@@ -294,3 +294,73 @@ export type {
   PlanNode,
   PlanResult,
 } from "./graph-analysis/index.js";
+
+// ── Automation Engine ───────────────────────────────────────────────────────
+export {
+  evaluateCondition,
+  compare,
+  getPath,
+  interpolate,
+  matchesObjectTrigger,
+  AutomationEngine,
+} from "./automation/index.js";
+
+export type {
+  ObjectTrigger,
+  CronTrigger,
+  ManualTrigger,
+  AutomationTrigger,
+  FieldCondition as AutomationFieldCondition,
+  TypeCondition as AutomationTypeCondition,
+  TagCondition as AutomationTagCondition,
+  AndCondition,
+  OrCondition,
+  NotCondition,
+  AutomationCondition,
+  CreateObjectAction,
+  UpdateObjectAction,
+  DeleteObjectAction,
+  NotificationAction,
+  DelayAction,
+  RunAutomationAction,
+  AutomationAction,
+  Automation,
+  AutomationContext,
+  AutomationRunStatus,
+  ActionResult,
+  AutomationRun,
+  ObjectEvent,
+  ActionHandlerFn,
+  ActionHandlerMap,
+  AutomationStore,
+  AutomationEngineOptions,
+} from "./automation/index.js";
+
+// ── Workspace Manifest ──────────────────────────────────────────────────────
+export {
+  MANIFEST_FILENAME,
+  MANIFEST_VERSION,
+  defaultManifest,
+  parseManifest,
+  serialiseManifest,
+  validateManifest,
+  addCollection,
+  removeCollection,
+  updateCollection,
+  getCollection,
+} from "./manifest/index.js";
+
+export type {
+  StorageBackend,
+  LoroStorageConfig,
+  MemoryStorageConfig,
+  FsStorageConfig,
+  StorageConfig,
+  SchemaConfig,
+  SyncMode,
+  SyncConfig,
+  CollectionDef,
+  WorkspaceVisibility,
+  WorkspaceManifest,
+  ManifestValidationError,
+} from "./manifest/index.js";

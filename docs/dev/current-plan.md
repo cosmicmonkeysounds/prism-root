@@ -253,11 +253,58 @@ All 19 Playwright tests pass covering Phases 1-4 rendered UI:
 | Playwright (shell) | 8 | Pass |
 | **E2E Total** | **19** | **All Pass** |
 
-Note: Phases 0, 5, 6, 7 are pure Layer 1 TypeScript with no React UI. E2E tests apply to rendered UI features (Phases 1-4). All Layer 1 systems are tested via Vitest unit tests.
+Note: Phases 0, 5, 6, 7, 8 are pure Layer 1 TypeScript with no React UI. E2E tests apply to rendered UI features (Phases 1-4). All Layer 1 systems are tested via Vitest unit tests.
 
-## Next: Phase 8
+## Phase 8: Automation Engine, Workspace Manifest (Complete)
+
+Two systems for workflow automation and workspace identity. All pure TypeScript, zero React.
+
+### Completed
+
+- [x] **Automation Engine** (`layer1/automation/`) — trigger/condition/action rule engine
+  - `AutomationTrigger` — ObjectTrigger (created/updated/deleted with type/tag/field filters), CronTrigger, ManualTrigger
+  - `AutomationCondition` — FieldCondition (10 comparison operators), TypeCondition, TagCondition, And/Or/Not combinators
+  - `AutomationAction` — CreateObject, UpdateObject, DeleteObject, Notification, Delay, RunAutomation
+  - `evaluateCondition()` — recursive condition tree evaluator with dot-path field access
+  - `interpolate()` — `{{path}}` template replacement from AutomationContext
+  - `matchesObjectTrigger()` — object event filtering by type/tag/field match
+  - `AutomationEngine` — orchestrator with start/stop lifecycle, cron scheduling, handleObjectEvent(), run()
+  - `AutomationStore` interface — synchronous list/get/save/saveRun for pluggable persistence
+  - Action dispatch via `ActionHandlerMap` — app layer provides handlers, engine orchestrates
+  - Execution tracking: AutomationRun with per-action results, status (success/failed/skipped/partial)
+- [x] **Workspace Manifest** (`layer1/manifest/`) — vault identity envelope
+  - `WorkspaceManifest` — the on-disk identity of a workspace (vault/shell), NOT the data itself
+  - `StorageConfig` — Loro CRDT (default), memory, fs backends (adapted from legacy sqlite/http/postgres)
+  - `SchemaConfig` — ordered schema module references (`@prism/core`, relative paths)
+  - `SyncConfig` — off/manual/auto modes with peer addresses for CRDT sync
+  - `CollectionDef` — named filtered views of objects (type filter, tag filter, sort)
+  - `defaultManifest()`, `parseManifest()`, `serialiseManifest()`, `validateManifest()`
+  - Collection CRUD: `addCollection()`, `removeCollection()`, `updateCollection()`, `getCollection()`
+  - Stored as `.prism.json` at workspace root
+
+### Axed from Legacy
+
+- `WebhookTrigger` / `IntegrationEventTrigger` — Prism uses Tauri IPC, not HTTP endpoints
+- `WebhookAction` / `IntegrationAction` — no raw HTTP in Prism architecture
+- `FeatureFlagCondition` / `ConfigCondition` — deferred until config system exists
+- `IAutomationStore` (async) — simplified to synchronous `AutomationStore` (Loro CRDT is sync)
+- `SqliteStorageConfig` / `HttpStorageConfig` / `PostgresStorageConfig` / `IndexedDBStorageConfig` — Prism uses Loro CRDT, not SQL
+- `SyncProviderKind` (http/git/dropbox/onedrive/s3) — simplified to peer-based CRDT sync
+- `WorkspaceRoster` — deferred; workspace discovery is a daemon concern
+
+### Test Summary
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| Vitest (condition-evaluator) | 27 | Pass |
+| Vitest (automation-engine) | 17 | Pass |
+| Vitest (manifest) | 27 | Pass |
+| **Phase 8 Total** | **71** | **All Pass** |
+
+## Next: Phase 9
 
 Candidates:
-- Workspace Manifest (collections, persistence, sync config)
-- Automation Engine (trigger/condition/action with plugin API)
-- Server Factory (Hono routes from ObjectRegistry)
+- Workspace Roster (workspace discovery, recent workspaces, daemon-side)
+- Server Factory (Hono routes from ObjectRegistry — for Relay nodes)
+- Config System (ConfigModel, setting layers, plugin settings)
+- Undo/Redo System (command-based undo stack integrated with Loro CRDT)

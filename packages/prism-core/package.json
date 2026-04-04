@@ -23,7 +23,9 @@
     "./plugin": "./src/layer1/plugin/index.ts",
     "./atom": "./src/layer1/atom/index.ts",
     "./automaton": "./src/layer1/automaton/index.ts",
-    "./graph-analysis": "./src/layer1/graph-analysis/index.ts"
+    "./graph-analysis": "./src/layer1/graph-analysis/index.ts",
+    "./automation": "./src/layer1/automation/index.ts",
+    "./manifest": "./src/layer1/manifest/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
