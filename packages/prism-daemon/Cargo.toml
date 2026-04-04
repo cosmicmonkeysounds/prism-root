@@ -1,0 +1,32 @@
+[package]
+name = "prism-daemon"
+version = "0.1.0"
+edition = "2021"
+description = "Prism Daemon — local Rust physics engine for CRDT, Lua, and hardware"
+
+[lib]
+name = "prism_daemon"
+path = "src/lib.rs"
+
+[dependencies]
+# CRDT source of truth
+loro = "1.4"
+
+# Lua 5.4 scripting — vendored for zero system deps
+mlua = { version = "0.10", features = ["lua54", "vendored", "serialize"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Error handling
+thiserror = "2"
+
+# Async runtime
+tokio = { version = "1", features = ["rt", "macros", "sync"] }
+
+# File system watching
+notify = "7"
+
+[dev-dependencies]
+tempfile = "3"

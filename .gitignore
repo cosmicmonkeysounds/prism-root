@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+.next/
+.turbo/
+out/
+
+# Test coverage
+coverage/
+
+# Env files
+.env
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Rust
+target/
+
+# Apps are separate git repos — tracked only via apps/README.md
+/apps/*/
+$legacy-inspiration-only
+.claude
+.husky

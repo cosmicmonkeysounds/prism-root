@@ -1,0 +1,16 @@
+[package]
+name = "prism-studio"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-build = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# The daemon library provides CRDT and Lua capabilities
+prism-daemon = { path = "../../prism-daemon" }
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }

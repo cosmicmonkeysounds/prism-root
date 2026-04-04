@@ -1,0 +1,7 @@
+dist/
+node_modules/
+.turbo/
+coverage/
+packages/prism-daemon/target/
+pnpm-lock.yaml
+$legacy-inspiration-only/
