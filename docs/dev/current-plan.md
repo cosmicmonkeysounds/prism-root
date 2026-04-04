@@ -46,7 +46,48 @@ Visual editing of CRDT state.
 | Rust (crdt commands) | 3 | Pass |
 | Rust (lua commands) | 6 | Pass |
 | Rust (file watcher) | 3 | Pass |
-| **Total** | **58** | **All Pass** |
+| **Phase 1+2 Total** | **58** | **All Pass** |
+
+## Phase 0: The Object Model (Complete)
+
+Ported from legacy Helm codebase with Helm→Prism rename. Foundation for the Object-Graph.
+
+### Completed
+
+- [x] `GraphObject` — universal graph node with shell + payload pattern
+- [x] `ObjectEdge` — typed edges between objects with behavior semantics
+- [x] `EntityDef` — schema-typed entity blueprints with category, tabs, fields
+- [x] `ObjectRegistry` — runtime registry of entity/edge types, category rules, slot system
+- [x] `TreeModel` — stateful in-memory tree with add/remove/move/reorder/duplicate/update
+- [x] `EdgeModel` — stateful in-memory edge store with hooks and events
+- [x] `WeakRefEngine` — automatic content-derived cross-object edges via providers
+- [x] `NSID` — namespaced identifiers for cross-Node type interoperability
+- [x] `PrismAddress` — `prism://did:web:node/objects/id` addressing scheme
+- [x] `NSIDRegistry` — NSID↔local type bidirectional mapping
+- [x] `ObjectQuery` — typed query descriptor with filtering, sorting, serialization
+- [x] Branded ID types (`ObjectId`, `EdgeId`) with zero-cost type safety
+- [x] Slot system for Lens extensions (tabs + fields contributed without modifying base EntityDef)
+
+### Axed from Legacy
+
+- `interfaces.ts` — premature abstraction; concrete classes serve as the interface
+- `api-config.ts` — Prism uses Tauri IPC, not REST route generation
+- `command-palette.ts` — KBar already handles this
+- `tree-clipboard.ts` + `cascade.ts` — premature; will add when needed
+- `context-engine.ts` — deferred to Phase 3
+- `lua-bridge.ts` — Prism has its own Lua integration
+- `presets/` — domain-specific; Lenses define their own
+
+### Test Summary
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| Vitest (registry) | 19 | Pass |
+| Vitest (tree-model) | 22 | Pass |
+| Vitest (edge-model) | 13 | Pass |
+| Vitest (nsid) | 15 | Pass |
+| Vitest (query) | 15 | Pass |
+| **Phase 0 Total** | **84** | **All Pass** |
 
 ## Next: Phase 3 — The Graph
 

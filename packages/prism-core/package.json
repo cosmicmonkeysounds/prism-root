@@ -12,7 +12,8 @@
     "./puck": "./src/layer2/puck/index.ts",
     "./kbar": "./src/layer2/kbar/index.ts",
     "./graph": "./src/layer2/graph/index.ts",
-    "./machines": "./src/layer1/machines/index.ts"
+    "./machines": "./src/layer1/machines/index.ts",
+    "./object-model": "./src/layer1/object-model/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

@@ -6,7 +6,7 @@ Client-side execution environment — Layer 1 (agnostic TS) + Layer 2 (React ren
 - `pnpm typecheck` / `pnpm test` / `pnpm test:watch`
 
 ## Architecture
-- **Layer 1**: Zustand stores, Loro bridge, Lua runtime (wasmoon), XState machines
+- **Layer 1**: Object Model (GraphObject, ObjectRegistry, TreeModel, EdgeModel, WeakRefEngine, NSID), Zustand stores, Loro bridge, Lua runtime (wasmoon), XState machines
 - **Layer 2**: CodeMirror 6 (LoroText sync), Puck (Loro layout), KBar (focus-depth), Spatial Graph (@xyflow/react + elkjs)
 - Loro CRDT is the hidden buffer. Editors project Loro state.
 - Zustand stores subscribe to specific Loro node IDs (atomic)
@@ -21,3 +21,4 @@ Client-side execution environment — Layer 1 (agnostic TS) + Layer 2 (React ren
 - `@prism/core/kbar` — KBar with focus-depth routing
 - `@prism/core/graph` — Spatial node graph (PrismGraph, custom nodes/edges, elkjs layout)
 - `@prism/core/machines` — XState tool machine (hand/select/edit FSM)
+- `@prism/core/object-model` — Object Model (GraphObject, registry, tree, edges, weak refs, NSID, query)
