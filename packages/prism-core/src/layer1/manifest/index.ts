@@ -7,9 +7,9 @@ export type {
   SchemaConfig,
   SyncMode,
   SyncConfig,
-  CollectionDef,
-  WorkspaceVisibility,
-  WorkspaceManifest,
+  CollectionRef,
+  ManifestVisibility,
+  PrismManifest,
 } from "./manifest-types.js";
 
 export { MANIFEST_FILENAME, MANIFEST_VERSION } from "./manifest-types.js";

@@ -10,15 +10,15 @@ import {
   getCollection,
 } from "./manifest.js";
 import { MANIFEST_VERSION } from "./manifest-types.js";
-import type { WorkspaceManifest, CollectionDef } from "./manifest-types.js";
+import type { PrismManifest, CollectionRef } from "./manifest-types.js";
 
 // ── defaultManifest ─────────────────────────────────────────────────────────
 
 describe("defaultManifest", () => {
   it("creates a manifest with required fields", () => {
-    const m = defaultManifest("My Workspace", "ws-1");
-    expect(m.id).toBe("ws-1");
-    expect(m.name).toBe("My Workspace");
+    const m = defaultManifest("My Project", "m-1");
+    expect(m.id).toBe("m-1");
+    expect(m.name).toBe("My Project");
     expect(m.version).toBe(MANIFEST_VERSION);
     expect(m.storage.backend).toBe("loro");
     expect(m.schema.modules).toEqual(["@prism/core"]);
@@ -32,12 +32,12 @@ describe("defaultManifest", () => {
 describe("parseManifest", () => {
   it("parses a minimal manifest", () => {
     const json = JSON.stringify({
-      id: "ws-1",
+      id: "m-1",
       name: "Test",
-      storage: { backend: "loro", path: "./data/ws.loro" },
+      storage: { backend: "loro", path: "./data/vault.loro" },
     });
     const m = parseManifest(json);
-    expect(m.id).toBe("ws-1");
+    expect(m.id).toBe("m-1");
     expect(m.name).toBe("Test");
     expect(m.version).toBe(MANIFEST_VERSION);
     expect(m.schema.modules).toEqual(["@prism/core"]);
@@ -45,8 +45,8 @@ describe("parseManifest", () => {
   });
 
   it("preserves all optional fields", () => {
-    const full: WorkspaceManifest = {
-      id: "ws-2",
+    const full: PrismManifest = {
+      id: "m-2",
       name: "Full",
       version: "1",
       storage: { backend: "memory" },
@@ -59,7 +59,7 @@ describe("parseManifest", () => {
       settings: { "ui.theme": "dark" },
       ownerId: "user-1",
       visibility: "team",
-      description: "A test workspace",
+      description: "A test manifest",
     };
     const m = parseManifest(JSON.stringify(full));
     expect(m.sync?.mode).toBe("auto");
@@ -69,7 +69,7 @@ describe("parseManifest", () => {
     expect(m.settings?.["ui.theme"]).toBe("dark");
     expect(m.ownerId).toBe("user-1");
     expect(m.visibility).toBe("team");
-    expect(m.description).toBe("A test workspace");
+    expect(m.description).toBe("A test manifest");
   });
 
   it("throws on missing id", () => {
@@ -155,7 +155,7 @@ describe("validateManifest", () => {
     expect(errors.some((e) => e.field === "visibility")).toBe(true);
   });
 
-  it("reports duplicate collection ids", () => {
+  it("reports duplicate collection ref ids", () => {
     const m = {
       ...defaultManifest("X", "x"),
       collections: [
@@ -167,7 +167,7 @@ describe("validateManifest", () => {
     expect(errors.some((e) => e.message.includes("duplicate"))).toBe(true);
   });
 
-  it("reports collection missing id", () => {
+  it("reports collection ref missing id", () => {
     const m = {
       ...defaultManifest("X", "x"),
       collections: [{ id: "", name: "A" }],
@@ -177,12 +177,12 @@ describe("validateManifest", () => {
   });
 });
 
-// ── Collection helpers ──────────────────────────────────────────────────────
+// ── Collection ref helpers ──────────────────────────────────────────────────
 
-describe("collection helpers", () => {
+describe("collection ref helpers", () => {
   const base = defaultManifest("Test", "t-1");
-  const col1: CollectionDef = { id: "tasks", name: "Tasks", objectTypes: ["task"] };
-  const col2: CollectionDef = { id: "goals", name: "Goals", objectTypes: ["goal"] };
+  const col1: CollectionRef = { id: "tasks", name: "Tasks", objectTypes: ["task"] };
+  const col2: CollectionRef = { id: "goals", name: "Goals", objectTypes: ["goal"] };
 
   it("addCollection adds to manifest", () => {
     const m = addCollection(base, col1);
@@ -224,7 +224,7 @@ describe("collection helpers", () => {
     );
   });
 
-  it("getCollection returns collection by id", () => {
+  it("getCollection returns collection ref by id", () => {
     const m = addCollection(base, col1);
     expect(getCollection(m, "tasks")).toEqual(col1);
   });

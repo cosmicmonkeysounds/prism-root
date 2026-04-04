@@ -359,8 +359,8 @@ export type {
   SchemaConfig,
   SyncMode,
   SyncConfig,
-  CollectionDef,
-  WorkspaceVisibility,
-  WorkspaceManifest,
+  CollectionRef,
+  ManifestVisibility,
+  PrismManifest,
   ManifestValidationError,
 } from "./manifest/index.js";

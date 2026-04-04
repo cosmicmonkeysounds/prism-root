@@ -255,9 +255,18 @@ All 19 Playwright tests pass covering Phases 1-4 rendered UI:
 
 Note: Phases 0, 5, 6, 7, 8 are pure Layer 1 TypeScript with no React UI. E2E tests apply to rendered UI features (Phases 1-4). All Layer 1 systems are tested via Vitest unit tests.
 
-## Phase 8: Automation Engine, Workspace Manifest (Complete)
+## Phase 8: Automation Engine, Prism Manifest (Complete)
 
-Two systems for workflow automation and workspace identity. All pure TypeScript, zero React.
+Two systems for workflow automation and manifest-driven workspace definition. All pure TypeScript, zero React.
+
+### Terminology (from SPEC.md)
+
+| Term | Definition |
+|------|-----------|
+| **Vault** | Encrypted local directory — the physical security boundary. Contains Collections and Manifests. |
+| **Collection** | Typed CRDT array (e.g. `Contacts`, `Tasks`). Holds the actual data. |
+| **Manifest** | JSON file with weak references to Collections. A "workspace" is just a Manifest pointing to data nodes. Multiple manifests can reference the same collection with different filters. |
+| **Shell** | The IDE chrome that renders whatever a Manifest references. No fixed layout. |
 
 ### Completed
 
@@ -272,15 +281,15 @@ Two systems for workflow automation and workspace identity. All pure TypeScript,
   - `AutomationStore` interface — synchronous list/get/save/saveRun for pluggable persistence
   - Action dispatch via `ActionHandlerMap` — app layer provides handlers, engine orchestrates
   - Execution tracking: AutomationRun with per-action results, status (success/failed/skipped/partial)
-- [x] **Workspace Manifest** (`layer1/manifest/`) — vault identity envelope
-  - `WorkspaceManifest` — the on-disk identity of a workspace (vault/shell), NOT the data itself
+- [x] **Prism Manifest** (`layer1/manifest/`) — workspace definition file
+  - `PrismManifest` — on-disk `.prism.json` containing weak references to Collections in a Vault
+  - `CollectionRef` — a manifest's pointer to a typed CRDT collection, optionally with type/tag/sort filters
   - `StorageConfig` — Loro CRDT (default), memory, fs backends (adapted from legacy sqlite/http/postgres)
   - `SchemaConfig` — ordered schema module references (`@prism/core`, relative paths)
   - `SyncConfig` — off/manual/auto modes with peer addresses for CRDT sync
-  - `CollectionDef` — named filtered views of objects (type filter, tag filter, sort)
   - `defaultManifest()`, `parseManifest()`, `serialiseManifest()`, `validateManifest()`
-  - Collection CRUD: `addCollection()`, `removeCollection()`, `updateCollection()`, `getCollection()`
-  - Stored as `.prism.json` at workspace root
+  - Collection ref CRUD: `addCollection()`, `removeCollection()`, `updateCollection()`, `getCollection()`
+  - Full glossary (Vault/Collection/Manifest/Shell) in `manifest-types.ts` doc comment
 
 ### Axed from Legacy
 
@@ -290,7 +299,7 @@ Two systems for workflow automation and workspace identity. All pure TypeScript,
 - `IAutomationStore` (async) — simplified to synchronous `AutomationStore` (Loro CRDT is sync)
 - `SqliteStorageConfig` / `HttpStorageConfig` / `PostgresStorageConfig` / `IndexedDBStorageConfig` — Prism uses Loro CRDT, not SQL
 - `SyncProviderKind` (http/git/dropbox/onedrive/s3) — simplified to peer-based CRDT sync
-- `WorkspaceRoster` — deferred; workspace discovery is a daemon concern
+- `WorkspaceRoster` — deferred; vault discovery is a daemon concern
 
 ### Test Summary
 
@@ -304,7 +313,7 @@ Two systems for workflow automation and workspace identity. All pure TypeScript,
 ## Next: Phase 9
 
 Candidates:
-- Workspace Roster (workspace discovery, recent workspaces, daemon-side)
+- Vault Discovery (recent vaults/manifests, daemon-side roster)
 - Server Factory (Hono routes from ObjectRegistry — for Relay nodes)
 - Config System (ConfigModel, setting layers, plugin settings)
 - Undo/Redo System (command-based undo stack integrated with Loro CRDT)
