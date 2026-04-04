@@ -1,41 +1,37 @@
 import { test, expect } from "@playwright/test";
 
 test.describe("Prism Studio", () => {
-  test("should render the studio header and tabs", async ({ page }) => {
+  test("should render the workspace shell with activity bar", async ({ page }) => {
     await page.goto("/");
-    await expect(page.locator("strong")).toContainText("Prism Studio");
-    // All four tabs should be visible
-    for (const label of ["Editor", "Layout", "Graph", "CRDT"]) {
-      await expect(page.getByRole("button", { name: label })).toBeVisible();
-    }
+    const shell = page.locator('[data-testid="workspace-shell"]');
+    await expect(shell).toBeVisible();
+    const activityBar = page.locator('[data-testid="activity-bar"]');
+    await expect(activityBar).toBeVisible();
   });
 
-  test("should show editor tab by default", async ({ page }) => {
+  test("should show editor tab open by default", async ({ page }) => {
     await page.goto("/");
-    // Editor tab is active (dark background) and the CodeMirror editor is present
-    const editorBtn = page.getByRole("button", { name: "Editor" });
-    await expect(editorBtn).toHaveCSS("background-color", "rgb(51, 51, 51)");
+    const tab = page.locator('[data-testid="tab-editor"]');
+    await expect(tab).toBeVisible();
   });
 
-  test("should switch between tabs", async ({ page }) => {
+  test("should switch between lenses via activity bar", async ({ page }) => {
     await page.goto("/");
 
-    await page.getByRole("button", { name: "CRDT" }).click();
+    // Click CRDT lens
+    await page.locator('[data-testid="activity-icon-crdt"]').click();
     await expect(page.locator("text=CRDT State Inspector")).toBeVisible();
 
-    await page.getByRole("button", { name: "Layout" }).click();
-    // Layout tab should be showing (Puck builder)
-    await expect(page.locator("text=CRDT State Inspector")).not.toBeVisible();
-
-    await page.getByRole("button", { name: "Graph" }).click();
-    await expect(page.locator("text=CRDT State Inspector")).not.toBeVisible();
+    // Click Graph lens
+    await page.locator('[data-testid="activity-icon-graph"]').click();
+    await expect(page.locator(".react-flow")).toBeVisible({ timeout: 10_000 });
   });
 
   test("should write a value to CRDT via the inspector", async ({ page }) => {
     await page.goto("/");
 
-    // Navigate to full-width CRDT tab
-    await page.getByRole("button", { name: "CRDT" }).click();
+    // Open CRDT lens
+    await page.locator('[data-testid="activity-icon-crdt"]').click();
     await expect(page.locator("text=CRDT State Inspector")).toBeVisible();
 
     // Fill in key and value
@@ -56,7 +52,7 @@ test.describe("Prism Studio", () => {
 
   test("should write multiple values and display all", async ({ page }) => {
     await page.goto("/");
-    await page.getByRole("button", { name: "CRDT" }).click();
+    await page.locator('[data-testid="activity-icon-crdt"]').click();
 
     const keyInput = page.locator("input").first();
     const valueInput = page.locator("input").nth(1);
@@ -76,7 +72,7 @@ test.describe("Prism Studio", () => {
 
   test("should overwrite existing key with new value", async ({ page }) => {
     await page.goto("/");
-    await page.getByRole("button", { name: "CRDT" }).click();
+    await page.locator('[data-testid="activity-icon-crdt"]').click();
 
     const keyInput = page.locator("input").first();
     const valueInput = page.locator("input").nth(1);
@@ -91,11 +87,5 @@ test.describe("Prism Studio", () => {
 
     const stateDisplay = page.locator("pre");
     await expect(stateDisplay).toContainText("published");
-  });
-
-  test("CRDT sidebar is visible in editor tab", async ({ page }) => {
-    await page.goto("/");
-    // Editor tab is default — CRDT inspector should be in the sidebar
-    await expect(page.locator("text=CRDT State Inspector")).toBeVisible();
   });
 });

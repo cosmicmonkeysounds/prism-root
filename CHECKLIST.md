@@ -252,4 +252,220 @@ Spatial node graph with custom nodes, edges, and auto-layout.
 
 - [x] `pnpm typecheck` — zero errors
 - [x] `pnpm test` — 72/72 pass (Vitest)
-- [ ] `npx playwright test` — E2E (requires dev server)
+- [x] `npx playwright test` — 12/12 E2E pass (7 heartbeat + 5 graph)
+
+---
+
+# Phase 0 Checklist: The Object Model
+
+Foundation data model ported from legacy Helm codebase with Helm→Prism rename.
+Pure Layer 1 TypeScript — no UI surface, no Playwright E2E needed.
+
+## Types & Branded IDs
+
+- [x] `ObjectId` / `EdgeId` branded string types with zero-cost type safety
+- [x] `objectId()` / `edgeId()` cast helpers for trust boundaries
+- [x] `EntityFieldType` — 11 value types (bool, int, float, string, text, color, enum, object_ref, date, datetime, url)
+- [x] `EntityFieldDef` — field schema with validation, defaults, computed expressions, enum options, ref types, UI hints
+- [x] `GraphObject` — universal graph node (shell + payload pattern)
+- [x] `ObjectEdge` — typed edge with relation, position, data payload
+- [x] `ResolvedEdge` — edge with target object resolved inline
+- [x] `EdgeBehavior` — weak, strong, dependency, membership, assignment
+- [x] `EdgeTypeDef` — edge type definition with constraints, cascade, federation scope
+- [x] `EntityDef` — entity blueprint (category, tabs, fields, containment overrides)
+- [x] `CategoryRule` — category parenting rules
+- [x] `TabDefinition` — detail view tabs
+
+## ObjectRegistry
+
+- [x] Entity type registration: `register()`, `registerAll()`, `addCategoryRule()`
+- [x] Lookup: `get()`, `has()`, `allTypes()`, `allDefs()`, `getLabel()`, `getPluralLabel()`, `getColor()`, `getIcon()`, `getCategory()`
+- [x] Tabs: `getTabs()`, `getEffectiveTabs()` (base + slot merge, base wins collision)
+- [x] Fields: `getEntityFields()` (base + slot merge)
+- [x] Containment: `canBeChildOf()`, `canBeRoot()`, `canHaveChildren()`, `getAllowedChildTypes()`
+- [x] Edge types: `registerEdge()`, `registerEdges()`, `getEdgeType()`, `canConnect()`, `getEdgesFrom()`, `getEdgesTo()`, `getEdgesBetween()`
+- [x] Slots: `registerSlot()`, `getSlots()` (forTypes + forCategories OR logic)
+- [x] Tree utilities: `buildTree()`, `getAncestors()`
+
+## TreeModel
+
+- [x] `add()` with containment validation and position management
+- [x] `remove()` with cascade descendant deletion and position compaction
+- [x] `move()` with circular reference detection and containment validation
+- [x] `reparent()` convenience wrapper
+- [x] `reorder()` within same parent
+- [x] `duplicate()` with deep clone option
+- [x] `update()` with immutable field protection (id, type, createdAt)
+- [x] Query: `get()`, `has()`, `getChildren()`, `getDescendants()`, `getAncestors()`, `buildTree()`, `toArray()`
+- [x] Events: add, remove, move, reorder, duplicate, update, change
+- [x] Lifecycle hooks: before/after for all mutations
+- [x] `TreeModelError` with typed error codes
+- [x] JSON serialization round-trip
+
+## EdgeModel
+
+- [x] `add()` with registry validation (allowMultiple, undirected)
+- [x] `remove()`, `update()` with immutable field protection
+- [x] Query: `get()`, `has()`, `getAll()`, `getFrom()`, `getTo()`, `getBetween()`, `getConnected()`
+- [x] Events: add, remove, update, change
+- [x] Lifecycle hooks: before/after for all mutations
+- [x] JSON serialization round-trip
+
+## WeakRefEngine
+
+- [x] Provider registration: `registerProvider()`, `unregisterProvider()`, `getProvider()`, `allProviders()`
+- [x] Lifecycle: `start()`, `stop()`, `dispose()`
+- [x] `recompute()` — diff-based edge materialization per object
+- [x] `rebuildAll()` — full sync for project open / bulk import
+- [x] `removeFor()` — clean up edges for deleted objects
+- [x] Query: `getWeakRefChildren()`, `getWeakRefParents()`
+- [x] `augmentTree()` — populate weakRefChildren on TreeNode[]
+- [x] `isWeakRefEdge()` — identify engine-managed edges
+- [x] Federation support: `scope: 'federated'` refs materialized even without local target
+- [x] Events: recomputed, rebuilt, change
+
+## NSID & Addressing
+
+- [x] `NSID` branded type with validation regex (3+ reverse-DNS segments)
+- [x] `isValidNSID()`, `parseNSID()`, `nsid()` constructor
+- [x] `nsidAuthority()`, `nsidName()` extractors
+- [x] `PrismAddress` branded type (`prism://did:web:node/objects/id`)
+- [x] `isValidPrismAddress()`, `prismAddress()`, `parsePrismAddress()`
+- [x] `NSIDRegistry` — bidirectional NSID↔local type mapping
+
+## ObjectQuery
+
+- [x] `ObjectQuery` — typed query descriptor (type, parentId, status, tags, date range, search, pinned, pagination, sorting, soft-delete)
+- [x] `queryToParams()` / `paramsToQuery()` — URL serialization round-trip
+- [x] `matchesQuery()` — in-memory filtering
+- [x] `sortObjects()` — in-memory sorting
+
+## Axed from Legacy
+
+- [x] `interfaces.ts` — premature abstraction; concrete classes are the interface
+- [x] `api-config.ts` — Prism uses Tauri IPC, not REST route generation
+- [x] `command-palette.ts` — KBar already exists in Prism
+- [x] `tree-clipboard.ts` + `cascade.ts` — premature; add when needed
+- [x] `context-engine.ts` — deferred to later phase
+- [x] `lua-bridge.ts` — Prism has its own Lua integration
+- [x] `presets/` — domain-specific; Lenses define their own
+
+## Tests
+
+- [x] **Registry tests** (`registry.test.ts`) — 19 tests
+  - [x] Entity registration and lookup
+  - [x] Containment: category rules, extraChildTypes, extraParentTypes, childOnly, canBeRoot
+  - [x] Edge type registration, canConnect, filtering
+  - [x] Slot registration by type and category
+  - [x] Effective tabs/fields merge with collision handling
+  - [x] Tree building from flat objects
+- [x] **Tree Model tests** (`tree-model.test.ts`) — 22 tests
+  - [x] Add: root, child, containment validation, missing parent
+  - [x] Remove: cascade descendants, position compaction
+  - [x] Move: reparent, circular ref detection, containment validation
+  - [x] Reorder: within parent
+  - [x] Duplicate: single and deep
+  - [x] Update: shell fields, immutable protection
+  - [x] Query: getChildren sorted, getDescendants depth-first, getAncestors
+  - [x] Events and unsubscribe
+  - [x] JSON round-trip
+- [x] **Edge Model tests** (`edge-model.test.ts`) — 13 tests
+  - [x] Add/remove/update
+  - [x] Query by source, target, between, connected
+  - [x] Registry validation: allowMultiple, undirected
+  - [x] Events on mutations
+  - [x] JSON round-trip
+- [x] **NSID tests** (`nsid.test.ts`) — 15 tests
+  - [x] NSID validation, parsing, construction
+  - [x] Authority/name extraction
+  - [x] PrismAddress validation, construction, parsing
+  - [x] NSIDRegistry register/resolve/clear
+- [x] **Query tests** (`query.test.ts`) — 15 tests
+  - [x] URL param round-trip (simple, arrays, null parentId)
+  - [x] matchesQuery: type, status, tags, search, parentId, deleted, date range, pinned
+  - [x] sortObjects: ascending, descending, default
+
+## Verification
+
+- [x] `pnpm typecheck` — zero errors
+- [x] `pnpm test` — 156/156 pass (84 object-model + 72 existing)
+- [x] `pnpm lint` — clean
+- [x] Package export: `@prism/core/object-model`
+- [x] Layer 1 barrel export updated
+- [x] `CLAUDE.md` updated (prism-core)
+- [x] `docs/dev/current-plan.md` updated
+- [x] No Playwright E2E needed — pure Layer 1 logic with no UI surface
+
+---
+
+# Phase 4 Checklist: The Shell
+
+Registry-driven workspace shell replacing hardcoded Studio UI.
+
+## Layer 1 — Workspace Primitives
+
+- [x] `LensId` / `TabId` branded types with `lensId()` / `tabId()` helpers
+- [x] `LensManifest` — typed lens definition (id, name, icon, category, contributes)
+- [x] `LensCategory` — editor, visual, data, debug, custom
+- [x] `LensCommand` / `LensKeybinding` / `LensView` contribution types
+- [x] `LensRegistry` — `createLensRegistry()` factory
+  - [x] `register()` / `unregister()` with event emission
+  - [x] `get()` / `has()` / `allLenses()` / `getByCategory()`
+  - [x] `subscribe()` with `registered` / `unregistered` / `change` events
+- [x] `WorkspaceStore` — `createWorkspaceStore()` Zustand vanilla
+  - [x] `openTab()` with singleton dedup (focus existing unpinned tab)
+  - [x] `closeTab()` with adjacent tab activation
+  - [x] `pinTab()` / `unpinTab()` toggle
+  - [x] `reorderTab()` / `setActiveTab()`
+  - [x] `toggleSidebar()` / `toggleInspector()` panel layout
+  - [x] `setSidebarWidth()` / `setInspectorWidth()` with clamping
+
+## Layer 2 — Shell Components
+
+- [x] `LensProvider` + `useLensContext()` + `useWorkspaceStore()` React context
+- [x] `ActivityBar` — vertical icon bar from LensRegistry with active indicator
+- [x] `TabBar` — horizontal tab bar with close/pin/middle-click-close
+- [x] `WorkspaceShell` — top-level layout (ActivityBar | Sidebar? | TabBar + Content | Inspector?)
+- [x] `data-testid` attributes on all interactive elements
+
+## Prism Studio
+
+- [x] 4 built-in lens manifests: Editor, Graph, Layout, CRDT
+- [x] `createLensComponentMap()` — maps LensId to React components via closures
+- [x] `registerBuiltinLenses()` — registers all 4 manifests into LensRegistry
+- [x] `App.tsx` rewritten: LensProvider + WorkspaceShell replaces hardcoded tabs
+- [x] KBar actions derived from LensRegistry (not hardcoded)
+
+## Tests
+
+- [x] **Lens Registry tests** (`lens-registry.test.ts`) — 12 tests
+  - [x] Register/retrieve, has(), allLenses(), getByCategory()
+  - [x] Unregister via method and via returned function
+  - [x] Subscribe fires on register/unregister, unsubscribe works
+  - [x] Re-register replaces, empty registry, no-op unregister
+- [x] **Workspace Store tests** (`workspace-store.test.ts`) — 15 tests
+  - [x] Empty initial state, default panel layout
+  - [x] openTab creates and activates, singleton dedup, pinned bypass
+  - [x] closeTab removes and activates adjacent, last tab → null
+  - [x] pinTab/unpinTab, reorderTab, setActiveTab
+  - [x] toggleSidebar, toggleInspector, width clamping
+- [x] **Playwright E2E** (`e2e/tests/shell.spec.ts`) — 8 tests
+  - [x] Activity bar with all lens icons
+  - [x] Clicking activity bar opens tab
+  - [x] Tab bar shows open tabs
+  - [x] Close tab removes it
+  - [x] Pin tab shows indicator
+  - [x] Sidebar toggle works
+  - [x] KBar navigation still works
+  - [x] Multiple tabs switching
+- [x] **Updated Playwright** — heartbeat (6) + graph (5) tests updated for new shell selectors
+
+## Verification
+
+- [x] `pnpm typecheck` — zero errors
+- [x] `pnpm test` — 183/183 pass (27 workspace + 156 existing)
+- [x] `npx playwright test` — 19/19 pass (8 shell + 6 heartbeat + 5 graph)
+- [x] Package exports: `@prism/core/workspace`, `@prism/core/shell`
+- [x] Layer 1 + Layer 2 barrel exports updated
+- [x] `CLAUDE.md` updated (prism-core)
+- [x] `docs/dev/current-plan.md` updated

@@ -33,3 +33,17 @@ export type {
   PrismGraphProps,
   LayoutOptions,
 } from "./graph/index.js";
+
+export {
+  LensProvider,
+  useLensContext,
+  useShellStore,
+  ActivityBar,
+  TabBar,
+  ShellLayout,
+} from "./shell/index.js";
+export type {
+  LensComponentMap,
+  LensContextValue,
+  LensProviderProps,
+} from "./shell/index.js";

@@ -52,28 +52,40 @@ export function queryToParams(q: ObjectQuery): URLSearchParams {
 export function paramsToQuery(params: URLSearchParams): ObjectQuery {
   const q: ObjectQuery = {};
   const types = params.getAll("type");
-  if (types.length === 1) q.type = types[0];
+  if (types.length === 1) q.type = types[0] ?? "";
   else if (types.length > 1) q.type = types;
 
   const statuses = params.getAll("status");
-  if (statuses.length === 1) q.status = statuses[0];
+  if (statuses.length === 1) q.status = statuses[0] ?? "";
   else if (statuses.length > 1) q.status = statuses;
 
   const tags = params.getAll("tags");
   if (tags.length > 0) q.tags = tags;
 
   if (params.has("parentId")) {
-    const pid = params.get("parentId")!;
-    q.parentId = pid === "null" ? null : pid;
+    const pid = params.get("parentId");
+    if (pid === "null") q.parentId = null;
+    else if (pid) q.parentId = pid;
   }
-  if (params.has("search")) q.search = params.get("search")!;
-  if (params.has("dateAfter")) q.dateAfter = params.get("dateAfter")!;
-  if (params.has("dateBefore")) q.dateBefore = params.get("dateBefore")!;
+  {
+    const search = params.get("search");
+    if (search) q.search = search;
+  }
+  {
+    const dateAfter = params.get("dateAfter");
+    if (dateAfter) q.dateAfter = dateAfter;
+  }
+  {
+    const dateBefore = params.get("dateBefore");
+    if (dateBefore) q.dateBefore = dateBefore;
+  }
   if (params.has("pinned")) q.pinned = params.get("pinned") === "true";
   if (params.has("limit")) q.limit = Number(params.get("limit"));
   if (params.has("offset")) q.offset = Number(params.get("offset"));
-  if (params.has("sortBy"))
-    q.sortBy = params.get("sortBy") as ObjectQuery["sortBy"];
+  if (params.has("sortBy")) {
+    const sortBy = params.get("sortBy");
+    if (sortBy) q.sortBy = sortBy as NonNullable<ObjectQuery["sortBy"]>;
+  }
   if (params.has("sortDir"))
     q.sortDir = params.get("sortDir") as "asc" | "desc";
   if (params.has("includeDeleted"))

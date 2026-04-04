@@ -129,11 +129,11 @@ export class TreeModel {
     }
 
     if (this.registry && parentId !== null) {
-      const parentType = this.map.get(parentId)!.type;
-      if (!this.registry.canBeChildOf(draft.type, parentType)) {
+      const parent = this.map.get(parentId);
+      if (parent && !this.registry.canBeChildOf(draft.type, parent.type)) {
         throw new TreeModelError(
           "CONTAINMENT_VIOLATION",
-          `'${draft.type}' cannot be a child of '${parentType}'`,
+          `'${draft.type}' cannot be a child of '${parent.type}'`,
         );
       }
     }
@@ -239,11 +239,11 @@ export class TreeModel {
     }
 
     if (this.registry && toParentId !== null) {
-      const parentType = this.map.get(toParentId)!.type;
-      if (!this.registry.canBeChildOf(obj.type, parentType)) {
+      const targetParent = this.map.get(toParentId);
+      if (targetParent && !this.registry.canBeChildOf(obj.type, targetParent.type)) {
         throw new TreeModelError(
           "CONTAINMENT_VIOLATION",
-          `'${obj.type}' cannot be a child of '${parentType}'`,
+          `'${obj.type}' cannot be a child of '${targetParent.type}'`,
         );
       }
     }
@@ -278,8 +278,10 @@ export class TreeModel {
       }
     }
 
+    const current = this.map.get(id);
+    if (!current) throw new TreeModelError("NOT_FOUND", `Object '${id}' not found`);
     const updated: GraphObject = {
-      ...this.map.get(id)!,
+      ...current,
       parentId: toParentId as ObjectId | null,
       position: pos,
       updatedAt: new Date().toISOString(),
@@ -318,8 +320,9 @@ export class TreeModel {
     if (clampedPos === fromPos) return siblings;
 
     const reordered = [...siblings];
-    const [moving] = reordered.splice(fromPos, 1);
-    reordered.splice(clampedPos, 0, moving!);
+    const moving = reordered.splice(fromPos, 1)[0];
+    if (!moving) throw new TreeModelError("NOT_FOUND", `Object '${id}' not in reorder list`);
+    reordered.splice(clampedPos, 0, moving);
 
     const updated: GraphObject[] = reordered.map((s, i) => {
       const u = { ...s, position: i, updatedAt: new Date().toISOString() };
@@ -357,7 +360,8 @@ export class TreeModel {
       sourceId: string,
       copyParentId: string | null,
     ): GraphObject => {
-      const source = this.map.get(sourceId)!;
+      const source = this.map.get(sourceId);
+      if (!source) throw new TreeModelError("NOT_FOUND", `Object '${sourceId}' not found`);
       const newId = this.generateId();
       idMap.set(sourceId, newId);
 
@@ -408,15 +412,13 @@ export class TreeModel {
 
     this.hooks.beforeUpdate?.(obj, changes);
 
-    const {
-      id: _id,
-      type: _type,
-      createdAt: _created,
-      ...safeChanges
-    } = changes as GraphObject;
+    const safeChanges = { ...changes } as Record<string, unknown>;
+    delete safeChanges.id;
+    delete safeChanges.type;
+    delete safeChanges.createdAt;
     const updated: GraphObject = {
       ...obj,
-      ...safeChanges,
+      ...(safeChanges as Partial<GraphObject>),
       updatedAt: new Date().toISOString(),
     };
     this.map.set(id, updated);

@@ -79,8 +79,8 @@ export interface WeakRefChild {
 
 const WEAK_REF_TAG = "__weakRef" as const;
 
-interface WeakRefEdgeData {
-  [WEAK_REF_TAG]: true;
+interface WeakRefEdgeData extends Record<string, unknown> {
+  __weakRef: true;
   providerId: string;
   providerLabel: string;
   location?: WeakRefExtraction["location"];
@@ -268,7 +268,7 @@ export class WeakRefEngine {
             sourceId: toObjectId(obj.id),
             targetId: toObjectId(ref.targetId as string),
             relation: ref.relation,
-            data: edgeData as unknown as Record<string, unknown>,
+            data: edgeData as Record<string, unknown>,
           });
           added++;
         }

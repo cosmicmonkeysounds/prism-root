@@ -68,7 +68,7 @@ export function nsidAuthority(id: NSID): string {
 /** Extract the name (last segment) from an NSID. */
 export function nsidName(id: NSID): string {
   const parts = id.split(".");
-  return parts[parts.length - 1]!;
+  return parts[parts.length - 1] ?? "";
 }
 
 // ── Prism addresses ─────────────────────────────────────────────────────────

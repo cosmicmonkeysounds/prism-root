@@ -89,11 +89,175 @@ Ported from legacy Helm codebase with Helm→Prism rename. Foundation for the Ob
 | Vitest (query) | 15 | Pass |
 | **Phase 0 Total** | **84** | **All Pass** |
 
-## Next: Phase 3 — The Graph
+## Phase 4: The Shell (Complete)
 
-Builder 2 -- spatial node graph over Loro state.
+Registry-driven workspace shell replacing hardcoded Studio UI.
 
-- @xyflow/react with custom CodeMirror/Markdown nodes
-- Wire types: Hard Ref (elkjs) + Weak Ref (dashed Bezier)
-- XState tool machine: Hand / Select / Edit
-- PixiJS bird's-eye for massive graphs
+### Completed
+
+- [x] `LensManifest` — typed lens definition (id, name, icon, category, contributes)
+- [x] `LensRegistry` — register/unregister/query/subscribe with events
+- [x] `WorkspaceStore` — Zustand store for tabs, activeTab, panelLayout
+  - [x] Singleton tab behavior (dedup by lensId, pinned tabs opt out)
+  - [x] Tab CRUD: openTab, closeTab, pinTab, reorderTab, setActiveTab
+  - [x] Panel layout: toggleSidebar, toggleInspector, width management
+- [x] `LensProvider` + `useLensContext()` — React context for registries
+- [x] `ActivityBar` — vertical icon bar from LensRegistry
+- [x] `TabBar` — horizontal tab bar with close/pin controls
+- [x] `WorkspaceShell` — top-level layout composing all shell components
+- [x] 4 built-in lenses: Editor, Graph, Layout, CRDT (manifests + component map)
+- [x] KBar actions derived from LensRegistry (not hardcoded)
+- [x] `data-testid` attributes throughout for Playwright
+
+### Test Summary
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| Vitest (lens-registry) | 12 | Pass |
+| Vitest (workspace-store) | 15 | Pass |
+| Playwright (shell) | 8 | Pass |
+| Playwright (heartbeat, updated) | 6 | Pass |
+| Playwright (graph, updated) | 5 | Pass |
+| **Phase 4 Total** | **27 Vitest + 19 E2E** | **All Pass** |
+
+## Phase 5: Input, Forms, Layout, Expression (Complete)
+
+Four foundational Layer 1 systems ported from legacy Helm. All pure TypeScript, zero React.
+
+### Completed
+
+- [x] **Input System** (`layer1/input/`) — KeyboardModel, InputScope, InputRouter (LIFO scope stack)
+  - Shortcut format: `cmd+k`, `cmd+shift+z`, `escape`. `cmd` = Ctrl OR Meta (cross-platform)
+  - InputScope: named context with KeyboardModel + action handlers, fluent `.on()`, UndoHook
+  - InputRouter: push/pop/replace scopes, handleKeyEvent walks stack top-down, async dispatch
+- [x] **Forms & Validation** (`layer1/forms/`) — schema-driven forms + text parsing
+  - FieldSchema: 17 field types (text, number, currency, rating, slider, boolean, date, select, etc.)
+  - DocumentSchema: fields + sections (TextSection | FieldGroupSection)
+  - FormSchema: extends DocumentSchema with validation rules + conditional visibility
+  - FormState: immutable pure-function state management (create, set, validate, reset)
+  - Wiki-link parser: `parseWikiLinks()`, `extractLinkedIds()`, `renderWikiLinks()`, `detectInlineLink()`
+  - Markdown parser: `parseMarkdown()` → BlockToken[], `parseInline()` → InlineToken[]
+- [x] **Layout System** (`layer1/layout/`) — multi-pane navigation with history
+  - SelectionModel: select/toggle/selectRange/selectAll/clear with events
+  - PageModel<TTarget>: viewMode, activeTab, selection, inputScopeId, persist/fromSerialized
+  - PageRegistry<TTarget>: maps target.kind → defaults, createPage factory
+  - WorkspaceSlot: inline back/forward history (no external NavigationController), LRU page cache
+  - WorkspaceManager: multiple slots, active tracking, open/close/focus
+- [x] **Expression Engine** (`layer1/expression/`) — formula evaluation
+  - Scanner/Tokenizer: operand syntax `[type:id.subfield]`, numbers, strings, booleans, operators
+  - Recursive descent parser: standard operator precedence, bare identifiers as field operands
+  - Evaluator: arithmetic, comparison, boolean logic (short-circuit), string concat, builtins (abs, ceil, floor, round, sqrt, pow, min, max, clamp)
+  - `evaluateExpression()` convenience: auto-wraps bare identifiers as `[field:name]`
+
+### Test Summary
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| Vitest (keyboard-model) | 25 | Pass |
+| Vitest (input-router + scope) | 23 | Pass |
+| Vitest (form-state) | 20 | Pass |
+| Vitest (wiki-link) | 17 | Pass |
+| Vitest (markdown) | 27 | Pass |
+| Vitest (selection-model) | 12 | Pass |
+| Vitest (page-model) | 12 | Pass |
+| Vitest (page-registry) | 8 | Pass |
+| Vitest (workspace-slot) | 14 | Pass |
+| Vitest (workspace-manager) | 14 | Pass |
+| Vitest (scanner) | 21 | Pass |
+| Vitest (expression) | 68 | Pass |
+| **Phase 5 Total** | **261** | **All Pass** |
+
+## Phase 6: Context Engine, Plugin System, Reactive Atoms (Complete)
+
+Three systems that complete the registry-driven architecture. All pure TypeScript, zero React.
+
+### Completed
+
+- [x] **Context Engine** (`layer1/object-model/context-engine.ts`) — context-aware suggestion engine
+  - `getEdgeOptions(sourceType, targetType?)` — valid edge types between objects
+  - `getChildOptions(parentType)` — object types that can be children
+  - `getAutocompleteSuggestions(sourceType)` — inline [[...]] link types + defaultRelation
+  - `getContextMenu(objectType, targetType?)` — structured right-click menu (create/connect/object sections)
+  - `getInlineLinkTypes(sourceType)` / `getInlineEdgeTypes()` — suggestInline edge types
+  - All answers derived from ObjectRegistry — nothing hardcoded
+- [x] **Plugin System** (`layer1/plugin/`) — universal extension unit
+  - `ContributionRegistry<T>` — generic typed registry (register/unregister/query/byPlugin)
+  - `PrismPlugin` — universal plugin interface with `contributes` (views, commands, keybindings, contextMenus, activityBar, settings, toolbar, statusBar, weakRefProviders)
+  - `PluginRegistry` — manages plugins, auto-registers contributions into typed registries, events on register/unregister
+  - Contribution types: ViewContributionDef, CommandContributionDef, KeybindingContributionDef, ContextMenuContributionDef, ActivityBarContributionDef, SettingsContributionDef, ToolbarContributionDef, StatusBarContributionDef
+- [x] **Reactive Atoms** (`layer1/atom/`) — Zustand-based reactive state layer
+  - `PrismBus` — lightweight typed event bus (on/once/emit/off, createPrismBus factory)
+  - `PrismEvents` — well-known event type constants (objects/edges/navigation/selection/search)
+  - `AtomStore` — UI state atoms (selectedId, selectionIds, editingObjectId, activePanel, searchQuery, navigationTarget)
+  - `ObjectAtomStore` — in-memory object/edge cache with selectors (selectObject, selectQuery, selectChildren, selectEdgesFrom, selectEdgesTo)
+  - `connectBusToAtoms(bus, atomStore)` — wire navigation/selection/search events to UI atoms
+  - `connectBusToObjectAtoms(bus, objectStore)` — wire object/edge CRUD events to cache
+
+### Test Summary
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| Vitest (context-engine) | 17 | Pass |
+| Vitest (contribution-registry) | 15 | Pass |
+| Vitest (plugin-registry) | 17 | Pass |
+| Vitest (event-bus) | 13 | Pass |
+| Vitest (atoms) | 15 | Pass |
+| Vitest (object-atoms) | 19 | Pass |
+| Vitest (connect) | 15 | Pass |
+| **Phase 6 Total** | **111** | **All Pass** |
+
+## Phase 7: State Machines, Graph Analysis, Planning Engine (Complete)
+
+Three systems for workflow orchestration and dependency analysis. All pure TypeScript, zero React.
+
+### Completed
+
+- [x] **State Machines** (`layer1/automaton/`) — flat FSM ported from legacy `@core/automaton`
+  - `Machine<TState, TEvent>` — context-free FSM with guards, actions, lifecycle hooks (onEnter/onExit)
+  - `createMachine(def)` factory with `.start()` and `.restore()` (no onEnter on restore)
+  - Wildcard `from: '*'` matches any state, array `from` for multi-source transitions
+  - Terminal states block all outgoing transitions
+  - Observable via `.on()` listener, serializable via `.toJSON()`
+- [x] **Dependency Graph** (`layer1/graph-analysis/dependency-graph.ts`) — ported from legacy `@core/tasks`
+  - `buildDependencyGraph(objects)` — forward "blocks" graph from `data.dependsOn`/`data.blockedBy`
+  - `buildPredecessorGraph(objects)` — inverse "blocked-by" graph
+  - `topologicalSort(objects)` — Kahn's algorithm, cyclic nodes appended at end
+  - `detectCycles(objects)` — DFS cycle detection, returns cycle paths
+  - `findBlockingChain(objectId, objects)` — transitive upstream blockers (BFS)
+  - `findImpactedObjects(objectId, objects)` — transitive downstream dependants (BFS)
+  - `computeSlipImpact(objectId, slipDays, objects)` — BFS wave propagation of slip
+- [x] **Planning Engine** (`layer1/graph-analysis/planning-engine.ts`) — ported from legacy `@core/planning`
+  - `computePlan(objects)` — generic CPM on any GraphObject with `data.dependsOn`
+  - Forward pass: earlyStart, earlyFinish
+  - Backward pass: lateStart, lateFinish, totalFloat
+  - Critical path extraction (zero-float nodes)
+  - Duration priority: `data.durationDays` > `data.estimateMs` > date span > default 1 day
+
+### Test Summary
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| Vitest (machine) | 19 | Pass |
+| Vitest (dependency-graph) | 20 | Pass |
+| Vitest (planning-engine) | 10 | Pass |
+| **Phase 7 Total** | **49** | **All Pass** |
+
+### E2E Tests (All Phases)
+
+All 19 Playwright tests pass covering Phases 1-4 rendered UI:
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| Playwright (heartbeat) | 6 | Pass |
+| Playwright (graph) | 5 | Pass |
+| Playwright (shell) | 8 | Pass |
+| **E2E Total** | **19** | **All Pass** |
+
+Note: Phases 0, 5, 6, 7 are pure Layer 1 TypeScript with no React UI. E2E tests apply to rendered UI features (Phases 1-4). All Layer 1 systems are tested via Vitest unit tests.
+
+## Next: Phase 8
+
+Candidates:
+- Workspace Manifest (collections, persistence, sync config)
+- Automation Engine (trigger/condition/action with plugin API)
+- Server Factory (Hono routes from ObjectRegistry)

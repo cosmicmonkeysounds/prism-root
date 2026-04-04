@@ -134,12 +134,10 @@ export class EdgeModel {
 
     this.hooks.beforeUpdate?.(edge, changes);
 
-    const {
-      id: _id,
-      createdAt: _created,
-      ...safeChanges
-    } = changes as ObjectEdge;
-    const updated: ObjectEdge = { ...edge, ...safeChanges };
+    const safeChanges = { ...changes } as Record<string, unknown>;
+    delete safeChanges.id;
+    delete safeChanges.createdAt;
+    const updated: ObjectEdge = { ...edge, ...(safeChanges as Partial<ObjectEdge>) };
     this.map.set(id, updated);
 
     this.hooks.afterUpdate?.(updated, edge);

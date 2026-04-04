@@ -1,136 +1,80 @@
-import { useState, useEffect, useMemo } from "react";
-import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
+import { useMemo, useEffect, useState } from "react";
+import type { Action } from "kbar";
 import { createLoroBridge } from "@prism/core/layer1/loro-bridge";
 import { createCrdtStore } from "@prism/core/layer1/stores/use-crdt-store";
+import { createLensRegistry, createShellStore } from "@prism/core/layer1/workspace/index";
+import { LensProvider, ShellLayout } from "@prism/core/layer2/shell/index";
 import { PrismKBarProvider } from "@prism/core/layer2/kbar/prism-kbar";
-import { CrdtPanel } from "./panels/crdt-panel.js";
-import { EditorPanel } from "./panels/editor-panel.js";
-import { LayoutPanel } from "./panels/layout-panel.js";
-import { GraphPanel } from "./panels/graph-panel.js";
+import {
+  registerBuiltinLenses,
+  createLensComponentMap,
+  EDITOR_LENS_ID,
+} from "./lenses/index.js";
 
 const bridge = createLoroBridge();
-const store = createCrdtStore();
+const crdtStore = createCrdtStore();
 
-/**
- * Phase 2 demo: The Eyes.
- * Visual editing of CRDT state via CodeMirror and Puck, with KBar command palette.
- */
 export function App() {
-  const [activeTab, setActiveTab] = useState<
-    "editor" | "layout" | "graph" | "crdt"
-  >("editor");
-
-  useEffect(() => {
-    const disconnect = store.getState().connect(bridge);
-    return disconnect;
-  }, []);
-
-  const globalActions = useMemo(
-    () => [
-      {
-        id: "switch-editor",
-        name: "Switch to Editor",
-        shortcut: ["e"],
-        perform: () => setActiveTab("editor"),
-        section: "Navigation",
-      },
-      {
-        id: "switch-layout",
-        name: "Switch to Layout Builder",
-        shortcut: ["l"],
-        perform: () => setActiveTab("layout"),
-        section: "Navigation",
-      },
-      {
-        id: "switch-graph",
-        name: "Switch to Graph",
-        shortcut: ["g"],
-        perform: () => setActiveTab("graph"),
-        section: "Navigation",
-      },
-      {
-        id: "switch-crdt",
-        name: "Switch to CRDT Inspector",
-        shortcut: ["c"],
-        perform: () => setActiveTab("crdt"),
-        section: "Navigation",
-      },
-    ],
+  const lensRegistry = useMemo(() => createLensRegistry(), []);
+  const shellStore = useMemo(() => createShellStore(), []);
+  const components = useMemo(
+    () => createLensComponentMap(bridge, crdtStore),
     [],
   );
 
+  const [globalActions, setGlobalActions] = useState<Action[]>([]);
+
+  // Connect CRDT bridge
+  useEffect(() => {
+    const disconnect = crdtStore.getState().connect(bridge);
+    return disconnect;
+  }, []);
+
+  // Register built-in lenses and derive KBar actions
+  useEffect(() => {
+    const unregister = registerBuiltinLenses(lensRegistry);
+
+    function deriveActions(): void {
+      setGlobalActions(
+        lensRegistry.allLenses().map((m) => {
+          const action: Action = {
+            id: `switch-${m.id}`,
+            name: `Switch to ${m.name}`,
+            perform: () => shellStore.getState().openTab(m.id, m.name),
+            section: "Navigation",
+          };
+          const shortcut = m.contributes.commands[0]?.shortcut;
+          if (shortcut) action.shortcut = shortcut;
+          return action;
+        }),
+      );
+    }
+    deriveActions();
+
+    const unsubscribe = lensRegistry.subscribe(() => deriveActions());
+
+    return () => {
+      unregister();
+      unsubscribe();
+    };
+  }, [lensRegistry, shellStore]);
+
+  // Open default editor tab
+  useEffect(() => {
+    if (shellStore.getState().tabs.length === 0) {
+      shellStore.getState().openTab(EDITOR_LENS_ID, "Editor");
+    }
+  }, [shellStore]);
+
   return (
     <PrismKBarProvider globalActions={globalActions}>
-      <div
-        style={{
-          fontFamily: "system-ui",
-          height: "100vh",
-          display: "flex",
-          flexDirection: "column",
-        }}
+      <LensProvider
+        registry={lensRegistry}
+        store={shellStore}
+        components={components}
       >
-        <header
-          style={{
-            padding: "8px 16px",
-            borderBottom: "1px solid #e0e0e0",
-            display: "flex",
-            alignItems: "center",
-            gap: 16,
-            background: "#fafafa",
-          }}
-        >
-          <strong>Prism Studio</strong>
-          <nav style={{ display: "flex", gap: 4 }}>
-            {(["editor", "layout", "graph", "crdt"] as const).map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                style={{
-                  padding: "4px 12px",
-                  border: "1px solid #ccc",
-                  borderRadius: 4,
-                  background: activeTab === tab ? "#333" : "white",
-                  color: activeTab === tab ? "white" : "#333",
-                  cursor: "pointer",
-                  fontSize: 13,
-                }}
-              >
-                {tab === "editor"
-                  ? "Editor"
-                  : tab === "layout"
-                    ? "Layout"
-                    : tab === "graph"
-                      ? "Graph"
-                      : "CRDT"}
-              </button>
-            ))}
-          </nav>
-          <span style={{ fontSize: 12, color: "#999", marginLeft: "auto" }}>
-            CMD+K for command palette
-          </span>
-        </header>
-
-        <div style={{ flex: 1, overflow: "hidden" }}>
-          {activeTab === "editor" && (
-            <PanelGroup direction="horizontal">
-              <Panel defaultSize={70} minSize={30}>
-                <EditorPanel doc={bridge.doc} />
-              </Panel>
-              <PanelResizeHandle
-                style={{ width: 4, background: "#e0e0e0", cursor: "col-resize" }}
-              />
-              <Panel defaultSize={30} minSize={20}>
-                <CrdtPanel store={store} />
-              </Panel>
-            </PanelGroup>
-          )}
-          {activeTab === "layout" && <LayoutPanel />}
-          {activeTab === "graph" && <GraphPanel />}
-          {activeTab === "crdt" && (
-            <CrdtPanel store={store} fullWidth />
-          )}
-        </div>
-      </div>
+        <ShellLayout />
+      </LensProvider>
     </PrismKBarProvider>
   );
 }

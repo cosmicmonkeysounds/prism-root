@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { ObjectRegistry } from "./registry.js";
 import { objectId } from "./types.js";
-import type { EntityDef, CategoryRule, EdgeTypeDef } from "./types.js";
+import type { EntityDef, CategoryRule } from "./types.js";
 
 // ── Shared fixture ────────────────────────────────────────────────────────────
 // A small "workspace app" type system: workspaces contain tasks and notes.
@@ -173,7 +173,7 @@ describe("ObjectRegistry", () => {
 
     const slots = registry.getSlots("task");
     expect(slots.length).toBe(1);
-    expect(slots[0]!.id).toBe("kami:brain");
+    expect(slots[0]?.id).toBe("kami:brain");
 
     expect(registry.getSlots("note").length).toBe(0);
   });
@@ -290,8 +290,8 @@ describe("ObjectRegistry", () => {
 
     const tree = registry.buildTree(objects);
     expect(tree.length).toBe(1);
-    expect(tree[0]!.object.name).toBe("Root");
-    expect(tree[0]!.children.length).toBe(1);
-    expect(tree[0]!.children[0]!.object.name).toBe("Task");
+    expect(tree[0]?.object.name).toBe("Root");
+    expect(tree[0]?.children.length).toBe(1);
+    expect(tree[0]?.children[0]?.object.name).toBe("Task");
   });
 });

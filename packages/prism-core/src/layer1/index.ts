@@ -26,7 +26,144 @@ export {
   paramsToQuery,
   matchesQuery,
   sortObjects,
+  ContextEngine,
 } from "./object-model/index.js";
+
+// ── Lens System & Shell ───────────────────────────────────────────────────────
+export {
+  lensId,
+  tabId,
+  createLensRegistry,
+  createShellStore,
+} from "./workspace/index.js";
+
+export type {
+  LensId,
+  TabId,
+  LensCategory,
+  LensCommand,
+  LensKeybinding,
+  LensView,
+  LensManifest,
+  LensRegistry,
+  LensRegistryEvent,
+  LensRegistryEventListener,
+  TabEntry,
+  PanelLayout,
+  ShellState,
+  ShellActions,
+  ShellStore,
+} from "./workspace/index.js";
+
+// ── Input System ──────────────────────────────────────────────────────────────
+export { parseShortcut, normaliseKeyEvent, keyToShortcut, KeyboardModel } from "./input/index.js";
+export { InputScope } from "./input/index.js";
+export { InputRouter } from "./input/index.js";
+
+export type {
+  NormalisedKey,
+  KeyEventLike,
+  UndoHook,
+  InputRouterEvent,
+  InputRouterListener,
+} from "./input/index.js";
+
+// ── Forms & Validation ────────────────────────────────────────────────────────
+export {
+  isTextSection,
+  isFieldGroupSection,
+  getField,
+  orderedFieldIds,
+  orderedFields,
+  NOTES_TEXT_SECTION,
+  DESCRIPTION_TEXT_SECTION,
+  createFormState,
+  setFieldValue,
+  setFieldErrors,
+  touchField,
+  setAllErrors,
+  setSubmitting,
+  resetFormState,
+  isDirty,
+  isTouchedValid,
+  fieldErrors,
+  fieldHasVisibleError,
+  parseWikiLinks,
+  extractLinkedIds,
+  renderWikiLinks,
+  buildWikiLink,
+  detectInlineLink,
+  parseMarkdown,
+  parseInline,
+  inlineToPlainText,
+  extractWikiIds,
+} from "./forms/index.js";
+
+export type {
+  FieldType,
+  SelectOption,
+  FieldSchema,
+  TextSection,
+  FieldGroupSection,
+  SectionDef,
+  DocumentSchema,
+  ValidatorType,
+  ValidationRule,
+  FieldValidation,
+  ConditionalOperator,
+  FieldCondition,
+  ConditionalRule,
+  FormSchema,
+  FormState,
+  WikiToken,
+  BlockToken,
+  InlineToken,
+} from "./forms/index.js";
+
+// ── Layout System ─────────────────────────────────────────────────────────────
+export { SelectionModel } from "./layout/index.js";
+export { PageModel } from "./layout/index.js";
+export { PageRegistry } from "./layout/index.js";
+export { WorkspaceSlot } from "./layout/index.js";
+export { WorkspaceManager } from "./layout/index.js";
+
+export type {
+  SerializedPage,
+  PageModelEvent,
+  PageModelListener,
+  PageModelOptions,
+  SelectionEvent,
+  SelectionListener,
+  WorkspaceSlotEvent,
+  WorkspaceSlotListener,
+  WorkspaceManagerEvent,
+  WorkspaceManagerListener,
+  PageTypeDef,
+  WorkspaceSlotOptions,
+} from "./layout/index.js";
+
+// ── Expression Engine ─────────────────────────────────────────────────────────
+export { tokenize, isDigit, isIdentStart, isIdentChar } from "./expression/index.js";
+export { parse } from "./expression/index.js";
+export { evaluate, evaluateExpression } from "./expression/index.js";
+
+export type {
+  ExprType,
+  ExprValue,
+  ExprError,
+  LiteralNode,
+  OperandNode,
+  BinaryOp,
+  BinaryNode,
+  UnaryNode,
+  CallNode,
+  AnyExprNode,
+  ParseResult,
+  ValueStore,
+  TokenKind,
+  OperandData,
+  Token,
+} from "./expression/index.js";
 
 export type {
   ObjectId,
@@ -65,4 +202,95 @@ export type {
   NSID,
   PrismAddress,
   ObjectQuery,
+  EdgeOption,
+  ChildOption,
+  ContextMenuAction,
+  ContextMenuItem,
+  ContextMenuSection,
+  AutocompleteSuggestion,
 } from "./object-model/index.js";
+
+// ── Plugin System ────────────────────────────────────────────────────────────
+export {
+  ContributionRegistry,
+  PluginRegistry,
+  pluginId,
+} from "./plugin/index.js";
+
+export type {
+  ContributionEntry,
+  PluginRegistryEventType,
+  PluginRegistryEvent,
+  PluginRegistryListener,
+  PluginId,
+  ViewZone,
+  ViewContributionDef,
+  CommandContributionDef,
+  ContextMenuContributionDef,
+  KeybindingContributionDef,
+  ActivityBarContributionDef,
+  SettingsContributionDef,
+  ToolbarContributionDef,
+  StatusBarContributionDef,
+  WeakRefProviderContributionDef,
+  PluginContributions,
+  PrismPlugin,
+} from "./plugin/index.js";
+
+// ── Reactive Atoms ───────────────────────────────────────────────────────────
+export {
+  createPrismBus,
+  PrismEvents,
+  createAtomStore,
+  createObjectAtomStore,
+  selectObject,
+  selectQuery,
+  selectChildren,
+  selectEdgesFrom,
+  selectEdgesTo,
+  selectAllObjects,
+  selectAllEdges,
+  connectBusToAtoms,
+  connectBusToObjectAtoms,
+} from "./atom/index.js";
+
+export type {
+  PrismBus,
+  EventHandler,
+  NavigationTarget,
+  AtomState,
+  AtomActions,
+  AtomStore,
+  ObjectAtomState,
+  ObjectAtomActions,
+  ObjectAtomStore,
+} from "./atom/index.js";
+
+// ── State Machines ───────────────────────────────────────────────────────────
+export { Machine, createMachine } from "./automaton/index.js";
+
+export type {
+  StateNode,
+  Transition,
+  MachineDefinition,
+  MachineListener,
+} from "./automaton/index.js";
+
+// ── Graph Analysis & Planning ────────────────────────────────────────────────
+export {
+  buildDependencyGraph,
+  buildPredecessorGraph,
+  topologicalSort,
+  detectCycles,
+  findBlockingChain,
+  findImpactedObjects,
+  computeSlipImpact,
+  computePlan,
+} from "./graph-analysis/index.js";
+
+export type {
+  DependencyGraph,
+  SlipImpact,
+  PlanNode,
+  PlanResult,
+} from "./graph-analysis/index.js";

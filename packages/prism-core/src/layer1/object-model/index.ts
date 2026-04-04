@@ -78,3 +78,14 @@ export {
   matchesQuery,
   sortObjects,
 } from "./query.js";
+
+// ── Context Engine ────────────────────────────────────────────────────────────
+export { ContextEngine } from "./context-engine.js";
+export type {
+  EdgeOption,
+  ChildOption,
+  ContextMenuAction,
+  ContextMenuItem,
+  ContextMenuSection,
+  AutocompleteSuggestion,
+} from "./context-engine.js";

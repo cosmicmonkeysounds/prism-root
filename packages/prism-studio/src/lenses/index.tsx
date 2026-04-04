@@ -1,0 +1,102 @@
+/**
+ * Built-in lens definitions for Prism Studio.
+ *
+ * Each lens has a manifest (pure TS) and a component wrapper
+ * that closes over the bridge/store to provide the right props.
+ */
+
+import type { ComponentType } from "react";
+import type { LensManifest, LensRegistry, LensId } from "@prism/core/layer1/workspace/index";
+import { lensId } from "@prism/core/layer1/workspace/index";
+import type { LoroBridge } from "@prism/core/layer1/loro-bridge";
+import type { CrdtStore } from "@prism/core/layer1/stores/use-crdt-store";
+import { EditorPanel } from "../panels/editor-panel.js";
+import { GraphPanel } from "../panels/graph-panel.js";
+import { LayoutPanel } from "../panels/layout-panel.js";
+import { CrdtPanel } from "../panels/crdt-panel.js";
+
+type StoreWithSubscribe = {
+  getState: () => CrdtStore;
+  subscribe: (listener: (state: CrdtStore) => void) => () => void;
+};
+
+export const EDITOR_LENS_ID = lensId("editor");
+export const GRAPH_LENS_ID = lensId("graph");
+export const LAYOUT_LENS_ID = lensId("layout");
+export const CRDT_LENS_ID = lensId("crdt");
+
+const editorManifest: LensManifest = {
+  id: EDITOR_LENS_ID,
+  name: "Editor",
+  icon: "\u270E",
+  category: "editor",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-editor", name: "Switch to Editor", shortcut: ["e"], section: "Navigation" }],
+  },
+};
+
+const graphManifest: LensManifest = {
+  id: GRAPH_LENS_ID,
+  name: "Graph",
+  icon: "\u2B21",
+  category: "visual",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-graph", name: "Switch to Graph", shortcut: ["g"], section: "Navigation" }],
+  },
+};
+
+const layoutManifest: LensManifest = {
+  id: LAYOUT_LENS_ID,
+  name: "Layout",
+  icon: "\u25A6",
+  category: "visual",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-layout", name: "Switch to Layout Builder", shortcut: ["l"], section: "Navigation" }],
+  },
+};
+
+const crdtManifest: LensManifest = {
+  id: CRDT_LENS_ID,
+  name: "CRDT",
+  icon: "\u29C9",
+  category: "debug",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-crdt", name: "Switch to CRDT Inspector", shortcut: ["c"], section: "Navigation" }],
+  },
+};
+
+export const ALL_MANIFESTS: LensManifest[] = [
+  editorManifest,
+  graphManifest,
+  layoutManifest,
+  crdtManifest,
+];
+
+export function registerBuiltinLenses(registry: LensRegistry): () => void {
+  const unsubs = ALL_MANIFESTS.map((m) => registry.register(m));
+  return () => unsubs.forEach((fn) => fn());
+}
+
+export function createLensComponentMap(
+  bridge: LoroBridge,
+  store: StoreWithSubscribe,
+): Map<LensId, ComponentType> {
+  const map = new Map<LensId, ComponentType>();
+
+  map.set(EDITOR_LENS_ID, function EditorLens() {
+    return <EditorPanel doc={bridge.doc} />;
+  });
+
+  map.set(GRAPH_LENS_ID, GraphPanel);
+  map.set(LAYOUT_LENS_ID, LayoutPanel);
+
+  map.set(CRDT_LENS_ID, function CrdtLens() {
+    return <CrdtPanel store={store} fullWidth />;
+  });
+
+  return map;
+}

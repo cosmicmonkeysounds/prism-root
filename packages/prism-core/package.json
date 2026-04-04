@@ -13,7 +13,17 @@
     "./kbar": "./src/layer2/kbar/index.ts",
     "./graph": "./src/layer2/graph/index.ts",
     "./machines": "./src/layer1/machines/index.ts",
-    "./object-model": "./src/layer1/object-model/index.ts"
+    "./object-model": "./src/layer1/object-model/index.ts",
+    "./workspace": "./src/layer1/workspace/index.ts",
+    "./shell": "./src/layer2/shell/index.ts",
+    "./input": "./src/layer1/input/index.ts",
+    "./forms": "./src/layer1/forms/index.ts",
+    "./layout": "./src/layer1/layout/index.ts",
+    "./expression": "./src/layer1/expression/index.ts",
+    "./plugin": "./src/layer1/plugin/index.ts",
+    "./atom": "./src/layer1/atom/index.ts",
+    "./automaton": "./src/layer1/automaton/index.ts",
+    "./graph-analysis": "./src/layer1/graph-analysis/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

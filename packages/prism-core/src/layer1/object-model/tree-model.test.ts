@@ -68,8 +68,8 @@ describe("TreeModel", () => {
 
     const result = tree.remove(parent.id);
     expect(result).not.toBeNull();
-    expect(result!.removed.id).toBe(parent.id);
-    expect(result!.descendants.length).toBe(1);
+    expect(result?.removed.id).toBe(parent.id);
+    expect(result?.descendants.length).toBe(1);
     expect(tree.size).toBe(0);
   });
 
@@ -78,16 +78,16 @@ describe("TreeModel", () => {
   });
 
   it("compacts sibling positions after removal", () => {
-    const a = tree.add({ type: "folder", name: "A" });
+    tree.add({ type: "folder", name: "A" });
     const b = tree.add({ type: "folder", name: "B" });
-    const c = tree.add({ type: "folder", name: "C" });
+    tree.add({ type: "folder", name: "C" });
 
     tree.remove(b.id);
 
     const roots = tree.getChildren(null);
     expect(roots.map((r) => r.name)).toEqual(["A", "C"]);
-    expect(roots[0]!.position).toBe(0);
-    expect(roots[1]!.position).toBe(1);
+    expect(roots[0]?.position).toBe(0);
+    expect(roots[1]?.position).toBe(1);
   });
 
   // ── Move ─────────────────────────────────────────────────────────────────────
@@ -144,8 +144,8 @@ describe("TreeModel", () => {
     const copies = tree.duplicate(obj.id);
 
     expect(copies.length).toBe(1);
-    expect(copies[0]!.name).toBe("Original");
-    expect(copies[0]!.id).not.toBe(obj.id);
+    expect(copies[0]?.name).toBe("Original");
+    expect(copies[0]?.id).not.toBe(obj.id);
     expect(tree.size).toBe(2);
   });
 
@@ -210,7 +210,7 @@ describe("TreeModel", () => {
 
     const nodes = tree.buildTree();
     expect(nodes.length).toBe(1);
-    expect(nodes[0]!.children.length).toBe(1);
+    expect(nodes[0]?.children.length).toBe(1);
   });
 
   // ── Events ───────────────────────────────────────────────────────────────────
@@ -241,6 +241,6 @@ describe("TreeModel", () => {
     const json = tree.toJSON();
     const restored = TreeModel.fromJSON(json, { registry });
     expect(restored.size).toBe(2);
-    expect(restored.get(json[0]!.id)?.name).toBe("A");
+    expect(json[0] && restored.get(json[0].id)?.name).toBe("A");
   });
 });

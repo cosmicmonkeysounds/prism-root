@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { EdgeModel } from "./edge-model.js";
 import { ObjectRegistry } from "./registry.js";
 import { objectId } from "./types.js";
-import type { EdgeTypeDef } from "./types.js";
 
 describe("EdgeModel", () => {
   let counter: number;
