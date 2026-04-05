@@ -27,7 +27,11 @@
     "./automation": "./src/layer1/automation/index.ts",
     "./manifest": "./src/layer1/manifest/index.ts",
     "./config": "./src/layer1/config/index.ts",
-    "./undo": "./src/layer1/undo/index.ts"
+    "./undo": "./src/layer1/undo/index.ts",
+    "./server": "./src/layer1/server/index.ts",
+    "./persistence": "./src/layer1/persistence/index.ts",
+    "./search": "./src/layer1/search/index.ts",
+    "./discovery": "./src/layer1/discovery/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

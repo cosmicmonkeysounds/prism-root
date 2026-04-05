@@ -12,8 +12,13 @@ export type {
   EntityDef,
   CategoryRule,
   TabDefinition,
+  ApiOperation,
+  ObjectTypeApiConfig,
 } from "./types.js";
 export { objectId, edgeId } from "./types.js";
+
+// ── String helpers ────────────────────────────────────────────────────────────
+export { pascal, camel, singular } from "./str.js";
 
 // ── Registry ───────────────────────────────────────────────────────────────────
 export { ObjectRegistry } from "./registry.js";

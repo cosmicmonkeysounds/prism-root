@@ -341,6 +341,51 @@ export interface EntityDef<TIcon = unknown> {
    * (see ObjectRegistry.registerSlot) without modifying this def.
    */
   fields?: EntityFieldDef[];
+
+  /**
+   * API configuration for automatic REST route generation.
+   * When present, the server factory generates CRUD routes for this type.
+   * Types without `api` are not exposed via REST.
+   */
+  api?: ObjectTypeApiConfig;
+}
+
+// ── API Config ────────────────────────────────────────────────────────────────
+
+/**
+ * Operations that can be generated as REST routes.
+ */
+export type ApiOperation =
+  | "list"
+  | "get"
+  | "create"
+  | "update"
+  | "delete"
+  | "restore"
+  | "move"
+  | "duplicate";
+
+/**
+ * API configuration for automatic REST route generation.
+ * Attached to EntityDef.api to control which routes the server factory generates.
+ */
+export interface ObjectTypeApiConfig {
+  /** URL path segment (e.g. 'tasks'). Default: type string. */
+  path?: string;
+  /** Which operations to generate. Default: ['list', 'get', 'create', 'update', 'delete']. */
+  operations?: ApiOperation[];
+  /** Enable soft-delete. Default: true. */
+  softDelete?: boolean;
+  /** Include in global search. Default: true. */
+  searchable?: boolean;
+  /** Shell fields usable as query filters. */
+  filterBy?: string[];
+  /** Default sort when no sort specified. */
+  defaultSort?: { field: string; dir: "asc" | "desc" };
+  /** Server-side edge cascade on delete. Default: true. */
+  cascadeEdges?: boolean;
+  /** Named server-side lifecycle hooks (by name, not by function reference). */
+  hooks?: Record<string, string>;
 }
 
 // ── Category Rules ─────────────────────────────────────────────────────────────

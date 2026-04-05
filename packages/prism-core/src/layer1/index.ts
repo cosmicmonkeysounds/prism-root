@@ -27,6 +27,9 @@ export {
   matchesQuery,
   sortObjects,
   ContextEngine,
+  pascal,
+  camel,
+  singular,
 } from "./object-model/index.js";
 
 // ── Lens System & Shell ───────────────────────────────────────────────────────
@@ -208,6 +211,8 @@ export type {
   ContextMenuItem,
   ContextMenuSection,
   AutocompleteSuggestion,
+  ApiOperation,
+  ObjectTypeApiConfig,
 } from "./object-model/index.js";
 
 // ── Plugin System ────────────────────────────────────────────────────────────
@@ -370,14 +375,37 @@ export type {
 } from "./config/index.js";
 
 // ── Undo/Redo ──────────────────────────────────────────────────────────────
-export { UndoRedoManager } from "./undo/index.js";
+export { UndoRedoManager, createUndoBridge } from "./undo/index.js";
 
 export type {
   ObjectSnapshot,
   UndoEntry,
   UndoApplier,
   UndoListener,
+  UndoBridge,
 } from "./undo/index.js";
+
+// ── Server Factory ──────────────────────────────────────────────────────────
+export {
+  generateRouteSpecs,
+  registerRoutes,
+  groupByType,
+  printRouteTable,
+  buildOpenApiDocument,
+  generateOpenApiJson,
+} from "./server/index.js";
+
+export type {
+  HttpMethod,
+  RouteOperation,
+  RouteSpec,
+  RouteGenOptions,
+  RouteRequest,
+  RouteResponse,
+  RouteHandler,
+  RouteAdapter,
+  OpenApiOptions,
+} from "./server/index.js";
 
 // ── Workspace Manifest ──────────────────────────────────────────────────────
 export {
@@ -407,3 +435,72 @@ export type {
   PrismManifest,
   ManifestValidationError,
 } from "./manifest/index.js";
+
+// ── CRDT Persistence ──────────────────────────────────────────────────────
+export {
+  createCollectionStore,
+  createMemoryAdapter,
+  createVaultManager,
+} from "./persistence/index.js";
+
+export type {
+  CollectionStore,
+  CollectionStoreOptions,
+  CollectionChangeType,
+  CollectionChange,
+  CollectionChangeHandler,
+  ObjectFilter,
+  PersistenceAdapter,
+  VaultManager,
+  VaultManagerOptions,
+} from "./persistence/index.js";
+
+// ── Search Engine ──────────────────────────────────────────────────────────
+export {
+  createSearchIndex,
+  tokenize as searchTokenize,
+  createSearchEngine,
+} from "./search/index.js";
+
+export type {
+  DocRef,
+  IndexHit,
+  FieldWeights,
+  SearchIndexOptions,
+  SearchIndex,
+  SearchOptions,
+  SearchHit,
+  SearchFacets,
+  SearchResult,
+  SearchSubscriber,
+  SearchEngineOptions,
+  SearchEngine,
+} from "./search/index.js";
+
+// ── Vault Discovery ────────────────────────────────────────────────────────
+export {
+  createMemoryRosterStore,
+  createVaultRoster,
+  createMemoryDiscoveryAdapter,
+  createVaultDiscovery,
+} from "./discovery/index.js";
+
+export type {
+  RosterEntry,
+  RosterSortField,
+  RosterSortDir,
+  RosterListOptions,
+  RosterChangeType,
+  RosterChange,
+  RosterChangeHandler,
+  RosterStore,
+  VaultRoster,
+  DiscoveryAdapter,
+  MemoryDiscoveryAdapter,
+  DiscoveredVault,
+  DiscoveryEventType,
+  DiscoveryEvent,
+  DiscoveryEventHandler,
+  DiscoveryScanOptions,
+  VaultDiscovery,
+} from "./discovery/index.js";

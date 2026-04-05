@@ -362,9 +362,153 @@ Two infrastructure systems for settings management and interaction history. All 
 | Vitest (undo-manager) | 22 | Pass |
 | **Phase 9 Total** | **103** | **All Pass** |
 
-## Next: Phase 10
+## Phase 10: Server Factory, Undo Bridge (Complete)
+
+Two systems for REST API generation and undo/redo integration. All pure TypeScript, zero React.
+
+### Completed
+
+- [x] **Server Factory** (`layer1/server/`) — framework-agnostic REST route generation
+  - `ApiOperation` + `ObjectTypeApiConfig` — types added to EntityDef for declarative API config
+  - `generateRouteSpecs(registry)` — reads ObjectRegistry.allDefs() and generates RouteSpec[] for types with `api` config
+  - Per-type CRUD routes: list (GET), get (GET /:id), create (POST), update (PUT /:id), delete (DELETE /:id), restore (POST /:id/restore), move (POST /:id/move), duplicate (POST /:id/duplicate)
+  - Edge routes: GET/POST/PUT/DELETE /api/edges[/:id], GET /api/objects/:id/related
+  - Global object search: GET /api/objects, GET /api/objects/:id
+  - `RouteAdapter` interface + `registerRoutes()` — framework-agnostic handler registration
+  - `groupByType()`, `printRouteTable()` — utilities for introspection
+  - `buildOpenApiDocument()` — OpenAPI 3.1.0 document from RouteSpec[] + ObjectRegistry
+  - Per-type component schemas from EntityFieldDef (enum, date, datetime, url, object_ref, bool, int, float, text)
+  - GraphObject/ObjectEdge/ResolvedEdge base schemas in components
+  - Proper operationIds (listTasks, getTask, createTask, etc.) and tags
+  - `generateOpenApiJson()` — serialized OpenAPI document
+  - String helpers: `pascal()`, `camel()`, `singular()` (in object-model/str.ts)
+- [x] **Undo Bridge** (`layer1/undo/undo-bridge.ts`) — auto-recording TreeModel/EdgeModel mutations
+  - `createUndoBridge(manager)` — returns TreeModelHooks + EdgeModelHooks
+  - afterAdd: records create snapshot (before=null, after=object)
+  - afterRemove: records delete snapshots for object + all descendants
+  - afterMove: records move snapshot
+  - afterDuplicate: records create snapshots for all copies
+  - afterUpdate: records before/after snapshot
+  - Edge hooks: afterAdd, afterRemove, afterUpdate — same pattern for ObjectEdge
+  - All snapshots are deep copies via structuredClone (mutation-safe)
+
+### Test Summary
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| Vitest (route-gen) | 19 | Pass |
+| Vitest (openapi) | 16 | Pass |
+| Vitest (undo-bridge) | 11 | Pass |
+| **Phase 10 Total** | **46** | **All Pass** |
+
+## Phase 11: CRDT Persistence Layer (Complete)
+
+Two systems for durable CRDT-backed storage and vault lifecycle management. All pure TypeScript, zero React.
+
+### Completed
+
+- [x] **Collection Store** (`layer1/persistence/collection-store.ts`) — Loro CRDT-backed object/edge storage
+  - `createCollectionStore(options?)` — wraps a LoroDoc with "objects" + "edges" top-level maps
+  - Object CRUD: `putObject()`, `getObject()`, `removeObject()`, `listObjects()`, `objectCount()`
+  - Edge CRUD: `putEdge()`, `getEdge()`, `removeEdge()`, `listEdges()`, `edgeCount()`
+  - `ObjectFilter` — query by types, tags, statuses, parentId, excludeDeleted
+  - Edge filtering by sourceId, targetId, relation
+  - Snapshot: `exportSnapshot()`, `exportUpdate(since?)`, `import(data)` — full Loro CRDT sync
+  - `onChange(handler)` — subscribe to object/edge mutations via `CollectionChange` events
+  - `allObjects()`, `allEdges()`, `toJSON()` — bulk access and debugging
+  - Multi-peer sync via peerId option and Loro merge semantics
+- [x] **Vault Persistence** (`layer1/persistence/vault-persistence.ts`) — manifest-driven collection lifecycle
+  - `PersistenceAdapter` interface — pluggable I/O: `load()`, `save()`, `delete()`, `exists()`, `list()`
+  - `createMemoryAdapter()` — in-memory adapter for testing and ephemeral workspaces
+  - `createVaultManager(manifest, adapter, options?)` — orchestrates collection stores against persistence
+  - Lazy loading: `openCollection(id)` creates + hydrates from disk on first access
+  - Dirty tracking: mutations auto-mark collections dirty via `onChange` subscription
+  - `saveCollection(id)` / `saveAll()` — persist dirty collections as Loro snapshots
+  - `closeCollection(id)` — save + evict from cache
+  - `isDirty(id)`, `openCollections()` — introspection
+  - Collection paths: `data/collections/{collectionId}.loro`
+
+### Test Summary
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| Vitest (collection-store) | 31 | Pass |
+| Vitest (vault-persistence) | 25 | Pass |
+| **Phase 11 Total** | **56** | **All Pass** |
+
+## Phase 12: Search Engine (Complete)
+
+Full-text search with TF-IDF scoring and cross-collection structured queries. All pure TypeScript, zero React.
+
+### Completed
+
+- [x] **Search Index** (`layer1/search/search-index.ts`) — in-memory inverted index with TF-IDF scoring
+  - `tokenize()` — lowercase tokenizer splitting on whitespace/punctuation, configurable min length
+  - `createSearchIndex(options?)` — inverted index mapping tokens to document references
+  - Field-weighted scoring: name (3x), type (2x), tags (2x), status (1x), description (1x), data (0.5x)
+  - IDF with smoothing: `log(1 + N/df)` — avoids zero scores with single documents
+  - Multi-field extraction: indexes name, description, type, tags, status, and string data payload values
+  - Add/remove/update/clear per document, removeCollection for bulk eviction
+  - Case-insensitive matching, multi-token query support
+- [x] **Search Engine** (`layer1/search/search-engine.ts`) — cross-collection search orchestrator
+  - `createSearchEngine(options?)` — composes SearchIndex with structured filters
+  - Full-text query with TF-IDF relevance scoring across all indexed collections
+  - Structured filters: types, tags (AND), statuses, collectionIds, dateAfter/dateBefore, includeDeleted
+  - Faceted results: counts by type, collection, and tag (computed from full result set, not just page)
+  - Pagination: configurable limit/offset with default page size (50)
+  - Sort by relevance (default when query present), name (default otherwise), date, createdAt, updatedAt
+  - Auto-indexing: `indexCollection()` subscribes to CollectionStore.onChange for live index updates
+  - Live subscriptions: `subscribe(options, handler)` re-runs search on every index change
+  - Reindex/remove collection lifecycle management
+
+### Test Summary
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| Vitest (search-index) | 30 | Pass |
+| Vitest (search-engine) | 34 | Pass |
+| **Phase 12 Total** | **64** | **All Pass** |
+
+## Phase 13: Vault Discovery (Complete)
+
+Vault/manifest registry and filesystem discovery for workspace management. All pure TypeScript, zero React.
+
+### Completed
+
+- [x] **Vault Roster** (`layer1/discovery/vault-roster.ts`) — persistent registry of known vaults
+  - `createVaultRoster(store?)` — in-memory registry with optional backing store
+  - CRUD: `add()`, `remove()`, `get()`, `getByPath()`, `update()`
+  - `touch(id)` — bump `lastOpenedAt` to now on workspace open
+  - `pin(id, pinned)` — pin/unpin entries for quick access
+  - `list(options?)` — sort by lastOpenedAt/name/addedAt, filter by pinned/tags/search text, limit
+  - Pinned entries always float to top within any sort order
+  - Path-based deduplication (same vault path → single entry)
+  - Change events: `onChange(handler)` with add/remove/update types
+  - `RosterStore` interface for pluggable persistence + `createMemoryRosterStore()`
+  - `save()` / `reload()` for explicit persistence lifecycle
+  - Hydrates from store on creation
+- [x] **Vault Discovery** (`layer1/discovery/vault-discovery.ts`) — filesystem scanning for manifests
+  - `createVaultDiscovery(adapter, roster?)` — scan + merge orchestrator
+  - `DiscoveryAdapter` interface: `listDirectories()`, `readFile()`, `exists()`, `joinPath()`
+  - `createMemoryDiscoveryAdapter()` — in-memory adapter for testing
+  - `scan(options)` — scan search paths for `.prism.json` files, parse manifests
+  - Configurable `maxDepth` (default 1), `mergeToRoster` toggle
+  - Also checks search path itself for a manifest (not just children)
+  - Automatic roster merge: adds new vaults, updates existing entries on rescan
+  - Discovery events: `scan-start`, `scan-complete`, `vault-found`, `scan-error`
+  - Scan state tracking: `scanning`, `lastScanAt`, `lastScanCount`
+
+### Test Summary
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| Vitest (vault-roster) | 32 | Pass |
+| Vitest (vault-discovery) | 22 | Pass |
+| **Phase 13 Total** | **54** | **All Pass** |
+
+## Next: Phase 14
 
 Candidates:
-- Vault Discovery (recent vaults/manifests, daemon-side roster)
-- Server Factory (Hono routes from ObjectRegistry — for Relay nodes)
-- Undo/Redo → TreeModel/EdgeModel integration (hooks that auto-record snapshots)
+- Derived Views (materialized query results, live projections from collections)
+- Federation (cross-Node object addressing, federated edges)
+- Batch Operations (bulk create/update/delete with undo support)
