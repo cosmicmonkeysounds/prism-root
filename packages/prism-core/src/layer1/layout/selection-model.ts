@@ -14,7 +14,7 @@ export class SelectionModel {
   toggle(id: string): void {
     if (this._selected.has(id)) {
       this._selected.delete(id);
-      this._primary = this._selected.size > 0 ? [...this._selected].at(-1)! : null;
+      this._primary = this._selected.size > 0 ? ([...this._selected].at(-1) ?? null) : null;
     } else {
       this._selected.add(id);
       this._primary = id;
@@ -27,7 +27,7 @@ export class SelectionModel {
     const b = orderedIds.indexOf(toId);
     if (a < 0 || b < 0) return;
     const [lo, hi] = a <= b ? [a, b] : [b, a];
-    for (let i = lo; i <= hi; i++) this._selected.add(orderedIds[i]!);
+    for (let i = lo; i <= hi; i++) this._selected.add(orderedIds[i] as string);
     this._primary = toId;
     this.emit();
   }

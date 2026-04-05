@@ -60,23 +60,23 @@ const CYCLIC = [
 describe("buildDependencyGraph", () => {
   it("builds forward graph", () => {
     const graph = buildDependencyGraph(LINEAR);
-    expect([...graph.get("A")!]).toContain("B");
-    expect([...graph.get("B")!]).toContain("C");
-    expect(graph.get("C")!.size).toBe(0);
+    expect([...(graph.get("A") ?? [])]).toContain("B");
+    expect([...(graph.get("B") ?? [])]).toContain("C");
+    expect(graph.get("C")?.size).toBe(0);
   });
 
   it("handles objects with no dependencies", () => {
     const graph = buildDependencyGraph([makeObj("X")]);
-    expect(graph.get("X")!.size).toBe(0);
+    expect(graph.get("X")?.size).toBe(0);
   });
 });
 
 describe("buildPredecessorGraph", () => {
   it("builds inverse graph", () => {
     const graph = buildPredecessorGraph(LINEAR);
-    expect(graph.get("A")!.size).toBe(0);
-    expect([...graph.get("B")!]).toContain("A");
-    expect([...graph.get("C")!]).toContain("B");
+    expect(graph.get("A")?.size).toBe(0);
+    expect([...(graph.get("B") ?? [])]).toContain("A");
+    expect([...(graph.get("C") ?? [])]).toContain("B");
   });
 });
 
@@ -180,7 +180,7 @@ describe("computeSlipImpact", () => {
     const impacts = computeSlipImpact("A", 5, DIAMOND);
     const d = impacts.find((i) => i.objectId === "D");
     expect(d).toBeDefined();
-    expect(d!.slipDays).toBe(5);
+    expect(d?.slipDays).toBe(5);
   });
 
   it("returns empty when no downstream objects", () => {

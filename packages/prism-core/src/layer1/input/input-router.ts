@@ -27,7 +27,7 @@ export class InputRouter {
 
   async handleKeyEvent(e: KeyEventLike): Promise<boolean> {
     for (let i = this.stack.length - 1; i >= 0; i--) {
-      const scope = this.stack[i]!;
+      const scope = this.stack[i] as InputScope;
       const action = scope.keyboard.resolve(e);
       if (!action) continue;
       const handled = await scope.dispatch(action);
@@ -41,7 +41,7 @@ export class InputRouter {
 
   async dispatch(action: string): Promise<boolean> {
     for (let i = this.stack.length - 1; i >= 0; i--) {
-      const scope = this.stack[i]!;
+      const scope = this.stack[i] as InputScope;
       const handled = await scope.dispatch(action);
       if (handled) {
         this.emit({ kind: "dispatched", action, scopeId: scope.id });

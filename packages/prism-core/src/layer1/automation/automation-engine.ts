@@ -13,7 +13,6 @@
 
 import type {
   Automation,
-  AutomationAction,
   AutomationContext,
   AutomationRun,
   ActionResult,
@@ -51,7 +50,7 @@ export interface AutomationEngineOptions {
 function parseCronToInterval(cron: string): number | null {
   const parts = cron.trim().split(/\s+/);
   if (parts.length !== 5) return null;
-  const minute = parts[0]!;
+  const minute = parts[0] as string;
 
   if (cron === "* * * * *") return 60_000;
   if (minute.startsWith("*/")) return parseInt(minute.slice(2)) * 60_000;
@@ -214,7 +213,7 @@ export class AutomationEngine {
     let failed = false;
 
     for (let i = 0; i < automation.actions.length; i++) {
-      const action = automation.actions[i]!;
+      const action = automation.actions[i] as (typeof automation.actions)[number];
       const actionStart = Date.now();
 
       if (action.type === "delay") {

@@ -187,7 +187,7 @@ describe("collection ref helpers", () => {
   it("addCollection adds to manifest", () => {
     const m = addCollection(base, col1);
     expect(m.collections).toHaveLength(1);
-    expect(m.collections![0]!.id).toBe("tasks");
+    expect(m.collections?.[0]?.id).toBe("tasks");
   });
 
   it("addCollection throws on duplicate", () => {
@@ -200,7 +200,7 @@ describe("collection ref helpers", () => {
     m = addCollection(m, col2);
     m = removeCollection(m, "tasks");
     expect(m.collections).toHaveLength(1);
-    expect(m.collections![0]!.id).toBe("goals");
+    expect(m.collections?.[0]?.id).toBe("goals");
   });
 
   it("removeCollection is safe for missing id", () => {
@@ -212,7 +212,7 @@ describe("collection ref helpers", () => {
   it("updateCollection patches fields", () => {
     let m = addCollection(base, col1);
     m = updateCollection(m, "tasks", { name: "All Tasks", sortBy: "date" });
-    const c = m.collections![0]!;
+    const c = m.collections?.[0] as CollectionRef;
     expect(c.name).toBe("All Tasks");
     expect(c.sortBy).toBe("date");
     expect(c.id).toBe("tasks");

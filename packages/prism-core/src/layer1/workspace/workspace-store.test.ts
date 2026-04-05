@@ -92,7 +92,7 @@ describe("ShellStore", () => {
 
   it("setActiveTab() ignores unknown id", () => {
     const id = store.getState().openTab(lensId("a"), "A");
-    store.getState().setActiveTab("nonexistent" as any);
+    store.getState().setActiveTab("nonexistent" as string);
     expect(store.getState().activeTabId).toBe(id);
   });
 

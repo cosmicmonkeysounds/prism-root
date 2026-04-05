@@ -56,7 +56,7 @@ export class Machine<TState extends string, TEvent extends string> {
     for (const t of def.transitions) {
       if (!this._transByEvent.has(t.event))
         this._transByEvent.set(t.event, []);
-      this._transByEvent.get(t.event)!.push(t);
+      this._transByEvent.get(t.event)?.push(t);
     }
 
     if (!options.skipInitialEnter) {

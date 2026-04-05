@@ -174,7 +174,7 @@ describe("ContextEngine", () => {
       const menu = engine.getContextMenu("note");
       const objSection = menu.find((s) => s.id === "object");
       expect(objSection).toBeDefined();
-      const actions = objSection!.items.map((i) => i.action);
+      const actions = objSection?.items.map((i) => i.action);
       expect(actions).toContain("duplicate");
       expect(actions).toContain("delete");
     });
@@ -194,7 +194,7 @@ describe("ContextEngine", () => {
       const menu = engine.getContextMenu("task", "person");
       const connectSection = menu.find((s) => s.id === "connect");
       expect(connectSection).toBeDefined();
-      const relations = connectSection!.items.map(
+      const relations = connectSection?.items.map(
         (i) => i.payload.relation,
       );
       expect(relations).toContain("assigned-to");
@@ -203,13 +203,13 @@ describe("ContextEngine", () => {
 
     it("create section items have correct action and payload", () => {
       const menu = engine.getContextMenu("project");
-      const createSection = menu.find((s) => s.id === "create")!;
-      const taskItem = createSection.items.find(
+      const createSection = menu.find((s) => s.id === "create");
+      const taskItem = createSection?.items.find(
         (i) => i.payload.childType === "task",
       );
       expect(taskItem).toBeDefined();
-      expect(taskItem!.action).toBe("create-child");
-      expect(taskItem!.label).toBe("New Task");
+      expect(taskItem?.action).toBe("create-child");
+      expect(taskItem?.label).toBe("New Task");
     });
   });
 });

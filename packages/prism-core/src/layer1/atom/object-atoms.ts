@@ -109,7 +109,7 @@ export function createObjectAtomStore() {
     removeObject: (id) =>
       set((state) => {
         const next = { ...state.objects };
-        delete next[id];
+        Reflect.deleteProperty(next, id);
         return { objects: next };
       }),
 
@@ -130,7 +130,7 @@ export function createObjectAtomStore() {
     removeEdge: (id) =>
       set((state) => {
         const next = { ...state.edges };
-        delete next[id];
+        Reflect.deleteProperty(next, id);
         return { edges: next };
       }),
 

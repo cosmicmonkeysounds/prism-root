@@ -79,7 +79,7 @@ export function parseMarkdown(md: string): BlockToken[] {
 
     const taskMatch = raw.match(/^[-*] \[([ x])\] (.*)$/);
     if (taskMatch) {
-      tokens.push({ kind: "task", text: taskMatch[2]!, checked: taskMatch[1] === "x" });
+      tokens.push({ kind: "task", text: taskMatch[2] as string, checked: taskMatch[1] === "x" });
       continue;
     }
 
@@ -90,7 +90,7 @@ export function parseMarkdown(md: string): BlockToken[] {
 
     const olMatch = raw.match(/^(\d+)\. (.*)$/);
     if (olMatch) {
-      tokens.push({ kind: "oli", text: olMatch[2]!, n: Number(olMatch[1]) });
+      tokens.push({ kind: "oli", text: olMatch[2] as string, n: Number(olMatch[1]) });
       continue;
     }
 

@@ -13,7 +13,7 @@ export function parseWikiLinks(text: string): WikiToken[] {
     if (start > last) {
       tokens.push({ kind: "text", text: text.slice(last, start) });
     }
-    const id = match[1]!.trim();
+    const id = (match[1] as string).trim();
     const display = match[2]?.trim() ?? id;
     tokens.push({ kind: "link", id, display, raw: match[0] });
     last = start + match[0].length;
@@ -29,7 +29,7 @@ export function parseWikiLinks(text: string): WikiToken[] {
 export function extractLinkedIds(text: string): string[] {
   const ids: string[] = [];
   for (const match of text.matchAll(WIKI_LINK_RE)) {
-    ids.push(match[1]!.trim());
+    ids.push((match[1] as string).trim());
   }
   return ids;
 }

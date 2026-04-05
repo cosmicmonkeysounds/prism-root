@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { computePlan } from "./planning-engine.js";
+import type { PlanNode } from "./planning-engine.js";
 import type { GraphObject } from "../object-model/types.js";
 import { objectId } from "../object-model/types.js";
 
@@ -39,7 +40,7 @@ describe("computePlan", () => {
 
   it("single task has duration 1 by default", () => {
     const result = computePlan([makeObj("A")]);
-    const node = result.nodes.get("A")!;
+    const node = result.nodes.get("A") as PlanNode;
     expect(node.durationDays).toBe(1);
     expect(node.earlyStart).toBe(0);
     expect(node.earlyFinish).toBe(1);
@@ -50,21 +51,21 @@ describe("computePlan", () => {
 
   it("uses explicit durationDays", () => {
     const result = computePlan([makeObj("A", { durationDays: 5 })]);
-    expect(result.nodes.get("A")!.durationDays).toBe(5);
+    expect(result.nodes.get("A")?.durationDays).toBe(5);
     expect(result.totalDurationDays).toBe(5);
   });
 
   it("derives duration from estimateMs", () => {
     const ms = 3 * 24 * 60 * 60 * 1000; // 3 days
     const result = computePlan([makeObj("A", { estimateMs: ms })]);
-    expect(result.nodes.get("A")!.durationDays).toBe(3);
+    expect(result.nodes.get("A")?.durationDays).toBe(3);
   });
 
   it("derives duration from date span", () => {
     const result = computePlan([
       makeObj("A", {}, { date: "2024-01-01", endDate: "2024-01-04" }),
     ]);
-    expect(result.nodes.get("A")!.durationDays).toBe(3);
+    expect(result.nodes.get("A")?.durationDays).toBe(3);
   });
 
   it("computes linear chain correctly", () => {
@@ -78,15 +79,15 @@ describe("computePlan", () => {
 
     expect(result.totalDurationDays).toBe(6);
 
-    const a = result.nodes.get("A")!;
+    const a = result.nodes.get("A") as PlanNode;
     expect(a.earlyStart).toBe(0);
     expect(a.earlyFinish).toBe(2);
 
-    const b = result.nodes.get("B")!;
+    const b = result.nodes.get("B") as PlanNode;
     expect(b.earlyStart).toBe(2);
     expect(b.earlyFinish).toBe(5);
 
-    const c = result.nodes.get("C")!;
+    const c = result.nodes.get("C") as PlanNode;
     expect(c.earlyStart).toBe(5);
     expect(c.earlyFinish).toBe(6);
 
@@ -106,11 +107,11 @@ describe("computePlan", () => {
 
     expect(result.totalDurationDays).toBe(5);
 
-    const c = result.nodes.get("C")!;
+    const c = result.nodes.get("C") as PlanNode;
     expect(c.totalFloat).toBe(2);
     expect(c.isCritical).toBe(false);
 
-    const b = result.nodes.get("B")!;
+    const b = result.nodes.get("B") as PlanNode;
     expect(b.totalFloat).toBe(0);
     expect(b.isCritical).toBe(true);
 
@@ -130,10 +131,10 @@ describe("computePlan", () => {
 
     expect(result.totalDurationDays).toBe(5);
 
-    const x = result.nodes.get("X")!;
+    const x = result.nodes.get("X") as PlanNode;
     expect(x.isCritical).toBe(true);
 
-    const y = result.nodes.get("Y")!;
+    const y = result.nodes.get("Y") as PlanNode;
     expect(y.totalFloat).toBe(3);
     expect(y.isCritical).toBe(false);
   });
@@ -144,7 +145,7 @@ describe("computePlan", () => {
       makeObj("B", { durationDays: 1, blockedBy: ["A"] }),
     ];
     const result = computePlan(objects);
-    expect(result.nodes.get("B")!.earlyStart).toBe(2);
+    expect((result.nodes.get("B") as PlanNode).earlyStart).toBe(2);
   });
 
   it("records predecessors in plan nodes", () => {
@@ -153,7 +154,7 @@ describe("computePlan", () => {
       makeObj("B", { dependsOn: ["A"] }),
     ];
     const result = computePlan(objects);
-    expect(result.nodes.get("B")!.predecessors).toEqual(["A"]);
-    expect(result.nodes.get("A")!.predecessors).toEqual([]);
+    expect((result.nodes.get("B") as PlanNode).predecessors).toEqual(["A"]);
+    expect((result.nodes.get("A") as PlanNode).predecessors).toEqual([]);
   });
 });

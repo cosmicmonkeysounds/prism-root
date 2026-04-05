@@ -145,7 +145,7 @@ export function updateCollection(
   const idx = existing.findIndex((c) => c.id === collectionId);
   if (idx === -1) throw new Error(`Collection ref '${collectionId}' not found`);
   const updated = [...existing];
-  updated[idx] = { ...existing[idx]!, ...patch, id: collectionId };
+  updated[idx] = { ...(existing[idx] as CollectionRef), ...patch, id: collectionId };
   return { ...manifest, collections: updated };
 }
 

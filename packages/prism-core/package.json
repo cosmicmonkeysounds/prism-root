@@ -25,7 +25,9 @@
     "./automaton": "./src/layer1/automaton/index.ts",
     "./graph-analysis": "./src/layer1/graph-analysis/index.ts",
     "./automation": "./src/layer1/automation/index.ts",
-    "./manifest": "./src/layer1/manifest/index.ts"
+    "./manifest": "./src/layer1/manifest/index.ts",
+    "./config": "./src/layer1/config/index.ts",
+    "./undo": "./src/layer1/undo/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

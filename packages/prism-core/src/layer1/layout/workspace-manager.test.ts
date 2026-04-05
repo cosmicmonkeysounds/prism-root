@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { WorkspaceManager } from "./workspace-manager.js";
 import { PageRegistry } from "./page-registry.js";
 import type { WorkspaceManagerEvent } from "./layout-types.js";
@@ -86,7 +86,7 @@ describe("WorkspaceManager", () => {
 
   it("emits slot-opened event", () => {
     const mgr = new WorkspaceManager<TestTarget>();
-    const events: WorkspaceManagerEvent<TestTarget>[] = [];
+    const events: WorkspaceManagerEvent[] = [];
     mgr.on((e) => events.push(e));
     mgr.open("main", makeRegistry(), { kind: "object", id: "a" });
     expect(events[0]).toEqual({ kind: "slot-opened", slotId: "main" });
@@ -95,7 +95,7 @@ describe("WorkspaceManager", () => {
   it("emits slot-closed event", () => {
     const mgr = new WorkspaceManager<TestTarget>();
     mgr.open("main", makeRegistry(), { kind: "object", id: "a" });
-    const events: WorkspaceManagerEvent<TestTarget>[] = [];
+    const events: WorkspaceManagerEvent[] = [];
     mgr.on((e) => events.push(e));
     mgr.close("main");
     expect(events).toContainEqual({ kind: "slot-closed", slotId: "main" });
@@ -105,7 +105,7 @@ describe("WorkspaceManager", () => {
     const mgr = new WorkspaceManager<TestTarget>();
     mgr.open("a", makeRegistry(), { kind: "object", id: "1" });
     mgr.open("b", makeRegistry(), { kind: "object", id: "2" });
-    const events: WorkspaceManagerEvent<TestTarget>[] = [];
+    const events: WorkspaceManagerEvent[] = [];
     mgr.on((e) => events.push(e));
     mgr.focus("a");
     expect(events).toContainEqual({ kind: "slot-focused", slotId: "a" });
@@ -122,7 +122,7 @@ describe("WorkspaceManager", () => {
 
   it("unsubscribe stops events", () => {
     const mgr = new WorkspaceManager<TestTarget>();
-    const events: WorkspaceManagerEvent<TestTarget>[] = [];
+    const events: WorkspaceManagerEvent[] = [];
     const unsub = mgr.on((e) => events.push(e));
     mgr.open("a", makeRegistry(), { kind: "object", id: "1" });
     unsub();

@@ -6,7 +6,7 @@ import { WorkspaceSlot } from "./workspace-slot.js";
 export class WorkspaceManager<TTarget extends { kind: string }> {
   private slots = new Map<string, WorkspaceSlot<TTarget>>();
   private _activeId: string | null = null;
-  private listeners = new Set<WorkspaceManagerListener<TTarget>>();
+  private listeners = new Set<WorkspaceManagerListener>();
 
   open(
     id: string,
@@ -14,7 +14,7 @@ export class WorkspaceManager<TTarget extends { kind: string }> {
     initialTarget: TTarget,
     options: { label?: string; cacheSize?: number } = {},
   ): WorkspaceSlot<TTarget> {
-    if (this.slots.has(id)) return this.slots.get(id)!;
+    if (this.slots.has(id)) return this.slots.get(id) as WorkspaceSlot<TTarget>;
     const slot = new WorkspaceSlot<TTarget>({ id, registry, initialTarget, ...options });
     this.slots.set(id, slot);
     this.emit({ kind: "slot-opened", slotId: id });
@@ -28,7 +28,7 @@ export class WorkspaceManager<TTarget extends { kind: string }> {
     slot.dispose();
     this.slots.delete(id);
     if (this._activeId === id) {
-      this._activeId = this.slots.size > 0 ? [...this.slots.keys()].at(-1)! : null;
+      this._activeId = this.slots.size > 0 ? ([...this.slots.keys()].at(-1) ?? null) : null;
     }
     this.emit({ kind: "slot-closed", slotId: id });
   }
@@ -60,7 +60,7 @@ export class WorkspaceManager<TTarget extends { kind: string }> {
     return this.slots.size;
   }
 
-  on(listener: WorkspaceManagerListener<TTarget>): () => void {
+  on(listener: WorkspaceManagerListener): () => void {
     this.listeners.add(listener);
     return () => {
       this.listeners.delete(listener);
@@ -74,7 +74,7 @@ export class WorkspaceManager<TTarget extends { kind: string }> {
     this.listeners.clear();
   }
 
-  private emit(event: WorkspaceManagerEvent<TTarget>): void {
+  private emit(event: WorkspaceManagerEvent): void {
     for (const l of this.listeners) l(event);
   }
 }

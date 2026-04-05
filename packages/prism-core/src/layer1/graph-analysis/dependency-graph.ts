@@ -28,10 +28,10 @@ export interface SlipImpact {
 function getPredecessors(obj: GraphObject): string[] {
   const d = obj.data as Record<string, unknown> | null;
   const dependsOn = Array.isArray(d?.dependsOn)
-    ? (d!.dependsOn as string[])
+    ? (d.dependsOn as string[])
     : [];
   const blockedBy = Array.isArray(d?.blockedBy)
-    ? (d!.blockedBy as string[])
+    ? (d.blockedBy as string[])
     : [];
   return [...new Set([...dependsOn, ...blockedBy])];
 }
@@ -49,7 +49,7 @@ export function buildDependencyGraph(
   for (const obj of objects) {
     for (const predId of getPredecessors(obj)) {
       if (!graph.has(predId)) graph.set(predId, new Set());
-      graph.get(predId)!.add(obj.id);
+      graph.get(predId)?.add(obj.id);
     }
   }
   return graph;
@@ -63,7 +63,7 @@ export function buildPredecessorGraph(
   for (const obj of objects) {
     if (!graph.has(obj.id)) graph.set(obj.id, new Set());
     for (const predId of getPredecessors(obj)) {
-      graph.get(obj.id)!.add(predId);
+      graph.get(obj.id)?.add(predId);
     }
   }
   return graph;
@@ -89,7 +89,7 @@ export function topologicalSort(objects: GraphObject[]): string[] {
   const result: string[] = [];
 
   while (queue.length > 0) {
-    const id = queue.shift()!;
+    const id = queue.shift() as string;
     result.push(id);
     for (const successor of graph.get(id) ?? []) {
       const newDeg = (inDegree.get(successor) ?? 0) - 1;
@@ -156,7 +156,7 @@ export function findBlockingChain(
   const result: string[] = [];
 
   while (queue.length > 0) {
-    const current = queue.shift()!;
+    const current = queue.shift() as string;
     for (const predecessor of pred.get(current) ?? []) {
       if (!visited.has(predecessor) && predecessor !== objectId) {
         visited.add(predecessor);
@@ -182,7 +182,7 @@ export function findImpactedObjects(
   const result: string[] = [];
 
   while (queue.length > 0) {
-    const current = queue.shift()!;
+    const current = queue.shift() as string;
     for (const succ of graph.get(current) ?? []) {
       if (!visited.has(succ)) {
         visited.add(succ);
@@ -213,7 +213,7 @@ export function computeSlipImpact(
   const queue = [objectId];
 
   while (queue.length > 0) {
-    const current = queue.shift()!;
+    const current = queue.shift() as string;
     const currentSlip = slipMap.get(current) ?? 0;
     const currentDepth = depthMap.get(current) ?? 0;
 

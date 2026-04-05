@@ -3,8 +3,6 @@ import { AutomationEngine } from "./automation-engine.js";
 import type { AutomationStore } from "./automation-engine.js";
 import type {
   Automation,
-  AutomationAction,
-  AutomationContext,
   AutomationRun,
   ActionHandlerMap,
 } from "./automation-types.js";
@@ -80,7 +78,7 @@ describe("AutomationEngine", () => {
     expect(run.status).toBe("success");
     expect(run.conditionPassed).toBe(true);
     expect(run.actionResults).toHaveLength(1);
-    expect(run.actionResults[0]!.status).toBe("success");
+    expect(run.actionResults[0]?.status).toBe("success");
     expect(log).toEqual(["create:auto-task"]);
     expect(store.runs).toHaveLength(1);
   });
@@ -148,7 +146,7 @@ describe("AutomationEngine", () => {
       object: { type: "task", tags: ["urgent"] },
     });
     expect(runs).toHaveLength(1);
-    expect(runs[0]!.status).toBe("success");
+    expect(runs[0]?.status).toBe("success");
     expect(log).toEqual(["update:task"]);
 
     // Non-matching event (wrong type)
@@ -181,9 +179,9 @@ describe("AutomationEngine", () => {
 
     expect(run.status).toBe("partial");
     expect(run.actionResults).toHaveLength(2);
-    expect(run.actionResults[0]!.status).toBe("success");
-    expect(run.actionResults[1]!.status).toBe("failed");
-    expect(run.actionResults[1]!.error).toContain("boom");
+    expect(run.actionResults[0]?.status).toBe("success");
+    expect(run.actionResults[1]?.status).toBe("failed");
+    expect(run.actionResults[1]?.error).toContain("boom");
   });
 
   it("records failed status when first action fails", async () => {
@@ -219,8 +217,8 @@ describe("AutomationEngine", () => {
     const run = await engine.run("auto-1");
 
     expect(run.status).toBe("success");
-    expect(run.actionResults[0]!.status).toBe("skipped");
-    expect(run.actionResults[0]!.error).toContain("No handler");
+    expect(run.actionResults[0]?.status).toBe("skipped");
+    expect(run.actionResults[0]?.error).toContain("No handler");
   });
 
   it("interpolates action templates from context", async () => {
@@ -258,8 +256,8 @@ describe("AutomationEngine", () => {
 
     await engine.run("auto-1");
     const updated = store.get("auto-1");
-    expect(updated!.runCount).toBe(1);
-    expect(updated!.lastRunAt).toBeDefined();
+    expect(updated?.runCount).toBe(1);
+    expect(updated?.lastRunAt).toBeDefined();
   });
 
   it("does not update runCount on skip", async () => {
@@ -275,7 +273,7 @@ describe("AutomationEngine", () => {
 
     await engine.run("auto-1", { x: "n" });
     const updated = store.get("auto-1");
-    expect(updated!.runCount).toBe(0);
+    expect(updated?.runCount).toBe(0);
   });
 
   it("throws when running nonexistent automation", async () => {
@@ -296,7 +294,7 @@ describe("AutomationEngine", () => {
 
     await engine.run("auto-1");
     expect(runs).toHaveLength(1);
-    expect(runs[0]!.status).toBe("success");
+    expect(runs[0]?.status).toBe("success");
   });
 
   // ── Cron scheduling ────────────────────────────────────────────────────────
@@ -384,7 +382,7 @@ describe("AutomationEngine", () => {
     const run = await promise;
 
     expect(run.status).toBe("success");
-    expect(run.actionResults[0]!.actionType).toBe("delay");
+    expect(run.actionResults[0]?.actionType).toBe("delay");
     vi.useRealTimers();
   });
 });

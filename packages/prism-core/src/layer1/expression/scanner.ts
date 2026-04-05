@@ -65,7 +65,7 @@ export function tokenize(source: string): Token[] {
     }
 
     const start = i;
-    const ch = source[i]!;
+    const ch = source[i] as string;
 
     // Operand: [type:id] or [type:id.subfield]
     if (ch === "[") {
@@ -93,16 +93,16 @@ export function tokenize(source: string): Token[] {
     }
 
     // Number
-    if (isDigit(ch) || (ch === "." && i + 1 < source.length && isDigit(source[i + 1]!))) {
+    if (isDigit(ch) || (ch === "." && i + 1 < source.length && isDigit(source[i + 1] as string))) {
       let num = "";
-      while (i < source.length && isDigit(source[i]!)) {
+      while (i < source.length && isDigit(source[i] as string)) {
         num += source[i];
         i++;
       }
       if (i < source.length && source[i] === ".") {
         num += ".";
         i++;
-        while (i < source.length && isDigit(source[i]!)) {
+        while (i < source.length && isDigit(source[i] as string)) {
           num += source[i];
           i++;
         }
@@ -144,7 +144,7 @@ export function tokenize(source: string): Token[] {
     // Identifier or keyword
     if (isIdentStart(ch)) {
       let ident = "";
-      while (i < source.length && isIdentChar(source[i]!)) {
+      while (i < source.length && isIdentChar(source[i] as string)) {
         ident += source[i];
         i++;
       }

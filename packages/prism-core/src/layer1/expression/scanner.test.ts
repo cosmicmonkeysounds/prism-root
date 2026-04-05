@@ -49,7 +49,7 @@ describe("tokenize", () => {
 
   it("handles escape sequences in strings", () => {
     const tokens = tokenize('"line\\nbreak"');
-    expect(tokens[0]!.stringValue).toBe("line\nbreak");
+    expect(tokens[0]?.stringValue).toBe("line\nbreak");
   });
 
   it("tokenizes booleans", () => {
@@ -60,9 +60,9 @@ describe("tokenize", () => {
 
   it("tokenizes keywords", () => {
     const tokens = tokenize("and or not");
-    expect(tokens[0]!.kind).toBe("AND");
-    expect(tokens[1]!.kind).toBe("OR");
-    expect(tokens[2]!.kind).toBe("NOT");
+    expect(tokens[0]?.kind).toBe("AND");
+    expect(tokens[1]?.kind).toBe("OR");
+    expect(tokens[2]?.kind).toBe("NOT");
   });
 
   it("tokenizes identifiers", () => {
@@ -103,13 +103,13 @@ describe("tokenize", () => {
 
   it("tokenizes unknown characters", () => {
     const tokens = tokenize("@");
-    expect(tokens[0]!.kind).toBe("UNKNOWN");
+    expect(tokens[0]?.kind).toBe("UNKNOWN");
   });
 
   it("always ends with EOF", () => {
     const tokens = tokenize("");
     expect(tokens).toHaveLength(1);
-    expect(tokens[0]!.kind).toBe("EOF");
+    expect(tokens[0]?.kind).toBe("EOF");
   });
 
   it("skips whitespace", () => {
@@ -119,9 +119,9 @@ describe("tokenize", () => {
 
   it("tracks offset", () => {
     const tokens = tokenize("1 + 2");
-    expect(tokens[0]!.offset).toBe(0);
-    expect(tokens[1]!.offset).toBe(2);
-    expect(tokens[2]!.offset).toBe(4);
+    expect(tokens[0]?.offset).toBe(0);
+    expect(tokens[1]?.offset).toBe(2);
+    expect(tokens[2]?.offset).toBe(4);
   });
 
   it("tokenizes complex expression", () => {

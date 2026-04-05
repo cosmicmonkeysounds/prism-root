@@ -11,7 +11,7 @@ function parseOk(source: string): AnyExprNode {
   const { node, errors } = parse(source);
   expect(errors).toHaveLength(0);
   expect(node).not.toBeNull();
-  return node!;
+  return node as AnyExprNode;
 }
 
 describe("parser — literals", () => {

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { WorkspaceSlot } from "./workspace-slot.js";
 import { PageRegistry } from "./page-registry.js";
 import type { WorkspaceSlotEvent } from "./layout-types.js";
@@ -103,7 +103,7 @@ describe("WorkspaceSlot", () => {
     slot.on((e) => events.push(e));
     slot.go({ kind: "object", id: "b" });
     expect(events).toHaveLength(1);
-    expect(events[0]!.kind).toBe("navigated");
+    expect(events[0]?.kind).toBe("navigated");
   });
 
   it("emits back/forward events", () => {

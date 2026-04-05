@@ -59,7 +59,7 @@ export class WorkspaceSlot<TTarget extends { kind: string }> {
   back(): boolean {
     if (this._backStack.length === 0) return false;
     this._forwardStack.push(this._current);
-    this._current = this._backStack.pop()!;
+    this._current = this._backStack.pop() as TTarget;
     this._activePage = this.getOrCreatePage(this._current);
     this.emit({ kind: "back", target: this._current, page: this._activePage });
     return true;
@@ -68,7 +68,7 @@ export class WorkspaceSlot<TTarget extends { kind: string }> {
   forward(): boolean {
     if (this._forwardStack.length === 0) return false;
     this._backStack.push(this._current);
-    this._current = this._forwardStack.pop()!;
+    this._current = this._forwardStack.pop() as TTarget;
     this._activePage = this.getOrCreatePage(this._current);
     this.emit({ kind: "forward", target: this._current, page: this._activePage });
     return true;

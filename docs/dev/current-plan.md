@@ -310,10 +310,61 @@ Two systems for workflow automation and manifest-driven workspace definition. Al
 | Vitest (manifest) | 27 | Pass |
 | **Phase 8 Total** | **71** | **All Pass** |
 
-## Next: Phase 9
+## Phase 9: Config System, Undo/Redo System (Complete)
+
+Two infrastructure systems for settings management and interaction history. All pure TypeScript, zero React.
+
+### Completed
+
+- [x] **Config System** (`layer1/config/`) — layered settings with scope resolution
+  - `ConfigRegistry` — instance-based catalog of SettingDefinitions + FeatureFlagDefinitions
+  - `ConfigModel` — live runtime config with layered scope resolution (default → workspace → user)
+  - `SettingDefinition` — typed settings with validation, scope restrictions, secret masking, tags
+  - `ConfigStore` interface — synchronous persistence (Loro CRDT is sync)
+  - `MemoryConfigStore` — in-process store with `simulateExternalChange()` for testing
+  - `attachStore(scope, store)` — auto-load + subscribe to external changes
+  - `watch(key, cb)` — observe specific key changes (immediate call + on change)
+  - `on('change', cb)` — wildcard listener for all config mutations
+  - `toJSON(scope)` — serialization with secret masking ('***')
+  - `validateConfig()` — lightweight JSON Schema subset (string/number/boolean/array/object)
+  - `coerceConfigValue()` — env var string → typed value coercion
+  - `schemaToValidator()` — bridge from declarative schema to SettingDefinition.validate
+  - `FeatureFlags` — boolean toggles with config key delegation and condition evaluation
+  - Built-in settings: ui (theme, density, language, sidebar, activityBar), editor (fontSize, lineNumbers, spellCheck, indentSize, autosaveMs), sync (enabled, intervalSeconds), ai (enabled, provider, modelId, apiKey), notifications
+  - Built-in flags: ai-features (→ ai.enabled), sync (→ sync.enabled)
+- [x] **Undo/Redo System** (`layer1/undo/`) — snapshot-based undo stack
+  - `UndoRedoManager` — framework-agnostic undo/redo with configurable max history
+  - `ObjectSnapshot` — before/after diffs for GraphObject and ObjectEdge
+  - `push(description, snapshots)` — record undoable entry, clears redo stack
+  - `merge(snapshots)` — coalesce rapid edits into last entry
+  - `undo()` / `redo()` — calls applier with snapshot direction
+  - `canUndo` / `canRedo` / `undoLabel` / `redoLabel` — UI state queries
+  - `subscribe(cb)` — observe stack changes for reactive UI updates
+  - Synchronous applier (not async — Loro CRDT operations are sync)
+
+### Axed from Legacy
+
+- `SettingScope: 'app' | 'team'` — Prism is local-first; no server-level or team-level scopes
+- `IConfigStore` (async) — simplified to synchronous `ConfigStore` (Loro CRDT is sync)
+- `LocalStorageConfigStore` — browser-specific; Prism uses Tauri IPC
+- `FeatureFlagCondition: 'user-role' | 'team-plan' | 'env'` — Prism has no team plans or server env vars
+- Server/SaaS settings (session timeout, CORS, 2FA, allowed origins) — Relay concerns, not core
+- `loadFromModule()` — deferred until schema loader exists
+
+### Test Summary
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| Vitest (config-registry) | 13 | Pass |
+| Vitest (config-model) | 28 | Pass |
+| Vitest (config-schema) | 29 | Pass |
+| Vitest (feature-flags) | 11 | Pass |
+| Vitest (undo-manager) | 22 | Pass |
+| **Phase 9 Total** | **103** | **All Pass** |
+
+## Next: Phase 10
 
 Candidates:
 - Vault Discovery (recent vaults/manifests, daemon-side roster)
 - Server Factory (Hono routes from ObjectRegistry — for Relay nodes)
-- Config System (ConfigModel, setting layers, plugin settings)
-- Undo/Redo System (command-based undo stack integrated with Loro CRDT)
+- Undo/Redo → TreeModel/EdgeModel integration (hooks that auto-record snapshots)

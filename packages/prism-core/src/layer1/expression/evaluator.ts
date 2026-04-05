@@ -96,9 +96,9 @@ function evalBinary(
     case "%":
       return toNumber(lv) % toNumber(rv);
     case "==":
-      return lv == rv; // eslint-disable-line eqeqeq
+      return lv == rv;
     case "!=":
-      return lv != rv; // eslint-disable-line eqeqeq
+      return lv != rv;
     case "<":
       return toNumber(lv) < toNumber(rv);
     case "<=":

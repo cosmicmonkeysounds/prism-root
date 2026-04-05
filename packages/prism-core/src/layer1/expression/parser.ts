@@ -11,15 +11,15 @@ export function parse(source: string): ParseResult {
   const errors: ExprError[] = [];
   let pos = 0;
 
-  const eof: Token = tokens[tokens.length - 1]!;
+  const eof: Token = tokens[tokens.length - 1] as Token;
 
   function peek(): Token {
-    return pos < tokens.length ? tokens[pos]! : eof;
+    return pos < tokens.length ? (tokens[pos] as Token) : eof;
   }
 
   function advance(): Token {
     if (pos >= tokens.length) return eof;
-    const t = tokens[pos]!;
+    const t = tokens[pos] as Token;
     pos++;
     return t;
   }
@@ -132,25 +132,25 @@ export function parse(source: string): ParseResult {
     // Number literal
     if (check("NUMBER")) {
       const t = advance();
-      return { kind: "literal", value: t.numberValue!, exprType: "number" };
+      return { kind: "literal", value: t.numberValue ?? 0, exprType: "number" };
     }
 
     // String literal
     if (check("STRING")) {
       const t = advance();
-      return { kind: "literal", value: t.stringValue!, exprType: "string" };
+      return { kind: "literal", value: t.stringValue ?? "", exprType: "string" };
     }
 
     // Boolean literal
     if (check("BOOL")) {
       const t = advance();
-      return { kind: "literal", value: t.boolValue!, exprType: "boolean" };
+      return { kind: "literal", value: t.boolValue ?? false, exprType: "boolean" };
     }
 
     // Operand [type:id] or [type:id.subfield]
     if (check("OPERAND")) {
       const t = advance();
-      const d = t.operandData!;
+      const d = t.operandData as NonNullable<typeof t.operandData>;
       const operandNode: AnyExprNode = d.subfield
         ? { kind: "operand", operandType: d.operandType, id: d.id, subfield: d.subfield }
         : { kind: "operand", operandType: d.operandType, id: d.id };

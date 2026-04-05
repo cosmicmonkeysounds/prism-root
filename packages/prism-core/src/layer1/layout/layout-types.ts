@@ -34,11 +34,11 @@ export type WorkspaceSlotEvent<TTarget> =
 
 export type WorkspaceSlotListener<TTarget> = (event: WorkspaceSlotEvent<TTarget>) => void;
 
-export type WorkspaceManagerEvent<TTarget extends { kind: string }> =
+export type WorkspaceManagerEvent =
   | { kind: "slot-opened"; slotId: string }
   | { kind: "slot-closed"; slotId: string }
   | { kind: "slot-focused"; slotId: string };
 
-export type WorkspaceManagerListener<TTarget extends { kind: string }> = (
-  event: WorkspaceManagerEvent<TTarget>,
+export type WorkspaceManagerListener = (
+  event: WorkspaceManagerEvent,
 ) => void;

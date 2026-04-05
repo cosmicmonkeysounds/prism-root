@@ -60,10 +60,10 @@ function getDuration(obj: GraphObject): number {
 function getPredecessors(obj: GraphObject): string[] {
   const d = obj.data as Record<string, unknown> | null;
   const dependsOn = Array.isArray(d?.dependsOn)
-    ? (d!.dependsOn as string[])
+    ? (d.dependsOn as string[])
     : [];
   const blockedBy = Array.isArray(d?.blockedBy)
-    ? (d!.blockedBy as string[])
+    ? (d.blockedBy as string[])
     : [];
   return [...new Set([...dependsOn, ...blockedBy])];
 }
@@ -117,7 +117,7 @@ export function computePlan(objects: GraphObject[]): PlanResult {
   for (const node of nodes.values()) {
     for (const predId of node.predecessors) {
       if (!succs.has(predId)) succs.set(predId, []);
-      succs.get(predId)!.push(node.id);
+      succs.get(predId)?.push(node.id);
     }
   }
 
@@ -168,7 +168,7 @@ export function computePlan(objects: GraphObject[]): PlanResult {
           (nodes.get(b)?.earlyFinish ?? 0) -
           (nodes.get(a)?.earlyFinish ?? 0),
       );
-    if (critSuccs.length > 0) walk(critSuccs[0]!);
+    if (critSuccs.length > 0) walk(critSuccs[0] as string);
   }
 
   for (const start of starts) walk(start.id);

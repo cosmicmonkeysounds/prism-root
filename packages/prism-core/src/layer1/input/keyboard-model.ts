@@ -2,7 +2,7 @@ import type { NormalisedKey, KeyEventLike } from "./input-types.js";
 
 export function parseShortcut(shortcut: string): NormalisedKey {
   const parts = shortcut.toLowerCase().split("+");
-  const key = parts[parts.length - 1]!;
+  const key = parts[parts.length - 1] as string;
   return {
     key,
     cmd: parts.includes("cmd") || parts.includes("ctrl"),

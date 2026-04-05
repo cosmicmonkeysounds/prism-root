@@ -109,7 +109,7 @@ export class ContextEngine<TIcon = unknown> {
 
   getChildOptions(parentType: string): ChildOption[] {
     return this.registry.getAllowedChildTypes(parentType).map((type) => {
-      const def = this.registry.get(type)!;
+      const def = this.registry.get(type) as EntityDef;
       return {
         type,
         label: def.label,

@@ -336,6 +336,49 @@ export type {
   AutomationEngineOptions,
 } from "./automation/index.js";
 
+// ── Config System ──────────────────────────────────────────────────────────
+export {
+  SETTING_SCOPE_ORDER,
+  ConfigRegistry,
+  ConfigModel,
+  validateConfig,
+  coerceConfigValue,
+  schemaToValidator,
+  FeatureFlags,
+  MemoryConfigStore,
+} from "./config/index.js";
+
+export type {
+  SettingScope,
+  SettingType,
+  SettingDefinition,
+  SettingChange,
+  SettingWatcher,
+  ChangeListener,
+  ConfigStore,
+  FeatureFlagContext,
+  FeatureFlagCondition,
+  FeatureFlagDefinition,
+  ConfigSchema,
+  StringSchema,
+  NumberSchema,
+  BooleanSchema,
+  ArraySchema,
+  ObjectSchema,
+  ValidationError,
+  ValidationResult,
+} from "./config/index.js";
+
+// ── Undo/Redo ──────────────────────────────────────────────────────────────
+export { UndoRedoManager } from "./undo/index.js";
+
+export type {
+  ObjectSnapshot,
+  UndoEntry,
+  UndoApplier,
+  UndoListener,
+} from "./undo/index.js";
+
 // ── Workspace Manifest ──────────────────────────────────────────────────────
 export {
   MANIFEST_FILENAME,
