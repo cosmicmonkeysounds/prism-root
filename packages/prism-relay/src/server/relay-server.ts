@@ -26,6 +26,7 @@ export interface RelayServerOptions {
   relay: RelayInstance;
   port?: number;
   host?: string;
+  corsOrigins?: string[];
 }
 
 export interface RelayServer {
@@ -34,8 +35,25 @@ export interface RelayServer {
 }
 
 export function createRelayServer(options: RelayServerOptions): RelayServer {
-  const { relay, port = 4444, host = "0.0.0.0" } = options;
+  const { relay, port = 4444, host = "0.0.0.0", corsOrigins } = options;
   const app = new Hono();
+
+  // ── CORS middleware ────────────────────────────────────────────────────
+  if (corsOrigins && corsOrigins.length > 0) {
+    app.use("/*", async (c, next) => {
+      const origin = c.req.header("origin") ?? "";
+      const allowed = corsOrigins.includes("*") || corsOrigins.includes(origin);
+      if (allowed) {
+        c.header("Access-Control-Allow-Origin", corsOrigins.includes("*") ? "*" : origin);
+        c.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+        c.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+      }
+      if (c.req.method === "OPTIONS") {
+        return c.body(null, 204);
+      }
+      await next();
+    });
+  }
 
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
   const connectionRegistry = createConnectionRegistry();

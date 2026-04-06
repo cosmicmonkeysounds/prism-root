@@ -6,7 +6,7 @@ Distributed Visual Operating System. Turborepo + pnpm monorepo.
 - `pnpm dev` — start all packages
 - `pnpm build` — build in dependency order
 - `pnpm test` — Vitest all packages
-- `pnpm test:e2e` — Playwright E2E
+- `pnpm test:e2e` — Playwright E2E (per-package: relay + studio)
 - `pnpm lint` / `pnpm typecheck` / `pnpm format`
 - `cd packages/prism-daemon && cargo test && cargo clippy`
 

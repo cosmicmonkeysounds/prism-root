@@ -8,7 +8,7 @@
     "build": "turbo build",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "pnpm --filter @prism/e2e test",
+    "test:e2e": "pnpm -r --filter '@prism/relay' --filter '@prism/studio' run test:e2e",
     "lint": "eslint .",
     "typecheck": "turbo typecheck",
     "format": "prettier --write .",
