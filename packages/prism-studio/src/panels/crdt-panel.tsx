@@ -1,6 +1,6 @@
 /**
  * CRDT Inspector panel — shows live state of the Loro document
- * and allows manual key-value writes (from Phase 1).
+ * and allows manual key-value writes.
  */
 
 import { useState, useEffect, useCallback } from "react";

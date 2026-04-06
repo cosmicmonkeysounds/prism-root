@@ -1,8 +1,8 @@
 /**
  * Graph Panel — Spatial node graph view backed by Loro CRDT.
  *
- * Renders PrismGraph with a sample set of nodes for Phase 3 demo.
- * Uses the graph store from @prism/core backed by a LoroDoc.
+ * Renders PrismGraph with seed nodes. Uses the graph store
+ * from @prism/core backed by a LoroDoc.
  */
 
 import { useEffect, useRef, useState } from "react";

@@ -68,13 +68,13 @@ Ported from legacy Helm codebase with Helm→Prism rename. Foundation for the Ob
 - [x] Branded ID types (`ObjectId`, `EdgeId`) with zero-cost type safety
 - [x] Slot system for Lens extensions (tabs + fields contributed without modifying base EntityDef)
 
-### Axed from Legacy
+### Axed from Legacy (at Phase 0 — some later restored)
 
 - `interfaces.ts` — premature abstraction; concrete classes serve as the interface
-- `api-config.ts` — Prism uses Tauri IPC, not REST route generation
+- `api-config.ts` — replaced by `layer1/server/route-gen.ts` in Phase 10
 - `command-palette.ts` — KBar already handles this
-- `tree-clipboard.ts` + `cascade.ts` — premature; will add when needed
-- `context-engine.ts` — deferred to Phase 3
+- `tree-clipboard.ts` + `cascade.ts` — restored as `layer1/clipboard/` in Phase 17
+- `context-engine.ts` — restored as `layer1/object-model/context-engine.ts` in Phase 6
 - `lua-bridge.ts` — Prism has its own Lua integration
 - `presets/` — domain-specific; Lenses define their own
 

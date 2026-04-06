@@ -9,7 +9,7 @@ import { createPuckLoroBridge } from "@prism/core/layer2/puck/loro-puck-bridge";
 import { usePuckLoro } from "@prism/core/layer2/puck/use-puck-loro";
 
 /**
- * Minimal Puck component config for Phase 2 demo.
+ * Minimal Puck component config.
  * Real apps will define rich component libraries.
  */
 const puckConfig: Config = {
