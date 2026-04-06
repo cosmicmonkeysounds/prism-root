@@ -16,17 +16,18 @@ The Universal Host — Vite SPA + Tauri 2.0 desktop shell.
 
 ## Kernel (`src/kernel/`)
 The Studio kernel wires all Layer 1 systems together:
-- `studio-kernel.ts` — creates and connects ObjectRegistry, CollectionStore, PrismBus, AtomStore, ObjectAtomStore, UndoRedoManager, NotificationStore, SearchEngine, ActivityStore, ActivityTracker, RelayManager. Also wires clipboard (copy/cut/paste), batch ops, templates, and LiveView.
+- `studio-kernel.ts` — creates and connects ObjectRegistry, CollectionStore, PrismBus, AtomStore, ObjectAtomStore, UndoRedoManager, NotificationStore, SearchEngine, ActivityStore, ActivityTracker, RelayManager, AutomationEngine, graph analysis, expression evaluator. Also wires clipboard (copy/cut/paste), batch ops, templates, and LiveView.
 - `relay-manager.ts` — manages connections to Prism Relay servers. Studio is client-only (no server code). Handles relay CRUD, WebSocket connect/disconnect via RelayClient SDK, portal publish/unpublish/list via HTTP API, collection sync, and relay status. Injectable HTTP/WS clients for testing.
 - `entities.ts` — page-builder entity types (folder, page, section, heading, text-block, image, button, card) with category containment rules and edge types (references, links-to)
-- `kernel-context.tsx` — React context + hooks: useKernel, useSelection, useObjects, useObject, useUndo, useNotifications, useRelay
+- `kernel-context.tsx` — React context + hooks: useKernel, useSelection, useObjects, useObject, useUndo, useNotifications, useRelay, useConfig, useConfigSettings, usePresence, useViewMode, useAutomation, useGraphAnalysis, useExpression
 
 ## Components (`src/components/`)
 - `studio-shell.tsx` — custom shell layout replacing core ShellLayout with real sidebar/inspector content
-- `object-explorer.tsx` — tree view of objects from CollectionStore, click to select, "New Page" button, search via SearchEngine. Includes TemplateGallery overlay, ActivityFeed sidebar, and reorder buttons (↑/↓) on selected nodes.
-- `inspector-panel.tsx` — schema-driven property editor reading EntityDef fields from ObjectRegistry. Includes clipboard buttons (Copy/Cut/Paste) and Add Child menu.
+- `object-explorer.tsx` — tree view of objects from CollectionStore, click to select, "New Page" button, search via SearchEngine. Includes TemplateGallery overlay, ActivityFeed sidebar, reorder buttons (↑/↓) on selected nodes, and view mode switcher (list/kanban/grid/table).
+- `inspector-panel.tsx` — schema-driven property editor reading EntityDef fields from ObjectRegistry. Includes clipboard buttons (Copy/Cut/Paste), Add Child menu, and Expression Bar for formula evaluation.
 - `notification-toast.tsx` — floating toast overlay subscribing to NotificationStore
 - `undo-status-bar.tsx` — undo/redo buttons in the header bar
+- `presence-indicator.tsx` — colored avatar dots for connected peers in header bar
 
 ## Panels (`src/panels/`)
 - `canvas-panel.tsx` — WYSIWYG page preview: renders page→section→component tree as visual React components, click-to-select blocks
@@ -35,9 +36,12 @@ The Studio kernel wires all Layer 1 systems together:
 - `layout-panel.tsx` — Puck visual builder (Loro CRDT bridge)
 - `crdt-panel.tsx` — CRDT state inspector (objects/edges/JSON tabs)
 - `relay-panel.tsx` — Relay Manager: add/remove relays, connect/disconnect, publish/unpublish portals, view portal URLs, CLI reference
+- `settings-panel.tsx` — Category-grouped settings UI from ConfigRegistry with search, toggle/select/number/string inputs
+- `automation-panel.tsx` — Automation rules: create/edit/delete/toggle/run automations with trigger/condition/action config, run history with status badges
+- `analysis-panel.tsx` — Graph analysis: critical path (CPM), cycle detection, blocking chain, impact analysis, slip impact calculator
 
 ## Lenses
-6 lenses: Editor (e), Graph (g), Layout (l), Canvas (v), CRDT (c), Relay (r)
+9 lenses: Editor (e), Graph (g), Layout (l), Canvas (v), CRDT (c), Relay (r), Settings (,), Automation (a), Analysis (n)
 
 ## Data Flow
 ```

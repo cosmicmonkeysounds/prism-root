@@ -65,9 +65,9 @@ Renamed from "Prism Server" to avoid confusion with Web 2.0 server concepts. It'
 
 Open-source routing infrastructure and Web 2.5 translator. **Any server running Relay software is a zero-knowledge router** — not just Nexus.
 
-- **Stack**: Node/Rust, E2EE (libsodium/X25519), WebRTC signaling (LiveKit), Next.js (SSR), Jose (JWT auth)
+- **Stack**: Node/Rust, E2EE (libsodium/X25519), WebRTC signaling (LiveKit), Hono (SSR via JSX), Jose (JWT auth)
 - **Zero-knowledge store-and-forward** routing with Blind Mailbox queues for offline peers
-- Next.js SSR for Sovereign Portals (served from **any** Relay, not just Nexus)
+- Hono JSX SSR for Sovereign Portals (served from **any** Relay, not just Nexus)
 - **AutoREST gateway** with Webhook support (outgoing HTTP when CRDT changes — for Zapier/Slack integrations)
 - Web 2.0 OAuth/Blind Escrow recovery for non-technical users
 - **Sovereign Indexer**: XML sitemaps + AutoREST endpoints for SEO — a primitive of the open Relay protocol, not a Nexus-only feature
@@ -84,7 +84,7 @@ The "Universal Host" application users actually download. Contains the full dual
 - Can deploy and manage self-hosted Relays from within Studio
 - Power users (devs, enterprises, tinkerers) live here
 
-**Why NOT Next.js for the core app**: Next.js's SSR philosophy (Server is King) conflicts with Prism's philosophy (Local Hardware is King). Using Next.js in Tauri/Capacitor means dragging a Node.js server to render files already on the hard drive. The App Router's RSC push means `"use client"` everywhere. WASM/CRDT state doesn't exist at server render time → hydration mismatch errors. **Vite SPA for all local apps; Next.js strictly on Relays for Sovereign Portals.**
+**Why NOT Next.js for any Prism component**: Next.js's SSR philosophy (Server is King) conflicts with Prism's philosophy (Local Hardware is King). Using Next.js in Tauri/Capacitor means dragging a Node.js server to render files already on the hard drive. The App Router's RSC push means `"use client"` everywhere. WASM/CRDT state doesn't exist at server render time → hydration mismatch errors. **Vite SPA for all local apps; Hono JSX on Relays for Sovereign Portals.** Hono is lightweight, edge-compatible, and its built-in JSX renderer produces static HTML from CRDT state without React hydration overhead.
 
 ### 5. Prism Nexus (The Cloud & SaaS)
 
@@ -98,7 +98,7 @@ Your monetized commercial wrapper — Studio + Relay + App Repo as a turnkey sub
 
 **The "Eject" Button**: Sites/apps built on Nexus SaaS are architecturally identical to local Prism apps. A user can click "Eject to Local," receive a `.prism` archive, import it into the Universal Host, and point it to a free self-hosted Relay. No other builder on earth can offer this.
 
-Nexus also serves users who want to build websites totally in a vacuum from Prism apps — just using the Next.js/SSR/Puck infrastructure as a pure SaaS web builder. This is the **Trojan Horse**: they get a powerful modern web builder; Prism secretly gives them a Web 4.0 escape hatch when they're ready.
+Nexus also serves users who want to build websites totally in a vacuum from Prism apps — just using the Hono SSR/Puck infrastructure as a pure SaaS web builder. This is the **Trojan Horse**: they get a powerful modern web builder; Prism secretly gives them a Web 4.0 escape hatch when they're ready.
 
 ---
 
@@ -301,13 +301,13 @@ Prism replaces traditional CMS platforms by acting as a sovereign backend. Desig
 
 ### Web 2.0 Feature Parity on Relays
 
-**Deploying Websites**: Tag a CRDT Collection as "Public" → generate Portal Manifest → deploy to Relay. Relay handles Let's Encrypt SSL, custom domain DNS, Next.js cache invalidation. Local Vault update → CRDT diff → Relay → Next.js cache busts → website updates in milliseconds
+**Deploying Websites**: Tag a CRDT Collection as "Public" → generate Portal Manifest → deploy to Relay. Relay handles Let's Encrypt SSL, custom domain DNS, Hono JSX cache invalidation. Local Vault update → CRDT diff → Relay → portal re-renders from CRDT state → website updates in milliseconds
 
 **AutoREST API Gateway**: Studio generates scoped Capability Token. Relay exposes standard REST or GraphQL. External services see standard HTTP → Relay translates to CRDT operation. **Webhook support**: outgoing HTTP when CRDT changes (for Zapier/Slack)
 
 **Web 2.0 Auth & Recovery (Blind Escrow)**: User authenticates via Google/GitHub OIDC on Relay. Relay derives "Escrow Key" from user password + high-entropy salt from OAuth token. App encrypts master Vault key with Escrow Key → sends encrypted payload to Relay. Relay never sees the raw master key; breach of Relay DB = useless encrypted blobs
 
-**SEO**: Next.js on Relay handles all SEO natively. `generateMetadata()` injects `<title>`, `<meta description>`, OpenGraph tags from Loro state. Auto-generated `sitemap.xml` and `robots.txt` from public graph nodes
+**SEO**: Hono JSX on Relay handles all SEO natively. Portal rendering injects `<title>`, `<meta description>`, OpenGraph/Twitter Card tags from Loro state. Auto-generated `sitemap.xml` and `robots.txt` from public portal graph nodes. Each portal page includes `og:title`, `og:description`, `og:type`, `og:url`, and structured data for search engines
 
 ---
 
@@ -559,7 +559,7 @@ Because the entire app ecosystem is React-based, performance requires strict arc
 | `vite` | SPA bundler for all local apps |
 | `tauri` v2 | Desktop shell, Rust daemon, native FS |
 | `@capacitor/core` | Mobile shell, Swift/Kotlin FFI |
-| `next.js` | SSR strictly on Relays for Sovereign Portals |
+| `hono` | Lightweight HTTP framework + JSX SSR on Relays for Sovereign Portals |
 | `notify` (Rust) | OS file watcher |
 | `object_store` (Rust) | VFS adapter layer (S3/GCS/local/NAS) |
 | `mlua` (Rust) | Lua 5.4 bindings with WASM support |

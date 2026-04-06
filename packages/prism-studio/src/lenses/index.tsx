@@ -14,6 +14,9 @@ import { LayoutPanel } from "../panels/layout-panel.js";
 import { CrdtPanel } from "../panels/crdt-panel.js";
 import { CanvasPanel } from "../panels/canvas-panel.js";
 import { RelayPanel } from "../panels/relay-panel.js";
+import { SettingsPanel } from "../panels/settings-panel.js";
+import { AutomationPanel } from "../panels/automation-panel.js";
+import { AnalysisPanel } from "../panels/analysis-panel.js";
 
 export const EDITOR_LENS_ID = lensId("editor");
 export const GRAPH_LENS_ID = lensId("graph");
@@ -21,6 +24,9 @@ export const LAYOUT_LENS_ID = lensId("layout");
 export const CANVAS_LENS_ID = lensId("canvas");
 export const CRDT_LENS_ID = lensId("crdt");
 export const RELAY_LENS_ID = lensId("relay");
+export const SETTINGS_LENS_ID = lensId("settings");
+export const AUTOMATION_LENS_ID = lensId("automation");
+export const ANALYSIS_LENS_ID = lensId("analysis");
 
 const editorManifest: LensManifest = {
   id: EDITOR_LENS_ID,
@@ -88,6 +94,39 @@ const relayManifest: LensManifest = {
   },
 };
 
+const settingsManifest: LensManifest = {
+  id: SETTINGS_LENS_ID,
+  name: "Settings",
+  icon: "\u2699",
+  category: "custom",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-settings", name: "Switch to Settings", shortcut: [","], section: "Navigation" }],
+  },
+};
+
+const automationManifest: LensManifest = {
+  id: AUTOMATION_LENS_ID,
+  name: "Automation",
+  icon: "\u26A1",
+  category: "custom",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-automation", name: "Switch to Automation", shortcut: ["a"], section: "Navigation" }],
+  },
+};
+
+const analysisManifest: LensManifest = {
+  id: ANALYSIS_LENS_ID,
+  name: "Analysis",
+  icon: "\uD83D\uDCC8",
+  category: "custom",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-analysis", name: "Switch to Analysis", shortcut: ["n"], section: "Navigation" }],
+  },
+};
+
 export const ALL_MANIFESTS: LensManifest[] = [
   editorManifest,
   graphManifest,
@@ -95,6 +134,9 @@ export const ALL_MANIFESTS: LensManifest[] = [
   canvasManifest,
   crdtManifest,
   relayManifest,
+  settingsManifest,
+  automationManifest,
+  analysisManifest,
 ];
 
 export function registerBuiltinLenses(registry: LensRegistry): () => void {
@@ -110,5 +152,8 @@ export function createLensComponentMap(): Map<LensId, ComponentType> {
   map.set(CANVAS_LENS_ID, CanvasPanel);
   map.set(CRDT_LENS_ID, CrdtPanel);
   map.set(RELAY_LENS_ID, RelayPanel);
+  map.set(SETTINGS_LENS_ID, SettingsPanel);
+  map.set(AUTOMATION_LENS_ID, AutomationPanel);
+  map.set(ANALYSIS_LENS_ID, AnalysisPanel);
   return map;
 }

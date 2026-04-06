@@ -11,6 +11,12 @@ import type { StudioKernel } from "./studio-kernel.js";
 import type { GraphObject, ObjectId } from "@prism/core/object-model";
 import type { Notification, NotificationKind } from "@prism/core/notification";
 import type { RelayEntry } from "./relay-manager.js";
+import type { SettingDefinition } from "@prism/core/config";
+import type { PresenceState } from "@prism/core/presence";
+import type { ViewMode } from "@prism/core/view";
+import type { Automation, AutomationRun } from "@prism/core/automation";
+import type { PlanResult, SlipImpact } from "@prism/core/graph-analysis";
+import type { ExprValue } from "@prism/core/expression";
 
 // ── Context ─────────────────────────────────────────────────────────────────
 
@@ -208,4 +214,170 @@ export function useRelay(): {
   }
 
   return { relays: cacheRef.current.relays, manager: kernel.relay };
+}
+
+/** Reactive config value by key. */
+export function useConfig<T>(key: string): {
+  value: T;
+  set: (value: T) => void;
+  definition: SettingDefinition | undefined;
+} {
+  const kernel = useKernel();
+
+  const value = useSyncExternalStore(
+    (cb) => kernel.config.on("change", cb),
+    () => kernel.config.get<T>(key) as T,
+  );
+
+  const set = useCallback(
+    (v: T) => kernel.config.set(key, v, "user"),
+    [kernel, key],
+  );
+
+  const definition = kernel.configRegistry.get(key);
+
+  return { value, set, definition };
+}
+
+/** Reactive config settings list grouped by tag. */
+export function useConfigSettings(tag?: string): SettingDefinition[] {
+  const kernel = useKernel();
+  if (tag) return kernel.configRegistry.byTag(tag);
+  return kernel.configRegistry.all();
+}
+
+/** Reactive presence peer list. */
+export function usePresence(): {
+  peers: PresenceState[];
+  localPeer: PresenceState;
+  peerCount: number;
+} {
+  const kernel = useKernel();
+  const cacheRef = useRef<{ peers: PresenceState[]; version: number }>({
+    peers: [],
+    version: -1,
+  });
+
+  const version = useSyncExternalStore(
+    (cb) => kernel.presence.subscribe(cb),
+    () => kernel.presence.peerCount,
+  );
+
+  if (cacheRef.current.version !== version) {
+    cacheRef.current = {
+      peers: kernel.presence.getAll(),
+      version,
+    };
+  }
+
+  return {
+    peers: cacheRef.current.peers,
+    localPeer: kernel.presence.local,
+    peerCount: version,
+  };
+}
+
+/** Reactive view mode. */
+export function useViewMode(): {
+  mode: ViewMode;
+  setMode: (mode: ViewMode) => void;
+  availableModes: ViewMode[];
+} {
+  const kernel = useKernel();
+
+  const mode = useSyncExternalStore(
+    (cb) => kernel.onViewModeChange(cb),
+    () => kernel.viewMode,
+  );
+
+  return {
+    mode,
+    setMode: kernel.setViewMode,
+    availableModes: kernel.viewRegistry.all().map((v) => v.mode),
+  };
+}
+
+/** Reactive automation list and runs. */
+export function useAutomation(): {
+  automations: Automation[];
+  runs: AutomationRun[];
+  save: (automation: Automation) => void;
+  remove: (id: string) => void;
+  run: (id: string) => Promise<AutomationRun>;
+} {
+  const kernel = useKernel();
+  const cacheRef = useRef<{ automations: Automation[]; runs: AutomationRun[]; version: string }>({
+    automations: [],
+    runs: [],
+    version: "",
+  });
+
+  const version = useSyncExternalStore(
+    (cb) => kernel.onAutomationChange(cb),
+    () => {
+      const automations = kernel.listAutomations();
+      const runs = kernel.listAutomationRuns();
+      return automations.map((a) => `${a.id}:${a.enabled}:${a.runCount}`).join(",") + `|${runs.length}`;
+    },
+  );
+
+  if (cacheRef.current.version !== version) {
+    cacheRef.current = {
+      automations: kernel.listAutomations(),
+      runs: kernel.listAutomationRuns(),
+      version,
+    };
+  }
+
+  const save = useCallback(
+    (automation: Automation) => kernel.saveAutomation(automation),
+    [kernel],
+  );
+
+  const remove = useCallback(
+    (id: string) => kernel.deleteAutomation(id),
+    [kernel],
+  );
+
+  const run = useCallback(
+    (id: string) => kernel.runAutomation(id),
+    [kernel],
+  );
+
+  return { ...cacheRef.current, save, remove, run };
+}
+
+/** Graph analysis utilities. */
+export function useGraphAnalysis(): {
+  topologicalSort: () => string[];
+  detectCycles: () => string[][];
+  blockingChain: (id: string) => string[];
+  impact: (id: string) => string[];
+  slipImpact: (id: string, days: number) => SlipImpact[];
+  plan: () => PlanResult;
+} {
+  const kernel = useKernel();
+
+  return {
+    topologicalSort: kernel.analyzeTopologicalSort,
+    detectCycles: kernel.analyzeCycles,
+    blockingChain: kernel.analyzeBlockingChain,
+    impact: kernel.analyzeImpact,
+    slipImpact: kernel.analyzeSlipImpact,
+    plan: kernel.analyzePlan,
+  };
+}
+
+/** Expression formula evaluator. */
+export function useExpression(): {
+  evaluate: (formula: string, objectId?: ObjectId) => { result: ExprValue; errors: string[] };
+} {
+  const kernel = useKernel();
+
+  const evaluate = useCallback(
+    (formula: string, objectId?: ObjectId) => kernel.evaluateFormula(formula, objectId),
+    [kernel],
+  );
+
+  return { evaluate };
 }

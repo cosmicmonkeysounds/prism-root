@@ -1,7 +1,8 @@
 /**
  * Hono app factory for Prism Relay.
  *
- * Wires HTTP routes and WebSocket transport into a single server.
+ * Wires HTTP routes, WebSocket transport, security middleware, and
+ * all feature modules into a single server.
  */
 
 import { Hono } from "hono";
@@ -24,17 +25,34 @@ import {
   createAcmeRoutes,
   createAcmeManagementRoutes,
   createTemplateRoutes,
+  createSeoRoutes,
+  createAuthRoutes,
+  createSafetyRoutes,
+  createAutoRestRoutes,
+  createPingRoutes,
 } from "../routes/index.js";
+import type { AuthRoutesOptions } from "../routes/index.js";
 import { handleWsOpen, handleWsMessage, handleWsClose, createConnectionRegistry } from "../transport/index.js";
 import type { WsConnection } from "../transport/index.js";
+import {
+  csrfMiddleware,
+  bodySizeLimitMiddleware,
+  bannedPeerMiddleware,
+} from "../middleware/security.js";
 
 export interface RelayServerOptions {
   relay: RelayInstance;
   port?: number;
   host?: string;
   corsOrigins?: string[];
-  /** Public-facing base URL (for WebSocket URLs in portal pages). */
+  /** Public-facing base URL (for WebSocket URLs in portal pages and SEO). */
   publicUrl?: string;
+  /** OAuth provider configuration for auth routes. */
+  auth?: AuthRoutesOptions;
+  /** Maximum request body size in bytes. Default: from relay config or 1MB. */
+  maxBodySize?: number;
+  /** Disable CSRF protection (for testing). Default: false. */
+  disableCsrf?: boolean;
 }
 
 export interface RelayServer {
@@ -43,7 +61,16 @@ export interface RelayServer {
 }
 
 export function createRelayServer(options: RelayServerOptions): RelayServer {
-  const { relay, port = 4444, host = "0.0.0.0", corsOrigins, publicUrl } = options;
+  const {
+    relay,
+    port = 4444,
+    host = "0.0.0.0",
+    corsOrigins,
+    publicUrl,
+    auth,
+    maxBodySize = 1_048_576,
+    disableCsrf = false,
+  } = options;
   const app = new Hono();
 
   // ── CORS middleware ────────────────────────────────────────────────────
@@ -54,7 +81,7 @@ export function createRelayServer(options: RelayServerOptions): RelayServer {
       if (allowed) {
         c.header("Access-Control-Allow-Origin", corsOrigins.includes("*") ? "*" : origin);
         c.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-        c.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+        c.header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Prism-CSRF, X-Prism-DID");
       }
       if (c.req.method === "OPTIONS") {
         return c.body(null, 204);
@@ -62,6 +89,18 @@ export function createRelayServer(options: RelayServerOptions): RelayServer {
       await next();
     });
   }
+
+  // ── Security middleware ──────────────────────────────────────────────
+  // Body size limit on all mutating requests
+  app.use("/api/*", bodySizeLimitMiddleware(maxBodySize));
+
+  // CSRF protection on API routes (custom header requirement)
+  if (!disableCsrf) {
+    app.use("/api/*", csrfMiddleware());
+  }
+
+  // Banned peer rejection
+  app.use("/api/*", bannedPeerMiddleware(relay));
 
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
   const connectionRegistry = createConnectionRegistry();
@@ -79,8 +118,17 @@ export function createRelayServer(options: RelayServerOptions): RelayServer {
   app.route("/api/acme", createAcmeManagementRoutes(relay));
   app.route("/api/templates", createTemplateRoutes(relay));
 
+  // ── New feature routes ──────────────────────────────────────────────
+  app.route("/api/auth", createAuthRoutes(relay, auth));
+  app.route("/api/safety", createSafetyRoutes(relay));
+  app.route("/api/rest", createAutoRestRoutes(relay));
+  app.route("/api/pings", createPingRoutes(relay));
+
   // ── ACME HTTP-01 challenge response (Let's Encrypt) ─────────────────
   app.route("/.well-known/acme-challenge", createAcmeRoutes(relay));
+
+  // ── SEO routes (sitemap.xml, robots.txt) ────────────────────────────
+  app.route("", createSeoRoutes(relay, publicUrl));
 
   // ── Portal view (HTML rendering) ────────────────────────────────────
   const wsBaseUrl = publicUrl
@@ -95,7 +143,7 @@ export function createRelayServer(options: RelayServerOptions): RelayServer {
       try {
         const res = await fetch(`${peerUrl}/api/federation/forward`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", "X-Prism-CSRF": "1" },
           body: JSON.stringify({
             envelope: serializeEnvelope(envelope),
             targetRelay: relay.did,

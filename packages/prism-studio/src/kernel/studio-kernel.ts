@@ -47,6 +47,31 @@ import type { ObjectTemplate, TemplateNode, InstantiateResult } from "@prism/cor
 import { createPageBuilderRegistry } from "./entities.js";
 import { createRelayManager } from "./relay-manager.js";
 import type { RelayManager } from "./relay-manager.js";
+import { ConfigRegistry, ConfigModel } from "@prism/core/config";
+import { createPresenceManager } from "@prism/core/presence";
+import type { PresenceManager } from "@prism/core/presence";
+import { createViewRegistry } from "@prism/core/view";
+import type { ViewRegistry, ViewMode } from "@prism/core/view";
+import { AutomationEngine } from "@prism/core/automation";
+import type {
+  AutomationStore,
+} from "@prism/core/automation";
+import type {
+  Automation,
+  AutomationRun,
+  ActionHandlerMap,
+} from "@prism/core/automation";
+import {
+  topologicalSort,
+  detectCycles,
+  findBlockingChain,
+  findImpactedObjects,
+  computeSlipImpact,
+  computePlan,
+} from "@prism/core/graph-analysis";
+import type { SlipImpact, PlanResult } from "@prism/core/graph-analysis";
+import { evaluateExpression } from "@prism/core/expression";
+import type { ExprValue } from "@prism/core/expression";
 
 // ── Clipboard Types ────────────────────────────────────────────────────────
 
@@ -75,6 +100,67 @@ export interface StudioKernel {
   readonly activity: ActivityStore;
   readonly activityTracker: ActivityTracker;
   readonly relay: RelayManager;
+  readonly config: ConfigModel;
+  readonly configRegistry: ConfigRegistry;
+  readonly presence: PresenceManager;
+  readonly viewRegistry: ViewRegistry;
+
+  // ── Automation ─────────────────────────────────────────────────────────────
+
+  readonly automationEngine: AutomationEngine;
+
+  /** List all automations. */
+  listAutomations(): Automation[];
+
+  /** Get a single automation by ID. */
+  getAutomation(id: string): Automation | undefined;
+
+  /** Save (create or update) an automation. */
+  saveAutomation(automation: Automation): void;
+
+  /** Delete an automation by ID. */
+  deleteAutomation(id: string): void;
+
+  /** Manually trigger an automation. */
+  runAutomation(id: string): Promise<AutomationRun>;
+
+  /** List recent automation runs. */
+  listAutomationRuns(): AutomationRun[];
+
+  /** Subscribe to automation changes. */
+  onAutomationChange(listener: () => void): () => void;
+
+  // ── Graph Analysis ────────────────────────────────────────────────────────
+
+  /** Compute topological sort of all objects. */
+  analyzeTopologicalSort(): string[];
+
+  /** Detect dependency cycles. */
+  analyzeCycles(): string[][];
+
+  /** Find blocking chain for an object. */
+  analyzeBlockingChain(objectId: string): string[];
+
+  /** Find impacted downstream objects. */
+  analyzeImpact(objectId: string): string[];
+
+  /** Compute slip impact for an object. */
+  analyzeSlipImpact(objectId: string, slipDays: number): SlipImpact[];
+
+  /** Compute critical path plan. */
+  analyzePlan(): PlanResult;
+
+  // ── Expression ────────────────────────────────────────────────────────────
+
+  /** Evaluate an expression formula against the current object context. */
+  evaluateFormula(formula: string, objectId?: ObjectId): { result: ExprValue; errors: string[] };
+
+  /** Get the active view mode. */
+  readonly viewMode: ViewMode;
+  /** Set the active view mode. */
+  setViewMode(mode: ViewMode): void;
+  /** Subscribe to view mode changes. */
+  onViewModeChange(listener: () => void): () => void;
 
   /** Create a new object in the collection, emit bus event, push undo. */
   createObject(obj: Omit<GraphObject, "id" | "createdAt" | "updatedAt">): GraphObject;
@@ -190,6 +276,128 @@ export function createStudioKernel(): StudioKernel {
   const trackableAdapter = createTrackableAdapter(store);
 
   const relay = createRelayManager();
+  const configRegistry = new ConfigRegistry();
+  const config = new ConfigModel(configRegistry);
+  const viewReg = createViewRegistry();
+  const presence = createPresenceManager({
+    localIdentity: {
+      peerId: `local_${Date.now().toString(36)}`,
+      displayName: "You",
+      color: "#4a9eff",
+    },
+  });
+
+  let currentViewMode: ViewMode = "list";
+  const viewModeListeners = new Set<() => void>();
+
+  // ── Automation ──────────────────────────────────────────────────────────────
+
+  const automationRuns: AutomationRun[] = [];
+  const automationMap = new Map<string, Automation>();
+  const automationListeners = new Set<() => void>();
+
+  function notifyAutomationListeners() {
+    for (const fn of automationListeners) fn();
+  }
+
+  const automationStore: AutomationStore = {
+    list(filter?) {
+      let all = [...automationMap.values()];
+      if (filter?.enabled !== undefined) all = all.filter((a) => a.enabled === filter.enabled);
+      if (filter?.triggerType) all = all.filter((a) => a.trigger.type === filter.triggerType);
+      return all;
+    },
+    get(id) { return automationMap.get(id); },
+    save(automation) {
+      automationMap.set(automation.id, automation);
+      notifyAutomationListeners();
+    },
+    saveRun(run) {
+      automationRuns.push(run);
+      if (automationRuns.length > 100) automationRuns.shift();
+      notifyAutomationListeners();
+    },
+  };
+
+  const actionHandlers: ActionHandlerMap = {
+    "object:create": async (action) => {
+      const a = action as { type: "object:create"; objectType: string; template: Record<string, unknown> };
+      createObject({
+        type: a.objectType,
+        name: (a.template.name as string) ?? `New ${a.objectType}`,
+        parentId: null,
+        position: 0,
+        status: (a.template.status as string) ?? null,
+        tags: (a.template.tags as string[]) ?? [],
+        date: null,
+        endDate: null,
+        description: (a.template.description as string) ?? "",
+        color: null,
+        image: null,
+        pinned: false,
+        data: a.template,
+      });
+    },
+    "object:update": async (action, ctx) => {
+      const a = action as { type: "object:update"; target: string; patch: Record<string, unknown> };
+      const targetId = a.target === "trigger" && ctx.object
+        ? objectId(ctx.object.id as string)
+        : objectId(a.target);
+      updateObject(targetId, a.patch as Partial<GraphObject>);
+    },
+    "object:delete": async (action, ctx) => {
+      const a = action as { type: "object:delete"; target: string };
+      const targetId = a.target === "trigger" && ctx.object
+        ? objectId(ctx.object.id as string)
+        : objectId(a.target);
+      deleteObject(targetId);
+    },
+    "notification:send": async (action) => {
+      const a = action as { type: "notification:send"; title: string; body: string };
+      notifications.add({ title: a.title, kind: "info", body: a.body });
+    },
+    "automation:run": async (action) => {
+      const a = action as { type: "automation:run"; automationId: string };
+      await automationEngine.run(a.automationId);
+    },
+  };
+
+  const automationEngine = new AutomationEngine(automationStore, actionHandlers, {
+    onRunComplete: (run) => {
+      if (run.status === "failed") {
+        notifications.add({
+          title: `Automation failed: ${automationMap.get(run.automationId)?.name ?? run.automationId}`,
+          kind: "error",
+          body: run.actionResults.find((r) => r.error)?.error,
+        });
+      }
+    },
+  });
+
+  // Wire bus events → automation engine
+  const disconnectAutomationCreated = bus.on(PrismEvents.ObjectCreated, (payload: unknown) => {
+    const p = payload as { object: GraphObject };
+    void automationEngine.handleObjectEvent({
+      type: "object:created",
+      object: p.object as unknown as Record<string, unknown>,
+    });
+  });
+  const disconnectAutomationUpdated = bus.on(PrismEvents.ObjectUpdated, (payload: unknown) => {
+    const p = payload as { object: GraphObject };
+    void automationEngine.handleObjectEvent({
+      type: "object:updated",
+      object: p.object as unknown as Record<string, unknown>,
+    });
+  });
+  const disconnectAutomationDeleted = bus.on(PrismEvents.ObjectDeleted, (payload: unknown) => {
+    const p = payload as { id: string };
+    void automationEngine.handleObjectEvent({
+      type: "object:deleted",
+      object: { id: p.id } as Record<string, unknown>,
+    });
+  });
+
+  automationEngine.start();
 
   // Index the default collection so search covers all kernel objects
   search.indexCollection("default", store);
@@ -741,12 +949,83 @@ export function createStudioKernel(): StudioKernel {
 
   // ── Dispose ──────────────────────────────────────────────────────────────
 
+  function setViewMode(mode: ViewMode): void {
+    if (mode === currentViewMode) return;
+    currentViewMode = mode;
+    for (const fn of viewModeListeners) fn();
+  }
+
+  // ── Graph Analysis helpers ─────────────────────────────────────────────────
+
+  function getAllObjects(): GraphObject[] {
+    return store.listObjects().filter((o) => !o.deletedAt);
+  }
+
+  function analyzeTopologicalSort(): string[] {
+    return topologicalSort(getAllObjects());
+  }
+
+  function analyzeCycles(): string[][] {
+    return detectCycles(getAllObjects());
+  }
+
+  function analyzeBlockingChain(id: string): string[] {
+    return findBlockingChain(id, getAllObjects());
+  }
+
+  function analyzeImpact(id: string): string[] {
+    return findImpactedObjects(id, getAllObjects());
+  }
+
+  function analyzeSlipImpact(id: string, slipDays: number): SlipImpact[] {
+    return computeSlipImpact(id, slipDays, getAllObjects());
+  }
+
+  function analyzePlan(): PlanResult {
+    return computePlan(getAllObjects());
+  }
+
+  // ── Expression helpers ─────────────────────────────────────────────────────
+
+  function evaluateFormula(
+    formula: string,
+    targetId?: ObjectId,
+  ): { result: ExprValue; errors: string[] } {
+    const ctx: Record<string, ExprValue> = {};
+
+    if (targetId) {
+      const obj = store.getObject(targetId);
+      if (obj) {
+        ctx.name = obj.name;
+        ctx.type = obj.type;
+        ctx.status = obj.status ?? "";
+        ctx.position = obj.position ?? 0;
+        if (obj.data) {
+          for (const [k, v] of Object.entries(obj.data)) {
+            if (typeof v === "number" || typeof v === "string" || typeof v === "boolean") {
+              ctx[k] = v;
+            }
+          }
+        }
+      }
+    }
+
+    return evaluateExpression(formula, ctx);
+  }
+
   function dispose(): void {
+    automationEngine.stop();
+    disconnectAutomationCreated();
+    disconnectAutomationUpdated();
+    disconnectAutomationDeleted();
+    automationListeners.clear();
     relay.dispose();
+    presence.dispose();
     disconnectAtoms();
     disconnectObjectAtoms();
     disconnectStoreSync();
     tracker.untrackAll();
+    viewModeListeners.clear();
   }
 
   return {
@@ -761,6 +1040,41 @@ export function createStudioKernel(): StudioKernel {
     activity: activityStore,
     activityTracker: tracker,
     relay,
+    config,
+    configRegistry,
+    presence,
+    viewRegistry: viewReg,
+    automationEngine,
+    listAutomations() { return automationStore.list(); },
+    getAutomation(id: string) { return automationStore.get(id); },
+    saveAutomation(automation: Automation) {
+      automationStore.save(automation);
+      automationEngine.refreshAutomation(automation.id);
+    },
+    deleteAutomation(id: string) {
+      automationMap.delete(id);
+      automationEngine.refreshAutomation(id);
+      notifyAutomationListeners();
+    },
+    async runAutomation(id: string) { return automationEngine.run(id); },
+    listAutomationRuns() { return [...automationRuns]; },
+    onAutomationChange(listener: () => void) {
+      automationListeners.add(listener);
+      return () => automationListeners.delete(listener);
+    },
+    analyzeTopologicalSort,
+    analyzeCycles,
+    analyzeBlockingChain,
+    analyzeImpact,
+    analyzeSlipImpact,
+    analyzePlan,
+    evaluateFormula,
+    get viewMode() { return currentViewMode; },
+    setViewMode,
+    onViewModeChange(listener: () => void) {
+      viewModeListeners.add(listener);
+      return () => viewModeListeners.delete(listener);
+    },
     createObject,
     updateObject,
     deleteObject,

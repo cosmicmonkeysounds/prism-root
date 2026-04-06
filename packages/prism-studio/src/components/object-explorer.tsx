@@ -9,7 +9,8 @@
 import { useState, useCallback, useMemo, useSyncExternalStore, useEffect, useRef } from "react";
 import type { GraphObject, ObjectId } from "@prism/core/object-model";
 import type { SearchHit } from "@prism/core/search";
-import { useKernel, useSelection } from "../kernel/index.js";
+import { useKernel, useSelection, useViewMode } from "../kernel/index.js";
+import type { ViewMode } from "@prism/core/view";
 
 const reorderBtnStyle = {
   background: "none",
@@ -500,13 +501,61 @@ export function ObjectExplorer() {
   }, [kernel]);
 
   const isSearching = searchResults !== null;
+  const { mode: viewMode, setMode: setViewMode } = useViewMode();
+
+  const VIEW_MODE_LABELS: Record<string, string> = {
+    list: "\u2630",
+    kanban: "\u25A3",
+    grid: "\u25A6",
+    table: "\u2637",
+  };
+
+  // Flatten all objects for non-tree views
+  const allNonDeleted = useMemo(() => {
+    return kernel.store.allObjects().filter((o) => !o.deletedAt);
+  }, [rootVersion, kernel.store]);
+
+  // Group by status for kanban
+  const kanbanColumns = useMemo(() => {
+    const cols = new Map<string, GraphObject[]>();
+    for (const obj of allNonDeleted) {
+      const status = obj.status ?? "none";
+      const list = cols.get(status);
+      if (list) list.push(obj);
+      else cols.set(status, [obj]);
+    }
+    return cols;
+  }, [allNonDeleted]);
 
   return (
     <div
       data-testid="object-explorer"
       style={{ flex: 1, overflow: "auto", paddingTop: 4 }}
     >
-      <div style={{ padding: "4px 8px" }}>
+      {/* View mode switcher + search */}
+      <div style={{ padding: "4px 8px", display: "flex", gap: 4, alignItems: "center" }}>
+        <div data-testid="view-mode-switcher" style={{ display: "flex", gap: 2 }}>
+          {(["list", "kanban", "grid", "table"] as ViewMode[]).map((m) => (
+            <button
+              key={m}
+              data-testid={`view-mode-${m}`}
+              onClick={() => setViewMode(m)}
+              title={m.charAt(0).toUpperCase() + m.slice(1)}
+              style={{
+                background: viewMode === m ? "#094771" : "#333",
+                border: "1px solid " + (viewMode === m ? "#094771" : "#444"),
+                borderRadius: 3,
+                color: viewMode === m ? "#fff" : "#888",
+                cursor: "pointer",
+                fontSize: 11,
+                padding: "2px 5px",
+                lineHeight: 1,
+              }}
+            >
+              {VIEW_MODE_LABELS[m] ?? m}
+            </button>
+          ))}
+        </div>
         <input
           data-testid="explorer-search"
           type="text"
@@ -514,7 +563,7 @@ export function ObjectExplorer() {
           value={searchText}
           onChange={(e) => setSearchText(e.target.value)}
           style={{
-            width: "100%",
+            flex: 1,
             padding: "4px 8px",
             fontSize: 11,
             background: "#1e1e1e",
@@ -530,13 +579,7 @@ export function ObjectExplorer() {
       {isSearching ? (
         <div data-testid="search-results">
           {searchResults.hits.length === 0 ? (
-            <div
-              style={{
-                padding: "8px 12px",
-                fontSize: 11,
-                color: "#666",
-              }}
-            >
+            <div style={{ padding: "8px 12px", fontSize: 11, color: "#666" }}>
               No results found
             </div>
           ) : (
@@ -549,6 +592,110 @@ export function ObjectExplorer() {
               />
             ))
           )}
+        </div>
+      ) : viewMode === "list" ? (
+        rootObjects.map((obj) => (
+          <TreeNodeWrapper
+            key={obj.id}
+            obj={obj}
+            depth={0}
+            kernel={kernel}
+            selectedId={selectedId}
+            expanded={expanded}
+            onToggle={handleToggle}
+          />
+        ))
+      ) : viewMode === "kanban" ? (
+        <div data-testid="kanban-view" style={{ display: "flex", gap: 4, padding: "4px 8px", overflow: "auto" }}>
+          {[...kanbanColumns.entries()].map(([status, objs]) => (
+            <div key={status} data-testid={`kanban-column-${status}`} style={{
+              minWidth: 140,
+              background: "#252526",
+              borderRadius: 4,
+              padding: "4px 6px",
+              fontSize: 11,
+            }}>
+              <div style={{ color: "#888", fontWeight: 600, fontSize: 10, textTransform: "uppercase", marginBottom: 4, letterSpacing: "0.05em" }}>
+                {status} ({objs.length})
+              </div>
+              {objs.map((obj) => (
+                <div
+                  key={obj.id}
+                  data-testid={`kanban-card-${obj.id}`}
+                  onClick={() => kernel.select(obj.id)}
+                  style={{
+                    padding: "4px 6px",
+                    background: selectedId === obj.id ? "#094771" : "#1e1e1e",
+                    color: selectedId === obj.id ? "#fff" : "#ccc",
+                    borderRadius: 3,
+                    marginBottom: 3,
+                    cursor: "pointer",
+                    fontSize: 11,
+                  }}
+                >
+                  {obj.name}
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      ) : viewMode === "grid" ? (
+        <div data-testid="grid-view" style={{ display: "flex", flexWrap: "wrap", gap: 6, padding: "4px 8px" }}>
+          {allNonDeleted.map((obj) => {
+            const def = kernel.registry.get(obj.type);
+            return (
+              <div
+                key={obj.id}
+                data-testid={`grid-card-${obj.id}`}
+                onClick={() => kernel.select(obj.id)}
+                style={{
+                  width: 110,
+                  padding: "8px 6px",
+                  background: selectedId === obj.id ? "#094771" : "#252526",
+                  color: selectedId === obj.id ? "#fff" : "#ccc",
+                  borderRadius: 4,
+                  cursor: "pointer",
+                  textAlign: "center",
+                  fontSize: 11,
+                }}
+              >
+                <div style={{ fontSize: 20, marginBottom: 2 }}>{def?.icon ?? "\u25CB"}</div>
+                <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{obj.name}</div>
+                <div style={{ color: "#666", fontSize: 10 }}>{obj.type}</div>
+              </div>
+            );
+          })}
+        </div>
+      ) : viewMode === "table" ? (
+        <div data-testid="table-view" style={{ padding: "4px 8px", fontSize: 11 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr style={{ color: "#888", borderBottom: "1px solid #333", textAlign: "left" }}>
+                <th style={{ padding: "4px 6px" }}>Name</th>
+                <th style={{ padding: "4px 6px" }}>Type</th>
+                <th style={{ padding: "4px 6px" }}>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {allNonDeleted.map((obj) => (
+                <tr
+                  key={obj.id}
+                  data-testid={`table-row-${obj.id}`}
+                  onClick={() => kernel.select(obj.id)}
+                  style={{
+                    background: selectedId === obj.id ? "#094771" : "transparent",
+                    color: selectedId === obj.id ? "#fff" : "#ccc",
+                    cursor: "pointer",
+                    borderBottom: "1px solid #2a2a2a",
+                  }}
+                >
+                  <td style={{ padding: "4px 6px" }}>{obj.name}</td>
+                  <td style={{ padding: "4px 6px" }}>{obj.type}</td>
+                  <td style={{ padding: "4px 6px" }}>{obj.status ?? "-"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       ) : (
         rootObjects.map((obj) => (

@@ -10,6 +10,13 @@ export {
   useUndo,
   useNotifications,
   useRelay,
+  useConfig,
+  useConfigSettings,
+  usePresence,
+  useViewMode,
+  useAutomation,
+  useGraphAnalysis,
+  useExpression,
 } from "./kernel-context.js";
 
 export { createPageBuilderRegistry } from "./entities.js";

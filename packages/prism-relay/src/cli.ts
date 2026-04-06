@@ -36,7 +36,7 @@ import {
   acmeCertificateModule,
   portalTemplateModule,
 } from "@prism/core/relay";
-import type { RelayModule, FederationRegistry } from "@prism/core/relay";
+import type { RelayModule, FederationRegistry, WebhookHttpClient } from "@prism/core/relay";
 import { RELAY_CAPABILITIES } from "@prism/core/relay";
 import { createRelayServer } from "./server/relay-server.js";
 import {
@@ -51,6 +51,7 @@ import type {
   RelayLogger,
 } from "./config/index.js";
 import type { ExportedIdentity } from "@prism/core/identity";
+import { createFileStore } from "./persistence/file-store.js";
 
 // ── Config File Loading ─────────────────────────────────────────────────────
 
@@ -111,6 +112,22 @@ async function loadOrCreateIdentity(
   return identity;
 }
 
+// ── Webhook HTTP Client ─────────────────────────────────────────────────────
+
+function createWebhookHttpClient(): WebhookHttpClient {
+  return {
+    async post(url, body, headers) {
+      const res = await fetch(url, {
+        method: "POST",
+        headers,
+        body,
+        signal: AbortSignal.timeout(10_000), // 10s timeout
+      });
+      return { status: res.status };
+    },
+  };
+}
+
 // ── Module Wiring ───────────────────────────────────────────────────────────
 
 function createModules(
@@ -118,13 +135,15 @@ function createModules(
   identity: PrismIdentity,
   config: ResolvedRelayConfig,
 ): RelayModule[] {
+  const httpClient = createWebhookHttpClient();
+
   const factories: Record<string, () => RelayModule> = {
     "blind-mailbox": () => blindMailboxModule(),
     "relay-router": () => relayRouterModule(),
     "relay-timestamp": () => relayTimestampModule(identity),
     "blind-ping": () => blindPingModule(),
     "capability-tokens": () => capabilityTokenModule(identity),
-    "webhooks": () => webhookModule(),
+    "webhooks": () => webhookModule(httpClient),
     "sovereign-portals": () => sovereignPortalModule(),
     "collection-host": () => collectionHostModule(),
     "hashcash": () => hashcashModule({ bits: config.hashcashBits }),
@@ -171,7 +190,7 @@ async function bootstrapFederation(
       try {
         const res = await fetch(`${peer.url}/api/federation/announce`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", "X-Prism-CSRF": "1" },
           body: JSON.stringify({
             relayDid: relay.did,
             url: config.federation.publicUrl,
@@ -224,13 +243,24 @@ async function main(): Promise<void> {
   const relay = builder.build();
   await relay.start();
 
+  // ── Persistence ───────────────────────────────────────────────────────
+  const fileStore = createFileStore({ dataDir: config.dataDir });
+  fileStore.load(relay);
+  fileStore.startAutoSave(relay);
+  log.info("Persistence loaded", { dataDir: config.dataDir });
+
   // ── Start Server ──────────────────────────────────────────────────────
-  const server = createRelayServer({
+  const publicUrl = config.federation.publicUrl;
+  const serverOpts: import("./server/relay-server.js").RelayServerOptions = {
     relay,
     port: config.port,
     host: config.host,
     corsOrigins: config.corsOrigins,
-  });
+    maxBodySize: config.relay.maxEnvelopeSizeBytes,
+    disableCsrf: config.mode === "dev",
+  };
+  if (publicUrl !== undefined) serverOpts.publicUrl = publicUrl;
+  const server = createRelayServer(serverOpts);
   const info = await server.start();
 
   log.info("Relay listening", {
@@ -254,6 +284,9 @@ async function main(): Promise<void> {
   // ── Shutdown ──────────────────────────────────────────────────────────
   function shutdown(): void {
     log.info("Shutting down...");
+    // Save state before shutdown
+    fileStore.save(relay);
+    fileStore.dispose();
     info.close()
       .then(() => relay.stop())
       .then(() => {

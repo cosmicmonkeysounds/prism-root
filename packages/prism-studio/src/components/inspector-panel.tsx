@@ -5,9 +5,9 @@
  * inputs. Saves changes back through the kernel (with undo support).
  */
 
-import { useCallback } from "react";
+import { useState, useCallback } from "react";
 import type { EntityFieldDef } from "@prism/core/object-model";
-import { useKernel, useSelection, useObject } from "../kernel/index.js";
+import { useKernel, useSelection, useObject, useExpression } from "../kernel/index.js";
 
 // ── Field Renderer ──────────────────────────────────────────────────────────
 
@@ -497,6 +497,9 @@ export function InspectorPanel() {
           </div>
         </div>
 
+        {/* Expression */}
+        <ExpressionBar objectId={obj.id} />
+
         {/* Delete */}
         <button
           data-testid="delete-object-btn"
@@ -516,6 +519,97 @@ export function InspectorPanel() {
           Delete {def?.label ?? obj.type}
         </button>
       </div>
+    </div>
+  );
+}
+
+// ── Expression Bar ──────────────────────────────────────────────────────────
+
+function ExpressionBar({ objectId }: { objectId: string }) {
+  const { evaluate } = useExpression();
+  const [formula, setFormula] = useState("");
+  const [result, setResult] = useState<{ value: string; isError: boolean } | null>(null);
+
+  const handleEvaluate = useCallback(() => {
+    if (!formula.trim()) return;
+    const { result: val, errors } = evaluate(formula, objectId as Parameters<typeof evaluate>[1]);
+    if (errors.length > 0) {
+      setResult({ value: errors.join("; "), isError: true });
+    } else {
+      setResult({ value: String(val), isError: false });
+    }
+  }, [formula, evaluate, objectId]);
+
+  return (
+    <div style={{ marginBottom: 12 }} data-testid="expression-bar">
+      <div
+        style={{
+          fontSize: 10,
+          fontWeight: 600,
+          textTransform: "uppercase",
+          color: "#666",
+          marginBottom: 6,
+          letterSpacing: 0.5,
+        }}
+      >
+        Expression
+      </div>
+      <div style={{ display: "flex", gap: 4 }}>
+        <input
+          type="text"
+          value={formula}
+          onChange={(e) => setFormula(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") handleEvaluate();
+          }}
+          placeholder="e.g. position + 1"
+          data-testid="expression-input"
+          style={{
+            flex: 1,
+            padding: "4px 6px",
+            fontSize: 12,
+            background: "#1e1e1e",
+            border: "1px solid #444",
+            borderRadius: 3,
+            color: "#ccc",
+            outline: "none",
+            fontFamily: "monospace",
+          }}
+        />
+        <button
+          onClick={handleEvaluate}
+          data-testid="expression-eval-btn"
+          style={{
+            padding: "4px 8px",
+            fontSize: 11,
+            background: "#0e639c",
+            border: "1px solid #1177bb",
+            borderRadius: 3,
+            color: "#fff",
+            cursor: "pointer",
+          }}
+        >
+          Eval
+        </button>
+      </div>
+      {result && (
+        <div
+          data-testid="expression-result"
+          style={{
+            marginTop: 4,
+            padding: "4px 6px",
+            fontSize: 12,
+            fontFamily: "monospace",
+            background: result.isError ? "#3b1111" : "#1a2e1a",
+            border: `1px solid ${result.isError ? "#5c2020" : "#2d4a2d"}`,
+            borderRadius: 3,
+            color: result.isError ? "#f87171" : "#4ade80",
+          }}
+        >
+          {result.isError ? "Error: " : "= "}
+          {result.value}
+        </div>
+      )}
     </div>
   );
 }

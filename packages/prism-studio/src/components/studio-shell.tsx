@@ -11,6 +11,7 @@ import { ActivityBar, TabBar } from "@prism/core/shell";
 import { ObjectExplorer } from "./object-explorer.js";
 import { InspectorPanel } from "./inspector-panel.js";
 import { UndoStatusBar } from "./undo-status-bar.js";
+import { PresenceIndicator } from "./presence-indicator.js";
 
 export function StudioShell() {
   const { store, components } = useLensContext();
@@ -99,6 +100,7 @@ export function StudioShell() {
               alignItems: "center",
             }}
           >
+            <PresenceIndicator />
             <UndoStatusBar />
             {!panelLayout.sidebar && (
               <button

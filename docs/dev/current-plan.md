@@ -1341,6 +1341,148 @@ Integrated Prism Relay into Studio as a client-only consumer. Studio has NO serv
 | Playwright — Keyboard (updated) | 5 | Pass |
 | **Phase 30g Total** | **2084 Vitest + 92 E2E** | **All Pass** |
 
+## Phase 30h: Studio Tier 2 — Settings, View Modes, Presence (Complete)
+
+Surfaced Layer 1 systems that had kernel support but lacked UI: ConfigModel/ConfigRegistry, ViewRegistry, PresenceManager.
+
+### Completed
+
+- [x] **Settings Panel** (`settings-panel.tsx`) — 7th Studio lens (shortcut: ,)
+  - Category-grouped settings UI from ConfigRegistry (ui, editor, sync, ai, notifications)
+  - Search filter across label, key, and description
+  - Toggle switches for boolean settings, dropdowns for select, number/string inputs
+  - Setting keys shown in monospace, scope badges, description text
+- [x] **View Mode Switcher** in Object Explorer
+  - 4 view modes: list (default tree), kanban (columns by status), grid (card tiles), table (rows)
+  - Kanban columns grouped by `obj.status`, clickable cards to select
+  - Grid view with icon tiles, type labels, click to select
+  - Table view with name/type/status columns, click to select rows
+  - Search overrides view mode (shows search results regardless of active mode)
+  - View mode persists across lens switches
+- [x] **Presence Indicators** (`presence-indicator.tsx`) in shell header
+  - Colored avatar dots for local + remote peers
+  - Initial letter of display name, white border on local peer
+  - Peer count badge when remote peers present
+  - Reactive via `usePresence()` hook
+- [x] **Kernel Wiring** — ConfigRegistry, ConfigModel, PresenceManager, ViewRegistry
+  - `useConfig()`, `useConfigSettings()`, `usePresence()`, `useViewMode()` hooks
+  - ViewMode state with custom subscribe pattern for useSyncExternalStore
+  - dispose() cleans up presence, view mode listeners
+- [x] **E2E Tests** (28 new Playwright tests across 3 spec files)
+  - Settings panel: rendering, groups, search, toggle, KBar navigation (9 tests)
+  - View modes: switcher, kanban/grid/table rendering, click-to-select, persistence, search (14 tests)
+  - Presence: indicator rendering, local peer avatar, initial letter, border, color (5 tests)
+- [x] **Existing E2E updated** — shell (7 icons), tabs (7 lenses), keyboard (7 KBar actions)
+
+### Test Summary
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| Playwright — Settings Panel | 9 | Pass |
+| Playwright — View Modes | 14 | Pass |
+| Playwright — Presence | 5 | Pass |
+| Playwright — Shell (updated) | 8 | Pass |
+| Playwright — Tabs (updated) | 5 | Pass |
+| Playwright — Keyboard (updated) | 5 | Pass |
+| **Phase 30h Total** | **2089 Vitest + 120 E2E** | **All Pass** |
+
+## Phase 30i: Relay Hardening — SEO, Auth, Security, Persistence (Complete)
+
+Closed all identified gaps between SPEC.md and the Relay implementation. Updated SPEC.md to reflect Hono JSX architecture (not Next.js).
+
+### Completed
+
+- [x] **SPEC.md updated** — all Next.js references replaced with Hono JSX
+- [x] **SEO routes** (`seo-routes.ts`) — `GET /sitemap.xml` auto-generated from public portals, `GET /robots.txt` with crawler directives
+- [x] **OpenGraph meta tags** — portal HTML now includes `og:title`, `og:description`, `og:type`, `og:site_name`, Twitter Card tags, and JSON-LD structured data
+- [x] **Security middleware** (`middleware/security.ts`)
+  - CSRF protection: `X-Prism-CSRF` header required on all mutating `/api/*` requests (disabled in dev mode)
+  - Body size enforcement: rejects requests exceeding `maxEnvelopeSizeBytes` via Content-Length check
+  - Banned peer rejection: checks `X-Prism-DID` header against PeerTrustGraph
+  - CORS updated to allow `X-Prism-CSRF` and `X-Prism-DID` headers
+- [x] **OAuth/OIDC auth routes** (`auth-routes.ts`)
+  - `GET /api/auth/providers` — lists configured OAuth providers
+  - `GET /api/auth/google` + `POST /api/auth/callback/google` — Google OIDC flow
+  - `GET /api/auth/github` + `POST /api/auth/callback/github` — GitHub OAuth flow
+  - Session tokens issued as Prism capability tokens with configurable TTL
+- [x] **Blind Escrow key derivation** — `POST /api/auth/escrow/derive` (PBKDF2-SHA256-600k from password + OAuth salt) and `POST /api/auth/escrow/recover` with key hash matching
+- [x] **File-based persistence** (`persistence/file-store.ts`)
+  - JSON state file at `{dataDir}/relay-state.json`
+  - Persists portals, webhooks, templates, certificates, federation peers, flagged hashes, revoked tokens, collection CRDT snapshots
+  - Auto-save on configurable interval, save on shutdown
+  - Restore on startup
+- [x] **Webhook delivery** — `webhookModule()` now receives a real `WebhookHttpClient` in CLI mode that POSTs to registered URLs with 10s timeout
+- [x] **AutoREST API gateway** (`autorest-routes.ts`)
+  - `GET/POST /api/rest/:collectionId` — list/create objects
+  - `GET/PUT/DELETE /api/rest/:collectionId/:objectId` — CRUD
+  - Capability token auth with scope + permission checking
+  - Query params: `type`, `status`, `tag`, `limit`, `offset`
+  - Fires webhook events on create/update/delete
+- [x] **Safety routes** (`safety-routes.ts`)
+  - `POST /api/safety/report` — whistleblower packet submission
+  - `GET /api/safety/hashes` — list flagged toxic hashes
+  - `POST /api/safety/hashes` — import hashes from federated peer
+  - `POST /api/safety/check` — batch verify content hashes
+  - `POST /api/safety/gossip` — push toxic hashes to all federation peers
+- [x] **Blind Ping routes** (`ping-routes.ts`)
+  - `POST /api/pings/register` — register device token (APNs/FCM)
+  - `DELETE /api/pings/register/:did` — unregister
+  - `GET /api/pings/devices` — list registered devices
+  - `POST /api/pings/send` — send blind ping to DID
+  - `POST /api/pings/wake` — wake all devices for a DID
+  - `createPushPingTransport()` — concrete APNs/FCM transport
+
+### Test Summary
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| SEO Routes | 3 | Pass |
+| Security Middleware | 5 | Pass |
+| Auth Routes | 7 | Pass |
+| Safety Routes | 5 | Pass |
+| AutoREST Routes | 8 | Pass |
+| Ping Routes | 6 | Pass |
+| Relay Server Integration (updated) | 22 | Pass |
+| Existing (unchanged) | 2076 | Pass |
+| **Phase 30i Total** | **2132 Vitest + 120 E2E** | **All Pass** |
+
+## Phase 30j: Studio Tier 3 — Automation, Analysis, Expression (Complete)
+
+Wired three additional Layer 1 systems into Studio: AutomationEngine (trigger/condition/action rules), Graph Analysis (dependency graph, critical path, blocking chains, impact), and Expression Engine (formula evaluation).
+
+### Completed
+
+- [x] **Automation Panel** (`automation-panel.tsx`) — 8th Studio lens (shortcut: a)
+  - Create/edit/delete automation rules with trigger (manual/object lifecycle/cron) and action (notification/create/update/delete object) configuration
+  - Enable/disable toggle with reactive state updates
+  - Manual run button with notification feedback
+  - Run history tab with status badges (success/failed/skipped/partial)
+- [x] **Analysis Panel** (`analysis-panel.tsx`) — 9th Studio lens (shortcut: n)
+  - Critical Path tab: CPM plan with total duration, critical path nodes, all nodes with ES/EF/LS/LF/Float
+  - Cycles tab: dependency cycle detection
+  - Impact tab: blocking chain, downstream impact, slip impact calculator
+- [x] **Expression Bar** in Inspector Panel
+  - Formula evaluation against selected object fields
+  - Arithmetic, comparisons, logic, built-in functions (abs, ceil, floor, round, sqrt, pow, min, max, clamp)
+  - Error/success display
+- [x] **Kernel Wiring** — AutomationEngine, AutomationStore, ActionHandlerMap, graph analysis, expression evaluator
+  - `useAutomation()`, `useGraphAnalysis()`, `useExpression()` hooks
+  - Bus events → AutomationEngine for reactive triggers
+- [x] **E2E Tests** (25 new tests) + existing updated for 9 lenses
+
+### Test Summary
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| Playwright — Automation | 10 | Pass |
+| Playwright — Analysis | 9 | Pass |
+| Playwright — Expression | 6 | Pass |
+| Playwright — Shell (updated) | 8 | Pass |
+| Playwright — Tabs (updated) | 5 | Pass |
+| Playwright — Keyboard (updated) | 5 | Pass |
+| Vitest (unchanged) | 2123 | Pass |
+| **Phase 30j Total** | **2123 Vitest + 145 E2E** | **All Pass** |
+
 ## Phase 31: Ecosystem Apps — Lattice
 
 Game middleware suite: narrative, audio, entity authoring, world topology.

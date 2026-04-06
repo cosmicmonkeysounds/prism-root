@@ -109,6 +109,24 @@ const PortalPage: FC<{ snapshot: PortalSnapshot; wsUrl?: string | undefined; sho
         <title>{portal.name}</title>
         <meta name="generator" content="Prism Sovereign Portal" />
         <meta name="description" content={`${portal.name} — ${objectCount} objects`} />
+        {/* OpenGraph */}
+        <meta property="og:title" content={portal.name} />
+        <meta property="og:description" content={`${portal.name} — ${objectCount} objects. Level ${portal.level} Sovereign Portal.`} />
+        <meta property="og:type" content="website" />
+        <meta property="og:site_name" content="Prism Sovereign Portal" />
+        {/* Twitter Card */}
+        <meta name="twitter:card" content="summary" />
+        <meta name="twitter:title" content={portal.name} />
+        <meta name="twitter:description" content={`${portal.name} — ${objectCount} objects`} />
+        {/* Structured Data */}
+        <script type="application/ld+json">{JSON.stringify({
+          "@context": "https://schema.org",
+          "@type": "WebPage",
+          name: portal.name,
+          description: `${portal.name} — ${objectCount} objects`,
+          dateCreated: portal.createdAt,
+          dateModified: generatedAt,
+        })}</script>
         <PortalStyles />
       </head>
       <body>

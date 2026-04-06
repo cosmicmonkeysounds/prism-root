@@ -39,7 +39,7 @@ beforeAll(async () => {
     .build();
   await relay.start();
 
-  const server = createRelayServer({ relay, port: 0 });
+  const server = createRelayServer({ relay, port: 0, disableCsrf: true });
   const info = await server.start();
   serverPort = info.port;
   close = info.close;
@@ -198,5 +198,139 @@ describe("relay-server integration", () => {
     res = await fetch(url("/api/federation/peers"));
     const peers = await res.json() as Array<{ relayDid: string; url: string }>;
     expect(peers.some((p) => p.relayDid === "did:key:zPeerRelay")).toBe(true);
+  });
+
+  // ── Auth routes ──────────────────────────────────────────────────────
+
+  it("GET /api/auth/providers lists providers", async () => {
+    const res = await fetch(url("/api/auth/providers"));
+    expect(res.status).toBe(200);
+    const body = await res.json() as { providers: string[] };
+    expect(Array.isArray(body.providers)).toBe(true);
+  });
+
+  it("POST /api/auth/escrow/derive + recover round-trip", async () => {
+    let res = await post("/api/auth/escrow/derive", {
+      depositorId: "user-auth-integ",
+      password: "test-password-123",
+      oauthSalt: "google-salt-abc",
+      encryptedVaultKey: "encrypted-key-data",
+    });
+    expect(res.status).toBe(201);
+    const derived = await res.json() as { ok: boolean; depositId: string };
+    expect(derived.ok).toBe(true);
+
+    res = await post("/api/auth/escrow/recover", {
+      depositorId: "user-auth-integ",
+      password: "test-password-123",
+      oauthSalt: "google-salt-abc",
+    });
+    expect(res.status).toBe(200);
+    const recovered = await res.json() as { ok: boolean; encryptedVaultKey: string };
+    expect(recovered.ok).toBe(true);
+    expect(recovered.encryptedVaultKey).toBe("encrypted-key-data");
+  });
+
+  // ── Safety routes ────────────────────────────────────────────────────
+
+  it("POST /api/safety/report flags content", async () => {
+    const res = await post("/api/safety/report", {
+      contentHash: "abc123toxic",
+      category: "spam",
+      reportedBy: "did:key:zReporter",
+    });
+    expect(res.status).toBe(201);
+  });
+
+  it("GET /api/safety/hashes lists flagged hashes", async () => {
+    const res = await fetch(url("/api/safety/hashes"));
+    expect(res.status).toBe(200);
+    const body = await res.json() as { hashes: Array<{ hash: string }>; count: number };
+    expect(body.hashes.some((h) => h.hash === "abc123toxic")).toBe(true);
+  });
+
+  it("POST /api/safety/check verifies hashes", async () => {
+    const res = await post("/api/safety/check", { hashes: ["abc123toxic", "safe-hash"] });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { results: Record<string, boolean> };
+    expect(body.results["abc123toxic"]).toBe(true);
+    expect(body.results["safe-hash"]).toBe(false);
+  });
+
+  // ── AutoREST routes ──────────────────────────────────────────────────
+
+  it("AutoREST CRUD on collection", async () => {
+    // Create a collection first
+    await post("/api/collections", { id: "rest-col" });
+
+    // Issue a capability token for AutoREST access
+    const tokenRes = await post("/api/tokens/issue", {
+      subject: "*",
+      permissions: ["read", "write", "delete"],
+      scope: "*",
+    });
+    const token = await tokenRes.json() as Record<string, unknown>;
+    // Base64-encode the serialized token for Bearer header
+    const bearerToken = Buffer.from(JSON.stringify(token)).toString("base64");
+    const authHeaders = { "Content-Type": "application/json", Authorization: `Bearer ${bearerToken}` };
+
+    // Create an object via AutoREST
+    let res = await fetch(url("/api/rest/rest-col"), {
+      method: "POST",
+      headers: authHeaders,
+      body: JSON.stringify({ name: "REST Object", type: "task" }),
+    });
+    expect(res.status).toBe(201);
+    const created = await res.json() as { ok: boolean; objectId: string };
+    expect(created.ok).toBe(true);
+
+    // List objects
+    res = await fetch(url("/api/rest/rest-col"), { headers: { Authorization: `Bearer ${bearerToken}` } });
+    expect(res.status).toBe(200);
+    const list = await res.json() as { objects: Array<{ id: string }>; total: number };
+    expect(list.objects.length).toBeGreaterThanOrEqual(1);
+
+    // Get single object
+    res = await fetch(url(`/api/rest/rest-col/${created.objectId}`), { headers: { Authorization: `Bearer ${bearerToken}` } });
+    expect(res.status).toBe(200);
+
+    // Delete object
+    res = await fetch(url(`/api/rest/rest-col/${created.objectId}`), { method: "DELETE", headers: { Authorization: `Bearer ${bearerToken}` } });
+    expect(res.status).toBe(200);
+  });
+
+  // ── Ping routes ──────────────────────────────────────────────────────
+
+  it("POST /api/pings/register + GET /api/pings/devices", async () => {
+    let res = await post("/api/pings/register", {
+      did: "did:key:zPingUser",
+      token: "device-token-abc",
+      platform: "apns",
+    });
+    expect(res.status).toBe(201);
+
+    res = await fetch(url("/api/pings/devices"));
+    expect(res.status).toBe(200);
+    const body = await res.json() as { devices: Array<{ did: string }>; count: number };
+    expect(body.devices.some((d) => d.did === "did:key:zPingUser")).toBe(true);
+  });
+
+  // ── SEO routes ───────────────────────────────────────────────────────
+
+  it("GET /sitemap.xml returns valid XML", async () => {
+    const res = await fetch(url("/sitemap.xml"));
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toContain("<?xml");
+    expect(text).toContain("<urlset");
+    expect(text).toContain("/portals");
+  });
+
+  it("GET /robots.txt returns directives", async () => {
+    const res = await fetch(url("/robots.txt"));
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toContain("User-agent:");
+    expect(text).toContain("Disallow: /api/");
   });
 });
