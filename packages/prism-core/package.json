@@ -41,7 +41,12 @@
     "./presence": "./src/layer1/presence/index.ts",
     "./identity": "./src/layer1/identity/index.ts",
     "./encryption": "./src/layer1/encryption/index.ts",
-    "./vfs": "./src/layer1/vfs/index.ts"
+    "./vfs": "./src/layer1/vfs/index.ts",
+    "./relay": "./src/layer1/relay/index.ts",
+    "./actor": "./src/layer1/actor/index.ts",
+    "./syntax": "./src/layer1/syntax/index.ts",
+    "./session": "./src/layer1/session/index.ts",
+    "./trust": "./src/layer1/trust/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

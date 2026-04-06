@@ -708,3 +708,204 @@ export type {
   VfsManager,
   VfsManagerOptions,
 } from "./vfs/index.js";
+
+// ── Relay ───────────────────────────────────────────────────────────────────
+export {
+  RELAY_CAPABILITIES,
+  createRelayBuilder,
+  blindMailboxModule,
+  relayRouterModule,
+  relayTimestampModule,
+  blindPingModule,
+  capabilityTokenModule,
+  webhookModule,
+  sovereignPortalModule,
+  createMemoryPingTransport,
+} from "./relay/index.js";
+
+export type {
+  WebhookHttpClient,
+  RelayEnvelope,
+  BlindMailbox,
+  RelayRouter,
+  RouteResult,
+  RelayTimestamper,
+  TimestampReceipt,
+  BlindPinger,
+  BlindPing,
+  PingTransport,
+  CapabilityToken,
+  CapabilityTokenManager,
+  WebhookConfig,
+  WebhookPayload,
+  WebhookDelivery,
+  WebhookEmitter,
+  PortalLevel,
+  PortalManifest,
+  PortalRegistry,
+  RelayModule,
+  RelayContext,
+  RelayConfig,
+  RelayInstance,
+  RelayBuilder,
+  RelayBuilderOptions,
+} from "./relay/index.js";
+
+// ── Actor System ───────────────────────────────────────────────────────────
+export {
+  DEFAULT_CAPABILITY_SCOPE,
+  createProcessQueue,
+  createLuaActorRuntime,
+  createSidecarRuntime,
+  createTestRuntime,
+} from "./actor/index.js";
+
+export type {
+  ExecutionTarget,
+  CapabilityScope,
+  TaskStatus,
+  ProcessTask,
+  RuntimeResult,
+  ActorRuntime,
+  QueueEventType,
+  QueueEvent,
+  QueueListener,
+  ProcessQueue,
+  ProcessQueueOptions,
+  LuaPayload,
+  SidecarPayload,
+  SidecarExecutor,
+} from "./actor/index.js";
+
+// ── Intelligence Layer ─────────────────────────────────────────────────────
+export {
+  createAiProviderRegistry,
+  createOllamaProvider,
+  createExternalProvider,
+  createContextBuilder,
+  createTestAiProvider,
+} from "./actor/index.js";
+
+// ── Syntax Engine ──────────────────────────────────────────────────────────
+export {
+  FIELD_TYPE_MAP,
+  BUILTIN_FUNCTIONS,
+  inferNodeType,
+  createExpressionProvider,
+  generateLuaTypeDef,
+  createSyntaxEngine,
+} from "./syntax/index.js";
+
+export type {
+  DiagnosticSeverity,
+  TextRange,
+  Diagnostic,
+  CompletionKind,
+  CompletionItem,
+  HoverInfo,
+  FieldTypeMapping,
+  TypeInfo,
+  SchemaContext,
+  LuaTypeDef,
+  FunctionSignature,
+  SyntaxProvider,
+  SyntaxEngineOptions,
+  SyntaxEngine,
+} from "./syntax/index.js";
+
+export type {
+  AiRole,
+  AiMessage,
+  AiCompletionRequest,
+  AiCompletion,
+  InlineCompletionRequest,
+  InlineCompletion,
+  ObjectContext,
+  AiProvider,
+  AiProviderRegistry,
+  OllamaProviderOptions,
+  ExternalProviderOptions,
+  ContextBuilderOptions,
+  AiHttpClient,
+} from "./actor/index.js";
+
+// ── Communication Fabric ───────────────────────────────────────────────────
+export {
+  createTranscriptTimeline,
+  createPlaybackController,
+  createTestTransport,
+  createTestTranscriptionProvider,
+  createSessionManager,
+} from "./session/index.js";
+
+export type {
+  TestTranscriptionProvider,
+} from "./session/index.js";
+
+export type {
+  SessionStatus,
+  ParticipantRole,
+  MediaKind,
+  SessionParticipant,
+  TranscriptSegment,
+  TranscriptTimeline,
+  TrackState,
+  MediaTrack,
+  PlaybackController,
+  PlaybackListener,
+  TransportKind,
+  SessionTransport,
+  TransportEventType,
+  TransportEvent,
+  TransportEventListener,
+  TranscriptionProvider,
+  TranscriptionOptions,
+  DelegationStatus,
+  DelegationRequest,
+  DelegationListener,
+  SessionChangeType,
+  SessionChangeListener,
+  SessionManagerOptions,
+  SessionConfig,
+  SessionManager,
+} from "./session/index.js";
+
+// ── Trust & Safety ─────────────────────────────────────────────────────────
+export {
+  createLuaSandbox,
+  createSchemaValidator,
+  createHashcashMinter,
+  createHashcashVerifier,
+  createPeerTrustGraph,
+  createShamirSplitter,
+  createEscrowManager,
+} from "./trust/index.js";
+
+export type {
+  SandboxCapability,
+  SandboxPolicy,
+  SandboxViolation,
+  LuaSandbox,
+  SchemaValidationSeverity,
+  SchemaValidationIssue,
+  SchemaValidationResult,
+  SchemaValidationRule,
+  SchemaValidator,
+  SchemaValidatorOptions,
+  HashcashChallenge,
+  HashcashProof,
+  HashcashMinter,
+  HashcashVerifier,
+  TrustLevel,
+  PeerReputation,
+  ContentHash,
+  TrustGraphEvent,
+  TrustGraphListener,
+  PeerTrustGraph,
+  TrustGraphOptions,
+  ShamirShare,
+  ShamirConfig,
+  ShamirSplitter,
+  EscrowDeposit,
+  EscrowManager,
+} from "./trust/index.js";
