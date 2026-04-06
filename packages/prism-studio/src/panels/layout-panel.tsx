@@ -5,8 +5,7 @@
 
 import { useMemo } from "react";
 import { Puck, type Config } from "@measured/puck";
-import { createPuckLoroBridge } from "@prism/core/layer2/puck/loro-puck-bridge";
-import { usePuckLoro } from "@prism/core/layer2/puck/use-puck-loro";
+import { createPuckLoroBridge, usePuckLoro } from "@prism/core/puck";
 
 /**
  * Minimal Puck component config.

@@ -1114,6 +1114,35 @@ Operational hub: productivity, finance, CRM, goals, inventory.
 | Edge Cases | 2 | Pass |
 | **Phase 30 Total** | **38** | **All Pass** |
 
+## Phase 30b: Studio Kernel — Page Builder Wiring (Complete)
+
+Wire all Layer 1 systems into Prism Studio, transforming the demo shell into a real page builder.
+
+### Completed
+
+- [x] `StudioKernel` — singleton factory wiring ObjectRegistry + CollectionStore + PrismBus + AtomStore + ObjectAtomStore + UndoRedoManager + NotificationStore
+- [x] `entities.ts` — 8 entity types (folder, page, section, heading, text-block, image, button, card), 4 category containment rules, 2 edge types
+- [x] `kernel-context.tsx` — React context + hooks: useKernel, useSelection, useObjects, useObject, useUndo, useNotifications (all useSyncExternalStore)
+- [x] `StudioShell` — custom shell with real ObjectExplorer sidebar + InspectorPanel + UndoStatusBar
+- [x] `ObjectExplorer` — hierarchical tree from CollectionStore, click-to-select, "New Page" creation
+- [x] `InspectorPanel` — schema-driven property editor from ObjectRegistry EntityDef fields, grouped fields, Add Child, Delete
+- [x] `NotificationToast` — auto-dismissing toast overlay from NotificationStore
+- [x] `UndoStatusBar` — undo/redo buttons wired to UndoRedoManager
+- [x] CRUD with undo: createObject, updateObject, deleteObject, createEdge, deleteEdge all push undo snapshots
+- [x] Bus → AtomStore → React reactivity chain fully connected
+- [x] Seed demo data (Home/About pages with sections, heading, text-block)
+- [x] KBar undo/redo actions + Cmd+Z/Cmd+Shift+Z keyboard shortcuts
+- [x] All panels updated: CRDT panel shows CollectionStore, Graph panel renders real objects, Editor uses kernel context
+- [x] `data-testid` attributes on all interactive elements for Playwright
+
+### Test Summary
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| Vitest (studio-kernel) | 18 | Pass |
+| Playwright (studio-kernel) | 18 | Written |
+| **Phase 30b Total** | **18 Vitest + 18 E2E** | **All Pass** |
+
 ## Phase 31: Ecosystem Apps — Lattice
 
 Game middleware suite: narrative, audio, entity authoring, world topology.

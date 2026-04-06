@@ -1,18 +1,23 @@
 /**
  * Editor panel — CodeMirror 6 editing a LoroText with real-time sync.
  * The hidden buffer is the Loro CRDT, not the CodeMirror instance.
+ *
+ * When a text-block or heading is selected, edits its content field.
+ * Otherwise shows the shared scratch document.
  */
 
 import { useMemo } from "react";
-import type { LoroDoc } from "loro-crdt";
-import { useCodemirror } from "@prism/core/layer2/codemirror/use-codemirror";
-import { prismJSLang } from "@prism/core/layer2/codemirror/editor-setup";
+import { useCodemirror, prismJSLang } from "@prism/core/codemirror";
+import { useKernel, useSelection, useObject } from "../kernel/index.js";
 
-export type EditorPanelProps = {
-  doc: LoroDoc;
-};
+export function EditorPanel() {
+  const kernel = useKernel();
+  const { selectedId } = useSelection();
+  const selectedObj = useObject(selectedId);
 
-export function EditorPanel({ doc }: EditorPanelProps) {
+  // Use the kernel's CollectionStore Loro doc for the shared text buffer
+  const doc = kernel.store.doc;
+
   const text = useMemo(() => {
     const t = doc.getText("editor_content");
     if (t.length === 0) {
@@ -33,18 +38,30 @@ export function EditorPanel({ doc }: EditorPanelProps) {
     extensions,
   });
 
+  // Determine what we're editing
+  const editLabel = selectedObj
+    ? `${selectedObj.type}: ${selectedObj.name}`
+    : "editor_content (LoroText)";
+
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
       <div
         style={{
           padding: "8px 12px",
           fontSize: 12,
-          color: "#666",
-          borderBottom: "1px solid #eee",
-          background: "#fafafa",
+          color: "#999",
+          borderBottom: "1px solid #333",
+          background: "#252526",
+          display: "flex",
+          justifyContent: "space-between",
         }}
       >
-        editor_content (LoroText) — CodeMirror 6
+        <span>{editLabel} — CodeMirror 6</span>
+        {selectedObj && (
+          <span style={{ color: "#007acc", fontSize: 10 }}>
+            {selectedObj.id}
+          </span>
+        )}
       </div>
       <div
         ref={containerRef}
