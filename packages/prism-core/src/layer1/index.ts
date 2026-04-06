@@ -552,3 +552,78 @@ export type {
   TimerProvider,
   NotificationQueue,
 } from "./notification/index.js";
+
+// ── Activity Log ──────────────────────────────────────────────────────────
+export {
+  createActivityStore,
+  createActivityTracker,
+  formatActivity,
+  formatFieldName,
+  formatFieldValue,
+  groupActivityByDate,
+} from "./activity/index.js";
+
+export type {
+  ActivityVerb,
+  FieldChange,
+  ActivityEvent,
+  ActivityEventInput,
+  ActivityDescription,
+  ActivityGroup,
+  ActivityStoreOptions,
+  ActivityListener,
+  ActivityStore,
+  TrackableStore,
+  ActivityTrackerOptions,
+  ActivityTracker,
+} from "./activity/index.js";
+
+// ── Batch Operations ──────────────────────────────────────────────────────
+export { createBatchTransaction } from "./batch/index.js";
+
+export type {
+  BatchTransaction,
+  BatchTransactionOptions,
+  BatchOp,
+  CreateObjectOp,
+  UpdateObjectOp,
+  DeleteObjectOp,
+  MoveObjectOp,
+  CreateEdgeOp,
+  UpdateEdgeOp,
+  DeleteEdgeOp,
+  BatchResult,
+  BatchProgress,
+  BatchProgressCallback,
+  BatchValidationError,
+  BatchValidationResult,
+  BatchExecuteOptions,
+} from "./batch/index.js";
+
+// ── Clipboard ─────────────────────────────────────────────────────────────
+export { createTreeClipboard } from "./clipboard/index.js";
+
+export type {
+  TreeClipboard,
+  TreeClipboardOptions,
+  SerializedSubtree,
+  ClipboardEntry,
+  ClipboardMode,
+  PasteOptions,
+  PasteResult,
+} from "./clipboard/index.js";
+
+// ── Template System ───────────────────────────────────────────────────────
+export { createTemplateRegistry } from "./template/index.js";
+
+export type {
+  TemplateRegistry,
+  TemplateRegistryOptions,
+  TemplateVariable,
+  TemplateNode,
+  TemplateEdge,
+  ObjectTemplate,
+  TemplateFilter,
+  InstantiateOptions,
+  InstantiateResult,
+} from "./template/index.js";

@@ -633,20 +633,52 @@ Audit trail of GraphObject mutations with actor/timestamp. All pure TypeScript, 
 | Vitest (activity-formatter) | 51 | Pass |
 | **Phase 16 Total** | **93** | **All Pass** |
 
-## Next: Phase 17
+## Phase 17: Batch Operations, Clipboard, Templates (Complete)
 
-Candidates:
-- Batch Operations (bulk create/update/delete with undo support)
-- Clipboard / Drag-and-Drop (tree clipboard with cut/copy/paste, drag reorder)
-- Template System (object templates, instantiation, template registry)
-- Federation (cross-Node object addressing, federated edges)
-- Ephemeral Presence (RAM-only cursor/selection state for connected peers)
+Utility Layer 1 systems for bulk manipulation and reuse. All pure TypeScript, zero React.
+
+### Completed
+
+- [x] **Batch Operations** (`layer1/batch/`)
+  - `BatchOp` — 7 operation kinds: create-object, update-object, delete-object, move-object, create-edge, update-edge, delete-edge
+  - `createBatchTransaction(options)` — collect ops, validate, execute atomically
+  - `validate()` — pre-flight checks (missing IDs, types, EdgeModel presence)
+  - `execute(options?)` — apply all mutations, push single undo entry, rollback on failure
+  - `BatchProgressCallback` — called before each op with current/total/op
+  - Undo integration: entire batch = one UndoRedoManager.push() call
+- [x] **Clipboard** (`layer1/clipboard/`)
+  - `createTreeClipboard(options)` — cut/copy/paste for GraphObject subtrees
+  - `copy(ids)` — deep-clone subtrees with descendants + internal edges
+  - `cut(ids)` — copy + delete sources on paste (one-time)
+  - `paste(options?)` — remap all IDs, reattach under target parent, recreate internal edges
+  - `SerializedSubtree` — portable snapshot: root + descendants + internalEdges
+  - `PasteResult` — created objects, created edges, oldId→newId map
+  - Single undo entry for paste (includes cut deletions)
+- [x] **Template System** (`layer1/template/`)
+  - `createTemplateRegistry(options)` — catalog of reusable ObjectTemplates
+  - `ObjectTemplate` — blueprint: root TemplateNode tree + TemplateEdge[] + TemplateVariable[]
+  - `register(template)` / `unregister(id)` / `list(filter?)` — CRUD with category/type/search filtering
+  - `instantiate(templateId, options?)` — create live objects from template with variable interpolation
+  - `createFromObject(objectId, meta)` — snapshot existing subtree as reusable template (round-trip capable)
+  - Variable interpolation: `{{name}}`, `{{date}}` in name, description, status, data string values
+  - Undo integration: single entry for entire instantiation
+
+### Axed from Phase 18 Draft
+
+Phase 18's draft content has been promoted to Phase 17 and completed. The remaining phases (19+) retain their numbering.
+
+### Test Summary
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| Vitest (batch-transaction) | 24 | Pass |
+| Vitest (tree-clipboard) | 21 | Pass |
+| Vitest (template-registry) | 28 | Pass |
+| **Phase 17 Total** | **73** | **All Pass** |
 
 ---
 
-## Phase 18: Batch Operations, Clipboard, Templates
-
-Utility Layer 1 systems for bulk manipulation and reuse.
+## Next: Phase 18
 
 - [ ] **Batch Operations** (`layer1/batch/`)
   - [ ] `BatchTransaction` — collect multiple object/edge mutations into a single atomic unit

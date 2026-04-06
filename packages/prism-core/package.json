@@ -34,7 +34,10 @@
     "./discovery": "./src/layer1/discovery/index.ts",
     "./view": "./src/layer1/view/index.ts",
     "./notification": "./src/layer1/notification/index.ts",
-    "./activity": "./src/layer1/activity/index.ts"
+    "./activity": "./src/layer1/activity/index.ts",
+    "./batch": "./src/layer1/batch/index.ts",
+    "./clipboard": "./src/layer1/clipboard/index.ts",
+    "./template": "./src/layer1/template/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
