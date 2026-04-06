@@ -1014,16 +1014,26 @@ The Sovereign Immune System — sandbox, spam protection, content trust.
 | Escrow Manager | 7 | Pass |
 | **Phase 27 Total** | **53** | **All Pass** |
 
-## Phase 28: Builder 3 (3D Viewport)
+## Phase 28: Builder 3 (3D Viewport) (Complete — Layer 2)
 
 R3F-based 3D editor for spatial content.
 
-- [ ] **3D Viewport** (`layer2/viewport3d/`)
-  - [ ] R3F + @react-three/drei scene graph
-  - [ ] OpenCASCADE.js for CAD geometry (STEP/IGES import)
-  - [ ] TSL shader compilation (Three.js Shading Language → WebGPU/WebGL)
-  - [ ] Loro-backed scene state: object transforms, materials, hierarchy in CRDT
-  - [ ] Gizmo controls: translate, rotate, scale with undo integration
+- [x] **3D Viewport** (`layer2/viewport3d/`)
+  - [x] R3F + @react-three/drei scene graph (types, SceneNode/SceneGraph model)
+  - [x] OpenCASCADE.js for CAD geometry (STEP/IGES import, tessellation, bounding box, mesh merge)
+  - [x] TSL shader compilation (Three.js Shading Language → WebGPU/WebGL, node graph → GLSL)
+  - [x] Loro-backed scene state: object transforms, materials, hierarchy in CRDT
+  - [x] Gizmo controls: translate, rotate, scale with undo integration
+
+### Test Summary
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| Scene State | 19 | Pass |
+| CAD Geometry | 15 | Pass |
+| TSL Compiler | 19 | Pass |
+| Gizmo Controls | 18 | Pass |
+| **Phase 28 Total** | **71** | **All Pass** |
 
 ## Phase 29: NLE / Timeline System (Grip) (Complete — Layer 1)
 
@@ -1039,10 +1049,17 @@ Non-linear editing and show control for live production.
   - [x] Tempo map (PPQN): dual time model (seconds ↔ bar/beat/tick), tempo automation, time signature changes
   - [x] Event system: 14 event kinds with subscribe/unsubscribe
   - [x] Reference: OpenDAW SDK (naomiaro/opendaw-test) for Layer 2 audio integration
-- [ ] **Audio Pipeline** (Layer 2 — future)
-  - [ ] OpenDAW SDK / @elemaudio/core for DSP graph
-  - [ ] peaks.js / waveform-playlist for waveform rendering
-  - [ ] WAM (Web Audio Modules) standard for VST-like plugins
+- [x] **Audio Pipeline** (`layer2/audio/`) — OpenDAW SDK bridge
+  - [x] `createOpenDawBridge()` — bidirectional sync between Prism timeline and OpenDAW engine
+  - [x] Track loading: AudioFileBox, AudioRegionBox, PPQN conversion, sample provider
+  - [x] Transport sync: AnimationFrame position → Prism scrub, timeline events → OpenDAW play/stop
+  - [x] 10 audio effects via EffectFactories (Reverb, Compressor, Delay, Crusher, EQ, etc.)
+  - [x] Volume/pan/mute/solo per-track control
+  - [x] Export: full mix and individual stems to WAV via AudioOfflineRenderer
+  - [x] React hooks: useOpenDawBridge, usePlaybackPosition, useTransportControls, useTrackEffects
+  - [x] Reference fork: cosmicmonkeysounds/opendaw-prism
+  - [ ] peaks.js / waveform-playlist for waveform rendering (future)
+  - [ ] WAM (Web Audio Modules) standard for VST-like plugins (future)
 - [ ] **Video Pipeline** (Layer 2 — future)
   - [ ] WebCodecs API for frame-accurate seeking
   - [ ] Proxy workflow: low-res edit → full-res export
@@ -1068,16 +1085,34 @@ Non-linear editing and show control for live production.
 | TempoMap | 10 | Pass |
 | **Phase 29 Total** | **67** | **All Pass** |
 
-## Phase 30: Ecosystem Apps — Flux
+## Phase 30: Ecosystem Apps — Flux (Complete — Layer 1 Domain Schemas)
 
 Operational hub: productivity, finance, CRM, goals, inventory.
 
-- [ ] **Flux App** (`packages/prism-flux/`)
+- [x] **Flux Domain Schemas** (`layer1/flux/`)
+  - [x] 11 EntityDef schemas: Task, Project, Goal, Milestone, Contact, Organization, Transaction, Account, Invoice, Item, Location
+  - [x] 4 categories: productivity, people, finance, inventory
+  - [x] 7 edge types: assigned-to, depends-on, blocks, belongs-to, related-to, invoiced-to, stored-at
+  - [x] 8 automation presets: task completion timestamps, recurring task reset, overdue notifications, invoice overdue, low/out-of-stock alerts, goal progress tracking, project completion
+  - [x] Computed fields: invoice tax/total, item stock value, goal progress formulas
+  - [x] CRM fields on Contact: deal value, deal stage pipeline (prospect→closed)
+  - [x] Import/export: CSV and JSON with field selection
+  - [x] NSIDs for all entity and edge types (io.prismapp.flux.*)
+- [ ] **Flux App** (`packages/prism-flux/` — future)
   - [ ] Lens plugins: Tasks, Contacts, Projects, Goals, Finance, Inventory
-  - [ ] EntityDef schemas for each domain (via ObjectRegistry)
-  - [ ] Automation presets: task deadlines, recurring reminders, status workflows
   - [ ] Dashboard views: kanban, calendar, timeline per entity type
-  - [ ] Import/export: CSV, JSON for migration from legacy tools
+
+### Test Summary
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| Entity Definitions | 12 | Pass |
+| Edge Definitions | 7 | Pass |
+| Automation Presets | 5 | Pass |
+| CSV Export/Import | 6 | Pass |
+| JSON Export/Import | 4 | Pass |
+| Edge Cases | 2 | Pass |
+| **Phase 30 Total** | **38** | **All Pass** |
 
 ## Phase 31: Ecosystem Apps — Lattice
 

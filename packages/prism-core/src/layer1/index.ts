@@ -944,3 +944,31 @@ export type {
   EscrowDeposit,
   EscrowManager,
 } from "./trust/index.js";
+
+// ── Flux Domain ───────────────────────────────────────────────────────────
+export {
+  FLUX_CATEGORIES,
+  FLUX_TYPES,
+  FLUX_EDGES,
+  TASK_STATUSES,
+  PROJECT_STATUSES,
+  GOAL_STATUSES,
+  TRANSACTION_TYPES,
+  CONTACT_TYPES,
+  INVOICE_STATUSES,
+  ITEM_STATUSES,
+  createFluxRegistry,
+} from "./flux/index.js";
+
+export type {
+  FluxCategory,
+  FluxEntityType,
+  FluxEdgeType,
+  FluxAutomationPreset,
+  FluxTriggerKind,
+  FluxAutomationAction,
+  FluxExportFormat,
+  FluxExportOptions,
+  FluxImportResult,
+  FluxRegistry,
+} from "./flux/index.js";
