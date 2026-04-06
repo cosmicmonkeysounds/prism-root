@@ -4,6 +4,8 @@ import {
   resolveIdentity,
   signPayload,
   verifySignature,
+  exportIdentity,
+  importIdentity,
   createMultiSigConfig,
   createPartialSignature,
   assembleMultiSignature,
@@ -184,6 +186,63 @@ describe("resolveIdentity", () => {
     await expect(resolveIdentity("did:btcr:abc123" as DID)).rejects.toThrow(
       "Unsupported DID method",
     );
+  });
+});
+
+// ── Identity Persistence ─────────────────────────────────────────────────────
+
+describe("identity persistence", () => {
+  it("round-trips an identity through export/import", async () => {
+    const original = await createIdentity({ method: "key" });
+    const exported = await exportIdentity(original);
+
+    expect(exported.did).toBe(original.did);
+    expect(exported.privateKeyJwk.kty).toBe("OKP");
+    expect(exported.publicKeyJwk.kty).toBe("OKP");
+    expect(typeof exported.createdAt).toBe("string");
+
+    const restored = await importIdentity(exported);
+    expect(restored.did).toBe(original.did);
+    expect(restored.keyHandle.publicKeyBytes).toEqual(original.keyHandle.publicKeyBytes);
+  });
+
+  it("restored identity can sign and original can verify", async () => {
+    const original = await createIdentity({ method: "key" });
+    const exported = await exportIdentity(original);
+    const restored = await importIdentity(exported);
+
+    const data = new TextEncoder().encode("persistence-test");
+    const sig = await restored.signPayload(data);
+    const valid = await original.verifySignature(data, sig);
+    expect(valid).toBe(true);
+  });
+
+  it("original identity can sign and restored can verify", async () => {
+    const original = await createIdentity({ method: "key" });
+    const exported = await exportIdentity(original);
+    const restored = await importIdentity(exported);
+
+    const data = new TextEncoder().encode("reverse-test");
+    const sig = await original.signPayload(data);
+    const valid = await restored.verifySignature(data, sig);
+    expect(valid).toBe(true);
+  });
+
+  it("exported identity is JSON-serializable", async () => {
+    const identity = await createIdentity({ method: "key" });
+    const exported = await exportIdentity(identity);
+
+    const json = JSON.stringify(exported);
+    const parsed = JSON.parse(json);
+    const restored = await importIdentity(parsed);
+
+    expect(restored.did).toBe(identity.did);
+
+    // Verify signing still works after JSON round-trip
+    const data = new TextEncoder().encode("json-round-trip");
+    const sig = await restored.signPayload(data);
+    const valid = await identity.verifySignature(data, sig);
+    expect(valid).toBe(true);
   });
 });
 

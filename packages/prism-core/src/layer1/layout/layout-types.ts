@@ -27,18 +27,18 @@ export interface PageModelOptions<TTarget> {
 export type SelectionEvent = { selected: ReadonlySet<string>; primary: string | null };
 export type SelectionListener = (event: SelectionEvent) => void;
 
-export type WorkspaceSlotEvent<TTarget> =
+export type LensSlotEvent<TTarget> =
   | { kind: "navigated"; target: TTarget; page: PageModel<TTarget> }
   | { kind: "back"; target: TTarget; page: PageModel<TTarget> }
   | { kind: "forward"; target: TTarget; page: PageModel<TTarget> };
 
-export type WorkspaceSlotListener<TTarget> = (event: WorkspaceSlotEvent<TTarget>) => void;
+export type LensSlotListener<TTarget> = (event: LensSlotEvent<TTarget>) => void;
 
-export type WorkspaceManagerEvent =
+export type LensManagerEvent =
   | { kind: "slot-opened"; slotId: string }
   | { kind: "slot-closed"; slotId: string }
   | { kind: "slot-focused"; slotId: string };
 
-export type WorkspaceManagerListener = (
-  event: WorkspaceManagerEvent,
+export type LensManagerListener = (
+  event: LensManagerEvent,
 ) => void;

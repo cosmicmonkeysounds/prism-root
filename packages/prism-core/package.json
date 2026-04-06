@@ -14,7 +14,7 @@
     "./graph": "./src/layer2/graph/index.ts",
     "./machines": "./src/layer1/machines/index.ts",
     "./object-model": "./src/layer1/object-model/index.ts",
-    "./workspace": "./src/layer1/workspace/index.ts",
+    "./lens": "./src/layer1/lens/index.ts",
     "./shell": "./src/layer2/shell/index.ts",
     "./input": "./src/layer1/input/index.ts",
     "./forms": "./src/layer1/forms/index.ts",

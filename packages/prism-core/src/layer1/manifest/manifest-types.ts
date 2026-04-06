@@ -1,5 +1,5 @@
 /**
- * Prism Manifest types — the on-disk definition file for a workspace.
+ * Prism Manifest types — the on-disk definition file for a vault.
  *
  * ## Glossary (from SPEC.md)
  *
@@ -12,8 +12,7 @@
  *                  reference the same collection.
  *
  *   Manifest    — A YAML/JSON file containing weak references to Collections.
- *                  A "workspace" in user-facing terms is just a Manifest —
- *                  it points to data nodes, it does not contain them.
+ *                  It points to data nodes, it does not contain them.
  *                  Example: a "JJM Productions" manifest in Flux points to
  *                  Contacts, Projects, and Tasks collections. A personal and
  *                  a professional manifest can both point to the same Contacts

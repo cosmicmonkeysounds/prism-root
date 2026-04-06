@@ -2,8 +2,6 @@
  * Shell Store — Zustand vanilla store for IDE shell state.
  *
  * Manages tabs, active tab, and panel layout for the editor shell.
- * This is UI infrastructure, NOT the spec's "Workspace" (Manifest
- * pointing to Collections). See SPEC.md §234.
  *
  * Follows the same factory function pattern as createCrdtStore()
  * and createGraphStore().

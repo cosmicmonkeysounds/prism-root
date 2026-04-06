@@ -33,3 +33,4 @@ target/
 $legacy-inspiration-only
 .claude
 .husky
+test-results

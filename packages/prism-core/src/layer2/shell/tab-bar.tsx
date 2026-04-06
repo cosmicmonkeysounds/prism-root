@@ -3,7 +3,7 @@
  */
 
 import { useLensContext, useShellStore } from "./lens-context.js";
-import type { TabEntry } from "../../layer1/workspace/index.js";
+import type { TabEntry } from "../../layer1/lens/index.js";
 
 function Tab({
   tab,

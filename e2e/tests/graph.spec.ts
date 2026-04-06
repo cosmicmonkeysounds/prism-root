@@ -18,25 +18,27 @@ test.describe("Phase 3: The Graph", () => {
     const flow = page.locator(".react-flow");
     await expect(flow).toBeVisible({ timeout: 10_000 });
 
+    // Seed data: Home, Hero, Content, Main Heading, Intro Text, About = 6 nodes
     const nodes = page.locator(".react-flow__node");
-    await expect(nodes).toHaveCount(3, { timeout: 5_000 });
+    await expect(nodes).toHaveCount(6, { timeout: 5_000 });
   });
 
   test("should display seed edges in the graph", async ({ page }) => {
     const flow = page.locator(".react-flow");
     await expect(flow).toBeVisible({ timeout: 10_000 });
 
+    // Parent-child edges: Home->Hero, Home->Content, Content->Main Heading, Content->Intro Text = 4
     const edges = page.locator(".react-flow__edge");
-    await expect(edges).toHaveCount(2, { timeout: 5_000 });
+    await expect(edges).toHaveCount(4, { timeout: 5_000 });
   });
 
-  test("should render custom node content", async ({ page }) => {
+  test("should render node content", async ({ page }) => {
     const flow = page.locator(".react-flow");
     await expect(flow).toBeVisible({ timeout: 10_000 });
 
-    await expect(page.locator(".prism-node-header").first()).toBeVisible({
-      timeout: 5_000,
-    });
+    // Nodes have labels with object names
+    const nodes = page.locator(".react-flow__node");
+    await expect(nodes.first()).toBeVisible({ timeout: 5_000 });
   });
 
   test("should navigate to Graph tab via KBar", async ({ page }) => {

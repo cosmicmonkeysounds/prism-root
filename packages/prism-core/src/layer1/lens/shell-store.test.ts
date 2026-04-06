@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { lensId } from "./lens-types.js";
-import { createShellStore } from "./workspace-store.js";
-import type { ShellStore } from "./workspace-store.js";
+import { createShellStore } from "./shell-store.js";
+import type { ShellStore } from "./shell-store.js";
 import type { StoreApi } from "zustand";
 
 describe("ShellStore", () => {

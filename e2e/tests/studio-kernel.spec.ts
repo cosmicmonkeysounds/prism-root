@@ -10,8 +10,8 @@ test.describe("Studio Kernel: Object Explorer", () => {
     await expect(explorer).toBeVisible();
 
     // Seed data includes at least "Home" and "About" pages
-    await expect(explorer.locator("text=Home")).toBeVisible();
-    await expect(explorer.locator("text=About")).toBeVisible();
+    await expect(explorer.locator('[data-testid^="explorer-node-"]', { hasText: "Home" }).first()).toBeVisible();
+    await expect(explorer.locator('[data-testid^="explorer-node-"]', { hasText: "About" }).first()).toBeVisible();
   });
 
   test("clicking an object in the explorer selects it", async ({ page }) => {
@@ -39,7 +39,7 @@ test.describe("Studio Kernel: Object Explorer", () => {
 
     // The new page should appear in the explorer
     const explorer = page.locator('[data-testid="object-explorer"]');
-    await expect(explorer.locator("text=New Page")).toBeVisible();
+    await expect(explorer.locator('[data-testid^="explorer-node-"]', { hasText: "New Page" }).first()).toBeVisible();
   });
 });
 
@@ -136,14 +136,14 @@ test.describe("Studio Kernel: Undo/Redo", () => {
     const createBtn = page.locator('[data-testid="create-page-btn"]');
 
     await createBtn.click();
-    await expect(explorer.locator("text=New Page")).toBeVisible();
+    await expect(explorer.locator('[data-testid^="explorer-node-"]', { hasText: "New Page" }).first()).toBeVisible();
 
     // Undo the creation
     const undoBtn = page.locator('[data-testid="undo-btn"]');
     await undoBtn.click();
 
     // The new page should be gone
-    await expect(explorer.locator("text=New Page")).not.toBeVisible();
+    await expect(explorer.locator('[data-testid^="explorer-node-"]', { hasText: "New Page" })).not.toBeVisible();
   });
 
   test("redo restores an undone action", async ({ page }) => {
@@ -151,18 +151,18 @@ test.describe("Studio Kernel: Undo/Redo", () => {
     const createBtn = page.locator('[data-testid="create-page-btn"]');
 
     await createBtn.click();
-    await expect(explorer.locator("text=New Page")).toBeVisible();
+    await expect(explorer.locator('[data-testid^="explorer-node-"]', { hasText: "New Page" }).first()).toBeVisible();
 
     // Undo
     const undoBtn = page.locator('[data-testid="undo-btn"]');
     await undoBtn.click();
-    await expect(explorer.locator("text=New Page")).not.toBeVisible();
+    await expect(explorer.locator('[data-testid^="explorer-node-"]', { hasText: "New Page" })).not.toBeVisible();
 
     // Redo
     const redoBtn = page.locator('[data-testid="redo-btn"]');
     await expect(redoBtn).toBeEnabled();
     await redoBtn.click();
-    await expect(explorer.locator("text=New Page")).toBeVisible();
+    await expect(explorer.locator('[data-testid^="explorer-node-"]', { hasText: "New Page" }).first()).toBeVisible();
   });
 
   test("Cmd+Z triggers undo", async ({ page }) => {
@@ -170,14 +170,14 @@ test.describe("Studio Kernel: Undo/Redo", () => {
     const createBtn = page.locator('[data-testid="create-page-btn"]');
 
     await createBtn.click();
-    await expect(explorer.locator("text=New Page")).toBeVisible();
+    await expect(explorer.locator('[data-testid^="explorer-node-"]', { hasText: "New Page" }).first()).toBeVisible();
 
     const isMac = await page.evaluate(() =>
       /Mac|iPod|iPhone|iPad/.test(navigator.platform),
     );
     await page.keyboard.press(isMac ? "Meta+z" : "Control+z");
 
-    await expect(explorer.locator("text=New Page")).not.toBeVisible();
+    await expect(explorer.locator('[data-testid^="explorer-node-"]', { hasText: "New Page" })).not.toBeVisible();
   });
 });
 
@@ -192,7 +192,7 @@ test.describe("Studio Kernel: Notifications", () => {
 
     const toast = page.locator('[data-testid="notification-toast"]');
     await expect(toast.first()).toBeVisible({ timeout: 2000 });
-    await expect(toast.first()).toContainText("Created");
+    await expect(toast.first()).toContainText("Page created");
   });
 
   test("toast auto-dismisses after a few seconds", async ({ page }) => {

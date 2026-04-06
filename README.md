@@ -31,19 +31,34 @@ Prism replaces files and folders with a semantic mesh of nodes connected by weak
 ### Setup
 
 ```bash
-pnpm install          # Install all dependencies
-pnpm typecheck        # TypeScript strict check
-pnpm test             # Vitest (all packages)
-pnpm test:e2e         # Playwright end-to-end
+pnpm install                    # Install all dependencies
+```
+
+### Dev Servers
+
+```bash
+pnpm dev                        # Start all packages (Turborepo)
+pnpm --filter prism-studio dev  # Studio only — Vite SPA on http://localhost:1420
+pnpm --filter prism-relay dev   # Relay only — Next.js on http://localhost:3000
+```
+
+### Testing
+
+```bash
+pnpm test                       # Vitest — all packages (1955 tests)
+pnpm test:e2e                   # Playwright E2E (requires Studio dev server on :1420)
+pnpm typecheck                  # TypeScript strict check
+pnpm lint                       # ESLint
+pnpm format                     # Prettier
 
 # Rust daemon
 cd packages/prism-daemon && cargo test && cargo clippy
+```
 
-# Dev server (Vite SPA)
-cd packages/prism-studio && pnpm dev
+### Desktop App (Tauri)
 
-# Tauri desktop app (includes daemon)
-cd packages/prism-studio && pnpm tauri dev
+```bash
+cd packages/prism-studio && pnpm tauri dev   # Tauri desktop with hot reload
 ```
 
 ## Architecture
@@ -110,7 +125,14 @@ Layer 1 is the domain-agnostic core. Zero React, zero DOM, zero runtime assumpti
 | Graph Analysis | `@prism/core/graph-analysis` | Dependency graph, topological sort, cycle detection, CPM planning engine |
 | Automation | `@prism/core/automation` | Trigger/condition/action rules, condition evaluator, template interpolation, cron scheduling |
 | Manifest | `@prism/core/manifest` | PrismManifest (`.prism.json`), CollectionRef, StorageConfig, SyncConfig, validation |
-| Workspace Shell | `@prism/core/workspace` | LensManifest, LensRegistry, ShellStore (IDE chrome infrastructure) |
+| Lens Shell | `@prism/core/lens` | LensManifest, LensRegistry, ShellStore (IDE chrome infrastructure) |
+| Persistence | `@prism/core/persistence` | CollectionStore (Loro CRDT-backed object/edge storage) |
+| Undo/Redo | `@prism/core/undo` | UndoRedoManager with labeled snapshots |
+| Notifications | `@prism/core/notification` | NotificationStore with kind/unread/dismiss |
+| Search | `@prism/core/search` | SearchEngine (prefix + fuzzy), SearchIndex |
+| Templates | `@prism/core/template` | ObjectTemplate, TemplateNode, variable interpolation, tree instantiation |
+| Activity | `@prism/core/activity` | ActivityStore, ActivityTracker, bus-driven event logging |
+| Clipboard | `@prism/core/clipboard` | ClipboardManager: copy/cut/paste with deep tree cloning |
 
 ### Layer 2 Systems (React Renderers)
 
@@ -131,13 +153,16 @@ Layer 2 projects Layer 1 state into visual form.
 | 1 | The Heartbeat | Loro CRDT round-trip via Tauri IPC | Complete |
 | 2 | The Eyes | CodeMirror, Puck, KBar, multi-panel Studio | Complete |
 | 0 | The Object Model | GraphObject, Registry, Tree, Edges, WeakRef, NSID, Query | Complete |
-| 4 | The Shell | LensRegistry, WorkspaceStore, ActivityBar, TabBar | Complete |
+| 4 | The Shell | LensRegistry, ShellStore, ActivityBar, TabBar | Complete |
 | 5 | Input, Forms, Layout, Expression | Four Layer 1 systems ported from legacy | Complete |
 | 6 | Context Engine, Plugin, Atoms | ContextEngine, PluginRegistry, PrismBus, AtomStore | Complete |
 | 7 | Machines, Graph Analysis, Planning | FSM, dependency graph, CPM critical path | Complete |
 | 8 | Automation, Manifest | AutomationEngine, PrismManifest | Complete |
+| 28-29 | NLE Timeline, Lua | NLE core, Timeline, Lua runtime, Tool FSM | Complete |
+| 30a-d | Studio Kernel (Tier 0) | StudioKernel, Entities, Persistence, Undo, Notifications, Search, Clipboard, Templates, Activity | Complete |
+| 30e | Studio UI (Tier 1) | Clipboard UI, Template Gallery, Activity Feed, Object Reorder + 18 E2E | Complete |
 
-**Test status**: 676 Vitest + 19 Playwright E2E — all passing.
+**Test status**: 1955 Vitest + 18 Tier 1 Playwright E2E — all passing.
 
 ## Ecosystem Apps
 
@@ -160,16 +185,23 @@ Four apps share the same Object-Graph and Prism Core. Each is a set of Lenses an
 
 ## Development
 
+All commands run from the repo root unless noted. Turborepo handles dependency ordering.
+
 ```bash
-pnpm dev          # Start all packages
-pnpm build        # Build in dependency order
-pnpm test         # Vitest (all packages)
-pnpm test:e2e     # Playwright end-to-end
+# Dev
+pnpm dev                        # All packages
+pnpm --filter prism-studio dev  # Studio only (:1420)
+pnpm --filter prism-relay dev   # Relay only (:3000)
+
+# Quality
+pnpm build        # Production build (dependency order)
+pnpm test         # Vitest (all packages, ~1955 tests)
+pnpm test:e2e     # Playwright E2E (Studio must be running on :1420)
+pnpm typecheck    # TypeScript strict
 pnpm lint         # ESLint
-pnpm typecheck    # TypeScript strict check
 pnpm format       # Prettier
 
-# Rust
+# Rust daemon
 cd packages/prism-daemon
 cargo test        # Unit + integration tests
 cargo clippy      # Linting

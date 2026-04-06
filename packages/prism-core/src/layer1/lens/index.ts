@@ -22,5 +22,5 @@ export type {
   ShellState,
   ShellActions,
   ShellStore,
-} from "./workspace-store.js";
-export { createShellStore } from "./workspace-store.js";
+} from "./shell-store.js";
+export { createShellStore } from "./shell-store.js";

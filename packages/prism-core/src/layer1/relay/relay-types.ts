@@ -375,4 +375,90 @@ export const RELAY_CAPABILITIES = {
   TOKENS: "relay:tokens",
   WEBHOOKS: "relay:webhooks",
   PORTALS: "relay:portals",
+  COLLECTIONS: "relay:collections",
+  HASHCASH: "relay:hashcash",
+  TRUST: "relay:trust",
+  ESCROW: "relay:escrow",
+  FEDERATION: "relay:federation",
 } as const;
+
+// ── Collection Hosting ─────────────────────────────────────────────────────
+
+import type { CollectionStore } from "../persistence/collection-store.js";
+
+/** Hosts CRDT collections on the Relay for remote sync. */
+export interface CollectionHost {
+  /** Create a new hosted collection. Returns the store. */
+  create(id: string): CollectionStore;
+  /** Get an existing hosted collection. */
+  get(id: string): CollectionStore | undefined;
+  /** List all hosted collection IDs. */
+  list(): string[];
+  /** Remove a hosted collection. */
+  remove(id: string): boolean;
+}
+
+// ── Hashcash Gate ──────────────────────────────────────────────────────────
+
+import type { HashcashChallenge, HashcashProof } from "../trust/trust-types.js";
+
+/** Spam protection gate using proof-of-work challenges. */
+export interface HashcashGate {
+  /** Issue a challenge for a resource (e.g. relay DID). */
+  createChallenge(resource: string): HashcashChallenge;
+  /** Verify a proof-of-work submission. */
+  verifyProof(proof: HashcashProof): Promise<boolean>;
+  /** Check if a DID has already passed a challenge. */
+  isVerified(did: DID): boolean;
+  /** Mark a DID as having passed a challenge. */
+  markVerified(did: DID): void;
+}
+
+/** Options for the hashcash module. */
+export interface HashcashModuleOptions {
+  /** Number of leading zero bits required (higher = harder). Default: 16. */
+  bits?: number;
+}
+
+// ── Federation ─────────────────────────────────────────────────────────────
+
+/** A known relay peer in the federation mesh. */
+export interface FederationPeer {
+  /** The peer relay's DID. */
+  relayDid: DID;
+  /** HTTP URL where the peer relay listens. */
+  url: string;
+  /** ISO-8601 time the peer announced itself. */
+  announcedAt: string;
+  /** ISO-8601 time the peer was last seen. */
+  lastSeenAt: string;
+}
+
+/** Result of forwarding an envelope to another relay. */
+export type ForwardResult =
+  | { status: "forwarded"; targetRelay: DID }
+  | { status: "no-transport" }
+  | { status: "unknown-relay"; targetRelay: DID }
+  | { status: "error"; message: string };
+
+/** Callback for the runtime to provide actual HTTP forwarding. */
+export type ForwardTransport = (
+  envelope: RelayEnvelope,
+  peerUrl: string,
+) => Promise<ForwardResult>;
+
+/** Registry of federated relay peers. */
+export interface FederationRegistry {
+  /** Announce a relay peer's presence. */
+  announce(relayDid: DID, url: string): void;
+  /** Get all known relay peers. */
+  getPeers(): FederationPeer[];
+  /** Get a specific peer by DID. */
+  getPeer(relayDid: DID): FederationPeer | undefined;
+  /** Remove a peer. */
+  removePeer(relayDid: DID): boolean;
+  /** Forward an envelope to a specific relay. */
+  forwardEnvelope(envelope: RelayEnvelope, targetRelay: DID): Promise<ForwardResult>;
+  /** Set the transport used for forwarding. */
+  setTransport(transport: ForwardTransport): void;
+}

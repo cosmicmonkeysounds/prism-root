@@ -198,6 +198,29 @@ export function InspectorPanel() {
     });
   }, [kernel, obj]);
 
+  const handleCopy = useCallback(() => {
+    if (!obj) return;
+    kernel.clipboardCopy([obj.id]);
+    kernel.notifications.add({ title: `Copied "${obj.name}"`, kind: "info" });
+  }, [kernel, obj]);
+
+  const handleCut = useCallback(() => {
+    if (!obj) return;
+    kernel.clipboardCut([obj.id]);
+    kernel.notifications.add({ title: `Cut "${obj.name}"`, kind: "info" });
+  }, [kernel, obj]);
+
+  const handlePaste = useCallback(() => {
+    if (!obj || !kernel.clipboardHasContent) return;
+    const result = kernel.clipboardPaste(obj.id);
+    if (result) {
+      kernel.notifications.add({
+        title: `Pasted ${result.created.length} object(s)`,
+        kind: "success",
+      });
+    }
+  }, [kernel, obj]);
+
   const handleAddChild = useCallback(
     (childType: string) => {
       if (!obj) return;
@@ -430,6 +453,50 @@ export function InspectorPanel() {
           </div>
         )}
 
+        {/* Clipboard */}
+        <div style={{ marginBottom: 12 }}>
+          <div
+            style={{
+              fontSize: 10,
+              fontWeight: 600,
+              textTransform: "uppercase",
+              color: "#666",
+              marginBottom: 6,
+              letterSpacing: 0.5,
+            }}
+          >
+            Clipboard
+          </div>
+          <div style={{ display: "flex", gap: 4 }}>
+            <button
+              data-testid="copy-btn"
+              onClick={handleCopy}
+              style={clipboardBtnStyle}
+            >
+              Copy
+            </button>
+            <button
+              data-testid="cut-btn"
+              onClick={handleCut}
+              style={clipboardBtnStyle}
+            >
+              Cut
+            </button>
+            <button
+              data-testid="paste-btn"
+              onClick={handlePaste}
+              disabled={!kernel.clipboardHasContent}
+              style={{
+                ...clipboardBtnStyle,
+                opacity: kernel.clipboardHasContent ? 1 : 0.4,
+                cursor: kernel.clipboardHasContent ? "pointer" : "default",
+              }}
+            >
+              Paste
+            </button>
+          </div>
+        </div>
+
         {/* Delete */}
         <button
           data-testid="delete-object-btn"
@@ -452,6 +519,17 @@ export function InspectorPanel() {
     </div>
   );
 }
+
+const clipboardBtnStyle = {
+  flex: 1,
+  padding: "4px 8px",
+  fontSize: 11,
+  background: "#333",
+  border: "1px solid #444",
+  borderRadius: 3,
+  color: "#ccc",
+  cursor: "pointer",
+} as const;
 
 // ── Layout Helper ───────────────────────────────────────────────────────────
 

@@ -6,16 +6,18 @@
  */
 
 import type { ComponentType } from "react";
-import type { LensManifest, LensRegistry, LensId } from "@prism/core/workspace";
-import { lensId } from "@prism/core/workspace";
+import type { LensManifest, LensRegistry, LensId } from "@prism/core/lens";
+import { lensId } from "@prism/core/lens";
 import { EditorPanel } from "../panels/editor-panel.js";
 import { GraphPanel } from "../panels/graph-panel.js";
 import { LayoutPanel } from "../panels/layout-panel.js";
 import { CrdtPanel } from "../panels/crdt-panel.js";
+import { CanvasPanel } from "../panels/canvas-panel.js";
 
 export const EDITOR_LENS_ID = lensId("editor");
 export const GRAPH_LENS_ID = lensId("graph");
 export const LAYOUT_LENS_ID = lensId("layout");
+export const CANVAS_LENS_ID = lensId("canvas");
 export const CRDT_LENS_ID = lensId("crdt");
 
 const editorManifest: LensManifest = {
@@ -51,6 +53,17 @@ const layoutManifest: LensManifest = {
   },
 };
 
+const canvasManifest: LensManifest = {
+  id: CANVAS_LENS_ID,
+  name: "Canvas",
+  icon: "\uD83D\uDDBC",
+  category: "visual",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-canvas", name: "Switch to Canvas Preview", shortcut: ["v"], section: "Navigation" }],
+  },
+};
+
 const crdtManifest: LensManifest = {
   id: CRDT_LENS_ID,
   name: "CRDT",
@@ -66,6 +79,7 @@ export const ALL_MANIFESTS: LensManifest[] = [
   editorManifest,
   graphManifest,
   layoutManifest,
+  canvasManifest,
   crdtManifest,
 ];
 
@@ -79,6 +93,7 @@ export function createLensComponentMap(): Map<LensId, ComponentType> {
   map.set(EDITOR_LENS_ID, EditorPanel);
   map.set(GRAPH_LENS_ID, GraphPanel);
   map.set(LAYOUT_LENS_ID, LayoutPanel);
+  map.set(CANVAS_LENS_ID, CanvasPanel);
   map.set(CRDT_LENS_ID, CrdtPanel);
   return map;
 }

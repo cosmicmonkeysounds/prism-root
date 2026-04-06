@@ -1,0 +1,30 @@
+export {
+  encodeBase64,
+  decodeBase64,
+  serializeEnvelope,
+  deserializeEnvelope,
+  parseClientMessage,
+  stringifyServerMessage,
+} from "./relay-protocol.js";
+
+export type {
+  SerializedEnvelope,
+  AuthMessage,
+  EnvelopeMessage,
+  CollectMessage,
+  PingMessage,
+  SyncRequestMessage,
+  SyncUpdateMessage,
+  HashcashProofMessage,
+  ClientMessage,
+  AuthOkMessage,
+  InboundEnvelopeMessage,
+  RouteResultMessage,
+  ErrorMessage,
+  PongMessage,
+  SyncSnapshotMessage,
+  SyncBroadcastMessage,
+  HashcashChallengeMessage,
+  HashcashOkMessage,
+  ServerMessage,
+} from "./relay-protocol.js";

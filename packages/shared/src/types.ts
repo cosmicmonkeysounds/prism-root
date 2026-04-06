@@ -27,7 +27,7 @@ export type LuaResult = {
   error?: string;
 };
 
-/** Manifest workspace definition (YAML-backed). */
+/** Manifest definition (YAML-backed). */
 export type Manifest = {
   id: string;
   name: string;

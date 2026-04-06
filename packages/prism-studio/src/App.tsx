@@ -1,6 +1,7 @@
 import { useMemo, useEffect, useState } from "react";
 import type { Action } from "kbar";
-import { createLensRegistry, createShellStore } from "@prism/core/workspace";
+import type { ObjectTemplate } from "@prism/core/template";
+import { createLensRegistry, createShellStore } from "@prism/core/lens";
 import { LensProvider } from "@prism/core/shell";
 import { PrismKBarProvider } from "@prism/core/kbar";
 import { StudioShell } from "./components/studio-shell.js";
@@ -19,6 +20,7 @@ import { NotificationToast } from "./components/notification-toast.js";
 // ── Kernel (singleton for app lifetime) ─────────────────────────────────────
 
 const kernel = createStudioKernel();
+registerSeedTemplates(kernel);
 seedDemoData(kernel);
 
 function seedDemoData(k: StudioKernel) {
@@ -131,6 +133,115 @@ function seedDemoData(k: StudioKernel) {
   k.select(page.id);
 }
 
+function registerSeedTemplates(k: StudioKernel) {
+  const blogPage: ObjectTemplate = {
+    id: "blog-page",
+    name: "Blog Post",
+    description: "A page with hero section, heading, and body text",
+    category: "page",
+    createdAt: new Date().toISOString(),
+    root: {
+      placeholderId: "root",
+      type: "page",
+      name: "{{title}}",
+      data: { title: "{{title}}", slug: "", layout: "single", published: false },
+      children: [
+        {
+          placeholderId: "hero",
+          type: "section",
+          name: "Hero",
+          data: { variant: "hero", padding: "lg" },
+        },
+        {
+          placeholderId: "body",
+          type: "section",
+          name: "Body",
+          data: { variant: "default", padding: "md" },
+          children: [
+            {
+              placeholderId: "heading",
+              type: "heading",
+              name: "Title",
+              data: { text: "{{title}}", level: "h1", align: "left" },
+            },
+            {
+              placeholderId: "text",
+              type: "text-block",
+              name: "Content",
+              data: { content: "Start writing here...", format: "markdown" },
+            },
+          ],
+        },
+      ],
+    },
+    variables: [
+      { name: "title", label: "Page Title", required: true },
+    ],
+  };
+
+  const landingPage: ObjectTemplate = {
+    id: "landing-page",
+    name: "Landing Page",
+    description: "Hero + features + CTA sections",
+    category: "page",
+    createdAt: new Date().toISOString(),
+    root: {
+      placeholderId: "root",
+      type: "page",
+      name: "{{title}}",
+      data: { title: "{{title}}", slug: "", layout: "single", published: false },
+      children: [
+        {
+          placeholderId: "hero",
+          type: "section",
+          name: "Hero",
+          data: { variant: "hero", padding: "lg" },
+          children: [
+            {
+              placeholderId: "h1",
+              type: "heading",
+              name: "Headline",
+              data: { text: "{{title}}", level: "h1", align: "center" },
+            },
+            {
+              placeholderId: "sub",
+              type: "text-block",
+              name: "Subtitle",
+              data: { content: "Describe your product or service here.", format: "markdown" },
+            },
+            {
+              placeholderId: "cta",
+              type: "button",
+              name: "CTA Button",
+              data: { label: "Get Started", variant: "primary", url: "#" },
+            },
+          ],
+        },
+        {
+          placeholderId: "features",
+          type: "section",
+          name: "Features",
+          data: { variant: "default", padding: "md" },
+          children: [
+            {
+              placeholderId: "fh",
+              type: "heading",
+              name: "Features Heading",
+              data: { text: "Features", level: "h2", align: "center" },
+            },
+          ],
+        },
+      ],
+    },
+    variables: [
+      { name: "title", label: "Page Title", required: true },
+    ],
+  };
+
+  k.registerTemplate(blogPage);
+  k.registerTemplate(landingPage);
+}
+
 // ── App ─────────────────────────────────────────────────────────────────────
 
 export function App() {
@@ -187,16 +298,23 @@ export function App() {
     };
   }, [lensRegistry, shellStore]);
 
-  // Open default editor tab
+  // Open default editor tab and show inspector
   useEffect(() => {
     if (shellStore.getState().tabs.length === 0) {
       shellStore.getState().openTab(EDITOR_LENS_ID, "Editor");
     }
+    if (!shellStore.getState().panelLayout.inspector) {
+      shellStore.getState().toggleInspector();
+    }
   }, [shellStore]);
 
-  // Wire global keyboard shortcuts for undo/redo
+  // Wire global keyboard shortcuts for undo/redo and clipboard
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
+      // Skip when user is typing in an input/textarea/contenteditable
+      const tag = (e.target as HTMLElement)?.tagName;
+      const isEditable = tag === "INPUT" || tag === "TEXTAREA" || (e.target as HTMLElement)?.isContentEditable;
+
       const mod = e.metaKey || e.ctrlKey;
       if (mod && e.key === "z" && !e.shiftKey) {
         e.preventDefault();
@@ -204,6 +322,32 @@ export function App() {
       } else if (mod && e.key === "z" && e.shiftKey) {
         e.preventDefault();
         if (kernel.undo.canRedo) kernel.undo.redo();
+      } else if (mod && e.key === "c" && !isEditable) {
+        const sel = kernel.atoms.getState().selectedId;
+        if (sel) {
+          e.preventDefault();
+          kernel.clipboardCopy([sel]);
+          kernel.notifications.add({ title: "Copied", kind: "info" });
+        }
+      } else if (mod && e.key === "x" && !isEditable) {
+        const sel = kernel.atoms.getState().selectedId;
+        if (sel) {
+          e.preventDefault();
+          kernel.clipboardCut([sel]);
+          kernel.notifications.add({ title: "Cut", kind: "info" });
+        }
+      } else if (mod && e.key === "v" && !isEditable) {
+        if (kernel.clipboardHasContent) {
+          e.preventDefault();
+          const sel = kernel.atoms.getState().selectedId;
+          const result = kernel.clipboardPaste(sel);
+          if (result) {
+            kernel.notifications.add({
+              title: `Pasted ${result.created.length} object(s)`,
+              kind: "success",
+            });
+          }
+        }
       }
     }
     window.addEventListener("keydown", handleKeyDown);

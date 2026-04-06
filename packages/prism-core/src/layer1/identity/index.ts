@@ -3,6 +3,8 @@ export {
   resolveIdentity,
   signPayload,
   verifySignature,
+  exportIdentity,
+  importIdentity,
   createMultiSigConfig,
   createPartialSignature,
   assembleMultiSignature,
@@ -28,4 +30,6 @@ export type {
   MultiSigConfig,
   CreateIdentityOptions,
   ResolveIdentityOptions,
+  ExportedIdentity,
+  ImportIdentityOptions,
 } from "./identity-types.js";

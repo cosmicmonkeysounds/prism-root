@@ -23,7 +23,7 @@ export function StudioShell() {
 
   return (
     <div
-      data-testid="workspace-shell"
+      data-testid="lens-shell"
       style={{
         display: "flex",
         height: "100vh",

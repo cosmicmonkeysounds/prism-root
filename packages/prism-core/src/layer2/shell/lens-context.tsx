@@ -10,7 +10,7 @@ import type {
   LensId,
   LensRegistry,
   ShellStore,
-} from "../../layer1/workspace/index.js";
+} from "../../layer1/lens/index.js";
 
 export type LensComponentMap = Map<LensId, ComponentType>;
 

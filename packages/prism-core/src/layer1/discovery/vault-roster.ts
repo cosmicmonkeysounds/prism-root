@@ -8,7 +8,7 @@
  *   - CRUD for roster entries (add, remove, update, get)
  *   - Sort by recency (lastOpenedAt), name, or createdAt
  *   - Pin/unpin entries for quick access
- *   - Touch (bump lastOpenedAt) on workspace open
+ *   - Touch (bump lastOpenedAt) on vault open
  *   - Deduplication by vault path
  *   - Subscribe to roster changes
  *   - Serialization for persistence

@@ -7,8 +7,8 @@ import { createVaultRoster, createMemoryRosterStore } from "./vault-roster.js";
 function makeEntry(overrides: Partial<RosterEntry> = {}): Omit<RosterEntry, "addedAt"> & { addedAt?: string } {
   return {
     id: "vault-1",
-    name: "My Workspace",
-    path: "/home/user/vaults/workspace-1",
+    name: "My Vault",
+    path: "/home/user/vaults/vault-1",
     lastOpenedAt: "2026-03-01T00:00:00Z",
     pinned: false,
     ...overrides,
@@ -34,7 +34,7 @@ describe("VaultRoster", () => {
 
       const got = roster.get("vault-1");
       expect(got).toBeDefined();
-      expect(got?.name).toBe("My Workspace");
+      expect(got?.name).toBe("My Vault");
     });
 
     it("assigns addedAt automatically", () => {
@@ -60,7 +60,7 @@ describe("VaultRoster", () => {
 
     it("looks up by path", () => {
       roster.add(makeEntry());
-      const entry = roster.getByPath("/home/user/vaults/workspace-1");
+      const entry = roster.getByPath("/home/user/vaults/vault-1");
       expect(entry?.id).toBe("vault-1");
     });
 
@@ -118,7 +118,7 @@ describe("VaultRoster", () => {
       roster.update("vault-1", { path: "/new/path" });
 
       expect(roster.getByPath("/new/path")?.id).toBe("vault-1");
-      expect(roster.getByPath("/home/user/vaults/workspace-1")).toBeUndefined();
+      expect(roster.getByPath("/home/user/vaults/vault-1")).toBeUndefined();
     });
   });
 

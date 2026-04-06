@@ -16,9 +16,9 @@ test.describe("Layout Panel", () => {
   test("should show component palette with Heading, Text, Card", async ({
     page,
   }) => {
-    // Puck renders a component list sidebar
-    await expect(page.locator("text=Heading")).toBeVisible({ timeout: 10_000 });
-    await expect(page.locator("text=Text")).toBeVisible();
-    await expect(page.locator("text=Card")).toBeVisible();
+    // Puck renders a component list sidebar — use first() to avoid matching activity feed text
+    await expect(page.locator("text=Heading").first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator("text=Text").first()).toBeVisible();
+    await expect(page.locator("text=Card").first()).toBeVisible();
   });
 });

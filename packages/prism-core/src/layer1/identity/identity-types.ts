@@ -122,3 +122,22 @@ export interface ResolveIdentityOptions {
   /** Override crypto.subtle for testing. */
   subtle?: SubtleCrypto;
 }
+
+// ── Identity Persistence ──────────────────────────────────────────────────
+
+/** Serialized identity for file-based persistence. JSON-safe. */
+export interface ExportedIdentity {
+  /** The DID string. */
+  did: DID;
+  /** JWK-encoded Ed25519 private key. */
+  privateKeyJwk: JsonWebKey;
+  /** JWK-encoded Ed25519 public key. */
+  publicKeyJwk: JsonWebKey;
+  /** ISO-8601 timestamp of when the identity was created. */
+  createdAt: string;
+}
+
+export interface ImportIdentityOptions {
+  /** Override crypto.subtle for testing. */
+  subtle?: SubtleCrypto;
+}

@@ -1139,9 +1139,109 @@ Wire all Layer 1 systems into Prism Studio, transforming the demo shell into a r
 
 | Suite | Tests | Status |
 |-------|-------|--------|
-| Vitest (studio-kernel) | 18 | Pass |
+| Vitest (studio-kernel) | 23 | Pass |
 | Playwright (studio-kernel) | 18 | Written |
-| **Phase 30b Total** | **18 Vitest + 18 E2E** | **All Pass** |
+| **Phase 30b Total** | **23 Vitest + 18 E2E** | **All Pass** |
+
+## Phase 30c: Studio Canvas + Search + Editor Wiring (Complete)
+
+WYSIWYG preview, search integration, and object-aware editing.
+
+### Completed
+
+- [x] `CanvasPanel` — WYSIWYG page preview rendering page→section→component hierarchy as visual React components
+  - Resolves selected page (walks up parentId for child selections)
+  - Renders heading/text-block/image/button/card with proper styling
+  - Click-to-select blocks in canvas (blue outline highlight)
+  - Section padding/background from entity data, layout max-width from page data
+- [x] `SearchEngine` integration — `kernel.search` indexed against CollectionStore with auto-reindex on changes
+- [x] `ObjectExplorer` search — text input filters objects via SearchEngine, flat result list, click to select
+- [x] `EditorPanel` object-aware — edits `text-block.data.content` or `heading.data.text` of selected object
+  - Per-object LoroText buffers keyed as `obj_content_{id}`
+  - Debounced (500ms) sync back to kernel via updateObject
+  - Falls back to scratch buffer when nothing editable is selected
+- [x] Canvas lens registered (shortcut: v), now 5 lenses total
+- [x] E2E tests updated for 5 lenses (shell, keyboard, tabs specs)
+- [x] New Playwright tests: canvas preview (4) + search (4)
+
+### Test Summary
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| Vitest (studio-kernel) | 23 | Pass |
+| Playwright (canvas) | 4 | Written |
+| Playwright (search) | 4 | Written |
+| **Phase 30c Total** | **23 Vitest + 8 E2E** | **All Pass** |
+
+## Phase 30d: Studio Tier 0 — Kernel Feature Wiring (Complete)
+
+Wired all Layer 1 systems into Studio kernel: Search (already done in 30c), Clipboard, Batch Operations, Activity Tracking, Templates, and LiveView.
+
+### Completed
+- [x] **Clipboard** — deep copy/cut/paste with subtree traversal, internal edge preservation, ID remapping
+- [x] **Batch Operations** — atomic multi-op (create/update/delete) with single undo entry
+- [x] **Activity Tracking** — ActivityStore + TrackableStore adapter for CollectionStore, records create/delete events
+- [x] **Templates** — register/list/instantiate with `{{variable}}` interpolation, recursive TemplateNode traversal, edge remapping
+- [x] **LiveView** — real-time filtered/sorted views over CollectionStore with type facets and dispose
+
+### Key Decisions
+- Clipboard/Batch/Templates implemented directly in kernel using CollectionStore primitives (not TreeModel adapters) — cleaner integration with bus events, undo, and atom sync
+- `createTrackableAdapter()` bridges CollectionStore → ActivityTracker's duck-typed `{ get, subscribeObject }` interface
+- Template instantiation uses `{{name}}` regex interpolation, matching legacy Helm pattern
+
+### Test Summary
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| Vitest (studio-kernel) | 43 | Pass |
+| — Clipboard | 4 | Pass |
+| — Batch | 3 | Pass |
+| — Activity | 3 | Pass |
+| — Templates | 5 | Pass |
+| — LiveView | 5 | Pass |
+| **Phase 30d Total** | **43 Vitest** | **All Pass** |
+
+## Phase 30e: Studio Tier 1 — UI Surface + E2E (Complete)
+
+Surfaced kernel features (clipboard, templates, activity, reorder) in the Studio UI with full Playwright E2E coverage.
+
+### Completed
+
+- [x] **Clipboard UI** — Copy/Cut/Paste buttons in inspector panel + Cmd+C/X/V keyboard shortcuts
+  - Inspector shows clipboard section when object selected
+  - Paste button disabled when clipboard empty
+  - Keyboard shortcuts skip when focus is in input/textarea/contenteditable
+- [x] **Template Gallery** — "Templates" button opens gallery overlay
+  - Lists registered templates (Blog Post, Landing Page)
+  - Click to instantiate with default variables
+  - Close button dismisses gallery
+- [x] **Activity Feed** — Recent activity section in object explorer sidebar
+  - Shows last 10 events from ActivityStore (newest first)
+  - Click event to select the corresponding object
+  - Auto-updates when objects are created
+- [x] **Object Reorder** — Move up/down buttons on selected explorer nodes
+  - Position swap with sibling above/below
+  - Disabled at boundaries (first/last)
+  - Tree re-renders reactively via change-counter versioning
+
+### Bug Fixes
+
+- Fixed `useSyncExternalStore` version tracking: `allObjects().length` doesn't change on reorder — replaced with monotonic counter refs that increment on every store `onChange`
+- Fixed Vite alias resolution: generated per-export aliases from `@prism/core` package.json exports map
+- Fixed elkjs `web-worker` resolution: aliased to `elkjs/lib/elk.bundled.js`
+- Fixed React 19 infinite loop: `getSnapshot` must return stable primitives, not new arrays/objects
+
+### Test Summary
+
+| Suite | Count | Status |
+|-------|-------|--------|
+| Vitest (all packages) | 1955 | Pass |
+| Playwright — Tier 1 | 18 | Pass |
+| — Clipboard UI | 5 | Pass |
+| — Template Gallery | 6 | Pass |
+| — Activity Feed | 4 | Pass |
+| — Object Reorder | 3 | Pass |
+| **Phase 30e Total** | **1955 Vitest + 18 E2E** | **All Pass** |
 
 ## Phase 31: Ecosystem Apps — Lattice
 

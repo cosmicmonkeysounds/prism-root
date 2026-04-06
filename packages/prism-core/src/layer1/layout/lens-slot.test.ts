@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { WorkspaceSlot } from "./workspace-slot.js";
+import { LensSlot } from "./lens-slot.js";
 import { PageRegistry } from "./page-registry.js";
-import type { WorkspaceSlotEvent } from "./layout-types.js";
+import type { LensSlotEvent } from "./layout-types.js";
 
 type TestTarget = { kind: string; id: string };
 
@@ -11,7 +11,7 @@ function makeSlot(opts: { cacheSize?: number } = {}) {
     defaultTab: "overview",
     getObjectId: (t) => t.id,
   });
-  return new WorkspaceSlot<TestTarget>({
+  return new LensSlot<TestTarget>({
     id: "main",
     registry,
     initialTarget: { kind: "object", id: "a" },
@@ -19,7 +19,7 @@ function makeSlot(opts: { cacheSize?: number } = {}) {
   });
 }
 
-describe("WorkspaceSlot", () => {
+describe("LensSlot", () => {
   it("has initial target and page", () => {
     const slot = makeSlot();
     expect(slot.current).toEqual({ kind: "object", id: "a" });
@@ -99,7 +99,7 @@ describe("WorkspaceSlot", () => {
 
   it("emits navigated event on go", () => {
     const slot = makeSlot();
-    const events: WorkspaceSlotEvent<TestTarget>[] = [];
+    const events: LensSlotEvent<TestTarget>[] = [];
     slot.on((e) => events.push(e));
     slot.go({ kind: "object", id: "b" });
     expect(events).toHaveLength(1);
@@ -109,7 +109,7 @@ describe("WorkspaceSlot", () => {
   it("emits back/forward events", () => {
     const slot = makeSlot();
     slot.go({ kind: "object", id: "b" });
-    const events: WorkspaceSlotEvent<TestTarget>[] = [];
+    const events: LensSlotEvent<TestTarget>[] = [];
     slot.on((e) => events.push(e));
     slot.back();
     slot.forward();

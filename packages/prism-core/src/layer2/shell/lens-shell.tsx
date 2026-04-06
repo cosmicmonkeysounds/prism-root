@@ -4,8 +4,7 @@
  * Composes ActivityBar + TabBar + active lens content.
  * Reads from LensProvider context to determine what to render.
  *
- * This is editor UI infrastructure, not the spec's "Workspace"
- * (Manifest pointing to Collections). See SPEC.md §234.
+ * This is editor UI infrastructure, not the spec's Manifest/Collections.
  */
 
 import { useLensContext, useShellStore } from "./lens-context.js";
@@ -23,7 +22,7 @@ export function ShellLayout() {
 
   return (
     <div
-      data-testid="workspace-shell"
+      data-testid="lens-shell"
       style={{
         display: "flex",
         height: "100vh",

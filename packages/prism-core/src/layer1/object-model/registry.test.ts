@@ -4,12 +4,12 @@ import { objectId } from "./types.js";
 import type { EntityDef, CategoryRule } from "./types.js";
 
 // ── Shared fixture ────────────────────────────────────────────────────────────
-// A small "workspace app" type system: workspaces contain tasks and notes.
+// A small "project app" type system: containers hold tasks and notes.
 
 const CATEGORY_RULES: CategoryRule[] = [
   {
-    category: "workspace",
-    canParent: ["workspace", "content", "record"],
+    category: "container",
+    canParent: ["container", "content", "record"],
     canBeRoot: true,
   },
   { category: "content", canParent: [], canBeRoot: true },
@@ -19,13 +19,13 @@ const CATEGORY_RULES: CategoryRule[] = [
 
 const TYPE_DEFS: EntityDef<string>[] = [
   {
-    type: "workspace",
-    category: "workspace",
-    label: "Workspace",
+    type: "container",
+    category: "container",
+    label: "Container",
     icon: "folder",
     color: "#3b82f6",
   },
-  { type: "project", category: "workspace", label: "Project", icon: "folder" },
+  { type: "project", category: "container", label: "Project", icon: "folder" },
   { type: "task", category: "content", label: "Task", icon: "check" },
   { type: "note", category: "content", label: "Note", icon: "note" },
   { type: "budget", category: "record", label: "Budget", icon: "money" },
@@ -46,7 +46,7 @@ const TYPE_DEFS: EntityDef<string>[] = [
     type: "folder",
     category: "content",
     label: "Folder",
-    extraParentTypes: ["workspace"],
+    extraParentTypes: ["container"],
   },
 ];
 
@@ -68,14 +68,14 @@ describe("ObjectRegistry", () => {
 
   it("returns all registered types", () => {
     expect(registry.allTypes()).toContain("task");
-    expect(registry.allTypes()).toContain("workspace");
+    expect(registry.allTypes()).toContain("container");
     expect(registry.allTypes().length).toBe(TYPE_DEFS.length);
   });
 
   it("returns label, plural label, color, category", () => {
     expect(registry.getLabel("task")).toBe("Task");
     expect(registry.getPluralLabel("task")).toBe("Task"); // no plural set
-    expect(registry.getColor("workspace")).toBe("#3b82f6");
+    expect(registry.getColor("container")).toBe("#3b82f6");
     expect(registry.getColor("unknown")).toBe("#888888"); // default
     expect(registry.getCategory("task")).toBe("content");
   });
@@ -83,7 +83,7 @@ describe("ObjectRegistry", () => {
   // ── Containment ────────────────────────────────────────────────────────────
 
   it("validates parent-child by category rule", () => {
-    expect(registry.canBeChildOf("task", "workspace")).toBe(true);
+    expect(registry.canBeChildOf("task", "container")).toBe(true);
     expect(registry.canBeChildOf("task", "task")).toBe(false); // content can't parent content
   });
 
@@ -92,7 +92,7 @@ describe("ObjectRegistry", () => {
   });
 
   it("validates extraParentTypes override", () => {
-    expect(registry.canBeChildOf("folder", "workspace")).toBe(true);
+    expect(registry.canBeChildOf("folder", "container")).toBe(true);
   });
 
   it("canBeRoot respects childOnly", () => {
@@ -105,17 +105,17 @@ describe("ObjectRegistry", () => {
   });
 
   it("canHaveChildren", () => {
-    expect(registry.canHaveChildren("workspace")).toBe(true);
+    expect(registry.canHaveChildren("container")).toBe(true);
     expect(registry.canHaveChildren("task")).toBe(false);
     expect(registry.canHaveChildren("account")).toBe(true); // extraChildTypes
   });
 
   it("getAllowedChildTypes", () => {
-    const allowed = registry.getAllowedChildTypes("workspace");
+    const allowed = registry.getAllowedChildTypes("container");
     expect(allowed).toContain("task");
     expect(allowed).toContain("note");
-    expect(allowed).toContain("project"); // workspace can parent workspace
-    expect(allowed).not.toContain("line-item"); // line-item is not content/workspace/record
+    expect(allowed).toContain("project"); // container can parent container
+    expect(allowed).not.toContain("line-item"); // line-item is not content/container/record
   });
 
   // ── Edge types ─────────────────────────────────────────────────────────────
@@ -186,7 +186,7 @@ describe("ObjectRegistry", () => {
 
     expect(registry.getSlots("task").length).toBe(1); // task is content
     expect(registry.getSlots("note").length).toBe(1); // note is content
-    expect(registry.getSlots("workspace").length).toBe(0);
+    expect(registry.getSlots("container").length).toBe(0);
   });
 
   it("getEffectiveTabs merges base + slot tabs", () => {
@@ -252,7 +252,7 @@ describe("ObjectRegistry", () => {
     const objects = [
       {
         id: objectId("root"),
-        type: "workspace",
+        type: "container",
         name: "Root",
         parentId: null,
         position: 0,

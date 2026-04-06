@@ -38,7 +38,7 @@ export {
   tabId,
   createLensRegistry,
   createShellStore,
-} from "./workspace/index.js";
+} from "./lens/index.js";
 
 export type {
   LensId,
@@ -56,7 +56,7 @@ export type {
   ShellState,
   ShellActions,
   ShellStore,
-} from "./workspace/index.js";
+} from "./lens/index.js";
 
 // ── Input System ──────────────────────────────────────────────────────────────
 export { parseShortcut, normaliseKeyEvent, keyToShortcut, KeyboardModel } from "./input/index.js";
@@ -127,8 +127,8 @@ export type {
 export { SelectionModel } from "./layout/index.js";
 export { PageModel } from "./layout/index.js";
 export { PageRegistry } from "./layout/index.js";
-export { WorkspaceSlot } from "./layout/index.js";
-export { WorkspaceManager } from "./layout/index.js";
+export { LensSlot } from "./layout/index.js";
+export { LensManager } from "./layout/index.js";
 
 export type {
   SerializedPage,
@@ -137,12 +137,12 @@ export type {
   PageModelOptions,
   SelectionEvent,
   SelectionListener,
-  WorkspaceSlotEvent,
-  WorkspaceSlotListener,
-  WorkspaceManagerEvent,
-  WorkspaceManagerListener,
+  LensSlotEvent,
+  LensSlotListener,
+  LensManagerEvent,
+  LensManagerListener,
   PageTypeDef,
-  WorkspaceSlotOptions,
+  LensSlotOptions,
 } from "./layout/index.js";
 
 // ── Expression Engine ─────────────────────────────────────────────────────────
@@ -407,7 +407,7 @@ export type {
   OpenApiOptions,
 } from "./server/index.js";
 
-// ── Workspace Manifest ──────────────────────────────────────────────────────
+// ── Manifest ─────────────────────────────────────────────────────────────────
 export {
   MANIFEST_FILENAME,
   MANIFEST_VERSION,

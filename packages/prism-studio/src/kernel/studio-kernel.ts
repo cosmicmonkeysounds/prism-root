@@ -9,6 +9,9 @@
  *   - ObjectAtomStore (in-memory object/edge cache with selectors)
  *   - UndoRedoManager (snapshot-based undo/redo)
  *   - NotificationStore (toast/alert queue)
+ *   - SearchEngine (full-text TF-IDF search)
+ *   - ActivityStore + ActivityTracker (audit trail)
+ *   - LiveView (materialized filtered/sorted/grouped projection)
  *
  * The kernel is instantiated once at app startup and provided via React
  * context to all components.
@@ -32,7 +35,29 @@ import { UndoRedoManager } from "@prism/core/undo";
 import type { ObjectSnapshot } from "@prism/core/undo";
 import { createNotificationStore } from "@prism/core/notification";
 import type { NotificationStore } from "@prism/core/notification";
+import { createSearchEngine } from "@prism/core/search";
+import type { SearchEngine } from "@prism/core/search";
+import { createActivityStore } from "@prism/core/activity";
+import type { ActivityStore } from "@prism/core/activity";
+import { createActivityTracker } from "@prism/core/activity";
+import type { ActivityTracker } from "@prism/core/activity";
+import { createLiveView } from "@prism/core/view";
+import type { LiveView, LiveViewOptions } from "@prism/core/view";
+import type { ObjectTemplate, TemplateNode, InstantiateResult } from "@prism/core/template";
 import { createPageBuilderRegistry } from "./entities.js";
+
+// ── Clipboard Types ────────────────────────────────────────────────────────
+
+export interface ClipboardEntry {
+  mode: "copy" | "cut";
+  objects: GraphObject[];
+  edges: ObjectEdge[];
+}
+
+export interface PasteResult {
+  created: GraphObject[];
+  idMap: Map<string, string>;
+}
 
 // ── Kernel Interface ────────────────────────────────────────────────────────
 
@@ -44,6 +69,9 @@ export interface StudioKernel {
   readonly objectAtoms: ObjectAtomStore;
   readonly undo: UndoRedoManager;
   readonly notifications: NotificationStore;
+  readonly search: SearchEngine;
+  readonly activity: ActivityStore;
+  readonly activityTracker: ActivityTracker;
 
   /** Create a new object in the collection, emit bus event, push undo. */
   createObject(obj: Omit<GraphObject, "id" | "createdAt" | "updatedAt">): GraphObject;
@@ -63,6 +91,51 @@ export interface StudioKernel {
   /** Select an object (updates atoms + emits bus event). */
   select(id: ObjectId | null): void;
 
+  // ── Clipboard ────────────────────────────────────────────────────────────
+
+  /** Copy object subtrees to clipboard. */
+  clipboardCopy(ids: ObjectId[]): void;
+
+  /** Cut object subtrees to clipboard (deleted on paste). */
+  clipboardCut(ids: ObjectId[]): void;
+
+  /** Paste clipboard contents under a target parent. */
+  clipboardPaste(parentId: ObjectId | null, position?: number): PasteResult | null;
+
+  /** Whether the clipboard has content. */
+  readonly clipboardHasContent: boolean;
+
+  // ── Batch Operations ─────────────────────────────────────────────────────
+
+  /** Execute multiple operations atomically with a single undo entry. */
+  batch(
+    label: string,
+    operations: Array<
+      | { kind: "create"; draft: Omit<GraphObject, "id" | "createdAt" | "updatedAt"> }
+      | { kind: "update"; id: ObjectId; patch: Partial<GraphObject> }
+      | { kind: "delete"; id: ObjectId }
+    >,
+  ): GraphObject[];
+
+  // ── Templates ────────────────────────────────────────────────────────────
+
+  /** Register a reusable template. */
+  registerTemplate(template: ObjectTemplate): void;
+
+  /** List all registered templates, optionally filtered by category. */
+  listTemplates(category?: string): ObjectTemplate[];
+
+  /** Instantiate a template under a parent. */
+  instantiateTemplate(
+    templateId: string,
+    options?: { parentId?: ObjectId | null; position?: number; variables?: Record<string, string> },
+  ): InstantiateResult | null;
+
+  // ── LiveView ─────────────────────────────────────────────────────────────
+
+  /** Create a live materialized view of the collection. */
+  createLiveView(options?: LiveViewOptions): LiveView;
+
   /** Dispose all subscriptions. */
   dispose(): void;
 }
@@ -74,6 +147,31 @@ function genId(): string {
   return `obj_${Date.now().toString(36)}_${(counter++).toString(36)}`;
 }
 
+const VARIABLE_RE = /\{\{(\w+)\}\}/g;
+
+function interpolate(str: string, vars: Record<string, string>): string {
+  return str.replace(VARIABLE_RE, (_match, name: string) => vars[name] ?? `{{${name}}}`);
+}
+
+// ── TrackableStore adapter for CollectionStore ─────────────────────────────
+
+function createTrackableAdapter(store: CollectionStore) {
+  return {
+    get(id: string): unknown {
+      return store.getObject(objectId(id));
+    },
+    subscribeObject(id: string, cb: (obj: unknown) => void): () => void {
+      return store.onChange((changes) => {
+        for (const change of changes) {
+          if (change.id === id && (change.type === "object-put" || change.type === "object-remove")) {
+            cb(store.getObject(objectId(id)));
+          }
+        }
+      });
+    },
+  };
+}
+
 // ── Factory ─────────────────────────────────────────────────────────────────
 
 export function createStudioKernel(): StudioKernel {
@@ -83,6 +181,13 @@ export function createStudioKernel(): StudioKernel {
   const atoms = createAtomStore();
   const objectAtoms = createObjectAtomStore();
   const notifications = createNotificationStore({ maxItems: 100 });
+  const search = createSearchEngine();
+  const activityStore = createActivityStore();
+  const tracker = createActivityTracker({ activityStore });
+  const trackableAdapter = createTrackableAdapter(store);
+
+  // Index the default collection so search covers all kernel objects
+  search.indexCollection("default", store);
 
   // Wire bus → atom stores (selection, navigation, object cache)
   const disconnectAtoms = connectBusToAtoms(bus, atoms);
@@ -142,7 +247,45 @@ export function createStudioKernel(): StudioKernel {
     }
   });
 
-  // ── CRUD with undo + bus ────────────────────────────────────────────────
+  // Template storage
+  const templates = new Map<string, ObjectTemplate>();
+
+  // Clipboard storage
+  let clipboardEntry: ClipboardEntry | null = null;
+
+  // ── Internal helpers ─────────────────────────────────────────────────────
+
+  function getDescendants(id: ObjectId): GraphObject[] {
+    const result: GraphObject[] = [];
+    const queue = store.listObjects({ parentId: id }).filter((o) => !o.deletedAt);
+    while (queue.length > 0) {
+      const obj = queue.shift() as GraphObject;
+      result.push(obj);
+      queue.push(...store.listObjects({ parentId: obj.id }).filter((o) => !o.deletedAt));
+    }
+    return result;
+  }
+
+  function collectSubtree(id: ObjectId): { objects: GraphObject[]; edges: ObjectEdge[] } {
+    const root = store.getObject(id);
+    if (!root) return { objects: [], edges: [] };
+
+    const descendants = getDescendants(id);
+    const all = [root, ...descendants];
+    const allIds = new Set(all.map((o) => o.id as string));
+
+    // Collect internal edges (both endpoints in subtree)
+    const internalEdges: ObjectEdge[] = [];
+    for (const edge of store.allEdges()) {
+      if (allIds.has(edge.sourceId as string) && allIds.has(edge.targetId as string)) {
+        internalEdges.push(edge);
+      }
+    }
+
+    return { objects: all, edges: internalEdges };
+  }
+
+  // ── CRUD with undo + bus + activity tracking ───────────────────────────
 
   function createObject(
     partial: Omit<GraphObject, "id" | "createdAt" | "updatedAt">,
@@ -161,6 +304,16 @@ export function createStudioKernel(): StudioKernel {
     undo.push(`Create ${obj.type} "${obj.name}"`, [
       { kind: "object", before: null, after: structuredClone(obj) },
     ]);
+
+    // Track activity
+    activityStore.record({
+      objectId: obj.id,
+      verb: "created",
+      meta: { objectType: obj.type, objectName: obj.name },
+    });
+
+    // Start tracking future changes
+    tracker.track(obj.id, trackableAdapter);
 
     return obj;
   }
@@ -206,6 +359,12 @@ export function createStudioKernel(): StudioKernel {
       { kind: "object", before: structuredClone(before), after: structuredClone(after) },
     ]);
 
+    activityStore.record({
+      objectId: id,
+      verb: "deleted",
+      meta: { objectType: before.type, objectName: before.name },
+    });
+
     return true;
   }
 
@@ -247,10 +406,341 @@ export function createStudioKernel(): StudioKernel {
     bus.emit(PrismEvents.SelectionChanged, { ids: id ? [id] : [] });
   }
 
+  // ── Clipboard ────────────────────────────────────────────────────────────
+
+  function clipboardCopy(ids: ObjectId[]): void {
+    const objects: GraphObject[] = [];
+    const edges: ObjectEdge[] = [];
+    const allIds = new Set<string>();
+
+    for (const id of ids) {
+      const { objects: sub, edges: subEdges } = collectSubtree(id);
+      for (const o of sub) {
+        if (!allIds.has(o.id as string)) {
+          allIds.add(o.id as string);
+          objects.push(structuredClone(o));
+        }
+      }
+      edges.push(...subEdges.map((e) => structuredClone(e)));
+    }
+
+    clipboardEntry = { mode: "copy", objects, edges };
+  }
+
+  function clipboardCut(ids: ObjectId[]): void {
+    clipboardCopy(ids);
+    if (clipboardEntry) {
+      clipboardEntry.mode = "cut";
+    }
+  }
+
+  function clipboardPaste(parentId: ObjectId | null, position?: number): PasteResult | null {
+    if (!clipboardEntry) return null;
+
+    const { mode, objects, edges: clipEdges } = clipboardEntry;
+    const idMap = new Map<string, string>();
+    const created: GraphObject[] = [];
+    const snapshots: ObjectSnapshot[] = [];
+
+    // Generate new IDs for all objects
+    for (const obj of objects) {
+      idMap.set(obj.id as string, genId());
+    }
+
+    // Sort by depth (roots first) — objects whose parentId is NOT in the set are roots
+    const rootIds = new Set(
+      objects
+        .filter((o) => !idMap.has(o.parentId as string))
+        .map((o) => o.id as string),
+    );
+
+    const now = new Date().toISOString();
+    let posCounter = position ?? 0;
+
+    for (const obj of objects) {
+      const newId = objectId(idMap.get(obj.id as string) as string);
+      const isRoot = rootIds.has(obj.id as string);
+
+      const newObj: GraphObject = {
+        ...obj,
+        id: newId,
+        parentId: isRoot ? parentId : objectId(idMap.get(obj.parentId as string) as string),
+        position: isRoot ? posCounter++ : obj.position,
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: null,
+      };
+
+      store.putObject(newObj);
+      bus.emit(PrismEvents.ObjectCreated, { object: newObj });
+      created.push(newObj);
+      snapshots.push({ kind: "object", before: null, after: structuredClone(newObj) });
+
+      tracker.track(newObj.id, trackableAdapter);
+    }
+
+    // Re-create internal edges with remapped IDs
+    for (const edge of clipEdges) {
+      const newSourceId = idMap.get(edge.sourceId as string);
+      const newTargetId = idMap.get(edge.targetId as string);
+      if (newSourceId && newTargetId) {
+        const newEdge: ObjectEdge = {
+          ...edge,
+          id: edgeId(genId()),
+          sourceId: objectId(newSourceId),
+          targetId: objectId(newTargetId),
+          createdAt: now,
+        };
+        store.putEdge(newEdge);
+        bus.emit(PrismEvents.EdgeCreated, { edge: newEdge });
+        snapshots.push({ kind: "edge", before: null, after: structuredClone(newEdge) });
+      }
+    }
+
+    undo.push(`Paste ${created.length} object(s)`, snapshots);
+
+    // If cut, delete the originals
+    if (mode === "cut") {
+      const cutSnapshots: ObjectSnapshot[] = [];
+      for (const obj of objects) {
+        const original = store.getObject(obj.id);
+        if (original) {
+          const deleted: GraphObject = {
+            ...original,
+            deletedAt: now,
+            updatedAt: now,
+          };
+          store.putObject(deleted);
+          bus.emit(PrismEvents.ObjectUpdated, { object: deleted });
+          cutSnapshots.push({
+            kind: "object",
+            before: structuredClone(original),
+            after: structuredClone(deleted),
+          });
+        }
+      }
+      if (cutSnapshots.length > 0) {
+        undo.push(`Cut ${cutSnapshots.length} object(s)`, cutSnapshots);
+      }
+      clipboardEntry = null; // cut is one-time
+    }
+
+    return { created, idMap };
+  }
+
+  // ── Batch Operations ─────────────────────────────────────────────────────
+
+  function batchOps(
+    label: string,
+    operations: Array<
+      | { kind: "create"; draft: Omit<GraphObject, "id" | "createdAt" | "updatedAt"> }
+      | { kind: "update"; id: ObjectId; patch: Partial<GraphObject> }
+      | { kind: "delete"; id: ObjectId }
+    >,
+  ): GraphObject[] {
+    const snapshots: ObjectSnapshot[] = [];
+    const results: GraphObject[] = [];
+    const now = new Date().toISOString();
+
+    for (const op of operations) {
+      switch (op.kind) {
+        case "create": {
+          const obj: GraphObject = {
+            ...op.draft,
+            id: objectId(genId()),
+            createdAt: now,
+            updatedAt: now,
+          };
+          store.putObject(obj);
+          bus.emit(PrismEvents.ObjectCreated, { object: obj });
+          snapshots.push({ kind: "object", before: null, after: structuredClone(obj) });
+          results.push(obj);
+          tracker.track(obj.id, trackableAdapter);
+          break;
+        }
+        case "update": {
+          const before = store.getObject(op.id);
+          if (before) {
+            const after: GraphObject = {
+              ...before,
+              ...op.patch,
+              id: before.id,
+              updatedAt: now,
+            };
+            store.putObject(after);
+            bus.emit(PrismEvents.ObjectUpdated, { object: after });
+            snapshots.push({
+              kind: "object",
+              before: structuredClone(before),
+              after: structuredClone(after),
+            });
+            results.push(after);
+          }
+          break;
+        }
+        case "delete": {
+          const before = store.getObject(op.id);
+          if (before) {
+            const after: GraphObject = {
+              ...before,
+              deletedAt: now,
+              updatedAt: now,
+            };
+            store.putObject(after);
+            bus.emit(PrismEvents.ObjectUpdated, { object: after });
+            snapshots.push({
+              kind: "object",
+              before: structuredClone(before),
+              after: structuredClone(after),
+            });
+            results.push(after);
+          }
+          break;
+        }
+      }
+    }
+
+    if (snapshots.length > 0) {
+      undo.push(label, snapshots);
+    }
+
+    return results;
+  }
+
+  // ── Templates ────────────────────────────────────────────────────────────
+
+  function registerTemplate(template: ObjectTemplate): void {
+    templates.set(template.id, template);
+  }
+
+  function listTemplates(category?: string): ObjectTemplate[] {
+    const all = [...templates.values()];
+    if (!category) return all;
+    return all.filter((t) => t.category === category);
+  }
+
+  function instantiateTemplateNode(
+    node: TemplateNode,
+    parentId: ObjectId | null,
+    position: number,
+    vars: Record<string, string>,
+    idMap: Map<string, string>,
+    created: GraphObject[],
+    snapshots: ObjectSnapshot[],
+  ): void {
+    const now = new Date().toISOString();
+    const newId = genId();
+    idMap.set(node.placeholderId, newId);
+
+    // Interpolate string fields
+    const data: Record<string, unknown> = {};
+    if (node.data) {
+      for (const [k, v] of Object.entries(node.data)) {
+        data[k] = typeof v === "string" ? interpolate(v, vars) : v;
+      }
+    }
+
+    const obj: GraphObject = {
+      type: node.type,
+      name: interpolate(node.name, vars),
+      parentId,
+      position,
+      status: node.status ? interpolate(node.status, vars) : null,
+      tags: node.tags ?? [],
+      date: null,
+      endDate: null,
+      description: node.description ? interpolate(node.description, vars) : "",
+      color: node.color ?? null,
+      image: null,
+      pinned: node.pinned ?? false,
+      data,
+      id: objectId(newId),
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    store.putObject(obj);
+    bus.emit(PrismEvents.ObjectCreated, { object: obj });
+    created.push(obj);
+    snapshots.push({ kind: "object", before: null, after: structuredClone(obj) });
+    tracker.track(obj.id, trackableAdapter);
+
+    // Recurse into children
+    if (node.children) {
+      for (let i = 0; i < node.children.length; i++) {
+        instantiateTemplateNode(
+          node.children[i] as TemplateNode,
+          obj.id,
+          i,
+          vars,
+          idMap,
+          created,
+          snapshots,
+        );
+      }
+    }
+  }
+
+  function instantiateTemplate(
+    templateId: string,
+    options?: { parentId?: ObjectId | null; position?: number; variables?: Record<string, string> },
+  ): InstantiateResult | null {
+    const template = templates.get(templateId);
+    if (!template) return null;
+
+    const vars = options?.variables ?? {};
+    const parentId = options?.parentId ?? null;
+    const position = options?.position ?? 0;
+    const idMap = new Map<string, string>();
+    const created: GraphObject[] = [];
+    const createdEdges: ObjectEdge[] = [];
+    const snapshots: ObjectSnapshot[] = [];
+
+    instantiateTemplateNode(template.root, parentId, position, vars, idMap, created, snapshots);
+
+    // Create template edges with remapped IDs
+    if (template.edges) {
+      const now = new Date().toISOString();
+      for (const te of template.edges) {
+        const sourceId = idMap.get(te.sourcePlaceholderId);
+        const targetId = idMap.get(te.targetPlaceholderId);
+        if (sourceId && targetId) {
+          const edge: ObjectEdge = {
+            id: edgeId(genId()),
+            sourceId: objectId(sourceId),
+            targetId: objectId(targetId),
+            relation: te.relation,
+            data: te.data ?? {},
+            createdAt: now,
+          };
+          store.putEdge(edge);
+          bus.emit(PrismEvents.EdgeCreated, { edge });
+          createdEdges.push(edge);
+          snapshots.push({ kind: "edge", before: null, after: structuredClone(edge) });
+        }
+      }
+    }
+
+    if (snapshots.length > 0) {
+      undo.push(`Instantiate template "${template.name}"`, snapshots);
+    }
+
+    return { created, createdEdges, idMap };
+  }
+
+  // ── LiveView factory ─────────────────────────────────────────────────────
+
+  function makeLiveView(options?: LiveViewOptions): LiveView {
+    return createLiveView(store, options);
+  }
+
+  // ── Dispose ──────────────────────────────────────────────────────────────
+
   function dispose(): void {
     disconnectAtoms();
     disconnectObjectAtoms();
     disconnectStoreSync();
+    tracker.untrackAll();
   }
 
   return {
@@ -261,12 +751,26 @@ export function createStudioKernel(): StudioKernel {
     objectAtoms,
     undo,
     notifications,
+    search,
+    activity: activityStore,
+    activityTracker: tracker,
     createObject,
     updateObject,
     deleteObject,
     createEdge,
     deleteEdge,
     select,
+    clipboardCopy,
+    clipboardCut,
+    clipboardPaste,
+    get clipboardHasContent() {
+      return clipboardEntry !== null;
+    },
+    batch: batchOps,
+    registerTemplate,
+    listTemplates,
+    instantiateTemplate,
+    createLiveView: makeLiveView,
     dispose,
   };
 }

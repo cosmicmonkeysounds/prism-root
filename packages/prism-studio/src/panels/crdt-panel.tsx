@@ -3,17 +3,27 @@
  * and allows browsing objects/edges.
  */
 
-import { useSyncExternalStore, useState } from "react";
+import { useSyncExternalStore, useState, useRef } from "react";
 import { useKernel } from "../kernel/index.js";
 
 export function CrdtPanel() {
   const kernel = useKernel();
   const [tab, setTab] = useState<"objects" | "edges" | "json">("objects");
 
-  const data = useSyncExternalStore(
-    (cb) => kernel.store.onChange(() => cb()),
-    () => kernel.store.toJSON(),
+  // Cache the snapshot to avoid infinite loops with useSyncExternalStore
+  const cacheRef = useRef<{ data: ReturnType<typeof kernel.store.toJSON>; version: number }>({
+    data: kernel.store.toJSON(),
+    version: 0,
+  });
+  const counterRef = useRef(0);
+  const version = useSyncExternalStore(
+    (cb) => kernel.store.onChange(() => { counterRef.current++; cb(); }),
+    () => counterRef.current,
   );
+  if (cacheRef.current.version !== version) {
+    cacheRef.current = { data: kernel.store.toJSON(), version };
+  }
+  const data = cacheRef.current.data;
 
   const objects = Object.values(data.objects);
   const edges = Object.values(data.edges);

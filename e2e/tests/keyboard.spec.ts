@@ -28,7 +28,7 @@ test.describe("Keyboard Navigation", () => {
     await expect(kbarInput).not.toBeVisible();
   });
 
-  test("KBar lists all 4 lens navigation actions", async ({ page }) => {
+  test("KBar lists lens navigation actions", async ({ page }) => {
     const isMac = await page.evaluate(() =>
       /Mac|iPod|iPhone|iPad/.test(navigator.platform),
     );
@@ -37,11 +37,13 @@ test.describe("Keyboard Navigation", () => {
     const kbarInput = page.locator('[role="combobox"]');
     await expect(kbarInput).toBeVisible({ timeout: 3_000 });
 
-    // All 4 switch actions should be listed
+    // KBar derives actions as "Switch to <LensName>" from lens manifests
+    // Also includes Undo/Redo actions
     await expect(page.locator("text=Switch to Editor")).toBeVisible();
     await expect(page.locator("text=Switch to Graph")).toBeVisible();
-    await expect(page.locator("text=Switch to Layout Builder")).toBeVisible();
-    await expect(page.locator("text=Switch to CRDT Inspector")).toBeVisible();
+    await expect(page.locator("text=Switch to Layout").first()).toBeVisible();
+    await expect(page.locator("text=Switch to Canvas").first()).toBeVisible();
+    await expect(page.locator("text=Switch to CRDT").first()).toBeVisible();
   });
 
   test("KBar filters results by search query", async ({ page }) => {
@@ -56,7 +58,7 @@ test.describe("Keyboard Navigation", () => {
     await kbarInput.type("CRDT", { delay: 50 });
 
     // CRDT should be visible, others filtered out
-    await expect(page.locator("text=Switch to CRDT Inspector")).toBeVisible();
+    await expect(page.locator("text=Switch to CRDT").first()).toBeVisible();
   });
 
   test("KBar action navigates to selected lens", async ({ page }) => {
@@ -69,7 +71,7 @@ test.describe("Keyboard Navigation", () => {
     await expect(kbarInput).toBeVisible({ timeout: 3_000 });
 
     await kbarInput.type("Layout", { delay: 50 });
-    await page.locator("text=Switch to Layout Builder").click();
+    await page.locator("text=Switch to Layout").first().click();
 
     // Puck should render
     const puck = page.locator('[class*="Puck"]').first();

@@ -1,21 +1,21 @@
-import type { WorkspaceManagerEvent, WorkspaceManagerListener } from "./layout-types.js";
+import type { LensManagerEvent, LensManagerListener } from "./layout-types.js";
 import type { PageRegistry } from "./page-registry.js";
 import type { PageModel } from "./page-model.js";
-import { WorkspaceSlot } from "./workspace-slot.js";
+import { LensSlot } from "./lens-slot.js";
 
-export class WorkspaceManager<TTarget extends { kind: string }> {
-  private slots = new Map<string, WorkspaceSlot<TTarget>>();
+export class LensManager<TTarget extends { kind: string }> {
+  private slots = new Map<string, LensSlot<TTarget>>();
   private _activeId: string | null = null;
-  private listeners = new Set<WorkspaceManagerListener>();
+  private listeners = new Set<LensManagerListener>();
 
   open(
     id: string,
     registry: PageRegistry<TTarget>,
     initialTarget: TTarget,
     options: { label?: string; cacheSize?: number } = {},
-  ): WorkspaceSlot<TTarget> {
-    if (this.slots.has(id)) return this.slots.get(id) as WorkspaceSlot<TTarget>;
-    const slot = new WorkspaceSlot<TTarget>({ id, registry, initialTarget, ...options });
+  ): LensSlot<TTarget> {
+    if (this.slots.has(id)) return this.slots.get(id) as LensSlot<TTarget>;
+    const slot = new LensSlot<TTarget>({ id, registry, initialTarget, ...options });
     this.slots.set(id, slot);
     this.emit({ kind: "slot-opened", slotId: id });
     this.focus(id);
@@ -40,7 +40,7 @@ export class WorkspaceManager<TTarget extends { kind: string }> {
     this.emit({ kind: "slot-focused", slotId: id });
   }
 
-  get activeSlot(): WorkspaceSlot<TTarget> | null {
+  get activeSlot(): LensSlot<TTarget> | null {
     return this._activeId ? (this.slots.get(this._activeId) ?? null) : null;
   }
 
@@ -48,11 +48,11 @@ export class WorkspaceManager<TTarget extends { kind: string }> {
     return this.activeSlot?.activePage ?? null;
   }
 
-  getSlot(id: string): WorkspaceSlot<TTarget> | undefined {
+  getSlot(id: string): LensSlot<TTarget> | undefined {
     return this.slots.get(id);
   }
 
-  get allSlots(): WorkspaceSlot<TTarget>[] {
+  get allSlots(): LensSlot<TTarget>[] {
     return [...this.slots.values()];
   }
 
@@ -60,7 +60,7 @@ export class WorkspaceManager<TTarget extends { kind: string }> {
     return this.slots.size;
   }
 
-  on(listener: WorkspaceManagerListener): () => void {
+  on(listener: LensManagerListener): () => void {
     this.listeners.add(listener);
     return () => {
       this.listeners.delete(listener);
@@ -74,7 +74,7 @@ export class WorkspaceManager<TTarget extends { kind: string }> {
     this.listeners.clear();
   }
 
-  private emit(event: WorkspaceManagerEvent): void {
+  private emit(event: LensManagerEvent): void {
     for (const l of this.listeners) l(event);
   }
 }

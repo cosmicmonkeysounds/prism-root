@@ -43,7 +43,7 @@ export interface PersistenceAdapter {
 // ── Memory Adapter ────────────────────────────────────────────────────────────
 
 /**
- * In-memory PersistenceAdapter for testing and ephemeral workspaces.
+ * In-memory PersistenceAdapter for testing and ephemeral vaults.
  */
 export function createMemoryAdapter(): PersistenceAdapter {
   const store = new Map<string, Uint8Array>();

@@ -5,7 +5,7 @@
  * (useSelection, useObjects, useNotifications) for specific slices.
  */
 
-import { createContext, useContext, useSyncExternalStore, useCallback } from "react";
+import { createContext, useContext, useSyncExternalStore, useCallback, useRef } from "react";
 import type { ReactNode } from "react";
 import type { StudioKernel } from "./studio-kernel.js";
 import type { GraphObject, ObjectId } from "@prism/core/object-model";
@@ -49,25 +49,42 @@ export function useSelection(): {
   return { selectedId, select: kernel.select };
 }
 
-/** Reactive object list from ObjectAtomStore. */
+/**
+ * Reactive object list from ObjectAtomStore.
+ * Uses a version counter to avoid returning new arrays from getSnapshot.
+ */
 export function useObjects(filter?: {
   types?: string[];
   parentId?: ObjectId | null;
 }): GraphObject[] {
   const kernel = useKernel();
-  return useSyncExternalStore(
+  const cacheRef = useRef<{ value: GraphObject[]; version: number }>({ value: [], version: -1 });
+
+  const version = useSyncExternalStore(
     (cb) => kernel.objectAtoms.subscribe(cb),
     () => {
-      const all = Object.values(kernel.objectAtoms.getState().objects);
-      return all.filter((obj) => {
+      // Return a simple counter that increments on change
+      const keys = Object.keys(kernel.objectAtoms.getState().objects);
+      return keys.length; // Stable primitive
+    },
+  );
+
+  // Compute the filtered list only when version changes
+  if (cacheRef.current.version !== version) {
+    const all = Object.values(kernel.objectAtoms.getState().objects);
+    cacheRef.current = {
+      value: all.filter((obj) => {
         if (obj.deletedAt) return false;
         if (filter?.types && !filter.types.includes(obj.type)) return false;
         if (filter?.parentId !== undefined && obj.parentId !== filter.parentId)
           return false;
         return true;
-      });
-    },
-  );
+      }),
+      version,
+    };
+  }
+
+  return cacheRef.current.value;
 }
 
 /** Reactive single object by ID. */
@@ -89,17 +106,30 @@ export function useUndo(): {
   redo: () => void;
 } {
   const kernel = useKernel();
-  const state = useSyncExternalStore(
+  const cacheRef = useRef<{
+    canUndo: boolean;
+    canRedo: boolean;
+    undoLabel: string | null;
+    redoLabel: string | null;
+  }>({ canUndo: false, canRedo: false, undoLabel: null, redoLabel: null });
+
+  // Use a string key as the snapshot — stable primitive
+  const stateKey = useSyncExternalStore(
     (cb) => kernel.undo.subscribe(cb),
-    () => ({
-      canUndo: kernel.undo.canUndo,
-      canRedo: kernel.undo.canRedo,
-      undoLabel: kernel.undo.undoLabel,
-      redoLabel: kernel.undo.redoLabel,
-    }),
+    () => `${kernel.undo.canUndo}|${kernel.undo.canRedo}|${kernel.undo.undoLabel}|${kernel.undo.redoLabel}`,
   );
+
+  // Update cache when key changes
+  const parts = stateKey.split("|");
+  cacheRef.current = {
+    canUndo: parts[0] === "true",
+    canRedo: parts[1] === "true",
+    undoLabel: parts[2] === "null" ? null : (parts[2] ?? null),
+    redoLabel: parts[3] === "null" ? null : (parts[3] ?? null),
+  };
+
   return {
-    ...state,
+    ...cacheRef.current,
     undo: () => kernel.undo.undo(),
     redo: () => kernel.undo.redo(),
   };
@@ -113,13 +143,24 @@ export function useNotifications(kind?: NotificationKind): {
   dismiss: (id: string) => void;
 } {
   const kernel = useKernel();
-  const state = useSyncExternalStore(
+  const cacheRef = useRef<{ items: Notification[]; unreadCount: number; version: number }>({
+    items: [],
+    unreadCount: 0,
+    version: -1,
+  });
+
+  const version = useSyncExternalStore(
     (cb) => kernel.notifications.subscribe(cb),
-    () => ({
+    () => kernel.notifications.getUnreadCount(),
+  );
+
+  if (cacheRef.current.version !== version) {
+    cacheRef.current = {
       items: kernel.notifications.getAll(kind ? { kind: [kind] } : undefined),
       unreadCount: kernel.notifications.getUnreadCount(),
-    }),
-  );
+      version,
+    };
+  }
 
   const add = useCallback(
     (title: string, k: NotificationKind, body?: string) => {
@@ -135,5 +176,5 @@ export function useNotifications(kind?: NotificationKind): {
     [kernel],
   );
 
-  return { ...state, add, dismiss };
+  return { ...cacheRef.current, add, dismiss };
 }

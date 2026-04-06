@@ -1,8 +1,8 @@
-import type { SerializedPage, WorkspaceSlotEvent, WorkspaceSlotListener } from "./layout-types.js";
+import type { SerializedPage, LensSlotEvent, LensSlotListener } from "./layout-types.js";
 import type { PageRegistry } from "./page-registry.js";
 import { PageModel } from "./page-model.js";
 
-export interface WorkspaceSlotOptions<TTarget extends { kind: string }> {
+export interface LensSlotOptions<TTarget extends { kind: string }> {
   id: string;
   label?: string;
   registry: PageRegistry<TTarget>;
@@ -10,7 +10,7 @@ export interface WorkspaceSlotOptions<TTarget extends { kind: string }> {
   cacheSize?: number;
 }
 
-export class WorkspaceSlot<TTarget extends { kind: string }> {
+export class LensSlot<TTarget extends { kind: string }> {
   readonly id: string;
   readonly label: string;
 
@@ -21,9 +21,9 @@ export class WorkspaceSlot<TTarget extends { kind: string }> {
   private _backStack: TTarget[] = [];
   private _forwardStack: TTarget[] = [];
   private _activePage: PageModel<TTarget>;
-  private listeners = new Set<WorkspaceSlotListener<TTarget>>();
+  private listeners = new Set<LensSlotListener<TTarget>>();
 
-  constructor(options: WorkspaceSlotOptions<TTarget>) {
+  constructor(options: LensSlotOptions<TTarget>) {
     this.id = options.id;
     this.label = options.label ?? options.id;
     this.registry = options.registry;
@@ -78,7 +78,7 @@ export class WorkspaceSlot<TTarget extends { kind: string }> {
     return [...this.pageCache.values()].map((p) => p.persist());
   }
 
-  on(listener: WorkspaceSlotListener<TTarget>): () => void {
+  on(listener: LensSlotListener<TTarget>): () => void {
     this.listeners.add(listener);
     return () => {
       this.listeners.delete(listener);
@@ -117,7 +117,7 @@ export class WorkspaceSlot<TTarget extends { kind: string }> {
     }
   }
 
-  private emit(event: WorkspaceSlotEvent<TTarget>): void {
+  private emit(event: LensSlotEvent<TTarget>): void {
     for (const l of this.listeners) l(event);
   }
 }

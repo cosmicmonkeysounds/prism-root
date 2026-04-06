@@ -18,6 +18,8 @@ import type {
   ResolvedIdentity,
   CreateIdentityOptions,
   ResolveIdentityOptions,
+  ExportedIdentity,
+  ImportIdentityOptions,
   MultiSigConfig,
   MultiSignature,
   PartialSignature,
@@ -320,6 +322,68 @@ export async function verifySignature(
 ): Promise<boolean> {
   const resolved = await resolveIdentity(did, options);
   return resolved.verifySignature(data, signature);
+}
+
+// ── Identity Persistence ──────────────────────────────────────────────────
+
+/**
+ * Export a PrismIdentity to a JSON-safe object for file-based persistence.
+ * The exported data includes JWK-encoded Ed25519 keys.
+ */
+export async function exportIdentity(
+  identity: PrismIdentity,
+): Promise<ExportedIdentity> {
+  const subtle = globalThis.crypto.subtle;
+  const privateKeyJwk = await subtle.exportKey("jwk", identity.keyHandle.signingKey);
+  const publicKeyJwk = await subtle.exportKey("jwk", identity.keyHandle.verifyKey);
+
+  return {
+    did: identity.did,
+    privateKeyJwk,
+    publicKeyJwk,
+    createdAt: identity.document.created,
+  };
+}
+
+/**
+ * Import a PrismIdentity from an ExportedIdentity (e.g. loaded from a file).
+ * Reconstructs the full identity including signing/verification functions.
+ */
+export async function importIdentity(
+  exported: ExportedIdentity,
+  options: ImportIdentityOptions = {},
+): Promise<PrismIdentity> {
+  const subtle = options.subtle ?? globalThis.crypto.subtle;
+
+  const signingKey = await subtle.importKey(
+    "jwk",
+    exported.privateKeyJwk,
+    "Ed25519",
+    true,
+    ["sign"],
+  );
+  const verifyKey = await subtle.importKey(
+    "jwk",
+    exported.publicKeyJwk,
+    "Ed25519",
+    true,
+    ["verify"],
+  );
+
+  const rawPublic = await subtle.exportKey("raw", verifyKey);
+  const publicKeyBytes = new Uint8Array(rawPublic);
+
+  const keyHandle: KeyHandle = { signingKey, verifyKey, publicKeyBytes };
+  const document = buildDIDDocument(exported.did, publicKeyBytes, exported.createdAt);
+
+  return {
+    did: exported.did,
+    document,
+    keyHandle,
+    signPayload: (data: Uint8Array) => signWithKey(subtle, signingKey, data),
+    verifySignature: (data: Uint8Array, signature: Uint8Array) =>
+      verifyWithKey(subtle, verifyKey, data, signature),
+  };
 }
 
 // ── Multi-sig ───────────────────────────────────────────────────────────────

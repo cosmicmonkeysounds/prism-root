@@ -11,7 +11,7 @@ export default defineConfig({
       // Map @prism/core subpath exports to their actual locations.
       // Order matters — more-specific first so they aren't shadowed.
       "@prism/core/object-model": core("layer1/object-model/index.ts"),
-      "@prism/core/workspace": core("layer1/workspace/index.ts"),
+      "@prism/core/lens": core("layer1/lens/index.ts"),
       "@prism/core/persistence": core("layer1/persistence/index.ts"),
       "@prism/core/atom": core("layer1/atom/index.ts"),
       "@prism/core/undo": core("layer1/undo/index.ts"),
@@ -57,6 +57,9 @@ export default defineConfig({
       "@prism/core/lua": core("layer1/lua/index.ts"),
       // Catch-all for deep imports like @prism/core/layer2/codemirror/editor-setup
       "@prism/core": resolve(__dirname, "packages/prism-core/src"),
+      // @prism/relay subpath exports
+      "@prism/relay/server": resolve(__dirname, "packages/prism-relay/src/server/index.ts"),
+      "@prism/relay/protocol": resolve(__dirname, "packages/prism-relay/src/protocol/index.ts"),
     },
   },
   test: {

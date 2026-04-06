@@ -5,7 +5,7 @@
  */
 
 import { useState, useEffect } from "react";
-import type { LensManifest } from "../../layer1/workspace/index.js";
+import type { LensManifest } from "../../layer1/lens/index.js";
 import { useLensContext, useShellStore } from "./lens-context.js";
 
 export function ActivityBar() {
