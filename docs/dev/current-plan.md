@@ -506,9 +506,91 @@ Vault/manifest registry and filesystem discovery for workspace management. All p
 | Vitest (vault-discovery) | 22 | Pass |
 | **Phase 13 Total** | **54** | **All Pass** |
 
-## Next: Phase 14
+## Phase 14: Derived Views (Complete)
+
+View mode definitions, configurable filter/sort/group pipeline, and live materialized projections from CollectionStores. All pure TypeScript, zero React.
+
+### Completed
+
+- [x] **View Definitions** (`layer1/view/view-def.ts`) — view mode registry with capability descriptors
+  - `ViewMode` — 7 standard modes: list, kanban, grid, table, timeline, calendar, graph
+  - `ViewDef` — per-mode capabilities: supportsSort, supportsFilter, supportsGrouping, supportsColumns, supportsInlineEdit, supportsBulkSelect, supportsHierarchy, requiresDate, requiresStatus
+  - `createViewRegistry()` — pre-loaded with 7 built-in defs, extensible via `register()`
+  - `supports(mode, capability)` — single capability query
+  - `modesWithCapability(capability)` — find all modes with a feature
+- [x] **View Config** (`layer1/view/view-config.ts`) — filter/sort/group pure transform pipeline
+  - `FilterConfig` — 12 operators: eq, neq, contains, starts, gt, gte, lt, lte, in, nin, empty, notempty
+  - `SortConfig` — field + direction, multi-level sort support
+  - `GroupConfig` — field-based grouping with collapse state
+  - `getFieldValue()` — resolves shell fields first, then data payload
+  - `applyFilters()` — AND-combined filter evaluation
+  - `applySorts()` — multi-level sort (immutable, returns new array)
+  - `applyGroups()` — single-level grouping with insertion-order preservation, __none__ for null/undefined
+  - `applyViewConfig()` — full pipeline: excludeDeleted → filters → sorts → limit
+- [x] **Live View** (`layer1/view/live-view.ts`) — auto-updating materialized projection
+  - `createLiveView(store, options?)` — wraps CollectionStore + ViewConfig
+  - `snapshot` — materialized objects, grouped results, total count, type/tag facets
+  - Config mutations: `setFilters()`, `setSorts()`, `setGroups()`, `setColumns()`, `setLimit()`, `setMode()`, `setConfig()`
+  - `toggleGroupCollapsed(key)` — per-group collapse state management
+  - `includes(objectId)` — fast membership check via internal ID set
+  - Auto-updates on CollectionStore changes (add/update/remove)
+  - `subscribe(listener)` — immediate callback + reactive updates
+  - `refresh()` — force re-materialization
+  - `dispose()` — detach from store, stop auto-updates
+
+### Test Summary
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| Vitest (view-def) | 17 | Pass |
+| Vitest (view-config) | 38 | Pass |
+| Vitest (live-view) | 34 | Pass |
+| **Phase 14 Total** | **89** | **All Pass** |
+
+## Phase 15: Notification System (Complete)
+
+In-app notification registry with debounced batching and deduplication. All pure TypeScript, zero React.
+
+### Completed
+
+- [x] **Notification Store** (`layer1/notification/notification-store.ts`) — in-memory notification registry
+  - `NotificationKind` — 8 kinds: system, mention, activity, reminder, info, success, warning, error
+  - `Notification` — id, kind, title, body?, objectId?, objectType?, actorId?, read, pinned, createdAt, readAt?, dismissedAt?, expiresAt?, data?
+  - `createNotificationStore(options?)` — full CRUD with eviction policy
+  - `add()` — create notification with auto-generated ID and timestamp
+  - `markRead()` / `markAllRead(filter?)` — read state management
+  - `dismiss()` / `dismissAll(filter?)` — soft-delete with timestamp
+  - `pin()` / `unpin()` — pin important notifications
+  - `getAll(filter?)` — newest-first, excludes dismissed/expired, filters by kind/read/objectId/since
+  - `getUnreadCount(filter?)` — unread count excluding dismissed
+  - `subscribe(handler)` — change events (add/update/dismiss)
+  - `hydrate(items)` — bulk load from persistence
+  - `clear()` — remove dismissed unpinned items, preserve pinned
+  - Eviction policy: dismissed unpinned (oldest) → read unpinned (oldest); pinned never evicted
+- [x] **Notification Queue** (`layer1/notification/notification-queue.ts`) — debounced batching with dedup
+  - `createNotificationQueue(store, options?)` — enqueue → debounce → flush to store
+  - `enqueue(input)` — add to pending queue with dedup by (objectId, kind)
+  - Debounce: configurable window (default 300ms), timer resets on subsequent enqueue
+  - Dedup within queue: same (objectId, kind) → last-write-wins
+  - Dedup across flush: within dedupWindowMs (default 5000ms), recently flushed items are skipped
+  - `flush()` — manually deliver all pending to store
+  - `pending()` — queued count
+  - `dispose()` — clear pending, cancel timers
+  - Pluggable `TimerProvider` for testing (setTimeout, clearTimeout, now)
+
+### Test Summary
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| Vitest (notification-store) | 36 | Pass |
+| Vitest (notification-queue) | 12 | Pass |
+| **Phase 15 Total** | **48** | **All Pass** |
+
+## Next: Phase 16
 
 Candidates:
-- Derived Views (materialized query results, live projections from collections)
 - Federation (cross-Node object addressing, federated edges)
 - Batch Operations (bulk create/update/delete with undo support)
+- Clipboard / Drag-and-Drop (tree clipboard with cut/copy/paste, drag reorder)
+- Template System (object templates, instantiation, template registry)
+- Activity Log (audit trail of object mutations with actor/timestamp)

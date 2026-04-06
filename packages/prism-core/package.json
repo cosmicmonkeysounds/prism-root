@@ -31,7 +31,9 @@
     "./server": "./src/layer1/server/index.ts",
     "./persistence": "./src/layer1/persistence/index.ts",
     "./search": "./src/layer1/search/index.ts",
-    "./discovery": "./src/layer1/discovery/index.ts"
+    "./discovery": "./src/layer1/discovery/index.ts",
+    "./view": "./src/layer1/view/index.ts",
+    "./notification": "./src/layer1/notification/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

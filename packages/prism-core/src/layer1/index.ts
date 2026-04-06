@@ -504,3 +504,51 @@ export type {
   DiscoveryScanOptions,
   VaultDiscovery,
 } from "./discovery/index.js";
+
+// ── Derived Views ──────────────────────────────────────────────────────────
+export {
+  createViewRegistry,
+  getFieldValue,
+  applyFilters,
+  applySorts,
+  applyGroups,
+  applyViewConfig,
+  createLiveView,
+} from "./view/index.js";
+
+export type {
+  ViewMode,
+  ViewDef,
+  ViewRegistry,
+  FilterOp,
+  FilterConfig,
+  SortConfig,
+  GroupConfig,
+  GroupedResult,
+  ViewConfig,
+  LiveViewSnapshot,
+  LiveViewListener,
+  LiveViewOptions,
+  LiveView,
+} from "./view/index.js";
+
+// ── Notification System ────────────────────────────────────────────────────
+export {
+  createNotificationStore,
+  createNotificationQueue,
+} from "./notification/index.js";
+
+export type {
+  NotificationKind,
+  Notification,
+  NotificationFilter,
+  NotificationInput,
+  NotificationChangeType,
+  NotificationChange,
+  NotificationListener,
+  NotificationStoreOptions,
+  NotificationStore,
+  NotificationQueueOptions,
+  TimerProvider,
+  NotificationQueue,
+} from "./notification/index.js";
