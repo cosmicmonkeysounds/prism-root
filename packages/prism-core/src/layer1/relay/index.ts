@@ -50,6 +50,16 @@ export type {
   FederationRegistry,
 } from "./relay-types.js";
 
+// ── Client SDK ──────────────────────────────────────────────────────────────
+export { createRelayClient } from "./relay-client.js";
+export type {
+  RelayClientOptions,
+  SendEnvelopeOptions,
+  RelayClientState,
+  RelayClientEvents,
+  RelayClient,
+} from "./relay-client.js";
+
 // ── Phase 2 modules ─────────────────────────────────────────────────────────
 export { collectionHostModule } from "./collection-host-module.js";
 export { hashcashModule } from "./hashcash-module.js";

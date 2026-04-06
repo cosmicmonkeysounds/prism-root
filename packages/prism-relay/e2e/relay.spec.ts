@@ -10,6 +10,7 @@ import { createIdentity } from "@prism/core/identity";
 import type { PrismIdentity } from "@prism/core/identity";
 import {
   createRelayBuilder,
+  createRelayClient,
   blindMailboxModule,
   relayRouterModule,
   capabilityTokenModule,
@@ -416,5 +417,89 @@ test.describe("Federation", () => {
     res = await request.get(`http://localhost:${port2}/api/federation/peers`);
     const peers2 = await res.json();
     expect(peers2.some((p: { relayDid: string }) => p.relayDid === identity.did)).toBe(true);
+  });
+});
+
+// ── Client SDK ──────────────────────────────────────────────────────────────
+
+test.describe("Client SDK", () => {
+  test("client connects, sends envelope, and recipient receives it", async () => {
+    const alice = await createIdentity({ method: "key" });
+    const bob = await createIdentity({ method: "key" });
+
+    const aliceClient = createRelayClient({
+      url: `ws://localhost:${serverPort}/ws/relay`,
+      identity: alice,
+      autoReconnect: false,
+    });
+    const bobClient = createRelayClient({
+      url: `ws://localhost:${serverPort}/ws/relay`,
+      identity: bob,
+      autoReconnect: false,
+    });
+
+    await aliceClient.connect();
+    expect(aliceClient.state).toBe("connected");
+    expect(aliceClient.relayDid).toBe(identity.did);
+
+    await bobClient.connect();
+    expect(bobClient.state).toBe("connected");
+
+    // Set up receiver
+    const received = new Promise<Uint8Array>((resolve) => {
+      bobClient.on("envelope", (env) => resolve(env.ciphertext));
+    });
+
+    // Send from Alice to Bob
+    const payload = new TextEncoder().encode("Hello from Alice via deployed relay!");
+    const result = await aliceClient.send({
+      to: bob.did,
+      ciphertext: payload,
+      ttlMs: 60_000,
+    });
+    expect(result.status).toBe("delivered");
+
+    // Bob receives it
+    const data = await received;
+    expect(new TextDecoder().decode(data)).toBe("Hello from Alice via deployed relay!");
+
+    aliceClient.close();
+    bobClient.close();
+  });
+
+  test("client syncs collection from relay", async () => {
+    // Create collection on server side
+    const host = relay.getCapability<CollectionHost>(RELAY_CAPABILITIES.COLLECTIONS) as CollectionHost;
+    host.create("client-e2e-col");
+
+    const alice = await createIdentity({ method: "key" });
+    const client = createRelayClient({
+      url: `ws://localhost:${serverPort}/ws/relay`,
+      identity: alice,
+      autoReconnect: false,
+    });
+    await client.connect();
+
+    const snapshot = await client.syncRequest("client-e2e-col");
+    expect(snapshot).toBeInstanceOf(Uint8Array);
+    expect(snapshot.length).toBeGreaterThan(0);
+
+    client.close();
+  });
+
+  test("client handles reconnection state", async () => {
+    const alice = await createIdentity({ method: "key" });
+    const client = createRelayClient({
+      url: `ws://localhost:${serverPort}/ws/relay`,
+      identity: alice,
+      autoReconnect: false,
+    });
+
+    expect(client.state).toBe("disconnected");
+    await client.connect();
+    expect(client.state).toBe("connected");
+    expect(client.modules.length).toBeGreaterThan(0);
+    client.close();
+    expect(client.state).toBe("disconnected");
   });
 });

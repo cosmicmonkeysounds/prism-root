@@ -7,7 +7,9 @@
 import { Hono } from "hono";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { serve } from "@hono/node-server";
-import type { RelayInstance } from "@prism/core/relay";
+import type { RelayInstance, FederationRegistry, RelayEnvelope, ForwardResult } from "@prism/core/relay";
+import { RELAY_CAPABILITIES } from "@prism/core/relay";
+import { serializeEnvelope } from "../protocol/relay-protocol.js";
 import {
   createStatusRoutes,
   createWebhookRoutes,
@@ -68,6 +70,29 @@ export function createRelayServer(options: RelayServerOptions): RelayServer {
   app.route("/api/trust", createTrustRoutes(relay));
   app.route("/api/escrow", createEscrowRoutes(relay));
   app.route("/api/federation", createFederationRoutes(relay));
+
+  // ── Federation transport ─────────────────────────────────────────────
+  const federation = relay.getCapability<FederationRegistry>(RELAY_CAPABILITIES.FEDERATION);
+  if (federation) {
+    federation.setTransport(async (envelope: RelayEnvelope, peerUrl: string): Promise<ForwardResult> => {
+      try {
+        const res = await fetch(`${peerUrl}/api/federation/forward`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            envelope: serializeEnvelope(envelope),
+            targetRelay: relay.did,
+          }),
+        });
+        if (res.ok) {
+          return await res.json() as ForwardResult;
+        }
+        return { status: "error", message: `Peer returned ${res.status}` };
+      } catch (e) {
+        return { status: "error", message: String(e) };
+      }
+    });
+  }
 
   // ── WebSocket ────────────────────────────────────────────────────────
   app.get(

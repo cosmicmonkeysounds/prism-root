@@ -60,6 +60,7 @@ export default defineConfig({
       // @prism/relay subpath exports
       "@prism/relay/server": resolve(__dirname, "packages/prism-relay/src/server/index.ts"),
       "@prism/relay/protocol": resolve(__dirname, "packages/prism-relay/src/protocol/index.ts"),
+      "@prism/relay/config": resolve(__dirname, "packages/prism-relay/src/config/index.ts"),
     },
   },
   test: {
