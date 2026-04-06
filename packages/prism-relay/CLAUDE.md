@@ -44,6 +44,14 @@ WebSocket at `/ws/relay`:
 6. `{ type: "hashcash-proof", proof }` → `{ type: "hashcash-ok" }` or error
 7. `{ type: "ping" }` → `{ type: "pong" }`
 
+## Sovereign Portals (HTML Rendering)
+- Uses Hono's built-in JSX (`jsxImportSource: "hono/jsx"` in tsconfig)
+- `GET /portals` — lists public portals as HTML
+- `GET /portals/:id` — renders portal as HTML (Level 1 = static, Level 2+ = live WS updates)
+- `GET /portals/:id/snapshot.json` — raw JSON snapshot for API consumers
+- Portal renderer in `@prism/core/relay` extracts tree-structured `PortalSnapshot` from `CollectionStore`
+- Level 2+ portals include a client-side WS script for live CRDT update detection
+
 ## HTTP API
 - `GET /api/status` — relay state
 - `GET /api/modules` — installed modules

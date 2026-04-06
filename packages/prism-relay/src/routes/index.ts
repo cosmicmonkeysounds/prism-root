@@ -7,3 +7,4 @@ export { createHashcashRoutes } from "./hashcash-routes.js";
 export { createTrustRoutes } from "./trust-routes.js";
 export { createEscrowRoutes } from "./escrow-routes.js";
 export { createFederationRoutes } from "./federation-routes.js";
+export { createPortalViewRoutes } from "./portal-view-routes.js";

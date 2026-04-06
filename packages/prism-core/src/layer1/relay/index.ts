@@ -60,6 +60,18 @@ export type {
   RelayClient,
 } from "./relay-client.js";
 
+// ── Portal Renderer ────────────────────────────────────────────────────────
+export {
+  extractPortalSnapshot,
+  escapeHtml,
+  renderPortalHtml,
+} from "./portal-renderer.js";
+export type {
+  PortalObject,
+  PortalEdge,
+  PortalSnapshot,
+} from "./portal-renderer.js";
+
 // ── Phase 2 modules ─────────────────────────────────────────────────────────
 export { collectionHostModule } from "./collection-host-module.js";
 export { hashcashModule } from "./hashcash-module.js";

@@ -20,6 +20,7 @@ import {
   createTrustRoutes,
   createEscrowRoutes,
   createFederationRoutes,
+  createPortalViewRoutes,
 } from "../routes/index.js";
 import { handleWsOpen, handleWsMessage, handleWsClose, createConnectionRegistry } from "../transport/index.js";
 import type { WsConnection } from "../transport/index.js";
@@ -29,6 +30,8 @@ export interface RelayServerOptions {
   port?: number;
   host?: string;
   corsOrigins?: string[];
+  /** Public-facing base URL (for WebSocket URLs in portal pages). */
+  publicUrl?: string;
 }
 
 export interface RelayServer {
@@ -37,7 +40,7 @@ export interface RelayServer {
 }
 
 export function createRelayServer(options: RelayServerOptions): RelayServer {
-  const { relay, port = 4444, host = "0.0.0.0", corsOrigins } = options;
+  const { relay, port = 4444, host = "0.0.0.0", corsOrigins, publicUrl } = options;
   const app = new Hono();
 
   // ── CORS middleware ────────────────────────────────────────────────────
@@ -70,6 +73,12 @@ export function createRelayServer(options: RelayServerOptions): RelayServer {
   app.route("/api/trust", createTrustRoutes(relay));
   app.route("/api/escrow", createEscrowRoutes(relay));
   app.route("/api/federation", createFederationRoutes(relay));
+
+  // ── Portal view (HTML rendering) ────────────────────────────────────
+  const wsBaseUrl = publicUrl
+    ? publicUrl.replace(/^http/, "ws")
+    : undefined;
+  app.route("/portals", createPortalViewRoutes(relay, wsBaseUrl));
 
   // ── Federation transport ─────────────────────────────────────────────
   const federation = relay.getCapability<FederationRegistry>(RELAY_CAPABILITIES.FEDERATION);

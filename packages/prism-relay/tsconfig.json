@@ -3,6 +3,8 @@
   "compilerOptions": {
     "baseUrl": ".",
     "outDir": "dist",
+    "jsx": "react-jsx",
+    "jsxImportSource": "hono/jsx",
     "paths": {
       "@prism/core/*": ["../prism-core/src/*"],
       "@prism/shared/*": ["../shared/src/*"]

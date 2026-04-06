@@ -1243,6 +1243,47 @@ Surfaced kernel features (clipboard, templates, activity, reorder) in the Studio
 | — Object Reorder | 3 | Pass |
 | **Phase 30e Total** | **1955 Vitest + 18 E2E** | **All Pass** |
 
+## Phase 30f: Prism Relay — Server Package + Sovereign Portals (In Progress)
+
+Full server runtime for Prism Relay (`packages/prism-relay/`), deployable to any VPS or container.
+
+### Completed
+- [x] **Hono HTTP Server** — `createRelayServer()` with all 12 modules wired as HTTP routes
+- [x] **WebSocket Transport** — auth, envelope routing, CRDT sync, hashcash, ping/pong
+- [x] **ConnectionRegistry** — tracks WS connections + collection subscriptions for broadcast
+- [x] **Deployment CLI** — 3 modes (server/p2p/dev), config file, env vars, CLI flags
+- [x] **Identity Persistence** — Ed25519 JWK export/import, auto-create on first run
+- [x] **Federation Transport** — HTTP-based envelope forwarding between relay peers
+- [x] **Relay Client SDK** — `createRelayClient()` with auth, send/receive, CRDT sync, auto-reconnect
+- [x] **Config System** — 4-layer resolution (CLI > env > config file > mode defaults)
+- [x] **Docker** — multi-stage Dockerfile for production deployment
+- [x] **Per-Package E2E** — Playwright tests moved from global e2e/ to per-package
+- [x] **Sovereign Portal Rendering** — Hono JSX SSR for Level 1-2 portals
+  - [x] `extractPortalSnapshot()` — tree-structured data extraction from CollectionStore
+  - [x] `renderPortalHtml()` — fallback static HTML renderer (framework-agnostic)
+  - [x] Portal view routes: `GET /portals`, `GET /portals/:id`, `GET /portals/:id/snapshot.json`
+  - [x] Level 2 live update: client-side WS script for CRDT change detection
+
+### TODO
+- [ ] Level 3 portals: interactive forms with ephemeral DID auth + capability tokens
+- [ ] Level 4 portals: complex webapps with full client-side hydration
+- [ ] Let's Encrypt SSL provisioning for custom domains
+- [ ] Portal template system: user-defined layouts from Studio
+- [ ] Incremental DOM patching for Level 2 (replace full-page reload)
+
+### Test Summary
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| Portal Renderer | 11 | Pass |
+| Portal View Routes | 7 | Pass |
+| Relay Server | 13 | Pass |
+| Relay Client | 8 | Pass |
+| Config | 11 | Pass |
+| Parse Args | 19 | Pass |
+| Route Tests (7 files) | 34 | Pass |
+| **Phase 30f Total** | **2058 Vitest** | **All Pass** |
+
 ## Phase 31: Ecosystem Apps — Lattice
 
 Game middleware suite: narrative, audio, entity authoring, world topology.
