@@ -1025,27 +1025,48 @@ R3F-based 3D editor for spatial content.
   - [ ] Loro-backed scene state: object transforms, materials, hierarchy in CRDT
   - [ ] Gizmo controls: translate, rotate, scale with undo integration
 
-## Phase 29: NLE / Timeline System (Grip)
+## Phase 29: NLE / Timeline System (Grip) (Complete — Layer 1)
 
 Non-linear editing and show control for live production.
 
-- [ ] **Timeline Engine** (`layer1/timeline/`)
-  - [ ] tone.js master clock with sample-accurate scheduling
-  - [ ] Track model: audio, video, lighting, automation lanes
-  - [ ] Clip model: time-range regions with source references
-  - [ ] Transport controls: play, pause, seek, loop, scrub
-- [ ] **Audio Pipeline**
-  - [ ] @elemaudio/core for DSP graph
-  - [ ] peaks.js waveform rendering
+- [x] **Timeline Engine** (`layer1/timeline/`)
+  - [x] Pluggable `TimelineClock` abstraction (Layer 2 provides tone.js/rAF, tests use `ManualClock`)
+  - [x] Track model: 5 kinds (audio, video, lighting, automation, midi) with mute/solo/lock/gain
+  - [x] Clip model: time-range regions with sourceRef, sourceOffset, trim, move between tracks, lock/mute/gain
+  - [x] Transport controls: play, pause, stop, seek, scrub, setSpeed, loop regions
+  - [x] Automation lanes: step/linear/bezier interpolation, per-parameter breakpoint curves
+  - [x] Timeline markers: sorted by time, custom colors
+  - [x] Tempo map (PPQN): dual time model (seconds ↔ bar/beat/tick), tempo automation, time signature changes
+  - [x] Event system: 14 event kinds with subscribe/unsubscribe
+  - [x] Reference: OpenDAW SDK (naomiaro/opendaw-test) for Layer 2 audio integration
+- [ ] **Audio Pipeline** (Layer 2 — future)
+  - [ ] OpenDAW SDK / @elemaudio/core for DSP graph
+  - [ ] peaks.js / waveform-playlist for waveform rendering
   - [ ] WAM (Web Audio Modules) standard for VST-like plugins
-- [ ] **Video Pipeline**
+- [ ] **Video Pipeline** (Layer 2 — future)
   - [ ] WebCodecs API for frame-accurate seeking
   - [ ] Proxy workflow: low-res edit → full-res export
-- [ ] **Hardware Bridges** (Rust daemon)
+- [ ] **Hardware Bridges** (Rust daemon — future)
   - [ ] Art-Net (DMX lighting control)
   - [ ] VISCA over IP (PTZ camera control)
   - [ ] OSC (Open Sound Control)
   - [ ] MIDI (instrument/controller I/O)
+
+### Test Summary
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| Transport | 10 | Pass |
+| Tracks | 8 | Pass |
+| Clips | 10 | Pass |
+| Automation | 8 | Pass |
+| Markers | 6 | Pass |
+| Queries | 4 | Pass |
+| Events | 1 | Pass |
+| Lifecycle | 1 | Pass |
+| ManualClock | 6 | Pass |
+| TempoMap | 10 | Pass |
+| **Phase 29 Total** | **67** | **All Pass** |
 
 ## Phase 30: Ecosystem Apps — Flux
 

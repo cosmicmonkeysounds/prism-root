@@ -46,7 +46,8 @@
     "./actor": "./src/layer1/actor/index.ts",
     "./syntax": "./src/layer1/syntax/index.ts",
     "./session": "./src/layer1/session/index.ts",
-    "./trust": "./src/layer1/trust/index.ts"
+    "./trust": "./src/layer1/trust/index.ts",
+    "./timeline": "./src/layer1/timeline/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

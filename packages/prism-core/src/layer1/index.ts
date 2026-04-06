@@ -881,6 +881,41 @@ export {
   createEscrowManager,
 } from "./trust/index.js";
 
+// ── NLE / Timeline ────────────────────────────────────────────────────────
+export {
+  createTimelineEngine,
+  createManualClock,
+  createTempoMap,
+  resetIdCounter,
+} from "./timeline/index.js";
+
+export type {
+  TimeSeconds,
+  TimeRange,
+  PPQ,
+  TempoMarker,
+  TimeSignature,
+  MusicalPosition,
+  TempoMap,
+  TrackKind,
+  TimelineClip,
+  InterpolationMode,
+  AutomationPoint,
+  AutomationLane,
+  TimelineTrack,
+  TransportStatus,
+  LoopRegion,
+  TransportState,
+  TimelineClock,
+  TimelineMarker,
+  TimelineEventKind,
+  TimelineEvent,
+  TimelineListener,
+  TimelineEngine,
+  ManualClock,
+  TimelineEngineOptions,
+} from "./timeline/index.js";
+
 export type {
   SandboxCapability,
   SandboxPolicy,
