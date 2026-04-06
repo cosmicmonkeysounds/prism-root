@@ -1243,12 +1243,12 @@ Surfaced kernel features (clipboard, templates, activity, reorder) in the Studio
 | — Object Reorder | 3 | Pass |
 | **Phase 30e Total** | **1955 Vitest + 18 E2E** | **All Pass** |
 
-## Phase 30f: Prism Relay — Server Package + Sovereign Portals (In Progress)
+## Phase 30f: Prism Relay — Server Package + Sovereign Portals (Complete)
 
 Full server runtime for Prism Relay (`packages/prism-relay/`), deployable to any VPS or container.
 
 ### Completed
-- [x] **Hono HTTP Server** — `createRelayServer()` with all 12 modules wired as HTTP routes
+- [x] **Hono HTTP Server** — `createRelayServer()` with all 14 modules wired as HTTP routes
 - [x] **WebSocket Transport** — auth, envelope routing, CRDT sync, hashcash, ping/pong
 - [x] **ConnectionRegistry** — tracks WS connections + collection subscriptions for broadcast
 - [x] **Deployment CLI** — 3 modes (server/p2p/dev), config file, env vars, CLI flags
@@ -1258,18 +1258,15 @@ Full server runtime for Prism Relay (`packages/prism-relay/`), deployable to any
 - [x] **Config System** — 4-layer resolution (CLI > env > config file > mode defaults)
 - [x] **Docker** — multi-stage Dockerfile for production deployment
 - [x] **Per-Package E2E** — Playwright tests moved from global e2e/ to per-package
-- [x] **Sovereign Portal Rendering** — Hono JSX SSR for Level 1-2 portals
+- [x] **Sovereign Portal Rendering** — Hono JSX SSR for Level 1-4 portals
   - [x] `extractPortalSnapshot()` — tree-structured data extraction from CollectionStore
   - [x] `renderPortalHtml()` — fallback static HTML renderer (framework-agnostic)
   - [x] Portal view routes: `GET /portals`, `GET /portals/:id`, `GET /portals/:id/snapshot.json`
-  - [x] Level 2 live update: client-side WS script for CRDT change detection
-
-### TODO
-- [ ] Level 3 portals: interactive forms with ephemeral DID auth + capability tokens
-- [ ] Level 4 portals: complex webapps with full client-side hydration
-- [ ] Let's Encrypt SSL provisioning for custom domains
-- [ ] Portal template system: user-defined layouts from Studio
-- [ ] Incremental DOM patching for Level 2 (replace full-page reload)
+  - [x] Level 2 incremental DOM patching: client-side WS script fetches snapshot JSON and patches `#portal-content` without full-page reload
+  - [x] Level 3 interactive forms: `POST /portals/:id/submit` with ephemeral DID auth, capability token verification for non-public portals, form rendering in portal pages
+  - [x] Level 4 client-side hydration: `window.__PRISM_PORTAL__` API with subscribe/notify, bidirectional CRDT sync via WebSocket, `sendUpdate()`/`submitObject()` methods
+- [x] **Let's Encrypt SSL Provisioning** — ACME HTTP-01 challenge routes (`/.well-known/acme-challenge/:token`), `AcmeCertificateManager` for certificate lifecycle, management API (`/api/acme/challenges`, `/api/acme/certificates`)
+- [x] **Portal Template System** — `PortalTemplateRegistry` for user-defined layouts with custom CSS/HTML templates, management API (`/api/templates`)
 
 ### Test Summary
 
@@ -1281,8 +1278,68 @@ Full server runtime for Prism Relay (`packages/prism-relay/`), deployable to any
 | Relay Client | 8 | Pass |
 | Config | 11 | Pass |
 | Parse Args | 19 | Pass |
-| Route Tests (7 files) | 34 | Pass |
-| **Phase 30f Total** | **2058 Vitest** | **All Pass** |
+| Route Tests (9 files) | 44 | Pass |
+| ACME Routes | 5 | Pass |
+| Template Routes | 5 | Pass |
+| Playwright E2E | 32 | Pass |
+| **Phase 30f Total** | **2089 Vitest + 32 E2E** | **All Pass** |
+
+## Phase 30g: Studio Relay Integration (Complete)
+
+Integrated Prism Relay into Studio as a client-only consumer. Studio has NO server code — it manages relays via CLI and connects to them via HTTP + WebSocket.
+
+### Completed
+
+- [x] **RelayManager** (`relay-manager.ts`) — manages relay connections from Studio
+  - Add/remove relay endpoint configurations (name + URL)
+  - Connect/disconnect via WebSocket (RelayClient SDK)
+  - Status tracking with subscriber notifications
+  - URL normalization (http→ws, https→wss, trailing slash stripping)
+- [x] **Portal Management** — publish/unpublish/list portals via Relay HTTP API
+  - `publishPortal()` — POST manifest to relay, returns view URL
+  - `unpublishPortal()` — DELETE portal from relay
+  - `listPortals()` — GET all portals on a relay
+  - `fetchStatus()` — GET relay health/module info
+- [x] **Collection Sync** — push CRDT snapshots to relay for portal rendering
+  - Creates hosted collection on relay, imports snapshot via HTTP
+  - WebSocket live sync for connected relays
+- [x] **Kernel Integration** — `kernel.relay` exposes RelayManager to all Studio components
+  - `useRelay()` hook for reactive relay state in React
+  - Dispose cleans up all relay connections
+- [x] **Relay Lens** (shortcut: r) — 6th Studio lens, "Relay Manager" panel
+  - Add Relay form (name + URL, Enter key submit)
+  - Relay cards with status dot (green/yellow/red/grey), Connect/Disconnect/Remove
+  - Publish Portal dialog (name, level 1-4, base path)
+  - Portal list with unpublish and view URL links
+  - CLI reference section with all deployment modes
+  - Summary counter (relays configured + connected count)
+- [x] **E2E Tests** (18 Playwright tests) — full coverage of relay panel UI
+  - Panel rendering (header, sections, empty state, CLI reference)
+  - Add relay form (inputs, submit, notification, clear, Enter key)
+  - Relay card actions (connect guidance, remove, notifications)
+  - Multiple relays (add multiple, remove selectively)
+  - KBar navigation to Relay panel
+  - Summary counter updates
+- [x] **Existing E2E updated** — shell (6 icons), tabs (6 lenses), keyboard (6 KBar actions)
+- [x] **Injectable HTTP/WS clients** for testing (no real network in unit tests)
+
+### Key Decisions
+- Studio is client-only: no server code, Relay servers managed via CLI
+- RelayManager uses HTTP fetch for portal CRUD, WebSocket for live sync
+- `handleConnect()` shows CLI guidance notification — full WS auth requires daemon identity via Tauri IPC (not yet wired)
+- Portal publishing defaults to "default" collection (the kernel's CollectionStore)
+- HTTP client and WS client factory are injectable for unit testing
+
+### Test Summary
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| Vitest — RelayManager | 21 | Pass |
+| Playwright — Relay Panel | 18 | Pass |
+| Playwright — Shell (updated) | 8 | Pass |
+| Playwright — Tabs (updated) | 5 | Pass |
+| Playwright — Keyboard (updated) | 5 | Pass |
+| **Phase 30g Total** | **2084 Vitest + 92 E2E** | **All Pass** |
 
 ## Phase 31: Ecosystem Apps — Lattice
 

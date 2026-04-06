@@ -21,6 +21,9 @@ import {
   createEscrowRoutes,
   createFederationRoutes,
   createPortalViewRoutes,
+  createAcmeRoutes,
+  createAcmeManagementRoutes,
+  createTemplateRoutes,
 } from "../routes/index.js";
 import { handleWsOpen, handleWsMessage, handleWsClose, createConnectionRegistry } from "../transport/index.js";
 import type { WsConnection } from "../transport/index.js";
@@ -73,6 +76,11 @@ export function createRelayServer(options: RelayServerOptions): RelayServer {
   app.route("/api/trust", createTrustRoutes(relay));
   app.route("/api/escrow", createEscrowRoutes(relay));
   app.route("/api/federation", createFederationRoutes(relay));
+  app.route("/api/acme", createAcmeManagementRoutes(relay));
+  app.route("/api/templates", createTemplateRoutes(relay));
+
+  // ── ACME HTTP-01 challenge response (Let's Encrypt) ─────────────────
+  app.route("/.well-known/acme-challenge", createAcmeRoutes(relay));
 
   // ── Portal view (HTML rendering) ────────────────────────────────────
   const wsBaseUrl = publicUrl

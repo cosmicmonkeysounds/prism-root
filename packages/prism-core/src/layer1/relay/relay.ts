@@ -613,6 +613,120 @@ function createPortalRegistry(): PortalRegistry {
   };
 }
 
+// ── Module: ACME Certificate Manager ──────────────────────────────────────
+
+import type {
+  AcmeChallenge,
+  SslCertificate,
+  AcmeCertificateManager,
+  PortalTemplate,
+  PortalTemplateRegistry,
+} from "./relay-types.js";
+
+export function acmeCertificateModule(): RelayModule {
+  return {
+    name: "acme-certificates",
+    description: "ACME HTTP-01 challenge handling and SSL certificate management for custom domains",
+    dependencies: [],
+
+    install(ctx: RelayContext): void {
+      const manager = createAcmeCertificateManager();
+      ctx.setCapability(RELAY_CAPABILITIES.ACME, manager);
+    },
+  };
+}
+
+function createAcmeCertificateManager(): AcmeCertificateManager {
+  const challenges = new Map<string, AcmeChallenge>();
+  const certificates = new Map<string, SslCertificate>();
+
+  return {
+    addChallenge(challenge: AcmeChallenge): void {
+      challenges.set(challenge.token, challenge);
+    },
+
+    getChallenge(token: string): AcmeChallenge | undefined {
+      return challenges.get(token);
+    },
+
+    removeChallenge(token: string): boolean {
+      return challenges.delete(token);
+    },
+
+    setCertificate(cert: SslCertificate): void {
+      certificates.set(cert.domain, cert);
+    },
+
+    getCertificate(domain: string): SslCertificate | undefined {
+      return certificates.get(domain);
+    },
+
+    listCertificates(): SslCertificate[] {
+      return [...certificates.values()];
+    },
+
+    removeCertificate(domain: string): boolean {
+      return certificates.delete(domain);
+    },
+
+    evictExpiredChallenges(): number {
+      const now = Date.now();
+      let evicted = 0;
+      for (const [token, challenge] of challenges) {
+        if (new Date(challenge.expiresAt).getTime() < now) {
+          challenges.delete(token);
+          evicted++;
+        }
+      }
+      return evicted;
+    },
+  };
+}
+
+// ── Module: Portal Templates ──────────────────────────────────────────────
+
+export function portalTemplateModule(): RelayModule {
+  return {
+    name: "portal-templates",
+    description: "User-defined layout templates for Sovereign Portal rendering",
+    dependencies: [],
+
+    install(ctx: RelayContext): void {
+      const registry = createPortalTemplateRegistry();
+      ctx.setCapability(RELAY_CAPABILITIES.TEMPLATES, registry);
+    },
+  };
+}
+
+function createPortalTemplateRegistry(): PortalTemplateRegistry {
+  const templates = new Map<string, PortalTemplate>();
+
+  return {
+    register(template: Omit<PortalTemplate, "templateId" | "createdAt">): PortalTemplate {
+      const templateId = uid("tpl");
+      const full: PortalTemplate = {
+        ...template,
+        templateId,
+        createdAt: new Date().toISOString(),
+      };
+      templates.set(templateId, full);
+      return full;
+    },
+
+    get(templateId: string): PortalTemplate | undefined {
+      return templates.get(templateId);
+    },
+
+    list(): PortalTemplate[] {
+      return [...templates.values()];
+    },
+
+    remove(templateId: string): boolean {
+      return templates.delete(templateId);
+    },
+  };
+}
+
 // ── In-memory Ping Transport (for testing) ──────────────────────────────────
 
 export function createMemoryPingTransport(): PingTransport & { sent: BlindPing[] } {

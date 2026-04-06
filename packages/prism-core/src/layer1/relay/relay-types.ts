@@ -380,6 +380,8 @@ export const RELAY_CAPABILITIES = {
   TRUST: "relay:trust",
   ESCROW: "relay:escrow",
   FEDERATION: "relay:federation",
+  ACME: "relay:acme",
+  TEMPLATES: "relay:templates",
 } as const;
 
 // ── Collection Hosting ─────────────────────────────────────────────────────
@@ -396,6 +398,92 @@ export interface CollectionHost {
   list(): string[];
   /** Remove a hosted collection. */
   remove(id: string): boolean;
+}
+
+// ── ACME / SSL Certificate Management ─────────────────────────────────────
+
+/** An ACME HTTP-01 challenge for Let's Encrypt domain validation. */
+export interface AcmeChallenge {
+  /** Domain being validated. */
+  domain: string;
+  /** Challenge token from ACME server. */
+  token: string;
+  /** Key authorization (token.thumbprint). */
+  keyAuthorization: string;
+  /** ISO-8601 creation time. */
+  createdAt: string;
+  /** ISO-8601 expiry (challenges are short-lived). */
+  expiresAt: string;
+}
+
+/** SSL certificate record for a custom domain. */
+export interface SslCertificate {
+  /** Domain this certificate covers. */
+  domain: string;
+  /** PEM-encoded certificate. */
+  certificate: string;
+  /** PEM-encoded private key. */
+  privateKey: string;
+  /** ISO-8601 issue date. */
+  issuedAt: string;
+  /** ISO-8601 expiry date. */
+  expiresAt: string;
+  /** Whether this certificate is currently active. */
+  active: boolean;
+}
+
+/** Manages ACME challenges and SSL certificates for custom portal domains. */
+export interface AcmeCertificateManager {
+  /** Store a pending ACME challenge for domain validation. */
+  addChallenge(challenge: AcmeChallenge): void;
+  /** Look up a challenge by its token (for HTTP-01 response). */
+  getChallenge(token: string): AcmeChallenge | undefined;
+  /** Remove a challenge (after validation or expiry). */
+  removeChallenge(token: string): boolean;
+  /** Store a certificate for a domain. */
+  setCertificate(cert: SslCertificate): void;
+  /** Get the active certificate for a domain. */
+  getCertificate(domain: string): SslCertificate | undefined;
+  /** List all managed certificates. */
+  listCertificates(): SslCertificate[];
+  /** Remove a certificate for a domain. */
+  removeCertificate(domain: string): boolean;
+  /** Evict expired challenges. */
+  evictExpiredChallenges(): number;
+}
+
+// ── Portal Templates ──────────────────────────────────────────────────────
+
+/** A reusable layout template for portal rendering. */
+export interface PortalTemplate {
+  /** Unique template ID. */
+  templateId: string;
+  /** Display name. */
+  name: string;
+  /** Description of what this template provides. */
+  description: string;
+  /** Custom CSS to inject into portal pages. */
+  css: string;
+  /** Header HTML template (supports {{portalName}}, {{objectCount}} placeholders). */
+  headerHtml: string;
+  /** Footer HTML template. */
+  footerHtml: string;
+  /** Object card HTML template (supports {{name}}, {{type}}, {{description}}, {{status}}, {{tags}}). */
+  objectCardHtml: string;
+  /** ISO-8601 creation time. */
+  createdAt: string;
+}
+
+/** Registry for user-defined portal templates. */
+export interface PortalTemplateRegistry {
+  /** Register a new template. */
+  register(template: Omit<PortalTemplate, "templateId" | "createdAt">): PortalTemplate;
+  /** Get a template by ID. */
+  get(templateId: string): PortalTemplate | undefined;
+  /** List all templates. */
+  list(): PortalTemplate[];
+  /** Remove a template. */
+  remove(templateId: string): boolean;
 }
 
 // ── Hashcash Gate ──────────────────────────────────────────────────────────

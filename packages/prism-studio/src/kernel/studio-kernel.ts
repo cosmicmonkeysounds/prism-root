@@ -45,6 +45,8 @@ import { createLiveView } from "@prism/core/view";
 import type { LiveView, LiveViewOptions } from "@prism/core/view";
 import type { ObjectTemplate, TemplateNode, InstantiateResult } from "@prism/core/template";
 import { createPageBuilderRegistry } from "./entities.js";
+import { createRelayManager } from "./relay-manager.js";
+import type { RelayManager } from "./relay-manager.js";
 
 // ── Clipboard Types ────────────────────────────────────────────────────────
 
@@ -72,6 +74,7 @@ export interface StudioKernel {
   readonly search: SearchEngine;
   readonly activity: ActivityStore;
   readonly activityTracker: ActivityTracker;
+  readonly relay: RelayManager;
 
   /** Create a new object in the collection, emit bus event, push undo. */
   createObject(obj: Omit<GraphObject, "id" | "createdAt" | "updatedAt">): GraphObject;
@@ -185,6 +188,8 @@ export function createStudioKernel(): StudioKernel {
   const activityStore = createActivityStore();
   const tracker = createActivityTracker({ activityStore });
   const trackableAdapter = createTrackableAdapter(store);
+
+  const relay = createRelayManager();
 
   // Index the default collection so search covers all kernel objects
   search.indexCollection("default", store);
@@ -737,6 +742,7 @@ export function createStudioKernel(): StudioKernel {
   // ── Dispose ──────────────────────────────────────────────────────────────
 
   function dispose(): void {
+    relay.dispose();
     disconnectAtoms();
     disconnectObjectAtoms();
     disconnectStoreSync();
@@ -754,6 +760,7 @@ export function createStudioKernel(): StudioKernel {
     search,
     activity: activityStore,
     activityTracker: tracker,
+    relay,
     createObject,
     updateObject,
     deleteObject,

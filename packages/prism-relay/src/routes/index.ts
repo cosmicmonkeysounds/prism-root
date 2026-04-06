@@ -8,3 +8,5 @@ export { createTrustRoutes } from "./trust-routes.js";
 export { createEscrowRoutes } from "./escrow-routes.js";
 export { createFederationRoutes } from "./federation-routes.js";
 export { createPortalViewRoutes } from "./portal-view-routes.js";
+export { createAcmeRoutes, createAcmeManagementRoutes } from "./acme-routes.js";
+export { createTemplateRoutes } from "./template-routes.js";

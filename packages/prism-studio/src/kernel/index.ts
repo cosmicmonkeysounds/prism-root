@@ -9,6 +9,19 @@ export {
   useObject,
   useUndo,
   useNotifications,
+  useRelay,
 } from "./kernel-context.js";
 
 export { createPageBuilderRegistry } from "./entities.js";
+
+export { createRelayManager } from "./relay-manager.js";
+export type {
+  RelayManager,
+  RelayEntry,
+  RelayConnectionStatus,
+  RelayStatus,
+  PublishPortalOptions,
+  DeployedPortal,
+  RelayHttpClient,
+  RelayManagerOptions,
+} from "./relay-manager.js";

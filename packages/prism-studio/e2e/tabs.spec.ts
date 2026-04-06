@@ -18,7 +18,7 @@ test.describe("Tab Management", () => {
     await expect(editorTabs).toHaveCount(1);
   });
 
-  test("opening all 5 lenses shows 5 tabs", async ({ page }) => {
+  test("opening all 6 lenses shows 6 tabs", async ({ page }) => {
     // Editor is open by default
     await page.locator('[data-testid="activity-icon-graph"]').click();
     await expect(page.locator('[data-testid="tab-graph"]')).toBeAttached();
@@ -32,12 +32,15 @@ test.describe("Tab Management", () => {
     await page.locator('[data-testid="activity-icon-crdt"]').click();
     await expect(page.locator('[data-testid="tab-crdt"]')).toBeAttached();
 
-    // All 5 lens tabs should be in the DOM (tab-bar contains tab-{lensId} divs,
+    await page.locator('[data-testid="activity-icon-relay"]').click();
+    await expect(page.locator('[data-testid="tab-relay"]')).toBeAttached();
+
+    // All 6 lens tabs should be in the DOM (tab-bar contains tab-{lensId} divs,
     // each with nested tab-pin-{lensId} and tab-close-{lensId} buttons).
     // Count only the top-level tab containers.
     const tabBar = page.locator('[data-testid="tab-bar"]');
     const tabs = tabBar.locator(':scope > [data-testid^="tab-"]');
-    await expect(tabs).toHaveCount(5);
+    await expect(tabs).toHaveCount(6);
   });
 
   test("closing all tabs shows empty state", async ({ page }) => {

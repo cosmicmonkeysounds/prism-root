@@ -44,6 +44,7 @@ test.describe("Keyboard Navigation", () => {
     await expect(page.locator("text=Switch to Layout").first()).toBeVisible();
     await expect(page.locator("text=Switch to Canvas").first()).toBeVisible();
     await expect(page.locator("text=Switch to CRDT").first()).toBeVisible();
+    await expect(page.locator("text=Switch to Relay").first()).toBeVisible();
   });
 
   test("KBar filters results by search query", async ({ page }) => {

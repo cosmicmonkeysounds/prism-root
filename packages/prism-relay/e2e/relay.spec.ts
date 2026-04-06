@@ -21,8 +21,14 @@ import {
   peerTrustModule,
   escrowModule,
   federationModule,
+  acmeCertificateModule,
+  portalTemplateModule,
 } from "@prism/core/relay";
-import type { RelayInstance, CollectionHost } from "@prism/core/relay";
+import type {
+  RelayInstance,
+  CollectionHost,
+  PortalRegistry,
+} from "@prism/core/relay";
 import { RELAY_CAPABILITIES } from "@prism/core/relay";
 import { createHashcashMinter } from "@prism/core/trust";
 import { createRelayServer } from "@prism/relay/server";
@@ -46,10 +52,12 @@ test.beforeAll(async () => {
     .use(peerTrustModule())
     .use(escrowModule())
     .use(federationModule())
+    .use(acmeCertificateModule())
+    .use(portalTemplateModule())
     .build();
   await relay.start();
 
-  const server = createRelayServer({ relay, port: 0 });
+  const server = createRelayServer({ relay, port: 0, publicUrl: "http://localhost:0" });
   const info = await server.start();
   serverPort = info.port;
   baseUrl = `http://localhost:${serverPort}`;
@@ -70,13 +78,13 @@ test.describe("HTTP API", () => {
     const body = await res.json();
     expect(body.running).toBe(true);
     expect(body.did).toBe(identity.did);
-    expect(body.modules).toHaveLength(10);
+    expect(body.modules).toHaveLength(12);
   });
 
   test("GET /api/modules lists all installed modules", async ({ request }) => {
     const res = await request.get(`${baseUrl}/api/modules`);
     const body = await res.json();
-    expect(body).toHaveLength(10);
+    expect(body).toHaveLength(12);
     const names = body.map((m: { name: string }) => m.name);
     expect(names).toContain("blind-mailbox");
     expect(names).toContain("relay-router");
@@ -85,6 +93,8 @@ test.describe("HTTP API", () => {
     expect(names).toContain("peer-trust");
     expect(names).toContain("escrow");
     expect(names).toContain("federation");
+    expect(names).toContain("acme-certificates");
+    expect(names).toContain("portal-templates");
   });
 
   // ── Webhooks ────────────────────────────────────────────────────────────
@@ -232,6 +242,257 @@ test.describe("HTTP API", () => {
     res = await request.get(`${baseUrl}/api/federation/peers`);
     const peers = await res.json();
     expect(peers.some((p: { relayDid: string }) => p.relayDid === "did:key:zE2EPeer")).toBe(true);
+  });
+
+  // ── ACME / SSL Certificates ─────────────────────────────────────────────
+
+  test("ACME HTTP-01 challenge flow", async ({ request }) => {
+    // Register a challenge via management API
+    let res = await request.post(`${baseUrl}/api/acme/challenges`, {
+      data: {
+        domain: "e2e.example.com",
+        token: "e2e-acme-token",
+        keyAuthorization: "e2e-acme-token.thumbprint-xyz",
+        expiresInMs: 300_000,
+      },
+    });
+    expect(res.status()).toBe(201);
+
+    // Verify the ACME HTTP-01 response works
+    res = await request.get(`${baseUrl}/.well-known/acme-challenge/e2e-acme-token`);
+    expect(res.status()).toBe(200);
+    const text = await res.text();
+    expect(text).toBe("e2e-acme-token.thumbprint-xyz");
+
+    // Clean up
+    res = await request.delete(`${baseUrl}/api/acme/challenges/e2e-acme-token`);
+    expect(res.status()).toBe(200);
+
+    // Verify challenge is gone
+    res = await request.get(`${baseUrl}/.well-known/acme-challenge/e2e-acme-token`);
+    expect(res.status()).toBe(404);
+  });
+
+  test("SSL certificate management CRUD", async ({ request }) => {
+    // Store certificate
+    let res = await request.post(`${baseUrl}/api/acme/certificates`, {
+      data: {
+        domain: "e2e-cert.example.com",
+        certificate: "-----BEGIN CERTIFICATE-----\ne2e-cert\n-----END CERTIFICATE-----",
+        privateKey: "-----BEGIN PRIVATE KEY-----\ne2e-key\n-----END PRIVATE KEY-----",
+        expiresAt: new Date(Date.now() + 86_400_000 * 90).toISOString(),
+      },
+    });
+    expect(res.status()).toBe(201);
+
+    // List certificates
+    res = await request.get(`${baseUrl}/api/acme/certificates`);
+    expect(res.status()).toBe(200);
+    const certs = await res.json();
+    expect(certs.some((c: { domain: string }) => c.domain === "e2e-cert.example.com")).toBe(true);
+    // Listing should NOT include private key
+    const cert = certs.find((c: { domain: string }) => c.domain === "e2e-cert.example.com");
+    expect(cert.privateKey).toBeUndefined();
+
+    // Get certificate
+    res = await request.get(`${baseUrl}/api/acme/certificates/e2e-cert.example.com`);
+    expect(res.status()).toBe(200);
+    const certDetail = await res.json();
+    expect(certDetail.domain).toBe("e2e-cert.example.com");
+
+    // Delete certificate
+    res = await request.delete(`${baseUrl}/api/acme/certificates/e2e-cert.example.com`);
+    expect(res.status()).toBe(200);
+  });
+
+  // ── Portal Templates ────────────────────────────────────────────────────
+
+  test("portal template CRUD lifecycle", async ({ request }) => {
+    // Create template
+    let res = await request.post(`${baseUrl}/api/templates`, {
+      data: {
+        name: "E2E Dark Theme",
+        description: "Dark portal theme for E2E testing",
+        css: ":root { --bg: #111; --fg: #eee; }",
+        headerHtml: "<h1>{{portalName}}</h1>",
+        footerHtml: "<footer>Powered by E2E</footer>",
+        objectCardHtml: "<div class='card'>{{name}}</div>",
+      },
+    });
+    expect(res.status()).toBe(201);
+    const template = await res.json();
+    expect(template.templateId).toBeDefined();
+    expect(template.name).toBe("E2E Dark Theme");
+
+    // List templates
+    res = await request.get(`${baseUrl}/api/templates`);
+    expect(res.status()).toBe(200);
+    const templates = await res.json();
+    expect(templates.some((t: { name: string }) => t.name === "E2E Dark Theme")).toBe(true);
+
+    // Get template
+    res = await request.get(`${baseUrl}/api/templates/${template.templateId}`);
+    expect(res.status()).toBe(200);
+    const detail = await res.json();
+    expect(detail.css).toContain("--bg: #111");
+
+    // Delete template
+    res = await request.delete(`${baseUrl}/api/templates/${template.templateId}`);
+    expect(res.status()).toBe(200);
+
+    // Verify gone
+    res = await request.get(`${baseUrl}/api/templates/${template.templateId}`);
+    expect(res.status()).toBe(404);
+  });
+
+  // ── Level 3 Portal: Form Submission ─────────────────────────────────────
+
+  test("Level 3 portal form submission creates object", async ({ request }) => {
+    // Create a backing collection with data
+    const host = relay.getCapability<CollectionHost>(RELAY_CAPABILITIES.COLLECTIONS) as CollectionHost;
+    host.create("e2e-form-col");
+
+    // Register Level 3 portal
+    const registry = relay.getCapability<PortalRegistry>(RELAY_CAPABILITIES.PORTALS) as PortalRegistry;
+    const portal = registry.register({
+      name: "E2E Form Portal",
+      level: 3,
+      collectionId: "e2e-form-col",
+      basePath: "/form",
+      isPublic: true,
+    });
+
+    // Submit via form
+    const res = await request.post(`${baseUrl}/portals/${portal.portalId}/submit`, {
+      data: {
+        name: "E2E Submission",
+        type: "feedback",
+        description: "Test feedback from E2E",
+      },
+    });
+    expect(res.status()).toBe(201);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.objectId).toBeDefined();
+    expect(body.ephemeralDid).toContain("did:key:ephemeral-");
+
+    // Verify the object was created in the collection
+    const store = host.get("e2e-form-col");
+    expect(store).toBeDefined();
+    const objects = (store as NonNullable<typeof store>).listObjects({ excludeDeleted: true });
+    const submission = objects.find((o) => o.name === "E2E Submission");
+    expect(submission).toBeDefined();
+    if (submission) {
+      expect(submission.type).toBe("feedback");
+      expect(submission.status).toBe("submitted");
+      expect(submission.tags).toContain("portal-submission");
+    }
+  });
+
+  test("Level 1 portal rejects form submissions", async ({ request }) => {
+    const registry = relay.getCapability<PortalRegistry>(RELAY_CAPABILITIES.PORTALS) as PortalRegistry;
+    const host = relay.getCapability<CollectionHost>(RELAY_CAPABILITIES.COLLECTIONS) as CollectionHost;
+    host.create("e2e-readonly-col");
+    const portal = registry.register({
+      name: "E2E Read Portal",
+      level: 1,
+      collectionId: "e2e-readonly-col",
+      basePath: "/readonly",
+      isPublic: true,
+    });
+
+    const res = await request.post(`${baseUrl}/portals/${portal.portalId}/submit`, {
+      data: { name: "Should Fail" },
+    });
+    expect(res.status()).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain("Level 3");
+  });
+
+  test("Level 3 portal validates required name field", async ({ request }) => {
+    const registry = relay.getCapability<PortalRegistry>(RELAY_CAPABILITIES.PORTALS) as PortalRegistry;
+    const host = relay.getCapability<CollectionHost>(RELAY_CAPABILITIES.COLLECTIONS) as CollectionHost;
+    host.create("e2e-validate-col");
+    const portal = registry.register({
+      name: "E2E Validate Portal",
+      level: 3,
+      collectionId: "e2e-validate-col",
+      basePath: "/validate",
+      isPublic: true,
+    });
+
+    const res = await request.post(`${baseUrl}/portals/${portal.portalId}/submit`, {
+      data: { description: "No name" },
+    });
+    expect(res.status()).toBe(400);
+  });
+
+  // ── Portal View Routes (HTML) ───────────────────────────────────────────
+
+  test("Level 3 portal renders form section", async ({ request }) => {
+    const host = relay.getCapability<CollectionHost>(RELAY_CAPABILITIES.COLLECTIONS) as CollectionHost;
+    host.create("e2e-view-form-col");
+    const registry = relay.getCapability<PortalRegistry>(RELAY_CAPABILITIES.PORTALS) as PortalRegistry;
+    const portal = registry.register({
+      name: "E2E View Form Portal",
+      level: 3,
+      collectionId: "e2e-view-form-col",
+      basePath: "/viewform",
+      isPublic: true,
+    });
+
+    const res = await request.get(`${baseUrl}/portals/${portal.portalId}`);
+    expect(res.status()).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("portal-form");
+    expect(html).toContain("Submit Data");
+    expect(html).toContain("portal-submit-form");
+    expect(html).toContain("Interactive");
+  });
+
+  test("Level 4 portal renders hydration script", async ({ request }) => {
+    const host = relay.getCapability<CollectionHost>(RELAY_CAPABILITIES.COLLECTIONS) as CollectionHost;
+    host.create("e2e-view-app-col");
+    const registry = relay.getCapability<PortalRegistry>(RELAY_CAPABILITIES.PORTALS) as PortalRegistry;
+    const portal = registry.register({
+      name: "E2E App Portal",
+      level: 4,
+      collectionId: "e2e-view-app-col",
+      basePath: "/app",
+      isPublic: true,
+    });
+
+    const res = await request.get(`${baseUrl}/portals/${portal.portalId}`);
+    expect(res.status()).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("__PRISM_PORTAL__");
+    expect(html).toContain("sendUpdate");
+    expect(html).toContain("submitObject");
+    expect(html).toContain("App");
+    expect(html).toContain("Interactive");
+  });
+
+  test("Level 2 portal uses incremental DOM patching", async ({ request }) => {
+    const host = relay.getCapability<CollectionHost>(RELAY_CAPABILITIES.COLLECTIONS) as CollectionHost;
+    host.create("e2e-view-live-col");
+    const registry = relay.getCapability<PortalRegistry>(RELAY_CAPABILITIES.PORTALS) as PortalRegistry;
+    const portal = registry.register({
+      name: "E2E Live Portal",
+      level: 2,
+      collectionId: "e2e-view-live-col",
+      basePath: "/live",
+      isPublic: true,
+    });
+
+    const server2 = createRelayServer({ relay, port: 0, publicUrl: `http://localhost:${serverPort}` });
+    const info2 = await server2.start();
+    const res = await request.get(`http://localhost:${info2.port}/portals/${portal.portalId}`);
+    const html = await res.text();
+    // Should use incremental patching, NOT window.location.reload()
+    expect(html).toContain("patchPortalContent");
+    expect(html).toContain("snapshot.json");
+    expect(html).not.toContain("window.location.reload");
+    await info2.close();
   });
 });
 

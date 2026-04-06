@@ -13,12 +13,14 @@ import { GraphPanel } from "../panels/graph-panel.js";
 import { LayoutPanel } from "../panels/layout-panel.js";
 import { CrdtPanel } from "../panels/crdt-panel.js";
 import { CanvasPanel } from "../panels/canvas-panel.js";
+import { RelayPanel } from "../panels/relay-panel.js";
 
 export const EDITOR_LENS_ID = lensId("editor");
 export const GRAPH_LENS_ID = lensId("graph");
 export const LAYOUT_LENS_ID = lensId("layout");
 export const CANVAS_LENS_ID = lensId("canvas");
 export const CRDT_LENS_ID = lensId("crdt");
+export const RELAY_LENS_ID = lensId("relay");
 
 const editorManifest: LensManifest = {
   id: EDITOR_LENS_ID,
@@ -75,12 +77,24 @@ const crdtManifest: LensManifest = {
   },
 };
 
+const relayManifest: LensManifest = {
+  id: RELAY_LENS_ID,
+  name: "Relay",
+  icon: "\u21C6",
+  category: "custom",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-relay", name: "Switch to Relay Manager", shortcut: ["r"], section: "Navigation" }],
+  },
+};
+
 export const ALL_MANIFESTS: LensManifest[] = [
   editorManifest,
   graphManifest,
   layoutManifest,
   canvasManifest,
   crdtManifest,
+  relayManifest,
 ];
 
 export function registerBuiltinLenses(registry: LensRegistry): () => void {
@@ -95,5 +109,6 @@ export function createLensComponentMap(): Map<LensId, ComponentType> {
   map.set(LAYOUT_LENS_ID, LayoutPanel);
   map.set(CANVAS_LENS_ID, CanvasPanel);
   map.set(CRDT_LENS_ID, CrdtPanel);
+  map.set(RELAY_LENS_ID, RelayPanel);
   return map;
 }

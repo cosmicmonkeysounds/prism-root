@@ -108,6 +108,8 @@ const ALL_MODULES = [
   "peer-trust",
   "escrow",
   "federation",
+  "acme-certificates",
+  "portal-templates",
 ];
 
 /** Minimal modules for p2p mode — routing + federation + trust. */

@@ -8,6 +8,8 @@ export {
   webhookModule,
   sovereignPortalModule,
   createMemoryPingTransport,
+  acmeCertificateModule,
+  portalTemplateModule,
 } from "./relay.js";
 
 export type { WebhookHttpClient } from "./relay.js";
@@ -48,6 +50,11 @@ export type {
   ForwardResult,
   ForwardTransport,
   FederationRegistry,
+  AcmeChallenge,
+  SslCertificate,
+  AcmeCertificateManager,
+  PortalTemplate,
+  PortalTemplateRegistry,
 } from "./relay-types.js";
 
 // ── Client SDK ──────────────────────────────────────────────────────────────

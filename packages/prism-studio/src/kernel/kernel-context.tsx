@@ -10,6 +10,7 @@ import type { ReactNode } from "react";
 import type { StudioKernel } from "./studio-kernel.js";
 import type { GraphObject, ObjectId } from "@prism/core/object-model";
 import type { Notification, NotificationKind } from "@prism/core/notification";
+import type { RelayEntry } from "./relay-manager.js";
 
 // ── Context ─────────────────────────────────────────────────────────────────
 
@@ -177,4 +178,34 @@ export function useNotifications(kind?: NotificationKind): {
   );
 
   return { ...cacheRef.current, add, dismiss };
+}
+
+/** Reactive relay connection list from RelayManager. */
+export function useRelay(): {
+  relays: RelayEntry[];
+  manager: StudioKernel["relay"];
+} {
+  const kernel = useKernel();
+  const cacheRef = useRef<{ relays: RelayEntry[]; version: number }>({
+    relays: [],
+    version: -1,
+  });
+
+  const version = useSyncExternalStore(
+    (cb) => kernel.relay.subscribe(cb),
+    () => {
+      // Use a simple length + status key as a stable primitive
+      const entries = kernel.relay.listRelays();
+      return entries.map((e) => `${e.id}:${e.status}`).join(",");
+    },
+  );
+
+  if (cacheRef.current.version !== version.length) {
+    cacheRef.current = {
+      relays: kernel.relay.listRelays(),
+      version: version.length,
+    };
+  }
+
+  return { relays: cacheRef.current.relays, manager: kernel.relay };
 }

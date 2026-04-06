@@ -5,7 +5,7 @@ Runtime server for Prism Relay — wraps Layer 1 relay primitives in HTTP + WebS
 ## Build & Test
 - `pnpm dev` — start with tsx watch (dev mode)
 - `pnpm typecheck`
-- `pnpm test:e2e` — Playwright E2E tests (20 tests, no browser needed)
+- `pnpm test:e2e` — Playwright E2E tests (32 tests, no browser needed)
 
 ## CLI
 Three deployment modes:
@@ -31,8 +31,8 @@ See `prism-relay --help` for full options.
 - `@prism/relay/config` — Config resolution, arg parsing, logger
 - `@prism/relay/cli` — CLI entry point
 
-## Modules (12 total)
-blind-mailbox, relay-router, relay-timestamp, blind-pings, capability-tokens, webhooks, sovereign-portals, collection-host, hashcash, peer-trust, escrow, federation
+## Modules (14 total)
+blind-mailbox, relay-router, relay-timestamp, blind-pings, capability-tokens, webhooks, sovereign-portals, collection-host, hashcash, peer-trust, escrow, federation, acme-certificates, portal-templates
 
 ## Protocol
 WebSocket at `/ws/relay`:
@@ -44,13 +44,28 @@ WebSocket at `/ws/relay`:
 6. `{ type: "hashcash-proof", proof }` → `{ type: "hashcash-ok" }` or error
 7. `{ type: "ping" }` → `{ type: "pong" }`
 
-## Sovereign Portals (HTML Rendering)
+## Sovereign Portals (HTML Rendering — Level 1-4)
 - Uses Hono's built-in JSX (`jsxImportSource: "hono/jsx"` in tsconfig)
 - `GET /portals` — lists public portals as HTML
-- `GET /portals/:id` — renders portal as HTML (Level 1 = static, Level 2+ = live WS updates)
+- `GET /portals/:id` — renders portal as HTML
 - `GET /portals/:id/snapshot.json` — raw JSON snapshot for API consumers
-- Portal renderer in `@prism/core/relay` extracts tree-structured `PortalSnapshot` from `CollectionStore`
-- Level 2+ portals include a client-side WS script for live CRDT update detection
+- `POST /portals/:id/submit` — Level 3+ form submission (creates object with ephemeral DID)
+
+### Portal Levels
+- **Level 1**: Static read-only HTML snapshot
+- **Level 2**: Live incremental DOM patching via WebSocket (fetches snapshot.json + patches #portal-content)
+- **Level 3**: Interactive forms with ephemeral DID auth, capability token verification for non-public portals
+- **Level 4**: Full client-side hydration with `window.__PRISM_PORTAL__` API (subscribe/notify, bidirectional CRDT sync, sendUpdate/submitObject)
+
+## ACME / SSL
+- `GET /.well-known/acme-challenge/:token` — ACME HTTP-01 challenge response
+- `POST /api/acme/challenges` — register challenge
+- `DELETE /api/acme/challenges/:token` — remove challenge
+- `GET/POST/DELETE /api/acme/certificates` — certificate lifecycle
+
+## Portal Templates
+- `GET/POST /api/templates` — list/create templates
+- `GET/DELETE /api/templates/:id` — get/remove template
 
 ## HTTP API
 - `GET /api/status` — relay state
@@ -63,3 +78,5 @@ WebSocket at `/ws/relay`:
 - Trust: `GET /api/trust`, `GET /:did`, `POST /:did/{ban,unban}`
 - Escrow: `POST /api/escrow/{deposit,claim}`, `GET /:depositorId`
 - Federation: `POST /api/federation/announce`, `GET /peers`, `POST /forward`
+- ACME: `POST /api/acme/challenges`, `GET/POST/DELETE /api/acme/certificates`
+- Templates: `GET/POST /api/templates`, `GET/DELETE /api/templates/:id`

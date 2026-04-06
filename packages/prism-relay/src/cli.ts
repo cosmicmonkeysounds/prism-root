@@ -33,6 +33,8 @@ import {
   peerTrustModule,
   escrowModule,
   federationModule,
+  acmeCertificateModule,
+  portalTemplateModule,
 } from "@prism/core/relay";
 import type { RelayModule, FederationRegistry } from "@prism/core/relay";
 import { RELAY_CAPABILITIES } from "@prism/core/relay";
@@ -129,6 +131,8 @@ function createModules(
     "peer-trust": () => peerTrustModule(),
     "escrow": () => escrowModule(),
     "federation": () => federationModule(),
+    "acme-certificates": () => acmeCertificateModule(),
+    "portal-templates": () => portalTemplateModule(),
   };
 
   const modules: RelayModule[] = [];
