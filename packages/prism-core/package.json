@@ -37,7 +37,11 @@
     "./activity": "./src/layer1/activity/index.ts",
     "./batch": "./src/layer1/batch/index.ts",
     "./clipboard": "./src/layer1/clipboard/index.ts",
-    "./template": "./src/layer1/template/index.ts"
+    "./template": "./src/layer1/template/index.ts",
+    "./presence": "./src/layer1/presence/index.ts",
+    "./identity": "./src/layer1/identity/index.ts",
+    "./encryption": "./src/layer1/encryption/index.ts",
+    "./vfs": "./src/layer1/vfs/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

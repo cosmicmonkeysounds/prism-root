@@ -4,7 +4,7 @@ import { EdgeModel } from "../object-model/edge-model.js";
 import { UndoRedoManager } from "../undo/undo-manager.js";
 import { createTemplateRegistry } from "./template-registry.js";
 import type { TemplateRegistry } from "./template-registry.js";
-import type { ObjectTemplate, TemplateNode } from "./template-types.js";
+import type { ObjectTemplate } from "./template-types.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -110,7 +110,7 @@ describe("TemplateRegistry", () => {
       registry.register(makeTemplate());
       registry.register(makeTemplate({ name: "Updated" }));
       expect(registry.size).toBe(1);
-      expect(registry.get("tpl-1")!.name).toBe("Updated");
+      expect(registry.get("tpl-1")?.name).toBe("Updated");
     });
 
     it("unregisters a template", () => {
@@ -153,7 +153,7 @@ describe("TemplateRegistry", () => {
     it("filters by root type", () => {
       const result = registry.list({ type: "monster" });
       expect(result).toHaveLength(1);
-      expect(result[0]!.id).toBe("t2");
+      expect(result[0].id).toBe("t2");
     });
 
     it("filters by search string (case-insensitive)", () => {
@@ -164,7 +164,7 @@ describe("TemplateRegistry", () => {
     it("combines filters", () => {
       const result = registry.list({ category: "productivity", search: "task c" });
       expect(result).toHaveLength(1);
-      expect(result[0]!.id).toBe("t3");
+      expect(result[0].id).toBe("t3");
     });
   });
 
@@ -177,17 +177,17 @@ describe("TemplateRegistry", () => {
         variables: { name: "My Task", priority: "high" },
       });
       expect(result.created).toHaveLength(1);
-      expect(result.created[0]!.name).toBe("My Task");
-      expect(result.created[0]!.type).toBe("task");
-      expect(result.created[0]!.data["priority"]).toBe("high");
+      expect(result.created[0].name).toBe("My Task");
+      expect(result.created[0].type).toBe("task");
+      expect(result.created[0].data["priority"]).toBe("high");
       expect(tree.size).toBe(1);
     });
 
     it("leaves unreplaced variables as-is", () => {
       registry.register(makeTemplate());
       const result = registry.instantiate("tpl-1");
-      expect(result.created[0]!.name).toBe("{{name}}");
-      expect(result.created[0]!.data["priority"]).toBe("{{priority}}");
+      expect(result.created[0].name).toBe("{{name}}");
+      expect(result.created[0].data["priority"]).toBe("{{priority}}");
     });
 
     it("creates under specified parent", () => {
@@ -197,7 +197,7 @@ describe("TemplateRegistry", () => {
         parentId: folder.id,
         variables: { name: "A", priority: "low" },
       });
-      expect(result.created[0]!.parentId).toBe(folder.id);
+      expect(result.created[0].parentId).toBe(folder.id);
     });
 
     it("throws for nonexistent template", () => {
@@ -214,12 +214,12 @@ describe("TemplateRegistry", () => {
         variables: { name: "Sprint 23", lead: "Alice" },
       });
       expect(result.created).toHaveLength(3); // project + 2 tasks
-      expect(result.created[0]!.name).toBe("Sprint 23");
-      expect(result.created[0]!.type).toBe("project");
+      expect(result.created[0].name).toBe("Sprint 23");
+      expect(result.created[0].type).toBe("project");
 
-      const children = tree.getChildren(result.created[0]!.id);
+      const children = tree.getChildren(result.created[0].id);
       expect(children).toHaveLength(2);
-      expect(children[0]!.data["assignee"]).toBe("Alice");
+      expect(children[0].data["assignee"]).toBe("Alice");
     });
 
     it("creates edges with remapped IDs", () => {
@@ -228,7 +228,7 @@ describe("TemplateRegistry", () => {
         variables: { name: "S", lead: "Bob" },
       });
       expect(result.createdEdges).toHaveLength(1);
-      const edge = result.createdEdges[0]!;
+      const edge = result.createdEdges[0];
       expect(edge.relation).toBe("depends-on");
       // Source and target should be real IDs in the created set
       const createdIds = new Set(result.created.map((o) => o.id as string));
@@ -255,7 +255,7 @@ describe("TemplateRegistry", () => {
       registry.register(makeNestedTemplate());
       registry.instantiate("tpl-nested", { variables: { name: "P" } });
       expect(undo.history).toHaveLength(1);
-      expect(undo.history[0]!.description).toContain("Project Template");
+      expect(undo.history[0].description).toContain("Project Template");
     });
 
     it("does not push undo without undo manager", () => {
@@ -286,7 +286,7 @@ describe("TemplateRegistry", () => {
       expect(tpl.root.type).toBe("task");
       expect(tpl.root.name).toBe("Original");
       expect(tpl.root.status).toBe("open");
-      expect(tpl.root.data!["priority"]).toBe("high");
+      expect(tpl.root.data?.["priority"]).toBe("high");
     });
 
     it("captures descendants as children", () => {
@@ -298,8 +298,8 @@ describe("TemplateRegistry", () => {
         name: "Folder Template",
       });
       expect(tpl.root.children).toHaveLength(2);
-      expect(tpl.root.children![0]!.name).toBe("A");
-      expect(tpl.root.children![1]!.name).toBe("B");
+      expect(tpl.root.children?.[0].name).toBe("A");
+      expect(tpl.root.children?.[1].name).toBe("B");
     });
 
     it("captures internal edges", () => {
@@ -319,7 +319,7 @@ describe("TemplateRegistry", () => {
         name: "With Edges",
       });
       expect(tpl.edges).toHaveLength(1);
-      expect(tpl.edges![0]!.relation).toBe("dep");
+      expect(tpl.edges?.[0].relation).toBe("dep");
     });
 
     it("round-trips: create template from object, then instantiate", () => {
@@ -363,7 +363,7 @@ describe("TemplateRegistry", () => {
       const result = registry.instantiate("tpl-1", {
         variables: { author: "Alice", date: "2026-04-01" },
       });
-      expect(result.created[0]!.description).toBe(
+      expect(result.created[0].description).toBe(
         "Written by Alice on 2026-04-01",
       );
     });
@@ -382,7 +382,7 @@ describe("TemplateRegistry", () => {
       const result = registry.instantiate("tpl-1", {
         variables: { initialStatus: "in-progress" },
       });
-      expect(result.created[0]!.status).toBe("in-progress");
+      expect(result.created[0].status).toBe("in-progress");
     });
 
     it("does not interpolate non-string data values", () => {
@@ -399,8 +399,8 @@ describe("TemplateRegistry", () => {
       const result = registry.instantiate("tpl-1", {
         variables: { tag: "urgent" },
       });
-      expect(result.created[0]!.data["count"]).toBe(42);
-      expect(result.created[0]!.data["label"]).toBe("urgent");
+      expect(result.created[0].data["count"]).toBe(42);
+      expect(result.created[0].data["label"]).toBe("urgent");
     });
 
     it("handles multiple variables in one string", () => {
@@ -416,7 +416,7 @@ describe("TemplateRegistry", () => {
       const result = registry.instantiate("tpl-1", {
         variables: { prefix: "PROJ", suffix: "001" },
       });
-      expect(result.created[0]!.name).toBe("PROJ-001");
+      expect(result.created[0].name).toBe("PROJ-001");
     });
   });
 
@@ -431,7 +431,7 @@ describe("TemplateRegistry", () => {
         position: 0,
       });
       const roots = tree.getChildren(null);
-      expect(roots[0]!.name).toBe("New");
+      expect(roots[0].name).toBe("New");
     });
   });
 });

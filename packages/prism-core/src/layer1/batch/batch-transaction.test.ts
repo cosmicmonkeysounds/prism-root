@@ -1,10 +1,10 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { TreeModel } from "../object-model/tree-model.js";
 import { EdgeModel } from "../object-model/edge-model.js";
 import { UndoRedoManager } from "../undo/undo-manager.js";
+import { objectId } from "../object-model/types.js";
 import { createBatchTransaction } from "./batch-transaction.js";
 import type { BatchTransaction } from "./batch-transaction.js";
-import type { BatchOp } from "./batch-types.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -40,7 +40,7 @@ describe("BatchTransaction", () => {
     tx = createBatchTransaction({ tree, edges, undo });
   });
 
-  // ── add / size / ops ──────────────────────────────────────────────────────
+  // ── add / size / ops ─��────────────────────────────────────────────────────
 
   describe("queuing", () => {
     it("starts empty", () => {
@@ -82,7 +82,7 @@ describe("BatchTransaction", () => {
       tx.add({ kind: "create-object", draft: { type: "", name: "A" } });
       const result = tx.validate();
       expect(result.valid).toBe(false);
-      expect(result.errors[0]!.reason).toContain("type");
+      expect(result.errors[0].reason).toContain("type");
     });
 
     it("catches missing name in create-object", () => {
@@ -102,23 +102,23 @@ describe("BatchTransaction", () => {
       txNoEdge.add({
         kind: "create-edge",
         draft: {
-          sourceId: "a" as any,
-          targetId: "b" as any,
+          sourceId: objectId("a"),
+          targetId: objectId("b"),
           relation: "dep",
           data: {},
         },
       });
       const result = txNoEdge.validate();
       expect(result.valid).toBe(false);
-      expect(result.errors[0]!.reason).toContain("EdgeModel");
+      expect(result.errors[0].reason).toContain("EdgeModel");
     });
 
     it("catches missing sourceId in create-edge", () => {
       tx.add({
         kind: "create-edge",
         draft: {
-          sourceId: "" as any,
-          targetId: "b" as any,
+          sourceId: objectId(""),
+          targetId: objectId("b"),
           relation: "dep",
           data: {},
         },
@@ -149,7 +149,7 @@ describe("BatchTransaction", () => {
         position: 0,
       });
       const result = tx.execute();
-      expect(result.created[0]!.parentId).toBe(parent.id);
+      expect(result.created[0].parentId).toBe(parent.id);
     });
   });
 
@@ -160,7 +160,7 @@ describe("BatchTransaction", () => {
       const obj = tree.add({ type: "task", name: "A" });
       tx.add({ kind: "update-object", id: obj.id, changes: { name: "B" } });
       tx.execute();
-      expect(tree.get(obj.id)!.name).toBe("B");
+      expect(tree.get(obj.id)?.name).toBe("B");
     });
 
     it("throws for missing object", () => {
@@ -193,11 +193,11 @@ describe("BatchTransaction", () => {
       const task = tree.add({ type: "task", name: "A" });
       tx.add({ kind: "move-object", id: task.id, toParentId: folder.id });
       tx.execute();
-      expect(tree.get(task.id)!.parentId).toBe(folder.id);
+      expect(tree.get(task.id)?.parentId).toBe(folder.id);
     });
   });
 
-  // ── execute: edges ────────────────────────────────────────────────────────
+  // ── execute: edges ─���──────────────────────────────────────────────────────
 
   describe("execute edge operations", () => {
     it("creates an edge", () => {
@@ -232,7 +232,7 @@ describe("BatchTransaction", () => {
         changes: { data: { weight: 5 } },
       });
       tx.execute();
-      expect(edges.get(edge.id)!.data["weight"]).toBe(5);
+      expect(edges.get(edge.id)?.data["weight"]).toBe(5);
     });
 
     it("deletes an edge", () => {
@@ -258,8 +258,8 @@ describe("BatchTransaction", () => {
       tx.add({ kind: "create-object", draft: { type: "task", name: "B" } });
       tx.execute({ description: "Bulk create" });
       expect(undo.history).toHaveLength(1);
-      expect(undo.history[0]!.description).toBe("Bulk create");
-      expect(undo.history[0]!.snapshots).toHaveLength(2);
+      expect(undo.history[0].description).toBe("Bulk create");
+      expect(undo.history[0].snapshots).toHaveLength(2);
     });
 
     it("does not push undo entry when no undo manager", () => {
@@ -285,7 +285,7 @@ describe("BatchTransaction", () => {
     });
   });
 
-  // ── rollback on failure ───────────────────────────────────────────────────
+  // ── rollback on failure ─���─────────────────────────────────────────────────
 
   describe("rollback on failure", () => {
     it("rolls back all mutations when a later op fails", () => {
@@ -309,15 +309,15 @@ describe("BatchTransaction", () => {
       tx.add({ kind: "create-object", draft: { type: "task", name: "A" } });
       // We execute in two batches since we need the ID
       const result1 = tx.execute({ description: "Create" });
-      const taskId = result1.created[0]!.id;
+      const taskId = result1.created[0].id;
 
       const tx2 = createBatchTransaction({ tree, edges, undo });
       tx2.add({ kind: "update-object", id: taskId, changes: { status: "done" } });
       tx2.add({ kind: "move-object", id: taskId, toParentId: folder.id });
       tx2.execute({ description: "Update and move" });
 
-      expect(tree.get(taskId)!.status).toBe("done");
-      expect(tree.get(taskId)!.parentId).toBe(folder.id);
+      expect(tree.get(taskId)?.status).toBe("done");
+      expect(tree.get(taskId)?.parentId).toBe(folder.id);
       expect(undo.history).toHaveLength(2);
     });
   });

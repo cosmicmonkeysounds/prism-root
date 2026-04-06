@@ -1,0 +1,31 @@
+export {
+  createIdentity,
+  resolveIdentity,
+  signPayload,
+  verifySignature,
+  createMultiSigConfig,
+  createPartialSignature,
+  assembleMultiSignature,
+  verifyMultiSignature,
+  encodeBase58,
+  decodeBase58,
+  publicKeyToDidKey,
+  didKeyToPublicKey,
+  base64urlEncode,
+} from "./identity.js";
+
+export type {
+  DIDMethod,
+  DID,
+  Ed25519KeyPair,
+  KeyHandle,
+  VerificationMethod,
+  DIDDocument,
+  PrismIdentity,
+  ResolvedIdentity,
+  PartialSignature,
+  MultiSignature,
+  MultiSigConfig,
+  CreateIdentityOptions,
+  ResolveIdentityOptions,
+} from "./identity-types.js";

@@ -186,7 +186,7 @@ export function createTemplateRegistry(
       targetParentId: string | null,
       pos?: number,
     ): void => {
-      const realId = idMap.get(node.placeholderId)!;
+      const realId = idMap.get(node.placeholderId) ?? generateId();
       const obj = tree.add(
         {
           id: objectId(realId),
@@ -260,10 +260,11 @@ export function createTemplateRegistry(
     const placeholderMap = new Map<string, string>();
     let placeholderCounter = 0;
     const getPlaceholder = (id: string): string => {
-      if (!placeholderMap.has(id)) {
-        placeholderMap.set(id, `placeholder-${++placeholderCounter}`);
-      }
-      return placeholderMap.get(id)!;
+      const existing = placeholderMap.get(id);
+      if (existing) return existing;
+      const ph = `placeholder-${++placeholderCounter}`;
+      placeholderMap.set(id, ph);
+      return ph;
     };
 
     const buildNode = (obj: GraphObject): TemplateNode => {

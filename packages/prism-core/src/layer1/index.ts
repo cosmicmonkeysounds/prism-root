@@ -627,3 +627,84 @@ export type {
   InstantiateOptions,
   InstantiateResult,
 } from "./template/index.js";
+
+// ── Ephemeral Presence ───────────────────────────────────────────────────
+export { createPresenceManager } from "./presence/index.js";
+
+export type {
+  PresenceManager,
+  CursorPosition,
+  SelectionRange,
+  PeerIdentity,
+  PresenceState,
+  PresenceChangeType,
+  PresenceChange,
+  PresenceListener,
+  PresenceManagerOptions,
+  TimerProvider as PresenceTimerProvider,
+} from "./presence/index.js";
+
+// ── Identity ────────────────────────────────────────────────────────────────
+export {
+  createIdentity,
+  resolveIdentity,
+  signPayload,
+  verifySignature,
+  createMultiSigConfig,
+  createPartialSignature,
+  assembleMultiSignature,
+  verifyMultiSignature,
+  encodeBase58,
+  decodeBase58,
+  publicKeyToDidKey,
+  didKeyToPublicKey,
+  base64urlEncode,
+} from "./identity/index.js";
+
+export type {
+  DIDMethod,
+  DID,
+  Ed25519KeyPair,
+  KeyHandle,
+  VerificationMethod,
+  DIDDocument,
+  PrismIdentity,
+  ResolvedIdentity,
+  PartialSignature,
+  MultiSignature,
+  MultiSigConfig,
+  CreateIdentityOptions,
+  ResolveIdentityOptions,
+} from "./identity/index.js";
+
+// ── Encryption ──────────────────────────────────────────────────────────────
+export {
+  createMemoryKeyStore,
+  createVaultKeyManager,
+  encryptSnapshot,
+  decryptSnapshot,
+} from "./encryption/index.js";
+
+export type {
+  VaultKeyInfo,
+  EncryptedSnapshot,
+  KeyStore,
+  VaultKeyManager,
+  VaultKeyManagerOptions,
+} from "./encryption/index.js";
+
+// ── Virtual File System ─────────────────────────────────────────────────────
+export {
+  createMemoryVfsAdapter,
+  createVfsManager,
+  computeBinaryHash,
+} from "./vfs/index.js";
+
+export type {
+  BinaryRef,
+  FileStat,
+  BinaryLock,
+  VfsAdapter,
+  VfsManager,
+  VfsManagerOptions,
+} from "./vfs/index.js";
