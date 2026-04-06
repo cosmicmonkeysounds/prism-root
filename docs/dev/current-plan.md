@@ -586,11 +586,281 @@ In-app notification registry with debounced batching and deduplication. All pure
 | Vitest (notification-queue) | 12 | Pass |
 | **Phase 15 Total** | **48** | **All Pass** |
 
-## Next: Phase 16
+## Phase 16: Activity Log (Complete)
+
+Audit trail of GraphObject mutations with actor/timestamp. All pure TypeScript, zero React.
+
+### Completed
+
+- [x] **Activity Store** (`layer1/activity/activity-log.ts`) — append-only per-object event log
+  - `ActivityVerb` — 20 semantic verbs: created, updated, deleted, restored, moved, renamed, status-changed, commented, mentioned, assigned, unassigned, attached, detached, linked, unlinked, completed, reopened, blocked, unblocked, custom
+  - `FieldChange` — before/after record for a single field mutation
+  - `ActivityEvent` — immutable audit record with verb-specific fields (changes, fromParentId/toParentId, fromStatus/toStatus, meta)
+  - `createActivityStore(options?)` — in-memory ring buffer per object (default 500 events)
+  - `record()` — append event with auto-generated id and createdAt
+  - `getEvents(objectId, opts?)` — newest-first retrieval with limit and before filters
+  - `getLatest()` / `getEventCount()` — quick access queries
+  - `hydrate(objectId, events)` — bulk load from persistence (sorts by createdAt)
+  - `subscribe(objectId, listener)` — per-object change notifications
+  - `toJSON()` / `clear()` — serialisation and reset
+- [x] **Activity Tracker** (`layer1/activity/activity-tracker.ts`) — auto-derives events from GraphObject diffs
+  - `TrackableStore` — duck-typed subscription interface (structurally compatible with CollectionStore)
+  - `createActivityTracker(options)` — watches objects via per-object subscriptions
+  - `track(objectId, store)` — begin watching; diffs snapshots on each emission
+  - Verb inference: deleted/restored (deletedAt), moved (parentId), renamed (only name), status-changed (status field), updated (fallback)
+  - Shell field diffing + data payload one-level-deep diffing
+  - `ignoredFields` config (default: updatedAt) to filter noise
+  - Handles object appeared (created if age < 5s) and disappeared (hard delete)
+  - `untrackAll()` — stop all subscriptions, `trackedIds()` — introspection
+- [x] **Activity Formatter** (`layer1/activity/activity-formatter.ts`) — human-readable event rendering
+  - `formatFieldName(field)` — raw field path to display label (data. prefix strip, camelCase split, overrides)
+  - `formatFieldValue(value)` — inline display formatting (null → "(none)", booleans, arrays, ISO dates, truncation)
+  - `formatActivity(event, opts?)` — text + HTML description for all 20 verbs
+  - `groupActivityByDate(events)` — Today/Yesterday/This week/Earlier buckets for timeline rendering
+
+### Axed from Legacy
+
+- `ActivityStore` class — replaced with factory function (Prism convention)
+- `storageKey` option — Prism uses Loro CRDT for persistence, not localStorage
+- `ITrackableStore` class-based — replaced with `TrackableStore` structural interface
+
+### Test Summary
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| Vitest (activity-log) | 21 | Pass |
+| Vitest (activity-tracker) | 21 | Pass |
+| Vitest (activity-formatter) | 51 | Pass |
+| **Phase 16 Total** | **93** | **All Pass** |
+
+## Next: Phase 17
 
 Candidates:
-- Federation (cross-Node object addressing, federated edges)
 - Batch Operations (bulk create/update/delete with undo support)
 - Clipboard / Drag-and-Drop (tree clipboard with cut/copy/paste, drag reorder)
 - Template System (object templates, instantiation, template registry)
-- Activity Log (audit trail of object mutations with actor/timestamp)
+- Federation (cross-Node object addressing, federated edges)
+- Ephemeral Presence (RAM-only cursor/selection state for connected peers)
+
+---
+
+## Phase 18: Batch Operations, Clipboard, Templates
+
+Utility Layer 1 systems for bulk manipulation and reuse.
+
+- [ ] **Batch Operations** (`layer1/batch/`)
+  - [ ] `BatchTransaction` — collect multiple object/edge mutations into a single atomic unit
+  - [ ] `executeBatch()` — apply all mutations to CollectionStore in one Loro transaction
+  - [ ] Undo integration: single undo entry for entire batch (via UndoRedoManager.push)
+  - [ ] Validation: pre-flight type/schema checks before committing
+  - [ ] Progress callback for large batches
+- [ ] **Clipboard** (`layer1/clipboard/`)
+  - [ ] `TreeClipboard` — cut/copy/paste for GraphObject subtrees
+  - [ ] `serializeSubtree()` — deep clone object + descendants + internal edges
+  - [ ] `pasteSubtree()` — remap IDs, reattach under target parent
+  - [ ] `cut()` — copy + mark source for deletion on paste
+  - [ ] Drag-and-drop reorder via TreeModel.move
+- [ ] **Template System** (`layer1/template/`)
+  - [ ] `TemplateRegistry` — catalog of object templates by type/category
+  - [ ] `ObjectTemplate` — blueprint with default field values, children, edge wiring
+  - [ ] `instantiateTemplate()` — create live objects from template, remap all IDs
+  - [ ] `createTemplateFromObject()` — snapshot existing subtree as reusable template
+  - [ ] Template variables: `{{name}}`, `{{date}}` placeholder interpolation on instantiation
+
+## Phase 19: Ephemeral Presence
+
+Real-time collaboration awareness.
+
+- [ ] **Ephemeral Presence** (`layer1/presence/`)
+  - [ ] `PresenceState` — cursor position, selection, active view, user identity
+  - [ ] `PresenceManager` — RAM-only state for connected peers (no CRDT persistence)
+  - [ ] Awareness protocol: broadcast/receive presence via Loro awareness API
+  - [ ] TTL-based eviction for disconnected peers
+  - [ ] `subscribe(handler)` — reactive updates for cursor/selection overlays
+
+## Phase 20: Identity & Encryption
+
+W3C DIDs and vault-level encryption. Foundation for federation and trust.
+
+- [ ] **DID Identity** (`layer1/identity/`)
+  - [ ] `PrismIdentity` — W3C DID document wrapper (did:web, did:key)
+  - [ ] `createIdentity()` — generate Ed25519 keypair + DID document
+  - [ ] `resolveIdentity(did)` — resolve DID to public key and metadata
+  - [ ] Schnorr multi-sig support for shared vault ownership
+  - [ ] `signPayload()` / `verifySignature()` — Ed25519 sign/verify for CRDT updates
+- [ ] **Vault Encryption** (`layer1/encryption/`)
+  - [ ] `VaultKeyManager` — derive AES-GCM-256 vault key from identity keypair
+  - [ ] `encryptSnapshot()` / `decryptSnapshot()` — encrypt Loro snapshots at rest
+  - [ ] Per-collection encryption with key rotation support
+  - [ ] Secure key storage integration (Tauri keychain / Secure Enclave bridge)
+
+## Phase 21: Virtual File System
+
+Decouples the object-graph (text/CRDTs) from heavy binary assets.
+
+- [ ] **VFS Layer** (`layer1/vfs/`)
+  - [ ] `VfsAdapter` interface — abstract file I/O (read, write, stat, list, delete)
+  - [ ] `createLocalVfsAdapter()` — local filesystem via Tauri IPC
+  - [ ] `createMemoryVfsAdapter()` — in-memory for testing
+  - [ ] `BinaryRef` — content-addressed reference (SHA-256 hash) stored in GraphObject.data
+  - [ ] Binary Forking Protocol: non-mergeable files (images, video) use lock-based editing
+  - [ ] `importFile()` / `exportFile()` — move binaries in/out of vault storage
+  - [ ] Deduplication via content addressing (same hash = same blob)
+
+## Phase 22: Federation & Sync
+
+Cross-node object addressing, CRDT sync, and ghost nodes.
+
+- [ ] **Federated Addressing** (`layer1/federation/`)
+  - [ ] `PrismAddress` resolution — `prism://did:web:node/objects/id` → local or remote fetch
+  - [ ] `GhostNode` — locked placeholder for objects in unshared collections
+  - [ ] `FederatedEdge` — edge where source and target live on different nodes
+  - [ ] `resolveRemoteObject()` — fetch object snapshot from peer via Relay or direct
+- [ ] **Sync Engine** (`layer1/sync/`)
+  - [ ] `SyncSession` — bidirectional Loro CRDT sync between two peers
+  - [ ] `SyncTransport` interface — pluggable transport (WebSocket, Tauri IPC, Relay)
+  - [ ] `createDirectSyncTransport()` — peer-to-peer WebSocket transport
+  - [ ] `createRelaySyncTransport()` — store-and-forward via Prism Relay
+  - [ ] Conflict quarantine: detect divergent non-CRDT state, surface for manual resolution
+
+## Phase 23: Prism Relay (Server)
+
+Next.js server for zero-knowledge routing and sovereign portals.
+
+- [ ] **Relay Core** (`packages/prism-relay/`)
+  - [ ] E2EE store-and-forward message queue (Blind Mailbox)
+  - [ ] Zero-knowledge routing: Relay sees encrypted blobs, not content
+  - [ ] Relay timestamping for institutional consensus
+  - [ ] Blind Pings: APNs/FCM push notifications for offline peers
+- [ ] **Sovereign Portals**
+  - [ ] SSR snapshot rendering of public collection views
+  - [ ] AutoREST gateway: expose CollectionStore as REST API via server factory routes
+  - [ ] Webhook support for external integrations
+  - [ ] Portal levels 1-4 (static → real-time CRDT diff-updates)
+
+## Phase 24: Actor System (0B/0C)
+
+Process queue, language runtimes, and local AI integration.
+
+- [ ] **Process Queue** (`layer1/actor/`)
+  - [ ] `ProcessQueue` — ordered execution of automation/script tasks
+  - [ ] `ActorRuntime` interface — pluggable language execution (Lua, TypeScript, Python)
+  - [ ] Lua runtime via mlua (daemon) + wasmoon (browser) — extend existing `layer1/lua/`
+  - [ ] TypeScript runtime via Deno sidecar (Tauri shell)
+  - [ ] Python runtime via sidecar for ML/data pipelines
+  - [ ] Sandbox: Capability Tokens for fine-grained permission control
+- [ ] **Intelligence Layer** (0C)
+  - [ ] `AiProvider` interface — Local (Ollama), Federated (peer model sharing), API (Claude, etc.)
+  - [ ] `createOllamaProvider()` — local model inference via HTTP
+  - [ ] Inline ghost-text: AI completions in CodeMirror via CM extension
+  - [ ] Object-aware context: feed graph neighbors + collection context to prompts
+
+## Phase 25: Prism Syntax Engine
+
+LSP-like intelligence for the expression and scripting layers.
+
+- [ ] **Syntax Engine** (`layer1/syntax/`)
+  - [ ] LSP server in Web Worker — diagnostics, completions, hover info
+  - [ ] `.d.lua` type definition generation from ObjectRegistry schemas
+  - [ ] Expression autocomplete: field names, function names, operator suggestions
+  - [ ] CodeMirror integration: wire LSP to CM diagnostics + autocomplete extensions
+  - [ ] Schema-aware validation: type-check expressions against EntityDef field types
+
+## Phase 26: Communication Fabric
+
+Real-time sessions, transcription, and A/V transport.
+
+- [ ] **Session Nodes** (`layer1/session/`)
+  - [ ] `SessionNode` — meeting/call as a CRDT Collection with transcript + timeline
+  - [ ] Self-Dictation: Whisper.cpp transcription integration (Tauri sidecar)
+  - [ ] Hypermedia Playback: transcript-synced video seek with timestamp anchors
+  - [ ] Listener Fallback: guest compute delegation for resource-constrained peers
+- [ ] **A/V Transport**
+  - [ ] LiveKit integration for SFU-based audio/video
+  - [ ] WebRTC direct for peer-to-peer fallback
+  - [ ] Ephemeral high-frequency state (cursor/gesture) via WebRTC data channels
+
+## Phase 27: Trust & Safety
+
+The Sovereign Immune System — sandbox, spam protection, content trust.
+
+- [ ] **Lua Sandbox** — Capability Tokens restricting API surface per plugin
+- [ ] **Schema Poison Pill** — YAML/JSON schema validation before import
+- [ ] **XSS Prevention** — Shadow DOM / iframe sandboxing for plugin-rendered content
+- [ ] **Relay Spam Protection** — Hashcash proof-of-work for Relay message submission
+- [ ] **Web of Trust** — peer reputation, hive-mind bans, toxic content hash gossip
+- [ ] **Secure Recovery** — Shamir secret sharing for "device in a lake" vault recovery
+- [ ] **Relay Encrypted Escrow** — blind escrow for key recovery
+
+## Phase 28: Builder 3 (3D Viewport)
+
+R3F-based 3D editor for spatial content.
+
+- [ ] **3D Viewport** (`layer2/viewport3d/`)
+  - [ ] R3F + @react-three/drei scene graph
+  - [ ] OpenCASCADE.js for CAD geometry (STEP/IGES import)
+  - [ ] TSL shader compilation (Three.js Shading Language → WebGPU/WebGL)
+  - [ ] Loro-backed scene state: object transforms, materials, hierarchy in CRDT
+  - [ ] Gizmo controls: translate, rotate, scale with undo integration
+
+## Phase 29: NLE / Timeline System (Grip)
+
+Non-linear editing and show control for live production.
+
+- [ ] **Timeline Engine** (`layer1/timeline/`)
+  - [ ] tone.js master clock with sample-accurate scheduling
+  - [ ] Track model: audio, video, lighting, automation lanes
+  - [ ] Clip model: time-range regions with source references
+  - [ ] Transport controls: play, pause, seek, loop, scrub
+- [ ] **Audio Pipeline**
+  - [ ] @elemaudio/core for DSP graph
+  - [ ] peaks.js waveform rendering
+  - [ ] WAM (Web Audio Modules) standard for VST-like plugins
+- [ ] **Video Pipeline**
+  - [ ] WebCodecs API for frame-accurate seeking
+  - [ ] Proxy workflow: low-res edit → full-res export
+- [ ] **Hardware Bridges** (Rust daemon)
+  - [ ] Art-Net (DMX lighting control)
+  - [ ] VISCA over IP (PTZ camera control)
+  - [ ] OSC (Open Sound Control)
+  - [ ] MIDI (instrument/controller I/O)
+
+## Phase 30: Ecosystem Apps — Flux
+
+Operational hub: productivity, finance, CRM, goals, inventory.
+
+- [ ] **Flux App** (`packages/prism-flux/`)
+  - [ ] Lens plugins: Tasks, Contacts, Projects, Goals, Finance, Inventory
+  - [ ] EntityDef schemas for each domain (via ObjectRegistry)
+  - [ ] Automation presets: task deadlines, recurring reminders, status workflows
+  - [ ] Dashboard views: kanban, calendar, timeline per entity type
+  - [ ] Import/export: CSV, JSON for migration from legacy tools
+
+## Phase 31: Ecosystem Apps — Lattice
+
+Game middleware suite: narrative, audio, entity authoring, world topology.
+
+- [ ] **Lattice App** (`packages/prism-lattice/`)
+  - [ ] **Loom** — Narrative engine: unified entry resolution, Fact Store (Ledger/Var), `.loom` format
+  - [ ] **Canto** — Audio middleware: Sound Objects, signal graph, spatial audio, acoustic scenes
+  - [ ] **Simulacra** — Entity authoring: game object system, `.sim` format, component slots, codegen
+  - [ ] **Topology** — World navigation: scenes, regions, portals, state transitions
+  - [ ] **Kami** — AI middleware: behavior trees, HSM, GOAP planners
+  - [ ] **Cue** — Event orchestration: timeline editor, sync animations/dialogue/audio
+  - [ ] **Meridian** — Stats: axes, pools, skill trees, conditions
+  - [ ] **Palette** — Inventory: items, loot tables, equipment slots
+  - [ ] **Boon** — Abilities: skills, cooldowns, activation rules
+
+## Phase 32: Ecosystem Apps — Cadence & Grip
+
+Music education and live production.
+
+- [ ] **Cadence App** (`packages/prism-cadence/`)
+  - [ ] LMS: courses, lessons, assignments, student progress
+  - [ ] Interactive music lessons with CRDT-synced notation
+  - [ ] Practice tracking and repertoire management
+- [ ] **Grip App** (`packages/prism-grip/`)
+  - [ ] 3D stage plot editor (Builder 3 + venue templates)
+  - [ ] NLE timeline for show programming (Phase 28 integration)
+  - [ ] Hardware control dashboard: DMX, PTZ, audio mixer
+  - [ ] Show runtime: cue-to-cue execution with hardware sync

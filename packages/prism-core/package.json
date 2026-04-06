@@ -33,7 +33,8 @@
     "./search": "./src/layer1/search/index.ts",
     "./discovery": "./src/layer1/discovery/index.ts",
     "./view": "./src/layer1/view/index.ts",
-    "./notification": "./src/layer1/notification/index.ts"
+    "./notification": "./src/layer1/notification/index.ts",
+    "./activity": "./src/layer1/activity/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
