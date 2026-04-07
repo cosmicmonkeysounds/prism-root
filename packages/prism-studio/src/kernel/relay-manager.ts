@@ -107,9 +107,51 @@ export interface RelayManager {
   /** Fetch relay status via HTTP. */
   fetchStatus(relayId: string): Promise<RelayStatus>;
 
+  // ── Collections management ─────────────────────────────────────────────
+  /** List hosted collections on a relay. */
+  listCollections(relayId: string): Promise<string[]>;
+  /** Get collection metadata. */
+  inspectCollection(relayId: string, collectionId: string): Promise<{ snapshot: string }>;
+  /** Delete a collection from a relay. */
+  deleteCollection(relayId: string, collectionId: string): Promise<boolean>;
+
   // ── Collection sync ────────────────────────────────────────────────────
   /** Push a collection snapshot to a connected relay. */
   syncCollection(relayId: string, collectionId: string, store: CollectionStore): Promise<void>;
+
+  // ── Webhooks management ───────────────────────────────────────────────
+  /** List webhooks on a relay. */
+  listWebhooks(relayId: string): Promise<Array<{ id: string; url: string; events: string[]; active: boolean }>>;
+  /** Delete a webhook. */
+  deleteWebhook(relayId: string, webhookId: string): Promise<boolean>;
+
+  // ── Federation/peers ──────────────────────────────────────────────────
+  /** List federation peers. */
+  listPeers(relayId: string): Promise<Array<{ relayDid: string; url: string }>>;
+  /** Ban a peer. */
+  banPeer(relayId: string, did: string): Promise<boolean>;
+  /** Unban a peer. */
+  unbanPeer(relayId: string, did: string): Promise<boolean>;
+  /** Get trust graph. */
+  getTrustGraph(relayId: string): Promise<unknown[]>;
+
+  // ── Certificates ──────────────────────────────────────────────────────
+  /** List ACME certificates. */
+  listCertificates(relayId: string): Promise<Array<{ domain: string; expiresAt: string; issuedAt: string }>>;
+
+  // ── Backup/restore ────────────────────────────────────────────────────
+  /** Export relay state as JSON. */
+  backupRelay(relayId: string): Promise<Record<string, unknown>>;
+  /** Import relay state from JSON. */
+  restoreRelay(relayId: string, data: Record<string, unknown>): Promise<{ restored: Record<string, number> }>;
+
+  // ── Health ────────────────────────────────────────────────────────────
+  /** Fetch relay health (uptime, memory, connections). */
+  fetchHealth(relayId: string): Promise<Record<string, unknown>>;
+
+  // ── Discovery ─────────────────────────────────────────────────────────
+  /** Probe a URL to check if it's a Prism Relay. Returns relay info or null. */
+  discoverRelay(url: string): Promise<{ did: string; modules: string[]; mode: string } | null>;
 
   // ── Subscriptions ──────────────────────────────────────────────────────
   /** Subscribe to relay state changes. Returns unsubscribe function. */
@@ -355,6 +397,31 @@ export function createRelayManager(options?: RelayManagerOptions): RelayManager 
     return (await res.json()) as RelayStatus;
   }
 
+  // ── Collections management ─────────────────────────────────────────────
+
+  async function listCollections(relayId: string): Promise<string[]> {
+    const entry = relays.get(relayId);
+    if (!entry) throw new Error(`Unknown relay: ${relayId}`);
+    const res = await http.fetch(`${entry.url}/api/collections`);
+    if (!res.ok) throw new Error(`Failed to list collections: ${res.status}`);
+    return (await res.json()) as string[];
+  }
+
+  async function inspectCollection(relayId: string, collectionId: string): Promise<{ snapshot: string }> {
+    const entry = relays.get(relayId);
+    if (!entry) throw new Error(`Unknown relay: ${relayId}`);
+    const res = await http.fetch(`${entry.url}/api/collections/${encodeURIComponent(collectionId)}/snapshot`);
+    if (!res.ok) throw new Error(`Collection not found: ${collectionId}`);
+    return (await res.json()) as { snapshot: string };
+  }
+
+  async function deleteCollection(relayId: string, collectionId: string): Promise<boolean> {
+    const entry = relays.get(relayId);
+    if (!entry) throw new Error(`Unknown relay: ${relayId}`);
+    const res = await http.fetch(`${entry.url}/api/collections/${encodeURIComponent(collectionId)}`, { method: "DELETE" });
+    return res.ok;
+  }
+
   // ── Collection sync ────────────────────────────────────────────────────
 
   async function syncCollection(
@@ -387,6 +454,116 @@ export function createRelayManager(options?: RelayManagerOptions): RelayManager 
     }
   }
 
+  // ── Webhooks management ────────────────────────────────────────────────
+
+  async function listWebhooks(relayId: string): Promise<Array<{ id: string; url: string; events: string[]; active: boolean }>> {
+    const entry = relays.get(relayId);
+    if (!entry) throw new Error(`Unknown relay: ${relayId}`);
+    const res = await http.fetch(`${entry.url}/api/webhooks`);
+    if (!res.ok) throw new Error(`Failed to list webhooks: ${res.status}`);
+    return (await res.json()) as Array<{ id: string; url: string; events: string[]; active: boolean }>;
+  }
+
+  async function deleteWebhook(relayId: string, webhookId: string): Promise<boolean> {
+    const entry = relays.get(relayId);
+    if (!entry) throw new Error(`Unknown relay: ${relayId}`);
+    const res = await http.fetch(`${entry.url}/api/webhooks/${encodeURIComponent(webhookId)}`, { method: "DELETE" });
+    return res.ok;
+  }
+
+  // ── Federation/peers ──────────────────────────────────────────────────
+
+  async function listPeers(relayId: string): Promise<Array<{ relayDid: string; url: string }>> {
+    const entry = relays.get(relayId);
+    if (!entry) throw new Error(`Unknown relay: ${relayId}`);
+    const res = await http.fetch(`${entry.url}/api/federation/peers`);
+    if (!res.ok) throw new Error(`Failed to list peers: ${res.status}`);
+    return (await res.json()) as Array<{ relayDid: string; url: string }>;
+  }
+
+  async function banPeer(relayId: string, did: string): Promise<boolean> {
+    const entry = relays.get(relayId);
+    if (!entry) throw new Error(`Unknown relay: ${relayId}`);
+    const res = await http.fetch(`${entry.url}/api/federation/peers/${encodeURIComponent(did)}/ban`, { method: "POST" });
+    return res.ok;
+  }
+
+  async function unbanPeer(relayId: string, did: string): Promise<boolean> {
+    const entry = relays.get(relayId);
+    if (!entry) throw new Error(`Unknown relay: ${relayId}`);
+    const res = await http.fetch(`${entry.url}/api/federation/peers/${encodeURIComponent(did)}/unban`, { method: "POST" });
+    return res.ok;
+  }
+
+  async function getTrustGraph(relayId: string): Promise<unknown[]> {
+    const entry = relays.get(relayId);
+    if (!entry) throw new Error(`Unknown relay: ${relayId}`);
+    const res = await http.fetch(`${entry.url}/api/federation/trust-graph`);
+    if (!res.ok) throw new Error(`Failed to get trust graph: ${res.status}`);
+    return (await res.json()) as unknown[];
+  }
+
+  // ── Certificates ──────────────────────────────────────────────────────
+
+  async function listCertificates(relayId: string): Promise<Array<{ domain: string; expiresAt: string; issuedAt: string }>> {
+    const entry = relays.get(relayId);
+    if (!entry) throw new Error(`Unknown relay: ${relayId}`);
+    const res = await http.fetch(`${entry.url}/api/certificates`);
+    if (!res.ok) throw new Error(`Failed to list certificates: ${res.status}`);
+    return (await res.json()) as Array<{ domain: string; expiresAt: string; issuedAt: string }>;
+  }
+
+  // ── Backup/restore ────────────────────────────────────────────────────
+
+  async function backupRelay(relayId: string): Promise<Record<string, unknown>> {
+    const entry = relays.get(relayId);
+    if (!entry) throw new Error(`Unknown relay: ${relayId}`);
+    const res = await http.fetch(`${entry.url}/api/backup`);
+    if (!res.ok) throw new Error(`Failed to backup relay: ${res.status}`);
+    return (await res.json()) as Record<string, unknown>;
+  }
+
+  async function restoreRelay(relayId: string, data: Record<string, unknown>): Promise<{ restored: Record<string, number> }> {
+    const entry = relays.get(relayId);
+    if (!entry) throw new Error(`Unknown relay: ${relayId}`);
+    const res = await http.fetch(`${entry.url}/api/restore`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error(`Failed to restore relay: ${res.status}`);
+    return (await res.json()) as { restored: Record<string, number> };
+  }
+
+  // ── Health ────────────────────────────────────────────────────────────
+
+  async function fetchHealth(relayId: string): Promise<Record<string, unknown>> {
+    const entry = relays.get(relayId);
+    if (!entry) throw new Error(`Unknown relay: ${relayId}`);
+    const res = await http.fetch(`${entry.url}/api/health`);
+    if (!res.ok) throw new Error(`Failed to fetch health: ${res.status}`);
+    return (await res.json()) as Record<string, unknown>;
+  }
+
+  // ── Discovery ─────────────────────────────────────────────────────────
+
+  async function discoverRelay(url: string): Promise<{ did: string; modules: string[]; mode: string } | null> {
+    try {
+      const base = url.replace(/\/+$/, "");
+      const res = await http.fetch(`${base}/api/health`);
+      if (!res.ok) return null;
+      const data = (await res.json()) as Record<string, unknown>;
+      if (!data["did"]) return null;
+      return {
+        did: data["did"] as string,
+        modules: (data["modules"] as string[]) ?? [],
+        mode: (data["mode"] as string) ?? "unknown",
+      };
+    } catch {
+      return null;
+    }
+  }
+
   // ── Subscriptions ──────────────────────────────────────────────────────
 
   function subscribe(listener: Listener): () => void {
@@ -415,7 +592,21 @@ export function createRelayManager(options?: RelayManagerOptions): RelayManager 
     unpublishPortal,
     listPortals,
     fetchStatus,
+    listCollections,
+    inspectCollection,
+    deleteCollection,
     syncCollection,
+    listWebhooks,
+    deleteWebhook,
+    listPeers,
+    banPeer,
+    unbanPeer,
+    getTrustGraph,
+    listCertificates,
+    backupRelay,
+    restoreRelay,
+    fetchHealth,
+    discoverRelay,
     subscribe,
     dispose,
   };

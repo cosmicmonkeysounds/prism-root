@@ -16,7 +16,7 @@ describe("logger", () => {
       logger.info("hello world");
 
       expect(stdoutSpy).toHaveBeenCalledOnce();
-      const output = stdoutSpy.mock.calls[0]![0] as string;
+      const output = (stdoutSpy.mock.calls[0]?.[0] ?? "") as string;
       // ISO timestamp pattern
       expect(output).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
       expect(output).toContain("[INFO ]");
@@ -27,7 +27,7 @@ describe("logger", () => {
       const logger = createLogger({ level: "debug", format: "text" });
       logger.info("request", { method: "GET", path: "/api" });
 
-      const output = stdoutSpy.mock.calls[0]![0] as string;
+      const output = (stdoutSpy.mock.calls[0]?.[0] ?? "") as string;
       expect(output).toContain('method="GET"');
       expect(output).toContain('path="/api"');
     });
@@ -36,7 +36,7 @@ describe("logger", () => {
       const logger = createLogger({ level: "debug", format: "text" });
       logger.info("simple message", {});
 
-      const output = stdoutSpy.mock.calls[0]![0] as string;
+      const output = (stdoutSpy.mock.calls[0]?.[0] ?? "") as string;
       // Should end with the message, no trailing key=value
       expect(output).toMatch(/simple message\n$/);
     });
@@ -47,7 +47,7 @@ describe("logger", () => {
       const logger = createLogger({ level: "debug", format: "json" });
       logger.info("structured", { count: 42 });
 
-      const output = stdoutSpy.mock.calls[0]![0] as string;
+      const output = (stdoutSpy.mock.calls[0]?.[0] ?? "") as string;
       const parsed = JSON.parse(output.trim()) as Record<string, unknown>;
       expect(parsed.ts).toMatch(/^\d{4}-\d{2}-\d{2}T/);
       expect(parsed.level).toBe("info");
@@ -83,7 +83,7 @@ describe("logger", () => {
 
       expect(stdoutSpy).not.toHaveBeenCalled();
       expect(stderrSpy).toHaveBeenCalledOnce();
-      expect(stderrSpy.mock.calls[0]![0] as string).toContain("important");
+      expect((stderrSpy.mock.calls[0]?.[0] ?? "") as string).toContain("important");
     });
 
     it("debug level logs everything", () => {
@@ -112,11 +112,11 @@ describe("logger", () => {
 
       logger.warn("wrn");
       expect(stderrSpy).toHaveBeenCalledTimes(1);
-      expect(stderrSpy.mock.calls[0]![0] as string).toContain("wrn");
+      expect((stderrSpy.mock.calls[0]?.[0] ?? "") as string).toContain("wrn");
 
       logger.error("err");
       expect(stderrSpy).toHaveBeenCalledTimes(2);
-      expect(stderrSpy.mock.calls[1]![0] as string).toContain("err");
+      expect((stderrSpy.mock.calls[1]?.[0] ?? "") as string).toContain("err");
     });
   });
 });

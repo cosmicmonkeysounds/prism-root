@@ -11,9 +11,9 @@
  * Relay servers are started/stopped via CLI, not from Studio.
  */
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useKernel, useRelay } from "../kernel/index.js";
-import type { RelayEntry, DeployedPortal } from "../kernel/index.js";
+import type { StudioKernel, RelayEntry, RelayManager, DeployedPortal } from "../kernel/index.js";
 import type { PortalLevel } from "@prism/core/relay";
 
 // ── Styles ────────────────────────────────────────────────────────────────
@@ -151,16 +151,29 @@ const styles = {
 
 // ── Add Relay Form ────────────────────────────────────────────────────────
 
-function AddRelayForm({ onAdd }: { onAdd: (name: string, url: string) => void }) {
+function AddRelayForm({ onAdd, manager }: { onAdd: (name: string, url: string) => void; manager: RelayManager }) {
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
+  const [discovered, setDiscovered] = useState<{ did: string; modules: string[]; mode: string } | null>(null);
 
   const handleSubmit = useCallback(() => {
     if (!name.trim() || !url.trim()) return;
     onAdd(name.trim(), url.trim());
     setName("");
     setUrl("");
+    setDiscovered(null);
   }, [name, url, onAdd]);
+
+  const handleProbe = useCallback(async () => {
+    if (!url.trim()) return;
+    const info = await manager.discoverRelay(url.trim());
+    if (info) {
+      if (!name.trim()) setName(info.mode ?? "Relay");
+      setDiscovered(info);
+    } else {
+      setDiscovered(null);
+    }
+  }, [url, name, manager]);
 
   return (
     <div style={styles.card}>
@@ -178,11 +191,17 @@ function AddRelayForm({ onAdd }: { onAdd: (name: string, url: string) => void })
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+          onBlur={handleProbe}
         />
         <button style={styles.button} onClick={handleSubmit}>
           Add Relay
         </button>
       </div>
+      {discovered && (
+        <div style={{ ...styles.label, color: "#48bb78", marginBottom: "0.375rem" }}>
+          Discovered: {discovered.mode} relay | Modules: {discovered.modules.join(", ") || "none"} | DID: {discovered.did.slice(0, 24)}...
+        </div>
+      )}
       <div style={styles.label}>
         Start relays via CLI: prism-relay --mode server --port 4444
       </div>
@@ -199,6 +218,8 @@ function RelayCard({
   onRemove,
   onPublish,
   onViewPortals,
+  onSelect,
+  isSelected,
 }: {
   entry: RelayEntry;
   onConnect: (id: string) => void;
@@ -206,11 +227,13 @@ function RelayCard({
   onRemove: (id: string) => void;
   onPublish: (relayId: string) => void;
   onViewPortals: (relayId: string) => void;
+  onSelect: (relayId: string) => void;
+  isSelected: boolean;
 }) {
   return (
-    <div style={styles.card}>
+    <div style={{ ...styles.card, ...(isSelected ? { border: "1px solid #0e639c" } : {}) }}>
       <div style={{ ...styles.row, justifyContent: "space-between", marginBottom: "0.375rem" }}>
-        <div style={styles.row}>
+        <div style={{ ...styles.row, cursor: "pointer" }} onClick={() => onSelect(entry.id)}>
           <span style={styles.statusDot(entry.status)} />
           <strong style={{ color: "#e5e5e5" }}>{entry.name}</strong>
           <span style={styles.label}>{entry.status}</span>
@@ -377,6 +400,261 @@ function PortalList({
   );
 }
 
+// ── Section Toggle ───────────────────────────────────────────────────────
+
+function SectionToggle({ title, name, expanded, onToggle, children }: {
+  title: string;
+  name: string;
+  expanded: string | null;
+  onToggle: (name: string) => void;
+  children: React.ReactNode;
+}) {
+  const isExpanded = expanded === name;
+  return (
+    <div style={{ marginBottom: "0.5rem" }}>
+      <div
+        style={{ ...styles.card, cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}
+        onClick={() => onToggle(name)}
+      >
+        <span style={{ color: "#e5e5e5", fontSize: "0.875rem", fontWeight: 600 }}>{title}</span>
+        <span style={{ color: "#888", fontSize: "0.75rem" }}>{isExpanded ? "\u25BC" : "\u25B6"}</span>
+      </div>
+      {isExpanded && children}
+    </div>
+  );
+}
+
+// ── Relay Health Section ─────────────────────────────────────────────────
+
+function RelayHealthSection({ relayId, manager }: { relayId: string; manager: RelayManager }) {
+  const [health, setHealth] = useState<Record<string, unknown> | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await manager.fetchHealth(relayId);
+      setHealth(data);
+    } catch { setHealth(null); }
+    finally { setLoading(false); }
+  }, [relayId, manager]);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  if (!health) return <div style={styles.empty}>Loading health data...</div>;
+
+  const uptime = typeof health["uptime"] === "number"
+    ? `${Math.floor(health["uptime"] as number / 3600)}h ${Math.floor((health["uptime"] as number % 3600) / 60)}m`
+    : "unknown";
+
+  return (
+    <div style={styles.card}>
+      <div style={{ ...styles.row, justifyContent: "space-between" }}>
+        <div>
+          <div style={styles.label}>Uptime: <strong style={{ color: "#e5e5e5" }}>{uptime}</strong></div>
+          <div style={styles.label}>Connections: <strong style={{ color: "#e5e5e5" }}>{String(health["connections"] ?? 0)}</strong></div>
+          <div style={styles.label}>Mode: <strong style={{ color: "#e5e5e5" }}>{String(health["mode"] ?? "unknown")}</strong></div>
+        </div>
+        <button style={styles.buttonOutline} onClick={refresh} disabled={loading}>
+          {loading ? "Refreshing..." : "Refresh"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Collections Section ──────────────────────────────────────────────────
+
+function CollectionsSection({ relayId, manager, kernel }: { relayId: string; manager: RelayManager; kernel: StudioKernel }) {
+  const [collections, setCollections] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try { setCollections(await manager.listCollections(relayId)); }
+    catch { setCollections([]); }
+    finally { setLoading(false); }
+  }, [relayId, manager]);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const handleDelete = useCallback(async (id: string) => {
+    await manager.deleteCollection(relayId, id);
+    setCollections(prev => prev.filter(c => c !== id));
+    kernel.notifications.add({ title: `Deleted collection "${id}"`, kind: "success" });
+  }, [relayId, manager, kernel]);
+
+  return (
+    <div style={styles.card}>
+      {loading ? <div style={styles.empty}>Loading...</div> :
+       collections.length === 0 ? <div style={styles.empty}>No collections hosted.</div> :
+       collections.map(id => (
+         <div key={id} style={{ ...styles.row, justifyContent: "space-between", padding: "0.25rem 0" }}>
+           <span style={{ color: "#e5e5e5", fontSize: "0.875rem" }}>{id}</span>
+           <button style={styles.buttonDanger} onClick={() => handleDelete(id)}>Delete</button>
+         </div>
+       ))}
+    </div>
+  );
+}
+
+// ── Federation Section ───────────────────────────────────────────────────
+
+function FederationSection({ relayId, manager, kernel }: { relayId: string; manager: RelayManager; kernel: StudioKernel }) {
+  const [peers, setPeers] = useState<Array<{ relayDid: string; url: string }>>([]);
+  const [loading, setLoading] = useState(false);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try { setPeers(await manager.listPeers(relayId)); }
+    catch { setPeers([]); }
+    finally { setLoading(false); }
+  }, [relayId, manager]);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const handleBan = useCallback(async (did: string) => {
+    await manager.banPeer(relayId, did);
+    kernel.notifications.add({ title: `Banned peer ${did.slice(0, 20)}...`, kind: "success" });
+  }, [relayId, manager, kernel]);
+
+  const handleUnban = useCallback(async (did: string) => {
+    await manager.unbanPeer(relayId, did);
+    kernel.notifications.add({ title: `Unbanned peer ${did.slice(0, 20)}...`, kind: "success" });
+  }, [relayId, manager, kernel]);
+
+  return (
+    <div style={styles.card}>
+      {loading ? <div style={styles.empty}>Loading...</div> :
+       peers.length === 0 ? <div style={styles.empty}>No federation peers.</div> :
+       peers.map(p => (
+         <div key={p.relayDid} style={{ ...styles.card, background: "#1e1e1e" }}>
+           <div style={{ color: "#e5e5e5", fontSize: "0.8125rem", fontFamily: "monospace" }}>{p.relayDid}</div>
+           <div style={styles.label}>{p.url}</div>
+           <div style={{ ...styles.row, marginTop: "0.375rem", gap: "0.25rem" }}>
+             <button style={styles.buttonDanger} onClick={() => handleBan(p.relayDid)}>Ban</button>
+             <button style={styles.buttonOutline} onClick={() => handleUnban(p.relayDid)}>Unban</button>
+           </div>
+         </div>
+       ))}
+    </div>
+  );
+}
+
+// ── Webhooks Section ─────────────────────────────────────────────────────
+
+function WebhooksSection({ relayId, manager, kernel }: { relayId: string; manager: RelayManager; kernel: StudioKernel }) {
+  const [webhooks, setWebhooks] = useState<Array<{ id: string; url: string; events: string[]; active: boolean }>>([]);
+  const [loading, setLoading] = useState(false);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try { setWebhooks(await manager.listWebhooks(relayId)); }
+    catch { setWebhooks([]); }
+    finally { setLoading(false); }
+  }, [relayId, manager]);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const handleDelete = useCallback(async (id: string) => {
+    await manager.deleteWebhook(relayId, id);
+    setWebhooks(prev => prev.filter(w => w.id !== id));
+    kernel.notifications.add({ title: `Deleted webhook "${id}"`, kind: "success" });
+  }, [relayId, manager, kernel]);
+
+  return (
+    <div style={styles.card}>
+      {loading ? <div style={styles.empty}>Loading...</div> :
+       webhooks.length === 0 ? <div style={styles.empty}>No webhooks configured.</div> :
+       webhooks.map(w => (
+         <div key={w.id} style={{ ...styles.card, background: "#1e1e1e" }}>
+           <div style={{ ...styles.row, justifyContent: "space-between" }}>
+             <div>
+               <div style={{ color: "#e5e5e5", fontSize: "0.8125rem", fontFamily: "monospace" }}>{w.url}</div>
+               <div style={styles.label}>Events: {w.events.join(", ")}</div>
+               <div style={styles.label}>Status: {w.active ? "Active" : "Inactive"}</div>
+             </div>
+             <button style={styles.buttonDanger} onClick={() => handleDelete(w.id)}>Delete</button>
+           </div>
+         </div>
+       ))}
+    </div>
+  );
+}
+
+// ── Certificates Section ─────────────────────────────────────────────────
+
+function CertificatesSection({ relayId, manager }: { relayId: string; manager: RelayManager }) {
+  const [certs, setCerts] = useState<Array<{ domain: string; expiresAt: string; issuedAt: string }>>([]);
+  const [loading, setLoading] = useState(false);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try { setCerts(await manager.listCertificates(relayId)); }
+    catch { setCerts([]); }
+    finally { setLoading(false); }
+  }, [relayId, manager]);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  return (
+    <div style={styles.card}>
+      {loading ? <div style={styles.empty}>Loading...</div> :
+       certs.length === 0 ? <div style={styles.empty}>No certificates.</div> :
+       certs.map(c => {
+         const expires = new Date(c.expiresAt);
+         const now = new Date();
+         const daysRemaining = Math.ceil((expires.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+         const expiryColor = daysRemaining < 14 ? "#fc8181" : daysRemaining < 30 ? "#ecc94b" : "#48bb78";
+
+         return (
+           <div key={c.domain} style={{ ...styles.card, background: "#1e1e1e" }}>
+             <div style={{ color: "#e5e5e5", fontSize: "0.875rem", fontWeight: 600 }}>{c.domain}</div>
+             <div style={styles.label}>Issued: {new Date(c.issuedAt).toLocaleDateString()}</div>
+             <div style={styles.label}>
+               Expires: {expires.toLocaleDateString()}{" "}
+               <strong style={{ color: expiryColor }}>({daysRemaining}d remaining)</strong>
+             </div>
+           </div>
+         );
+       })}
+    </div>
+  );
+}
+
+// ── Backup & Restore Section ─────────────────────────────────────────────
+
+function BackupRestoreSection({ relayId, manager, kernel }: { relayId: string; manager: RelayManager; kernel: StudioKernel }) {
+  const [loading, setLoading] = useState(false);
+
+  const handleBackup = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await manager.backupRelay(relayId);
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "relay-backup.json";
+      a.click();
+      URL.revokeObjectURL(url);
+      kernel.notifications.add({ title: "Backup downloaded", kind: "success" });
+    } catch (err) {
+      kernel.notifications.add({ title: "Backup failed", kind: "error", body: String(err) });
+    } finally { setLoading(false); }
+  }, [relayId, manager, kernel]);
+
+  return (
+    <div style={styles.card}>
+      <div style={styles.row}>
+        <button style={styles.button} onClick={handleBackup} disabled={loading}>
+          {loading ? "Exporting..." : "Export Backup"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Main Panel ────────────────────────────────────────────────────────────
 
 export function RelayPanel() {
@@ -387,6 +665,12 @@ export function RelayPanel() {
   const [viewingPortalsRelayId, setViewingPortalsRelayId] = useState<string | null>(null);
   const [portals, setPortals] = useState<DeployedPortal[]>([]);
   const [loading, setLoading] = useState(false);
+  const [selectedRelayId, setSelectedRelayId] = useState<string | null>(null);
+  const [expandedSection, setExpandedSection] = useState<string | null>(null);
+
+  const toggleSection = useCallback((name: string) => {
+    setExpandedSection(prev => prev === name ? null : name);
+  }, []);
 
   const handleAdd = useCallback((name: string, url: string) => {
     manager.addRelay(name, url);
@@ -495,7 +779,7 @@ export function RelayPanel() {
       {/* Add Relay */}
       <div style={styles.section}>
         <div style={styles.sectionTitle}>Add Relay</div>
-        <AddRelayForm onAdd={handleAdd} />
+        <AddRelayForm onAdd={handleAdd} manager={manager} />
       </div>
 
       {/* Relay List */}
@@ -515,6 +799,8 @@ export function RelayPanel() {
                 onRemove={handleRemove}
                 onPublish={(id) => setPublishingRelayId(id)}
                 onViewPortals={handleViewPortals}
+                onSelect={(id) => setSelectedRelayId(prev => prev === id ? null : id)}
+                isSelected={selectedRelayId === entry.id}
               />
               {publishingRelayId === entry.id && (
                 <PublishDialog
@@ -534,6 +820,37 @@ export function RelayPanel() {
           ))
         )}
       </div>
+
+      {/* Manage selected relay */}
+      {selectedRelayId && (
+        <div style={styles.section}>
+          <div style={styles.sectionTitle}>Manage Relay</div>
+
+          <SectionToggle title="Health" name="health" expanded={expandedSection} onToggle={toggleSection}>
+            <RelayHealthSection relayId={selectedRelayId} manager={manager} />
+          </SectionToggle>
+
+          <SectionToggle title="Collections" name="collections" expanded={expandedSection} onToggle={toggleSection}>
+            <CollectionsSection relayId={selectedRelayId} manager={manager} kernel={kernel} />
+          </SectionToggle>
+
+          <SectionToggle title="Federation Peers" name="federation" expanded={expandedSection} onToggle={toggleSection}>
+            <FederationSection relayId={selectedRelayId} manager={manager} kernel={kernel} />
+          </SectionToggle>
+
+          <SectionToggle title="Webhooks" name="webhooks" expanded={expandedSection} onToggle={toggleSection}>
+            <WebhooksSection relayId={selectedRelayId} manager={manager} kernel={kernel} />
+          </SectionToggle>
+
+          <SectionToggle title="Certificates" name="certs" expanded={expandedSection} onToggle={toggleSection}>
+            <CertificatesSection relayId={selectedRelayId} manager={manager} />
+          </SectionToggle>
+
+          <SectionToggle title="Backup & Restore" name="backup" expanded={expandedSection} onToggle={toggleSection}>
+            <BackupRestoreSection relayId={selectedRelayId} manager={manager} kernel={kernel} />
+          </SectionToggle>
+        </div>
+      )}
 
       {/* CLI reference */}
       <div style={styles.section}>

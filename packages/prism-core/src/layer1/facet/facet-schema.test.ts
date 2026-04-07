@@ -7,6 +7,8 @@ import {
   type LayoutPartKind,
   type FieldSlot,
   type PortalSlot,
+  type TextSlot,
+  type DrawingSlot,
   type SummaryField,
 } from './facet-schema.js';
 
@@ -457,5 +459,145 @@ describe('LayoutPartKind types', () => {
     if (slot.kind === 'portal') {
       expect(slot.slot.part).toBe(kind);
     }
+  });
+});
+
+// ── Spatial extensions ────────────────────────────────────────────────────
+
+describe('spatial layout extensions', () => {
+  it('FieldSlot accepts spatial properties', () => {
+    const field: FieldSlot = {
+      fieldPath: 'name', part: 'body', order: 0,
+      x: 10, y: 20, w: 200, h: 30, zIndex: 5,
+    };
+    const def = facetDefinitionBuilder('id', 'obj', 'form').addField(field).build();
+    const slot = def.slots[0];
+    if (slot.kind === 'field') {
+      expect(slot.slot.x).toBe(10);
+      expect(slot.slot.y).toBe(20);
+      expect(slot.slot.w).toBe(200);
+      expect(slot.slot.h).toBe(30);
+      expect(slot.slot.zIndex).toBe(5);
+    }
+  });
+
+  it('FieldSlot accepts conditionalFormats', () => {
+    const field: FieldSlot = {
+      fieldPath: 'amount', part: 'body', order: 0,
+      conditionalFormats: [
+        { expression: '[field:amount] > 1000', backgroundColor: '#ff0000', textColor: '#fff' },
+      ],
+    };
+    const def = facetDefinitionBuilder('id', 'obj', 'form').addField(field).build();
+    const slot = def.slots[0];
+    if (slot.kind === 'field') {
+      expect(slot.slot.conditionalFormats).toHaveLength(1);
+      expect(slot.slot.conditionalFormats?.[0]?.expression).toBe('[field:amount] > 1000');
+    }
+  });
+
+  it('PortalSlot accepts spatial properties', () => {
+    const portal: PortalSlot = {
+      relationshipId: 'items', displayFields: ['desc'], part: 'body', order: 0,
+      x: 50, y: 100, w: 400, h: 200, zIndex: 2,
+    };
+    const def = facetDefinitionBuilder('id', 'obj', 'form').addPortal(portal).build();
+    const slot = def.slots[0];
+    if (slot.kind === 'portal') {
+      expect(slot.slot.x).toBe(50);
+      expect(slot.slot.w).toBe(400);
+    }
+  });
+
+  it('FacetDefinition accepts layoutMode and canvasSize', () => {
+    const def = facetDefinitionBuilder('id', 'obj', 'form')
+      .layoutMode('spatial')
+      .canvasSize(800, 600)
+      .build();
+    expect(def.layoutMode).toBe('spatial');
+    expect(def.canvasWidth).toBe(800);
+    expect(def.canvasHeight).toBe(600);
+  });
+
+  it('layoutMode defaults to undefined (treated as flow)', () => {
+    const def = createFacetDefinition('id', 'obj', 'form');
+    expect(def.layoutMode).toBeUndefined();
+  });
+});
+
+// ── TextSlot and DrawingSlot ──────────────────────────────────────────────
+
+describe('TextSlot', () => {
+  it('addText() adds a text slot', () => {
+    const text: TextSlot = { text: 'Title', part: 'header', order: 0 };
+    const def = facetDefinitionBuilder('id', 'obj', 'form').addText(text).build();
+    expect(def.slots).toHaveLength(1);
+    expect(def.slots[0].kind).toBe('text');
+    if (def.slots[0].kind === 'text') {
+      expect(def.slots[0].slot.text).toBe('Title');
+    }
+  });
+
+  it('preserves text styling properties', () => {
+    const text: TextSlot = {
+      text: 'Header', part: 'header', order: 0,
+      fontSize: 24, fontWeight: 700, color: '#333', textAlign: 'center',
+      x: 10, y: 5, w: 300, h: 40, zIndex: 10,
+    };
+    const def = facetDefinitionBuilder('id', 'obj', 'form').addText(text).build();
+    const slot = def.slots[0];
+    if (slot.kind === 'text') {
+      expect(slot.slot.fontSize).toBe(24);
+      expect(slot.slot.fontWeight).toBe(700);
+      expect(slot.slot.color).toBe('#333');
+      expect(slot.slot.textAlign).toBe('center');
+      expect(slot.slot.x).toBe(10);
+    }
+  });
+
+  it('addText() is chainable', () => {
+    const builder = facetDefinitionBuilder('id', 'obj', 'form');
+    expect(builder.addText({ text: 'T', part: 'body', order: 0 })).toBe(builder);
+  });
+});
+
+describe('DrawingSlot', () => {
+  it('addDrawing() adds a drawing slot', () => {
+    const drawing: DrawingSlot = { shape: 'rectangle', part: 'body', order: 0 };
+    const def = facetDefinitionBuilder('id', 'obj', 'form').addDrawing(drawing).build();
+    expect(def.slots).toHaveLength(1);
+    expect(def.slots[0].kind).toBe('drawing');
+    if (def.slots[0].kind === 'drawing') {
+      expect(def.slots[0].slot.shape).toBe('rectangle');
+    }
+  });
+
+  it('preserves drawing style properties', () => {
+    const drawing: DrawingSlot = {
+      shape: 'rounded-rectangle', part: 'body', order: 0,
+      strokeColor: '#000', strokeWidth: 2, fillColor: '#eee', cornerRadius: 8,
+      x: 0, y: 0, w: 100, h: 50,
+    };
+    const def = facetDefinitionBuilder('id', 'obj', 'form').addDrawing(drawing).build();
+    const slot = def.slots[0];
+    if (slot.kind === 'drawing') {
+      expect(slot.slot.cornerRadius).toBe(8);
+      expect(slot.slot.fillColor).toBe('#eee');
+    }
+  });
+
+  it('addDrawing() is chainable', () => {
+    const builder = facetDefinitionBuilder('id', 'obj', 'form');
+    expect(builder.addDrawing({ shape: 'line', part: 'body', order: 0 })).toBe(builder);
+  });
+
+  it('all four slot kinds interleave in insertion order', () => {
+    const def = facetDefinitionBuilder('id', 'obj', 'form')
+      .addField({ fieldPath: 'name', part: 'body', order: 0 })
+      .addText({ text: 'Label', part: 'body', order: 1 })
+      .addPortal({ relationshipId: 'r', displayFields: [], part: 'body', order: 2 })
+      .addDrawing({ shape: 'line', part: 'body', order: 3 })
+      .build();
+    expect(def.slots.map((s) => s.kind)).toEqual(['field', 'text', 'portal', 'drawing']);
   });
 });

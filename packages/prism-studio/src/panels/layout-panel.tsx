@@ -13,8 +13,12 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { Puck, type Config, type Data, type ComponentConfig, type Fields } from "@measured/puck";
 import type { GraphObject, ObjectId } from "@prism/core/object-model";
 import { objectId } from "@prism/core/object-model";
+import type { FacetLayout } from "@prism/core/facet";
 import { useKernel, useSelection } from "../kernel/index.js";
 import { parseLuaUi, renderUINode } from "./lua-facet-panel.js";
+import { FacetViewRenderer } from "../components/facet-view-renderer.js";
+import { SpatialCanvasRenderer } from "../components/spatial-canvas-renderer.js";
+import { DataPortalRenderer } from "../components/data-portal-renderer.js";
 
 // ── Styles ──────────────────────────────────────────────────────────────────
 
@@ -393,6 +397,178 @@ export function LayoutPanel() {
                   ) : (
                     <div>{result.nodes.map((node, i) => renderUINode(node, i))}</div>
                   )}
+                </div>
+              );
+            },
+          };
+          continue;
+        }
+
+        // Special renderer for facet-view: renders a FacetDefinition as a data view
+        if (def.type === "facet-view") {
+          components[kebabToPascal(def.type)] = {
+            fields: {
+              facetId: { type: "text" } as unknown as Fields[string],
+              viewMode: {
+                type: "select",
+                options: [
+                  { label: "Form", value: "form" },
+                  { label: "List", value: "list" },
+                  { label: "Table", value: "table" },
+                  { label: "Report", value: "report" },
+                  { label: "Card", value: "card" },
+                ],
+              } as unknown as Fields[string],
+              maxRows: { type: "number" } as unknown as Fields[string],
+            },
+            defaultProps: { facetId: "", viewMode: "form", maxRows: 25 },
+            render: (props) => {
+              const p = props as Record<string, unknown>;
+              const facetId = (p["facetId"] as string) ?? "";
+              const viewMode = (p["viewMode"] as FacetLayout) ?? "form";
+              const maxRows = (p["maxRows"] as number) ?? 25;
+              const facetDef = facetId ? kernel.getFacetDefinition(facetId) : undefined;
+              const objects = facetDef
+                ? kernel.store.allObjects().filter(
+                    (o) => o.type === facetDef.objectType && !o.deletedAt,
+                  )
+                : [];
+              return (
+                <div data-testid="puck-facet-view" style={{ margin: "4px 0" }}>
+                  <FacetViewRenderer
+                    definition={facetDef}
+                    objects={objects}
+                    viewMode={viewMode}
+                    maxRows={maxRows}
+                  />
+                </div>
+              );
+            },
+          };
+          continue;
+        }
+
+        // Special renderer for spatial-canvas: free-form positioned fields
+        if (def.type === "spatial-canvas") {
+          components[kebabToPascal(def.type)] = {
+            fields: {
+              facetId: { type: "text" } as unknown as Fields[string],
+              canvasWidth: { type: "number" } as unknown as Fields[string],
+              canvasHeight: { type: "number" } as unknown as Fields[string],
+              gridSize: { type: "number" } as unknown as Fields[string],
+              showGrid: {
+                type: "radio",
+                options: [
+                  { label: "Yes", value: "true" },
+                  { label: "No", value: "false" },
+                ],
+              } as unknown as Fields[string],
+            },
+            defaultProps: { facetId: "", canvasWidth: 612, canvasHeight: 400, gridSize: 8, showGrid: "true" },
+            render: (props) => {
+              const p = props as Record<string, unknown>;
+              const facetId = (p["facetId"] as string) ?? "";
+              const canvasWidth = (p["canvasWidth"] as number) ?? 612;
+              const canvasHeight = (p["canvasHeight"] as number) ?? 400;
+              const gridSize = (p["gridSize"] as number) ?? 8;
+              const showGrid = p["showGrid"] === "true" || p["showGrid"] === true;
+              const facetDef = facetId ? kernel.getFacetDefinition(facetId) : undefined;
+              if (!facetDef) {
+                return (
+                  <div
+                    style={{
+                      border: "1px solid #f97316",
+                      borderRadius: 6,
+                      padding: 12,
+                      margin: "4px 0",
+                      background: "#1a1a2e",
+                      color: "#888",
+                      textAlign: "center",
+                      minHeight: 80,
+                    }}
+                    data-testid="puck-spatial-canvas"
+                  >
+                    <div style={{ fontSize: 11, fontWeight: 600, color: "#f97316", textTransform: "uppercase", marginBottom: 6 }}>
+                      {"\uD83D\uDCD0"} Spatial Canvas
+                    </div>
+                    <div style={{ fontSize: 12 }}>Set a Facet Definition ID to render the canvas.</div>
+                  </div>
+                );
+              }
+              return (
+                <div data-testid="puck-spatial-canvas" style={{ margin: "4px 0" }}>
+                  <SpatialCanvasRenderer
+                    definition={facetDef}
+                    editable={false}
+                    canvasWidth={canvasWidth}
+                    canvasHeight={canvasHeight}
+                    gridSize={gridSize}
+                    showGrid={showGrid}
+                  />
+                </div>
+              );
+            },
+          };
+          continue;
+        }
+
+        // Special renderer for data-portal: related records inline
+        if (def.type === "data-portal") {
+          components[kebabToPascal(def.type)] = {
+            fields: {
+              relationshipId: { type: "text" } as unknown as Fields[string],
+              displayFields: { type: "text" } as unknown as Fields[string],
+              visibleRows: { type: "number" } as unknown as Fields[string],
+              allowCreation: {
+                type: "radio",
+                options: [
+                  { label: "Yes", value: "true" },
+                  { label: "No", value: "false" },
+                ],
+              } as unknown as Fields[string],
+              sortField: { type: "text" } as unknown as Fields[string],
+            },
+            defaultProps: { relationshipId: "", displayFields: "", visibleRows: 5, allowCreation: "false", sortField: "" },
+            render: (props) => {
+              const p = props as Record<string, unknown>;
+              const relationshipId = (p["relationshipId"] as string) ?? "";
+              const displayFieldsStr = (p["displayFields"] as string) ?? "";
+              const displayFields = displayFieldsStr.split(",").map((s) => s.trim()).filter(Boolean);
+              const visibleRows = (p["visibleRows"] as number) ?? 5;
+              const sortField = (p["sortField"] as string) ?? "";
+              if (!relationshipId) {
+                return (
+                  <div
+                    style={{
+                      border: "1px solid #8b5cf6",
+                      borderRadius: 6,
+                      padding: 12,
+                      margin: "4px 0",
+                      background: "#1e1e1e",
+                      color: "#888",
+                      textAlign: "center",
+                    }}
+                    data-testid="puck-data-portal"
+                  >
+                    <div style={{ fontSize: 11, fontWeight: 600, color: "#8b5cf6", textTransform: "uppercase", marginBottom: 6 }}>
+                      {"\uD83D\uDD17"} Data Portal
+                    </div>
+                    <div style={{ fontSize: 12 }}>Set a Relationship Edge Type to display related records.</div>
+                  </div>
+                );
+              }
+              const allObjects = kernel.store.allObjects().filter((o) => !o.deletedAt);
+              const allEdges = kernel.store.allEdges();
+              return (
+                <div data-testid="puck-data-portal" style={{ margin: "4px 0" }}>
+                  <DataPortalRenderer
+                    objects={allObjects}
+                    edges={allEdges}
+                    relationshipId={relationshipId}
+                    displayFields={displayFields}
+                    visibleRows={visibleRows}
+                    sortField={sortField || undefined}
+                  />
                 </div>
               );
             },

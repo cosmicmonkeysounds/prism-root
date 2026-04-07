@@ -218,4 +218,154 @@ describe("parseArgs", () => {
     expect(result.overrides.didMethod).toBe("web");
     expect(result.overrides.didWebDomain).toBe("relay.example.com");
   });
+
+  // ── Peers subcommands ───────────────────────────────────────────────
+
+  it("parses peers list", () => {
+    const result = parseArgs(["peers", "list"]);
+    expect(result.command).toBe("peers-list");
+  });
+
+  it("parses peers ban with DID", () => {
+    const result = parseArgs(["peers", "ban", "did:key:z123"]);
+    expect(result.command).toBe("peers-ban");
+    expect(result.positionalArg).toBe("did:key:z123");
+  });
+
+  it("parses peers unban with DID", () => {
+    const result = parseArgs(["peers", "unban", "did:key:z123"]);
+    expect(result.command).toBe("peers-unban");
+    expect(result.positionalArg).toBe("did:key:z123");
+  });
+
+  it("defaults bare peers to peers-list", () => {
+    const result = parseArgs(["peers"]);
+    expect(result.command).toBe("peers-list");
+  });
+
+  // ── Collections subcommands ─────────────────────────────────────────
+
+  it("parses collections list", () => {
+    const result = parseArgs(["collections", "list"]);
+    expect(result.command).toBe("collections-list");
+  });
+
+  it("parses collections inspect with positional arg", () => {
+    const result = parseArgs(["collections", "inspect", "myCol"]);
+    expect(result.command).toBe("collections-inspect");
+    expect(result.positionalArg).toBe("myCol");
+  });
+
+  it("parses collections export with positional arg and --output", () => {
+    const result = parseArgs(["collections", "export", "myCol", "--output", "out.json"]);
+    expect(result.command).toBe("collections-export");
+    expect(result.positionalArg).toBe("myCol");
+    expect(result.outputFile).toBe("out.json");
+  });
+
+  it("parses collections import with positional arg and --input", () => {
+    const result = parseArgs(["collections", "import", "myCol", "--input", "in.json"]);
+    expect(result.command).toBe("collections-import");
+    expect(result.positionalArg).toBe("myCol");
+    expect(result.inputFile).toBe("in.json");
+  });
+
+  it("parses collections delete with positional arg", () => {
+    const result = parseArgs(["collections", "delete", "myCol"]);
+    expect(result.command).toBe("collections-delete");
+    expect(result.positionalArg).toBe("myCol");
+  });
+
+  it("defaults bare collections to collections-list", () => {
+    const result = parseArgs(["collections"]);
+    expect(result.command).toBe("collections-list");
+  });
+
+  // ── Portals subcommands ─────────────────────────────────────────────
+
+  it("parses portals list", () => {
+    const result = parseArgs(["portals", "list"]);
+    expect(result.command).toBe("portals-list");
+  });
+
+  it("parses portals delete with positional arg", () => {
+    const result = parseArgs(["portals", "delete", "p1"]);
+    expect(result.command).toBe("portals-delete");
+    expect(result.positionalArg).toBe("p1");
+  });
+
+  it("defaults bare portals to portals-list", () => {
+    const result = parseArgs(["portals"]);
+    expect(result.command).toBe("portals-list");
+  });
+
+  // ── Webhooks subcommands ────────────────────────────────────────────
+
+  it("parses webhooks list", () => {
+    const result = parseArgs(["webhooks", "list"]);
+    expect(result.command).toBe("webhooks-list");
+  });
+
+  it("parses webhooks test with positional arg", () => {
+    const result = parseArgs(["webhooks", "test", "w1"]);
+    expect(result.command).toBe("webhooks-test");
+    expect(result.positionalArg).toBe("w1");
+  });
+
+  // ── Tokens subcommands ──────────────────────────────────────────────
+
+  it("parses tokens list", () => {
+    const result = parseArgs(["tokens", "list"]);
+    expect(result.command).toBe("tokens-list");
+  });
+
+  it("parses tokens revoke with positional arg", () => {
+    const result = parseArgs(["tokens", "revoke", "t1"]);
+    expect(result.command).toBe("tokens-revoke");
+    expect(result.positionalArg).toBe("t1");
+  });
+
+  // ── Certs subcommands ───────────────────────────────────────────────
+
+  it("parses certs list", () => {
+    const result = parseArgs(["certs", "list"]);
+    expect(result.command).toBe("certs-list");
+  });
+
+  it("parses certs renew with positional arg", () => {
+    const result = parseArgs(["certs", "renew", "example.com"]);
+    expect(result.command).toBe("certs-renew");
+    expect(result.positionalArg).toBe("example.com");
+  });
+
+  // ── Backup / Restore / Logs ─────────────────────────────────────────
+
+  it("parses backup command", () => {
+    const result = parseArgs(["backup"]);
+    expect(result.command).toBe("backup");
+  });
+
+  it("parses backup with --output", () => {
+    const result = parseArgs(["backup", "--output", "b.json"]);
+    expect(result.command).toBe("backup");
+    expect(result.outputFile).toBe("b.json");
+  });
+
+  it("parses restore with --input", () => {
+    const result = parseArgs(["restore", "--input", "b.json"]);
+    expect(result.command).toBe("restore");
+    expect(result.inputFile).toBe("b.json");
+  });
+
+  it("parses logs command", () => {
+    const result = parseArgs(["logs"]);
+    expect(result.command).toBe("logs");
+  });
+
+  it("parses logs with --level and --follow", () => {
+    const result = parseArgs(["logs", "--level", "error", "--follow"]);
+    expect(result.command).toBe("logs");
+    expect(result.logLevelFilter).toBe("error");
+    expect(result.follow).toBe(true);
+  });
 });

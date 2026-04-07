@@ -5,10 +5,13 @@ Runtime server for Prism Relay — wraps Layer 1 relay primitives in HTTP + WebS
 ## Build & Test
 - `pnpm dev` — start with tsx watch (dev mode)
 - `pnpm typecheck`
+- `npx vitest run` — unit tests (30+ test files)
 - `pnpm test:e2e` — Playwright E2E tests (135 tests across 2 spec files, no browser needed)
 
 ## CLI
-Installable as `prism-relay` via the `bin` field. Supports subcommands:
+Installable as `prism-relay` via the `bin` field. 30+ subcommands:
+
+### Server Lifecycle
 - `prism-relay start` (default) — start the relay server
 - `prism-relay init [--mode server|p2p|dev] [-o path]` — generate a starter config file
 - `prism-relay status [--port N]` — check health of a running relay via `/api/health`
@@ -17,6 +20,17 @@ Installable as `prism-relay` via the `bin` field. Supports subcommands:
 - `prism-relay modules list` — list all 15 available relay modules with descriptions
 - `prism-relay config validate [-c path]` — validate config without starting
 - `prism-relay config show [--mode ...]` — show fully resolved config with defaults
+
+### Remote Management (connect to running relay via HTTP)
+- `prism-relay peers list|ban|unban` — federation peer management
+- `prism-relay collections list|inspect|export|import|delete` — collection management
+- `prism-relay portals list|inspect|delete` — portal management
+- `prism-relay webhooks list|delete|test` — webhook management
+- `prism-relay tokens list|revoke` — capability token management
+- `prism-relay certs list|renew` — ACME certificate management
+- `prism-relay backup [--output path]` — export relay state
+- `prism-relay restore [--input path]` — import relay state
+- `prism-relay logs [--level L] [--follow]` — view/tail relay logs
 
 Three deployment modes:
 - `--mode server` — always-on relay (all modules, hashcash=16, JSON logging, no CORS, CSRF enabled)
@@ -146,12 +160,18 @@ WebSocket at `/ws/relay`:
 - `GET /api/status` — relay state
 - `GET /api/modules` — installed modules
 - `GET /api/health` — health check (uptime, memory, peer count) for load balancers/Docker
-- Webhooks: `GET/POST /api/webhooks`, `DELETE /api/webhooks/:id`, `GET /api/webhooks/:id/deliveries`
+- Webhooks: `GET/POST /api/webhooks`, `DELETE /api/webhooks/:id`, `GET /:id/deliveries`, `POST /:id/test`
 - Portals: `GET/POST /api/portals`, `GET/DELETE /api/portals/:id`
-- Tokens: `POST /api/tokens/{issue,verify,revoke}`
-- Collections: `GET/POST /api/collections`, `GET /:id/snapshot`, `POST /:id/import`
+- Tokens: `GET /api/tokens` (list), `POST /api/tokens/{issue,verify,revoke}`
+- Collections: `GET/POST /api/collections`, `GET /:id/snapshot`, `POST /:id/import`, `DELETE /:id`
 - Hashcash: `POST /api/hashcash/{challenge,verify}`
 - Trust: `GET /api/trust`, `GET /:did`, `POST /:did/{ban,unban}`
 - Escrow: `POST /api/escrow/{deposit,claim}`, `GET /:depositorId`
 - Federation: `POST /api/federation/announce`, `GET /peers`, `POST /forward`
 - Signaling: `GET /api/signaling/rooms`, `GET /rooms/:id/peers`, `POST /rooms/:id/{join,leave,signal,poll}`
+- Backup: `GET/POST /api/backup` — export/import full relay state
+- Logs: `GET /api/logs` (with `?level=` and `?limit=` filters), `DELETE /api/logs`
+
+## Docs
+- [Deployment Guide](docs/deployment.md) — Docker, TLS, federation, monitoring, security
+- [Development Guide](docs/development.md) — Architecture, adding modules, testing, contributing

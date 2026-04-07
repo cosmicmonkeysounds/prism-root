@@ -30,6 +30,7 @@ import ReportFacetPanel from "../panels/report-facet-panel.js";
 import { LuaFacetPanel } from "../panels/lua-facet-panel.js";
 import { FacetDesignerPanel } from "../panels/facet-designer-panel.js";
 import { RecordBrowserPanel } from "../panels/record-browser-panel.js";
+import { SpatialCanvasPanel } from "../panels/spatial-canvas-panel.js";
 
 export const EDITOR_LENS_ID = lensId("editor");
 export const GRAPH_LENS_ID = lensId("graph");
@@ -53,6 +54,7 @@ export const REPORT_FACET_LENS_ID = lensId("report-facet");
 export const LUA_FACET_LENS_ID = lensId("lua-facet");
 export const FACET_DESIGNER_LENS_ID = lensId("facet-designer");
 export const RECORD_BROWSER_LENS_ID = lensId("record-browser");
+export const SPATIAL_CANVAS_LENS_ID = lensId("spatial-canvas");
 
 const editorManifest: LensManifest = {
   id: EDITOR_LENS_ID,
@@ -296,6 +298,17 @@ const recordBrowserManifest: LensManifest = {
   },
 };
 
+const spatialCanvasManifest: LensManifest = {
+  id: SPATIAL_CANVAS_LENS_ID,
+  name: "Spatial Canvas",
+  icon: "\uD83D\uDCD0",
+  category: "facet",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-spatial-canvas", name: "Switch to Spatial Canvas Editor", shortcut: ["shift+x"], section: "Navigation" }],
+  },
+};
+
 export const ALL_MANIFESTS: LensManifest[] = [
   editorManifest,
   graphManifest,
@@ -319,6 +332,7 @@ export const ALL_MANIFESTS: LensManifest[] = [
   luaFacetManifest,
   facetDesignerManifest,
   recordBrowserManifest,
+  spatialCanvasManifest,
 ];
 
 export function registerBuiltinLenses(registry: LensRegistry): () => void {
@@ -350,5 +364,6 @@ export function createLensComponentMap(): Map<LensId, ComponentType> {
   map.set(LUA_FACET_LENS_ID, LuaFacetPanel);
   map.set(FACET_DESIGNER_LENS_ID, FacetDesignerPanel);
   map.set(RECORD_BROWSER_LENS_ID, RecordBrowserPanel);
+  map.set(SPATIAL_CANVAS_LENS_ID, SpatialCanvasPanel);
   return map;
 }

@@ -14,10 +14,16 @@ export type { SourceFormat } from "./facet-parser.js";
 // ── Facet Schema (layout parts, field/portal slots, definitions) ─────────
 export type {
   FacetLayout,
+  FacetLayoutMode,
   LayoutPartKind,
   LayoutPart,
+  SpatialRect,
+  ConditionalFormat,
   FieldSlot,
   PortalSlot,
+  TextSlot,
+  DrawingShape,
+  DrawingSlot,
   FacetSlot,
   SummaryField,
   FacetDefinition,
@@ -27,6 +33,23 @@ export {
   FacetDefinitionBuilder,
   facetDefinitionBuilder,
 } from "./facet-schema.js";
+
+// ── Spatial Layout (pure geometry helpers for free-form layouts) ─────────
+export type {
+  ComputedBand,
+  Alignment,
+} from "./spatial-layout.js";
+export {
+  computePartBands,
+  snapToGrid,
+  alignSlots,
+  distributeSlots,
+  detectOverlaps,
+  slotHitTest,
+  partForY,
+  clampToBand,
+  sortByZIndex,
+} from "./spatial-layout.js";
 
 // ── Spell Engine ─────────────────────────────────────────────────────────
 export type {

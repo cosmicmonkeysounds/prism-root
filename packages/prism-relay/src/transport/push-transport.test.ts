@@ -50,20 +50,20 @@ describe("generateApnsJwt", () => {
     expect(parts).toHaveLength(3);
     // Each part should be non-empty base64url
     for (const part of parts) {
-      expect(part!.length).toBeGreaterThan(0);
+      expect(part?.length).toBeGreaterThan(0);
     }
   });
 
   it("header has alg=ES256 and kid", () => {
     const jwt = generateApnsJwt(testApnsConfig, 1000);
-    const header = decodeJwtPart(jwt.split(".")[0]!);
+    const header = decodeJwtPart(jwt.split(".")[0] ?? "");
     expect(header.alg).toBe("ES256");
     expect(header.kid).toBe("TESTKEY123");
   });
 
   it("payload has iss=teamId and iat", () => {
     const jwt = generateApnsJwt(testApnsConfig, 1234567890);
-    const payload = decodeJwtPart(jwt.split(".")[1]!);
+    const payload = decodeJwtPart(jwt.split(".")[1] ?? "");
     expect(payload.iss).toBe("TEAMID456");
     expect(payload.iat).toBe(1234567890);
   });
@@ -80,13 +80,13 @@ describe("generateFcmAssertion", () => {
 
   it("header has alg=RS256", () => {
     const jwt = generateFcmAssertion(testServiceAccount, 1000);
-    const header = decodeJwtPart(jwt.split(".")[0]!);
+    const header = decodeJwtPart(jwt.split(".")[0] ?? "");
     expect(header.alg).toBe("RS256");
   });
 
   it("payload has correct iss, scope, aud, iat, and exp", () => {
     const jwt = generateFcmAssertion(testServiceAccount, 1000);
-    const payload = decodeJwtPart(jwt.split(".")[1]!);
+    const payload = decodeJwtPart(jwt.split(".")[1] ?? "");
     expect(payload.iss).toBe("test@project.iam.gserviceaccount.com");
     expect(payload.scope).toBe("https://www.googleapis.com/auth/firebase.messaging");
     expect(payload.aud).toBe("https://oauth2.googleapis.com/token");

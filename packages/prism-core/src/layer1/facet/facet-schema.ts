@@ -39,6 +39,28 @@ export interface LayoutPart {
 
 // ── Slot types ───────────────────────────────────────────────────────────────
 
+// ── Spatial positioning (shared by all slot types in 'spatial' mode) ─────
+
+export interface SpatialRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+// ── Conditional formatting ──────────────────────────────────────────────
+
+export interface ConditionalFormat {
+  /** ExpressionEngine formula — evaluated per record. */
+  expression: string;
+  backgroundColor?: string;
+  textColor?: string;
+  fontWeight?: number;
+  border?: string;
+}
+
+// ── Slot types ──────────────────────────────────────────────────────────
+
 export interface FieldSlot {
   /** Dot-path into GraphObject.data (e.g. "name", "address.city"). */
   fieldPath: string;
@@ -55,6 +77,14 @@ export interface FieldSlot {
   part: LayoutPartKind;
   /** Sort order within the part. */
   order: number;
+  /** Spatial position (used when FacetDefinition.layoutMode === 'spatial'). */
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
+  zIndex?: number;
+  /** Conditional formatting rules evaluated per record. */
+  conditionalFormats?: ConditionalFormat[];
 }
 
 export interface PortalSlot {
@@ -72,11 +102,58 @@ export interface PortalSlot {
   allowCreation?: boolean;
   sortField?: string;
   sortDirection?: 'asc' | 'desc';
+  /** Spatial position (used when FacetDefinition.layoutMode === 'spatial'). */
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
+  zIndex?: number;
+}
+
+export interface TextSlot {
+  /** Static or merge-field text content. Use {{fieldName}} for merge fields. */
+  text: string;
+  fontSize?: number;
+  fontWeight?: number;
+  color?: string;
+  textAlign?: 'left' | 'center' | 'right';
+  /** Which layout part this text belongs to. */
+  part: LayoutPartKind;
+  /** Sort order within the part. */
+  order: number;
+  /** Spatial position. */
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
+  zIndex?: number;
+}
+
+export type DrawingShape = 'line' | 'rectangle' | 'ellipse' | 'rounded-rectangle';
+
+export interface DrawingSlot {
+  shape: DrawingShape;
+  strokeColor?: string;
+  strokeWidth?: number;
+  fillColor?: string;
+  cornerRadius?: number;
+  /** Which layout part this drawing belongs to. */
+  part: LayoutPartKind;
+  /** Sort order within the part. */
+  order: number;
+  /** Spatial position. */
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
+  zIndex?: number;
 }
 
 export type FacetSlot =
   | { kind: 'field'; slot: FieldSlot }
-  | { kind: 'portal'; slot: PortalSlot };
+  | { kind: 'portal'; slot: PortalSlot }
+  | { kind: 'text'; slot: TextSlot }
+  | { kind: 'drawing'; slot: DrawingSlot };
 
 // ── Summary fields ───────────────────────────────────────────────────────────
 
@@ -87,6 +164,8 @@ export interface SummaryField {
 }
 
 // ── Facet definition ─────────────────────────────────────────────────────────
+
+export type FacetLayoutMode = 'flow' | 'spatial';
 
 export interface FacetDefinition {
   id: string;
@@ -109,6 +188,12 @@ export interface FacetDefinition {
   onLayoutEnter?: string;
   /** Automation ID to fire when exiting this layout. */
   onLayoutExit?: string;
+  /** 'flow' = grid/order-based (default), 'spatial' = absolute (x,y) positioning. */
+  layoutMode?: FacetLayoutMode;
+  /** Design canvas width in points (default 612 = US Letter). */
+  canvasWidth?: number;
+  /** Design canvas height in points. */
+  canvasHeight?: number;
 }
 
 // ── Factory ──────────────────────────────────────────────────────────────────
@@ -159,6 +244,27 @@ export class FacetDefinitionBuilder {
 
   addPortal(slot: PortalSlot): this {
     this._def.slots.push({ kind: 'portal', slot });
+    return this;
+  }
+
+  addText(slot: TextSlot): this {
+    this._def.slots.push({ kind: 'text', slot });
+    return this;
+  }
+
+  addDrawing(slot: DrawingSlot): this {
+    this._def.slots.push({ kind: 'drawing', slot });
+    return this;
+  }
+
+  layoutMode(mode: FacetLayoutMode): this {
+    this._def.layoutMode = mode;
+    return this;
+  }
+
+  canvasSize(width: number, height: number): this {
+    this._def.canvasWidth = width;
+    this._def.canvasHeight = height;
     return this;
   }
 

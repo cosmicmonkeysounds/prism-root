@@ -57,7 +57,6 @@ describe("presence-store", () => {
     } as unknown as ConnectionRegistry;
 
     const msg = { type: "presence" as const, peerId: "peer-1", cursor: { x: 5, y: 5 } };
-    // eslint-disable-next-line unicorn/no-useless-undefined
     store.broadcast(mockRegistry, undefined, msg as never);
 
     expect(mockRegistry.broadcastAll).toHaveBeenCalledOnce();

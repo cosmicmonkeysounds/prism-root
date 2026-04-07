@@ -4,7 +4,6 @@ import type { PrismIdentity } from "@prism/core/identity";
 import { createRelayBuilder, blindMailboxModule, collectionHostModule } from "@prism/core/relay";
 import type { RelayInstance } from "@prism/core/relay";
 import { createCollectionRoutes } from "./collection-routes.js";
-import { encodeBase64 } from "../protocol/relay-protocol.js";
 
 let relay: RelayInstance;
 let relayNoCollections: RelayInstance;

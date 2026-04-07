@@ -16,15 +16,45 @@ Puck/Lua/Canvas/Facet builder system unified and fully working.
 - [x] Cross-panel integration — Canvas reflects inspector edits, palette→canvas, delete→undo, graph renders all types
 - [x] Seed data includes lua-block "Status Widget" demo on Home page
 
+## Free-Form Spatial Layout (Complete)
+
+FileMaker Pro-style absolute positioning as nestable Puck components. See `docs/dev/filemaker-gap-analysis.md`.
+
+### Completed
+
+- [x] Schema extensions — SpatialRect, TextSlot, DrawingSlot, ConditionalFormat, FacetLayoutMode on facet-schema.ts
+- [x] Builder API — `.addText()`, `.addDrawing()`, `.layoutMode()`, `.canvasSize()` on FacetDefinitionBuilder
+- [x] Pure spatial functions — `spatial-layout.ts` (computePartBands, snapToGrid, alignSlots, distributeSlots, detectOverlaps, slotHitTest, partForY, clampToBand, sortByZIndex)
+- [x] 3 new Puck component types — `facet-view`, `spatial-canvas`, `data-portal` entities + custom renderers
+- [x] SpatialCanvasRenderer — react-moveable + react-selecto for drag/resize/snap/multi-select
+- [x] FacetViewRenderer — renders FacetDefinition in form/list/table/report/card modes
+- [x] DataPortalRenderer — related records inline via edge relationships
+- [x] Spatial Canvas Panel — dedicated editor lens (#23, Shift+X) with field palette, slot inspector, grid/snap
+- [x] FacetDesigner updated — handles text/drawing slot variants with clone/count
+- [x] Gap analysis doc — `docs/dev/filemaker-gap-analysis.md` with P0-P4 status tracking
+- [x] 45 Vitest tests for spatial-layout pure functions
+- [x] 14 Playwright E2E tests for spatial canvas
+
 ### Test Summary
 
 | Suite | Tests | Status |
 |-------|-------|--------|
 | Vitest (studio-kernel) | 97 | Pass |
-| Vitest (all) | 2652 | Pass |
+| Vitest (all) | 2828 | Pass |
 | Playwright (builder) | 49 | Pass |
-| Playwright (all affected) | 72 | Pass |
-| **Playwright (total)** | **241** | **Pass** |
+| Playwright (spatial-canvas) | 14 | Pass |
+| **Playwright (total)** | **277** | **Pass** |
+
+### Remaining FileMaker Gaps (Phase 3+)
+
+- [ ] Tab controls / slide panels / popovers (P1)
+- [ ] Layout picker dropdown UI (P1)
+- [ ] Conditional formatting runtime eval (P1)
+- [ ] Merge field `{{fieldName}}` runtime interpolation (P2)
+- [ ] Per-field calculation binding (P2)
+- [ ] Themes / custom styles (P3)
+- [ ] Print layout / PDF export (P3)
+- [ ] CRDT persistence for FacetDefinitions (P4)
 
 ## Phase 1: The Heartbeat (Complete)
 

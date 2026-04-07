@@ -209,6 +209,84 @@ const luaBlockDef: EntityDef<string> = {
   ],
 };
 
+// ── Data-Aware Components (FileMaker Pro parity) ───────────────────────────
+
+const facetViewDef: EntityDef<string> = {
+  type: "facet-view",
+  category: "component",
+  label: "Facet View",
+  pluralLabel: "Facet Views",
+  icon: "\uD83D\uDCCB",
+  color: "#10b981",
+  childOnly: true,
+  fields: [
+    { id: "facetId", type: "string", label: "Facet Definition ID", required: true },
+    {
+      id: "viewMode",
+      type: "enum",
+      label: "View Mode",
+      default: "form",
+      enumOptions: [
+        { value: "form", label: "Form" },
+        { value: "list", label: "List" },
+        { value: "table", label: "Table" },
+        { value: "report", label: "Report" },
+        { value: "card", label: "Card" },
+      ],
+    },
+    { id: "maxRows", type: "int", label: "Max Rows", default: 25 },
+  ],
+};
+
+const spatialCanvasDef: EntityDef<string> = {
+  type: "spatial-canvas",
+  category: "component",
+  label: "Spatial Canvas",
+  pluralLabel: "Spatial Canvases",
+  icon: "\uD83D\uDCD0",
+  color: "#f97316",
+  childOnly: true,
+  fields: [
+    { id: "facetId", type: "string", label: "Facet Definition ID", required: true },
+    { id: "canvasWidth", type: "int", label: "Canvas Width (pt)", default: 612 },
+    { id: "canvasHeight", type: "int", label: "Canvas Height (pt)", default: 400 },
+    { id: "gridSize", type: "int", label: "Grid Size (pt)", default: 8 },
+    {
+      id: "showGrid",
+      type: "bool",
+      label: "Show Grid",
+      default: true,
+    },
+  ],
+};
+
+const dataPortalDef: EntityDef<string> = {
+  type: "data-portal",
+  category: "component",
+  label: "Data Portal",
+  pluralLabel: "Data Portals",
+  icon: "\uD83D\uDD17",
+  color: "#8b5cf6",
+  childOnly: true,
+  fields: [
+    { id: "relationshipId", type: "string", label: "Relationship Edge Type", required: true },
+    { id: "displayFields", type: "string", label: "Display Fields (comma-separated)" },
+    { id: "visibleRows", type: "int", label: "Visible Rows", default: 5 },
+    { id: "allowCreation", type: "bool", label: "Allow Inline Creation", default: false },
+    { id: "sortField", type: "string", label: "Sort Field" },
+    {
+      id: "sortDirection",
+      type: "enum",
+      label: "Sort Direction",
+      default: "asc",
+      enumOptions: [
+        { value: "asc", label: "Ascending" },
+        { value: "desc", label: "Descending" },
+      ],
+    },
+  ],
+};
+
 // ── Edge Type Definitions ───────────────────────────────────────────────────
 
 const referencesEdge: EdgeTypeDef = {
@@ -241,6 +319,9 @@ export function createPageBuilderRegistry(): ObjectRegistry<string> {
   registry.register(buttonDef);
   registry.register(cardDef);
   registry.register(luaBlockDef);
+  registry.register(facetViewDef);
+  registry.register(spatialCanvasDef);
+  registry.register(dataPortalDef);
 
   registry.registerEdge(referencesEdge);
   registry.registerEdge(linksToEdge);

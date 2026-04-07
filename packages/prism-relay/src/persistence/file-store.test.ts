@@ -68,8 +68,9 @@ describe("file-store", () => {
     const store = createFileStore({ dataDir });
 
     const relay1 = buildRelay([sovereignPortalModule()]);
-    const portals1 = relay1.getCapability<PortalRegistry>(RELAY_CAPABILITIES.PORTALS)!;
-    portals1.register({
+    const portals1 = relay1.getCapability<PortalRegistry>(RELAY_CAPABILITIES.PORTALS);
+    expect(portals1).toBeDefined();
+    portals1?.register({
       name: "Test Portal",
       level: 1,
       collectionId: "col-1",
@@ -83,13 +84,14 @@ describe("file-store", () => {
     const relay2 = buildRelay([sovereignPortalModule()]);
     store.load(relay2);
 
-    const portals2 = relay2.getCapability<PortalRegistry>(RELAY_CAPABILITIES.PORTALS)!;
-    const list = portals2.list();
+    const portals2 = relay2.getCapability<PortalRegistry>(RELAY_CAPABILITIES.PORTALS);
+    expect(portals2).toBeDefined();
+    const list = portals2?.list() ?? [];
     expect(list.length).toBe(1);
-    expect(list[0]!.name).toBe("Test Portal");
-    expect(list[0]!.level).toBe(1);
-    expect(list[0]!.collectionId).toBe("col-1");
-    expect(list[0]!.isPublic).toBe(true);
+    expect(list[0]?.name).toBe("Test Portal");
+    expect(list[0]?.level).toBe(1);
+    expect(list[0]?.collectionId).toBe("col-1");
+    expect(list[0]?.isPublic).toBe(true);
   });
 
   it("round-trips webhooks via save/load", () => {
@@ -97,8 +99,9 @@ describe("file-store", () => {
     const store = createFileStore({ dataDir });
 
     const relay1 = buildRelay([webhookModule()]);
-    const webhooks1 = relay1.getCapability<WebhookEmitter>(RELAY_CAPABILITIES.WEBHOOKS)!;
-    webhooks1.register({
+    const webhooks1 = relay1.getCapability<WebhookEmitter>(RELAY_CAPABILITIES.WEBHOOKS);
+    expect(webhooks1).toBeDefined();
+    webhooks1?.register({
       url: "https://example.com/hook",
       events: ["object.created"],
       active: true,
@@ -110,12 +113,13 @@ describe("file-store", () => {
     const relay2 = buildRelay([webhookModule()]);
     store.load(relay2);
 
-    const webhooks2 = relay2.getCapability<WebhookEmitter>(RELAY_CAPABILITIES.WEBHOOKS)!;
-    const list = webhooks2.list();
+    const webhooks2 = relay2.getCapability<WebhookEmitter>(RELAY_CAPABILITIES.WEBHOOKS);
+    expect(webhooks2).toBeDefined();
+    const list = webhooks2?.list() ?? [];
     expect(list.length).toBe(1);
-    expect(list[0]!.url).toBe("https://example.com/hook");
-    expect(list[0]!.events).toEqual(["object.created"]);
-    expect(list[0]!.active).toBe(true);
+    expect(list[0]?.url).toBe("https://example.com/hook");
+    expect(list[0]?.events).toEqual(["object.created"]);
+    expect(list[0]?.active).toBe(true);
   });
 
   it("round-trips templates via save/load", () => {
@@ -123,8 +127,9 @@ describe("file-store", () => {
     const store = createFileStore({ dataDir });
 
     const relay1 = buildRelay([portalTemplateModule()]);
-    const templates1 = relay1.getCapability<PortalTemplateRegistry>(RELAY_CAPABILITIES.TEMPLATES)!;
-    templates1.register({
+    const templates1 = relay1.getCapability<PortalTemplateRegistry>(RELAY_CAPABILITIES.TEMPLATES);
+    expect(templates1).toBeDefined();
+    templates1?.register({
       name: "Blog Template",
       description: "A simple blog layout",
       css: "body { margin: 0; }",
@@ -139,11 +144,12 @@ describe("file-store", () => {
     const relay2 = buildRelay([portalTemplateModule()]);
     store.load(relay2);
 
-    const templates2 = relay2.getCapability<PortalTemplateRegistry>(RELAY_CAPABILITIES.TEMPLATES)!;
-    const list = templates2.list();
+    const templates2 = relay2.getCapability<PortalTemplateRegistry>(RELAY_CAPABILITIES.TEMPLATES);
+    expect(templates2).toBeDefined();
+    const list = templates2?.list() ?? [];
     expect(list.length).toBe(1);
-    expect(list[0]!.name).toBe("Blog Template");
-    expect(list[0]!.css).toBe("body { margin: 0; }");
+    expect(list[0]?.name).toBe("Blog Template");
+    expect(list[0]?.css).toBe("body { margin: 0; }");
   });
 
   it("returns empty state when file does not exist", () => {
@@ -154,8 +160,9 @@ describe("file-store", () => {
     const relay = buildRelay([sovereignPortalModule()]);
     store.load(relay);
 
-    const portals = relay.getCapability<PortalRegistry>(RELAY_CAPABILITIES.PORTALS)!;
-    expect(portals.list()).toEqual([]);
+    const portals = relay.getCapability<PortalRegistry>(RELAY_CAPABILITIES.PORTALS);
+    expect(portals).toBeDefined();
+    expect(portals?.list()).toEqual([]);
   });
 
   it("returns empty state when JSON is corrupted", () => {
@@ -167,8 +174,9 @@ describe("file-store", () => {
     const relay = buildRelay([sovereignPortalModule()]);
     store.load(relay);
 
-    const portals = relay.getCapability<PortalRegistry>(RELAY_CAPABILITIES.PORTALS)!;
-    expect(portals.list()).toEqual([]);
+    const portals = relay.getCapability<PortalRegistry>(RELAY_CAPABILITIES.PORTALS);
+    expect(portals).toBeDefined();
+    expect(portals?.list()).toEqual([]);
   });
 
   it("round-trips federation peers via save/load", () => {
@@ -176,8 +184,9 @@ describe("file-store", () => {
     const store = createFileStore({ dataDir });
 
     const relay1 = buildRelay([federationModule()]);
-    const fed1 = relay1.getCapability<FederationRegistry>(RELAY_CAPABILITIES.FEDERATION)!;
-    fed1.announce("did:key:z6MkPeer1", "https://peer1.example.com");
+    const fed1 = relay1.getCapability<FederationRegistry>(RELAY_CAPABILITIES.FEDERATION);
+    expect(fed1).toBeDefined();
+    fed1?.announce("did:key:z6MkPeer1", "https://peer1.example.com");
 
     store.load(relay1);
     store.save(relay1);
@@ -185,11 +194,12 @@ describe("file-store", () => {
     const relay2 = buildRelay([federationModule()]);
     store.load(relay2);
 
-    const fed2 = relay2.getCapability<FederationRegistry>(RELAY_CAPABILITIES.FEDERATION)!;
-    const peers = fed2.getPeers();
+    const fed2 = relay2.getCapability<FederationRegistry>(RELAY_CAPABILITIES.FEDERATION);
+    expect(fed2).toBeDefined();
+    const peers = fed2?.getPeers() ?? [];
     expect(peers.length).toBe(1);
-    expect(peers[0]!.relayDid).toBe("did:key:z6MkPeer1");
-    expect(peers[0]!.url).toBe("https://peer1.example.com");
+    expect(peers[0]?.relayDid).toBe("did:key:z6MkPeer1");
+    expect(peers[0]?.url).toBe("https://peer1.example.com");
   });
 
   it("round-trips flagged hashes via save/load", () => {
@@ -197,8 +207,9 @@ describe("file-store", () => {
     const store = createFileStore({ dataDir });
 
     const relay1 = buildRelay([peerTrustModule()]);
-    const trust1 = relay1.getCapability<PeerTrustGraph>(RELAY_CAPABILITIES.TRUST)!;
-    trust1.flagContent("sha256-abc123", "csam", "did:key:z6MkReporter");
+    const trust1 = relay1.getCapability<PeerTrustGraph>(RELAY_CAPABILITIES.TRUST);
+    expect(trust1).toBeDefined();
+    trust1?.flagContent("sha256-abc123", "csam", "did:key:z6MkReporter");
 
     store.load(relay1);
     store.save(relay1);
@@ -206,11 +217,12 @@ describe("file-store", () => {
     const relay2 = buildRelay([peerTrustModule()]);
     store.load(relay2);
 
-    const trust2 = relay2.getCapability<PeerTrustGraph>(RELAY_CAPABILITIES.TRUST)!;
-    const flagged = [...trust2.flaggedContent()];
+    const trust2 = relay2.getCapability<PeerTrustGraph>(RELAY_CAPABILITIES.TRUST);
+    expect(trust2).toBeDefined();
+    const flagged = [...(trust2?.flaggedContent() ?? [])];
     expect(flagged.length).toBe(1);
-    expect(flagged[0]!.hash).toBe("sha256-abc123");
-    expect(flagged[0]!.category).toBe("csam");
+    expect(flagged[0]?.hash).toBe("sha256-abc123");
+    expect(flagged[0]?.category).toBe("csam");
   });
 
   it("startAutoSave triggers periodic saves", () => {
@@ -230,8 +242,9 @@ describe("file-store", () => {
       expect(fs.existsSync(path.join(dataDir, "relay-state.json"))).toBe(true);
 
       // Mutate and advance again to confirm periodic saving
-      const portals = relay.getCapability<PortalRegistry>(RELAY_CAPABILITIES.PORTALS)!;
-      portals.register({
+      const portals = relay.getCapability<PortalRegistry>(RELAY_CAPABILITIES.PORTALS);
+      expect(portals).toBeDefined();
+      portals?.register({
         name: "Auto Portal",
         level: 1,
         collectionId: "col-auto",
@@ -243,7 +256,7 @@ describe("file-store", () => {
       const content = fs.readFileSync(path.join(dataDir, "relay-state.json"), "utf-8");
       const state = JSON.parse(content) as { portals: Array<{ name: string }> };
       expect(state.portals.length).toBe(1);
-      expect(state.portals[0]!.name).toBe("Auto Portal");
+      expect(state.portals[0]?.name).toBe("Auto Portal");
 
       store.dispose();
     } finally {

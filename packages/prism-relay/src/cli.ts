@@ -60,6 +60,33 @@ import type {
 } from "./config/index.js";
 import type { ExportedIdentity } from "@prism/core/identity";
 import { createFileStore } from "./persistence/file-store.js";
+import { createLogBuffer } from "./routes/logs-routes.js";
+
+// ── Remote API Helper ───────────────────────────────────────────────────────
+
+function relayUrl(parsed: ReturnType<typeof parseArgs>): string {
+  const host = parsed.overrides.host ?? "127.0.0.1";
+  const port = parsed.overrides.port ?? 4444;
+  return `http://${host}:${port}`;
+}
+
+async function apiFetch(
+  base: string,
+  path: string,
+  init?: RequestInit,
+): Promise<Response> {
+  const url = `${base}${path}`;
+  try {
+    return await fetch(url, {
+      ...init,
+      headers: { "X-Prism-CSRF": "1", ...init?.headers },
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch (e) {
+    process.stderr.write(`Cannot reach relay at ${base}: ${String(e)}\n`);
+    process.exit(1);
+  }
+}
 
 // ── Config File Loading ─────────────────────────────────────────────────────
 
@@ -402,12 +429,442 @@ function cmdConfigShow(parsed: ReturnType<typeof parseArgs>): void {
   process.stdout.write(JSON.stringify(config, null, 2) + "\n");
 }
 
+// ── Management Commands (remote, connect via HTTP API) ──────────────────────
+
+async function cmdPeersList(parsed: ReturnType<typeof parseArgs>): Promise<void> {
+  const base = relayUrl(parsed);
+  const res = await apiFetch(base, "/api/trust");
+  const peers = await res.json() as unknown[];
+  if (peers.length === 0) {
+    process.stdout.write("No peers registered.\n");
+    return;
+  }
+  process.stdout.write(JSON.stringify(peers, null, 2) + "\n");
+}
+
+async function cmdPeersBan(parsed: ReturnType<typeof parseArgs>): Promise<void> {
+  const did = parsed.positionalArg;
+  if (!did) {
+    process.stderr.write("Usage: prism-relay peers ban <did>\n");
+    process.exit(1);
+  }
+  const base = relayUrl(parsed);
+  const res = await apiFetch(base, `/api/trust/${encodeURIComponent(did)}/ban`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reason: "Banned via CLI" }),
+  });
+  if (res.ok) {
+    process.stdout.write(`Banned: ${did}\n`);
+  } else {
+    process.stderr.write(`Failed to ban peer: ${res.status}\n`);
+    process.exit(1);
+  }
+}
+
+async function cmdPeersUnban(parsed: ReturnType<typeof parseArgs>): Promise<void> {
+  const did = parsed.positionalArg;
+  if (!did) {
+    process.stderr.write("Usage: prism-relay peers unban <did>\n");
+    process.exit(1);
+  }
+  const base = relayUrl(parsed);
+  const res = await apiFetch(base, `/api/trust/${encodeURIComponent(did)}/unban`, {
+    method: "POST",
+  });
+  if (res.ok) {
+    process.stdout.write(`Unbanned: ${did}\n`);
+  } else {
+    process.stderr.write(`Failed to unban peer: ${res.status}\n`);
+    process.exit(1);
+  }
+}
+
+async function cmdCollectionsList(parsed: ReturnType<typeof parseArgs>): Promise<void> {
+  const base = relayUrl(parsed);
+  const res = await apiFetch(base, "/api/collections");
+  const ids = await res.json() as string[];
+  if (ids.length === 0) {
+    process.stdout.write("No collections hosted.\n");
+    return;
+  }
+  process.stdout.write("Hosted collections:\n");
+  for (const id of ids) {
+    process.stdout.write(`  ${id}\n`);
+  }
+  process.stdout.write(`\n${ids.length} collection(s) total.\n`);
+}
+
+async function cmdCollectionsInspect(parsed: ReturnType<typeof parseArgs>): Promise<void> {
+  const id = parsed.positionalArg;
+  if (!id) {
+    process.stderr.write("Usage: prism-relay collections inspect <id>\n");
+    process.exit(1);
+  }
+  const base = relayUrl(parsed);
+  const res = await apiFetch(base, `/api/collections/${encodeURIComponent(id)}/snapshot`);
+  if (!res.ok) {
+    process.stderr.write(`Collection not found: ${id}\n`);
+    process.exit(1);
+  }
+  const data = await res.json() as { snapshot: string };
+  const bytes = Buffer.from(data.snapshot, "base64");
+  process.stdout.write(`Collection: ${id}\n`);
+  process.stdout.write(`  Snapshot size: ${bytes.length} bytes\n`);
+}
+
+async function cmdCollectionsExport(parsed: ReturnType<typeof parseArgs>): Promise<void> {
+  const id = parsed.positionalArg;
+  if (!id) {
+    process.stderr.write("Usage: prism-relay collections export <id> [--output <path>]\n");
+    process.exit(1);
+  }
+  const base = relayUrl(parsed);
+  const res = await apiFetch(base, `/api/collections/${encodeURIComponent(id)}/snapshot`);
+  if (!res.ok) {
+    process.stderr.write(`Collection not found: ${id}\n`);
+    process.exit(1);
+  }
+  const data = await res.json() as { snapshot: string };
+  const output = parsed.outputFile ?? parsed.initOutput ?? `${id}.snapshot.json`;
+  fs.writeFileSync(output, JSON.stringify(data, null, 2), "utf-8");
+  process.stdout.write(`Exported collection "${id}" to ${output}\n`);
+}
+
+async function cmdCollectionsImport(parsed: ReturnType<typeof parseArgs>): Promise<void> {
+  const id = parsed.positionalArg;
+  if (!id) {
+    process.stderr.write("Usage: prism-relay collections import <id> --input <path>\n");
+    process.exit(1);
+  }
+  const inputPath = parsed.inputFile;
+  if (!inputPath) {
+    process.stderr.write("--input <path> is required for import.\n");
+    process.exit(1);
+  }
+  if (!fs.existsSync(inputPath)) {
+    process.stderr.write(`Input file not found: ${inputPath}\n`);
+    process.exit(1);
+  }
+  const base = relayUrl(parsed);
+  // Ensure collection exists
+  await apiFetch(base, "/api/collections", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id }),
+  });
+  const fileData = JSON.parse(fs.readFileSync(inputPath, "utf-8")) as { snapshot?: string; data?: string };
+  const snapshotData = fileData.snapshot ?? fileData.data;
+  if (!snapshotData) {
+    process.stderr.write("Input file must contain a 'snapshot' or 'data' field.\n");
+    process.exit(1);
+  }
+  const res = await apiFetch(base, `/api/collections/${encodeURIComponent(id)}/import`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ data: snapshotData }),
+  });
+  if (res.ok) {
+    process.stdout.write(`Imported collection "${id}" from ${inputPath}\n`);
+  } else {
+    process.stderr.write(`Import failed: ${res.status}\n`);
+    process.exit(1);
+  }
+}
+
+async function cmdCollectionsDelete(parsed: ReturnType<typeof parseArgs>): Promise<void> {
+  const id = parsed.positionalArg;
+  if (!id) {
+    process.stderr.write("Usage: prism-relay collections delete <id>\n");
+    process.exit(1);
+  }
+  const base = relayUrl(parsed);
+  const res = await apiFetch(base, `/api/collections/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+  if (res.ok) {
+    process.stdout.write(`Deleted collection: ${id}\n`);
+  } else {
+    process.stderr.write(`Collection not found: ${id}\n`);
+    process.exit(1);
+  }
+}
+
+async function cmdPortalsList(parsed: ReturnType<typeof parseArgs>): Promise<void> {
+  const base = relayUrl(parsed);
+  const res = await apiFetch(base, "/api/portals");
+  const portals = await res.json() as Array<{ portalId: string; name: string; level: number; basePath: string; isPublic: boolean }>;
+  if (portals.length === 0) {
+    process.stdout.write("No portals published.\n");
+    return;
+  }
+  process.stdout.write("Published portals:\n\n");
+  for (const p of portals) {
+    process.stdout.write(`  ${p.name} (${p.portalId})\n`);
+    process.stdout.write(`    Level: ${p.level}  Path: ${p.basePath}  Public: ${p.isPublic}\n`);
+    process.stdout.write(`    URL: ${base}/portals/${p.portalId}\n\n`);
+  }
+  process.stdout.write(`${portals.length} portal(s) total.\n`);
+}
+
+async function cmdPortalsInspect(parsed: ReturnType<typeof parseArgs>): Promise<void> {
+  const id = parsed.positionalArg;
+  if (!id) {
+    process.stderr.write("Usage: prism-relay portals inspect <id>\n");
+    process.exit(1);
+  }
+  const base = relayUrl(parsed);
+  const res = await apiFetch(base, "/api/portals");
+  const portals = await res.json() as Array<Record<string, unknown>>;
+  const portal = portals.find((p) => p["portalId"] === id);
+  if (!portal) {
+    process.stderr.write(`Portal not found: ${id}\n`);
+    process.exit(1);
+  }
+  process.stdout.write(JSON.stringify(portal, null, 2) + "\n");
+}
+
+async function cmdPortalsDelete(parsed: ReturnType<typeof parseArgs>): Promise<void> {
+  const id = parsed.positionalArg;
+  if (!id) {
+    process.stderr.write("Usage: prism-relay portals delete <id>\n");
+    process.exit(1);
+  }
+  const base = relayUrl(parsed);
+  const res = await apiFetch(base, `/api/portals/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+  if (res.ok) {
+    process.stdout.write(`Deleted portal: ${id}\n`);
+  } else {
+    process.stderr.write(`Portal not found: ${id}\n`);
+    process.exit(1);
+  }
+}
+
+async function cmdWebhooksList(parsed: ReturnType<typeof parseArgs>): Promise<void> {
+  const base = relayUrl(parsed);
+  const res = await apiFetch(base, "/api/webhooks");
+  const webhooks = await res.json() as Array<{ id: string; url: string; events: string[]; active: boolean }>;
+  if (webhooks.length === 0) {
+    process.stdout.write("No webhooks registered.\n");
+    return;
+  }
+  process.stdout.write("Registered webhooks:\n\n");
+  for (const w of webhooks) {
+    process.stdout.write(`  ${w.id}\n`);
+    process.stdout.write(`    URL: ${w.url}  Active: ${w.active}  Events: ${w.events.join(", ")}\n\n`);
+  }
+  process.stdout.write(`${webhooks.length} webhook(s) total.\n`);
+}
+
+async function cmdWebhooksDelete(parsed: ReturnType<typeof parseArgs>): Promise<void> {
+  const id = parsed.positionalArg;
+  if (!id) {
+    process.stderr.write("Usage: prism-relay webhooks delete <id>\n");
+    process.exit(1);
+  }
+  const base = relayUrl(parsed);
+  const res = await apiFetch(base, `/api/webhooks/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+  if (res.ok) {
+    process.stdout.write(`Deleted webhook: ${id}\n`);
+  } else {
+    process.stderr.write(`Webhook not found: ${id}\n`);
+    process.exit(1);
+  }
+}
+
+async function cmdWebhooksTest(parsed: ReturnType<typeof parseArgs>): Promise<void> {
+  const id = parsed.positionalArg;
+  if (!id) {
+    process.stderr.write("Usage: prism-relay webhooks test <id>\n");
+    process.exit(1);
+  }
+  const base = relayUrl(parsed);
+  const res = await apiFetch(base, `/api/webhooks/${encodeURIComponent(id)}/test`, {
+    method: "POST",
+  });
+  if (res.ok) {
+    const data = await res.json() as { deliveredTo: string };
+    process.stdout.write(`Test event sent to: ${data.deliveredTo}\n`);
+  } else {
+    process.stderr.write(`Webhook not found: ${id}\n`);
+    process.exit(1);
+  }
+}
+
+async function cmdTokensList(parsed: ReturnType<typeof parseArgs>): Promise<void> {
+  const base = relayUrl(parsed);
+  const res = await apiFetch(base, "/api/tokens");
+  const tokens = await res.json() as unknown[];
+  if (tokens.length === 0) {
+    process.stdout.write("No active tokens.\n");
+    return;
+  }
+  process.stdout.write(JSON.stringify(tokens, null, 2) + "\n");
+}
+
+async function cmdTokensRevoke(parsed: ReturnType<typeof parseArgs>): Promise<void> {
+  const id = parsed.positionalArg;
+  if (!id) {
+    process.stderr.write("Usage: prism-relay tokens revoke <id>\n");
+    process.exit(1);
+  }
+  const base = relayUrl(parsed);
+  const res = await apiFetch(base, "/api/tokens/revoke", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tokenId: id }),
+  });
+  if (res.ok) {
+    process.stdout.write(`Revoked token: ${id}\n`);
+  } else {
+    process.stderr.write(`Failed to revoke token: ${res.status}\n`);
+    process.exit(1);
+  }
+}
+
+async function cmdCertsList(parsed: ReturnType<typeof parseArgs>): Promise<void> {
+  const base = relayUrl(parsed);
+  const res = await apiFetch(base, "/api/acme/certificates");
+  const certs = await res.json() as Array<{ domain: string; expiresAt: string; issuedAt: string }>;
+  if (certs.length === 0) {
+    process.stdout.write("No certificates managed.\n");
+    return;
+  }
+  process.stdout.write("ACME certificates:\n\n");
+  for (const c of certs) {
+    const expires = new Date(c.expiresAt);
+    const daysLeft = Math.ceil((expires.getTime() - Date.now()) / 86_400_000);
+    process.stdout.write(`  ${c.domain}\n`);
+    process.stdout.write(`    Issued: ${c.issuedAt}  Expires: ${c.expiresAt} (${daysLeft} days)\n\n`);
+  }
+  process.stdout.write(`${certs.length} certificate(s) total.\n`);
+}
+
+async function cmdCertsRenew(parsed: ReturnType<typeof parseArgs>): Promise<void> {
+  const domain = parsed.positionalArg;
+  if (!domain) {
+    process.stderr.write("Usage: prism-relay certs renew <domain>\n");
+    process.exit(1);
+  }
+  const base = relayUrl(parsed);
+  const res = await apiFetch(base, "/api/acme/certificates", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ domain }),
+  });
+  if (res.ok) {
+    process.stdout.write(`Certificate renewal initiated for: ${domain}\n`);
+  } else {
+    const text = await res.text();
+    process.stderr.write(`Renewal failed: ${res.status} ${text}\n`);
+    process.exit(1);
+  }
+}
+
+async function cmdBackup(parsed: ReturnType<typeof parseArgs>): Promise<void> {
+  const base = relayUrl(parsed);
+  const res = await apiFetch(base, "/api/backup");
+  if (!res.ok) {
+    process.stderr.write(`Backup failed: ${res.status}\n`);
+    process.exit(1);
+  }
+  const data = await res.text();
+  const output = parsed.outputFile ?? parsed.initOutput ?? "relay-backup.json";
+  fs.writeFileSync(output, data, "utf-8");
+  process.stdout.write(`Relay state backed up to: ${output}\n`);
+}
+
+async function cmdRestore(parsed: ReturnType<typeof parseArgs>): Promise<void> {
+  const inputPath = parsed.inputFile;
+  if (!inputPath) {
+    process.stderr.write("Usage: prism-relay restore --input <path>\n");
+    process.exit(1);
+  }
+  if (!fs.existsSync(inputPath)) {
+    process.stderr.write(`Input file not found: ${inputPath}\n`);
+    process.exit(1);
+  }
+  const base = relayUrl(parsed);
+  const data = fs.readFileSync(inputPath, "utf-8");
+  const res = await apiFetch(base, "/api/backup", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: data,
+  });
+  if (res.ok) {
+    const result = await res.json() as { restored: Record<string, number> };
+    process.stdout.write(`Relay state restored from: ${inputPath}\n`);
+    for (const [key, count] of Object.entries(result.restored)) {
+      if (count > 0) process.stdout.write(`  ${key}: ${count}\n`);
+    }
+  } else {
+    process.stderr.write(`Restore failed: ${res.status}\n`);
+    process.exit(1);
+  }
+}
+
+async function cmdLogs(parsed: ReturnType<typeof parseArgs>): Promise<void> {
+  const base = relayUrl(parsed);
+  const level = parsed.logLevelFilter;
+  const qs = new URLSearchParams();
+  if (level) qs.set("level", level);
+  qs.set("limit", "200");
+
+  async function fetchAndPrint(): Promise<void> {
+    const res = await apiFetch(base, `/api/logs?${qs.toString()}`);
+    if (!res.ok) {
+      process.stderr.write(`Failed to fetch logs: ${res.status}\n`);
+      process.exit(1);
+    }
+    const entries = await res.json() as Array<{ ts: string; level: string; msg: string; data?: Record<string, unknown> }>;
+    for (const e of entries) {
+      const data = e.data && Object.keys(e.data).length > 0
+        ? " " + Object.entries(e.data).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(" ")
+        : "";
+      process.stdout.write(`${e.ts} [${e.level.toUpperCase().padEnd(5)}] ${e.msg}${data}\n`);
+    }
+  }
+
+  await fetchAndPrint();
+
+  if (parsed.follow) {
+    // Poll every 2 seconds
+    const interval = setInterval(async () => {
+      try {
+        await fetchAndPrint();
+      } catch {
+        clearInterval(interval);
+      }
+    }, 2000);
+
+    process.on("SIGINT", () => {
+      clearInterval(interval);
+      process.exit(0);
+    });
+
+    // Keep alive
+    await new Promise(() => {});
+  }
+}
+
 // ── Subcommand: start ───────────────────────────────────────────────────────
 
 async function cmdStart(parsed: ReturnType<typeof parseArgs>): Promise<void> {
   const fileConfig = loadConfigFile(parsed.configPath);
   const config = resolveConfig(fileConfig, parsed.overrides);
-  const log = createLogger(config.logging);
+  const logBuffer = createLogBuffer(2000);
+  const baseLog = createLogger(config.logging);
+  // Wrap logger to also push into the ring buffer for /api/logs
+  const log: typeof baseLog = {
+    debug(msg, data) { logBuffer.push({ ts: new Date().toISOString(), level: "debug", msg, ...(data ? { data } : {}) }); baseLog.debug(msg, data); },
+    info(msg, data) { logBuffer.push({ ts: new Date().toISOString(), level: "info", msg, ...(data ? { data } : {}) }); baseLog.info(msg, data); },
+    warn(msg, data) { logBuffer.push({ ts: new Date().toISOString(), level: "warn", msg, ...(data ? { data } : {}) }); baseLog.warn(msg, data); },
+    error(msg, data) { logBuffer.push({ ts: new Date().toISOString(), level: "error", msg, ...(data ? { data } : {}) }); baseLog.error(msg, data); },
+  };
 
   log.info("Prism Relay starting", { mode: config.mode });
 
@@ -466,6 +923,7 @@ async function cmdStart(parsed: ReturnType<typeof parseArgs>): Promise<void> {
     corsOrigins: config.corsOrigins,
     maxBodySize: config.relay.maxEnvelopeSizeBytes,
     disableCsrf: config.mode === "dev",
+    logBuffer,
   };
   if (publicUrl !== undefined) serverOpts.publicUrl = publicUrl;
   const server = createRelayServer(serverOpts);
@@ -549,6 +1007,69 @@ async function main(): Promise<void> {
       break;
     case "config-show":
       cmdConfigShow(parsed);
+      break;
+    case "peers-list":
+      await cmdPeersList(parsed);
+      break;
+    case "peers-ban":
+      await cmdPeersBan(parsed);
+      break;
+    case "peers-unban":
+      await cmdPeersUnban(parsed);
+      break;
+    case "collections-list":
+      await cmdCollectionsList(parsed);
+      break;
+    case "collections-inspect":
+      await cmdCollectionsInspect(parsed);
+      break;
+    case "collections-export":
+      await cmdCollectionsExport(parsed);
+      break;
+    case "collections-import":
+      await cmdCollectionsImport(parsed);
+      break;
+    case "collections-delete":
+      await cmdCollectionsDelete(parsed);
+      break;
+    case "portals-list":
+      await cmdPortalsList(parsed);
+      break;
+    case "portals-inspect":
+      await cmdPortalsInspect(parsed);
+      break;
+    case "portals-delete":
+      await cmdPortalsDelete(parsed);
+      break;
+    case "webhooks-list":
+      await cmdWebhooksList(parsed);
+      break;
+    case "webhooks-delete":
+      await cmdWebhooksDelete(parsed);
+      break;
+    case "webhooks-test":
+      await cmdWebhooksTest(parsed);
+      break;
+    case "tokens-list":
+      await cmdTokensList(parsed);
+      break;
+    case "tokens-revoke":
+      await cmdTokensRevoke(parsed);
+      break;
+    case "certs-list":
+      await cmdCertsList(parsed);
+      break;
+    case "certs-renew":
+      await cmdCertsRenew(parsed);
+      break;
+    case "backup":
+      await cmdBackup(parsed);
+      break;
+    case "restore":
+      await cmdRestore(parsed);
+      break;
+    case "logs":
+      await cmdLogs(parsed);
       break;
   }
 }

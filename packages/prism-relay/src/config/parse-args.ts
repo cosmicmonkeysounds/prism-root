@@ -326,10 +326,6 @@ export function parseArgs(argv: string[]): ParsedArgs {
   let follow = false;
 
   // Re-scan for new flags and positional arg
-  const remaining = rest.filter((_, idx) => {
-    // Already consumed by the switch above
-    return true;
-  });
 
   for (let j = 0; j < rest.length; j++) {
     const a = rest[j];
@@ -337,18 +333,18 @@ export function parseArgs(argv: string[]): ParsedArgs {
       inputFile = rest[j + 1];
       j++;
     } else if (a === "--output" || a === "-o") {
-      // Already handled for init, also capture for export/backup
-      if (!initOutput) outputFile = rest[j + 1];
+      // For non-init commands, capture as outputFile
+      if (command !== "init") outputFile = rest[j + 1];
       j++;
     } else if (a === "--level" && command === "logs") {
       logLevelFilter = rest[j + 1];
       j++;
     } else if (a === "--follow" || a === "-f") {
       follow = true;
-    } else if (!a.startsWith("-") && positionalArg === undefined) {
+    } else if (a !== undefined && !a.startsWith("-") && positionalArg === undefined) {
       // Positional argument — skip if it was consumed by a prior flag
-      const prev = j > 0 ? rest[j - 1] : "";
-      const flagsThatConsumeNext = [
+      const prev: string = j > 0 ? (rest[j - 1] ?? "") : "";
+      const flagsThatConsumeNext: string[] = [
         "--config", "-c", "--output", "-o", "--mode", "--port", "--host",
         "--data-dir", "--identity", "--modules", "--cors", "--hashcash-bits",
         "--did-method", "--did-web-domain", "--public-url", "--bootstrap-peer",

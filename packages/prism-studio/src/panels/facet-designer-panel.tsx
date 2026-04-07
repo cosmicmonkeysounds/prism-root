@@ -278,15 +278,29 @@ function nextId(prefix: string) {
   return `${prefix}_${++idCounter}`;
 }
 
+function cloneSlot(s: FacetSlot): FacetSlot {
+  switch (s.kind) {
+    case "field": {
+      const cloned = { ...s.slot };
+      if (s.slot.conditionalFormats) {
+        cloned.conditionalFormats = s.slot.conditionalFormats.map((cf) => ({ ...cf }));
+      }
+      return { kind: "field", slot: cloned };
+    }
+    case "portal":
+      return { kind: "portal", slot: { ...s.slot, displayFields: [...s.slot.displayFields] } };
+    case "text":
+      return { kind: "text", slot: { ...s.slot } };
+    case "drawing":
+      return { kind: "drawing", slot: { ...s.slot } };
+  }
+}
+
 function cloneDef(def: FacetDefinition): FacetDefinition {
   return {
     ...def,
     parts: def.parts.map((p) => ({ ...p })),
-    slots: def.slots.map((s) =>
-      s.kind === "field"
-        ? { kind: "field" as const, slot: { ...s.slot } }
-        : { kind: "portal" as const, slot: { ...s.slot, displayFields: [...s.slot.displayFields] } },
-    ),
+    slots: def.slots.map(cloneSlot),
     ...(def.summaryFields ? { summaryFields: def.summaryFields.map((sf) => ({ ...sf })) } : {}),
     ...(def.sortFields ? { sortFields: def.sortFields.map((sf) => ({ ...sf })) } : {}),
   };
@@ -295,16 +309,22 @@ function cloneDef(def: FacetDefinition): FacetDefinition {
 function countSlotsByPart(
   slots: ReadonlyArray<FacetSlot>,
   partKind: LayoutPartKind,
-): { fields: number; portals: number } {
+): { fields: number; portals: number; texts: number; drawings: number } {
   let fields = 0;
   let portals = 0;
+  let texts = 0;
+  let drawings = 0;
   for (const s of slots) {
     if (s.slot.part === partKind) {
-      if (s.kind === "field") fields++;
-      else portals++;
+      switch (s.kind) {
+        case "field": fields++; break;
+        case "portal": portals++; break;
+        case "text": texts++; break;
+        case "drawing": drawings++; break;
+      }
     }
   }
-  return { fields, portals };
+  return { fields, portals, texts, drawings };
 }
 
 // ── Part Card ───────────────────────────────────────────────────────────────
@@ -317,7 +337,7 @@ function PartCard({
 }: {
   part: LayoutPart;
   index: number;
-  slotCounts: { fields: number; portals: number };
+  slotCounts: { fields: number; portals: number; texts: number; drawings: number };
   onRemove: () => void;
 }) {
   return (
@@ -330,6 +350,8 @@ function PartCard({
           )}
           <span style={styles.badge}>{slotCounts.fields}F</span>
           <span style={styles.badgePortal}>{slotCounts.portals}P</span>
+          {slotCounts.texts > 0 && <span style={styles.badge}>{slotCounts.texts}T</span>}
+          {slotCounts.drawings > 0 && <span style={styles.badge}>{slotCounts.drawings}D</span>}
           <button
             style={styles.btnDanger}
             onClick={onRemove}

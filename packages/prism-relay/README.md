@@ -14,6 +14,11 @@ npx tsx src/cli.ts --mode dev
 
 The relay generates a persistent Ed25519 identity on first run, saved to `~/.prism/relay/identity.json`. Subsequent starts reuse the same DID.
 
+## Documentation
+
+- **[Deployment Guide](docs/deployment.md)** -- Production setup, Docker, TLS, federation, monitoring
+- **[Development Guide](docs/development.md)** -- Architecture, adding modules, testing, contributing
+
 ## Deployment Modes
 
 ### Server Mode — Production
@@ -145,6 +150,24 @@ prism-relay [OPTIONS]
   -v, --version              Show version
 ```
 
+### Management Commands
+
+Connect to a running relay and manage it remotely:
+
+```bash
+prism-relay peers list                    # List federation peers
+prism-relay collections list              # List hosted collections
+prism-relay portals list                  # List published portals
+prism-relay webhooks list                 # List registered webhooks
+prism-relay tokens list                   # List active tokens
+prism-relay certs list                    # List ACME certificates
+prism-relay backup --output state.json    # Export relay state
+prism-relay restore --input state.json    # Import relay state
+prism-relay logs --level error --follow   # Tail logs
+```
+
+Use `--port` and `--host` to target a specific relay (default: localhost:4444).
+
 ## Modules
 
 The relay is modular — pick the modules you need via config or `--modules` flag.
@@ -166,6 +189,16 @@ The relay is modular — pick the modules you need via config or `--modules` fla
 | `acme-certificates` | ACME HTTP-01 challenge + certificate lifecycle | Y | - |
 | `portal-templates` | Reusable portal layout templates | Y | - |
 | `webrtc-signaling` | P2P/SFU connection negotiation (rooms, SDP relay) | Y | - |
+
+## Studio Integration
+
+Prism Studio (the universal host) connects to Relays as a client for:
+- Publishing Sovereign Portals (Levels 1-4)
+- Syncing CRDT collections
+- Managing federation peers, webhooks, certificates
+- Monitoring relay health and backing up state
+
+The Studio Relay Panel provides a full management UI. See the [Studio CLAUDE.md](../prism-studio/CLAUDE.md) for details.
 
 ## Connecting from an App
 
