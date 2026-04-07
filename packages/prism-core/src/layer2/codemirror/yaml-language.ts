@@ -155,7 +155,7 @@ function token(stream: StringStream, state: YamlState): string | null {
   }
 
   // ── Flow collection punctuation ──────────────────────────────────────
-  if (stream.match(/^[{}\[\],]/)) return "bracket";
+  if (stream.match(/^[{}[\],]/)) return "bracket";
 
   // ── Values (after colon or in flow context) ──────────────────────────
 
@@ -194,7 +194,7 @@ function token(stream: StringStream, state: YamlState): string | null {
   }
 
   // Fall through: consume a word as a plain scalar value
-  if (stream.match(/^[^\s#:,\[\]{}'"&*!|>]+/)) {
+  if (stream.match(/^[^\s#:,[\]{}'"&*!|>]+/)) {
     return state.afterColon ? "string" : "propertyName";
   }
 

@@ -40,7 +40,8 @@ export interface RootNode extends SyntaxNode {
 /** Build a Position from source string + offset. */
 export function posAt(source: string, offset: number): Position {
   const lines = source.slice(0, offset).split('\n');
-  return { offset, line: lines.length, column: lines[lines.length - 1]!.length };
+  const lastLine = lines[lines.length - 1] ?? '';
+  return { offset, line: lines.length, column: lastLine.length };
 }
 
 /** Build a SourceRange from source string + start/end offsets. */

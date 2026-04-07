@@ -62,14 +62,14 @@ export class TokenStream<T extends BaseToken> {
   peek(ahead = 0): T {
     const idx = this._pos + ahead;
     if (idx >= this._tokens.length) {
-      return this._tokens[this._tokens.length - 1]!; // should be EOF
+      return this._tokens[this._tokens.length - 1] as T; // should be EOF
     }
-    return this._tokens[idx]!;
+    return this._tokens[idx] as T;
   }
 
   /** Consume and return the current token. */
   advance(): T {
-    const tok = this._tokens[this._pos]!;
+    const tok = this._tokens[this._pos] as T;
     if (this._pos < this._tokens.length - 1) {
       this._pos++;
     }

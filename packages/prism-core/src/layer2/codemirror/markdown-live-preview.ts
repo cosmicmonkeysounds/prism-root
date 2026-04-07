@@ -111,7 +111,7 @@ function addInlineDecorations(
       if (closeIdx !== -1) {
         const inner = rest.slice(2, closeIdx);
         const display = inner.includes("|")
-          ? inner.split("|")[1]!
+          ? (inner.split("|")[1] ?? inner)
           : inner;
         const docFrom = lineBase + i;
         const docTo = lineBase + i + closeIdx + 2;
@@ -234,7 +234,7 @@ function buildDecorations(view: EditorView): DecorationSet {
     // -- Heading: # / ## / ### ------------------------------------------------
     const headingMatch = text.match(/^(#{1,6})\s/);
     if (headingMatch) {
-      const hashes = headingMatch[1]!.length;
+      const hashes = (headingMatch[1] ?? '').length;
       // Replace "# " prefix with nothing, mark rest as heading
       builder.add(base, base + hashes + 1, Decoration.replace({}));
       builder.add(

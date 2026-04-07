@@ -80,7 +80,7 @@ export function spellCheckExtension(
         const tree = syntaxTree(view.state);
         tree.iterate({
           enter(node) {
-            syntaxTypes!.set(node.from, node.name);
+            (syntaxTypes as Map<number, string>).set(node.from, node.name);
           },
         });
       }

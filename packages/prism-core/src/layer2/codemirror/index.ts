@@ -24,3 +24,8 @@ export {
   loomLezerHighlightStyle,
   loomLanguageSupport,
 } from "./loom-lezer-lang.js";
+export {
+  createTokenMarkExtension,
+  createTokenPreviewExtension,
+  inlineTokenTheme,
+} from "./inline-tokens.js";

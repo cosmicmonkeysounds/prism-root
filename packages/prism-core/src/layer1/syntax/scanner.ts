@@ -83,13 +83,13 @@ export class Scanner {
   /** Return character at current position + ahead, without consuming. Empty string if past end. */
   peek(ahead = 0): string {
     const idx = this._offset + ahead;
-    return idx < this.source.length ? this.source[idx]! : '';
+    return idx < this.source.length ? (this.source[idx] ?? '') : '';
   }
 
   /** Consume and return current character. Empty string if at end. */
   advance(): string {
     if (this._offset >= this.source.length) return '';
-    const ch = this.source[this._offset]!;
+    const ch = this.source[this._offset] ?? '';
     this._offset++;
     if (ch === '\n') {
       this._line++;

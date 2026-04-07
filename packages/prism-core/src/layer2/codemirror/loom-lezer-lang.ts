@@ -214,7 +214,7 @@ class LoomPartialParse implements PartialParse {
     const positions = this.lineChildren.map(c => c.from);
 
     return new Tree(
-      nodeSet.types[N.Document]!,
+      nodeSet.types[N.Document] as NodeType,
       children,
       positions,
       text.length,
@@ -383,8 +383,9 @@ class LoomPartialParse implements PartialParse {
     const restAfterStr = trimmed.slice(pos - from);
     const typeMatch = restAfterStr.match(/\s*(:[a-z]+)/);
     if (typeMatch) {
-      const typeStart = pos + (typeMatch.index ?? 0) + typeMatch[0].length - typeMatch[1]!.length;
-      children.push({ type: N.TypeTag, from: typeStart, to: typeStart + typeMatch[1]!.length });
+      const tag = typeMatch[1] ?? '';
+      const typeStart = pos + (typeMatch.index ?? 0) + typeMatch[0].length - tag.length;
+      children.push({ type: N.TypeTag, from: typeStart, to: typeStart + tag.length });
     }
 
     return { type: N.Header, from, to, children };
@@ -605,7 +606,7 @@ class LoomPartialParse implements PartialParse {
       }
 
       // Inline mutation <var := expr>
-      if (!matched && rest.startsWith('<') && /^<[a-z_$]\w*\s*[:+\-]?=/.test(rest)) {
+      if (!matched && rest.startsWith('<') && /^<[a-z_$]\w*\s*[:+-]?=/.test(rest)) {
         const closeAngle = rest.indexOf('>');
         if (closeAngle !== -1) {
           if (pos > textStart) {
@@ -677,7 +678,7 @@ class LoomPartialParse implements PartialParse {
 
   private buildNode(c: TreeChild): Tree {
     if (!c.children || c.children.length === 0) {
-      return new Tree(nodeSet.types[c.type]!, [], [], c.to - c.from);
+      return new Tree(nodeSet.types[c.type] as NodeType, [], [], c.to - c.from);
     }
 
     // Sort children by position
@@ -686,7 +687,7 @@ class LoomPartialParse implements PartialParse {
     const positions = sorted.map(child => child.from - c.from);
 
     return new Tree(
-      nodeSet.types[c.type]!,
+      nodeSet.types[c.type] as NodeType,
       childTrees,
       positions,
       c.to - c.from,
