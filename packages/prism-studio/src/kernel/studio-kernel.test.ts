@@ -20,6 +20,7 @@ describe("StudioKernel", () => {
       expect(kernel.registry.has("image")).toBe(true);
       expect(kernel.registry.has("button")).toBe(true);
       expect(kernel.registry.has("card")).toBe(true);
+      expect(kernel.registry.has("lua-block")).toBe(true);
       expect(kernel.registry.has("folder")).toBe(true);
     });
 
@@ -1262,6 +1263,405 @@ describe("StudioKernel", () => {
       expect(def.name).toBe("Contact Form");
       expect(def.parts).toHaveLength(2);
       expect(def.slots).toHaveLength(2);
+    });
+  });
+
+  // ── Page Builder Integration ──────────────────────────────────────────────
+
+  describe("page builder integration", () => {
+    it("should list allowed child types for page", () => {
+      const allowed = kernel.registry.getAllowedChildTypes("page");
+      expect(allowed).toContain("section");
+      expect(allowed).toContain("heading");
+      expect(allowed).toContain("text-block");
+      expect(allowed).toContain("image");
+      expect(allowed).toContain("button");
+      expect(allowed).toContain("card");
+      expect(allowed).toContain("lua-block");
+    });
+
+    it("should list allowed child types for section", () => {
+      const allowed = kernel.registry.getAllowedChildTypes("section");
+      expect(allowed).toContain("heading");
+      expect(allowed).toContain("text-block");
+      expect(allowed).toContain("lua-block");
+      expect(allowed).not.toContain("page");
+      expect(allowed).not.toContain("section");
+    });
+
+    it("should build page→section→component hierarchy", () => {
+      const page = kernel.createObject({
+        type: "page",
+        name: "Test Page",
+        parentId: null,
+        position: 0,
+        status: "draft",
+        tags: [],
+        date: null,
+        endDate: null,
+        description: "",
+        color: null,
+        image: null,
+        pinned: false,
+        data: { title: "Test Page", slug: "", layout: "single", published: false },
+      });
+
+      const section = kernel.createObject({
+        type: "section",
+        name: "Hero Section",
+        parentId: page.id,
+        position: 0,
+        status: "draft",
+        tags: [],
+        date: null,
+        endDate: null,
+        description: "",
+        color: null,
+        image: null,
+        pinned: false,
+        data: { variant: "hero", padding: "lg" },
+      });
+
+      kernel.createObject({
+        type: "heading",
+        name: "Welcome",
+        parentId: section.id,
+        position: 0,
+        status: "draft",
+        tags: [],
+        date: null,
+        endDate: null,
+        description: "",
+        color: null,
+        image: null,
+        pinned: false,
+        data: { text: "Welcome", level: "h1", align: "center" },
+      });
+
+      kernel.createObject({
+        type: "text-block",
+        name: "Intro",
+        parentId: section.id,
+        position: 1,
+        status: "draft",
+        tags: [],
+        date: null,
+        endDate: null,
+        description: "",
+        color: null,
+        image: null,
+        pinned: false,
+        data: { content: "Hello world", format: "markdown" },
+      });
+
+      // Verify hierarchy
+      const pageChildren = kernel.store.listObjects({ parentId: page.id });
+      expect(pageChildren).toHaveLength(1);
+      expect(pageChildren[0]?.type).toBe("section");
+
+      const sectionChildren = kernel.store.listObjects({ parentId: section.id });
+      expect(sectionChildren).toHaveLength(2);
+      expect(sectionChildren.map((c) => c.type).sort()).toEqual(["heading", "text-block"]);
+    });
+
+    it("should reorder children by updating position", () => {
+      const page = kernel.createObject({
+        type: "page",
+        name: "Reorder Page",
+        parentId: null,
+        position: 0,
+        status: "draft",
+        tags: [],
+        date: null,
+        endDate: null,
+        description: "",
+        color: null,
+        image: null,
+        pinned: false,
+        data: {},
+      });
+
+      const s1 = kernel.createObject({
+        type: "section",
+        name: "Section A",
+        parentId: page.id,
+        position: 0,
+        status: "draft",
+        tags: [],
+        date: null,
+        endDate: null,
+        description: "",
+        color: null,
+        image: null,
+        pinned: false,
+        data: {},
+      });
+
+      const s2 = kernel.createObject({
+        type: "section",
+        name: "Section B",
+        parentId: page.id,
+        position: 1,
+        status: "draft",
+        tags: [],
+        date: null,
+        endDate: null,
+        description: "",
+        color: null,
+        image: null,
+        pinned: false,
+        data: {},
+      });
+
+      // Swap positions
+      kernel.updateObject(s1.id, { position: 1 });
+      kernel.updateObject(s2.id, { position: 0 });
+
+      const children = kernel.store
+        .listObjects({ parentId: page.id })
+        .sort((a, b) => a.position - b.position);
+
+      expect(children[0]?.name).toBe("Section B");
+      expect(children[1]?.name).toBe("Section A");
+    });
+
+    it("should reparent objects via updateObject", () => {
+      const page = kernel.createObject({
+        type: "page",
+        name: "Move Page",
+        parentId: null,
+        position: 0,
+        status: "draft",
+        tags: [],
+        date: null,
+        endDate: null,
+        description: "",
+        color: null,
+        image: null,
+        pinned: false,
+        data: {},
+      });
+
+      const s1 = kernel.createObject({
+        type: "section",
+        name: "Source Section",
+        parentId: page.id,
+        position: 0,
+        status: "draft",
+        tags: [],
+        date: null,
+        endDate: null,
+        description: "",
+        color: null,
+        image: null,
+        pinned: false,
+        data: {},
+      });
+
+      const s2 = kernel.createObject({
+        type: "section",
+        name: "Target Section",
+        parentId: page.id,
+        position: 1,
+        status: "draft",
+        tags: [],
+        date: null,
+        endDate: null,
+        description: "",
+        color: null,
+        image: null,
+        pinned: false,
+        data: {},
+      });
+
+      const heading = kernel.createObject({
+        type: "heading",
+        name: "Move Me",
+        parentId: s1.id,
+        position: 0,
+        status: "draft",
+        tags: [],
+        date: null,
+        endDate: null,
+        description: "",
+        color: null,
+        image: null,
+        pinned: false,
+        data: { text: "Move Me", level: "h2" },
+      });
+
+      // Move heading from s1 to s2
+      kernel.updateObject(heading.id, { parentId: s2.id, position: 0 });
+
+      const s1Children = kernel.store.listObjects({ parentId: s1.id });
+      const s2Children = kernel.store.listObjects({ parentId: s2.id });
+
+      expect(s1Children).toHaveLength(0);
+      expect(s2Children).toHaveLength(1);
+      expect(s2Children[0]?.name).toBe("Move Me");
+    });
+
+    it("should duplicate objects", () => {
+      const page = kernel.createObject({
+        type: "page",
+        name: "Dup Page",
+        parentId: null,
+        position: 0,
+        status: "draft",
+        tags: ["test"],
+        date: null,
+        endDate: null,
+        description: "",
+        color: null,
+        image: null,
+        pinned: false,
+        data: { title: "Dup Page", slug: "", layout: "single", published: false },
+      });
+
+      // Duplicate via createObject with same data
+      const dup = kernel.createObject({
+        type: page.type,
+        name: `${page.name} (copy)`,
+        parentId: page.parentId,
+        position: 1,
+        status: page.status,
+        tags: [...page.tags],
+        date: page.date,
+        endDate: page.endDate,
+        description: page.description,
+        color: page.color,
+        image: page.image,
+        pinned: page.pinned,
+        data: { ...(page.data as Record<string, unknown>) },
+      });
+
+      expect(dup.name).toBe("Dup Page (copy)");
+      expect(dup.id).not.toBe(page.id);
+      expect(dup.type).toBe("page");
+    });
+
+    it("should generate Puck-compatible component list from registry", () => {
+      const allDefs = kernel.registry.allDefs();
+      const componentDefs = allDefs.filter(
+        (d) => d.category === "component" || d.category === "section",
+      );
+
+      // Should have section + all component types including lua-block
+      expect(componentDefs.length).toBeGreaterThanOrEqual(7);
+      const types = componentDefs.map((d) => d.type);
+      expect(types).toContain("section");
+      expect(types).toContain("heading");
+      expect(types).toContain("text-block");
+      expect(types).toContain("image");
+      expect(types).toContain("button");
+      expect(types).toContain("card");
+      expect(types).toContain("lua-block");
+    });
+
+    it("should create and update lua-block with Lua source", () => {
+      const page = kernel.createObject({
+        type: "page",
+        name: "Lua Test Page",
+        parentId: null,
+        position: 0,
+        status: "draft",
+        tags: [],
+        date: null,
+        endDate: null,
+        description: "",
+        color: null,
+        image: null,
+        pinned: false,
+        data: { title: "Lua Test", slug: "", layout: "single", published: false },
+      });
+
+      const section = kernel.createObject({
+        type: "section",
+        name: "Lua Section",
+        parentId: page.id,
+        position: 0,
+        status: "draft",
+        tags: [],
+        date: null,
+        endDate: null,
+        description: "",
+        color: null,
+        image: null,
+        pinned: false,
+        data: {},
+      });
+
+      const luaBlock = kernel.createObject({
+        type: "lua-block",
+        name: "Status Widget",
+        parentId: section.id,
+        position: 0,
+        status: "draft",
+        tags: [],
+        date: null,
+        endDate: null,
+        description: "",
+        color: null,
+        image: null,
+        pinned: false,
+        data: {
+          title: "Status",
+          source: 'return ui.label("Hello")',
+        },
+      });
+
+      expect(luaBlock.type).toBe("lua-block");
+      const data = luaBlock.data as Record<string, unknown>;
+      expect(data["source"]).toBe('return ui.label("Hello")');
+      expect(data["title"]).toBe("Status");
+
+      // Update the Lua source
+      const updated = kernel.updateObject(luaBlock.id, {
+        data: { ...data, source: 'return ui.button("Click")' },
+      });
+      expect(updated).toBeDefined();
+      const updatedData = updated?.data as Record<string, unknown>;
+      expect(updatedData["source"]).toBe('return ui.button("Click")');
+    });
+
+    it("should delete objects and verify cleanup", () => {
+      const page = kernel.createObject({
+        type: "page",
+        name: "Delete Test",
+        parentId: null,
+        position: 0,
+        status: "draft",
+        tags: [],
+        date: null,
+        endDate: null,
+        description: "",
+        color: null,
+        image: null,
+        pinned: false,
+        data: {},
+      });
+
+      const section = kernel.createObject({
+        type: "section",
+        name: "Delete Section",
+        parentId: page.id,
+        position: 0,
+        status: "draft",
+        tags: [],
+        date: null,
+        endDate: null,
+        description: "",
+        color: null,
+        image: null,
+        pinned: false,
+        data: {},
+      });
+
+      kernel.deleteObject(section.id);
+      const liveChildren = kernel.store
+        .listObjects({ parentId: page.id })
+        .filter((o) => !o.deletedAt);
+      expect(liveChildren).toHaveLength(0);
     });
   });
 

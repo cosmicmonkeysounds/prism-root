@@ -195,6 +195,20 @@ const cardDef: EntityDef<string> = {
   ],
 };
 
+const luaBlockDef: EntityDef<string> = {
+  type: "lua-block",
+  category: "component",
+  label: "Lua Block",
+  pluralLabel: "Lua Blocks",
+  icon: "\uD83C\uDF19",
+  color: "#06b6d4",
+  childOnly: true,
+  fields: [
+    { id: "source", type: "text", label: "Lua Source", required: true, ui: { multiline: true } },
+    { id: "title", type: "string", label: "Title" },
+  ],
+};
+
 // ── Edge Type Definitions ───────────────────────────────────────────────────
 
 const referencesEdge: EdgeTypeDef = {
@@ -226,6 +240,7 @@ export function createPageBuilderRegistry(): ObjectRegistry<string> {
   registry.register(imageDef);
   registry.register(buttonDef);
   registry.register(cardDef);
+  registry.register(luaBlockDef);
 
   registry.registerEdge(referencesEdge);
   registry.registerEdge(linksToEdge);

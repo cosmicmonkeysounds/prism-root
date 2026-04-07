@@ -28,6 +28,8 @@ import { TableFacetPanel } from "../panels/table-facet-panel.js";
 import { SequencerPanel } from "../panels/sequencer-panel.js";
 import ReportFacetPanel from "../panels/report-facet-panel.js";
 import { LuaFacetPanel } from "../panels/lua-facet-panel.js";
+import { FacetDesignerPanel } from "../panels/facet-designer-panel.js";
+import { RecordBrowserPanel } from "../panels/record-browser-panel.js";
 
 export const EDITOR_LENS_ID = lensId("editor");
 export const GRAPH_LENS_ID = lensId("graph");
@@ -49,6 +51,8 @@ export const TABLE_FACET_LENS_ID = lensId("table-facet");
 export const SEQUENCER_LENS_ID = lensId("sequencer");
 export const REPORT_FACET_LENS_ID = lensId("report-facet");
 export const LUA_FACET_LENS_ID = lensId("lua-facet");
+export const FACET_DESIGNER_LENS_ID = lensId("facet-designer");
+export const RECORD_BROWSER_LENS_ID = lensId("record-browser");
 
 const editorManifest: LensManifest = {
   id: EDITOR_LENS_ID,
@@ -270,6 +274,28 @@ const reportFacetManifest: LensManifest = {
   },
 };
 
+const facetDesignerManifest: LensManifest = {
+  id: FACET_DESIGNER_LENS_ID,
+  name: "Facet Designer",
+  icon: "\u{1F3A8}",
+  category: "facet",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-facet-designer", name: "Switch to Facet Designer", shortcut: ["x"], section: "Navigation" }],
+  },
+};
+
+const recordBrowserManifest: LensManifest = {
+  id: RECORD_BROWSER_LENS_ID,
+  name: "Record Browser",
+  icon: "\u{1F4D6}",
+  category: "facet",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-record-browser", name: "Switch to Record Browser", shortcut: ["z"], section: "Navigation" }],
+  },
+};
+
 export const ALL_MANIFESTS: LensManifest[] = [
   editorManifest,
   graphManifest,
@@ -291,6 +317,8 @@ export const ALL_MANIFESTS: LensManifest[] = [
   sequencerManifest,
   reportFacetManifest,
   luaFacetManifest,
+  facetDesignerManifest,
+  recordBrowserManifest,
 ];
 
 export function registerBuiltinLenses(registry: LensRegistry): () => void {
@@ -320,5 +348,7 @@ export function createLensComponentMap(): Map<LensId, ComponentType> {
   map.set(SEQUENCER_LENS_ID, SequencerPanel);
   map.set(REPORT_FACET_LENS_ID, ReportFacetPanel);
   map.set(LUA_FACET_LENS_ID, LuaFacetPanel);
+  map.set(FACET_DESIGNER_LENS_ID, FacetDesignerPanel);
+  map.set(RECORD_BROWSER_LENS_ID, RecordBrowserPanel);
   return map;
 }

@@ -18,22 +18,23 @@ The Universal Host — Vite SPA + Tauri 2.0 desktop shell.
 The Studio kernel wires all Layer 1 systems together:
 - `studio-kernel.ts` — creates and connects ObjectRegistry, CollectionStore, PrismBus, AtomStore, ObjectAtomStore, UndoRedoManager, NotificationStore, SearchEngine, ActivityStore, ActivityTracker, RelayManager, AutomationEngine, graph analysis, expression evaluator, PluginRegistry, InputRouter, VaultRoster, FormState helpers, Identity (DID generation/sign/verify/export/import), VfsManager (content-addressed blob storage with locks), Trust & Safety (PeerTrustGraph, SchemaValidator, LuaSandbox, ShamirSplitter, EscrowManager), Facet System (FacetParser, SpellChecker, ProseCodec, Sequencer, Emitters, FacetDefinition registry). Also wires clipboard (copy/cut/paste), batch ops, templates, and LiveView.
 - `relay-manager.ts` — manages connections to Prism Relay servers. Studio is client-only (no server code). Handles relay CRUD, WebSocket connect/disconnect via RelayClient SDK, portal publish/unpublish/list via HTTP API, collection sync, and relay status. Injectable HTTP/WS clients for testing.
-- `entities.ts` — page-builder entity types (folder, page, section, heading, text-block, image, button, card) with category containment rules and edge types (references, links-to)
+- `entities.ts` — page-builder entity types (folder, page, section, heading, text-block, image, button, card, lua-block) with category containment rules and edge types (references, links-to)
 - `kernel-context.tsx` — React context + hooks: useKernel, useSelection, useObjects, useObject, useUndo, useNotifications, useRelay, useConfig, useConfigSettings, usePresence, useViewMode, useAutomation, useGraphAnalysis, useExpression, usePlugins, useInputRouter, useVaultRoster, useIdentity, useVfs, useTrust, useFacetParser, useSpellCheck, useProseCodec, useSequencer, useEmitters, useFacetDefinitions
 
 ## Components (`src/components/`)
 - `studio-shell.tsx` — custom shell layout replacing core ShellLayout with real sidebar/inspector content
-- `object-explorer.tsx` — tree view of objects from CollectionStore, click to select, "New Page" button, search via SearchEngine. Includes TemplateGallery overlay, ActivityFeed sidebar, reorder buttons (↑/↓) on selected nodes, and view mode switcher (list/kanban/grid/table).
+- `object-explorer.tsx` — tree view of objects from CollectionStore, click to select, "New Page" button, search via SearchEngine. Includes TemplateGallery overlay, ActivityFeed sidebar, reorder buttons (↑/↓) on selected nodes, view mode switcher (list/kanban/grid/table), and HTML5 drag-drop for reorder/reparent with containment validation.
+- `component-palette.tsx` — sidebar listing available block types (component/section) from ObjectRegistry, grouped by category, searchable, click-to-add with containment validation, draggable items. Wired into StudioShell sidebar below ObjectExplorer.
 - `inspector-panel.tsx` — schema-driven property editor reading EntityDef fields from ObjectRegistry. Includes clipboard buttons (Copy/Cut/Paste), Add Child menu, and Expression Bar for formula evaluation.
 - `notification-toast.tsx` — floating toast overlay subscribing to NotificationStore
 - `undo-status-bar.tsx` — undo/redo buttons in the header bar
 - `presence-indicator.tsx` — colored avatar dots for connected peers in header bar
 
 ## Panels (`src/panels/`)
-- `canvas-panel.tsx` — WYSIWYG page preview: renders page→section→component tree as visual React components, click-to-select blocks
+- `canvas-panel.tsx` — WYSIWYG page preview: renders page→section→component tree as visual React components, click-to-select blocks, floating block toolbar (move/duplicate/delete) on selected blocks, quick-create combobox for adding allowed child types. Renders `lua-block` objects inline via Lua UI parser.
 - `editor-panel.tsx` — CodeMirror 6 editing selected text-block/heading content (or scratch buffer when nothing editable selected)
-- `graph-panel.tsx` — @xyflow/react node graph of kernel objects and edges
-- `layout-panel.tsx` — Puck visual builder (Loro CRDT bridge)
+- `graph-panel.tsx` — @xyflow/react node graph of kernel objects and edges, live-reactive (subscribes to store changes, rebuilds on mutations)
+- `layout-panel.tsx` — Puck visual builder wired to kernel: generates config from ObjectRegistry, projects kernel objects to Puck Data, diffs Puck changes back to kernel CRUD. Live onChange sync (debounced 300ms). Lua Block component renders Lua UI inline via parser.
 - `crdt-panel.tsx` — CRDT state inspector (objects/edges/JSON tabs)
 - `relay-panel.tsx` — Relay Manager: add/remove relays, connect/disconnect, publish/unpublish portals, view portal URLs, CLI reference
 - `settings-panel.tsx` — Category-grouped settings UI from ConfigRegistry with search, toggle/select/number/string inputs
@@ -48,9 +49,13 @@ The Studio kernel wires all Layer 1 systems together:
 - `form-facet-panel.tsx` — Schema-driven form renderer: YAML/JSON source editor, auto-detected fields, bidirectional source↔form sync, spell checking
 - `table-facet-panel.tsx` — Data grid: sortable/filterable columns, inline editing, keyboard navigation, row selection
 - `sequencer-panel.tsx` — Visual automation builder: condition builder (subject/operator/value), script builder (step list), live Lua preview
+- `report-facet-panel.tsx` — Grouped/summarized data view with aggregates (count, sum, avg, min, max), collapsible groups
+- `lua-facet-panel.tsx` — Lua `ui.*` call parser → UINode tree → React renderer, 10 element types, sample scripts. Kernel-bound: selecting a `lua-block` object auto-loads its source; edits auto-save to kernel (debounced 400ms). Exports `parseLuaUi()` and `renderUINode()` for reuse by Canvas/Layout panels.
+- `facet-designer-panel.tsx` — Visual layout builder for FacetDefinitions (parts, slots, summary fields, sort/group, automation hooks)
+- `record-browser-panel.tsx` — Unified data browser with form/list/table/report/card mode toggle, record navigation, search
 
 ## Lenses
-18 lenses: Editor (e), Graph (g), Layout (l), Canvas (v), CRDT (c), Relay (r), Settings (,), Automation (a), Analysis (n), Plugins (p), Shortcuts (k), Vaults (w), Identity (i), Assets (f), Trust (t), Form (d), Table (b), Sequencer (q)
+22 lenses: Editor (e), Graph (g), Layout (l), Canvas (v), CRDT (c), Relay (r), Settings (,), Automation (a), Analysis (n), Plugins (p), Shortcuts (k), Vaults (w), Identity (i), Assets (f), Trust (t), Form (d), Table (b), Sequencer (q), Report (o), Lua Facet (u), Facet Designer (x), Record Browser (z)
 
 ## Data Flow
 ```

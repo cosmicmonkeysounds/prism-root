@@ -2,15 +2,17 @@
 
 Goal: Studio builds and modifies Prism apps (SquareSpace / FileMaker Pro).
 
-## Current State (~25%)
+## Current State (~40%)
 
 **Working:** Object CRUD with undo, entity registry with 8 types + containment,
-schema-driven inspector, object explorer tree, notifications, CRDT persistence,
-bus → atom reactivity, tab/lens system, graph visualization, CodeMirror + Puck panels.
+schema-driven inspector, object explorer tree with drag-drop reorder/reparent,
+notifications, CRDT persistence, bus → atom reactivity, tab/lens system,
+live-reactive graph visualization, CodeMirror + Puck panels (Puck wired to kernel),
+canvas with block toolbar + quick-create, component palette, search, clipboard,
+batch ops, activity log, templates, LiveView.
 
-**Not working:** Puck disconnected from kernel, editor edits global buffer not objects,
-no drag-drop, no preview, no export, no templates, no search, no clipboard,
-no batch ops, no activity log, no data binding, no styling system.
+**Not working:** Editor edits global buffer not objects, no export, no data binding,
+no styling system, no responsive breakpoints, no design tokens.
 
 ---
 
@@ -18,26 +20,26 @@ no batch ops, no activity log, no data binding, no styling system.
 
 These systems exist in @prism/core and just need kernel integration.
 
-- [ ] **0A. Search** — Wire `createSearchEngine` into kernel, index objects on create/update, expose `kernel.search`
-- [ ] **0B. Clipboard** — Wire `createTreeClipboard` into kernel, expose `kernel.clipboard` (cut/copy/paste with deep clone + ID remap)
-- [ ] **0C. Batch Operations** — Wire `createBatchTransaction` into kernel for atomic multi-op + single undo entry
-- [ ] **0D. Activity Log** — Wire `createActivityStore` + `createActivityTracker` into kernel for audit trail
-- [ ] **0E. Templates** — Wire `createTemplateRegistry` into kernel, register page builder templates (hero, 3-col, etc.)
-- [ ] **0F. LiveView** — Wire `createLiveView` into kernel for filtered/sorted/grouped data projections
+- [x] **0A. Search** — Wire `createSearchEngine` into kernel, index objects on create/update, expose `kernel.search`
+- [x] **0B. Clipboard** — Wire `createTreeClipboard` into kernel, expose `kernel.clipboard` (cut/copy/paste with deep clone + ID remap)
+- [x] **0C. Batch Operations** — Wire `createBatchTransaction` into kernel for atomic multi-op + single undo entry
+- [x] **0D. Activity Log** — Wire `createActivityStore` + `createActivityTracker` into kernel for audit trail
+- [x] **0E. Templates** — Wire `createTemplateRegistry` into kernel, register page builder templates (hero, 3-col, etc.)
+- [x] **0F. LiveView** — Wire `createLiveView` into kernel for filtered/sorted/grouped data projections
 
 ## Tier 1 — Connect Existing Panels to Kernel
 
-- [ ] **1A. Puck ↔ Kernel Bridge** — Bidirectional sync: page object tree → Puck data, Puck edits → kernel CRUD
+- [x] **1A. Puck ↔ Kernel Bridge** — Bidirectional sync: page object tree → Puck data, Puck edits → kernel CRUD
 - [ ] **1B. Editor ↔ Selected Object** — CodeMirror edits `text-block.data.content` of selected object (not global buffer)
-- [ ] **1C. Graph Panel Live Data** — Graph reacts to all kernel mutations (currently snapshot-only)
+- [x] **1C. Graph Panel Live Data** — Graph reacts to all kernel mutations (subscribes to store.onChange)
 
 ## Tier 2 — Core Page Builder UX
 
-- [ ] **2A. Drag-Drop in Explorer** — Reorder (position) + reparent via drag-drop in object tree
-- [ ] **2B. Component Palette** — Sidebar panel listing available block types from registry, drag to add
-- [ ] **2C. Canvas Preview** — WYSIWYG preview rendering page objects as React components
-- [ ] **2D. Block Toolbar** — Floating toolbar on selected block: move up/down, duplicate, delete
-- [ ] **2E. Quick-Create Combobox** — Inline add child of allowed types (legacy ChildrenPanel pattern)
+- [x] **2A. Drag-Drop in Explorer** — Reorder (position) + reparent via drag-drop in object tree with containment validation
+- [x] **2B. Component Palette** — Sidebar panel listing available block types from registry, click-to-add + draggable
+- [x] **2C. Canvas Preview** — WYSIWYG preview rendering page objects as React components
+- [x] **2D. Block Toolbar** — Floating toolbar on selected block: move up/down, duplicate, delete
+- [x] **2E. Quick-Create Combobox** — Inline add child of allowed types at bottom of sections/pages
 
 ## Tier 3 — Styling & Theming
 

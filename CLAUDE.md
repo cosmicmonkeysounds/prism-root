@@ -5,8 +5,8 @@ Distributed Visual Operating System. Turborepo + pnpm monorepo.
 ## Commands
 - `pnpm dev` — start all packages
 - `pnpm build` — build in dependency order
-- `pnpm test` — Vitest all packages
-- `pnpm test:e2e` — Playwright E2E (per-package: relay + studio)
+- `pnpm test` — Vitest all packages (2652 tests, 120 files)
+- `pnpm test:e2e` — Playwright E2E (per-package: 263 studio + 135 relay)
 - `pnpm lint` / `pnpm typecheck` / `pnpm format`
 - `cd packages/prism-daemon && cargo test && cargo clippy`
 

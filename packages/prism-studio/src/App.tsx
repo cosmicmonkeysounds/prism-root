@@ -111,6 +111,25 @@ function seedDemoData(k: StudioKernel) {
   });
 
   k.createObject({
+    type: "lua-block",
+    name: "Status Widget",
+    parentId: contentSection.id,
+    position: 2,
+    status: null,
+    tags: [],
+    date: null,
+    endDate: null,
+    description: "",
+    color: null,
+    image: null,
+    pinned: false,
+    data: {
+      title: "Status Widget",
+      source: `-- Status Widget\nreturn ui.column({\n  ui.row({\n    ui.badge("Online", "green"),\n    ui.badge("v1.0", "blue"),\n    ui.spacer(),\n    ui.label("Prism Studio"),\n  }),\n  ui.divider(),\n  ui.row({\n    ui.button("Refresh"),\n    ui.button("Settings"),\n  }),\n})`,
+    },
+  });
+
+  k.createObject({
     type: "page",
     name: "About",
     parentId: null,

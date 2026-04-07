@@ -18,7 +18,7 @@ The relay generates a persistent Ed25519 identity on first run, saved to `~/.pri
 
 ### Server Mode — Production
 
-Always-on relay with all 12 modules, JSON logging, hashcash=16 spam protection.
+Always-on relay with all 15 modules, JSON logging, hashcash=16 spam protection.
 
 ```bash
 # Build for production
@@ -163,6 +163,9 @@ The relay is modular — pick the modules you need via config or `--modules` fla
 | `peer-trust` | Peer reputation (trust/distrust/ban) | Y | Y |
 | `escrow` | Blind key recovery deposits | Y | - |
 | `federation` | Relay-to-relay mesh networking | Y | Y |
+| `acme-certificates` | ACME HTTP-01 challenge + certificate lifecycle | Y | - |
+| `portal-templates` | Reusable portal layout templates | Y | - |
+| `webrtc-signaling` | P2P/SFU connection negotiation (rooms, SDP relay) | Y | - |
 
 ## Connecting from an App
 
@@ -445,30 +448,44 @@ pnpm typecheck
 
 ```
 src/
-  cli.ts                  CLI entry point
+  cli.ts                    CLI entry point
+  index.ts                  Package exports
   config/
-    relay-config.ts       Config types + resolution
-    parse-args.ts         CLI argument parser
-    logger.ts             Structured logger
+    relay-config.ts         Config types + resolution
+    parse-args.ts           CLI argument parser
+    logger.ts               Structured logger
   server/
-    relay-server.ts       Hono app factory + CORS + WS
+    relay-server.ts         Hono app factory + CORS + WS
+  middleware/
+    csrf.ts                 CSRF protection (X-Prism-CSRF header)
+    body-size.ts            Content-Length enforcement
+    banned-peer.ts          X-Prism-DID peer rejection
   routes/
-    status-routes.ts      GET /api/status, /api/modules
-    webhook-routes.ts     Webhook CRUD
-    portal-routes.ts      Portal manifest CRUD
-    token-routes.ts       Capability token issue/verify/revoke
-    collection-routes.ts  Collection hosting
-    hashcash-routes.ts    Proof-of-work challenge/verify
-    trust-routes.ts       Peer trust management
-    escrow-routes.ts      Key recovery escrow
-    federation-routes.ts  Relay-to-relay mesh
+    status-routes.ts        GET /api/status, /api/modules, /api/health
+    webhook-routes.ts       Webhook CRUD
+    portal-routes.ts        Portal manifest CRUD + HTML rendering (JSX SSR)
+    token-routes.ts         Capability token issue/verify/revoke
+    collection-routes.ts    Collection hosting + AutoREST gateway
+    hashcash-routes.ts      Proof-of-work challenge/verify
+    trust-routes.ts         Peer trust management
+    escrow-routes.ts        Key recovery escrow
+    federation-routes.ts    Relay-to-relay mesh
+    ping-routes.ts          Blind push notification registration
+    signaling-routes.ts     WebRTC signaling rooms
+    auth-routes.ts          OAuth/OIDC (Google, GitHub)
+    safety-routes.ts        Content flagging + toxic hash gossip
+    acme-routes.ts          ACME HTTP-01 challenges + cert lifecycle
+    seo-routes.ts           sitemap.xml, robots.txt
   transport/
-    ws-transport.ts       WebSocket message handler
-    connection-registry.ts Connection tracking + broadcast
+    ws-transport.ts         WebSocket message handler
+    connection-registry.ts  Connection tracking + broadcast
   protocol/
-    relay-protocol.ts     Wire format types + serialization
+    relay-protocol.ts       Wire format types + serialization
+  persistence/
+    file-store.ts           JSON file store for relay state
   e2e/
-    relay.spec.ts         23 Playwright E2E tests
+    relay.spec.ts                 Core E2E (87 tests)
+    production-readiness.spec.ts  Security + resilience (48 tests)
 ```
 
 ## Security

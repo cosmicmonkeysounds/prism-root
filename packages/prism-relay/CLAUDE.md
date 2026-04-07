@@ -5,7 +5,7 @@ Runtime server for Prism Relay — wraps Layer 1 relay primitives in HTTP + WebS
 ## Build & Test
 - `pnpm dev` — start with tsx watch (dev mode)
 - `pnpm typecheck`
-- `pnpm test:e2e` — Playwright E2E tests (32 tests, no browser needed)
+- `pnpm test:e2e` — Playwright E2E tests (135 tests across 2 spec files, no browser needed)
 
 ## CLI
 Installable as `prism-relay` via the `bin` field. Supports subcommands:

@@ -1,5 +1,31 @@
 # Current Plan
 
+## Unified Builder System (Complete)
+
+Puck/Lua/Canvas/Facet builder system unified and fully working.
+
+### Completed
+
+- [x] `lua-block` entity type — component that stores Lua source, renders via Lua UI parser
+- [x] Layout Panel (Puck) — live onChange sync (debounced 300ms), Lua Block component with inline preview
+- [x] Canvas Panel — renders `lua-block` objects inline with parsed Lua UI tree
+- [x] Lua Facet Panel — bound to kernel objects: selecting a lua-block auto-loads its source, edits auto-save (debounced 400ms)
+- [x] Component Palette — wired into sidebar (below ObjectExplorer), includes lua-block type, search, drag-to-add
+- [x] Facet Designer Panel — visual FacetDefinition builder with parts, field slots, portal slots, summaries, sort/group, hooks
+- [x] Record Browser Panel — unified data browser with Form/List/Table/Report/Card mode toggle, search, navigation
+- [x] Cross-panel integration — Canvas reflects inspector edits, palette→canvas, delete→undo, graph renders all types
+- [x] Seed data includes lua-block "Status Widget" demo on Home page
+
+### Test Summary
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| Vitest (studio-kernel) | 97 | Pass |
+| Vitest (all) | 2652 | Pass |
+| Playwright (builder) | 49 | Pass |
+| Playwright (all affected) | 72 | Pass |
+| **Playwright (total)** | **241** | **Pass** |
+
 ## Phase 1: The Heartbeat (Complete)
 
 Loro CRDT round-trips between browser and Rust daemon via Tauri IPC. All tests passing.
@@ -1566,6 +1592,58 @@ Wired Layer 1 facet engines (FacetParser, SpellEngine, Sequencer, ProseCodec, Em
 | Vitest (total) | 2622 | Pass |
 | **Phase 30n Total** | **2622 Vitest + E2E** | **All Pass** |
 
+## Phase 30o: Page Builder Centralization — Tiers 1-2 (Complete)
+
+Connected Studio's page builder panels to the kernel so all state flows through one path (CollectionStore CRDT), not isolated silos.
+
+### Completed
+
+- [x] **1A: Puck ↔ Kernel Bridge** — Rewrote `layout-panel.tsx`:
+  - Generates Puck Config dynamically from ObjectRegistry entity defs (component/section categories)
+  - Projects kernel objects (page children) into Puck Data format
+  - Diffs Puck onChange back into kernel CRUD (create/update/delete)
+  - Removed isolated PuckLoroBridge; kernel CollectionStore is now the single source of truth
+- [x] **1C: Graph Panel Live Data** — Rewrote `graph-panel.tsx`:
+  - Subscribes to `kernel.store.onChange()` for live reactivity
+  - Graph rebuilds automatically when objects are created, updated, or deleted
+  - No longer snapshot-only at mount time
+- [x] **2A: Drag-Drop in Explorer** — Added to `object-explorer.tsx`:
+  - HTML5 drag-drop on tree nodes for reorder (above/below) and reparent (on)
+  - Containment rule validation via `registry.canBeChildOf()`
+  - Drop indicators (blue border top/bottom, highlight for reparent)
+  - Automatic sibling position shifting on reorder
+- [x] **2B: Component Palette** — New `component-palette.tsx`:
+  - Lists all component/section entity types from ObjectRegistry
+  - Grouped by category, searchable
+  - Click to add as child of selected object (with containment validation)
+  - Draggable items for drag-to-add
+- [x] **2D: Block Toolbar on Canvas** — Added to `canvas-panel.tsx`:
+  - Floating toolbar appears on selected blocks
+  - Move up/down (swap with siblings), Duplicate, Delete actions
+  - Toolbar positioned absolutely above the selected block
+- [x] **2E: Quick-Create Combobox** — Added to `canvas-panel.tsx`:
+  - "Add block" button at bottom of each section and page
+  - Shows allowed child types from registry containment rules
+  - Click to create and auto-select the new object
+- [x] **Tests** — 7 new integration tests in `studio-kernel.test.ts`:
+  - getAllowedChildTypes validation for page and section
+  - Page→section→component hierarchy building
+  - Child reorder via position update
+  - Reparent via updateObject
+  - Object duplication
+  - Registry component list for Puck config generation
+  - Delete and cleanup verification
+
+| Artifact | Tests | Status |
+| -------- | ----- | ------ |
+| `layout-panel.tsx` (rewrite) | type-safe | Clean |
+| `graph-panel.tsx` (rewrite) | type-safe | Clean |
+| `object-explorer.tsx` (drag-drop) | type-safe | Clean |
+| `component-palette.tsx` (new) | type-safe | Clean |
+| `canvas-panel.tsx` (toolbar + quick-create) | type-safe | Clean |
+| `studio-kernel.test.ts` (+7 tests) | 96 pass | All Pass |
+| **Phase 30o Total** | **2651 Vitest** | **All Pass** |
+
 ## Phase 30l: WebRTC Signaling — All Relays (Complete)
 
 WebRTC signaling as a standard relay module available to ALL relays, not deferred as Nexus-only. Enables P2P connection negotiation (SDP offer/answer, ICE candidates) through any relay.
@@ -1746,8 +1824,8 @@ Three tiers:
 - [x] **Facet lenses** — Form, Table, Report, Sequencer, Lua Facet (20 total lenses, "facet" category)
 - [x] **Studio kernel wiring** — FacetParser, SpellEngine, ProseCodec, Sequencer, Emitters, FacetDefinitions all wired
 - [x] **Kernel hooks** — useFacetParser, useSpellCheck, useProseCodec, useSequencer, useEmitters, useFacetDefinitions
-- [ ] **Facet Designer lens** — visual layout builder (like FileMaker Layout Mode)
-- [ ] **Record Browser** — form/list/table/report toggle per collection (like FileMaker Browse Mode)
+- [x] **Facet Designer lens** — visual layout builder (like FileMaker Layout Mode)
+- [x] **Record Browser** — form/list/table/report/card toggle per collection (like FileMaker Browse Mode)
 
 ## Phase 33: Ecosystem Apps — Cadence & Grip
 

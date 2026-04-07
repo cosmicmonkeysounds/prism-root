@@ -18,18 +18,18 @@ test.describe("Phase 3: The Graph", () => {
     const flow = page.locator(".react-flow");
     await expect(flow).toBeVisible({ timeout: 10_000 });
 
-    // Seed data: Home, Hero, Content, Main Heading, Intro Text, About = 6 nodes
+    // Seed data: Home, Hero, Content, Main Heading, Intro Text, Status Widget, About = 7 nodes
     const nodes = page.locator(".react-flow__node");
-    await expect(nodes).toHaveCount(6, { timeout: 5_000 });
+    await expect(nodes).toHaveCount(7, { timeout: 5_000 });
   });
 
   test("should display seed edges in the graph", async ({ page }) => {
     const flow = page.locator(".react-flow");
     await expect(flow).toBeVisible({ timeout: 10_000 });
 
-    // Parent-child edges: Home->Hero, Home->Content, Content->Main Heading, Content->Intro Text = 4
+    // Parent-child edges: Home->Hero, Home->Content, Content->Main Heading, Content->Intro Text, Content->Status Widget = 5
     const edges = page.locator(".react-flow__edge");
-    await expect(edges).toHaveCount(4, { timeout: 5_000 });
+    await expect(edges).toHaveCount(5, { timeout: 5_000 });
   });
 
   test("should render node content", async ({ page }) => {

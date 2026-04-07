@@ -6,18 +6,18 @@
  * Like FileMaker Pro custom functions but for building UI.
  */
 
-import { useState, useCallback, useMemo } from "react";
-import { useKernel } from "../kernel/index.js";
+import { useState, useCallback, useMemo, useEffect, useRef } from "react";
+import { useKernel, useSelection, useObject } from "../kernel/index.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
-interface UINode {
+export interface UINode {
   type: string;
   props: Record<string, string>;
   children: UINode[];
 }
 
-interface ParseResult {
+export interface ParseResult {
   nodes: UINode[];
   error: string | null;
 }
@@ -192,7 +192,7 @@ const SAMPLE_NAMES = Object.keys(SAMPLE_SCRIPTS);
  * Simple parser that finds `ui.xxx(...)` patterns in Lua source and builds
  * a tree of UINode objects. Handles nested calls for container elements.
  */
-function parseLuaUi(source: string): ParseResult {
+export function parseLuaUi(source: string): ParseResult {
   const trimmed = source.trim();
   if (trimmed.length === 0) {
     return { nodes: [], error: null };
@@ -478,7 +478,7 @@ const BADGE_COLORS: Record<string, { bg: string; fg: string }> = {
 
 // ── UI Node Renderer ────────────────────────────────────────────────────────
 
-function renderUINode(node: UINode, key: number): React.ReactElement {
+export function renderUINode(node: UINode, key: number): React.ReactElement {
   switch (node.type) {
     case "label":
       return (
@@ -631,12 +631,51 @@ const DEFAULT_SOURCE = SAMPLE_SCRIPTS["Hello World"] ?? "";
 
 export default function LuaFacetPanel() {
   const kernel = useKernel();
+  const { selectedId } = useSelection();
+  const selectedObj = useObject(selectedId);
 
   const [source, setSource] = useState(DEFAULT_SOURCE);
   const [copied, setCopied] = useState(false);
+  const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Track whether we're editing a lua-block object
+  const isLuaBlock = selectedObj?.type === "lua-block";
+  const objectSource = isLuaBlock
+    ? ((selectedObj.data as Record<string, unknown>)["source"] as string) ?? ""
+    : null;
+
+  // When a lua-block is selected, load its source
+  useEffect(() => {
+    if (objectSource !== null) {
+      setSource(objectSource);
+    }
+  }, [selectedId, objectSource]);
+
+  // Debounced save back to kernel when editing a lua-block
+  const handleSourceChange = useCallback(
+    (newSource: string) => {
+      setSource(newSource);
+      if (isLuaBlock && selectedId) {
+        if (syncTimer.current) clearTimeout(syncTimer.current);
+        syncTimer.current = setTimeout(() => {
+          kernel.updateObject(selectedId, {
+            data: { ...((selectedObj?.data as Record<string, unknown>) ?? {}), source: newSource },
+          });
+        }, 400);
+      }
+    },
+    [isLuaBlock, selectedId, selectedObj, kernel],
+  );
+
+  // Clean up timer
+  useEffect(() => {
+    return () => {
+      if (syncTimer.current) clearTimeout(syncTimer.current);
+    };
+  }, []);
 
   // Panel context info
-  const viewId = kernel.atoms.getState().selectedId ?? "(none)";
+  const viewId = selectedId ?? "(none)";
   const instanceKey = `lua-facet-${viewId}`;
   const isActive = true;
 
@@ -722,13 +761,34 @@ export default function LuaFacetPanel() {
         </button>
       </div>
 
+      {/* Object binding indicator */}
+      {isLuaBlock && (
+        <div
+          style={{
+            ...styles.card,
+            borderColor: "#06b6d4",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+          }}
+          data-testid="lua-object-binding"
+        >
+          <span style={{ ...styles.badge, background: "#083344", color: "#06b6d4" }}>
+            Bound
+          </span>
+          <span style={{ fontSize: "0.75rem", color: "#aaa" }}>
+            Editing &ldquo;{selectedObj?.name}&rdquo; &mdash; changes auto-save to kernel
+          </span>
+        </div>
+      )}
+
       {/* Lua editor */}
       <div style={styles.card}>
         <div style={styles.sectionTitle}>Lua Source</div>
         <textarea
           style={{ ...styles.textarea, height: 180 } as React.CSSProperties}
           value={source}
-          onChange={(e) => setSource(e.target.value)}
+          onChange={(e) => handleSourceChange(e.target.value)}
           spellCheck={false}
           data-testid="lua-editor"
         />

@@ -45,8 +45,8 @@ pnpm --filter prism-relay dev   # Relay only — Next.js on http://localhost:300
 ### Testing
 
 ```bash
-pnpm test                       # Vitest — all packages (1955 tests)
-pnpm test:e2e                   # Playwright E2E (requires Studio dev server on :1420)
+pnpm test                       # Vitest — all packages (2652 tests)
+pnpm test:e2e                   # Playwright E2E (263 Studio + 135 Relay tests)
 pnpm typecheck                  # TypeScript strict check
 pnpm lint                       # ESLint
 pnpm format                     # Prettier
@@ -69,9 +69,12 @@ prism/
 │   ├── shared/           # TypeScript types and IPC contracts
 │   ├── prism-core/       # Layer 1 (pure TS) + Layer 2 (React renderers)
 │   ├── prism-daemon/     # Rust: Loro CRDT, mlua Lua 5.4, VFS, hardware
+│   ├── prism-relay/      # Modular relay server: Hono HTTP + WebSocket, CLI
 │   └── prism-studio/     # Vite SPA + Tauri 2.0 shell (Universal Host)
-├── e2e/                  # Playwright end-to-end tests
-├── docs/                 # ADRs, dev plans
+├── docs/
+│   ├── adr/              # Architecture Decision Records
+│   └── dev/              # Current plan, studio checklist
+├── scripts/hooks/        # Claude Code development hooks
 └── SPEC.md               # Full technical specification
 ```
 
@@ -81,7 +84,7 @@ prism/
 |--------|------|
 | **Prism Core** | Client-side glass + logic. Layer 1 (domain-agnostic pure TS) + Layer 2 (React renderers). |
 | **Prism Daemon** | Rust background engine on sovereign hardware. CRDT merging, VFS, Actors, hardware protocols. |
-| **Prism Relay** | Open-source zero-knowledge routing infrastructure. E2EE store-and-forward, Sovereign Portals via Next.js SSR. |
+| **Prism Relay** | Open-source zero-knowledge routing infrastructure. E2EE store-and-forward, Sovereign Portals via SSR, AutoREST API gateway, federation mesh. 15 composable modules. |
 | **Prism Studio** | The Universal Host app. Vite SPA in Tauri (desktop) / Capacitor (mobile). Every app is a Studio instance. |
 | **Prism Nexus** | Commercial SaaS wrapper: managed Relays + cloud Studio + App Repo. Fully ejectable to local. |
 
@@ -93,7 +96,7 @@ prism/
 | State | Zustand | Atomic stores subscribed to specific Loro node IDs. |
 | Scripting | Lua 5.4 | Same scripts run in browser (wasmoon) and daemon (mlua). |
 | Desktop | Tauri 2.0 | Native shell, Rust backend, IPC bridge. |
-| Frontend | Vite + React | SPA for all client apps. Next.js strictly on Relays. |
+| Frontend | Vite + React | SPA for all client apps. SSR strictly on Relays. |
 | Editor | CodeMirror 6 | Sole text/code editor. No Monaco anywhere. |
 
 ### Data Flow
@@ -162,7 +165,7 @@ Layer 2 projects Layer 1 state into visual form.
 | 30a-d | Studio Kernel (Tier 0) | StudioKernel, Entities, Persistence, Undo, Notifications, Search, Clipboard, Templates, Activity | Complete |
 | 30e | Studio UI (Tier 1) | Clipboard UI, Template Gallery, Activity Feed, Object Reorder + 18 E2E | Complete |
 
-**Test status**: 1955 Vitest + 18 Tier 1 Playwright E2E — all passing.
+**Test status**: 2652 Vitest (120 test files) + 263 Studio Playwright E2E + 135 Relay Playwright E2E — all passing.
 
 ## Ecosystem Apps
 
@@ -172,8 +175,8 @@ Four apps share the same Object-Graph and Prism Core. Each is a set of Lenses an
 |-----|---------|
 | **Flux** | Operational hub: productivity, finance, CRM, goals, inventory. The primary entry point. |
 | **Lattice** | Game middleware suite: narrative (Loom), audio (Canto), entity authoring (Simulacra), event orchestration (Cue). |
-| **Cadence** | Music education platform: interactive lessons, DID-based enrollment, CRDT-synced assignments. |
-| **Grip** | Live production management: stage plots, cue sheets, lighting/audio/video control via hardware protocols. |
+| **Cadence** | Music production + education: interactive lessons, DID-based enrollment, CRDT-synced assignments. Backed by OpenDAW audio engine. |
+| **Grip** | Live production management: stage plots, cue sheets, lighting/audio/video control via hardware protocols (MIDI, DMX, OSC). |
 
 ## Philosophy
 
@@ -195,8 +198,8 @@ pnpm --filter prism-relay dev   # Relay only (:3000)
 
 # Quality
 pnpm build        # Production build (dependency order)
-pnpm test         # Vitest (all packages, ~1955 tests)
-pnpm test:e2e     # Playwright E2E (Studio must be running on :1420)
+pnpm test         # Vitest (all packages, ~2652 tests)
+pnpm test:e2e     # Playwright E2E (263 Studio + 135 Relay)
 pnpm typecheck    # TypeScript strict
 pnpm lint         # ESLint
 pnpm format       # Prettier

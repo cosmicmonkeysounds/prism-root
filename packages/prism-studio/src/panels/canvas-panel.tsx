@@ -13,6 +13,159 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import type { GraphObject, ObjectId } from "@prism/core/object-model";
 import { useKernel, useSelection, useObject } from "../kernel/index.js";
+import { parseLuaUi, renderUINode } from "./lua-facet-panel.js";
+
+// ── Block Toolbar ─────────────────────────────────────────────────────────
+
+const toolbarStyles = {
+  container: {
+    position: "absolute" as const,
+    top: -32,
+    right: 0,
+    display: "flex",
+    gap: 2,
+    background: "#252526",
+    border: "1px solid #444",
+    borderRadius: 4,
+    padding: "2px 4px",
+    boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
+    zIndex: 10,
+  },
+  btn: {
+    background: "none",
+    border: "1px solid transparent",
+    borderRadius: 3,
+    color: "#ccc",
+    cursor: "pointer",
+    fontSize: 11,
+    padding: "2px 6px",
+    lineHeight: 1,
+  },
+  btnDanger: {
+    background: "none",
+    border: "1px solid transparent",
+    borderRadius: 3,
+    color: "#f87171",
+    cursor: "pointer",
+    fontSize: 11,
+    padding: "2px 6px",
+    lineHeight: 1,
+  },
+} as const;
+
+function BlockToolbar({
+  obj,
+  kernel,
+}: {
+  obj: GraphObject;
+  kernel: ReturnType<typeof useKernel>;
+}) {
+  const handleMoveUp = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (obj.position <= 0) return;
+      // Swap with sibling above
+      const siblings = kernel.store
+        .allObjects()
+        .filter((o) => o.parentId === obj.parentId && !o.deletedAt && o.id !== obj.id)
+        .sort((a, b) => a.position - b.position);
+      const above = siblings.find((s) => s.position < obj.position);
+      if (above) {
+        kernel.updateObject(above.id, { position: obj.position });
+      }
+      kernel.updateObject(obj.id, { position: obj.position - 1 });
+    },
+    [obj, kernel],
+  );
+
+  const handleMoveDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      const siblings = kernel.store
+        .allObjects()
+        .filter((o) => o.parentId === obj.parentId && !o.deletedAt && o.id !== obj.id)
+        .sort((a, b) => a.position - b.position);
+      const below = siblings.find((s) => s.position > obj.position);
+      if (below) {
+        kernel.updateObject(below.id, { position: obj.position });
+      }
+      kernel.updateObject(obj.id, { position: obj.position + 1 });
+    },
+    [obj, kernel],
+  );
+
+  const handleDuplicate = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      const siblingCount = kernel.store.listObjects({ parentId: obj.parentId ?? null }).length;
+      kernel.createObject({
+        type: obj.type,
+        name: `${obj.name} (copy)`,
+        parentId: obj.parentId,
+        position: siblingCount,
+        status: obj.status,
+        tags: [...obj.tags],
+        date: obj.date,
+        endDate: obj.endDate,
+        description: obj.description,
+        color: obj.color,
+        image: obj.image,
+        pinned: obj.pinned,
+        data: { ...(obj.data as Record<string, unknown>) },
+      });
+      kernel.notifications.add({ title: `Duplicated "${obj.name}"`, kind: "success" });
+    },
+    [obj, kernel],
+  );
+
+  const handleDelete = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      const name = obj.name;
+      kernel.deleteObject(obj.id);
+      kernel.select(obj.parentId);
+      kernel.notifications.add({ title: `Deleted "${name}"`, kind: "info" });
+    },
+    [obj, kernel],
+  );
+
+  return (
+    <div style={toolbarStyles.container} data-testid={`block-toolbar-${obj.id}`}>
+      <button
+        style={toolbarStyles.btn}
+        onClick={handleMoveUp}
+        title="Move up"
+        data-testid="toolbar-move-up"
+      >
+        {"\u25B2"}
+      </button>
+      <button
+        style={toolbarStyles.btn}
+        onClick={handleMoveDown}
+        title="Move down"
+        data-testid="toolbar-move-down"
+      >
+        {"\u25BC"}
+      </button>
+      <button
+        style={toolbarStyles.btn}
+        onClick={handleDuplicate}
+        title="Duplicate"
+        data-testid="toolbar-duplicate"
+      >
+        {"\u29C9"}
+      </button>
+      <button
+        style={toolbarStyles.btnDanger}
+        onClick={handleDelete}
+        title="Delete"
+        data-testid="toolbar-delete"
+      >
+        {"\u2715"}
+      </button>
+    </div>
+  );
+}
 
 // ── Markdown helpers ───────────────────────────────────────────────────────
 
@@ -273,17 +426,64 @@ function CardRenderer({ obj }: { obj: GraphObject }) {
   );
 }
 
+function LuaBlockRenderer({ obj }: { obj: GraphObject }) {
+  const data = obj.data as { source?: string; title?: string };
+  const source = data.source ?? "";
+  const title = data.title ?? obj.name;
+  const result = parseLuaUi(source);
+
+  return (
+    <div
+      data-testid={`lua-block-preview-${obj.id}`}
+      style={{
+        border: "1px solid #06b6d4",
+        borderRadius: 6,
+        padding: 12,
+        margin: "0 0 8px 0",
+        background: "#f0fdff",
+      }}
+    >
+      <div
+        style={{
+          fontSize: 11,
+          fontWeight: 600,
+          color: "#06b6d4",
+          textTransform: "uppercase",
+          letterSpacing: "0.05em",
+          marginBottom: 6,
+          display: "flex",
+          alignItems: "center",
+          gap: 4,
+        }}
+      >
+        {"\uD83C\uDF19"} {title}
+      </div>
+      {result.error ? (
+        <div style={{ color: "#dc2626", fontSize: 12 }}>Lua error: {result.error}</div>
+      ) : result.nodes.length === 0 ? (
+        <div style={{ color: "#999", fontStyle: "italic", fontSize: 12 }}>
+          Empty Lua script
+        </div>
+      ) : (
+        <div>{result.nodes.map((node, i) => renderUINode(node, i))}</div>
+      )}
+    </div>
+  );
+}
+
 // ── Block wrapper (selection highlight + click) ────────────────────────────
 
 function BlockWrapper({
   obj,
   isSelected,
   onSelect,
+  kernel,
   children,
 }: {
   obj: GraphObject;
   isSelected: boolean;
   onSelect: (id: ObjectId) => void;
+  kernel: ReturnType<typeof useKernel>;
   children: ReactNode;
 }) {
   const handleClick = useCallback(
@@ -299,6 +499,7 @@ function BlockWrapper({
       data-testid={`canvas-block-${obj.id}`}
       onClick={handleClick}
       style={{
+        position: "relative",
         outline: isSelected ? "2px solid #3b82f6" : "2px solid transparent",
         outlineOffset: "2px",
         borderRadius: "4px",
@@ -306,6 +507,7 @@ function BlockWrapper({
         transition: "outline-color 0.15s",
       }}
     >
+      {isSelected && <BlockToolbar obj={obj} kernel={kernel} />}
       {children}
     </div>
   );
@@ -317,10 +519,12 @@ function ComponentBlock({
   obj,
   isSelected,
   onSelect,
+  kernel,
 }: {
   obj: GraphObject;
   isSelected: boolean;
   onSelect: (id: ObjectId) => void;
+  kernel: ReturnType<typeof useKernel>;
 }) {
   let content: ReactNode;
 
@@ -340,6 +544,9 @@ function ComponentBlock({
     case "card":
       content = <CardRenderer obj={obj} />;
       break;
+    case "lua-block":
+      content = <LuaBlockRenderer obj={obj} />;
+      break;
     default:
       content = (
         <div style={{ color: "#999", fontStyle: "italic", padding: "8px" }}>
@@ -349,7 +556,7 @@ function ComponentBlock({
   }
 
   return (
-    <BlockWrapper obj={obj} isSelected={isSelected} onSelect={onSelect}>
+    <BlockWrapper obj={obj} isSelected={isSelected} onSelect={onSelect} kernel={kernel}>
       {content}
     </BlockWrapper>
   );
@@ -361,10 +568,12 @@ function SectionBlock({
   obj,
   selectedId,
   onSelect,
+  kernel,
 }: {
   obj: GraphObject;
   selectedId: ObjectId | null;
   onSelect: (id: ObjectId) => void;
+  kernel: ReturnType<typeof useKernel>;
 }) {
   const children = useChildren(obj.id);
   const data = obj.data as { padding?: string; background?: string; variant?: string };
@@ -415,8 +624,138 @@ function SectionBlock({
             obj={child}
             isSelected={selectedId === child.id}
             onSelect={onSelect}
+            kernel={kernel}
           />
         ))
+      )}
+      <QuickCreate parentId={obj.id} parentType={obj.type} kernel={kernel} />
+    </div>
+  );
+}
+
+// ── Quick-Create Combobox ──────────────────────────────────────────────────
+
+function QuickCreate({
+  parentId,
+  parentType,
+  kernel,
+}: {
+  parentId: ObjectId;
+  parentType: string;
+  kernel: ReturnType<typeof useKernel>;
+}) {
+  const [open, setOpen] = useState(false);
+
+  const allowedTypes = useMemo(
+    () => kernel.registry.getAllowedChildTypes(parentType),
+    [kernel.registry, parentType],
+  );
+
+  const handleAdd = useCallback(
+    (type: string) => {
+      const def = kernel.registry.get(type);
+      const siblings = kernel.store.listObjects({ parentId }).length;
+      const newObj = kernel.createObject({
+        type,
+        name: `New ${def?.label ?? type}`,
+        parentId,
+        position: siblings,
+        status: "draft",
+        tags: [],
+        date: null,
+        endDate: null,
+        description: "",
+        color: null,
+        image: null,
+        pinned: false,
+        data: {},
+      });
+      kernel.select(newObj.id);
+      setOpen(false);
+    },
+    [parentId, kernel],
+  );
+
+  if (allowedTypes.length === 0) return null;
+
+  return (
+    <div
+      style={{ textAlign: "center", padding: "8px 0" }}
+      data-testid={`quick-create-${parentId}`}
+    >
+      {!open ? (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            setOpen(true);
+          }}
+          style={{
+            background: "transparent",
+            border: "1px dashed #ccc",
+            borderRadius: 4,
+            color: "#999",
+            cursor: "pointer",
+            fontSize: 12,
+            padding: "6px 16px",
+          }}
+          data-testid="quick-create-trigger"
+        >
+          + Add block
+        </button>
+      ) : (
+        <div
+          style={{
+            display: "inline-flex",
+            gap: 4,
+            flexWrap: "wrap",
+            justifyContent: "center",
+            padding: "4px 0",
+          }}
+          data-testid="quick-create-menu"
+        >
+          {allowedTypes.map((type) => {
+            const def = kernel.registry.get(type);
+            const icon = typeof def?.icon === "string" ? def.icon : "\u25CB";
+            return (
+              <button
+                key={type}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleAdd(type);
+                }}
+                style={{
+                  background: "#f0f0f0",
+                  border: "1px solid #ddd",
+                  borderRadius: 4,
+                  color: "#333",
+                  cursor: "pointer",
+                  fontSize: 11,
+                  padding: "4px 10px",
+                }}
+                data-testid={`quick-create-option-${type}`}
+              >
+                {icon} {def?.label ?? type}
+              </button>
+            );
+          })}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setOpen(false);
+            }}
+            style={{
+              background: "transparent",
+              border: "1px solid #ddd",
+              borderRadius: 4,
+              color: "#999",
+              cursor: "pointer",
+              fontSize: 11,
+              padding: "4px 8px",
+            }}
+          >
+            {"\u2715"}
+          </button>
+        </div>
       )}
     </div>
   );
@@ -514,9 +853,11 @@ export function CanvasPanel() {
               obj={section}
               selectedId={selectedId}
               onSelect={handleSelect}
+              kernel={kernel}
             />
           ))
         )}
+        <QuickCreate parentId={page.id} parentType={page.type} kernel={kernel} />
       </div>
     </div>
   );

@@ -9,6 +9,7 @@
 import { useLensContext, useShellStore } from "@prism/core/shell";
 import { ActivityBar, TabBar } from "@prism/core/shell";
 import { ObjectExplorer } from "./object-explorer.js";
+import { ComponentPalette } from "./component-palette.js";
 import { InspectorPanel } from "./inspector-panel.js";
 import { UndoStatusBar } from "./undo-status-bar.js";
 import { PresenceIndicator } from "./presence-indicator.js";
@@ -78,6 +79,15 @@ export function StudioShell() {
             </button>
           </div>
           <ObjectExplorer />
+          <div
+            style={{
+              borderTop: "1px solid #333",
+              maxHeight: "35%",
+              overflow: "auto",
+            }}
+          >
+            <ComponentPalette />
+          </div>
         </div>
       )}
 

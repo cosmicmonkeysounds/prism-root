@@ -10,7 +10,8 @@
     "./server": "./src/server/index.ts",
     "./protocol": "./src/protocol/index.ts",
     "./config": "./src/config/index.ts",
-    "./cli": "./src/cli.ts"
+    "./cli": "./src/cli.ts",
+    "./persistence": "./src/persistence/file-store.ts"
   },
   "scripts": {
     "dev": "tsx watch src/cli.ts",

@@ -12,6 +12,11 @@ import type { SearchHit } from "@prism/core/search";
 import { useKernel, useSelection, useViewMode } from "../kernel/index.js";
 import type { ViewMode } from "@prism/core/view";
 
+// ── Drag-Drop State ─────────────────────────────────────────────────────────
+
+/** Module-level drag state shared across all tree nodes. */
+let draggedId: string | null = null;
+
 const reorderBtnStyle = {
   background: "none",
   border: "none",
@@ -46,29 +51,144 @@ function TreeNode({
   const isExpanded = expanded.has(obj.id);
   const def = kernel.registry.get(obj.type);
   const icon = def?.icon ?? "\u25CB";
+  const [dropTarget, setDropTarget] = useState<"above" | "on" | "below" | null>(null);
+
+  const handleDragStart = useCallback(
+    (e: React.DragEvent) => {
+      draggedId = obj.id;
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", obj.id);
+    },
+    [obj.id],
+  );
+
+  const handleDragOver = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      if (!draggedId || draggedId === obj.id) return;
+
+      // Determine drop position based on cursor Y within the row
+      const rect = e.currentTarget.getBoundingClientRect();
+      const y = e.clientY - rect.top;
+      const quarter = rect.height / 4;
+
+      if (y < quarter) {
+        setDropTarget("above");
+      } else if (y > rect.height - quarter) {
+        setDropTarget("below");
+      } else {
+        // Validate containment: can the dragged type be a child of this object?
+        const dragObj = kernel.store.allObjects().find((o) => o.id === draggedId);
+        if (dragObj && kernel.registry.canBeChildOf(dragObj.type, obj.type)) {
+          setDropTarget("on");
+        } else {
+          setDropTarget("above");
+        }
+      }
+      e.dataTransfer.dropEffect = "move";
+    },
+    [obj.id, obj.type, kernel],
+  );
+
+  const handleDragLeave = useCallback(() => {
+    setDropTarget(null);
+  }, []);
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setDropTarget(null);
+
+      const sourceId = draggedId;
+      draggedId = null;
+      if (!sourceId || sourceId === obj.id) return;
+
+      const sourceObj = kernel.store.allObjects().find((o) => o.id === sourceId);
+      if (!sourceObj) return;
+
+      if (dropTarget === "on") {
+        // Reparent: move source into this object as a child
+        if (kernel.registry.canBeChildOf(sourceObj.type, obj.type)) {
+          const childCount = kernel.store.listObjects({ parentId: obj.id }).length;
+          kernel.updateObject(sourceObj.id, {
+            parentId: obj.id,
+            position: childCount,
+          });
+          kernel.notifications.add({ title: `Moved "${sourceObj.name}" into "${obj.name}"`, kind: "info" });
+        }
+      } else {
+        // Reorder: place source above or below this object (same parent)
+        const targetParentId = obj.parentId;
+        const targetPosition = dropTarget === "above" ? obj.position : obj.position + 1;
+
+        // Validate containment if reparenting
+        if (sourceObj.parentId !== targetParentId) {
+          if (targetParentId) {
+            const parentObj = kernel.store.getObject(targetParentId);
+            if (!parentObj || !kernel.registry.canBeChildOf(sourceObj.type, parentObj.type)) return;
+          }
+        }
+
+        kernel.updateObject(sourceObj.id, {
+          parentId: targetParentId,
+          position: targetPosition,
+        });
+
+        // Shift siblings down
+        const siblings = kernel.store
+          .allObjects()
+          .filter(
+            (o) =>
+              o.parentId === targetParentId &&
+              !o.deletedAt &&
+              o.id !== sourceObj.id &&
+              o.position >= targetPosition,
+          );
+        for (const s of siblings) {
+          kernel.updateObject(s.id, { position: s.position + 1 });
+        }
+      }
+    },
+    [obj, kernel, dropTarget],
+  );
+
+  const dropIndicatorStyle = dropTarget === "above"
+    ? { borderTop: "2px solid #3b82f6" }
+    : dropTarget === "below"
+      ? { borderBottom: "2px solid #3b82f6" }
+      : dropTarget === "on"
+        ? { background: "#1a3a5c" }
+        : {};
 
   return (
     <div>
       <div
         data-testid={`explorer-node-${obj.id}`}
+        draggable
         onClick={() => kernel.select(obj.id)}
+        onDragStart={handleDragStart}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
         style={{
           display: "flex",
           alignItems: "center",
           padding: "3px 8px",
           paddingLeft: 8 + depth * 16,
-          cursor: "pointer",
+          cursor: "grab",
           background: isSelected ? "#094771" : "transparent",
           color: isSelected ? "#fff" : "#ccc",
           fontSize: 12,
           gap: 4,
           userSelect: "none",
+          ...dropIndicatorStyle,
         }}
         onMouseEnter={(e) => {
-          if (!isSelected) e.currentTarget.style.background = "#2a2d2e";
+          if (!isSelected && !dropTarget) e.currentTarget.style.background = "#2a2d2e";
         }}
         onMouseLeave={(e) => {
-          if (!isSelected) e.currentTarget.style.background = "transparent";
+          if (!isSelected && !dropTarget) e.currentTarget.style.background = "transparent";
         }}
       >
         {hasChildren ? (
