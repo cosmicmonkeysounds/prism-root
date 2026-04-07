@@ -18,6 +18,10 @@ export function createTokenRoutes(relay: RelayInstance): Hono {
     await next();
   });
 
+  app.get("/", (c) => {
+    return c.json(manager().list());
+  });
+
   app.post("/issue", async (c) => {
     const body = await c.req.json<{
       subject: DID | "*";

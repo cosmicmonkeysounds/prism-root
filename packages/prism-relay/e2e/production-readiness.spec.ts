@@ -717,7 +717,7 @@ test.describe("Malicious Input", () => {
   });
 
   test("handles non-JSON content type gracefully", async () => {
-    const res = await fetch(`${url}/api/webhooks`, {
+    await fetch(`${url}/api/webhooks`, {
       method: "POST",
       headers: { "Content-Type": "text/plain" },
       body: "this is not json",

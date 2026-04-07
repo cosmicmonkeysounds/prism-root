@@ -173,6 +173,8 @@ export interface CapabilityTokenManager {
   revoke(tokenId: string): void;
   /** Check if a token has been revoked. */
   isRevoked(tokenId: string): boolean;
+  /** List all issued tokens (excludes revoked). */
+  list(): CapabilityToken[];
 }
 
 // ── Webhooks ────────────────────────────────────────────────────────────────

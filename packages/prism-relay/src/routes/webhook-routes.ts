@@ -38,6 +38,17 @@ export function createWebhookRoutes(relay: RelayInstance): Hono {
     return c.json({ ok: true });
   });
 
+  app.post("/:id/test", async (c) => {
+    const id = c.req.param("id");
+    const webhook = emitter().list().find((w) => w.id === id);
+    if (!webhook) return c.json({ error: "webhook not found" }, 404);
+    await emitter().emit("webhook.test", {
+      webhookId: id,
+      timestamp: new Date().toISOString(),
+    });
+    return c.json({ ok: true, deliveredTo: webhook.url });
+  });
+
   app.get("/:id/deliveries", (c) => {
     return c.json(emitter().deliveries(c.req.param("id")));
   });

@@ -32,8 +32,11 @@ import {
   createPingRoutes,
   createSignalingRoutes,
   createPresenceRoutes,
+  createBackupRoutes,
+  createLogsRoutes,
+  createLogBuffer,
 } from "../routes/index.js";
-import type { AuthRoutesOptions } from "../routes/index.js";
+import type { AuthRoutesOptions, LogBuffer } from "../routes/index.js";
 import { handleWsOpen, handleWsMessage, handleWsClose, createConnectionRegistry, createPresenceStore } from "../transport/index.js";
 import type { WsConnection } from "../transport/index.js";
 import {
@@ -56,10 +59,13 @@ export interface RelayServerOptions {
   maxBodySize?: number;
   /** Disable CSRF protection (for testing). Default: false. */
   disableCsrf?: boolean;
+  /** Log buffer for /api/logs endpoint. */
+  logBuffer?: LogBuffer;
 }
 
 export interface RelayServer {
   app: Hono;
+  logBuffer: LogBuffer;
   start(): Promise<{ port: number; close(): Promise<void> }>;
 }
 
@@ -74,6 +80,7 @@ export function createRelayServer(options: RelayServerOptions): RelayServer {
     maxBodySize = 1_048_576,
     disableCsrf = false,
   } = options;
+  const logBuffer = options.logBuffer ?? createLogBuffer();
   const app = new Hono();
 
   // ── CORS middleware ────────────────────────────────────────────────────
@@ -132,6 +139,8 @@ export function createRelayServer(options: RelayServerOptions): RelayServer {
   app.route("/api/pings", createPingRoutes(relay));
   app.route("/api/signaling", createSignalingRoutes(relay));
   app.route("/api/presence", createPresenceRoutes(presenceStore));
+  app.route("/api/backup", createBackupRoutes(relay));
+  app.route("/api/logs", createLogsRoutes(logBuffer));
 
   // ── ACME HTTP-01 challenge response (Let's Encrypt) ─────────────────
   app.route("/.well-known/acme-challenge", createAcmeRoutes(relay));
@@ -192,6 +201,7 @@ export function createRelayServer(options: RelayServerOptions): RelayServer {
 
   return {
     app,
+    logBuffer,
     start() {
       return new Promise<{ port: number; close(): Promise<void> }>((resolve) => {
         const server = serve({ fetch: app.fetch, port, hostname: host }, (info) => {

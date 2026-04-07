@@ -394,6 +394,7 @@ function createCapabilityTokenManager(
   identity: PrismIdentity,
 ): CapabilityTokenManager {
   const revoked = new Set<string>();
+  const issued: CapabilityToken[] = [];
   const encoder = new TextEncoder();
 
   return {
@@ -407,7 +408,7 @@ function createCapabilityTokenManager(
       const payload = `${tokenId}:${identity.did}:${params.subject}:${params.permissions.join(",")}:${params.scope}:${issuedAt}:${expiresAt ?? "null"}`;
       const signature = await identity.signPayload(encoder.encode(payload));
 
-      return {
+      const token: CapabilityToken = {
         tokenId,
         issuer: identity.did,
         subject: params.subject,
@@ -417,6 +418,8 @@ function createCapabilityTokenManager(
         expiresAt,
         signature,
       };
+      issued.push(token);
+      return token;
     },
 
     async verify(token: CapabilityToken): Promise<{ valid: boolean; reason?: string }> {
@@ -447,6 +450,10 @@ function createCapabilityTokenManager(
 
     isRevoked(tokenId: string): boolean {
       return revoked.has(tokenId);
+    },
+
+    list(): CapabilityToken[] {
+      return issued.filter((t) => !revoked.has(t.tokenId));
     },
   };
 }

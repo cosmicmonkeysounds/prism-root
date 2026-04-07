@@ -21,3 +21,6 @@ export { createPushPingTransport } from "../transport/push-transport.js";
 export type { PushTransportConfig } from "../transport/push-transport.js";
 export { createSignalingRoutes } from "./signaling-routes.js";
 export { createPresenceRoutes } from "./presence-routes.js";
+export { createBackupRoutes } from "./backup-routes.js";
+export { createLogsRoutes, createLogBuffer } from "./logs-routes.js";
+export type { LogBuffer, LogEntry } from "./logs-routes.js";
