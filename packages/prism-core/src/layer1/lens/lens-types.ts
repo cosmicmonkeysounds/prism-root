@@ -15,7 +15,7 @@ export type TabId = string & { readonly __brand: "TabId" };
 export const tabId = (id: string): TabId => id as TabId;
 
 /** Category for activity-bar grouping. */
-export type LensCategory = "editor" | "visual" | "data" | "debug" | "custom";
+export type LensCategory = "editor" | "visual" | "data" | "debug" | "custom" | "facet";
 
 /** A command contribution from a lens. */
 export interface LensCommand {

@@ -16,10 +16,10 @@ The Universal Host — Vite SPA + Tauri 2.0 desktop shell.
 
 ## Kernel (`src/kernel/`)
 The Studio kernel wires all Layer 1 systems together:
-- `studio-kernel.ts` — creates and connects ObjectRegistry, CollectionStore, PrismBus, AtomStore, ObjectAtomStore, UndoRedoManager, NotificationStore, SearchEngine, ActivityStore, ActivityTracker, RelayManager, AutomationEngine, graph analysis, expression evaluator, PluginRegistry, InputRouter, VaultRoster, FormState helpers, Identity (DID generation/sign/verify/export/import), VfsManager (content-addressed blob storage with locks), Trust & Safety (PeerTrustGraph, SchemaValidator, LuaSandbox, ShamirSplitter, EscrowManager). Also wires clipboard (copy/cut/paste), batch ops, templates, and LiveView.
+- `studio-kernel.ts` — creates and connects ObjectRegistry, CollectionStore, PrismBus, AtomStore, ObjectAtomStore, UndoRedoManager, NotificationStore, SearchEngine, ActivityStore, ActivityTracker, RelayManager, AutomationEngine, graph analysis, expression evaluator, PluginRegistry, InputRouter, VaultRoster, FormState helpers, Identity (DID generation/sign/verify/export/import), VfsManager (content-addressed blob storage with locks), Trust & Safety (PeerTrustGraph, SchemaValidator, LuaSandbox, ShamirSplitter, EscrowManager), Facet System (FacetParser, SpellChecker, ProseCodec, Sequencer, Emitters, FacetDefinition registry). Also wires clipboard (copy/cut/paste), batch ops, templates, and LiveView.
 - `relay-manager.ts` — manages connections to Prism Relay servers. Studio is client-only (no server code). Handles relay CRUD, WebSocket connect/disconnect via RelayClient SDK, portal publish/unpublish/list via HTTP API, collection sync, and relay status. Injectable HTTP/WS clients for testing.
 - `entities.ts` — page-builder entity types (folder, page, section, heading, text-block, image, button, card) with category containment rules and edge types (references, links-to)
-- `kernel-context.tsx` — React context + hooks: useKernel, useSelection, useObjects, useObject, useUndo, useNotifications, useRelay, useConfig, useConfigSettings, usePresence, useViewMode, useAutomation, useGraphAnalysis, useExpression, usePlugins, useInputRouter, useVaultRoster, useIdentity, useVfs, useTrust
+- `kernel-context.tsx` — React context + hooks: useKernel, useSelection, useObjects, useObject, useUndo, useNotifications, useRelay, useConfig, useConfigSettings, usePresence, useViewMode, useAutomation, useGraphAnalysis, useExpression, usePlugins, useInputRouter, useVaultRoster, useIdentity, useVfs, useTrust, useFacetParser, useSpellCheck, useProseCodec, useSequencer, useEmitters, useFacetDefinitions
 
 ## Components (`src/components/`)
 - `studio-shell.tsx` — custom shell layout replacing core ShellLayout with real sidebar/inspector content
@@ -45,9 +45,12 @@ The Studio kernel wires all Layer 1 systems together:
 - `identity-panel.tsx` — Identity management: generate DID, display DID/document/public key, sign & verify payloads, export/import JSON
 - `assets-panel.tsx` — VFS browser: import files, browse blobs (hash/size/MIME), lock/unlock binary forking, remove files
 - `trust-panel.tsx` — Trust dashboard: 4 tabs — Peers (add/trust/distrust/ban/unban with trust levels), Validation (JSON schema validator), Flags (content hash flagging), Escrow (deposit/list encrypted key material)
+- `form-facet-panel.tsx` — Schema-driven form renderer: YAML/JSON source editor, auto-detected fields, bidirectional source↔form sync, spell checking
+- `table-facet-panel.tsx` — Data grid: sortable/filterable columns, inline editing, keyboard navigation, row selection
+- `sequencer-panel.tsx` — Visual automation builder: condition builder (subject/operator/value), script builder (step list), live Lua preview
 
 ## Lenses
-15 lenses: Editor (e), Graph (g), Layout (l), Canvas (v), CRDT (c), Relay (r), Settings (,), Automation (a), Analysis (n), Plugins (p), Shortcuts (k), Vaults (w), Identity (i), Assets (f), Trust (t)
+18 lenses: Editor (e), Graph (g), Layout (l), Canvas (v), CRDT (c), Relay (r), Settings (,), Automation (a), Analysis (n), Plugins (p), Shortcuts (k), Vaults (w), Identity (i), Assets (f), Trust (t), Form (d), Table (b), Sequencer (q)
 
 ## Data Flow
 ```

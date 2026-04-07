@@ -23,6 +23,9 @@ import { VaultPanel } from "../panels/vault-panel.js";
 import { IdentityPanel } from "../panels/identity-panel.js";
 import { AssetsPanel } from "../panels/assets-panel.js";
 import { TrustPanel } from "../panels/trust-panel.js";
+import { FormFacetPanel } from "../panels/form-facet-panel.js";
+import { TableFacetPanel } from "../panels/table-facet-panel.js";
+import { SequencerPanel } from "../panels/sequencer-panel.js";
 
 export const EDITOR_LENS_ID = lensId("editor");
 export const GRAPH_LENS_ID = lensId("graph");
@@ -39,6 +42,9 @@ export const VAULT_LENS_ID = lensId("vault");
 export const IDENTITY_LENS_ID = lensId("identity");
 export const ASSETS_LENS_ID = lensId("assets");
 export const TRUST_LENS_ID = lensId("trust");
+export const FORM_FACET_LENS_ID = lensId("form-facet");
+export const TABLE_FACET_LENS_ID = lensId("table-facet");
+export const SEQUENCER_LENS_ID = lensId("sequencer");
 
 const editorManifest: LensManifest = {
   id: EDITOR_LENS_ID,
@@ -205,6 +211,39 @@ const trustManifest: LensManifest = {
   },
 };
 
+const formFacetManifest: LensManifest = {
+  id: FORM_FACET_LENS_ID,
+  name: "Form",
+  icon: "\uD83D\uDCDD",
+  category: "custom",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-form-facet", name: "Switch to Form Facet", shortcut: ["d"], section: "Navigation" }],
+  },
+};
+
+const tableFacetManifest: LensManifest = {
+  id: TABLE_FACET_LENS_ID,
+  name: "Table",
+  icon: "\uD83D\uDCCA",
+  category: "custom",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-table-facet", name: "Switch to Table Facet", shortcut: ["b"], section: "Navigation" }],
+  },
+};
+
+const sequencerManifest: LensManifest = {
+  id: SEQUENCER_LENS_ID,
+  name: "Sequencer",
+  icon: "\uD83C\uDFBC",
+  category: "custom",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-sequencer", name: "Switch to Sequencer", shortcut: ["q"], section: "Navigation" }],
+  },
+};
+
 export const ALL_MANIFESTS: LensManifest[] = [
   editorManifest,
   graphManifest,
@@ -221,6 +260,9 @@ export const ALL_MANIFESTS: LensManifest[] = [
   identityManifest,
   assetsManifest,
   trustManifest,
+  formFacetManifest,
+  tableFacetManifest,
+  sequencerManifest,
 ];
 
 export function registerBuiltinLenses(registry: LensRegistry): () => void {
@@ -245,5 +287,8 @@ export function createLensComponentMap(): Map<LensId, ComponentType> {
   map.set(IDENTITY_LENS_ID, IdentityPanel);
   map.set(ASSETS_LENS_ID, AssetsPanel);
   map.set(TRUST_LENS_ID, TrustPanel);
+  map.set(FORM_FACET_LENS_ID, FormFacetPanel);
+  map.set(TABLE_FACET_LENS_ID, TableFacetPanel);
+  map.set(SEQUENCER_LENS_ID, SequencerPanel);
   return map;
 }

@@ -23,6 +23,8 @@ import type { RosterEntry } from "@prism/core/discovery";
 import type { PrismIdentity, ExportedIdentity } from "@prism/core/identity";
 import type { BinaryRef, BinaryLock } from "@prism/core/vfs";
 import type { PeerReputation, SchemaValidationResult, ContentHash, SandboxPolicy, LuaSandbox, ShamirShare, ShamirConfig, EscrowDeposit } from "@prism/core/trust";
+import type { SourceFormat, FacetDefinition, FacetLayout, ProseNode, SchemaModel, SequencerConditionState, SequencerScriptState } from "@prism/core/facet";
+import type { FieldSchema } from "@prism/core/forms";
 
 // ── Context ─────────────────────────────────────────────────────────────────
 
@@ -619,5 +621,103 @@ export function useTrust(): {
     combineShares: kernel.combineShares,
     depositEscrow: kernel.depositEscrow,
     listEscrowDeposits: kernel.listEscrowDeposits,
+  };
+}
+
+/** Facet parser utilities. */
+export function useFacetParser(): {
+  detectFormat: (source: string) => SourceFormat;
+  parseValues: (source: string, format: SourceFormat) => Record<string, unknown>;
+  serializeValues: (values: Record<string, unknown>, format: SourceFormat, originalSource?: string) => string;
+  inferFields: (values: Record<string, unknown>) => FieldSchema[];
+} {
+  const kernel = useKernel();
+
+  return {
+    detectFormat: kernel.detectFormat,
+    parseValues: kernel.parseValues,
+    serializeValues: kernel.serializeValues,
+    inferFields: kernel.inferFields,
+  };
+}
+
+/** Spell checking utilities. */
+export function useSpellCheck(): {
+  check: (text: string) => Array<{ word: string; from: number; to: number; suggestions: string[] }>;
+  suggest: (word: string) => string[];
+} {
+  const kernel = useKernel();
+
+  return {
+    check: kernel.spellCheck,
+    suggest: kernel.spellSuggest,
+  };
+}
+
+/** Prose codec (Markdown ↔ ProseNode). */
+export function useProseCodec(): {
+  markdownToNodes: (md: string) => ProseNode;
+  nodesToMarkdown: (node: ProseNode) => string;
+} {
+  const kernel = useKernel();
+
+  return {
+    markdownToNodes: kernel.markdownToNodes,
+    nodesToMarkdown: kernel.nodesToMarkdown,
+  };
+}
+
+/** Sequencer (visual condition/script → Lua). */
+export function useSequencer(): {
+  emitConditionLua: (state: SequencerConditionState) => string;
+  emitScriptLua: (state: SequencerScriptState) => string;
+} {
+  const kernel = useKernel();
+
+  return {
+    emitConditionLua: kernel.emitConditionLua,
+    emitScriptLua: kernel.emitScriptLua,
+  };
+}
+
+/** Code emitters (SchemaModel → multi-language). */
+export function useEmitters(): {
+  emit: (model: SchemaModel, language: "typescript" | "javascript" | "csharp" | "lua" | "json" | "yaml" | "toml") => string;
+} {
+  const kernel = useKernel();
+
+  return {
+    emit: kernel.emitCode,
+  };
+}
+
+/** Reactive facet definition registry. */
+export function useFacetDefinitions(): {
+  definitions: FacetDefinition[];
+  register: (definition: FacetDefinition) => void;
+  remove: (id: string) => boolean;
+  get: (id: string) => FacetDefinition | undefined;
+  buildDefinition: (id: string, entityType: string, layout: FacetLayout) => ReturnType<StudioKernel["buildFacetDefinition"]>;
+} {
+  const kernel = useKernel();
+  const versionRef = useRef(0);
+
+  const version = useSyncExternalStore(
+    (cb) => kernel.onFacetChange(() => {
+      versionRef.current++;
+      cb();
+    }),
+    () => versionRef.current,
+  );
+
+  // Force re-read on version change
+  void version;
+
+  return {
+    definitions: kernel.listFacetDefinitions(),
+    register: kernel.registerFacetDefinition,
+    remove: kernel.removeFacetDefinition,
+    get: kernel.getFacetDefinition,
+    buildDefinition: kernel.buildFacetDefinition,
   };
 }

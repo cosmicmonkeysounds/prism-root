@@ -1538,6 +1538,34 @@ Wired three sovereignty Layer 1 systems into Studio: Identity (W3C DID managemen
 | Vitest (total) | 2170 | Pass |
 | **Phase 30m Total** | **2170 Vitest + E2E** | **All Pass** |
 
+## Phase 30n: Studio Tier 6 — Facets UI (Complete)
+
+Wired Layer 1 facet engines (FacetParser, SpellEngine, Sequencer, ProseCodec, Emitters) into Studio kernel and built three new React panels for visual data projection and automation building.
+
+### Completed
+
+- [x] **Kernel wiring** — FacetParser (detect/parse/serialize/infer), SpellChecker (check/suggest with MockSpellCheckBackend + static dictionary), ProseCodec (markdownToNodes/nodesToMarkdown), Sequencer (emitConditionLua/emitScriptLua), Emitters (TS/JS/C#/Lua/JSON/YAML/TOML via SchemaModel), FacetDefinition registry (register/list/get/remove/builder)
+- [x] **React hooks** — `useFacetParser` (detect/parse/serialize/infer), `useSpellCheck` (check/suggest), `useProseCodec` (md↔nodes), `useSequencer` (condition/script→Lua), `useEmitters` (multi-language codegen), `useFacetDefinitions` (reactive definition registry)
+- [x] **Form Facet Panel** (`form-facet-panel.tsx`) — schema-driven form renderer: YAML/JSON source editor, auto-detected field types (text/number/boolean/email/tags/textarea), bidirectional source↔form sync, SpellEngine integration for text fields with inline error display
+- [x] **Table Facet Panel** (`table-facet-panel.tsx`) — data grid: sortable columns (name/type/status/tags/position/updated), text filter + type dropdown filter, inline editing via double-click, keyboard navigation (arrow keys), row selection synced with kernel
+- [x] **Sequencer Panel** (`sequencer-panel.tsx`) — visual automation builder: ConditionBuilder (combinator ALL/ANY, subject kind/operator/value dropdowns, add/remove clauses), ScriptBuilder (action steps with reorder/add/remove), live Lua preview, copy to clipboard
+- [x] **Lens registration** — 3 new lenses: Form (d), Table (b), Sequencer (q). Total: 18 lenses
+- [x] **Kernel unit tests** — 22 new tests: facet parser (7), spell checker (2), prose codec (2), sequencer (3), emitters (3), facet definitions (4), dispose (1)
+- [x] **Shell test updated** — activity bar icon count 15 → 18
+
+### Test Summary
+
+| Suite | Count | Status |
+|-------|-------|--------|
+| Vitest — facet parser | 7 | Pass |
+| Vitest — spell checker | 2 | Pass |
+| Vitest — prose codec | 2 | Pass |
+| Vitest — sequencer | 3 | Pass |
+| Vitest — emitters | 3 | Pass |
+| Vitest — facet definitions | 4 | Pass |
+| Vitest (total) | 2622 | Pass |
+| **Phase 30n Total** | **2622 Vitest + E2E** | **All Pass** |
+
 ## Phase 30l: WebRTC Signaling — All Relays (Complete)
 
 WebRTC signaling as a standard relay module available to ALL relays, not deferred as Nexus-only. Enables P2P connection negotiation (SDP offer/answer, ICE candidates) through any relay.

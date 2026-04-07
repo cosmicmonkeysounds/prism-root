@@ -52,6 +52,7 @@ export default defineConfig({
       "@prism/core/timeline": core("layer1/timeline/index.ts"),
       "@prism/core/audio": core("layer2/audio/index.ts"),
       "@prism/core/viewport3d": core("layer2/viewport3d/index.ts"),
+      "@prism/core/facet": core("layer1/facet/index.ts"),
       "@prism/core/flux": core("layer1/flux/index.ts"),
       "@prism/core/machines": core("layer1/machines/index.ts"),
       "@prism/core/lua": core("layer1/lua/index.ts"),

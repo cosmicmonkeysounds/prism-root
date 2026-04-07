@@ -1081,6 +1081,190 @@ describe("StudioKernel", () => {
     });
   });
 
+  // ── Facet System ──────────────────────────────────────────────────────────
+
+  describe("facet parser", () => {
+    it("should detect YAML format", () => {
+      expect(kernel.detectFormat("key: value")).toBe("yaml");
+    });
+
+    it("should detect JSON format", () => {
+      expect(kernel.detectFormat('{"key": "value"}')).toBe("json");
+    });
+
+    it("should parse YAML values", () => {
+      const values = kernel.parseValues("name: Alice\nage: 30", "yaml");
+      expect(values.name).toBe("Alice");
+      expect(values.age).toBe(30);
+    });
+
+    it("should parse JSON values", () => {
+      const values = kernel.parseValues('{"name": "Bob", "active": true}', "json");
+      expect(values.name).toBe("Bob");
+      expect(values.active).toBe(true);
+    });
+
+    it("should serialize values back to YAML", () => {
+      const original = "name: Alice\nage: 30";
+      const yaml = kernel.serializeValues({ name: "Bob", age: 25 }, "yaml", original);
+      expect(yaml).toContain("name:");
+      expect(yaml).toContain("Bob");
+      expect(yaml).toContain("25");
+    });
+
+    it("should serialize values back to JSON", () => {
+      const json = kernel.serializeValues({ name: "Bob" }, "json", "{}");
+      expect(JSON.parse(json)).toEqual({ name: "Bob" });
+    });
+
+    it("should infer field schemas from values", () => {
+      const fields = kernel.inferFields({
+        name: "Alice",
+        age: 30,
+        active: true,
+        email: "alice@example.com",
+      });
+      expect(fields.length).toBe(4);
+      const nameField = fields.find((f) => f.id === "name");
+      expect(nameField?.type).toBe("text");
+      const ageField = fields.find((f) => f.id === "age");
+      expect(ageField?.type).toBe("number");
+      const activeField = fields.find((f) => f.id === "active");
+      expect(activeField?.type).toBe("boolean");
+      const emailField = fields.find((f) => f.id === "email");
+      expect(emailField?.type).toBe("email");
+    });
+  });
+
+  describe("spell checker", () => {
+    it("should have a spell checker instance", () => {
+      expect(kernel.spellChecker).toBeDefined();
+    });
+
+    it("should return suggestions for misspelled words", async () => {
+      await kernel.spellChecker.loadDictionary();
+      const suggestions = kernel.spellSuggest("teh");
+      expect(suggestions).toContain("the");
+    });
+  });
+
+  describe("prose codec", () => {
+    it("should convert markdown to nodes", () => {
+      const node = kernel.markdownToNodes("# Hello\n\nWorld");
+      expect(node.type).toBe("doc");
+      expect(node.content).toBeDefined();
+      expect(node.content?.length).toBeGreaterThan(0);
+    });
+
+    it("should round-trip markdown", () => {
+      const md = "# Title\n\nParagraph text.";
+      const node = kernel.markdownToNodes(md);
+      const result = kernel.nodesToMarkdown(node);
+      expect(result).toContain("Title");
+      expect(result).toContain("Paragraph text.");
+    });
+  });
+
+  describe("sequencer", () => {
+    it("should emit condition Lua", () => {
+      const lua = kernel.emitConditionLua({
+        combinator: "all",
+        clauses: [
+          { id: "c1", subjectKind: "variable", subject: "score", operator: "gt", value: "100" },
+        ],
+      });
+      expect(lua).toContain("100");
+    });
+
+    it("should emit script Lua", () => {
+      const lua = kernel.emitScriptLua({
+        steps: [
+          { id: "s1", actionKind: "set-variable", target: "scope.health", value: "100" },
+        ],
+      });
+      expect(lua).toContain("health");
+    });
+
+    it("should emit empty condition as true", () => {
+      const lua = kernel.emitConditionLua({ combinator: "all", clauses: [] });
+      expect(lua).toBe("true");
+    });
+  });
+
+  describe("emitters", () => {
+    it("should emit TypeScript code", () => {
+      const code = kernel.emitCode({
+        namespace: "test",
+        declarations: [
+          { kind: "interface", name: "Person", fields: [{ name: "name", type: "string" }] },
+        ],
+      }, "typescript");
+      expect(code).toContain("interface Person");
+      expect(code).toContain("name");
+    });
+
+    it("should emit JSON code", () => {
+      const code = kernel.emitCode({
+        declarations: [
+          { kind: "interface", name: "Item", fields: [{ name: "id", type: "number" }] },
+        ],
+      }, "json");
+      expect(code).toContain("Item");
+    });
+
+    it("should emit Lua code", () => {
+      const code = kernel.emitCode({
+        declarations: [
+          { kind: "interface", name: "Config", fields: [{ name: "enabled", type: "boolean" }] },
+        ],
+      }, "lua");
+      expect(code).toContain("Config");
+    });
+  });
+
+  describe("facet definitions", () => {
+    it("should register and list facet definitions", () => {
+      const def = kernel.buildFacetDefinition("test-form", "page", "form")
+        .name("Test Form")
+        .build();
+      kernel.registerFacetDefinition(def);
+      expect(kernel.listFacetDefinitions()).toHaveLength(1);
+      expect(kernel.getFacetDefinition("test-form")).toBeDefined();
+    });
+
+    it("should remove facet definitions", () => {
+      const def = kernel.buildFacetDefinition("rem-form", "page", "form").build();
+      kernel.registerFacetDefinition(def);
+      expect(kernel.removeFacetDefinition("rem-form")).toBe(true);
+      expect(kernel.listFacetDefinitions()).toHaveLength(0);
+    });
+
+    it("should notify on facet changes", () => {
+      let called = 0;
+      const unsub = kernel.onFacetChange(() => { called++; });
+      const def = kernel.buildFacetDefinition("notify-form", "page", "form").build();
+      kernel.registerFacetDefinition(def);
+      expect(called).toBe(1);
+      kernel.removeFacetDefinition("notify-form");
+      expect(called).toBe(2);
+      unsub();
+    });
+
+    it("should build definitions with parts and fields", () => {
+      const def = kernel.buildFacetDefinition("detailed", "contact", "form")
+        .name("Contact Form")
+        .description("A test form")
+        .addPart({ kind: "header" })
+        .addPart({ kind: "body" })
+        .addField({ fieldPath: "name", part: "header", order: 0 })
+        .addField({ fieldPath: "email", part: "body", order: 0 })
+        .build();
+      expect(def.name).toBe("Contact Form");
+      expect(def.parts).toHaveLength(2);
+      expect(def.slots).toHaveLength(2);
+    });
+  });
+
   // ── Dispose ─────────────────────────────────────────────────────────────
 
   describe("dispose", () => {

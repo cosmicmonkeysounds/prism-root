@@ -91,6 +91,43 @@ import {
   createShamirSplitter,
   createEscrowManager,
 } from "@prism/core/trust";
+import {
+  detectFormat,
+  parseValues,
+  serializeValues,
+  inferFields,
+  spellCheckerBuilder,
+  MockSpellCheckBackend,
+  createStaticDictionaryProvider,
+  URL_FILTER,
+  EMAIL_FILTER,
+  ALL_CAPS_FILTER,
+  CAMEL_CASE_FILTER,
+  FILE_PATH_FILTER,
+  markdownToNodes,
+  nodesToMarkdown,
+  emitConditionLua,
+  emitScriptLua,
+  TypeScriptWriter,
+  JavaScriptWriter,
+  CSharpWriter,
+  LuaWriter,
+  JsonWriter,
+  YamlWriter,
+  TomlWriter,
+  facetDefinitionBuilder,
+} from "@prism/core/facet";
+import type {
+  SourceFormat,
+  FacetDefinition,
+  FacetLayout,
+  ProseNode,
+  SchemaModel,
+  SequencerConditionState,
+  SequencerScriptState,
+  SpellChecker,
+} from "@prism/core/facet";
+import type { FieldSchema } from "@prism/core/forms";
 import type {
   PeerTrustGraph,
   SchemaValidator,
@@ -359,6 +396,61 @@ export interface StudioKernel {
   /** Subscribe to trust graph changes. */
   onTrustChange(listener: () => void): () => void;
 
+  // ── Facet System ──────────────────────────────────────────────────────────
+
+  readonly spellChecker: SpellChecker;
+
+  /** Detect source format (YAML or JSON). */
+  detectFormat(source: string): SourceFormat;
+
+  /** Parse YAML/JSON source into key-value records. */
+  parseValues(source: string, format: SourceFormat): Record<string, unknown>;
+
+  /** Serialize values back to source format. */
+  serializeValues(values: Record<string, unknown>, format: SourceFormat, originalSource?: string): string;
+
+  /** Auto-detect field schemas from a value record. */
+  inferFields(values: Record<string, unknown>): FieldSchema[];
+
+  /** Check text for spelling errors. */
+  spellCheck(text: string): Array<{ word: string; from: number; to: number; suggestions: string[] }>;
+
+  /** Get spelling suggestions for a word. */
+  spellSuggest(word: string): string[];
+
+  /** Convert Markdown to structured ProseNode tree. */
+  markdownToNodes(md: string): ProseNode;
+
+  /** Convert ProseNode tree back to Markdown. */
+  nodesToMarkdown(nodes: ProseNode): string;
+
+  /** Emit a condition state as Lua expression. */
+  emitConditionLua(state: SequencerConditionState): string;
+
+  /** Emit a script state as Lua statement block. */
+  emitScriptLua(state: SequencerScriptState): string;
+
+  /** Generate code from a schema model in a target language. */
+  emitCode(model: SchemaModel, language: "typescript" | "javascript" | "csharp" | "lua" | "json" | "yaml" | "toml"): string;
+
+  /** Build a FacetDefinition using the builder API. */
+  buildFacetDefinition(id: string, entityType: string, layout: FacetLayout): ReturnType<typeof facetDefinitionBuilder>;
+
+  /** List all registered facet definitions. */
+  listFacetDefinitions(): FacetDefinition[];
+
+  /** Register a facet definition. */
+  registerFacetDefinition(definition: FacetDefinition): void;
+
+  /** Get a facet definition by ID. */
+  getFacetDefinition(id: string): FacetDefinition | undefined;
+
+  /** Remove a facet definition. */
+  removeFacetDefinition(id: string): boolean;
+
+  /** Subscribe to facet definition changes. */
+  onFacetChange(listener: () => void): () => void;
+
   /** Get the active view mode. */
   readonly viewMode: ViewMode;
   /** Set the active view mode. */
@@ -545,6 +637,55 @@ export function createStudioKernel(): StudioKernel {
   const disconnectTrustGraph = trustGraph.onChange(() => {
     notifyTrustListeners();
   });
+
+  // ── Facet System ────────────────────────────────────────────────────────
+  const facetDefinitions = new Map<string, FacetDefinition>();
+  const facetListeners = new Set<() => void>();
+
+  function notifyFacetListeners() {
+    for (const fn of facetListeners) fn();
+  }
+
+  // Build spell checker with mock backend + static dictionary provider
+  const { checker: spellChecker } = spellCheckerBuilder()
+    .language("en")
+    .dictionary(createStaticDictionaryProvider({
+      id: "studio:en", label: "Studio English", language: "en", aff: "", dic: "",
+    }))
+    .filter(URL_FILTER)
+    .filter(EMAIL_FILTER)
+    .filter(ALL_CAPS_FILTER)
+    .filter(CAMEL_CASE_FILTER)
+    .filter(FILE_PATH_FILTER)
+    .backend(new MockSpellCheckBackend({
+      correct: new Set(["the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+        "have", "has", "had", "do", "does", "did", "will", "would", "could", "should",
+        "may", "might", "shall", "can", "need", "dare", "ought", "used", "to",
+        "and", "but", "or", "nor", "for", "yet", "so", "in", "on", "at", "by",
+        "with", "from", "of", "that", "this", "it", "not", "no", "yes",
+        "hello", "world", "prism", "facet", "studio", "test"]),
+      suggestions: {
+        teh: ["the"],
+        recieve: ["receive"],
+        occured: ["occurred"],
+        seperate: ["separate"],
+      },
+    }))
+    .build();
+
+  // Eagerly load the dictionary so spellCheck/suggest work synchronously
+  void spellChecker.loadDictionary().catch(() => { /* no-op if no provider */ });
+
+  // Emitter instances (stateless — create once)
+  const emitters = {
+    typescript: new TypeScriptWriter(),
+    javascript: new JavaScriptWriter(),
+    csharp: new CSharpWriter(),
+    lua: new LuaWriter(),
+    json: new JsonWriter(),
+    yaml: new YamlWriter(),
+    toml: new TomlWriter(),
+  } as const;
 
   const localPeerId = `local_${Date.now().toString(36)}`;
   const presence = createPresenceManager({
@@ -1371,6 +1512,7 @@ export function createStudioKernel(): StudioKernel {
     trustGraph.dispose();
     trustListeners.clear();
     sandboxes.clear();
+    facetListeners.clear();
   }
 
   return {
@@ -1550,6 +1692,45 @@ export function createStudioKernel(): StudioKernel {
     onTrustChange(listener: () => void) {
       trustListeners.add(listener);
       return () => trustListeners.delete(listener);
+    },
+
+    // ── Facet System ────────────────────────────────────────────────────────
+    spellChecker,
+    detectFormat(source: string) { return detectFormat(source); },
+    parseValues(source: string, format: SourceFormat) { return parseValues(source, format); },
+    serializeValues(values: Record<string, unknown>, format: SourceFormat, originalSource?: string) {
+      return serializeValues(values, format, originalSource ?? "");
+    },
+    inferFields(values: Record<string, unknown>) { return inferFields(values); },
+    spellCheck(text: string) { return spellChecker.checkText(text); },
+    spellSuggest(word: string) { return spellChecker.suggest(word); },
+    markdownToNodes(md: string) { return markdownToNodes(md); },
+    nodesToMarkdown(node: ProseNode) { return nodesToMarkdown(node); },
+    emitConditionLua(state: SequencerConditionState) { return emitConditionLua(state); },
+    emitScriptLua(state: SequencerScriptState) { return emitScriptLua(state); },
+    emitCode(model: SchemaModel, language: "typescript" | "javascript" | "csharp" | "lua" | "json" | "yaml" | "toml") {
+      const writer = emitters[language];
+      const meta = { projectName: "prism", generatedAt: new Date().toISOString() };
+      const result = writer.emit(model as never, meta);
+      return result.files[0]?.content ?? "";
+    },
+    buildFacetDefinition(id: string, entityType: string, layout: FacetLayout) {
+      return facetDefinitionBuilder(id, entityType, layout);
+    },
+    listFacetDefinitions() { return [...facetDefinitions.values()]; },
+    registerFacetDefinition(definition: FacetDefinition) {
+      facetDefinitions.set(definition.id, definition);
+      notifyFacetListeners();
+    },
+    getFacetDefinition(id: string) { return facetDefinitions.get(id); },
+    removeFacetDefinition(id: string) {
+      const result = facetDefinitions.delete(id);
+      if (result) notifyFacetListeners();
+      return result;
+    },
+    onFacetChange(listener: () => void) {
+      facetListeners.add(listener);
+      return () => facetListeners.delete(listener);
     },
 
     dispose,

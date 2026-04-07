@@ -23,6 +23,12 @@ export {
   useIdentity,
   useVfs,
   useTrust,
+  useFacetParser,
+  useSpellCheck,
+  useProseCodec,
+  useSequencer,
+  useEmitters,
+  useFacetDefinitions,
 } from "./kernel-context.js";
 
 export { createPageBuilderRegistry } from "./entities.js";
