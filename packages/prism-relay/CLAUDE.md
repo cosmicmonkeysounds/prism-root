@@ -34,8 +34,8 @@ See `prism-relay --help` for full options.
 - `@prism/relay/config` — Config resolution, arg parsing, logger
 - `@prism/relay/cli` — CLI entry point
 
-## Modules (14 total)
-blind-mailbox, relay-router, relay-timestamp, blind-pings, capability-tokens, webhooks, sovereign-portals, collection-host, hashcash, peer-trust, escrow, federation, acme-certificates, portal-templates
+## Modules (15 total)
+blind-mailbox, relay-router, relay-timestamp, blind-pings, capability-tokens, webhooks, sovereign-portals, collection-host, hashcash, peer-trust, escrow, federation, acme-certificates, portal-templates, webrtc-signaling
 
 ## Protocol
 WebSocket at `/ws/relay`:
@@ -121,6 +121,16 @@ WebSocket at `/ws/relay`:
 - `GET/POST /api/templates` — list/create templates
 - `GET/DELETE /api/templates/:id` — get/remove template
 
+## WebRTC Signaling (P2P/SFU Connection Negotiation)
+- `GET /api/signaling/rooms` — list active signaling rooms
+- `GET /api/signaling/rooms/:roomId/peers` — list peers in a room
+- `POST /api/signaling/rooms/:roomId/join` — join a room (returns existing peers)
+- `POST /api/signaling/rooms/:roomId/leave` — leave a room (notifies remaining peers)
+- `POST /api/signaling/rooms/:roomId/signal` — relay SDP offer/answer/ICE candidate to target peer
+- `POST /api/signaling/rooms/:roomId/poll` — poll buffered signals for a peer
+- Signal types: `offer`, `answer`, `ice-candidate`, `leave`
+- Relay is transport-agnostic: routes opaque payloads between peers
+
 ## HTTP API (Core)
 - `GET /api/status` — relay state
 - `GET /api/modules` — installed modules
@@ -132,3 +142,4 @@ WebSocket at `/ws/relay`:
 - Trust: `GET /api/trust`, `GET /:did`, `POST /:did/{ban,unban}`
 - Escrow: `POST /api/escrow/{deposit,claim}`, `GET /:depositorId`
 - Federation: `POST /api/federation/announce`, `GET /peers`, `POST /forward`
+- Signaling: `GET /api/signaling/rooms`, `GET /rooms/:id/peers`, `POST /rooms/:id/{join,leave,signal,poll}`

@@ -727,6 +727,124 @@ function createPortalTemplateRegistry(): PortalTemplateRegistry {
   };
 }
 
+// ── Module: WebRTC Signaling ────────────────────────────────────────────────
+
+import type {
+  SignalMessage,
+  SignalingPeer,
+  SignalingRoom,
+  SignalDelivery,
+  SignalingHub,
+} from "./relay-types.js";
+
+export function webrtcSignalingModule(): RelayModule {
+  return {
+    name: "webrtc-signaling",
+    description: "WebRTC signaling relay for P2P/SFU connection negotiation",
+    dependencies: [],
+
+    install(ctx: RelayContext): void {
+      const hub = createSignalingHub();
+      ctx.setCapability(RELAY_CAPABILITIES.SIGNALING, hub);
+    },
+  };
+}
+
+function createSignalingHub(): SignalingHub {
+  const rooms = new Map<string, SignalingRoom>();
+  const deliveries = new Map<string, SignalDelivery>(); // key: `${roomId}:${peerId}`
+
+  function deliveryKey(roomId: string, peerId: string): string {
+    return `${roomId}:${peerId}`;
+  }
+
+  return {
+    getOrCreateRoom(roomId: string, maxPeers = 0): SignalingRoom {
+      const existing = rooms.get(roomId);
+      if (existing) return existing;
+      const room: SignalingRoom = {
+        roomId,
+        peers: new Map(),
+        createdAt: new Date().toISOString(),
+        maxPeers,
+      };
+      rooms.set(roomId, room);
+      return room;
+    },
+
+    join(roomId: string, peer: SignalingPeer, deliver: SignalDelivery): SignalingPeer[] {
+      const room = this.getOrCreateRoom(roomId);
+
+      if (room.maxPeers > 0 && room.peers.size >= room.maxPeers) {
+        throw new Error(`Room "${roomId}" is full (max ${room.maxPeers} peers)`);
+      }
+
+      room.peers.set(peer.peerId, peer);
+      deliveries.set(deliveryKey(roomId, peer.peerId), deliver);
+
+      // Return existing peers (excluding the one who just joined)
+      return [...room.peers.values()].filter(p => p.peerId !== peer.peerId);
+    },
+
+    leave(roomId: string, peerId: string): void {
+      const room = rooms.get(roomId);
+      if (!room) return;
+
+      room.peers.delete(peerId);
+      deliveries.delete(deliveryKey(roomId, peerId));
+
+      // Notify remaining peers
+      const leaveMessage: SignalMessage = {
+        type: "leave",
+        from: peerId,
+        to: "",
+        roomId,
+        payload: null,
+        timestamp: new Date().toISOString(),
+      };
+
+      for (const [key, deliver] of deliveries) {
+        if (key.startsWith(`${roomId}:`)) {
+          deliver({ ...leaveMessage, to: key.split(":")[1] as string });
+        }
+      }
+    },
+
+    relay(message: Omit<SignalMessage, "timestamp">): boolean {
+      const key = deliveryKey(message.roomId, message.to);
+      const deliver = deliveries.get(key);
+      if (!deliver) return false;
+      deliver({ ...message, timestamp: new Date().toISOString() });
+      return true;
+    },
+
+    listRooms(): Array<{ roomId: string; peerCount: number; createdAt: string }> {
+      return [...rooms.values()].map(r => ({
+        roomId: r.roomId,
+        peerCount: r.peers.size,
+        createdAt: r.createdAt,
+      }));
+    },
+
+    getPeers(roomId: string): SignalingPeer[] {
+      const room = rooms.get(roomId);
+      if (!room) return [];
+      return [...room.peers.values()];
+    },
+
+    evictEmptyRooms(): number {
+      let evicted = 0;
+      for (const [id, room] of rooms) {
+        if (room.peers.size === 0) {
+          rooms.delete(id);
+          evicted++;
+        }
+      }
+      return evicted;
+    },
+  };
+}
+
 // ── In-memory Ping Transport (for testing) ──────────────────────────────────
 
 export function createMemoryPingTransport(): PingTransport & { sent: BlindPing[] } {

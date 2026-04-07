@@ -77,6 +77,12 @@ importers:
       '@codemirror/view':
         specifier: ^6.36.0
         version: 6.41.0
+      '@lezer/common':
+        specifier: ^1.2.0
+        version: 1.5.1
+      '@lezer/highlight':
+        specifier: ^1.2.0
+        version: 1.2.3
       '@measured/puck':
         specifier: ^0.19.0
         version: 0.19.3(@types/react@19.2.14)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(use-sync-external-store@1.6.0(react@19.2.4))

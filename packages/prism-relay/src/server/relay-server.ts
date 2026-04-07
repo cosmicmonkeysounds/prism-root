@@ -30,6 +30,7 @@ import {
   createSafetyRoutes,
   createAutoRestRoutes,
   createPingRoutes,
+  createSignalingRoutes,
 } from "../routes/index.js";
 import type { AuthRoutesOptions } from "../routes/index.js";
 import { handleWsOpen, handleWsMessage, handleWsClose, createConnectionRegistry } from "../transport/index.js";
@@ -123,6 +124,7 @@ export function createRelayServer(options: RelayServerOptions): RelayServer {
   app.route("/api/safety", createSafetyRoutes(relay));
   app.route("/api/rest", createAutoRestRoutes(relay));
   app.route("/api/pings", createPingRoutes(relay));
+  app.route("/api/signaling", createSignalingRoutes(relay));
 
   // ── ACME HTTP-01 challenge response (Let's Encrypt) ─────────────────
   app.route("/.well-known/acme-challenge", createAcmeRoutes(relay));

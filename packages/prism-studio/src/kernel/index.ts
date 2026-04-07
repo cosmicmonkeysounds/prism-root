@@ -17,6 +17,9 @@ export {
   useAutomation,
   useGraphAnalysis,
   useExpression,
+  usePlugins,
+  useInputRouter,
+  useVaultRoster,
 } from "./kernel-context.js";
 
 export { createPageBuilderRegistry } from "./entities.js";

@@ -382,6 +382,7 @@ export const RELAY_CAPABILITIES = {
   FEDERATION: "relay:federation",
   ACME: "relay:acme",
   TEMPLATES: "relay:templates",
+  SIGNALING: "relay:signaling",
 } as const;
 
 // ── Collection Hosting ─────────────────────────────────────────────────────
@@ -549,4 +550,70 @@ export interface FederationRegistry {
   forwardEnvelope(envelope: RelayEnvelope, targetRelay: DID): Promise<ForwardResult>;
   /** Set the transport used for forwarding. */
   setTransport(transport: ForwardTransport): void;
+}
+
+// ── WebRTC Signaling ──────────────────────────────────────────────────────
+
+/** WebRTC signaling message types for connection negotiation. */
+export type SignalType = "offer" | "answer" | "ice-candidate" | "leave";
+
+/** A signaling message exchanged between peers via the Relay. */
+export interface SignalMessage {
+  /** Signal type (SDP offer/answer, ICE candidate, or leave). */
+  type: SignalType;
+  /** Sender peer ID. */
+  from: string;
+  /** Target peer ID. */
+  to: string;
+  /** Room this signal belongs to. */
+  roomId: string;
+  /** SDP or ICE candidate payload (opaque to the Relay). */
+  payload: unknown;
+  /** ISO-8601 timestamp. */
+  timestamp: string;
+}
+
+/** A peer in a signaling room. */
+export interface SignalingPeer {
+  /** Unique peer identifier. */
+  peerId: string;
+  /** Optional display name. */
+  displayName?: string;
+  /** ISO-8601 time joined. */
+  joinedAt: string;
+  /** Arbitrary metadata (e.g. capabilities, track types). */
+  metadata?: Record<string, unknown>;
+}
+
+/** A signaling room for WebRTC connection negotiation. */
+export interface SignalingRoom {
+  /** Unique room ID. */
+  roomId: string;
+  /** Currently connected peers. */
+  peers: Map<string, SignalingPeer>;
+  /** ISO-8601 creation time. */
+  createdAt: string;
+  /** Maximum peers allowed (0 = unlimited). */
+  maxPeers: number;
+}
+
+/** Callback for delivering signaling messages to connected peers. */
+export type SignalDelivery = (message: SignalMessage) => void;
+
+/** Manages WebRTC signaling rooms and message relay. */
+export interface SignalingHub {
+  /** Create or get a room. */
+  getOrCreateRoom(roomId: string, maxPeers?: number): SignalingRoom;
+  /** Join a room as a peer. Returns the current peer list. */
+  join(roomId: string, peer: SignalingPeer, deliver: SignalDelivery): SignalingPeer[];
+  /** Leave a room. Notifies remaining peers. */
+  leave(roomId: string, peerId: string): void;
+  /** Relay a signaling message to the target peer. */
+  relay(message: Omit<SignalMessage, "timestamp">): boolean;
+  /** List all active rooms. */
+  listRooms(): Array<{ roomId: string; peerCount: number; createdAt: string }>;
+  /** Get peers in a room. */
+  getPeers(roomId: string): SignalingPeer[];
+  /** Remove empty rooms. Returns count removed. */
+  evictEmptyRooms(): number;
 }

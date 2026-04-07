@@ -17,3 +17,4 @@ export { createSafetyRoutes } from "./safety-routes.js";
 export { createAutoRestRoutes } from "./autorest-routes.js";
 export { createPingRoutes, createPushPingTransport } from "./ping-routes.js";
 export type { PushTransportConfig, DeviceRegistration } from "./ping-routes.js";
+export { createSignalingRoutes } from "./signaling-routes.js";

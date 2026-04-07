@@ -1483,6 +1483,66 @@ Wired three additional Layer 1 systems into Studio: AutomationEngine (trigger/co
 | Vitest (unchanged) | 2123 | Pass |
 | **Phase 30j Total** | **2123 Vitest + 145 E2E** | **All Pass** |
 
+## Phase 30k: Studio Tier 4 — Plugins, Shortcuts, Vaults, Forms (Complete)
+
+Wired four additional Layer 1 systems into Studio: PluginRegistry (extension management), InputRouter (keyboard shortcut management), VaultRoster (workspace discovery), and Forms & Validation (schema-driven form state).
+
+### Completed
+
+- [x] **Kernel wiring** — PluginRegistry, InputRouter with global scope (default bindings: cmd+z/shift+z/k/s/n), VaultRoster with MemoryRosterStore, FormState helpers (createFormState, setFieldValue, setFieldErrors, isDirty, fieldHasVisibleError)
+- [x] **React hooks** — `usePlugins` (reactive plugin list + register/unregister), `useInputRouter` (bindings list + bind/unbind + recent events), `useVaultRoster` (reactive vault list + add/remove/pin/touch)
+- [x] **Plugin Panel** (`plugin-panel.tsx`) — register/remove plugins, expand to see contributions, contributions tab showing all commands/views across plugins
+- [x] **Shortcuts Panel** (`shortcuts-panel.tsx`) — view/add/remove keyboard bindings, scopes tab showing InputScope stack, events tab showing dispatched/pushed/popped/unhandled events
+- [x] **Vault Panel** (`vault-panel.tsx`) — add/remove/pin/open vaults, search filtering, pinned section with star indicator, metadata display (path, dates, collections)
+- [x] **Lens registration** — 3 new lenses: Plugins (p), Shortcuts (k), Vaults (w). Total: 12 lenses
+- [x] **E2E tests** — 25 new Playwright tests across 3 spec files (plugin, shortcuts, vault)
+- [x] **Shell test updated** — activity bar icon count 9 → 12
+
+### Test Summary
+
+| Suite | Count | Status |
+|-------|-------|--------|
+| Playwright — Plugin | 7 | Pass |
+| Playwright — Shortcuts | 8 | Pass |
+| Playwright — Vault | 9 | Pass |
+| Playwright — Shell (updated) | 8 | Pass |
+| Playwright — Tabs (updated) | 5 | Pass |
+| Playwright — Keyboard (updated) | 5 | Pass |
+| Vitest (unchanged) | 2132 | Pass |
+| **Phase 30k Total** | **2132 Vitest + 170 E2E** | **All Pass** |
+
+## Phase 30l: WebRTC Signaling — All Relays (Complete)
+
+WebRTC signaling as a standard relay module available to ALL relays, not deferred as Nexus-only. Enables P2P connection negotiation (SDP offer/answer, ICE candidates) through any relay.
+
+### Completed
+
+- [x] **SignalingHub capability** in `@prism/core/relay`
+  - `RELAY_CAPABILITIES.SIGNALING` — new capability name
+  - `webrtcSignalingModule()` — composable relay module (no dependencies)
+  - SignalingHub: room management, peer join/leave, signal relay, empty room eviction
+  - Types: `SignalMessage`, `SignalingPeer`, `SignalingRoom`, `SignalDelivery`, `SignalingHub`
+- [x] **HTTP signaling routes** in `@prism/relay`
+  - `GET /api/signaling/rooms` — list active rooms
+  - `GET /api/signaling/rooms/:roomId/peers` — list peers
+  - `POST /api/signaling/rooms/:roomId/join` — join room, receive existing peer list
+  - `POST /api/signaling/rooms/:roomId/leave` — leave room, notify remaining peers
+  - `POST /api/signaling/rooms/:roomId/signal` — relay offer/answer/ice-candidate
+  - `POST /api/signaling/rooms/:roomId/poll` — poll buffered signals
+- [x] **Integration tests** (15 new Vitest tests)
+- [x] **E2E tests** (10 new Playwright tests)
+- [x] **Module count** — 14 → 15 modules per relay
+
+### Test Summary
+
+| Suite | Count | Status |
+|-------|-------|--------|
+| Vitest — signaling routes | 15 | Pass |
+| Playwright — signaling E2E | 10 | Pass |
+| Vitest (total) | 2147 | Pass |
+| Relay E2E (total) | 74 | Pass |
+| **Phase 30l Total** | **2147 Vitest + 74 relay E2E + 170 studio E2E** | **All Pass** |
+
 ## Phase 31: Ecosystem Apps — Lattice
 
 Game middleware suite: narrative, audio, entity authoring, world topology.

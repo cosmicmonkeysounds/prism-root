@@ -721,6 +721,7 @@ export {
   webhookModule,
   sovereignPortalModule,
   createMemoryPingTransport,
+  webrtcSignalingModule,
 } from "./relay/index.js";
 
 export type {
@@ -749,6 +750,12 @@ export type {
   RelayInstance,
   RelayBuilder,
   RelayBuilderOptions,
+  SignalType,
+  SignalMessage,
+  SignalingPeer,
+  SignalingRoom,
+  SignalDelivery,
+  SignalingHub,
 } from "./relay/index.js";
 
 // ── Actor System ───────────────────────────────────────────────────────────

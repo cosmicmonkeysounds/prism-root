@@ -5,7 +5,7 @@
  * (useSelection, useObjects, useNotifications) for specific slices.
  */
 
-import { createContext, useContext, useSyncExternalStore, useCallback, useRef } from "react";
+import { createContext, useContext, useSyncExternalStore, useCallback, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { StudioKernel } from "./studio-kernel.js";
 import type { GraphObject, ObjectId } from "@prism/core/object-model";
@@ -17,6 +17,9 @@ import type { ViewMode } from "@prism/core/view";
 import type { Automation, AutomationRun } from "@prism/core/automation";
 import type { PlanResult, SlipImpact } from "@prism/core/graph-analysis";
 import type { ExprValue } from "@prism/core/expression";
+import type { PrismPlugin } from "@prism/core/plugin";
+import type { InputRouterEvent } from "@prism/core/input";
+import type { RosterEntry } from "@prism/core/discovery";
 
 // ── Context ─────────────────────────────────────────────────────────────────
 
@@ -380,4 +383,123 @@ export function useExpression(): {
   );
 
   return { evaluate };
+}
+
+/** Reactive plugin registry. */
+export function usePlugins(): {
+  plugins: PrismPlugin[];
+  register: (plugin: PrismPlugin) => () => void;
+  unregister: (id: string) => boolean;
+} {
+  const kernel = useKernel();
+  const cacheRef = useRef<{ plugins: PrismPlugin[]; version: number }>({
+    plugins: [],
+    version: -1,
+  });
+
+  const version = useSyncExternalStore(
+    (cb) => kernel.onPluginChange(cb),
+    () => kernel.plugins.size,
+  );
+
+  if (cacheRef.current.version !== version) {
+    cacheRef.current = {
+      plugins: kernel.listPlugins(),
+      version,
+    };
+  }
+
+  return {
+    plugins: cacheRef.current.plugins,
+    register: kernel.registerPlugin,
+    unregister: kernel.unregisterPlugin,
+  };
+}
+
+/** Reactive keyboard bindings from InputRouter. */
+export function useInputRouter(): {
+  bindings: Array<{ shortcut: string; action: string }>;
+  bind: (shortcut: string, action: string) => void;
+  unbind: (shortcut: string) => void;
+  recentEvents: InputRouterEvent[];
+} {
+  const kernel = useKernel();
+  const [events, setEvents] = useState<InputRouterEvent[]>([]);
+  const [bindingVersion, setBindingVersion] = useState(0);
+
+  // Subscribe to router events
+  const eventsRef = useRef(events);
+  eventsRef.current = events;
+
+  useSyncExternalStore(
+    (cb) => {
+      return kernel.onInputEvent((event) => {
+        const next = [...eventsRef.current.slice(-49), event];
+        setEvents(next);
+        cb();
+      });
+    },
+    () => events.length,
+  );
+
+  const bindings = kernel.listBindings();
+
+  const bind = useCallback(
+    (shortcut: string, action: string) => {
+      kernel.bindShortcut(shortcut, action);
+      setBindingVersion((v) => v + 1);
+    },
+    [kernel],
+  );
+
+  const unbind = useCallback(
+    (shortcut: string) => {
+      kernel.unbindShortcut(shortcut);
+      setBindingVersion((v) => v + 1);
+    },
+    [kernel],
+  );
+
+  // Force re-read on binding version change
+  void bindingVersion;
+
+  return {
+    bindings,
+    bind,
+    unbind,
+    recentEvents: events,
+  };
+}
+
+/** Reactive vault roster. */
+export function useVaultRoster(): {
+  vaults: RosterEntry[];
+  addVault: (entry: Omit<RosterEntry, "addedAt"> & { addedAt?: string }) => RosterEntry;
+  removeVault: (id: string) => boolean;
+  pinVault: (id: string, pinned: boolean) => RosterEntry | undefined;
+  touchVault: (id: string) => RosterEntry | undefined;
+} {
+  const kernel = useKernel();
+  const versionRef = useRef(0);
+
+  const version = useSyncExternalStore(
+    (cb) => kernel.onVaultChange(() => {
+      versionRef.current++;
+      cb();
+    }),
+    () => versionRef.current,
+  );
+
+  const vaults = kernel.listVaults();
+
+  // Force re-read when version changes
+  void version;
+
+  return {
+    vaults,
+    addVault: kernel.addVault,
+    removeVault: kernel.removeVault,
+    pinVault: kernel.pinVault,
+    touchVault: kernel.touchVault,
+  };
 }

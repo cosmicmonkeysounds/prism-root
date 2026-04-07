@@ -9,7 +9,7 @@ test.describe("Phase 4: The Shell", () => {
     const activityBar = page.locator('[data-testid="activity-bar"]');
     await expect(activityBar).toBeVisible();
     const icons = activityBar.locator('[data-testid^="activity-icon-"]');
-    await expect(icons).toHaveCount(9);
+    await expect(icons).toHaveCount(12);
   });
 
   test("clicking activity bar icon opens a tab", async ({ page }) => {

@@ -17,6 +17,9 @@ import { RelayPanel } from "../panels/relay-panel.js";
 import { SettingsPanel } from "../panels/settings-panel.js";
 import { AutomationPanel } from "../panels/automation-panel.js";
 import { AnalysisPanel } from "../panels/analysis-panel.js";
+import { PluginPanel } from "../panels/plugin-panel.js";
+import { ShortcutsPanel } from "../panels/shortcuts-panel.js";
+import { VaultPanel } from "../panels/vault-panel.js";
 
 export const EDITOR_LENS_ID = lensId("editor");
 export const GRAPH_LENS_ID = lensId("graph");
@@ -27,6 +30,9 @@ export const RELAY_LENS_ID = lensId("relay");
 export const SETTINGS_LENS_ID = lensId("settings");
 export const AUTOMATION_LENS_ID = lensId("automation");
 export const ANALYSIS_LENS_ID = lensId("analysis");
+export const PLUGIN_LENS_ID = lensId("plugin");
+export const SHORTCUTS_LENS_ID = lensId("shortcuts");
+export const VAULT_LENS_ID = lensId("vault");
 
 const editorManifest: LensManifest = {
   id: EDITOR_LENS_ID,
@@ -127,6 +133,39 @@ const analysisManifest: LensManifest = {
   },
 };
 
+const pluginManifest: LensManifest = {
+  id: PLUGIN_LENS_ID,
+  name: "Plugins",
+  icon: "\uD83E\uDDE9",
+  category: "custom",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-plugins", name: "Switch to Plugins", shortcut: ["p"], section: "Navigation" }],
+  },
+};
+
+const shortcutsManifest: LensManifest = {
+  id: SHORTCUTS_LENS_ID,
+  name: "Shortcuts",
+  icon: "\u2328",
+  category: "custom",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-shortcuts", name: "Switch to Shortcuts", shortcut: ["k"], section: "Navigation" }],
+  },
+};
+
+const vaultManifest: LensManifest = {
+  id: VAULT_LENS_ID,
+  name: "Vaults",
+  icon: "\uD83D\uDD12",
+  category: "custom",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-vaults", name: "Switch to Vaults", shortcut: ["w"], section: "Navigation" }],
+  },
+};
+
 export const ALL_MANIFESTS: LensManifest[] = [
   editorManifest,
   graphManifest,
@@ -137,6 +176,9 @@ export const ALL_MANIFESTS: LensManifest[] = [
   settingsManifest,
   automationManifest,
   analysisManifest,
+  pluginManifest,
+  shortcutsManifest,
+  vaultManifest,
 ];
 
 export function registerBuiltinLenses(registry: LensRegistry): () => void {
@@ -155,5 +197,8 @@ export function createLensComponentMap(): Map<LensId, ComponentType> {
   map.set(SETTINGS_LENS_ID, SettingsPanel);
   map.set(AUTOMATION_LENS_ID, AutomationPanel);
   map.set(ANALYSIS_LENS_ID, AnalysisPanel);
+  map.set(PLUGIN_LENS_ID, PluginPanel);
+  map.set(SHORTCUTS_LENS_ID, ShortcutsPanel);
+  map.set(VAULT_LENS_ID, VaultPanel);
   return map;
 }

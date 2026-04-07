@@ -13,6 +13,8 @@ import {
   createRelayClient,
   blindMailboxModule,
   relayRouterModule,
+  relayTimestampModule,
+  blindPingModule,
   capabilityTokenModule,
   webhookModule,
   sovereignPortalModule,
@@ -23,6 +25,7 @@ import {
   federationModule,
   acmeCertificateModule,
   portalTemplateModule,
+  webrtcSignalingModule,
 } from "@prism/core/relay";
 import type {
   RelayInstance,
@@ -44,6 +47,8 @@ test.beforeAll(async () => {
   relay = createRelayBuilder({ relayDid: identity.did })
     .use(blindMailboxModule())
     .use(relayRouterModule())
+    .use(relayTimestampModule(identity))
+    .use(blindPingModule())
     .use(capabilityTokenModule(identity))
     .use(webhookModule())
     .use(sovereignPortalModule())
@@ -54,10 +59,11 @@ test.beforeAll(async () => {
     .use(federationModule())
     .use(acmeCertificateModule())
     .use(portalTemplateModule())
+    .use(webrtcSignalingModule())
     .build();
   await relay.start();
 
-  const server = createRelayServer({ relay, port: 0, publicUrl: "http://localhost:0" });
+  const server = createRelayServer({ relay, port: 0, publicUrl: "http://localhost:0", disableCsrf: true });
   const info = await server.start();
   serverPort = info.port;
   baseUrl = `http://localhost:${serverPort}`;
@@ -78,13 +84,13 @@ test.describe("HTTP API", () => {
     const body = await res.json();
     expect(body.running).toBe(true);
     expect(body.did).toBe(identity.did);
-    expect(body.modules).toHaveLength(12);
+    expect(body.modules).toHaveLength(15);
   });
 
   test("GET /api/modules lists all installed modules", async ({ request }) => {
     const res = await request.get(`${baseUrl}/api/modules`);
     const body = await res.json();
-    expect(body).toHaveLength(12);
+    expect(body).toHaveLength(15);
     const names = body.map((m: { name: string }) => m.name);
     expect(names).toContain("blind-mailbox");
     expect(names).toContain("relay-router");
@@ -645,7 +651,7 @@ test.describe("Federation", () => {
       .build();
     await relay2.start();
 
-    const server2 = createRelayServer({ relay: relay2, port: 0 });
+    const server2 = createRelayServer({ relay: relay2, port: 0, disableCsrf: true });
     const info2 = await server2.start();
     port2 = info2.port;
     close2 = info2.close;
@@ -762,5 +768,496 @@ test.describe("Client SDK", () => {
     expect(client.modules.length).toBeGreaterThan(0);
     client.close();
     expect(client.state).toBe("disconnected");
+  });
+});
+
+// ── Phase 30i: Auth, Safety, AutoREST, Pings, SEO, Security ──────────────
+
+test.describe("Auth routes", () => {
+  test("GET /api/auth/providers lists available providers", async ({ request }) => {
+    const res = await request.get(`${baseUrl}/api/auth/providers`);
+    expect(res.status()).toBe(200);
+    const body = await res.json();
+    expect(body.providers).toEqual([]); // No OAuth configured in test
+  });
+
+  test("GET /api/auth/google returns 404 when not configured", async ({ request }) => {
+    const res = await request.get(`${baseUrl}/api/auth/google`);
+    expect(res.status()).toBe(404);
+  });
+
+  test("GET /api/auth/github returns 404 when not configured", async ({ request }) => {
+    const res = await request.get(`${baseUrl}/api/auth/github`);
+    expect(res.status()).toBe(404);
+  });
+
+  test("Blind Escrow derive + recover round-trip", async ({ request }) => {
+    let res = await request.post(`${baseUrl}/api/auth/escrow/derive`, {
+      data: {
+        depositorId: "e2e-escrow-user",
+        password: "strong-password-123",
+        oauthSalt: "google-salt-xyz",
+        encryptedVaultKey: "encrypted-master-key-data",
+      },
+    });
+    expect(res.status()).toBe(201);
+    const derived = await res.json();
+    expect(derived.ok).toBe(true);
+    expect(derived.depositId).toBeDefined();
+
+    // Recover with correct password
+    res = await request.post(`${baseUrl}/api/auth/escrow/recover`, {
+      data: {
+        depositorId: "e2e-escrow-user",
+        password: "strong-password-123",
+        oauthSalt: "google-salt-xyz",
+      },
+    });
+    expect(res.status()).toBe(200);
+    const recovered = await res.json();
+    expect(recovered.ok).toBe(true);
+    expect(recovered.encryptedVaultKey).toBe("encrypted-master-key-data");
+  });
+
+  test("Blind Escrow rejects wrong password", async ({ request }) => {
+    const res = await request.post(`${baseUrl}/api/auth/escrow/recover`, {
+      data: {
+        depositorId: "e2e-escrow-user",
+        password: "wrong-password",
+        oauthSalt: "google-salt-xyz",
+      },
+    });
+    expect(res.status()).toBe(403);
+  });
+
+  test("escrow derive validates required fields", async ({ request }) => {
+    const res = await request.post(`${baseUrl}/api/auth/escrow/derive`, {
+      data: { password: "test" },
+    });
+    expect(res.status()).toBe(400);
+  });
+});
+
+test.describe("Safety routes", () => {
+  test("POST /api/safety/report flags content hash", async ({ request }) => {
+    const res = await request.post(`${baseUrl}/api/safety/report`, {
+      data: {
+        contentHash: "e2e-toxic-hash-abc",
+        category: "spam",
+        reportedBy: "did:key:zE2EReporter",
+      },
+    });
+    expect(res.status()).toBe(201);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.flagged).toBe(true);
+  });
+
+  test("GET /api/safety/hashes lists flagged content", async ({ request }) => {
+    const res = await request.get(`${baseUrl}/api/safety/hashes`);
+    expect(res.status()).toBe(200);
+    const body = await res.json();
+    expect(body.hashes.some((h: { hash: string }) => h.hash === "e2e-toxic-hash-abc")).toBe(true);
+    expect(body.count).toBeGreaterThanOrEqual(1);
+  });
+
+  test("POST /api/safety/check verifies hashes", async ({ request }) => {
+    const res = await request.post(`${baseUrl}/api/safety/check`, {
+      data: { hashes: ["e2e-toxic-hash-abc", "safe-content-hash"] },
+    });
+    expect(res.status()).toBe(200);
+    const body = await res.json();
+    expect(body.results["e2e-toxic-hash-abc"]).toBe(true);
+    expect(body.results["safe-content-hash"]).toBe(false);
+  });
+
+  test("POST /api/safety/hashes imports from federation peer", async ({ request }) => {
+    const res = await request.post(`${baseUrl}/api/safety/hashes`, {
+      data: {
+        hashes: [{ hash: "imported-hash-xyz", category: "abuse", reportedBy: "did:key:zPeer" }],
+        sourceRelay: "did:key:zFederatedRelay",
+      },
+    });
+    expect(res.status()).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.imported).toBeGreaterThanOrEqual(1);
+  });
+
+  test("POST /api/safety/report validates required fields", async ({ request }) => {
+    const res = await request.post(`${baseUrl}/api/safety/report`, {
+      data: { category: "spam" },
+    });
+    expect(res.status()).toBe(400);
+  });
+});
+
+test.describe("AutoREST API gateway", () => {
+  let bearerToken: string;
+
+  test.beforeAll(async ({ request }) => {
+    // Create a collection for AutoREST
+    await request.post(`${baseUrl}/api/collections`, { data: { id: "e2e-rest-col" } });
+
+    // Issue a capability token
+    const tokenRes = await request.post(`${baseUrl}/api/tokens/issue`, {
+      data: { subject: "*", permissions: ["read", "write", "delete"], scope: "*" },
+    });
+    const token = await tokenRes.json();
+    bearerToken = Buffer.from(JSON.stringify(token)).toString("base64");
+  });
+
+  test("POST creates an object", async ({ request }) => {
+    const res = await request.post(`${baseUrl}/api/rest/e2e-rest-col`, {
+      headers: { Authorization: `Bearer ${bearerToken}` },
+      data: { name: "E2E REST Object", type: "task", description: "Created via AutoREST" },
+    });
+    expect(res.status()).toBe(201);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.objectId).toBeDefined();
+  });
+
+  test("GET lists objects with filters", async ({ request }) => {
+    const res = await request.get(`${baseUrl}/api/rest/e2e-rest-col?type=task`, {
+      headers: { Authorization: `Bearer ${bearerToken}` },
+    });
+    expect(res.status()).toBe(200);
+    const body = await res.json();
+    expect(body.objects.length).toBeGreaterThanOrEqual(1);
+    expect(body.total).toBeGreaterThanOrEqual(1);
+    expect(body.objects[0].type).toBe("task");
+  });
+
+  test("GET retrieves single object", async ({ request }) => {
+    // First list to get an ID
+    const listRes = await request.get(`${baseUrl}/api/rest/e2e-rest-col`, {
+      headers: { Authorization: `Bearer ${bearerToken}` },
+    });
+    const { objects } = await listRes.json();
+    const objectId = objects[0].id;
+
+    const res = await request.get(`${baseUrl}/api/rest/e2e-rest-col/${objectId}`, {
+      headers: { Authorization: `Bearer ${bearerToken}` },
+    });
+    expect(res.status()).toBe(200);
+    const obj = await res.json();
+    expect(obj.name).toBe("E2E REST Object");
+  });
+
+  test("PUT updates an object", async ({ request }) => {
+    const listRes = await request.get(`${baseUrl}/api/rest/e2e-rest-col`, {
+      headers: { Authorization: `Bearer ${bearerToken}` },
+    });
+    const { objects } = await listRes.json();
+    const objectId = objects[0].id;
+
+    const res = await request.put(`${baseUrl}/api/rest/e2e-rest-col/${objectId}`, {
+      headers: { Authorization: `Bearer ${bearerToken}` },
+      data: { name: "Updated E2E Object", status: "done" },
+    });
+    expect(res.status()).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+  });
+
+  test("DELETE soft-deletes an object", async ({ request }) => {
+    const listRes = await request.get(`${baseUrl}/api/rest/e2e-rest-col`, {
+      headers: { Authorization: `Bearer ${bearerToken}` },
+    });
+    const { objects } = await listRes.json();
+    const objectId = objects[0].id;
+
+    const res = await request.delete(`${baseUrl}/api/rest/e2e-rest-col/${objectId}`, {
+      headers: { Authorization: `Bearer ${bearerToken}` },
+    });
+    expect(res.status()).toBe(200);
+
+    // Object should no longer appear in listing (soft-deleted)
+    const afterRes = await request.get(`${baseUrl}/api/rest/e2e-rest-col`, {
+      headers: { Authorization: `Bearer ${bearerToken}` },
+    });
+    const afterBody = await afterRes.json();
+    expect(afterBody.objects.find((o: { id: string }) => o.id === objectId)).toBeUndefined();
+  });
+
+  test("rejects unauthenticated access", async ({ request }) => {
+    const res = await request.get(`${baseUrl}/api/rest/e2e-rest-col`);
+    expect(res.status()).toBe(403);
+  });
+
+  test("returns 404 for non-existent collection", async ({ request }) => {
+    const res = await request.get(`${baseUrl}/api/rest/nonexistent`, {
+      headers: { Authorization: `Bearer ${bearerToken}` },
+    });
+    expect(res.status()).toBe(404);
+  });
+});
+
+test.describe("Blind Ping routes", () => {
+  test("POST /api/pings/register registers a device", async ({ request }) => {
+    const res = await request.post(`${baseUrl}/api/pings/register`, {
+      data: { did: "did:key:zE2EPingUser", platform: "apns", token: "e2e-device-token-abc" },
+    });
+    expect(res.status()).toBe(201);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.registration.did).toBe("did:key:zE2EPingUser");
+  });
+
+  test("GET /api/pings/devices lists registered devices", async ({ request }) => {
+    const res = await request.get(`${baseUrl}/api/pings/devices`);
+    expect(res.status()).toBe(200);
+    const body = await res.json();
+    expect(body.devices.some((d: { did: string }) => d.did === "did:key:zE2EPingUser")).toBe(true);
+    expect(body.count).toBeGreaterThanOrEqual(1);
+  });
+
+  test("POST /api/pings/send dispatches a blind ping", async ({ request }) => {
+    const res = await request.post(`${baseUrl}/api/pings/send`, {
+      data: { recipientDid: "did:key:zE2EPingUser" },
+    });
+    expect(res.status()).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+  });
+
+  test("POST /api/pings/wake wakes all devices for a DID", async ({ request }) => {
+    const res = await request.post(`${baseUrl}/api/pings/wake`, {
+      data: { did: "did:key:zE2EPingUser" },
+    });
+    expect(res.status()).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.pinged).toBeGreaterThanOrEqual(1);
+  });
+
+  test("DELETE /api/pings/register/:did removes devices", async ({ request }) => {
+    const res = await request.delete(`${baseUrl}/api/pings/register/did:key:zE2EPingUser`);
+    expect(res.status()).toBe(200);
+    const body = await res.json();
+    expect(body.removed).toBeGreaterThanOrEqual(1);
+  });
+
+  test("validates required fields", async ({ request }) => {
+    const res = await request.post(`${baseUrl}/api/pings/register`, {
+      data: { platform: "apns" },
+    });
+    expect(res.status()).toBe(400);
+  });
+
+  test("validates platform enum", async ({ request }) => {
+    const res = await request.post(`${baseUrl}/api/pings/register`, {
+      data: { did: "did:key:z1", platform: "invalid", token: "tok" },
+    });
+    expect(res.status()).toBe(400);
+  });
+});
+
+test.describe("SEO routes", () => {
+  test("GET /sitemap.xml returns valid XML with portal entries", async ({ request }) => {
+    const res = await request.get(`${baseUrl}/sitemap.xml`);
+    expect(res.status()).toBe(200);
+    const text = await res.text();
+    expect(text).toContain("<?xml");
+    expect(text).toContain("<urlset");
+    expect(text).toContain("/portals");
+  });
+
+  test("GET /robots.txt returns crawler directives", async ({ request }) => {
+    const res = await request.get(`${baseUrl}/robots.txt`);
+    expect(res.status()).toBe(200);
+    const text = await res.text();
+    expect(text).toContain("User-agent:");
+    expect(text).toContain("Allow: /portals/");
+    expect(text).toContain("Disallow: /api/");
+    expect(text).toContain("Sitemap:");
+  });
+
+  test("portal HTML includes OpenGraph and JSON-LD metadata", async ({ request }) => {
+    const host = relay.getCapability<CollectionHost>(RELAY_CAPABILITIES.COLLECTIONS) as CollectionHost;
+    host.create("e2e-seo-col");
+    const registry = relay.getCapability<PortalRegistry>(RELAY_CAPABILITIES.PORTALS) as PortalRegistry;
+    const portal = registry.register({
+      name: "E2E SEO Portal",
+      level: 1,
+      collectionId: "e2e-seo-col",
+      basePath: "/seo",
+      isPublic: true,
+    });
+
+    const res = await request.get(`${baseUrl}/portals/${portal.portalId}`);
+    expect(res.status()).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('og:title');
+    expect(html).toContain('og:description');
+    expect(html).toContain('og:type');
+    expect(html).toContain('twitter:card');
+    expect(html).toContain('application/ld+json');
+    expect(html).toContain('schema.org');
+  });
+});
+
+test.describe("Security middleware", () => {
+  // Create a server WITH CSRF enabled for security tests
+  let securePort: number;
+  let secureClose: () => Promise<void>;
+
+  test.beforeAll(async () => {
+    const secureServer = createRelayServer({ relay, port: 0, disableCsrf: false });
+    const info = await secureServer.start();
+    securePort = info.port;
+    secureClose = info.close;
+  });
+
+  test.afterAll(async () => {
+    await secureClose();
+  });
+
+  test("rejects POST without X-Prism-CSRF header", async ({ request }) => {
+    const res = await request.post(`http://localhost:${securePort}/api/webhooks`, {
+      data: { url: "https://test.example/hook", events: ["*"], active: true },
+    });
+    expect(res.status()).toBe(403);
+    const body = await res.json();
+    expect(body.error).toContain("CSRF");
+  });
+
+  test("allows POST with X-Prism-CSRF header", async ({ request }) => {
+    const res = await request.post(`http://localhost:${securePort}/api/webhooks`, {
+      headers: { "X-Prism-CSRF": "1" },
+      data: { url: "https://test.example/hook", events: ["*"], active: true },
+    });
+    expect(res.status()).toBe(201);
+  });
+
+  test("allows GET without CSRF header", async ({ request }) => {
+    const res = await request.get(`http://localhost:${securePort}/api/status`);
+    expect(res.status()).toBe(200);
+  });
+
+  test("rejects requests from banned peers", async ({ request }) => {
+    // Ban a peer first (using CSRF header)
+    await request.post(`http://localhost:${securePort}/api/trust/did:key:zBannedE2E/ban`, {
+      headers: { "X-Prism-CSRF": "1" },
+      data: { reason: "e2e test" },
+    });
+
+    // Request from banned peer should be rejected
+    const res = await request.get(`http://localhost:${securePort}/api/status`, {
+      headers: { "X-Prism-DID": "did:key:zBannedE2E" },
+    });
+    // Banned peer middleware is on /api/* — GET /api/status should be rejected
+    expect(res.status()).toBe(403);
+    const body = await res.json();
+    expect(body.error).toContain("banned");
+
+    // Unban for cleanup
+    await request.post(`http://localhost:${securePort}/api/trust/did:key:zBannedE2E/unban`, {
+      headers: { "X-Prism-CSRF": "1" },
+      data: {},
+    });
+  });
+});
+
+// ── WebRTC Signaling ───────────────────────────────────────────────────────
+
+test.describe("WebRTC Signaling routes", () => {
+  test("GET /api/signaling/rooms lists rooms (initially empty)", async ({ request }) => {
+    const res = await request.get(`${baseUrl}/api/signaling/rooms`);
+    expect(res.status()).toBe(200);
+    const body = await res.json();
+    expect(body.count).toBeGreaterThanOrEqual(0);
+    expect(Array.isArray(body.rooms)).toBe(true);
+  });
+
+  test("peer joins a room and gets empty peer list", async ({ request }) => {
+    const res = await request.post(`${baseUrl}/api/signaling/rooms/e2e-room/join`, {
+      data: { peerId: "e2e-peer-a", displayName: "Alice" },
+    });
+    expect(res.status()).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.roomId).toBe("e2e-room");
+    expect(body.peers).toEqual([]);
+  });
+
+  test("second peer sees first peer", async ({ request }) => {
+    const res = await request.post(`${baseUrl}/api/signaling/rooms/e2e-room/join`, {
+      data: { peerId: "e2e-peer-b", displayName: "Bob" },
+    });
+    expect(res.status()).toBe(200);
+    const body = await res.json();
+    expect(body.peers).toHaveLength(1);
+    expect(body.peers[0].peerId).toBe("e2e-peer-a");
+  });
+
+  test("GET peers lists both peers", async ({ request }) => {
+    const res = await request.get(`${baseUrl}/api/signaling/rooms/e2e-room/peers`);
+    expect(res.status()).toBe(200);
+    const body = await res.json();
+    expect(body.count).toBe(2);
+  });
+
+  test("relay SDP offer between peers", async ({ request }) => {
+    const res = await request.post(`${baseUrl}/api/signaling/rooms/e2e-room/signal`, {
+      data: {
+        type: "offer",
+        from: "e2e-peer-a",
+        to: "e2e-peer-b",
+        payload: { sdp: "v=0\r\noffer..." },
+      },
+    });
+    expect(res.status()).toBe(200);
+    const body = await res.json();
+    expect(body.delivered).toBe(true);
+  });
+
+  test("poll retrieves buffered signals", async ({ request }) => {
+    const res = await request.post(`${baseUrl}/api/signaling/rooms/e2e-room/poll`, {
+      data: { peerId: "e2e-peer-b" },
+    });
+    expect(res.status()).toBe(200);
+    const body = await res.json();
+    expect(body.count).toBeGreaterThanOrEqual(1);
+    const offers = body.signals.filter((s: Record<string, unknown>) => s.type === "offer");
+    expect(offers).toHaveLength(1);
+  });
+
+  test("relay ICE candidates", async ({ request }) => {
+    const res = await request.post(`${baseUrl}/api/signaling/rooms/e2e-room/signal`, {
+      data: {
+        type: "ice-candidate",
+        from: "e2e-peer-b",
+        to: "e2e-peer-a",
+        payload: { candidate: "candidate:1 1 udp 2130706431 ..." },
+      },
+    });
+    expect(res.status()).toBe(200);
+    expect((await res.json()).delivered).toBe(true);
+  });
+
+  test("rejects invalid signal type", async ({ request }) => {
+    const res = await request.post(`${baseUrl}/api/signaling/rooms/e2e-room/signal`, {
+      data: { type: "bad-type", from: "a", to: "b", payload: {} },
+    });
+    expect(res.status()).toBe(400);
+  });
+
+  test("peer leaves room", async ({ request }) => {
+    await request.post(`${baseUrl}/api/signaling/rooms/e2e-room/leave`, {
+      data: { peerId: "e2e-peer-a" },
+    });
+    const res = await request.get(`${baseUrl}/api/signaling/rooms/e2e-room/peers`);
+    const body = await res.json();
+    expect(body.count).toBe(1);
+  });
+
+  test("rooms listing shows the room", async ({ request }) => {
+    const res = await request.get(`${baseUrl}/api/signaling/rooms`);
+    const body = await res.json();
+    const room = body.rooms.find((r: Record<string, unknown>) => r.roomId === "e2e-room");
+    expect(room).toBeDefined();
+    expect(room.peerCount).toBe(1);
   });
 });

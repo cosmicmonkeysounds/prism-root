@@ -72,6 +72,14 @@ import {
 import type { SlipImpact, PlanResult } from "@prism/core/graph-analysis";
 import { evaluateExpression } from "@prism/core/expression";
 import type { ExprValue } from "@prism/core/expression";
+import { PluginRegistry } from "@prism/core/plugin";
+import type { PrismPlugin } from "@prism/core/plugin";
+import { InputRouter, InputScope } from "@prism/core/input";
+import type { InputRouterEvent } from "@prism/core/input";
+import { createVaultRoster, createMemoryRosterStore } from "@prism/core/discovery";
+import type { VaultRoster, RosterEntry, RosterListOptions } from "@prism/core/discovery";
+import { createFormState, setFieldValue, setFieldErrors, fieldHasVisibleError, isDirty } from "@prism/core/forms";
+import type { FormState } from "@prism/core/forms";
 
 // ── Clipboard Types ────────────────────────────────────────────────────────
 
@@ -154,6 +162,77 @@ export interface StudioKernel {
 
   /** Evaluate an expression formula against the current object context. */
   evaluateFormula(formula: string, objectId?: ObjectId): { result: ExprValue; errors: string[] };
+
+  // ── Plugin System ──────────────────────────────────────────────────────────
+
+  readonly plugins: PluginRegistry;
+
+  /** Register a plugin. Returns unregister function. */
+  registerPlugin(plugin: PrismPlugin): () => void;
+
+  /** List all registered plugins. */
+  listPlugins(): PrismPlugin[];
+
+  /** Unregister a plugin by ID. */
+  unregisterPlugin(id: string): boolean;
+
+  /** Subscribe to plugin registry changes. */
+  onPluginChange(listener: () => void): () => void;
+
+  // ── Input System ──────────────────────────────────────────────────────────
+
+  readonly inputRouter: InputRouter;
+
+  /** Get all keyboard bindings from the global scope. */
+  listBindings(): Array<{ shortcut: string; action: string }>;
+
+  /** Bind a shortcut in the global scope. */
+  bindShortcut(shortcut: string, action: string): void;
+
+  /** Unbind a shortcut from the global scope. */
+  unbindShortcut(shortcut: string): void;
+
+  /** Subscribe to input router events. */
+  onInputEvent(listener: (event: InputRouterEvent) => void): () => void;
+
+  // ── Vault Discovery ───────────────────────────────────────────────────────
+
+  readonly vaultRoster: VaultRoster;
+
+  /** List vaults with optional filtering/sorting. */
+  listVaults(options?: RosterListOptions): RosterEntry[];
+
+  /** Add a vault to the roster. */
+  addVault(entry: Omit<RosterEntry, "addedAt"> & { addedAt?: string }): RosterEntry;
+
+  /** Remove a vault from the roster. */
+  removeVault(id: string): boolean;
+
+  /** Pin/unpin a vault. */
+  pinVault(id: string, pinned: boolean): RosterEntry | undefined;
+
+  /** Touch (update lastOpenedAt) a vault. */
+  touchVault(id: string): RosterEntry | undefined;
+
+  /** Subscribe to vault roster changes. */
+  onVaultChange(listener: () => void): () => void;
+
+  // ── Forms & Validation ────────────────────────────────────────────────────
+
+  /** Create a form state from defaults. */
+  createFormState(defaults?: Record<string, unknown>): FormState;
+
+  /** Update a field value in form state (returns new state). */
+  updateFormField(state: FormState, fieldId: string, value: unknown, original: unknown): FormState;
+
+  /** Set field errors in form state (returns new state). */
+  setFormErrors(state: FormState, fieldId: string, errors: string[]): FormState;
+
+  /** Check if a form field has a visible error. */
+  hasFieldError(state: FormState, fieldId: string): boolean;
+
+  /** Check if form state is dirty. */
+  isFormDirty(state: FormState): boolean;
 
   /** Get the active view mode. */
   readonly viewMode: ViewMode;
@@ -279,6 +358,37 @@ export function createStudioKernel(): StudioKernel {
   const configRegistry = new ConfigRegistry();
   const config = new ConfigModel(configRegistry);
   const viewReg = createViewRegistry();
+
+  // ── Plugin System ──────────────────────────────────────────────────────────
+  const pluginRegistry = new PluginRegistry();
+  const pluginListeners = new Set<() => void>();
+  pluginRegistry.subscribe(() => {
+    for (const fn of pluginListeners) fn();
+  });
+
+  // ── Input System ───────────────────────────────────────────────────────────
+  const inputRouter = new InputRouter();
+  const globalScope = new InputScope("global", "Global");
+
+  // Register default studio shortcuts in global scope
+  globalScope.keyboard.bindAll({
+    "cmd+z": "undo",
+    "cmd+shift+z": "redo",
+    "cmd+k": "command-palette",
+    "cmd+s": "save",
+    "cmd+n": "new-object",
+  });
+
+  inputRouter.push(globalScope);
+
+  // ── Vault Discovery ────────────────────────────────────────────────────────
+  const rosterStore = createMemoryRosterStore();
+  const vaultRoster = createVaultRoster(rosterStore);
+  const vaultListeners = new Set<() => void>();
+  vaultRoster.onChange(() => {
+    for (const fn of vaultListeners) fn();
+  });
+
   const presence = createPresenceManager({
     localIdentity: {
       peerId: `local_${Date.now().toString(36)}`,
@@ -1019,6 +1129,8 @@ export function createStudioKernel(): StudioKernel {
     disconnectAutomationUpdated();
     disconnectAutomationDeleted();
     automationListeners.clear();
+    pluginListeners.clear();
+    vaultListeners.clear();
     relay.dispose();
     presence.dispose();
     disconnectAtoms();
@@ -1092,6 +1204,49 @@ export function createStudioKernel(): StudioKernel {
     listTemplates,
     instantiateTemplate,
     createLiveView: makeLiveView,
+
+    // ── Plugin System ──────────────────────────────────────────────────────
+    plugins: pluginRegistry,
+    registerPlugin(plugin: PrismPlugin) { return pluginRegistry.register(plugin); },
+    listPlugins() { return pluginRegistry.all(); },
+    unregisterPlugin(id: string) { return pluginRegistry.unregister(id); },
+    onPluginChange(listener: () => void) {
+      pluginListeners.add(listener);
+      return () => pluginListeners.delete(listener);
+    },
+
+    // ── Input System ──────────────────────────────────────────────────────
+    inputRouter,
+    listBindings() { return globalScope.keyboard.allBindings(); },
+    bindShortcut(shortcut: string, action: string) { globalScope.keyboard.bind(shortcut, action); },
+    unbindShortcut(shortcut: string) { globalScope.keyboard.unbind(shortcut); },
+    onInputEvent(listener: (event: InputRouterEvent) => void) { return inputRouter.on(listener); },
+
+    // ── Vault Discovery ────────────────────────────────────────────────────
+    vaultRoster,
+    listVaults(options?: RosterListOptions) { return vaultRoster.list(options); },
+    addVault(entry: Omit<RosterEntry, "addedAt"> & { addedAt?: string }) { return vaultRoster.add(entry); },
+    removeVault(id: string) { return vaultRoster.remove(id); },
+    pinVault(id: string, pinned: boolean) { return vaultRoster.pin(id, pinned); },
+    touchVault(id: string) { return vaultRoster.touch(id); },
+    onVaultChange(listener: () => void) {
+      vaultListeners.add(listener);
+      return () => vaultListeners.delete(listener);
+    },
+
+    // ── Forms & Validation ─────────────────────────────────────────────────
+    createFormState(defaults?: Record<string, unknown>) { return createFormState(defaults); },
+    updateFormField(state: FormState, fieldId: string, value: unknown, original: unknown) {
+      return setFieldValue(state, fieldId, value, original);
+    },
+    setFormErrors(state: FormState, fieldId: string, errors: string[]) {
+      return setFieldErrors(state, fieldId, errors);
+    },
+    hasFieldError(state: FormState, fieldId: string) {
+      return fieldHasVisibleError(state, fieldId);
+    },
+    isFormDirty(state: FormState) { return isDirty(state); },
+
     dispose,
   };
 }

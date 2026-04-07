@@ -10,6 +10,7 @@ export {
   createMemoryPingTransport,
   acmeCertificateModule,
   portalTemplateModule,
+  webrtcSignalingModule,
 } from "./relay.js";
 
 export type { WebhookHttpClient } from "./relay.js";
@@ -55,6 +56,12 @@ export type {
   AcmeCertificateManager,
   PortalTemplate,
   PortalTemplateRegistry,
+  SignalType,
+  SignalMessage,
+  SignalingPeer,
+  SignalingRoom,
+  SignalDelivery,
+  SignalingHub,
 } from "./relay-types.js";
 
 // ── Client SDK ──────────────────────────────────────────────────────────────
