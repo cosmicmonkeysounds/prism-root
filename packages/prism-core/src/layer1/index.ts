@@ -995,6 +995,11 @@ export {
   JsonWriter,
   YamlWriter,
   TomlWriter,
+  luaBrowserView,
+  luaCollectionRule,
+  luaStatsCommand,
+  luaMenuItem,
+  luaCommand,
 } from "./facet/index.js";
 
 export type {
@@ -1032,6 +1037,12 @@ export type {
   SchemaEnum,
   SchemaDeclaration,
   SchemaModel,
+  BrowserViewConfig,
+  CollectionRuleConfig,
+  StatsFieldConfig,
+  StatsCommandConfig,
+  MenuItemConfig,
+  CommandConfig,
 } from "./facet/index.js";
 
 // ── Flux Domain ───────────────────────────────────────────────────────────

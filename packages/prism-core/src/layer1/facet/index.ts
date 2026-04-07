@@ -84,6 +84,25 @@ export type {
 } from "./sequencer-types.js";
 export { emitConditionLua, emitScriptLua } from "./sequencer-types.js";
 
+// ── Facet Builders (Lua codegen helpers for plugin patterns) ────────────
+export type {
+  BrowserViewColumn,
+  BrowserViewConfig,
+  CollectionRuleConfig,
+  StatsOperation,
+  StatsFieldConfig,
+  StatsCommandConfig,
+  MenuItemConfig,
+  CommandConfig,
+} from "./facet-builders.js";
+export {
+  luaBrowserView,
+  luaCollectionRule,
+  luaStatsCommand,
+  luaMenuItem,
+  luaCommand,
+} from "./facet-builders.js";
+
 // ── Emitters (SchemaModel → TS/JS/C#/Lua/JSON/YAML/TOML) ────────────────
 export type {
   SchemaField,

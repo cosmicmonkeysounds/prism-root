@@ -26,6 +26,8 @@ import { TrustPanel } from "../panels/trust-panel.js";
 import { FormFacetPanel } from "../panels/form-facet-panel.js";
 import { TableFacetPanel } from "../panels/table-facet-panel.js";
 import { SequencerPanel } from "../panels/sequencer-panel.js";
+import ReportFacetPanel from "../panels/report-facet-panel.js";
+import { LuaFacetPanel } from "../panels/lua-facet-panel.js";
 
 export const EDITOR_LENS_ID = lensId("editor");
 export const GRAPH_LENS_ID = lensId("graph");
@@ -45,6 +47,8 @@ export const TRUST_LENS_ID = lensId("trust");
 export const FORM_FACET_LENS_ID = lensId("form-facet");
 export const TABLE_FACET_LENS_ID = lensId("table-facet");
 export const SEQUENCER_LENS_ID = lensId("sequencer");
+export const REPORT_FACET_LENS_ID = lensId("report-facet");
+export const LUA_FACET_LENS_ID = lensId("lua-facet");
 
 const editorManifest: LensManifest = {
   id: EDITOR_LENS_ID,
@@ -215,7 +219,7 @@ const formFacetManifest: LensManifest = {
   id: FORM_FACET_LENS_ID,
   name: "Form",
   icon: "\uD83D\uDCDD",
-  category: "custom",
+  category: "facet",
   contributes: {
     views: [{ slot: "main" }],
     commands: [{ id: "switch-form-facet", name: "Switch to Form Facet", shortcut: ["d"], section: "Navigation" }],
@@ -226,7 +230,7 @@ const tableFacetManifest: LensManifest = {
   id: TABLE_FACET_LENS_ID,
   name: "Table",
   icon: "\uD83D\uDCCA",
-  category: "custom",
+  category: "facet",
   contributes: {
     views: [{ slot: "main" }],
     commands: [{ id: "switch-table-facet", name: "Switch to Table Facet", shortcut: ["b"], section: "Navigation" }],
@@ -237,10 +241,32 @@ const sequencerManifest: LensManifest = {
   id: SEQUENCER_LENS_ID,
   name: "Sequencer",
   icon: "\uD83C\uDFBC",
-  category: "custom",
+  category: "facet",
   contributes: {
     views: [{ slot: "main" }],
     commands: [{ id: "switch-sequencer", name: "Switch to Sequencer", shortcut: ["q"], section: "Navigation" }],
+  },
+};
+
+const luaFacetManifest: LensManifest = {
+  id: LUA_FACET_LENS_ID,
+  name: "Lua Facet",
+  icon: "\uD83C\uDF19",
+  category: "facet",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-lua-facet", name: "Switch to Lua Facet", shortcut: ["u"], section: "Navigation" }],
+  },
+};
+
+const reportFacetManifest: LensManifest = {
+  id: REPORT_FACET_LENS_ID,
+  name: "Report",
+  icon: "\uD83D\uDCCB",
+  category: "facet",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-report-facet", name: "Switch to Report Facet", shortcut: ["o"], section: "Navigation" }],
   },
 };
 
@@ -263,6 +289,8 @@ export const ALL_MANIFESTS: LensManifest[] = [
   formFacetManifest,
   tableFacetManifest,
   sequencerManifest,
+  reportFacetManifest,
+  luaFacetManifest,
 ];
 
 export function registerBuiltinLenses(registry: LensRegistry): () => void {
@@ -290,5 +318,7 @@ export function createLensComponentMap(): Map<LensId, ComponentType> {
   map.set(FORM_FACET_LENS_ID, FormFacetPanel);
   map.set(TABLE_FACET_LENS_ID, TableFacetPanel);
   map.set(SEQUENCER_LENS_ID, SequencerPanel);
+  map.set(REPORT_FACET_LENS_ID, ReportFacetPanel);
+  map.set(LUA_FACET_LENS_ID, LuaFacetPanel);
   return map;
 }

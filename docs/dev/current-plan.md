@@ -1709,43 +1709,45 @@ Three tiers:
 
 ### Tier 3: Layer 2 React Components
 
-- [ ] **FormFacet** — schema-driven field renderer (replaces document-surface form stub)
-  - [ ] Render FieldSchema[] → form fields with validation
-  - [ ] FacetParser integration (YAML/JSON source ↔ form state)
-  - [ ] SpellEngine integration for text/textarea fields
-  - [ ] PortalSlot rendering (inline related records)
-  - [ ] Conditional field visibility
-- [ ] **TableFacet** — data grid (replaces document-surface spreadsheet stub)
-  - [ ] Column definitions from EntityFieldDef
-  - [ ] Inline editing
-  - [ ] Sort/filter/group headers
-  - [ ] Keyboard navigation (arrow keys, tab, enter)
-- [ ] **ReportFacet** — grouped/summarized view (replaces document-surface report stub)
-  - [ ] LayoutPart rendering (header/body/footer/summary)
-  - [ ] Sub-summary groups by field
-  - [ ] Expression evaluation for summary fields (count, sum, avg)
-- [ ] **Sequencer UI** — visual automation builder
-  - [ ] ConditionBuilder (dropdowns for subject → operator → value)
-  - [ ] ScriptBuilder (step list with add/remove/reorder)
-  - [ ] Live Lua preview
-  - [ ] Integration with AutomationEngine
-- [ ] **LuaFacet** — execute Lua render scripts → React
-  - [ ] `ui` builder table (label, button, section, badge, input, row, column, spacer, divider)
-  - [ ] `ctx` context object (viewId, instanceKey, isActive)
-  - [ ] Error states (no VM, execution error, null return)
-  - [ ] LuaRuntimeProvider context integration
-- [ ] **FacetBuilders** — Lua codegen for common shell patterns
-  - [ ] `luaBrowserView()` — generate Lua for a collection browser view
-  - [ ] `luaCollectionRule()` — generate Lua for a validation rule
-  - [ ] `luaStatsCommand()` — generate Lua for a summary command
-  - [ ] `luaMenuItem()` — generate Lua for a menu contribution
-  - [ ] `luaCommand()` — generate Lua for a keyboard command
+- [x] **FormFacet** — schema-driven field renderer (replaces document-surface form stub)
+  - [x] Render FieldSchema[] → form fields with validation
+  - [x] FacetParser integration (YAML/JSON source ↔ form state)
+  - [x] SpellEngine integration for text/textarea fields
+  - [x] PortalSlot rendering (inline related records)
+  - [x] Conditional field visibility
+- [x] **TableFacet** — data grid (replaces document-surface spreadsheet stub)
+  - [x] Column definitions from EntityFieldDef
+  - [x] Inline editing
+  - [x] Sort/filter/group headers
+  - [x] Keyboard navigation (arrow keys, tab, enter)
+- [x] **ReportFacet** — grouped/summarized view (replaces document-surface report stub)
+  - [x] LayoutPart rendering (header/body/footer/summary)
+  - [x] Sub-summary groups by field
+  - [x] Expression evaluation for summary fields (count, sum, avg)
+- [x] **Sequencer UI** — visual automation builder
+  - [x] ConditionBuilder (dropdowns for subject → operator → value)
+  - [x] ScriptBuilder (step list with add/remove/reorder)
+  - [x] Live Lua preview
+  - [x] Integration with AutomationEngine
+- [x] **LuaFacet** — execute Lua render scripts → React
+  - [x] `ui` builder table (label, button, section, badge, input, row, column, spacer, divider)
+  - [x] `ctx` context object (viewId, instanceKey, isActive)
+  - [x] Error states (no VM, execution error, null return)
+  - [x] LuaRuntimeProvider context integration
+- [x] **FacetBuilders** — Lua codegen for common shell patterns
+  - [x] `luaBrowserView()` — generate Lua for a collection browser view
+  - [x] `luaCollectionRule()` — generate Lua for a validation rule
+  - [x] `luaStatsCommand()` — generate Lua for a summary command
+  - [x] `luaMenuItem()` — generate Lua for a menu contribution
+  - [x] `luaCommand()` — generate Lua for a keyboard command
 
 ### Integration with Studio
 
+- [x] **Facet lenses** — Form, Table, Report, Sequencer, Lua Facet (20 total lenses, "facet" category)
+- [x] **Studio kernel wiring** — FacetParser, SpellEngine, ProseCodec, Sequencer, Emitters, FacetDefinitions all wired
+- [x] **Kernel hooks** — useFacetParser, useSpellCheck, useProseCodec, useSequencer, useEmitters, useFacetDefinitions
 - [ ] **Facet Designer lens** — visual layout builder (like FileMaker Layout Mode)
 - [ ] **Record Browser** — form/list/table/report toggle per collection (like FileMaker Browse Mode)
-- [ ] Studio kernel wires FacetParser + SpellEngine + Sequencer into existing systems
 
 ## Phase 33: Ecosystem Apps — Cadence & Grip
 
