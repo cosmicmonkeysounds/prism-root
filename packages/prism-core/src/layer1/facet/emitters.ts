@@ -97,7 +97,8 @@ export function emitTypeScript(model: SchemaModel): string {
 
   for (let i = 0; i < model.declarations.length; i++) {
     if (i > 0) b.blank();
-    emitTsDeclaration(b, model.declarations[i]!);
+    const decl = model.declarations[i];
+    if (decl) emitTsDeclaration(b, decl);
   }
 
   return b.build() + '\n';
@@ -155,7 +156,8 @@ export function emitJavaScript(model: SchemaModel): string {
 
   for (let i = 0; i < model.declarations.length; i++) {
     if (i > 0) b.blank();
-    emitJsDeclaration(b, model.declarations[i]!);
+    const decl = model.declarations[i];
+    if (decl) emitJsDeclaration(b, decl);
   }
 
   return b.build() + '\n';
@@ -247,7 +249,8 @@ export function emitCSharp(model: SchemaModel): string {
   b.block(`namespace ${ns}`, bld => {
     for (let i = 0; i < model.declarations.length; i++) {
       if (i > 0) bld.blank();
-      emitCSharpDeclaration(bld, model.declarations[i]!);
+      const decl = model.declarations[i];
+      if (decl) emitCSharpDeclaration(bld, decl);
     }
   });
 
@@ -305,7 +308,8 @@ export function emitLua(model: SchemaModel): string {
 
   for (let i = 0; i < model.declarations.length; i++) {
     if (i > 0) b.blank();
-    emitLuaDeclaration(b, model.declarations[i]!);
+    const decl = model.declarations[i];
+    if (decl) emitLuaDeclaration(b, decl);
   }
 
   return b.build() + '\n';
@@ -410,14 +414,14 @@ function yamlSerializeArray(arr: unknown[], depth: number): string {
       const lines = val.split('\n').filter(l => l.length > 0);
       if (lines.length === 0) return `${pad}-`;
       const rest = lines.slice(1).map(l => `${pad}  ${l.trimStart()}`);
-      return [`${pad}- ${lines[0]!.trimStart()}`, ...rest].join('\n');
+      return [`${pad}- ${(lines[0] ?? '').trimStart()}`, ...rest].join('\n');
     }
     return `${pad}- ${yamlSerializeNode(item, depth)}`;
   }).join('\n');
 }
 
 function yamlNeedsKeyQuoting(k: string): boolean {
-  return /[:{}\[\],#&*!|>'"@` ]/.test(k) || k.trim() !== k || k === '';
+  return /[:{}[\],#&*!|>'"@` ]/.test(k) || k.trim() !== k || k === '';
 }
 
 function yamlSerializeObject(obj: Record<string, unknown>, depth: number): string {

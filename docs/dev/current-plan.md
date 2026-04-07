@@ -1638,46 +1638,46 @@ Three tiers:
 
 ### Tier 2: Layer 1 Engines (`@prism/core/facet`)
 
-- [ ] **FacetParser** — port legacy `form-parser.ts`
-  - [ ] `detectFormat(value)` → 'yaml' | 'json'
-  - [ ] `parseValues(value, format)` → Record<string, unknown>
-  - [ ] `serializeValues(values, format, originalSource)` → string (preserves comments/ordering)
-  - [ ] `inferFields(values)` → FieldSchema[] (auto-detect types: boolean, number, url, email, date, textarea, tags)
-- [ ] **FacetSchema** — NEW: layout part definitions
-  - [ ] `FacetLayout` type (form, list, table, report, card)
-  - [ ] `LayoutPart` (header, body, footer, summary, leading-grand-summary, trailing-grand-summary)
-  - [ ] `FieldSlot` (field placement within a layout part: field ref, label position, width, validation display)
-  - [ ] `PortalSlot` (inline related records via EdgeTypeDef relationship)
-  - [ ] `FacetDefinition` (layout + parts + slots + scripts + title + description)
-  - [ ] `createFacetDefinition()` factory + `FacetDefinitionBuilder` fluent API
-- [ ] **SpellEngine** — port legacy `spellcheck/` (full engine, not just CM6 extension)
-  - [ ] `SpellCheckRegistry` (dictionary + filter registration, events)
-  - [ ] `SpellChecker` class (load dict, check text, suggest, personal dict)
-  - [ ] `PersonalDictionary` (persistent storage + session-only ignore)
-  - [ ] `SpellCheckerBuilder` fluent API
-  - [ ] 12 built-in TokenFilters (URL, email, allCaps, camelCase, filePath, inlineCode, wikiLink, etc.)
-  - [ ] Dictionary providers (URL, static, lazy, npm)
-  - [ ] `MockSpellCheckBackend` for tests
-- [ ] **ProseCodec** — port legacy `markdown-serializer.ts`
-  - [ ] `markdownToNodes(md)` → structured node tree (headings, paragraphs, lists, code blocks, blockquotes, HR)
-  - [ ] `nodesToMarkdown(nodes)` → string (round-trip preserving)
-  - [ ] Inline element support (bold, italic, code, links, wiki-links)
-  - [ ] Task list support (`- [ ]`, `- [x]`)
-- [ ] **Sequencer types** — port legacy wizard data model + Lua emission
-  - [ ] `SequencerSubject` (variable, field, event, custom — with id, label, type)
-  - [ ] `SequencerConditionState` (combinator: all|any, clauses with 12 operators)
-  - [ ] `SequencerScriptState` (steps: set-variable, add-variable, emit-event, call-function, custom)
-  - [ ] `emitConditionLua(state)` → Lua expression string
-  - [ ] `emitScriptLua(state)` → Lua statement block
-- [ ] **Emitters** — port legacy `codegen/writers/` (SchemaModel → multi-language)
-  - [ ] `SchemaModel` / `SchemaField` / `SchemaInterface` / `SchemaEnum` types
-  - [ ] `TypeScriptWriter` (interfaces + enums + JSDoc)
-  - [ ] `JavaScriptWriter` (JSDoc @typedef)
-  - [ ] `CSharpWriter` (classes + enums with namespace)
-  - [ ] `LuaWriter` (table + field definitions)
-  - [ ] `JsonWriter` (pretty-print serializer)
-  - [ ] `YamlWriter` (zero-dep: scalars, blocks, anchors)
-  - [ ] `TomlWriter` (zero-dep: tables, array-of-tables)
+- [x] **FacetParser** — port legacy `form-parser.ts`
+  - [x] `detectFormat(value)` → 'yaml' | 'json'
+  - [x] `parseValues(value, format)` → Record<string, unknown>
+  - [x] `serializeValues(values, format, originalSource)` → string (preserves comments/ordering)
+  - [x] `inferFields(values)` → FieldSchema[] (auto-detect types: boolean, number, url, email, date, textarea, tags)
+- [x] **FacetSchema** — NEW: layout part definitions
+  - [x] `FacetLayout` type (form, list, table, report, card)
+  - [x] `LayoutPart` (header, body, footer, summary, leading-grand-summary, trailing-grand-summary)
+  - [x] `FieldSlot` (field placement within a layout part: field ref, label position, width, validation display)
+  - [x] `PortalSlot` (inline related records via EdgeTypeDef relationship)
+  - [x] `FacetDefinition` (layout + parts + slots + scripts + title + description)
+  - [x] `createFacetDefinition()` factory + `FacetDefinitionBuilder` fluent API
+- [x] **SpellEngine** — port legacy `spellcheck/` (full engine, not just CM6 extension)
+  - [x] `SpellCheckRegistry` (dictionary + filter registration, events)
+  - [x] `SpellChecker` class (load dict, check text, suggest, personal dict)
+  - [x] `PersonalDictionary` (persistent storage + session-only ignore)
+  - [x] `SpellCheckerBuilder` fluent API
+  - [x] 12 built-in TokenFilters (URL, email, allCaps, camelCase, filePath, inlineCode, wikiLink, etc.)
+  - [x] Dictionary providers (URL, static, lazy, npm)
+  - [x] `MockSpellCheckBackend` for tests
+- [x] **ProseCodec** — port legacy `markdown-serializer.ts`
+  - [x] `markdownToNodes(md)` → structured node tree (headings, paragraphs, lists, code blocks, blockquotes, HR)
+  - [x] `nodesToMarkdown(nodes)` → string (round-trip preserving)
+  - [x] Inline element support (bold, italic, code, links, wiki-links)
+  - [x] Task list support (`- [ ]`, `- [x]`)
+- [x] **Sequencer types** — port legacy wizard data model + Lua emission
+  - [x] `SequencerSubject` (variable, field, event, custom — with id, label, type)
+  - [x] `SequencerConditionState` (combinator: all|any, clauses with 12 operators)
+  - [x] `SequencerScriptState` (steps: set-variable, add-variable, emit-event, call-function, custom)
+  - [x] `emitConditionLua(state)` → Lua expression string
+  - [x] `emitScriptLua(state)` → Lua statement block
+- [x] **Emitters** — port legacy `codegen/writers/` (SchemaModel → multi-language)
+  - [x] `SchemaModel` / `SchemaField` / `SchemaInterface` / `SchemaEnum` types
+  - [x] `TypeScriptWriter` (interfaces + enums + JSDoc)
+  - [x] `JavaScriptWriter` (JSDoc @typedef)
+  - [x] `CSharpWriter` (classes + enums with namespace)
+  - [x] `LuaWriter` (table + field definitions)
+  - [x] `JsonWriter` (pretty-print serializer)
+  - [x] `YamlWriter` (zero-dep: scalars, blocks, anchors)
+  - [x] `TomlWriter` (zero-dep: tables, array-of-tables)
 
 ### Tier 3: Layer 2 React Components
 

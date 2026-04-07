@@ -34,7 +34,7 @@ import {
   createPresenceRoutes,
 } from "../routes/index.js";
 import type { AuthRoutesOptions } from "../routes/index.js";
-import { handleWsOpen, handleWsMessage, handleWsClose, createConnectionRegistry } from "../transport/index.js";
+import { handleWsOpen, handleWsMessage, handleWsClose, createConnectionRegistry, createPresenceStore } from "../transport/index.js";
 import type { WsConnection } from "../transport/index.js";
 import {
   csrfMiddleware,
@@ -110,6 +110,7 @@ export function createRelayServer(options: RelayServerOptions): RelayServer {
 
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
   const connectionRegistry = createConnectionRegistry();
+  const presenceStore = createPresenceStore();
 
   // ── HTTP routes ──────────────────────────────────────────────────────
   app.route("/api", createStatusRoutes(relay));
@@ -130,6 +131,7 @@ export function createRelayServer(options: RelayServerOptions): RelayServer {
   app.route("/api/rest", createAutoRestRoutes(relay));
   app.route("/api/pings", createPingRoutes(relay));
   app.route("/api/signaling", createSignalingRoutes(relay));
+  app.route("/api/presence", createPresenceRoutes(presenceStore));
 
   // ── ACME HTTP-01 challenge response (Let's Encrypt) ─────────────────
   app.route("/.well-known/acme-challenge", createAcmeRoutes(relay));
@@ -178,11 +180,11 @@ export function createRelayServer(options: RelayServerOptions): RelayServer {
         },
         onMessage(evt, ws) {
           const data = typeof evt.data === "string" ? evt.data : String(evt.data);
-          handleWsMessage(ws, conn, relay, data, connectionRegistry);
+          handleWsMessage(ws, conn, relay, data, connectionRegistry, presenceStore);
         },
         onClose(_evt, ws) {
           connectionRegistry.remove(ws);
-          handleWsClose(conn, relay);
+          handleWsClose(conn, relay, connectionRegistry, presenceStore);
         },
       };
     }),

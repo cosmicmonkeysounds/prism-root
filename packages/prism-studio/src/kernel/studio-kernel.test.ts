@@ -969,6 +969,17 @@ describe("StudioKernel", () => {
       expect(called).toBe(1);
       unsub();
     });
+
+    it("should list imported files and update on remove", async () => {
+      expect(kernel.listFiles()).toHaveLength(0);
+      const ref1 = await kernel.importFile(new TextEncoder().encode("one"), "one.txt", "text/plain");
+      await kernel.importFile(new TextEncoder().encode("two"), "two.txt", "text/plain");
+      expect(kernel.listFiles()).toHaveLength(2);
+      expect(kernel.listFiles().map((r) => r.filename).sort()).toEqual(["one.txt", "two.txt"]);
+      await kernel.removeFile(ref1.hash);
+      expect(kernel.listFiles()).toHaveLength(1);
+      expect(kernel.listFiles()[0]?.filename).toBe("two.txt");
+    });
   });
 
   // ── Trust & Safety ─────────────────────────────────────────────────────

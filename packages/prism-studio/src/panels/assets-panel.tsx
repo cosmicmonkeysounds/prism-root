@@ -168,8 +168,7 @@ function AssetCard({
 
 export function AssetsPanel() {
   const kernel = useKernel();
-  const { locks, importFile, removeFile, acquireLock, releaseLock } = useVfs();
-  const [assets, setAssets] = useState<BinaryRef[]>([]);
+  const { files, locks, importFile, removeFile, acquireLock, releaseLock } = useVfs();
   const [importName, setImportName] = useState("");
   const [importMime, setImportMime] = useState("application/octet-stream");
   const [importData, setImportData] = useState("");
@@ -179,7 +178,6 @@ export function AssetsPanel() {
     if (!importName.trim() || !importData.trim()) return;
     const data = new TextEncoder().encode(importData);
     const ref = await importFile(data, importName.trim(), importMime.trim() || "text/plain");
-    setAssets((prev) => [...prev, ref]);
     setImportName("");
     setImportData("");
     kernel.notifications.add({ title: `Imported: ${ref.filename}`, kind: "success" });
@@ -188,7 +186,6 @@ export function AssetsPanel() {
   const handleRemove = useCallback(
     async (hash: string, filename: string) => {
       await removeFile(hash);
-      setAssets((prev) => prev.filter((a) => a.hash !== hash));
       kernel.notifications.add({ title: `Removed: ${filename}`, kind: "info" });
     },
     [removeFile, kernel],
@@ -231,7 +228,7 @@ export function AssetsPanel() {
       <div style={styles.header as React.CSSProperties}>
         <span>Assets</span>
         <span style={{ fontSize: "0.75rem", color: "#666" }}>
-          {assets.length} file(s) | {locks.length} lock(s)
+          {files.length} file(s) | {locks.length} lock(s)
         </span>
       </div>
 
@@ -301,13 +298,13 @@ export function AssetsPanel() {
       )}
 
       {/* Asset list */}
-      <div style={styles.sectionTitle}>Files ({assets.length})</div>
-      {assets.length === 0 && (
+      <div style={styles.sectionTitle}>Files ({files.length})</div>
+      {files.length === 0 && (
         <div style={{ color: "#555", fontStyle: "italic", textAlign: "center", padding: "1rem" }}>
           No files imported yet. Use the form above to import.
         </div>
       )}
-      {assets.map((asset) => (
+      {files.map((asset) => (
         <AssetCard
           key={asset.hash}
           asset={asset}

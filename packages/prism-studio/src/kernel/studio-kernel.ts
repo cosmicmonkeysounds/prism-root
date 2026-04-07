@@ -295,6 +295,9 @@ export interface StudioKernel {
   /** Remove a file from storage. */
   removeFile(hash: string): Promise<boolean>;
 
+  /** List all imported file references. */
+  listFiles(): BinaryRef[];
+
   /** List all active binary locks. */
   listLocks(): BinaryLock[];
 
@@ -543,9 +546,10 @@ export function createStudioKernel(): StudioKernel {
     notifyTrustListeners();
   });
 
+  const localPeerId = `local_${Date.now().toString(36)}`;
   const presence = createPresenceManager({
     localIdentity: {
-      peerId: `local_${Date.now().toString(36)}`,
+      peerId: localPeerId,
       displayName: "You",
       color: "#4a9eff",
     },
@@ -1310,8 +1314,11 @@ export function createStudioKernel(): StudioKernel {
 
   // ── VFS helpers ─────────────────────────────────────────────────────────
 
+  const importedRefs = new Map<string, BinaryRef>();
+
   async function importFileImpl(data: Uint8Array, filename: string, mimeType: string): Promise<BinaryRef> {
     const ref = await vfs.importFile(data, filename, mimeType);
+    importedRefs.set(ref.hash, ref);
     notifyVfsListeners();
     return ref;
   }
@@ -1322,19 +1329,22 @@ export function createStudioKernel(): StudioKernel {
 
   async function removeFileImpl(hash: string): Promise<boolean> {
     const result = await vfs.removeFile(hash);
-    if (result) notifyVfsListeners();
+    if (result) {
+      importedRefs.delete(hash);
+      notifyVfsListeners();
+    }
     return result;
   }
 
   function acquireLockImpl(hash: string, reason?: string): BinaryLock {
-    const peerId = currentIdentity?.did ?? `local_${Date.now().toString(36)}`;
+    const peerId = currentIdentity?.did ?? localPeerId;
     const lock = vfs.acquireLock(hash, peerId, reason);
     notifyVfsListeners();
     return lock;
   }
 
   function releaseLockImpl(hash: string): void {
-    const peerId = currentIdentity?.did ?? `local_${Date.now().toString(36)}`;
+    const peerId = currentIdentity?.did ?? localPeerId;
     vfs.releaseLock(hash, peerId);
     notifyVfsListeners();
   }
@@ -1487,6 +1497,7 @@ export function createStudioKernel(): StudioKernel {
     importFile: importFileImpl,
     exportFile: exportFileImpl,
     removeFile: removeFileImpl,
+    listFiles() { return [...importedRefs.values()]; },
     listLocks() { return vfs.listLocks(); },
     acquireLock: acquireLockImpl,
     releaseLock: releaseLockImpl,

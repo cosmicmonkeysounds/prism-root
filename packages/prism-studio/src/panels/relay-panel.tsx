@@ -393,15 +393,16 @@ export function RelayPanel() {
     kernel.notifications.add({ title: `Added relay "${name}"`, kind: "info" });
   }, [manager, kernel]);
 
-  const handleConnect = useCallback(async (_relayId: string) => {
-    // In a full implementation, identity comes from the daemon via IPC.
-    // For now we notify the user that CLI-managed relay connections are the way.
+  const handleConnect = useCallback(async (relayId: string) => {
+    // Identity comes from the daemon via IPC — not available in SPA mode.
+    // Relay connections are started via CLI; Studio connects as a client.
+    const entry = manager.getRelay(relayId);
     kernel.notifications.add({
-      title: "Connect via CLI",
+      title: `Connect "${entry?.name ?? relayId}" via CLI`,
       kind: "info",
-      body: "Relay connections are managed through the CLI. Use: prism-relay --mode dev",
+      body: `Relay connections require the daemon. Use: prism-relay --mode dev --port 4444`,
     });
-  }, [kernel]);
+  }, [kernel, manager]);
 
   const handleDisconnect = useCallback((relayId: string) => {
     manager.disconnect(relayId);

@@ -50,7 +50,8 @@
     "./timeline": "./src/layer1/timeline/index.ts",
     "./audio": "./src/layer2/audio/index.ts",
     "./viewport3d": "./src/layer2/viewport3d/index.ts",
-    "./flux": "./src/layer1/flux/index.ts"
+    "./flux": "./src/layer1/flux/index.ts",
+    "./facet": "./src/layer1/facet/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

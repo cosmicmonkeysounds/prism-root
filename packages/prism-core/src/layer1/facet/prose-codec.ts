@@ -131,7 +131,7 @@ function blockToNode(block: BlockToken): ProseNode | null {
     case 'code':
       return {
         type: 'codeBlock',
-        attrs: block.lang ? { language: block.lang } : undefined,
+        ...(block.lang ? { attrs: { language: block.lang } } : {}),
         content: [{ type: 'text', text: block.text }],
       };
 

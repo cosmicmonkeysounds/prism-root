@@ -198,9 +198,9 @@ export function useRelay(): {
   manager: StudioKernel["relay"];
 } {
   const kernel = useKernel();
-  const cacheRef = useRef<{ relays: RelayEntry[]; version: number }>({
+  const cacheRef = useRef<{ relays: RelayEntry[]; version: string }>({
     relays: [],
-    version: -1,
+    version: "",
   });
 
   const version = useSyncExternalStore(
@@ -212,10 +212,10 @@ export function useRelay(): {
     },
   );
 
-  if (cacheRef.current.version !== version.length) {
+  if (cacheRef.current.version !== version) {
     cacheRef.current = {
       relays: kernel.relay.listRelays(),
-      version: version.length,
+      version,
     };
   }
 
@@ -542,6 +542,7 @@ export function useIdentity(): {
 
 /** Reactive virtual file system state. */
 export function useVfs(): {
+  files: BinaryRef[];
   locks: BinaryLock[];
   importFile: (data: Uint8Array, filename: string, mimeType: string) => Promise<BinaryRef>;
   exportFile: (ref: BinaryRef) => Promise<Uint8Array | null>;
@@ -564,6 +565,7 @@ export function useVfs(): {
   void version;
 
   return {
+    files: kernel.listFiles(),
     locks: kernel.listLocks(),
     importFile: kernel.importFile,
     exportFile: kernel.exportFile,

@@ -10,9 +10,9 @@ import type { ServerMessage } from "../protocol/relay-protocol.js";
 import type { ConnectionRegistry } from "./connection-registry.js";
 
 export interface PeerPresence {
-  cursor?: { x: number; y: number };
-  selection?: { start: number; end: number };
-  activeView?: string;
+  cursor?: { x: number; y: number } | undefined;
+  selection?: { start: number; end: number } | undefined;
+  activeView?: string | undefined;
 }
 
 export interface PresenceStore {

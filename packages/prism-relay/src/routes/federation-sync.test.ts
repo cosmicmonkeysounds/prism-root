@@ -149,10 +149,10 @@ describe("federation-sync", () => {
     const storeB = hostB.get(collectionId);
     expect(storeB).toBeDefined();
 
-    const objects = storeB!.listObjects();
+    const objects = storeB?.listObjects();
     expect(objects).toHaveLength(1);
-    expect(objects[0]!.name).toBe("Alpha Task");
-    expect(objects[0]!.description).toBe("Created on relay A");
+    expect(objects?.[0]?.name).toBe("Alpha Task");
+    expect(objects?.[0]?.description).toBe("Created on relay A");
   });
 
   it("POST /api/federation/sync imports a snapshot directly", async () => {
@@ -198,9 +198,9 @@ describe("federation-sync", () => {
     const storeB = hostB.get(collectionId);
     expect(storeB).toBeDefined();
 
-    const objects = storeB!.listObjects();
+    const objects = storeB?.listObjects();
     expect(objects).toHaveLength(1);
-    expect(objects[0]!.name).toBe("Direct Sync Note");
+    expect(objects?.[0]?.name).toBe("Direct Sync Note");
   });
 
   it("federation sync is resilient to peer failures", async () => {
@@ -256,9 +256,9 @@ describe("federation-sync", () => {
     const storeB = hostB.get(collectionId);
     expect(storeB).toBeDefined();
 
-    const objects = storeB!.listObjects();
+    const objects = storeB?.listObjects();
     expect(objects).toHaveLength(1);
-    expect(objects[0]!.name).toBe("Resilient Task");
+    expect(objects?.[0]?.name).toBe("Resilient Task");
   });
 
   it("federation sync validates required fields", async () => {

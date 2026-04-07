@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createIdentity } from "@prism/core/identity";
-import type { PrismIdentity } from "@prism/core/identity";
 import {
   createRelayBuilder,
   blindMailboxModule,
@@ -45,7 +44,6 @@ async function createTestRelay(): Promise<{
 // ── Primary relay (the one we test against) ─────────────────────────────────
 
 let relay: RelayInstance;
-let port: number;
 let close: () => Promise<void>;
 let url: (path: string) => string;
 
@@ -59,7 +57,6 @@ let peerUrl: (path: string) => string;
 beforeAll(async () => {
   const main = await createTestRelay();
   relay = main.relay;
-  port = main.port;
   close = main.close;
   url = main.url;
 
@@ -148,18 +145,18 @@ describe("whistleblower packets", () => {
     // Verify the escrow deposit exists and can be claimed once
     const escrow = relay.getCapability<EscrowManager>(RELAY_CAPABILITIES.ESCROW);
     expect(escrow).toBeDefined();
-    const deposit = escrow!.get(body.escrowId!);
+    const deposit = escrow?.get(body.escrowId as string);
     expect(deposit).toBeDefined();
-    expect(deposit!.encryptedPayload).toBe(evidenceBlob);
-    expect(deposit!.claimed).toBe(false);
+    expect(deposit?.encryptedPayload).toBe(evidenceBlob);
+    expect(deposit?.claimed).toBe(false);
 
     // Claim the evidence (one-time access)
-    const claimed = escrow!.claim(body.escrowId!);
+    const claimed = escrow?.claim(body.escrowId as string);
     expect(claimed).toBeDefined();
-    expect(claimed!.claimed).toBe(true);
+    expect(claimed?.claimed).toBe(true);
 
     // Second claim should fail (one-time)
-    const secondClaim = escrow!.claim(body.escrowId!);
+    const secondClaim = escrow?.claim(body.escrowId as string);
     expect(secondClaim).toBeNull();
   });
 
@@ -178,9 +175,9 @@ describe("whistleblower packets", () => {
     expect(body.ok).toBe(true);
     // Gossip should have fired since federation is enabled
     expect(body.gossip).toBeTruthy();
-    expect(body.gossip!.totalPeers).toBe(1);
-    expect(body.gossip!.successCount).toBe(1);
-    expect(body.gossip!.hashCount).toBeGreaterThanOrEqual(1);
+    expect(body.gossip?.totalPeers).toBe(1);
+    expect(body.gossip?.successCount).toBe(1);
+    expect(body.gossip?.hashCount).toBeGreaterThanOrEqual(1);
   });
 
   it("POST /api/safety/report accepts all valid categories", async () => {
@@ -215,14 +212,14 @@ describe("toxic hash gossip", () => {
     expect(body.failedCount).toBe(0);
     expect(body.hashCount).toBeGreaterThanOrEqual(1);
     expect(body.peers).toHaveLength(1);
-    expect(body.peers[0]!.success).toBe(true);
-    expect(body.peers[0]!.relayDid).toBe(peerRelay.did);
+    expect(body.peers[0]?.success).toBe(true);
+    expect(body.peers[0]?.relayDid).toBe(peerRelay.did);
   });
 
   it("POST /api/safety/gossip returns per-peer results with errors for unreachable peers", async () => {
     // Add a fake unreachable peer
     const federation = relay.getCapability<FederationRegistry>(RELAY_CAPABILITIES.FEDERATION);
-    federation!.announce("did:key:dead-peer" as ReturnType<typeof relay.did extends string ? never : never>, "http://127.0.0.1:1");
+    federation?.announce("did:key:dead-peer" as ReturnType<typeof relay.did extends string ? never : never>, "http://127.0.0.1:1");
 
     const res = await fetch(url("/api/safety/gossip"), {
       method: "POST",
@@ -238,7 +235,7 @@ describe("toxic hash gossip", () => {
 
     const failedPeer = body.peers.find((p) => !p.success);
     expect(failedPeer).toBeDefined();
-    expect(failedPeer!.error).toBeTruthy();
+    expect(failedPeer?.error).toBeTruthy();
   });
 
   it("POST /api/safety/gossip returns empty when no hashes are flagged", async () => {

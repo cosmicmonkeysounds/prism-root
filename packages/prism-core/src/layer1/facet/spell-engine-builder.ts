@@ -17,6 +17,7 @@ import type { TokenFilter } from '../syntax/spell-check-types';
 import type {
   DictionaryProvider,
   SpellCheckBackend,
+  SpellCheckerConfig,
   PersonalDictionaryStorage,
 } from './spell-engine-types';
 import { SpellCheckRegistry } from './spell-engine-registry';
@@ -134,16 +135,17 @@ export class SpellCheckerBuilder {
         ? new PersonalDictionary(this._personalStorage)
         : undefined);
 
-    const checker = new SpellChecker(registry, {
-      personal,
-      backend: this._backend,
+    const opts: { personal?: PersonalDictionary; backend?: SpellCheckBackend; config?: SpellCheckerConfig } = {
       config: {
         language: this._language,
         maxSuggestions: this._maxSuggestions,
         minWordLength: this._minWordLength,
-        wordPattern: this._wordPattern,
+        ...(this._wordPattern !== undefined && { wordPattern: this._wordPattern }),
       },
-    });
+    };
+    if (personal !== undefined) opts.personal = personal;
+    if (this._backend !== undefined) opts.backend = this._backend;
+    const checker = new SpellChecker(registry, opts);
 
     return { checker, registry };
   }

@@ -11,7 +11,7 @@
  *   spellCheckerBuilder().filter(URL_FILTER).filter(CAMEL_CASE_FILTER).build();
  */
 
-import type { TokenFilter } from '../syntax/spell-check-types';
+import type { TokenFilter, TokenContext } from '../syntax/spell-check-types';
 
 /** Skip words that look like URLs (http://, https://, ftp://, www.). */
 export const URL_FILTER: TokenFilter = {
@@ -183,8 +183,8 @@ export function createSyntaxFilter(
   const lowered = syntaxPatterns.map((p) => p.toLowerCase());
   return {
     id: `spellcheck:${id}`,
-    label,
-    shouldSkip(_word, ctx) {
+    ...(label !== undefined && { label }),
+    shouldSkip(_word: string, ctx: TokenContext) {
       if (!ctx.syntaxType) return false;
       const t = ctx.syntaxType.toLowerCase();
       return lowered.some((p) => t.includes(p));

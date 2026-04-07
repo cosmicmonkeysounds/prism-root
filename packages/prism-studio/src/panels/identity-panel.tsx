@@ -136,6 +136,10 @@ function SignVerifySection() {
 
   const handleVerify = useCallback(async () => {
     if (!payload.trim() || !signature.trim()) return;
+    if (!/^[0-9a-fA-F]*$/.test(signature) || signature.length % 2 !== 0) {
+      setVerifyResult(false);
+      return;
+    }
     const data = new TextEncoder().encode(payload);
     const sigBytes = new Uint8Array(
       (signature.match(/.{1,2}/g) ?? []).map((h) => parseInt(h, 16)),

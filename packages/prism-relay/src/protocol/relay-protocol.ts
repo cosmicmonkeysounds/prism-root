@@ -68,9 +68,9 @@ export interface HashcashProofMessage {
 export interface PresenceUpdateMessage {
   type: "presence-update";
   peerId: string;
-  cursor?: { x: number; y: number };
-  selection?: { start: number; end: number };
-  activeView?: string;
+  cursor?: { x: number; y: number } | undefined;
+  selection?: { start: number; end: number } | undefined;
+  activeView?: string | undefined;
 }
 
 export type ClientMessage =
@@ -149,9 +149,9 @@ export interface PresenceStateMessage {
 export interface PresenceBroadcastMessage {
   type: "presence-update";
   peerId: string;
-  cursor?: { x: number; y: number };
-  selection?: { start: number; end: number };
-  activeView?: string;
+  cursor?: { x: number; y: number } | undefined;
+  selection?: { start: number; end: number } | undefined;
+  activeView?: string | undefined;
 }
 
 export interface PresenceLeaveMessage {

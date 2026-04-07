@@ -236,8 +236,8 @@ function humanizeKey(key: string): string {
   if (current) parts.push(current);
 
   if (parts.length === 0) return key;
-  const first = parts[0]!;
-  parts[0] = first[0]!.toUpperCase() + first.slice(1);
+  const first = parts[0] ?? '';
+  parts[0] = (first[0] ?? '').toUpperCase() + first.slice(1);
   return parts.join(' ');
 }
 

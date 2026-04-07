@@ -170,12 +170,16 @@ export class SpellChecker implements SpellCheckerInterface {
     }
 
     // Load the primary dictionary
-    const data = await providers[0]!.load();
+    const primary = providers[0];
+    if (!primary) throw new Error(`No dictionary provider found for language "${this._config.language}"`);
+    const data = await primary.load();
     this._backend.load(data);
 
     // Load supplementary dictionaries (same language, different providers)
     for (let i = 1; i < providers.length; i++) {
-      const extra = await providers[i]!.load();
+      const provider = providers[i];
+      if (!provider) continue;
+      const extra = await provider.load();
       if (this._backend.addDictionary) {
         this._backend.addDictionary(extra);
       }
@@ -235,11 +239,12 @@ export class SpellChecker implements SpellCheckerInterface {
       if (this._personal?.isKnown(extracted.word)) continue;
 
       // Build context for filters
+      const syntaxType = options?.syntaxTypes?.get(extracted.from);
       const ctx: TokenContext = {
         line: extracted.line,
         offsetInLine: extracted.offsetInLine,
         offsetInDoc: extracted.from,
-        syntaxType: options?.syntaxTypes?.get(extracted.from),
+        ...(syntaxType !== undefined && { syntaxType }),
       };
 
       // Check all filters — skip if any says so

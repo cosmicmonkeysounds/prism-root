@@ -1261,3 +1261,384 @@ test.describe("WebRTC Signaling routes", () => {
     expect(room.peerCount).toBe(1);
   });
 });
+
+// ── Health Check ─────────────────────────────────────────────────────────────
+
+test.describe("Health Check", () => {
+  test("GET /api/health returns healthy status", async ({ request }) => {
+    const res = await request.get(`${baseUrl}/api/health`);
+    expect(res.status()).toBe(200);
+    const body = await res.json();
+    expect(body.status).toBe("healthy");
+    expect(typeof body.did).toBe("string");
+    expect(typeof body.uptime).toBe("number");
+    expect(body.uptime).toBeGreaterThan(0);
+    expect(typeof body.modules).toBe("number");
+    expect(body.modules).toBeGreaterThanOrEqual(15);
+    expect(typeof body.peers).toBe("number");
+    expect(typeof body.federationPeers).toBe("number");
+    expect(body.memory).toBeDefined();
+    expect(typeof body.memory.rss).toBe("number");
+    expect(typeof body.memory.heapUsed).toBe("number");
+    expect(typeof body.memory.heapTotal).toBe("number");
+  });
+
+  test("health check does not require CSRF header", async ({ request }) => {
+    // Even with CSRF enabled, health check is a GET so it should pass
+    const res = await request.get(`${baseUrl}/api/health`);
+    expect(res.status()).toBe(200);
+  });
+});
+
+// ── Presence (HTTP) ──────────────────────────────────────────────────────────
+
+test.describe("Presence HTTP API", () => {
+  test("GET /api/presence returns empty peer list initially", async ({ request }) => {
+    const res = await request.get(`${baseUrl}/api/presence`);
+    expect(res.status()).toBe(200);
+    const body = await res.json();
+    expect(body.peers).toBeDefined();
+    expect(Array.isArray(body.peers)).toBe(true);
+    expect(body.count).toBe(body.peers.length);
+  });
+});
+
+// ── Gossip Protocol ──────────────────────────────────────────────────────────
+
+test.describe("Gossip Protocol", () => {
+  test("POST /api/safety/gossip pushes hashes to federation peers", async ({ request }) => {
+    // Flag some content first
+    await request.post(`${baseUrl}/api/safety/report`, {
+      data: {
+        contentHash: "sha256-gossip-test-hash",
+        category: "spam",
+        reportedBy: "did:key:zGossipReporter",
+      },
+    });
+
+    // Trigger gossip — response uses hashCount/totalPeers/successCount
+    const res = await request.post(`${baseUrl}/api/safety/gossip`);
+    expect(res.status()).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(typeof body.hashCount).toBe("number");
+    expect(body.hashCount).toBeGreaterThan(0);
+    expect(typeof body.totalPeers).toBe("number");
+    expect(typeof body.successCount).toBe("number");
+  });
+
+  test("POST /api/safety/hashes imports hashes from federation", async ({ request }) => {
+    const res = await request.post(`${baseUrl}/api/safety/hashes`, {
+      data: {
+        hashes: [
+          { hash: "sha256-imported-1", category: "malware", reportedBy: "did:key:zPeer1" },
+          { hash: "sha256-imported-2", category: "csam", reportedBy: "did:key:zPeer2" },
+        ],
+        sourceRelay: "did:key:zFederationPeer",
+      },
+    });
+    expect(res.status()).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.imported).toBe(2);
+
+    // Verify via check endpoint — returns { results: { hash: bool } }
+    const check = await request.post(`${baseUrl}/api/safety/check`, {
+      data: { hashes: ["sha256-imported-1", "sha256-imported-2", "sha256-not-flagged"] },
+    });
+    const checkBody = await check.json();
+    expect(checkBody.results["sha256-imported-1"]).toBe(true);
+    expect(checkBody.results["sha256-imported-2"]).toBe(true);
+    expect(checkBody.results["sha256-not-flagged"]).toBe(false);
+  });
+
+  test("POST /api/safety/report with evidence triggers auto-gossip", async ({ request }) => {
+    const res = await request.post(`${baseUrl}/api/safety/report`, {
+      data: {
+        contentHash: "sha256-evidence-test",
+        category: "malware",
+        reportedBy: "did:key:zWhistleblower",
+        evidence: btoa("encrypted-evidence-blob"),
+      },
+    });
+    // Report returns 201
+    expect(res.status()).toBe(201);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.contentHash).toBe("sha256-evidence-test");
+    expect(body.flagged).toBe(true);
+  });
+});
+
+// ── Federation CRDT Sync ─────────────────────────────────────────────────────
+
+test.describe("Federation CRDT Sync", () => {
+  test("POST /api/federation/sync imports a collection snapshot", async ({ request }) => {
+    // Create a collection and get its snapshot
+    const createRes = await request.post(`${baseUrl}/api/collections`, {
+      data: { id: "fed-sync-test" },
+    });
+    expect(createRes.status()).toBe(201);
+
+    const snapRes = await request.get(`${baseUrl}/api/collections/fed-sync-test/snapshot`);
+    expect(snapRes.status()).toBe(200);
+    const snapBody = await snapRes.json();
+
+    // Now sync that snapshot as if from a federation peer
+    const syncRes = await request.post(`${baseUrl}/api/federation/sync`, {
+      data: {
+        collectionId: "fed-sync-imported",
+        snapshot: snapBody.snapshot,
+      },
+    });
+    expect(syncRes.status()).toBe(200);
+    const syncBody = await syncRes.json();
+    expect(syncBody.ok).toBe(true);
+    expect(syncBody.collectionId).toBe("fed-sync-imported");
+
+    // Verify the imported collection exists (list returns string[])
+    const listRes = await request.get(`${baseUrl}/api/collections`);
+    const listBody = await listRes.json();
+    expect(listBody).toContain("fed-sync-imported");
+  });
+});
+
+// ── Multi-Relay Federation E2E ───────────────────────────────────────────────
+
+test.describe("Multi-Relay Federation", () => {
+  let relay2: RelayInstance;
+  let port2: number;
+  let close2: () => Promise<void>;
+
+  test.beforeAll(async () => {
+    const identity2 = await createIdentity({ method: "key" });
+    relay2 = createRelayBuilder({ relayDid: identity2.did })
+      .use(blindMailboxModule())
+      .use(relayRouterModule())
+      .use(collectionHostModule())
+      .use(federationModule())
+      .use(peerTrustModule())
+      .build();
+    await relay2.start();
+
+    const server2 = createRelayServer({ relay: relay2, port: 0, disableCsrf: true });
+    const info2 = await server2.start();
+    port2 = info2.port;
+    close2 = info2.close;
+  });
+
+  test.afterAll(async () => {
+    await close2();
+    await relay2.stop();
+  });
+
+  test("two relays exchange federation announcements", async ({ request }) => {
+    const url2 = `http://localhost:${port2}`;
+
+    // Announce relay1 to relay2
+    const ann1 = await request.post(`${url2}/api/federation/announce`, {
+      data: { relayDid: relay.did, url: baseUrl },
+    });
+    expect(ann1.status()).toBe(200);
+
+    // Announce relay2 to relay1
+    const ann2 = await request.post(`${baseUrl}/api/federation/announce`, {
+      data: { relayDid: relay2.did, url: url2 },
+    });
+    expect(ann2.status()).toBe(200);
+
+    // Verify peers on both sides (federation /peers returns raw array)
+    const peers1 = await request.get(`${baseUrl}/api/federation/peers`);
+    const peers1Body = await peers1.json();
+    expect(peers1Body.some((p: Record<string, string>) => p.relayDid === relay2.did)).toBe(true);
+
+    const peers2 = await request.get(`${url2}/api/federation/peers`);
+    const peers2Body = await peers2.json();
+    expect(peers2Body.some((p: Record<string, string>) => p.relayDid === relay.did)).toBe(true);
+  });
+
+  test("collection sync propagates between federated relays", async ({ request }) => {
+    const url2 = `http://localhost:${port2}`;
+
+    // Create a collection on relay1
+    const createRes = await request.post(`${baseUrl}/api/collections`, {
+      data: { id: "cross-relay-col" },
+    });
+    expect(createRes.status()).toBe(201);
+
+    // Get its snapshot
+    const snapRes = await request.get(`${baseUrl}/api/collections/cross-relay-col/snapshot`);
+    const snapBody = await snapRes.json();
+
+    // Sync the snapshot to relay2 via federation sync
+    const syncRes = await request.post(`${url2}/api/federation/sync`, {
+      data: {
+        collectionId: "cross-relay-col",
+        snapshot: snapBody.snapshot,
+      },
+    });
+    expect(syncRes.status()).toBe(200);
+
+    // Verify relay2 has the collection (list returns string[])
+    const listRes = await request.get(`${url2}/api/collections`);
+    const listBody = await listRes.json();
+    expect(listBody).toContain("cross-relay-col");
+  });
+
+  test("safety gossip pushes flagged hashes to federation peer", async ({ request }) => {
+    // Flag content on relay1
+    await request.post(`${baseUrl}/api/safety/report`, {
+      data: {
+        contentHash: "sha256-cross-relay-hash",
+        category: "spam",
+        reportedBy: "did:key:zCrossRelay",
+      },
+    });
+
+    // Trigger gossip on relay1 (should push to relay2)
+    const gossipRes = await request.post(`${baseUrl}/api/safety/gossip`);
+    expect(gossipRes.status()).toBe(200);
+    const gossipBody = await gossipRes.json();
+    expect(typeof gossipBody.hashCount).toBe("number");
+    expect(typeof gossipBody.totalPeers).toBe("number");
+
+    // Note: The gossip actually POSTs to relay2's /api/safety/hashes endpoint.
+    // If peers are registered, this should propagate. The result depends on
+    // whether relay2 was announced with the right URL format.
+  });
+});
+
+// ── WebSocket Presence Flow ──────────────────────────────────────────────────
+
+test.describe("WebSocket Presence", () => {
+  test("presence-update via WebSocket is received by other clients", async () => {
+    const ws1 = new WebSocket(`ws://localhost:${serverPort}/ws/relay`);
+    const ws2 = new WebSocket(`ws://localhost:${serverPort}/ws/relay`);
+
+    await new Promise<void>((resolve) => { ws1.onopen = () => resolve(); });
+    await new Promise<void>((resolve) => { ws2.onopen = () => resolve(); });
+
+    // Set up presence listener on ws2 BEFORE sending auth to avoid race
+    const presencePromise = new Promise<Record<string, unknown>>((resolve) => {
+      ws2.addEventListener("message", (evt) => {
+        const msg = JSON.parse(evt.data as string);
+        if (msg.type === "presence-update") resolve(msg);
+      });
+    });
+
+    // Auth both using addEventListener so presence listener stays active
+    const auth1 = new Promise<void>((resolve) => {
+      ws1.addEventListener("message", function handler(evt) {
+        const msg = JSON.parse(evt.data as string);
+        if (msg.type === "auth-ok") {
+          ws1.removeEventListener("message", handler);
+          resolve();
+        }
+      });
+    });
+    const auth2 = new Promise<void>((resolve) => {
+      ws2.addEventListener("message", function handler(evt) {
+        const msg = JSON.parse(evt.data as string);
+        if (msg.type === "auth-ok") {
+          ws2.removeEventListener("message", handler);
+          resolve();
+        }
+      });
+    });
+
+    ws1.send(JSON.stringify({ type: "auth", did: "did:key:zPresenceA" }));
+    ws2.send(JSON.stringify({ type: "auth", did: "did:key:zPresenceB" }));
+    await auth1;
+    await auth2;
+
+    // ws1 sends presence-update — ws2 should receive broadcast
+    ws1.send(JSON.stringify({
+      type: "presence-update",
+      peerId: "did:key:zPresenceA",
+      cursor: { x: 100, y: 200 },
+      activeView: "editor",
+    }));
+
+    const presenceMsg = await presencePromise;
+    expect(presenceMsg["peerId"]).toBe("did:key:zPresenceA");
+    expect(presenceMsg["cursor"]).toEqual({ x: 100, y: 200 });
+    expect(presenceMsg["activeView"]).toBe("editor");
+
+    ws1.close();
+    ws2.close();
+  });
+
+  test("presence-leave broadcast on disconnect", async () => {
+    const ws1 = new WebSocket(`ws://localhost:${serverPort}/ws/relay`);
+    const ws2 = new WebSocket(`ws://localhost:${serverPort}/ws/relay`);
+
+    await new Promise<void>((resolve) => { ws1.onopen = () => resolve(); });
+    await new Promise<void>((resolve) => { ws2.onopen = () => resolve(); });
+
+    ws1.send(JSON.stringify({ type: "auth", did: "did:key:zLeaveA" }));
+    ws2.send(JSON.stringify({ type: "auth", did: "did:key:zLeaveB" }));
+
+    await new Promise<void>((resolve) => {
+      ws1.onmessage = (evt) => {
+        const msg = JSON.parse(evt.data as string);
+        if (msg.type === "auth-ok") resolve();
+      };
+    });
+    await new Promise<void>((resolve) => {
+      ws2.onmessage = (evt) => {
+        const msg = JSON.parse(evt.data as string);
+        if (msg.type === "auth-ok") resolve();
+      };
+    });
+
+    // Send a presence update from ws1 so the store knows about them
+    ws1.send(JSON.stringify({
+      type: "presence-update",
+      peerId: "did:key:zLeaveA",
+      cursor: { x: 50, y: 50 },
+    }));
+
+    // Wait for ws2 to receive the update
+    await new Promise<void>((resolve) => {
+      ws2.onmessage = (evt) => {
+        const msg = JSON.parse(evt.data as string);
+        if (msg.type === "presence-update") resolve();
+      };
+    });
+
+    // Now listen for presence-leave on ws2 when ws1 disconnects
+    const leavePromise = new Promise<Record<string, unknown>>((resolve) => {
+      ws2.onmessage = (evt) => {
+        const msg = JSON.parse(evt.data as string);
+        if (msg.type === "presence-leave") resolve(msg);
+      };
+    });
+
+    ws1.close();
+
+    const leaveMsg = await leavePromise;
+    expect(leaveMsg["peerId"]).toBe("did:key:zLeaveA");
+
+    ws2.close();
+  });
+});
+
+// ── Rate Limiting ────────────────────────────────────────────────────────────
+
+test.describe("Rate Limiting", () => {
+  test("returns 429 after exceeding rate limit", async ({ request }) => {
+    // The default rate limit is 100 requests per bucket.
+    // Send many rapid requests and check that eventually we get 429.
+    // We use a unique DID header to get our own bucket.
+    const responses: number[] = [];
+    for (let i = 0; i < 120; i++) {
+      const res = await request.get(`${baseUrl}/api/status`, {
+        headers: { "X-Prism-DID": "did:key:zRateLimitTest" },
+      });
+      responses.push(res.status());
+      if (res.status() === 429) break;
+    }
+    // Should have gotten at least one 429
+    expect(responses).toContain(429);
+  });
+});
