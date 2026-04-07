@@ -16,10 +16,10 @@ The Universal Host — Vite SPA + Tauri 2.0 desktop shell.
 
 ## Kernel (`src/kernel/`)
 The Studio kernel wires all Layer 1 systems together:
-- `studio-kernel.ts` — creates and connects ObjectRegistry, CollectionStore, PrismBus, AtomStore, ObjectAtomStore, UndoRedoManager, NotificationStore, SearchEngine, ActivityStore, ActivityTracker, RelayManager, AutomationEngine, graph analysis, expression evaluator, PluginRegistry, InputRouter, VaultRoster, FormState helpers. Also wires clipboard (copy/cut/paste), batch ops, templates, and LiveView.
+- `studio-kernel.ts` — creates and connects ObjectRegistry, CollectionStore, PrismBus, AtomStore, ObjectAtomStore, UndoRedoManager, NotificationStore, SearchEngine, ActivityStore, ActivityTracker, RelayManager, AutomationEngine, graph analysis, expression evaluator, PluginRegistry, InputRouter, VaultRoster, FormState helpers, Identity (DID generation/sign/verify/export/import), VfsManager (content-addressed blob storage with locks), Trust & Safety (PeerTrustGraph, SchemaValidator, LuaSandbox, ShamirSplitter, EscrowManager). Also wires clipboard (copy/cut/paste), batch ops, templates, and LiveView.
 - `relay-manager.ts` — manages connections to Prism Relay servers. Studio is client-only (no server code). Handles relay CRUD, WebSocket connect/disconnect via RelayClient SDK, portal publish/unpublish/list via HTTP API, collection sync, and relay status. Injectable HTTP/WS clients for testing.
 - `entities.ts` — page-builder entity types (folder, page, section, heading, text-block, image, button, card) with category containment rules and edge types (references, links-to)
-- `kernel-context.tsx` — React context + hooks: useKernel, useSelection, useObjects, useObject, useUndo, useNotifications, useRelay, useConfig, useConfigSettings, usePresence, useViewMode, useAutomation, useGraphAnalysis, useExpression, usePlugins, useInputRouter, useVaultRoster
+- `kernel-context.tsx` — React context + hooks: useKernel, useSelection, useObjects, useObject, useUndo, useNotifications, useRelay, useConfig, useConfigSettings, usePresence, useViewMode, useAutomation, useGraphAnalysis, useExpression, usePlugins, useInputRouter, useVaultRoster, useIdentity, useVfs, useTrust
 
 ## Components (`src/components/`)
 - `studio-shell.tsx` — custom shell layout replacing core ShellLayout with real sidebar/inspector content
@@ -42,9 +42,12 @@ The Studio kernel wires all Layer 1 systems together:
 - `plugin-panel.tsx` — Plugin registry: register/remove plugins, view contributions (commands/views), expand details
 - `shortcuts-panel.tsx` — Keyboard binding manager: view/add/remove bindings, input scopes, event log
 - `vault-panel.tsx` — Vault roster: add/remove/pin/open vaults, search filtering, pinned section
+- `identity-panel.tsx` — Identity management: generate DID, display DID/document/public key, sign & verify payloads, export/import JSON
+- `assets-panel.tsx` — VFS browser: import files, browse blobs (hash/size/MIME), lock/unlock binary forking, remove files
+- `trust-panel.tsx` — Trust dashboard: 4 tabs — Peers (add/trust/distrust/ban/unban with trust levels), Validation (JSON schema validator), Flags (content hash flagging), Escrow (deposit/list encrypted key material)
 
 ## Lenses
-12 lenses: Editor (e), Graph (g), Layout (l), Canvas (v), CRDT (c), Relay (r), Settings (,), Automation (a), Analysis (n), Plugins (p), Shortcuts (k), Vaults (w)
+15 lenses: Editor (e), Graph (g), Layout (l), Canvas (v), CRDT (c), Relay (r), Settings (,), Automation (a), Analysis (n), Plugins (p), Shortcuts (k), Vaults (w), Identity (i), Assets (f), Trust (t)
 
 ## Data Flow
 ```

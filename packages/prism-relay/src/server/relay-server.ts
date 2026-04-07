@@ -39,6 +39,7 @@ import {
   csrfMiddleware,
   bodySizeLimitMiddleware,
   bannedPeerMiddleware,
+  rateLimitMiddleware,
 } from "../middleware/security.js";
 
 export interface RelayServerOptions {
@@ -92,6 +93,9 @@ export function createRelayServer(options: RelayServerOptions): RelayServer {
   }
 
   // ── Security middleware ──────────────────────────────────────────────
+  // Rate limiting (token bucket per IP/DID)
+  app.use("/api/*", rateLimitMiddleware());
+
   // Body size limit on all mutating requests
   app.use("/api/*", bodySizeLimitMiddleware(maxBodySize));
 

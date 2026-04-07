@@ -11,7 +11,7 @@ export type {
 } from "./relay-config.js";
 
 export { parseArgs, printHelp } from "./parse-args.js";
-export type { ParsedArgs } from "./parse-args.js";
+export type { ParsedArgs, SubCommand } from "./parse-args.js";
 
 export { createLogger } from "./logger.js";
 export type { LogLevel, RelayLogger } from "./logger.js";

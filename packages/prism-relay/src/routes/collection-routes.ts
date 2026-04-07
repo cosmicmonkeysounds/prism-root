@@ -1,7 +1,31 @@
 import { Hono } from "hono";
-import type { RelayInstance, CollectionHost } from "@prism/core/relay";
+import type { RelayInstance, CollectionHost, FederationRegistry } from "@prism/core/relay";
 import { RELAY_CAPABILITIES } from "@prism/core/relay";
 import { encodeBase64, decodeBase64 } from "../protocol/relay-protocol.js";
+
+/**
+ * Push a collection snapshot to all federation peers.
+ * Fire-and-forget: failures are logged but never block the caller.
+ */
+function pushSnapshotToPeers(
+  relay: RelayInstance,
+  collectionId: string,
+  snapshotBase64: string,
+): void {
+  const federation = relay.getCapability<FederationRegistry>(RELAY_CAPABILITIES.FEDERATION);
+  if (!federation) return;
+
+  const peers = federation.getPeers();
+  for (const peer of peers) {
+    fetch(`${peer.url}/api/federation/sync`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Prism-CSRF": "1" },
+      body: JSON.stringify({ collectionId, snapshot: snapshotBase64 }),
+    }).catch(() => {
+      // Peer unreachable — silently ignore for resilience
+    });
+  }
+}
 
 export function createCollectionRoutes(relay: RelayInstance): Hono {
   const app = new Hono();
@@ -35,10 +59,16 @@ export function createCollectionRoutes(relay: RelayInstance): Hono {
   });
 
   app.post("/:id/import", async (c) => {
-    const store = host().get(c.req.param("id"));
+    const collectionId = c.req.param("id");
+    const store = host().get(collectionId);
     if (!store) return c.json({ error: "collection not found" }, 404);
     const body = await c.req.json<{ data: string }>();
     store.import(decodeBase64(body.data));
+
+    // After import, push the full snapshot to federation peers (async, fire-and-forget)
+    const updatedSnapshot = encodeBase64(store.exportSnapshot());
+    pushSnapshotToPeers(relay, collectionId, updatedSnapshot);
+
     return c.json({ ok: true });
   });
 

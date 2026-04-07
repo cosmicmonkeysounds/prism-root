@@ -24,6 +24,7 @@ import {
 } from "../protocol/relay-protocol.js";
 import type { ServerMessage } from "../protocol/relay-protocol.js";
 import type { ConnectionRegistry } from "./connection-registry.js";
+import type { PresenceStore } from "./presence-store.js";
 
 export interface WsConnection {
   did: DID | null;
@@ -43,6 +44,7 @@ export function handleWsMessage(
   relay: RelayInstance,
   data: string,
   registry?: ConnectionRegistry,
+  presence?: PresenceStore,
 ): void {
   let msg;
   try {
@@ -177,13 +179,52 @@ export function handleWsMessage(
       });
       return;
     }
+
+    case "presence-update": {
+      if (!conn.did) {
+        send(ws, { type: "error", message: "not authenticated" });
+        return;
+      }
+      if (!presence) return;
+      presence.set(msg.peerId, {
+        cursor: msg.cursor,
+        selection: msg.selection,
+        activeView: msg.activeView,
+      });
+      // Broadcast to all other connections
+      if (registry) {
+        presence.broadcast(registry, ws, {
+          type: "presence-update",
+          peerId: msg.peerId,
+          cursor: msg.cursor,
+          selection: msg.selection,
+          activeView: msg.activeView,
+        });
+      }
+      return;
+    }
   }
 }
 
-export function handleWsClose(conn: WsConnection, relay: RelayInstance): void {
+export function handleWsClose(
+  conn: WsConnection,
+  relay: RelayInstance,
+  registry?: ConnectionRegistry,
+  presence?: PresenceStore,
+): void {
   if (conn.did) {
+    const peerId = conn.did;
     const router = relay.getCapability<RelayRouter>(RELAY_CAPABILITIES.ROUTER);
-    router?.unregisterPeer(conn.did);
+    router?.unregisterPeer(peerId);
+    if (presence) {
+      presence.remove(peerId);
+      if (registry) {
+        presence.broadcast(registry, undefined, {
+          type: "presence-leave",
+          peerId,
+        });
+      }
+    }
     conn.did = null;
   }
 }

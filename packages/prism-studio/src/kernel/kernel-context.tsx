@@ -20,6 +20,9 @@ import type { ExprValue } from "@prism/core/expression";
 import type { PrismPlugin } from "@prism/core/plugin";
 import type { InputRouterEvent } from "@prism/core/input";
 import type { RosterEntry } from "@prism/core/discovery";
+import type { PrismIdentity, ExportedIdentity } from "@prism/core/identity";
+import type { BinaryRef, BinaryLock } from "@prism/core/vfs";
+import type { PeerReputation, SchemaValidationResult, ContentHash, SandboxPolicy, LuaSandbox, ShamirShare, ShamirConfig, EscrowDeposit } from "@prism/core/trust";
 
 // ── Context ─────────────────────────────────────────────────────────────────
 
@@ -501,5 +504,118 @@ export function useVaultRoster(): {
     removeVault: kernel.removeVault,
     pinVault: kernel.pinVault,
     touchVault: kernel.touchVault,
+  };
+}
+
+/** Reactive identity state. */
+export function useIdentity(): {
+  identity: PrismIdentity | null;
+  generate: () => Promise<PrismIdentity>;
+  exportId: () => Promise<ExportedIdentity | null>;
+  importId: (exported: ExportedIdentity) => Promise<PrismIdentity>;
+  sign: (data: Uint8Array) => Promise<Uint8Array | null>;
+  verify: (data: Uint8Array, signature: Uint8Array) => Promise<boolean>;
+} {
+  const kernel = useKernel();
+  const versionRef = useRef(0);
+
+  const version = useSyncExternalStore(
+    (cb) => kernel.onIdentityChange(() => {
+      versionRef.current++;
+      cb();
+    }),
+    () => versionRef.current,
+  );
+
+  // Force re-read on version change
+  void version;
+
+  return {
+    identity: kernel.identity,
+    generate: kernel.generateIdentity,
+    exportId: kernel.exportIdentity,
+    importId: kernel.importIdentity,
+    sign: kernel.signData,
+    verify: kernel.verifyData,
+  };
+}
+
+/** Reactive virtual file system state. */
+export function useVfs(): {
+  locks: BinaryLock[];
+  importFile: (data: Uint8Array, filename: string, mimeType: string) => Promise<BinaryRef>;
+  exportFile: (ref: BinaryRef) => Promise<Uint8Array | null>;
+  removeFile: (hash: string) => Promise<boolean>;
+  acquireLock: (hash: string, reason?: string) => BinaryLock;
+  releaseLock: (hash: string) => void;
+} {
+  const kernel = useKernel();
+  const versionRef = useRef(0);
+
+  const version = useSyncExternalStore(
+    (cb) => kernel.onVfsChange(() => {
+      versionRef.current++;
+      cb();
+    }),
+    () => versionRef.current,
+  );
+
+  // Force re-read on version change
+  void version;
+
+  return {
+    locks: kernel.listLocks(),
+    importFile: kernel.importFile,
+    exportFile: kernel.exportFile,
+    removeFile: kernel.removeFile,
+    acquireLock: kernel.acquireLock,
+    releaseLock: kernel.releaseLock,
+  };
+}
+
+/** Reactive trust & safety state. */
+export function useTrust(): {
+  peers: PeerReputation[];
+  flaggedContent: ReadonlyArray<ContentHash>;
+  trustPeer: (peerId: string) => void;
+  distrustPeer: (peerId: string) => void;
+  banPeer: (peerId: string, reason: string) => void;
+  unbanPeer: (peerId: string) => void;
+  validateImport: (data: unknown) => SchemaValidationResult;
+  createSandbox: (policy: SandboxPolicy) => LuaSandbox;
+  flagContent: (hash: string, category: string) => void;
+  splitSecret: (secret: Uint8Array, config: ShamirConfig) => ShamirShare[];
+  combineShares: (shares: ShamirShare[], config: ShamirConfig) => Uint8Array;
+  depositEscrow: (encryptedPayload: string, expiresAt?: string) => EscrowDeposit | null;
+  listEscrowDeposits: () => EscrowDeposit[];
+} {
+  const kernel = useKernel();
+  const versionRef = useRef(0);
+
+  const version = useSyncExternalStore(
+    (cb) => kernel.onTrustChange(() => {
+      versionRef.current++;
+      cb();
+    }),
+    () => versionRef.current,
+  );
+
+  // Force re-read on version change
+  void version;
+
+  return {
+    peers: kernel.listPeers(),
+    flaggedContent: kernel.listFlaggedContent(),
+    trustPeer: kernel.trustPeer,
+    distrustPeer: kernel.distrustPeer,
+    banPeer: kernel.banPeer,
+    unbanPeer: kernel.unbanPeer,
+    validateImport: kernel.validateImport,
+    createSandbox: kernel.createSandbox,
+    flagContent: kernel.flagContent,
+    splitSecret: kernel.splitSecret,
+    combineShares: kernel.combineShares,
+    depositEscrow: kernel.depositEscrow,
+    listEscrowDeposits: kernel.listEscrowDeposits,
   };
 }

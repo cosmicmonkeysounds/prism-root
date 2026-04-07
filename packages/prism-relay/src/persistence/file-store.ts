@@ -71,7 +71,6 @@ const EMPTY_STATE: PersistedState = {
 export class RelayFileStore {
   private readonly stateFile: string;
   private readonly collectionsDir: string;
-  private dirty = false;
   private saveTimer: ReturnType<typeof setInterval> | null = null;
   private readonly saveIntervalMs: number;
 
@@ -197,19 +196,11 @@ export class RelayFileStore {
     }
   }
 
-  /** Start periodic saving. */
+  /** Start periodic saving. Saves unconditionally on each interval. */
   startAutoSave(relay: RelayInstance): void {
     this.saveTimer = setInterval(() => {
-      if (this.dirty) {
-        this.save(relay);
-        this.dirty = false;
-      }
+      this.save(relay);
     }, this.saveIntervalMs);
-  }
-
-  /** Mark state as dirty (will be saved on next interval). */
-  markDirty(): void {
-    this.dirty = true;
   }
 
   /** Save current relay state to disk immediately. */

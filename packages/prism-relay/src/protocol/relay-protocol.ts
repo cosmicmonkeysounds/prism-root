@@ -65,6 +65,14 @@ export interface HashcashProofMessage {
   };
 }
 
+export interface PresenceUpdateMessage {
+  type: "presence-update";
+  peerId: string;
+  cursor?: { x: number; y: number };
+  selection?: { start: number; end: number };
+  activeView?: string;
+}
+
 export type ClientMessage =
   | AuthMessage
   | EnvelopeMessage
@@ -72,7 +80,8 @@ export type ClientMessage =
   | PingMessage
   | SyncRequestMessage
   | SyncUpdateMessage
-  | HashcashProofMessage;
+  | HashcashProofMessage
+  | PresenceUpdateMessage;
 
 // ── Relay → Client messages ────────────────────────────────────────────────
 
@@ -127,6 +136,29 @@ export interface HashcashOkMessage {
   type: "hashcash-ok";
 }
 
+export interface PresenceStateMessage {
+  type: "presence-state";
+  peers: Array<{
+    peerId: string;
+    cursor?: { x: number; y: number };
+    selection?: { start: number; end: number };
+    activeView?: string;
+  }>;
+}
+
+export interface PresenceBroadcastMessage {
+  type: "presence-update";
+  peerId: string;
+  cursor?: { x: number; y: number };
+  selection?: { start: number; end: number };
+  activeView?: string;
+}
+
+export interface PresenceLeaveMessage {
+  type: "presence-leave";
+  peerId: string;
+}
+
 export type ServerMessage =
   | AuthOkMessage
   | InboundEnvelopeMessage
@@ -136,7 +168,10 @@ export type ServerMessage =
   | SyncSnapshotMessage
   | SyncBroadcastMessage
   | HashcashChallengeMessage
-  | HashcashOkMessage;
+  | HashcashOkMessage
+  | PresenceStateMessage
+  | PresenceBroadcastMessage
+  | PresenceLeaveMessage;
 
 // ── Serialization helpers ──────────────────────────────────────────────────
 
@@ -186,6 +221,7 @@ export function deserializeEnvelope(s: SerializedEnvelope): RelayEnvelope {
 const CLIENT_MESSAGE_TYPES = new Set([
   "auth", "envelope", "collect", "ping",
   "sync-request", "sync-update", "hashcash-proof",
+  "presence-update",
 ]);
 
 export function parseClientMessage(raw: string): ClientMessage {

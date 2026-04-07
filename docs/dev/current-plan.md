@@ -1511,6 +1511,33 @@ Wired four additional Layer 1 systems into Studio: PluginRegistry (extension man
 | Vitest (unchanged) | 2132 | Pass |
 | **Phase 30k Total** | **2132 Vitest + 170 E2E** | **All Pass** |
 
+## Phase 30m: Studio Tier 5 — Identity, Assets, Trust (Complete)
+
+Wired three sovereignty Layer 1 systems into Studio: Identity (W3C DID management), Virtual File System (content-addressed blob storage), and Trust & Safety (peer reputation, schema validation, Shamir recovery, escrow).
+
+### Completed
+
+- [x] **Kernel wiring** — createIdentity/signPayload/verifySignature/exportIdentity/importIdentity, VfsManager with MemoryVfsAdapter, PeerTrustGraph, SchemaValidator, LuaSandbox, ShamirSplitter, EscrowManager
+- [x] **React hooks** — `useIdentity` (reactive identity + generate/export/import/sign/verify), `useVfs` (reactive locks + import/export/remove/lock/unlock), `useTrust` (reactive peers/flags + trust/distrust/ban/validate/sandbox/shamir/escrow)
+- [x] **Identity Panel** (`identity-panel.tsx`) — generate DID, display DID/document/public key, sign & verify payloads, export/import JSON
+- [x] **Assets Panel** (`assets-panel.tsx`) — import text files, browse blobs with hash/size/MIME, lock/unlock binary forking, remove files
+- [x] **Trust Panel** (`trust-panel.tsx`) — 4-tab UI: Peers (add/trust/distrust/ban/unban with trust level badges), Validation (JSON schema validator), Flags (content hash flagging by category), Escrow (deposit/list encrypted key material)
+- [x] **Lens registration** — 3 new lenses: Identity (i), Assets (f), Trust (t). Total: 15 lenses
+- [x] **E2E tests** — 25 new Playwright tests across 3 spec files (identity, assets, trust)
+- [x] **Kernel unit tests** — 22 new Vitest tests (identity: 6, VFS: 6, trust: 10)
+- [x] **Shell test updated** — activity bar icon count 12 → 15
+
+### Test Summary
+
+| Suite | Count | Status |
+|-------|-------|--------|
+| Playwright — Identity | 8 | Pass |
+| Playwright — Assets | 7 | Pass |
+| Playwright — Trust | 10 | Pass |
+| Playwright — Shell (updated) | 8 | Pass |
+| Vitest (total) | 2170 | Pass |
+| **Phase 30m Total** | **2170 Vitest + E2E** | **All Pass** |
+
 ## Phase 30l: WebRTC Signaling — All Relays (Complete)
 
 WebRTC signaling as a standard relay module available to ALL relays, not deferred as Nexus-only. Enables P2P connection negotiation (SDP offer/answer, ICE candidates) through any relay.
@@ -1558,7 +1585,141 @@ Game middleware suite: narrative, audio, entity authoring, world topology.
   - [ ] **Palette** — Inventory: items, loot tables, equipment slots
   - [ ] **Boon** — Abilities: skills, cooldowns, activation rules
 
-## Phase 32: Ecosystem Apps — Cadence & Grip
+## Phase 30h: Relay CLI Hardening (Complete)
+
+Production-readiness improvements to the Prism Relay CLI and server runtime.
+
+### Completed
+- [x] **CLI Subcommands** — `start`, `init`, `status`, `identity show/regenerate`, `modules list`, `config validate/show`
+- [x] **`prism-relay init`** — scaffolds a starter config file per deployment mode
+- [x] **`prism-relay status`** — queries `/api/health` on a running relay
+- [x] **`prism-relay identity show/regenerate`** — inspect or rotate relay identity with backup
+- [x] **`prism-relay modules list`** — lists all 15 modules with descriptions
+- [x] **`prism-relay config validate`** — validates config (module names, federation, did:web, port range) without starting
+- [x] **`prism-relay config show`** — prints fully resolved config with all defaults applied
+- [x] **`bin` field + shebang** — package installable as global `prism-relay` command
+- [x] **`/api/health` endpoint** — uptime, memory, peer count, federation peer count (200/503)
+- [x] **Background eviction jobs** — mailbox envelope eviction, ACME challenge eviction, signaling room cleanup on configurable intervals
+- [x] **Auto-save fix** — periodic persistence now saves unconditionally (dirty flag was never set)
+- [x] **webrtc-signaling module** — 15th module wired into CLI factories and ALL_MODULES preset
+
+### Test Summary
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| Parse Args | 36 | Pass |
+| Status Routes (+ health) | 3 | Pass |
+| Config | 11 | Pass |
+| **All Vitest** | **2188** | **1 unrelated failure (Studio VFS)** |
+
+## Phase 32: Facets — FileMaker Pro-Inspired Builder System
+
+Visual projection + automation builder system. "Facet" = a face of a prism = a visual projection of collection data. Non-programmers can design forms, lists, tables, reports, scripts, and calculations without writing code.
+
+### Architecture
+
+Three tiers:
+1. **Tier 1** (exists): ObjectRegistry, CollectionStore, ExpressionEngine, AutomationEngine, ViewConfig, Lua Runtime
+2. **Tier 2** (Layer 1 engines): FacetParser, FacetSchema, SpellEngine, ProseCodec, Sequencer types, Emitters
+3. **Tier 3** (Layer 2 React): FormFacet, TableFacet, ReportFacet, Sequencer UI, LuaFacet, FacetBuilders
+
+### Naming Map (Legacy Helm → Prism Facets)
+
+| Legacy | Prism | Purpose |
+|--------|-------|---------|
+| Document Surface modes | Facet (FormFacet, ListFacet, TableFacet, ReportFacet) | Visual projections |
+| Wizards (Condition/Script) | Sequencer | Visual automation builder |
+| Form Parser | FacetParser | YAML/JSON ↔ typed field records |
+| Codegen Writers | Emitters (TS/JS/C#/Lua/JSON/YAML/TOML) | Schema → multi-language output |
+| Spellcheck Engine | SpellEngine | Text quality across all facets |
+| Lua View Renderer | LuaFacet | Custom facets authored in Lua |
+| Shell Extension Builders | FacetBuilders | Lua codegen for standard patterns |
+| Markdown Serializer | ProseCodec | MD ↔ structured content |
+
+### Tier 2: Layer 1 Engines (`@prism/core/facet`)
+
+- [ ] **FacetParser** — port legacy `form-parser.ts`
+  - [ ] `detectFormat(value)` → 'yaml' | 'json'
+  - [ ] `parseValues(value, format)` → Record<string, unknown>
+  - [ ] `serializeValues(values, format, originalSource)` → string (preserves comments/ordering)
+  - [ ] `inferFields(values)` → FieldSchema[] (auto-detect types: boolean, number, url, email, date, textarea, tags)
+- [ ] **FacetSchema** — NEW: layout part definitions
+  - [ ] `FacetLayout` type (form, list, table, report, card)
+  - [ ] `LayoutPart` (header, body, footer, summary, leading-grand-summary, trailing-grand-summary)
+  - [ ] `FieldSlot` (field placement within a layout part: field ref, label position, width, validation display)
+  - [ ] `PortalSlot` (inline related records via EdgeTypeDef relationship)
+  - [ ] `FacetDefinition` (layout + parts + slots + scripts + title + description)
+  - [ ] `createFacetDefinition()` factory + `FacetDefinitionBuilder` fluent API
+- [ ] **SpellEngine** — port legacy `spellcheck/` (full engine, not just CM6 extension)
+  - [ ] `SpellCheckRegistry` (dictionary + filter registration, events)
+  - [ ] `SpellChecker` class (load dict, check text, suggest, personal dict)
+  - [ ] `PersonalDictionary` (persistent storage + session-only ignore)
+  - [ ] `SpellCheckerBuilder` fluent API
+  - [ ] 12 built-in TokenFilters (URL, email, allCaps, camelCase, filePath, inlineCode, wikiLink, etc.)
+  - [ ] Dictionary providers (URL, static, lazy, npm)
+  - [ ] `MockSpellCheckBackend` for tests
+- [ ] **ProseCodec** — port legacy `markdown-serializer.ts`
+  - [ ] `markdownToNodes(md)` → structured node tree (headings, paragraphs, lists, code blocks, blockquotes, HR)
+  - [ ] `nodesToMarkdown(nodes)` → string (round-trip preserving)
+  - [ ] Inline element support (bold, italic, code, links, wiki-links)
+  - [ ] Task list support (`- [ ]`, `- [x]`)
+- [ ] **Sequencer types** — port legacy wizard data model + Lua emission
+  - [ ] `SequencerSubject` (variable, field, event, custom — with id, label, type)
+  - [ ] `SequencerConditionState` (combinator: all|any, clauses with 12 operators)
+  - [ ] `SequencerScriptState` (steps: set-variable, add-variable, emit-event, call-function, custom)
+  - [ ] `emitConditionLua(state)` → Lua expression string
+  - [ ] `emitScriptLua(state)` → Lua statement block
+- [ ] **Emitters** — port legacy `codegen/writers/` (SchemaModel → multi-language)
+  - [ ] `SchemaModel` / `SchemaField` / `SchemaInterface` / `SchemaEnum` types
+  - [ ] `TypeScriptWriter` (interfaces + enums + JSDoc)
+  - [ ] `JavaScriptWriter` (JSDoc @typedef)
+  - [ ] `CSharpWriter` (classes + enums with namespace)
+  - [ ] `LuaWriter` (table + field definitions)
+  - [ ] `JsonWriter` (pretty-print serializer)
+  - [ ] `YamlWriter` (zero-dep: scalars, blocks, anchors)
+  - [ ] `TomlWriter` (zero-dep: tables, array-of-tables)
+
+### Tier 3: Layer 2 React Components
+
+- [ ] **FormFacet** — schema-driven field renderer (replaces document-surface form stub)
+  - [ ] Render FieldSchema[] → form fields with validation
+  - [ ] FacetParser integration (YAML/JSON source ↔ form state)
+  - [ ] SpellEngine integration for text/textarea fields
+  - [ ] PortalSlot rendering (inline related records)
+  - [ ] Conditional field visibility
+- [ ] **TableFacet** — data grid (replaces document-surface spreadsheet stub)
+  - [ ] Column definitions from EntityFieldDef
+  - [ ] Inline editing
+  - [ ] Sort/filter/group headers
+  - [ ] Keyboard navigation (arrow keys, tab, enter)
+- [ ] **ReportFacet** — grouped/summarized view (replaces document-surface report stub)
+  - [ ] LayoutPart rendering (header/body/footer/summary)
+  - [ ] Sub-summary groups by field
+  - [ ] Expression evaluation for summary fields (count, sum, avg)
+- [ ] **Sequencer UI** — visual automation builder
+  - [ ] ConditionBuilder (dropdowns for subject → operator → value)
+  - [ ] ScriptBuilder (step list with add/remove/reorder)
+  - [ ] Live Lua preview
+  - [ ] Integration with AutomationEngine
+- [ ] **LuaFacet** — execute Lua render scripts → React
+  - [ ] `ui` builder table (label, button, section, badge, input, row, column, spacer, divider)
+  - [ ] `ctx` context object (viewId, instanceKey, isActive)
+  - [ ] Error states (no VM, execution error, null return)
+  - [ ] LuaRuntimeProvider context integration
+- [ ] **FacetBuilders** — Lua codegen for common shell patterns
+  - [ ] `luaBrowserView()` — generate Lua for a collection browser view
+  - [ ] `luaCollectionRule()` — generate Lua for a validation rule
+  - [ ] `luaStatsCommand()` — generate Lua for a summary command
+  - [ ] `luaMenuItem()` — generate Lua for a menu contribution
+  - [ ] `luaCommand()` — generate Lua for a keyboard command
+
+### Integration with Studio
+
+- [ ] **Facet Designer lens** — visual layout builder (like FileMaker Layout Mode)
+- [ ] **Record Browser** — form/list/table/report toggle per collection (like FileMaker Browse Mode)
+- [ ] Studio kernel wires FacetParser + SpellEngine + Sequencer into existing systems
+
+## Phase 33: Ecosystem Apps — Cadence & Grip
 
 Music education and live production.
 

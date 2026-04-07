@@ -855,6 +855,221 @@ describe("StudioKernel", () => {
     });
   });
 
+  // ── Identity ────────────────────────────────────────────────────────────
+
+  describe("identity", () => {
+    it("should start with no identity", () => {
+      expect(kernel.identity).toBeNull();
+    });
+
+    it("should generate a DID identity", async () => {
+      const identity = await kernel.generateIdentity();
+      expect(identity.did).toMatch(/^did:key:z/);
+      expect(kernel.identity).toBe(identity);
+    });
+
+    it("should sign and verify data", async () => {
+      await kernel.generateIdentity();
+      const data = new TextEncoder().encode("test payload");
+      const sig = await kernel.signData(data);
+      expect(sig).not.toBeNull();
+      const sigBytes = sig as Uint8Array;
+
+      const valid = await kernel.verifyData(data, sigBytes);
+      expect(valid).toBe(true);
+
+      const tampered = new TextEncoder().encode("tampered");
+      const invalid = await kernel.verifyData(tampered, sigBytes);
+      expect(invalid).toBe(false);
+    });
+
+    it("should export and import identity", async () => {
+      const original = await kernel.generateIdentity();
+      const exported = await kernel.exportIdentity();
+      expect(exported).not.toBeNull();
+      const exp = exported as NonNullable<typeof exported>;
+      expect(exp.did).toBe(original.did);
+
+      // Import into a new kernel
+      const kernel2 = createStudioKernel();
+      const imported = await kernel2.importIdentity(exp);
+      expect(imported.did).toBe(original.did);
+      kernel2.dispose();
+    });
+
+    it("should notify on identity change", async () => {
+      let called = 0;
+      const unsub = kernel.onIdentityChange(() => { called++; });
+      await kernel.generateIdentity();
+      expect(called).toBe(1);
+      unsub();
+    });
+
+    it("should return null when signing without identity", async () => {
+      const result = await kernel.signData(new Uint8Array([1, 2, 3]));
+      expect(result).toBeNull();
+    });
+  });
+
+  // ── Virtual File System ────────────────────────────────────────────────
+
+  describe("vfs", () => {
+    it("should import a file and return BinaryRef", async () => {
+      const data = new TextEncoder().encode("hello vfs");
+      const ref = await kernel.importFile(data, "test.txt", "text/plain");
+      expect(ref.filename).toBe("test.txt");
+      expect(ref.mimeType).toBe("text/plain");
+      expect(ref.size).toBe(9);
+      expect(ref.hash).toBeTruthy();
+    });
+
+    it("should export a file by ref", async () => {
+      const data = new TextEncoder().encode("round trip");
+      const ref = await kernel.importFile(data, "round.txt", "text/plain");
+      const exported = await kernel.exportFile(ref);
+      expect(exported).not.toBeNull();
+      expect(new TextDecoder().decode(exported as Uint8Array)).toBe("round trip");
+    });
+
+    it("should remove a file", async () => {
+      const data = new TextEncoder().encode("delete me");
+      const ref = await kernel.importFile(data, "del.txt", "text/plain");
+      const removed = await kernel.removeFile(ref.hash);
+      expect(removed).toBe(true);
+
+      const again = await kernel.exportFile(ref);
+      expect(again).toBeNull();
+    });
+
+    it("should deduplicate identical content", async () => {
+      const data = new TextEncoder().encode("same content");
+      const ref1 = await kernel.importFile(data, "a.txt", "text/plain");
+      const ref2 = await kernel.importFile(data, "b.txt", "text/plain");
+      expect(ref1.hash).toBe(ref2.hash);
+    });
+
+    it("should acquire and release locks", async () => {
+      const data = new TextEncoder().encode("lockable");
+      const ref = await kernel.importFile(data, "lock.bin", "application/octet-stream");
+
+      const lock = kernel.acquireLock(ref.hash, "editing");
+      expect(lock.hash).toBe(ref.hash);
+      expect(lock.reason).toBe("editing");
+
+      expect(kernel.listLocks()).toHaveLength(1);
+
+      kernel.releaseLock(ref.hash);
+      expect(kernel.listLocks()).toHaveLength(0);
+    });
+
+    it("should notify on VFS changes", async () => {
+      let called = 0;
+      const unsub = kernel.onVfsChange(() => { called++; });
+      await kernel.importFile(new TextEncoder().encode("a"), "a.txt", "text/plain");
+      expect(called).toBe(1);
+      unsub();
+    });
+  });
+
+  // ── Trust & Safety ─────────────────────────────────────────────────────
+
+  describe("trust", () => {
+    it("should start with no peers", () => {
+      expect(kernel.listPeers()).toHaveLength(0);
+    });
+
+    it("should add and trust a peer", () => {
+      kernel.trustPeer("peer-a");
+      const peers = kernel.listPeers();
+      expect(peers).toHaveLength(1);
+      const first = peers[0];
+      expect(first).toBeDefined();
+      expect(first?.peerId).toBe("peer-a");
+      expect(first?.positiveInteractions).toBeGreaterThan(0);
+    });
+
+    it("should distrust a peer", () => {
+      kernel.trustPeer("peer-b");
+      kernel.distrustPeer("peer-b");
+      const peer = kernel.listPeers().find((p) => p.peerId === "peer-b");
+      expect(peer).toBeDefined();
+      expect(peer?.negativeInteractions).toBeGreaterThan(0);
+    });
+
+    it("should ban and unban a peer", () => {
+      kernel.trustPeer("peer-c");
+      kernel.banPeer("peer-c", "bad actor");
+      const peer = kernel.listPeers().find((p) => p.peerId === "peer-c");
+      expect(peer).toBeDefined();
+      expect(peer?.banned).toBe(true);
+      expect(peer?.banReason).toBe("bad actor");
+
+      kernel.unbanPeer("peer-c");
+      const unbanned = kernel.listPeers().find((p) => p.peerId === "peer-c");
+      expect(unbanned).toBeDefined();
+      expect(unbanned?.banned).toBe(false);
+    });
+
+    it("should validate import data", () => {
+      const result = kernel.validateImport({ name: "safe", value: 42 });
+      expect(result.valid).toBe(true);
+    });
+
+    it("should flag content", () => {
+      kernel.flagContent("hash123", "spam");
+      const flagged = kernel.listFlaggedContent();
+      expect(flagged).toHaveLength(1);
+      expect(flagged[0]?.category).toBe("spam");
+    });
+
+    it("should create a sandbox", () => {
+      const sandbox = kernel.createSandbox({
+        pluginId: "test-plugin",
+        capabilities: ["crdt:read", "ui:notify"],
+        maxDurationMs: 5000,
+        maxMemoryBytes: 0,
+        allowedUrls: [],
+        allowedPaths: [],
+      });
+      expect(sandbox.hasCapability("crdt:read")).toBe(true);
+      expect(sandbox.hasCapability("crdt:write")).toBe(false);
+    });
+
+    it("should split and combine Shamir shares", () => {
+      const secret = new TextEncoder().encode("my-secret-key");
+      const config = { totalShares: 5, threshold: 3 };
+      const shares = kernel.splitSecret(secret, config);
+      expect(shares).toHaveLength(5);
+
+      // Reconstruct with 3 shares
+      const recovered = kernel.combineShares(shares.slice(0, 3), config);
+      expect(new TextDecoder().decode(recovered)).toBe("my-secret-key");
+    });
+
+    it("should deposit and list escrow", async () => {
+      await kernel.generateIdentity();
+      const deposit = kernel.depositEscrow("encrypted-payload-123");
+      expect(deposit).not.toBeNull();
+      expect(deposit?.encryptedPayload).toBe("encrypted-payload-123");
+
+      const deposits = kernel.listEscrowDeposits();
+      expect(deposits).toHaveLength(1);
+    });
+
+    it("should return null escrow without identity", () => {
+      const result = kernel.depositEscrow("no-id");
+      expect(result).toBeNull();
+    });
+
+    it("should notify on trust changes", () => {
+      let called = 0;
+      const unsub = kernel.onTrustChange(() => { called++; });
+      kernel.trustPeer("notify-peer");
+      expect(called).toBeGreaterThan(0);
+      unsub();
+    });
+  });
+
   // ── Dispose ─────────────────────────────────────────────────────────────
 
   describe("dispose", () => {

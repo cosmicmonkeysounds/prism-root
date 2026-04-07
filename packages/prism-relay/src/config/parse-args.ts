@@ -1,35 +1,91 @@
 /**
  * CLI argument parser for Prism Relay.
  *
- * Supports:
- *   prism-relay [--mode server|p2p|dev] [--port N] [--host H]
- *               [--config path] [--data-dir path] [--identity path]
- *               [--modules mod1,mod2,...] [--cors origin1,origin2]
- *               [--public-url URL] [--log-level debug|info|warn|error]
- *               [--log-format text|json] [--hashcash-bits N]
- *               [--did-method key|web] [--did-web-domain D]
- *               [--bootstrap-peer did@url,...]
- *               [--help] [--version]
+ * Supports subcommands:
+ *   prism-relay [start] [--mode server|p2p|dev] [--port N] [--host H] ...
+ *   prism-relay init [--mode server|p2p|dev] [--output path]
+ *   prism-relay status [--port N] [--host H]
+ *   prism-relay identity show [--data-dir path]
+ *   prism-relay identity regenerate [--data-dir path] [--did-method key|web]
+ *   prism-relay modules list
+ *   prism-relay config validate [--config path]
+ *   prism-relay config show [--config path] [--mode ...]
+ *   prism-relay [--help] [--version]
  */
 
 import type { DeploymentMode, RelayConfigFile } from "./relay-config.js";
 
+export type SubCommand =
+  | "start"
+  | "init"
+  | "status"
+  | "identity-show"
+  | "identity-regenerate"
+  | "modules-list"
+  | "config-validate"
+  | "config-show";
+
 export interface ParsedArgs {
+  command: SubCommand;
   configPath: string | undefined;
   help: boolean;
   version: boolean;
   overrides: Partial<RelayConfigFile>;
+  /** Output path for `init` command. */
+  initOutput: string | undefined;
+}
+
+/**
+ * Extract the subcommand from argv (first non-flag argument).
+ * Returns the command and the remaining argv with the command stripped.
+ */
+function extractCommand(argv: string[]): { command: SubCommand; rest: string[] } {
+  if (argv.length === 0) return { command: "start", rest: [] };
+
+  const first = argv[0] as string;
+
+  // Two-word subcommands
+  if (first === "identity" && argv.length > 1) {
+    const sub = argv[1];
+    if (sub === "show") return { command: "identity-show", rest: argv.slice(2) };
+    if (sub === "regenerate") return { command: "identity-regenerate", rest: argv.slice(2) };
+  }
+  if (first === "config" && argv.length > 1) {
+    const sub = argv[1];
+    if (sub === "validate") return { command: "config-validate", rest: argv.slice(2) };
+    if (sub === "show") return { command: "config-show", rest: argv.slice(2) };
+  }
+  if (first === "modules" && argv.length > 1 && argv[1] === "list") {
+    return { command: "modules-list", rest: argv.slice(2) };
+  }
+
+  // Single-word subcommands
+  if (first === "start") return { command: "start", rest: argv.slice(1) };
+  if (first === "init") return { command: "init", rest: argv.slice(1) };
+  if (first === "status") return { command: "status", rest: argv.slice(1) };
+  if (first === "identity") return { command: "identity-show", rest: argv.slice(1) };
+  if (first === "config") return { command: "config-show", rest: argv.slice(1) };
+  if (first === "modules") return { command: "modules-list", rest: argv.slice(1) };
+
+  // If first arg is a flag, default to "start"
+  if (first.startsWith("-")) return { command: "start", rest: argv };
+
+  // Unknown word — treat as start with the full argv
+  return { command: "start", rest: argv };
 }
 
 export function parseArgs(argv: string[]): ParsedArgs {
+  const { command, rest } = extractCommand(argv);
+
   let configPath: string | undefined;
   let help = false;
   let version = false;
+  let initOutput: string | undefined;
   const overrides: Partial<RelayConfigFile> = {};
 
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
-    const next = argv[i + 1];
+  for (let i = 0; i < rest.length; i++) {
+    const arg = rest[i];
+    const next = rest[i + 1];
 
     switch (arg) {
       case "--help":
@@ -43,6 +99,11 @@ export function parseArgs(argv: string[]): ParsedArgs {
       case "--config":
       case "-c":
         configPath = next;
+        i++;
+        break;
+      case "--output":
+      case "-o":
+        initOutput = next;
         i++;
         break;
       case "--mode":
@@ -122,7 +183,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     }
   }
 
-  return { configPath, help, version, overrides };
+  return { command, configPath, help, version, overrides, initOutput };
 }
 
 export function printHelp(): string {
@@ -130,7 +191,17 @@ export function printHelp(): string {
 Prism Relay — distributed relay server for the Prism framework.
 
 USAGE:
-  prism-relay [OPTIONS]
+  prism-relay [COMMAND] [OPTIONS]
+
+COMMANDS:
+  start                    Start the relay server (default if no command given)
+  init                     Generate a starter config file
+  status                   Check health of a running relay
+  identity show            Display the relay's DID and public key
+  identity regenerate      Generate a new identity (backs up the old one)
+  modules list             List all available relay modules
+  config validate          Validate a config file without starting
+  config show              Show the fully resolved config (with defaults applied)
 
 DEPLOYMENT MODES:
   --mode server    Always-on relay server (all modules, hashcash=16, no CORS)
@@ -139,6 +210,7 @@ DEPLOYMENT MODES:
 
 OPTIONS:
   -c, --config <path>        Config file path (default: ./relay.config.json)
+  -o, --output <path>        Output path for init command (default: ./relay.config.json)
   --port <number>            Listen port (default: 4444)
   --host <address>           Bind address (default: varies by mode)
   --data-dir <path>          Data directory (default: ~/.prism/relay)
@@ -167,14 +239,29 @@ EXAMPLES:
   # Local development
   prism-relay --mode dev
 
+  # Generate a production config file
+  prism-relay init --mode server -o relay.config.json
+
+  # Validate config before deploying
+  prism-relay config validate -c relay.config.json
+
+  # Show what the resolved config looks like
+  prism-relay config show --mode p2p --public-url https://my-relay.example.com
+
+  # Check a running relay
+  prism-relay status --port 4444
+
+  # Show relay identity
+  prism-relay identity show
+
   # Production server
-  prism-relay --mode server --port 443 --host 0.0.0.0
+  prism-relay start --mode server --port 443 --host 0.0.0.0
 
   # P2P peer with federation
-  prism-relay --mode p2p --public-url https://my-relay.example.com \\
+  prism-relay start --mode p2p --public-url https://my-relay.example.com \\
     --bootstrap-peer did:key:zPeer1@https://peer1.example.com
 
   # From config file
-  prism-relay --config ./my-relay.json
+  prism-relay -c ./my-relay.json
 `.trim();
 }

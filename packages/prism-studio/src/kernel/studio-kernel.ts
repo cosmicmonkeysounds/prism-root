@@ -80,6 +80,31 @@ import { createVaultRoster, createMemoryRosterStore } from "@prism/core/discover
 import type { VaultRoster, RosterEntry, RosterListOptions } from "@prism/core/discovery";
 import { createFormState, setFieldValue, setFieldErrors, fieldHasVisibleError, isDirty } from "@prism/core/forms";
 import type { FormState } from "@prism/core/forms";
+import { createIdentity, signPayload, verifySignature, exportIdentity, importIdentity } from "@prism/core/identity";
+import type { PrismIdentity, ExportedIdentity } from "@prism/core/identity";
+import { createVfsManager, createMemoryVfsAdapter } from "@prism/core/vfs";
+import type { VfsManager, BinaryRef, BinaryLock } from "@prism/core/vfs";
+import {
+  createPeerTrustGraph,
+  createSchemaValidator,
+  createLuaSandbox,
+  createShamirSplitter,
+  createEscrowManager,
+} from "@prism/core/trust";
+import type {
+  PeerTrustGraph,
+  SchemaValidator,
+  LuaSandbox,
+  SandboxPolicy,
+  ShamirSplitter,
+  ShamirShare,
+  ShamirConfig,
+  EscrowManager,
+  EscrowDeposit,
+  PeerReputation,
+  SchemaValidationResult,
+  ContentHash,
+} from "@prism/core/trust";
 
 // ── Clipboard Types ────────────────────────────────────────────────────────
 
@@ -234,6 +259,103 @@ export interface StudioKernel {
   /** Check if form state is dirty. */
   isFormDirty(state: FormState): boolean;
 
+  // ── Identity ──────────────────────────────────────────────────────────────
+
+  /** The active vault identity (null before generation). */
+  readonly identity: PrismIdentity | null;
+
+  /** Generate a new Ed25519 DID identity. */
+  generateIdentity(): Promise<PrismIdentity>;
+
+  /** Export the current identity for persistence. */
+  exportIdentity(): Promise<ExportedIdentity | null>;
+
+  /** Import a previously exported identity. */
+  importIdentity(exported: ExportedIdentity): Promise<PrismIdentity>;
+
+  /** Sign arbitrary data with the current identity. */
+  signData(data: Uint8Array): Promise<Uint8Array | null>;
+
+  /** Verify a signature against the current identity. */
+  verifyData(data: Uint8Array, signature: Uint8Array): Promise<boolean>;
+
+  /** Subscribe to identity changes. */
+  onIdentityChange(listener: () => void): () => void;
+
+  // ── Virtual File System ─────────────────────────────────────────────────
+
+  readonly vfs: VfsManager;
+
+  /** Import a binary file into content-addressed storage. */
+  importFile(data: Uint8Array, filename: string, mimeType: string): Promise<BinaryRef>;
+
+  /** Export a file from storage. */
+  exportFile(ref: BinaryRef): Promise<Uint8Array | null>;
+
+  /** Remove a file from storage. */
+  removeFile(hash: string): Promise<boolean>;
+
+  /** List all active binary locks. */
+  listLocks(): BinaryLock[];
+
+  /** Acquire a lock on a binary blob. */
+  acquireLock(hash: string, reason?: string): BinaryLock;
+
+  /** Release a lock on a binary blob. */
+  releaseLock(hash: string): void;
+
+  /** Subscribe to VFS changes. */
+  onVfsChange(listener: () => void): () => void;
+
+  // ── Trust & Safety ──────────────────────────────────────────────────────
+
+  readonly trustGraph: PeerTrustGraph;
+  readonly schemaValidator: SchemaValidator;
+  readonly escrow: EscrowManager;
+  readonly shamir: ShamirSplitter;
+
+  /** Record a positive interaction for a peer. */
+  trustPeer(peerId: string): void;
+
+  /** Record a negative interaction for a peer. */
+  distrustPeer(peerId: string): void;
+
+  /** Ban a peer. */
+  banPeer(peerId: string, reason: string): void;
+
+  /** Unban a peer. */
+  unbanPeer(peerId: string): void;
+
+  /** Get all known peers with reputation. */
+  listPeers(): PeerReputation[];
+
+  /** Validate data before import. */
+  validateImport(data: unknown): SchemaValidationResult;
+
+  /** Create a sandbox for a plugin. */
+  createSandbox(policy: SandboxPolicy): LuaSandbox;
+
+  /** Flag content as toxic. */
+  flagContent(hash: string, category: string): void;
+
+  /** Get all flagged content. */
+  listFlaggedContent(): ReadonlyArray<ContentHash>;
+
+  /** Split a secret into Shamir shares. */
+  splitSecret(secret: Uint8Array, config: ShamirConfig): ShamirShare[];
+
+  /** Combine Shamir shares to recover a secret. */
+  combineShares(shares: ShamirShare[], config: ShamirConfig): Uint8Array;
+
+  /** Deposit encrypted key material for recovery. */
+  depositEscrow(encryptedPayload: string, expiresAt?: string): EscrowDeposit | null;
+
+  /** List escrow deposits for the current identity. */
+  listEscrowDeposits(): EscrowDeposit[];
+
+  /** Subscribe to trust graph changes. */
+  onTrustChange(listener: () => void): () => void;
+
   /** Get the active view mode. */
   readonly viewMode: ViewMode;
   /** Set the active view mode. */
@@ -387,6 +509,38 @@ export function createStudioKernel(): StudioKernel {
   const vaultListeners = new Set<() => void>();
   vaultRoster.onChange(() => {
     for (const fn of vaultListeners) fn();
+  });
+
+  // ── Identity ────────────────────────────────────────────────────────────
+  let currentIdentity: PrismIdentity | null = null;
+  const identityListeners = new Set<() => void>();
+
+  function notifyIdentityListeners() {
+    for (const fn of identityListeners) fn();
+  }
+
+  // ── Virtual File System ────────────────────────────────────────────────
+  const vfsAdapter = createMemoryVfsAdapter();
+  const vfs = createVfsManager({ adapter: vfsAdapter });
+  const vfsListeners = new Set<() => void>();
+  function notifyVfsListeners() {
+    for (const fn of vfsListeners) fn();
+  }
+
+  // ── Trust & Safety ─────────────────────────────────────────────────────
+  const trustGraph = createPeerTrustGraph();
+  const schemaValidator = createSchemaValidator();
+  const shamirSplitter = createShamirSplitter();
+  const escrowManager = createEscrowManager();
+  const sandboxes = new Map<string, LuaSandbox>();
+  const trustListeners = new Set<() => void>();
+
+  function notifyTrustListeners() {
+    for (const fn of trustListeners) fn();
+  }
+
+  const disconnectTrustGraph = trustGraph.onChange(() => {
+    notifyTrustListeners();
   });
 
   const presence = createPresenceManager({
@@ -1123,6 +1277,68 @@ export function createStudioKernel(): StudioKernel {
     return evaluateExpression(formula, ctx);
   }
 
+  // ── Identity helpers ─────────────────────────────────────────────────────
+
+  async function generateIdentityImpl(): Promise<PrismIdentity> {
+    currentIdentity = await createIdentity();
+    notifyIdentityListeners();
+    notifications.add({ title: `Identity created: ${currentIdentity.did}`, kind: "success" });
+    return currentIdentity;
+  }
+
+  async function exportIdentityImpl(): Promise<ExportedIdentity | null> {
+    if (!currentIdentity) return null;
+    return exportIdentity(currentIdentity);
+  }
+
+  async function importIdentityImpl(exported: ExportedIdentity): Promise<PrismIdentity> {
+    currentIdentity = await importIdentity(exported);
+    notifyIdentityListeners();
+    notifications.add({ title: `Identity imported: ${currentIdentity.did}`, kind: "success" });
+    return currentIdentity;
+  }
+
+  async function signDataImpl(data: Uint8Array): Promise<Uint8Array | null> {
+    if (!currentIdentity) return null;
+    return signPayload(currentIdentity, data);
+  }
+
+  async function verifyDataImpl(data: Uint8Array, signature: Uint8Array): Promise<boolean> {
+    if (!currentIdentity) return false;
+    return verifySignature(currentIdentity.did, data, signature);
+  }
+
+  // ── VFS helpers ─────────────────────────────────────────────────────────
+
+  async function importFileImpl(data: Uint8Array, filename: string, mimeType: string): Promise<BinaryRef> {
+    const ref = await vfs.importFile(data, filename, mimeType);
+    notifyVfsListeners();
+    return ref;
+  }
+
+  async function exportFileImpl(ref: BinaryRef): Promise<Uint8Array | null> {
+    return vfs.exportFile(ref);
+  }
+
+  async function removeFileImpl(hash: string): Promise<boolean> {
+    const result = await vfs.removeFile(hash);
+    if (result) notifyVfsListeners();
+    return result;
+  }
+
+  function acquireLockImpl(hash: string, reason?: string): BinaryLock {
+    const peerId = currentIdentity?.did ?? `local_${Date.now().toString(36)}`;
+    const lock = vfs.acquireLock(hash, peerId, reason);
+    notifyVfsListeners();
+    return lock;
+  }
+
+  function releaseLockImpl(hash: string): void {
+    const peerId = currentIdentity?.did ?? `local_${Date.now().toString(36)}`;
+    vfs.releaseLock(hash, peerId);
+    notifyVfsListeners();
+  }
+
   function dispose(): void {
     automationEngine.stop();
     disconnectAutomationCreated();
@@ -1138,6 +1354,13 @@ export function createStudioKernel(): StudioKernel {
     disconnectStoreSync();
     tracker.untrackAll();
     viewModeListeners.clear();
+    identityListeners.clear();
+    vfsListeners.clear();
+    vfs.dispose();
+    disconnectTrustGraph();
+    trustGraph.dispose();
+    trustListeners.clear();
+    sandboxes.clear();
   }
 
   return {
@@ -1246,6 +1469,77 @@ export function createStudioKernel(): StudioKernel {
       return fieldHasVisibleError(state, fieldId);
     },
     isFormDirty(state: FormState) { return isDirty(state); },
+
+    // ── Identity ──────────────────────────────────────────────────────────
+    get identity() { return currentIdentity; },
+    generateIdentity: generateIdentityImpl,
+    exportIdentity: exportIdentityImpl,
+    importIdentity: importIdentityImpl,
+    signData: signDataImpl,
+    verifyData: verifyDataImpl,
+    onIdentityChange(listener: () => void) {
+      identityListeners.add(listener);
+      return () => identityListeners.delete(listener);
+    },
+
+    // ── Virtual File System ───────────────────────────────────────────────
+    vfs,
+    importFile: importFileImpl,
+    exportFile: exportFileImpl,
+    removeFile: removeFileImpl,
+    listLocks() { return vfs.listLocks(); },
+    acquireLock: acquireLockImpl,
+    releaseLock: releaseLockImpl,
+    onVfsChange(listener: () => void) {
+      vfsListeners.add(listener);
+      return () => vfsListeners.delete(listener);
+    },
+
+    // ── Trust & Safety ────────────────────────────────────────────────────
+    trustGraph,
+    schemaValidator,
+    escrow: escrowManager,
+    shamir: shamirSplitter,
+    trustPeer(peerId: string) { trustGraph.recordPositive(peerId); },
+    distrustPeer(peerId: string) { trustGraph.recordNegative(peerId); },
+    banPeer(peerId: string, reason: string) {
+      trustGraph.ban(peerId, reason);
+      notifications.add({ title: `Peer banned: ${peerId}`, kind: "warning", body: reason });
+    },
+    unbanPeer(peerId: string) {
+      trustGraph.unban(peerId);
+      notifications.add({ title: `Peer unbanned: ${peerId}`, kind: "info" });
+    },
+    listPeers() { return trustGraph.allPeers(); },
+    validateImport(data: unknown) { return schemaValidator.validate(data); },
+    createSandbox(policy: SandboxPolicy) {
+      const sandbox = createLuaSandbox(policy);
+      sandboxes.set(policy.pluginId, sandbox);
+      return sandbox;
+    },
+    flagContent(hash: string, category: string) {
+      const reportedBy = currentIdentity?.did ?? "local";
+      trustGraph.flagContent(hash, category, reportedBy);
+    },
+    listFlaggedContent() { return trustGraph.flaggedContent(); },
+    splitSecret(secret: Uint8Array, config: ShamirConfig) {
+      return shamirSplitter.split(secret, config);
+    },
+    combineShares(shares: ShamirShare[], config: ShamirConfig) {
+      return shamirSplitter.combine(shares, config);
+    },
+    depositEscrow(encryptedPayload: string, expiresAt?: string) {
+      if (!currentIdentity) return null;
+      return escrowManager.deposit(currentIdentity.did, encryptedPayload, expiresAt);
+    },
+    listEscrowDeposits() {
+      if (!currentIdentity) return [];
+      return escrowManager.listDeposits(currentIdentity.did);
+    },
+    onTrustChange(listener: () => void) {
+      trustListeners.add(listener);
+      return () => trustListeners.delete(listener);
+    },
 
     dispose,
   };

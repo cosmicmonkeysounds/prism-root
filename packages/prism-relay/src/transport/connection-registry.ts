@@ -18,6 +18,7 @@ export interface ConnectionRegistry {
   remove(ws: WSContext): void;
   get(ws: WSContext): TrackedConnection | undefined;
   broadcastToCollection(collectionId: string, msg: ServerMessage, exclude?: WSContext): void;
+  broadcastAll(msg: ServerMessage, exclude?: WSContext): void;
 }
 
 export function createConnectionRegistry(): ConnectionRegistry {
@@ -45,6 +46,15 @@ export function createConnectionRegistry(): ConnectionRegistry {
       const payload = stringifyServerMessage(msg);
       for (const [, conn] of connections) {
         if (conn.subscribedCollections.has(collectionId) && conn.ws !== exclude) {
+          conn.ws.send(payload);
+        }
+      }
+    },
+
+    broadcastAll(msg, exclude) {
+      const payload = stringifyServerMessage(msg);
+      for (const [, conn] of connections) {
+        if (conn.ws !== exclude) {
           conn.ws.send(payload);
         }
       }

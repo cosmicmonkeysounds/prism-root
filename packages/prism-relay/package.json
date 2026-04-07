@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "prism-relay": "./dist/cli.js"
+  },
   "exports": {
     "./server": "./src/server/index.ts",
     "./protocol": "./src/protocol/index.ts",

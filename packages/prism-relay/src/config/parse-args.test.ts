@@ -2,6 +2,94 @@ import { describe, it, expect } from "vitest";
 import { parseArgs } from "./parse-args.js";
 
 describe("parseArgs", () => {
+  // ── Subcommand extraction ──────────────────────────────────────────
+
+  it("defaults to start command when no args", () => {
+    const result = parseArgs([]);
+    expect(result.command).toBe("start");
+  });
+
+  it("defaults to start command when first arg is a flag", () => {
+    const result = parseArgs(["--mode", "dev"]);
+    expect(result.command).toBe("start");
+    expect(result.overrides.mode).toBe("dev");
+  });
+
+  it("parses explicit start command", () => {
+    const result = parseArgs(["start", "--port", "8080"]);
+    expect(result.command).toBe("start");
+    expect(result.overrides.port).toBe(8080);
+  });
+
+  it("parses init command", () => {
+    const result = parseArgs(["init", "--mode", "server"]);
+    expect(result.command).toBe("init");
+    expect(result.overrides.mode).toBe("server");
+  });
+
+  it("parses init with --output", () => {
+    const result = parseArgs(["init", "--output", "/tmp/relay.json"]);
+    expect(result.command).toBe("init");
+    expect(result.initOutput).toBe("/tmp/relay.json");
+  });
+
+  it("parses init with -o shorthand", () => {
+    const result = parseArgs(["init", "-o", "my-config.json"]);
+    expect(result.command).toBe("init");
+    expect(result.initOutput).toBe("my-config.json");
+  });
+
+  it("parses status command", () => {
+    const result = parseArgs(["status", "--port", "5555"]);
+    expect(result.command).toBe("status");
+    expect(result.overrides.port).toBe(5555);
+  });
+
+  it("parses identity show command", () => {
+    const result = parseArgs(["identity", "show"]);
+    expect(result.command).toBe("identity-show");
+  });
+
+  it("parses identity regenerate command", () => {
+    const result = parseArgs(["identity", "regenerate", "--did-method", "web"]);
+    expect(result.command).toBe("identity-regenerate");
+    expect(result.overrides.didMethod).toBe("web");
+  });
+
+  it("defaults identity to show", () => {
+    const result = parseArgs(["identity"]);
+    expect(result.command).toBe("identity-show");
+  });
+
+  it("parses modules list command", () => {
+    const result = parseArgs(["modules", "list"]);
+    expect(result.command).toBe("modules-list");
+  });
+
+  it("defaults modules to list", () => {
+    const result = parseArgs(["modules"]);
+    expect(result.command).toBe("modules-list");
+  });
+
+  it("parses config validate command", () => {
+    const result = parseArgs(["config", "validate", "-c", "relay.json"]);
+    expect(result.command).toBe("config-validate");
+    expect(result.configPath).toBe("relay.json");
+  });
+
+  it("parses config show command", () => {
+    const result = parseArgs(["config", "show", "--mode", "p2p"]);
+    expect(result.command).toBe("config-show");
+    expect(result.overrides.mode).toBe("p2p");
+  });
+
+  it("defaults config to show", () => {
+    const result = parseArgs(["config"]);
+    expect(result.command).toBe("config-show");
+  });
+
+  // ── Flag parsing (preserved from original) ─────────────────────────
+
   it("parses --help flag", () => {
     const result = parseArgs(["--help"]);
     expect(result.help).toBe(true);
@@ -112,5 +200,22 @@ describe("parseArgs", () => {
     expect(result.version).toBe(false);
     expect(result.configPath).toBeUndefined();
     expect(Object.keys(result.overrides)).toHaveLength(0);
+  });
+
+  // ── Subcommand + flags combined ────────────────────────────────────
+
+  it("passes flags through to subcommands", () => {
+    const result = parseArgs(["start", "--mode", "server", "--port", "443", "--host", "0.0.0.0"]);
+    expect(result.command).toBe("start");
+    expect(result.overrides.mode).toBe("server");
+    expect(result.overrides.port).toBe(443);
+    expect(result.overrides.host).toBe("0.0.0.0");
+  });
+
+  it("identity regenerate with did-web options", () => {
+    const result = parseArgs(["identity", "regenerate", "--did-method", "web", "--did-web-domain", "relay.example.com"]);
+    expect(result.command).toBe("identity-regenerate");
+    expect(result.overrides.didMethod).toBe("web");
+    expect(result.overrides.didWebDomain).toBe("relay.example.com");
   });
 });

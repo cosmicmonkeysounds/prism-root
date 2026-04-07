@@ -110,6 +110,7 @@ const ALL_MODULES = [
   "federation",
   "acme-certificates",
   "portal-templates",
+  "webrtc-signaling",
 ];
 
 /** Minimal modules for p2p mode — routing + federation + trust. */

@@ -83,6 +83,83 @@ export function bannedPeerMiddleware(relay: RelayInstance) {
   };
 }
 
+// ── Rate Limiting (Token Bucket) ─────────────────────────────────────────
+
+interface RateBucket {
+  tokens: number;
+  lastRefill: number;
+}
+
+/**
+ * Per-IP rate limiter using the token bucket algorithm.
+ * Protects against DDoS and brute-force attacks.
+ *
+ * Each IP starts with `max` tokens. Tokens refill at `refillRate` per second.
+ * Each request consumes 1 token. When tokens hit 0, return 429.
+ */
+export function rateLimitMiddleware(opts?: {
+  /** Maximum burst size. Default: 100 requests. */
+  max?: number;
+  /** Tokens refilled per second. Default: 20 requests/sec. */
+  refillRate?: number;
+  /** Max tracked IPs (LRU eviction above this). Default: 10000. */
+  maxEntries?: number;
+}) {
+  const max = opts?.max ?? 100;
+  const refillRate = opts?.refillRate ?? 20;
+  const maxEntries = opts?.maxEntries ?? 10_000;
+  const buckets = new Map<string, RateBucket>();
+
+  function getClientKey(c: Context): string {
+    // Prefer DID for authenticated requests, fall back to IP
+    const did = c.req.header("x-prism-did");
+    if (did) return `did:${did}`;
+    // X-Forwarded-For for proxied requests, raw IP otherwise
+    const forwarded = c.req.header("x-forwarded-for");
+    if (forwarded) return `ip:${forwarded.split(",")[0]?.trim()}`;
+    // Hono doesn't expose raw IP directly; use a fallback
+    return `ip:${c.req.header("x-real-ip") ?? "unknown"}`;
+  }
+
+  function refill(bucket: RateBucket, now: number): void {
+    const elapsed = (now - bucket.lastRefill) / 1000;
+    bucket.tokens = Math.min(max, bucket.tokens + elapsed * refillRate);
+    bucket.lastRefill = now;
+  }
+
+  // Periodic eviction of stale entries (every 60s)
+  setInterval(() => {
+    if (buckets.size > maxEntries) {
+      const cutoff = Date.now() - 120_000; // 2 min inactive
+      for (const [key, bucket] of buckets) {
+        if (bucket.lastRefill < cutoff) buckets.delete(key);
+        if (buckets.size <= maxEntries * 0.75) break;
+      }
+    }
+  }, 60_000).unref();
+
+  return async (c: Context, next: Next) => {
+    const key = getClientKey(c);
+    const now = Date.now();
+
+    let bucket = buckets.get(key);
+    if (!bucket) {
+      bucket = { tokens: max, lastRefill: now };
+      buckets.set(key, bucket);
+    }
+
+    refill(bucket, now);
+
+    if (bucket.tokens < 1) {
+      c.header("Retry-After", String(Math.ceil(1 / refillRate)));
+      return c.json({ error: "rate limit exceeded" }, 429);
+    }
+
+    bucket.tokens -= 1;
+    return next();
+  };
+}
+
 // ── Schema Poison Pill (CRDT diff validation) ──────────────────────────────
 
 /**

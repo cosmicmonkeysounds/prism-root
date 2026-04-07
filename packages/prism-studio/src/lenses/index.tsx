@@ -20,6 +20,9 @@ import { AnalysisPanel } from "../panels/analysis-panel.js";
 import { PluginPanel } from "../panels/plugin-panel.js";
 import { ShortcutsPanel } from "../panels/shortcuts-panel.js";
 import { VaultPanel } from "../panels/vault-panel.js";
+import { IdentityPanel } from "../panels/identity-panel.js";
+import { AssetsPanel } from "../panels/assets-panel.js";
+import { TrustPanel } from "../panels/trust-panel.js";
 
 export const EDITOR_LENS_ID = lensId("editor");
 export const GRAPH_LENS_ID = lensId("graph");
@@ -33,6 +36,9 @@ export const ANALYSIS_LENS_ID = lensId("analysis");
 export const PLUGIN_LENS_ID = lensId("plugin");
 export const SHORTCUTS_LENS_ID = lensId("shortcuts");
 export const VAULT_LENS_ID = lensId("vault");
+export const IDENTITY_LENS_ID = lensId("identity");
+export const ASSETS_LENS_ID = lensId("assets");
+export const TRUST_LENS_ID = lensId("trust");
 
 const editorManifest: LensManifest = {
   id: EDITOR_LENS_ID,
@@ -166,6 +172,39 @@ const vaultManifest: LensManifest = {
   },
 };
 
+const identityManifest: LensManifest = {
+  id: IDENTITY_LENS_ID,
+  name: "Identity",
+  icon: "\uD83D\uDD11",
+  category: "custom",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-identity", name: "Switch to Identity", shortcut: ["i"], section: "Navigation" }],
+  },
+};
+
+const assetsManifest: LensManifest = {
+  id: ASSETS_LENS_ID,
+  name: "Assets",
+  icon: "\uD83D\uDCC1",
+  category: "custom",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-assets", name: "Switch to Assets", shortcut: ["f"], section: "Navigation" }],
+  },
+};
+
+const trustManifest: LensManifest = {
+  id: TRUST_LENS_ID,
+  name: "Trust",
+  icon: "\uD83D\uDEE1",
+  category: "custom",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-trust", name: "Switch to Trust", shortcut: ["t"], section: "Navigation" }],
+  },
+};
+
 export const ALL_MANIFESTS: LensManifest[] = [
   editorManifest,
   graphManifest,
@@ -179,6 +218,9 @@ export const ALL_MANIFESTS: LensManifest[] = [
   pluginManifest,
   shortcutsManifest,
   vaultManifest,
+  identityManifest,
+  assetsManifest,
+  trustManifest,
 ];
 
 export function registerBuiltinLenses(registry: LensRegistry): () => void {
@@ -200,5 +242,8 @@ export function createLensComponentMap(): Map<LensId, ComponentType> {
   map.set(PLUGIN_LENS_ID, PluginPanel);
   map.set(SHORTCUTS_LENS_ID, ShortcutsPanel);
   map.set(VAULT_LENS_ID, VaultPanel);
+  map.set(IDENTITY_LENS_ID, IdentityPanel);
+  map.set(ASSETS_LENS_ID, AssetsPanel);
+  map.set(TRUST_LENS_ID, TrustPanel);
   return map;
 }

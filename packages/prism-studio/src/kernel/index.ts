@@ -20,6 +20,9 @@ export {
   usePlugins,
   useInputRouter,
   useVaultRoster,
+  useIdentity,
+  useVfs,
+  useTrust,
 } from "./kernel-context.js";
 
 export { createPageBuilderRegistry } from "./entities.js";

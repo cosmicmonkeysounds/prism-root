@@ -8,6 +8,16 @@ Runtime server for Prism Relay — wraps Layer 1 relay primitives in HTTP + WebS
 - `pnpm test:e2e` — Playwright E2E tests (32 tests, no browser needed)
 
 ## CLI
+Installable as `prism-relay` via the `bin` field. Supports subcommands:
+- `prism-relay start` (default) — start the relay server
+- `prism-relay init [--mode server|p2p|dev] [-o path]` — generate a starter config file
+- `prism-relay status [--port N]` — check health of a running relay via `/api/health`
+- `prism-relay identity show` — display relay DID and public key
+- `prism-relay identity regenerate` — generate new identity (backs up old one)
+- `prism-relay modules list` — list all 15 available relay modules with descriptions
+- `prism-relay config validate [-c path]` — validate config without starting
+- `prism-relay config show [--mode ...]` — show fully resolved config with defaults
+
 Three deployment modes:
 - `--mode server` — always-on relay (all modules, hashcash=16, JSON logging, no CORS, CSRF enabled)
 - `--mode p2p` — federated peer (minimal modules, federation enabled, hashcash=12)
@@ -16,6 +26,7 @@ Three deployment modes:
 Config priority: CLI flags > env vars > config file > mode defaults.
 Identity persists to `~/.prism/relay/identity.json` (auto-created on first run).
 State persists to `{dataDir}/relay-state.json` (auto-save every 5s, save on shutdown).
+Background jobs: mailbox eviction, ACME challenge eviction, signaling room cleanup.
 See `prism-relay --help` for full options.
 
 ## Architecture
@@ -35,7 +46,7 @@ See `prism-relay --help` for full options.
 - `@prism/relay/cli` — CLI entry point
 
 ## Modules (15 total)
-blind-mailbox, relay-router, relay-timestamp, blind-pings, capability-tokens, webhooks, sovereign-portals, collection-host, hashcash, peer-trust, escrow, federation, acme-certificates, portal-templates, webrtc-signaling
+blind-mailbox, relay-router, relay-timestamp, blind-ping, capability-tokens, webhooks, sovereign-portals, collection-host, hashcash, peer-trust, escrow, federation, acme-certificates, portal-templates, webrtc-signaling
 
 ## Protocol
 WebSocket at `/ws/relay`:
@@ -134,6 +145,7 @@ WebSocket at `/ws/relay`:
 ## HTTP API (Core)
 - `GET /api/status` — relay state
 - `GET /api/modules` — installed modules
+- `GET /api/health` — health check (uptime, memory, peer count) for load balancers/Docker
 - Webhooks: `GET/POST /api/webhooks`, `DELETE /api/webhooks/:id`, `GET /api/webhooks/:id/deliveries`
 - Portals: `GET/POST /api/portals`, `GET/DELETE /api/portals/:id`
 - Tokens: `POST /api/tokens/{issue,verify,revoke}`
