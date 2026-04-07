@@ -31,6 +31,7 @@ import {
   createAutoRestRoutes,
   createPingRoutes,
   createSignalingRoutes,
+  createPresenceRoutes,
 } from "../routes/index.js";
 import type { AuthRoutesOptions } from "../routes/index.js";
 import { handleWsOpen, handleWsMessage, handleWsClose, createConnectionRegistry } from "../transport/index.js";

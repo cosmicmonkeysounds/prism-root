@@ -23,15 +23,10 @@ export interface DeviceRegistration {
 }
 
 /**
- * APNs/FCM transport that dispatches blind pings to registered devices.
- * This is the concrete PingTransport implementation that the relay wires in.
+ * Re-export PushTransportConfig from the transport module for backwards compat.
+ * The real implementation lives in transport/push-transport.ts.
  */
-export interface PushTransportConfig {
-  /** APNs team ID + key (for Apple Push Notification service). */
-  apns?: { teamId: string; keyId: string; privateKey: string; bundleId: string };
-  /** FCM server key (for Firebase Cloud Messaging). */
-  fcm?: { serverKey: string };
-}
+export type { PushTransportConfig } from "../transport/push-transport.js";
 
 // In-memory device registry (persisted via file store in production)
 const deviceRegistry = new Map<string, DeviceRegistration>();
@@ -131,82 +126,13 @@ export function createPingRoutes(relay: RelayInstance): Hono {
 }
 
 /**
- * Create a PingTransport that dispatches to APNs/FCM based on device registry.
- * This is wired into the BlindPinger module via setTransport().
+ * Get all device registrations for a given DID.
+ * Used by the push transport to look up device tokens.
  */
-export function createPushPingTransport(
-  config: PushTransportConfig,
-): import("@prism/core/relay").PingTransport {
-  return {
-    async send(ping): Promise<boolean> {
-      // Look up device registrations for the recipient
-      const devices: DeviceRegistration[] = [];
-      for (const [, reg] of deviceRegistry) {
-        if (reg.did === ping.to) devices.push(reg);
-      }
-
-      if (devices.length === 0) return false;
-
-      let anySent = false;
-      for (const device of devices) {
-        try {
-          if (device.platform === "fcm" && config.fcm) {
-            await sendFcmPing(config.fcm.serverKey, device.token, ping.badgeCount);
-            anySent = true;
-          } else if (device.platform === "apns" && config.apns) {
-            await sendApnsPing(config.apns, device.token, ping.badgeCount);
-            anySent = true;
-          }
-        } catch {
-          // Transport error — continue to next device
-        }
-      }
-
-      return anySent;
-    },
-  };
-}
-
-async function sendFcmPing(
-  serverKey: string,
-  deviceToken: string,
-  badgeCount?: number,
-): Promise<void> {
-  await fetch("https://fcm.googleapis.com/fcm/send", {
-    method: "POST",
-    headers: {
-      Authorization: `key=${serverKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      to: deviceToken,
-      // Content-free: only a data message to wake the app
-      data: { type: "prism_sync", ...(badgeCount !== undefined ? { badge: String(badgeCount) } : {}) },
-      // No "notification" key — silent background push
-      content_available: true,
-      priority: "high",
-    }),
-  });
-}
-
-async function sendApnsPing(
-  config: NonNullable<PushTransportConfig["apns"]>,
-  deviceToken: string,
-  badgeCount?: number,
-): Promise<void> {
-  // APNs HTTP/2 push — minimal payload for background wake
-  await fetch(`https://api.push.apple.com/3/device/${deviceToken}`, {
-    method: "POST",
-    headers: {
-      "apns-topic": config.bundleId,
-      "apns-push-type": "background",
-      "apns-priority": "5",
-    },
-    body: JSON.stringify({
-      aps: {
-        "content-available": 1,
-        ...(badgeCount !== undefined ? { badge: badgeCount } : {}),
-      },
-    }),
-  });
+export function getDevicesForDid(did: string): DeviceRegistration[] {
+  const devices: DeviceRegistration[] = [];
+  for (const [, reg] of deviceRegistry) {
+    if (reg.did === did) devices.push(reg);
+  }
+  return devices;
 }

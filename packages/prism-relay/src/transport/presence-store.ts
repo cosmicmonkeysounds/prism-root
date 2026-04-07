@@ -7,7 +7,6 @@
 
 import type { WSContext } from "hono/ws";
 import type { ServerMessage } from "../protocol/relay-protocol.js";
-import { stringifyServerMessage } from "../protocol/relay-protocol.js";
 import type { ConnectionRegistry } from "./connection-registry.js";
 
 export interface PeerPresence {
@@ -21,6 +20,7 @@ export interface PresenceStore {
   remove(peerId: string): void;
   get(peerId: string): PeerPresence | undefined;
   getAll(): Array<{ peerId: string } & PeerPresence>;
+  /** Broadcast a presence message to all connected peers, optionally excluding a sender. */
   broadcast(registry: ConnectionRegistry, exclude: WSContext | undefined, msg: ServerMessage): void;
 }
 
@@ -49,24 +49,7 @@ export function createPresenceStore(): PresenceStore {
     },
 
     broadcast(registry, exclude, msg) {
-      const payload = stringifyServerMessage(msg);
-      // Use the registry's internal iteration — we broadcast to ALL connections,
-      // not just collection subscribers. We access via broadcastToAll helper.
-      // Since ConnectionRegistry doesn't have broadcastAll, we iterate tracked connections.
-      // We need to send to every tracked connection except the excluded one.
-      // ConnectionRegistry exposes get() per-ws but not iteration, so we use
-      // a lightweight approach: store WS references alongside presence.
-      //
-      // Actually, ConnectionRegistry doesn't expose iteration. We'll use a
-      // parallel tracking approach: presence-store keeps its own ws set.
-      _broadcastAll(payload, exclude);
+      registry.broadcastAll(msg, exclude);
     },
   };
-
-  function _broadcastAll(payload: string, exclude: WSContext | undefined): void {
-    // This is a private concern — we keep a ws set in closure scope.
-    // See the overridden version below.
-    void payload;
-    void exclude;
-  }
 }

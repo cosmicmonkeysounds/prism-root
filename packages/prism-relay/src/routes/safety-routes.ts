@@ -9,9 +9,100 @@
  */
 
 import { Hono } from "hono";
-import type { RelayInstance, FederationRegistry } from "@prism/core/relay";
+import type { RelayInstance, FederationRegistry, FederationPeer } from "@prism/core/relay";
 import { RELAY_CAPABILITIES } from "@prism/core/relay";
-import type { PeerTrustGraph } from "@prism/core/trust";
+import type { PeerTrustGraph, EscrowManager } from "@prism/core/trust";
+
+/** Result of gossiping to a single peer. */
+export interface GossipPeerResult {
+  relayDid: string;
+  url: string;
+  success: boolean;
+  error?: string;
+}
+
+/** Summary returned by the gossip endpoint. */
+export interface GossipSummary {
+  ok: boolean;
+  hashCount: number;
+  totalPeers: number;
+  successCount: number;
+  failedCount: number;
+  peers: GossipPeerResult[];
+}
+
+/** Report body for whistleblower packets. */
+export interface WhistleblowerReport {
+  contentHash: string;
+  category: string;
+  reportedBy: string;
+  evidence?: string;
+}
+
+/**
+ * Gossip all flagged hashes to every federation peer.
+ * Resilient: catches per-peer errors and continues.
+ */
+async function gossipToAllPeers(
+  trust: PeerTrustGraph,
+  federation: FederationRegistry,
+  sourceRelayDid: string,
+): Promise<GossipSummary> {
+  const flagged = trust.flaggedContent();
+  if (flagged.length === 0) {
+    return { ok: true, hashCount: 0, totalPeers: 0, successCount: 0, failedCount: 0, peers: [] };
+  }
+
+  const peers: ReadonlyArray<FederationPeer> = federation.getPeers();
+  const payload = {
+    hashes: flagged.map((f) => ({
+      hash: f.hash,
+      category: f.category,
+      reportedBy: f.reportedBy,
+    })),
+    sourceRelay: sourceRelayDid,
+  };
+  const body = JSON.stringify(payload);
+
+  const results: GossipPeerResult[] = [];
+
+  for (const peer of peers) {
+    try {
+      const res = await fetch(`${peer.url}/api/safety/hashes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Prism-CSRF": "1" },
+        body,
+      });
+      if (res.ok) {
+        results.push({ relayDid: peer.relayDid, url: peer.url, success: true });
+      } else {
+        results.push({
+          relayDid: peer.relayDid,
+          url: peer.url,
+          success: false,
+          error: `HTTP ${String(res.status)}`,
+        });
+      }
+    } catch (err: unknown) {
+      results.push({
+        relayDid: peer.relayDid,
+        url: peer.url,
+        success: false,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  const successCount = results.filter((r) => r.success).length;
+  return {
+    ok: true,
+    hashCount: flagged.length,
+    totalPeers: peers.length,
+    successCount,
+    failedCount: peers.length - successCount,
+    peers: results,
+  };
+}
 
 export function createSafetyRoutes(relay: RelayInstance): Hono {
   const app = new Hono();
@@ -24,35 +115,59 @@ export function createSafetyRoutes(relay: RelayInstance): Hono {
     return relay.getCapability<FederationRegistry>(RELAY_CAPABILITIES.FEDERATION);
   }
 
+  function getEscrow(): EscrowManager | undefined {
+    return relay.getCapability<EscrowManager>(RELAY_CAPABILITIES.ESCROW);
+  }
+
   // POST /api/safety/report — submit a whistleblower packet
   app.post("/report", async (c) => {
     const trust = getTrust();
     if (!trust) return c.json({ error: "trust module not installed" }, 404);
 
-    const body = await c.req.json<{
-      contentHash: string;
-      category: string;
-      reportedBy: string;
-      decryptionKey?: string;
-      evidence?: string;
-    }>();
+    const body = await c.req.json<WhistleblowerReport>();
 
     if (!body.contentHash || !body.category || !body.reportedBy) {
       return c.json({ error: "contentHash, category, and reportedBy are required" }, 400);
     }
 
+    const validCategories = ["spam", "csam", "malware", "other"];
+    if (!validCategories.includes(body.category)) {
+      return c.json({ error: `category must be one of: ${validCategories.join(", ")}` }, 400);
+    }
+
     // Flag the content in the trust graph
     trust.flagContent(body.contentHash, body.category, body.reportedBy);
 
-    // Record negative reputation for the content origin if identifiable
+    // Record positive reputation for the reporter (they are helping the network)
     if (body.reportedBy !== "anonymous") {
-      trust.recordPositive(body.reportedBy); // Reporter gets positive rep
+      trust.recordPositive(body.reportedBy);
+    }
+
+    // Store evidence as a one-time escrow deposit if provided
+    let escrowId: string | null = null;
+    if (body.evidence) {
+      const escrow = getEscrow();
+      if (escrow) {
+        // Evidence expires in 30 days — one-time claim
+        const expiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+        const deposit = escrow.deposit(body.reportedBy, body.evidence, expiry);
+        escrowId = deposit.id;
+      }
+    }
+
+    // Auto-trigger gossip if federation is enabled
+    let gossip: GossipSummary | null = null;
+    const federation = getFederation();
+    if (federation) {
+      gossip = await gossipToAllPeers(trust, federation, relay.did);
     }
 
     return c.json({
       ok: true,
       contentHash: body.contentHash,
       flagged: true,
+      escrowId,
+      gossip,
     }, 201);
   });
 
@@ -79,11 +194,17 @@ export function createSafetyRoutes(relay: RelayInstance): Hono {
       return c.json({ error: "hashes array is required" }, 400);
     }
 
+    if (!body.sourceRelay) {
+      return c.json({ error: "sourceRelay is required" }, 400);
+    }
+
     let imported = 0;
     for (const entry of body.hashes) {
-      if (!trust.isContentFlagged(entry.hash)) {
-        trust.flagContent(entry.hash, entry.category, entry.reportedBy);
-        imported++;
+      if (entry.hash && entry.category && entry.reportedBy) {
+        if (!trust.isContentFlagged(entry.hash)) {
+          trust.flagContent(entry.hash, entry.category, entry.reportedBy);
+          imported++;
+        }
       }
     }
 
@@ -115,36 +236,8 @@ export function createSafetyRoutes(relay: RelayInstance): Hono {
     if (!trust) return c.json({ error: "trust module not installed" }, 404);
     if (!federation) return c.json({ error: "federation module not installed" }, 404);
 
-    const flagged = trust.flaggedContent();
-    if (flagged.length === 0) {
-      return c.json({ ok: true, peers: 0, hashes: 0 });
-    }
-
-    const peers = federation.getPeers();
-    const payload = {
-      hashes: flagged.map((f) => ({
-        hash: f.hash,
-        category: f.category,
-        reportedBy: f.reportedBy,
-      })),
-      sourceRelay: relay.did,
-    };
-
-    let successCount = 0;
-    for (const peer of peers) {
-      try {
-        const res = await fetch(`${peer.url}/api/safety/hashes`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "X-Prism-CSRF": "1" },
-          body: JSON.stringify(payload),
-        });
-        if (res.ok) successCount++;
-      } catch {
-        // Peer unreachable — skip
-      }
-    }
-
-    return c.json({ ok: true, peers: successCount, hashes: flagged.length });
+    const summary = await gossipToAllPeers(trust, federation, relay.did);
+    return c.json(summary);
   });
 
   return app;

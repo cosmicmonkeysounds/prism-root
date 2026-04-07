@@ -180,6 +180,72 @@ export function parseArgs(argv: string[]): ParsedArgs {
         overrides.logging.format = next as "text" | "json";
         i++;
         break;
+      case "--apns-key-path":
+        if (next) {
+          if (!overrides.push) overrides.push = {};
+          if (!overrides.push.apns) {
+            overrides.push.apns = { keyId: "", teamId: "", privateKey: next, bundleId: "" };
+          } else {
+            overrides.push.apns.privateKey = next;
+          }
+        }
+        i++;
+        break;
+      case "--apns-key-id":
+        if (next) {
+          if (!overrides.push) overrides.push = {};
+          if (!overrides.push.apns) {
+            overrides.push.apns = { keyId: next, teamId: "", privateKey: "", bundleId: "" };
+          } else {
+            overrides.push.apns.keyId = next;
+          }
+        }
+        i++;
+        break;
+      case "--apns-team-id":
+        if (next) {
+          if (!overrides.push) overrides.push = {};
+          if (!overrides.push.apns) {
+            overrides.push.apns = { keyId: "", teamId: next, privateKey: "", bundleId: "" };
+          } else {
+            overrides.push.apns.teamId = next;
+          }
+        }
+        i++;
+        break;
+      case "--apns-bundle-id":
+        if (next) {
+          if (!overrides.push) overrides.push = {};
+          if (!overrides.push.apns) {
+            overrides.push.apns = { keyId: "", teamId: "", privateKey: "", bundleId: next };
+          } else {
+            overrides.push.apns.bundleId = next;
+          }
+        }
+        i++;
+        break;
+      case "--fcm-key-path":
+        if (next) {
+          if (!overrides.push) overrides.push = {};
+          if (!overrides.push.fcm) {
+            overrides.push.fcm = { projectId: "", serviceAccountKey: next };
+          } else {
+            overrides.push.fcm.serviceAccountKey = next;
+          }
+        }
+        i++;
+        break;
+      case "--fcm-project-id":
+        if (next) {
+          if (!overrides.push) overrides.push = {};
+          if (!overrides.push.fcm) {
+            overrides.push.fcm = { projectId: next, serviceAccountKey: "" };
+          } else {
+            overrides.push.fcm.projectId = next;
+          }
+        }
+        i++;
+        break;
     }
   }
 

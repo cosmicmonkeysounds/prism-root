@@ -4,6 +4,7 @@
  * Priority (highest wins): CLI flags > env vars > config file > defaults.
  */
 
+import * as fs from "node:fs";
 import type { DID } from "@prism/core/identity";
 
 // ── Config Types ──────────────────────────────────────────────────────────
@@ -55,6 +56,25 @@ export interface RelayConfigFile {
     evictionIntervalMs?: number;
   };
 
+  /** Push notification transport config (APNs / FCM). */
+  push?: {
+    /** APNs configuration for Apple Push Notifications. */
+    apns?: {
+      keyId: string;
+      teamId: string;
+      /** PEM private key string, or path to .p8 key file (resolved at runtime). */
+      privateKey: string;
+      bundleId: string;
+      production?: boolean;
+    };
+    /** FCM configuration for Firebase Cloud Messaging. */
+    fcm?: {
+      projectId: string;
+      /** Service account JSON string, or path to .json key file (resolved at runtime). */
+      serviceAccountKey: string;
+    };
+  };
+
   /** Structured logging. */
   logging?: {
     level?: "debug" | "info" | "warn" | "error";
@@ -87,6 +107,19 @@ export interface ResolvedRelayConfig {
     maxEnvelopeSizeBytes: number;
     evictionIntervalMs: number;
   };
+  push: {
+    apns?: {
+      keyId: string;
+      teamId: string;
+      privateKey: string;
+      bundleId: string;
+      production: boolean;
+    };
+    fcm?: {
+      projectId: string;
+      serviceAccountKey: string;
+    };
+  } | undefined;
   logging: {
     level: "debug" | "info" | "warn" | "error";
     format: "text" | "json";
@@ -199,11 +232,52 @@ export function resolveConfig(
       maxEnvelopeSizeBytes: merged.relay?.maxEnvelopeSizeBytes ?? 1_048_576,
       evictionIntervalMs: merged.relay?.evictionIntervalMs ?? 60_000,
     },
+    push: resolvePushConfig(merged.push),
     logging: {
       level: envStr("PRISM_RELAY_LOG_LEVEL", merged.logging?.level) as ResolvedRelayConfig["logging"]["level"] ?? (defaults.logging as ResolvedRelayConfig["logging"]).level,
       format: merged.logging?.format ?? (defaults.logging as ResolvedRelayConfig["logging"]).format,
     },
   };
+}
+
+// ── Push Config Resolution ──────────────────────────────────────────────
+
+function resolvePushConfig(
+  push: RelayConfigFile["push"],
+): ResolvedRelayConfig["push"] {
+  if (!push) return undefined;
+
+  const resolved: NonNullable<ResolvedRelayConfig["push"]> = {};
+
+  if (push.apns) {
+    let privateKey = push.apns.privateKey;
+    // If the value looks like a file path, read the file
+    if (privateKey.endsWith(".p8") || privateKey.endsWith(".pem")) {
+      privateKey = fs.readFileSync(privateKey, "utf-8");
+    }
+    resolved.apns = {
+      keyId: push.apns.keyId,
+      teamId: push.apns.teamId,
+      privateKey,
+      bundleId: push.apns.bundleId,
+      production: push.apns.production ?? false,
+    };
+  }
+
+  if (push.fcm) {
+    let serviceAccountKey = push.fcm.serviceAccountKey;
+    // If the value looks like a file path, read the file
+    if (serviceAccountKey.endsWith(".json")) {
+      serviceAccountKey = fs.readFileSync(serviceAccountKey, "utf-8");
+    }
+    resolved.fcm = {
+      projectId: push.fcm.projectId,
+      serviceAccountKey,
+    };
+  }
+
+  if (!resolved.apns && !resolved.fcm) return undefined;
+  return resolved;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────
