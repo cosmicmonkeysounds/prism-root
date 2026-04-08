@@ -160,6 +160,7 @@ const ALL_MODULES = [
   "portal-templates",
   "webrtc-signaling",
   "vault-host",
+  "password-auth",
 ];
 
 /** Minimal modules for p2p mode — routing + federation + trust. */

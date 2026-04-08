@@ -14,6 +14,13 @@ import type { CSSProperties, ReactNode } from "react";
 import type { GraphObject, ObjectId } from "@prism/core/object-model";
 import { useKernel, useSelection, useObject } from "../kernel/index.js";
 import { parseLuaUi, renderUINode } from "./lua-facet-panel.js";
+import { KanbanWidgetRenderer } from "../components/kanban-widget-renderer.js";
+import { CalendarWidgetRenderer } from "../components/calendar-widget-renderer.js";
+import { ChartWidgetRenderer, type ChartType, type ChartAggregation } from "../components/chart-widget-renderer.js";
+import { MapWidgetRenderer } from "../components/map-widget-renderer.js";
+import { TabContainerRenderer } from "../components/tab-container-renderer.js";
+import { PopoverWidgetRenderer } from "../components/popover-widget-renderer.js";
+import { SlidePanelRenderer } from "../components/slide-panel-renderer.js";
 
 // ── Block Toolbar ─────────────────────────────────────────────────────────
 
@@ -471,6 +478,113 @@ function LuaBlockRenderer({ obj }: { obj: GraphObject }) {
   );
 }
 
+// ── Data-aware widget blocks ───────────────────────────────────────────────
+
+function KanbanWidgetBlock({ obj, kernel }: { obj: GraphObject; kernel: ReturnType<typeof useKernel> }) {
+  const data = obj.data as {
+    collectionType?: string;
+    groupField?: string;
+    titleField?: string;
+    colorField?: string;
+    maxCardsPerColumn?: number;
+  };
+  const collectionType = data.collectionType ?? "";
+  const groupField = data.groupField ?? "status";
+  const objects = collectionType
+    ? kernel.store.allObjects().filter((o) => o.type === collectionType && !o.deletedAt)
+    : [];
+  return (
+    <KanbanWidgetRenderer
+      objects={objects}
+      groupField={groupField}
+      titleField={data.titleField ?? "name"}
+      colorField={data.colorField || undefined}
+      maxCardsPerColumn={data.maxCardsPerColumn ?? 50}
+      onMoveObject={(id, newValue) => kernel.updateObject(id as ObjectId, { [groupField]: newValue })}
+    />
+  );
+}
+
+function CalendarWidgetBlock({ obj, kernel }: { obj: GraphObject; kernel: ReturnType<typeof useKernel> }) {
+  const data = obj.data as {
+    collectionType?: string;
+    dateField?: string;
+    titleField?: string;
+    viewType?: "month" | "week" | "day";
+  };
+  const collectionType = data.collectionType ?? "";
+  const objects = collectionType
+    ? kernel.store.allObjects().filter((o) => o.type === collectionType && !o.deletedAt)
+    : [];
+  return (
+    <CalendarWidgetRenderer
+      objects={objects}
+      dateField={data.dateField ?? "date"}
+      titleField={data.titleField ?? "name"}
+      viewType={data.viewType ?? "month"}
+    />
+  );
+}
+
+function ChartWidgetBlock({ obj, kernel }: { obj: GraphObject; kernel: ReturnType<typeof useKernel> }) {
+  const data = obj.data as {
+    collectionType?: string;
+    chartType?: ChartType;
+    groupField?: string;
+    valueField?: string;
+    aggregation?: ChartAggregation;
+  };
+  const collectionType = data.collectionType ?? "";
+  const objects = collectionType
+    ? kernel.store.allObjects().filter((o) => o.type === collectionType && !o.deletedAt)
+    : [];
+  return (
+    <ChartWidgetRenderer
+      objects={objects}
+      chartType={data.chartType ?? "bar"}
+      groupField={data.groupField ?? ""}
+      valueField={data.valueField || undefined}
+      aggregation={data.aggregation ?? "count"}
+    />
+  );
+}
+
+function MapWidgetBlock({ obj, kernel }: { obj: GraphObject; kernel: ReturnType<typeof useKernel> }) {
+  const data = obj.data as {
+    collectionType?: string;
+    latField?: string;
+    lngField?: string;
+    titleField?: string;
+  };
+  const collectionType = data.collectionType ?? "";
+  const objects = collectionType
+    ? kernel.store.allObjects().filter((o) => o.type === collectionType && !o.deletedAt)
+    : [];
+  return (
+    <MapWidgetRenderer
+      objects={objects}
+      latField={data.latField ?? "lat"}
+      lngField={data.lngField ?? "lng"}
+      titleField={data.titleField ?? "name"}
+    />
+  );
+}
+
+function TabContainerBlock({ obj }: { obj: GraphObject }) {
+  const data = obj.data as { tabs?: string; activeTab?: number };
+  return <TabContainerRenderer tabs={data.tabs ?? ""} activeTab={data.activeTab ?? 0} />;
+}
+
+function PopoverWidgetBlock({ obj }: { obj: GraphObject }) {
+  const data = obj.data as { triggerLabel?: string; content?: string };
+  return <PopoverWidgetRenderer triggerLabel={data.triggerLabel ?? "Open"} content={data.content ?? ""} />;
+}
+
+function SlidePanelBlock({ obj }: { obj: GraphObject }) {
+  const data = obj.data as { label?: string; content?: string; collapsed?: boolean };
+  return <SlidePanelRenderer label={data.label ?? "Details"} content={data.content ?? ""} collapsed={!!data.collapsed} />;
+}
+
 // ── Block wrapper (selection highlight + click) ────────────────────────────
 
 function BlockWrapper({
@@ -546,6 +660,27 @@ function ComponentBlock({
       break;
     case "lua-block":
       content = <LuaBlockRenderer obj={obj} />;
+      break;
+    case "kanban-widget":
+      content = <KanbanWidgetBlock obj={obj} kernel={kernel} />;
+      break;
+    case "calendar-widget":
+      content = <CalendarWidgetBlock obj={obj} kernel={kernel} />;
+      break;
+    case "chart-widget":
+      content = <ChartWidgetBlock obj={obj} kernel={kernel} />;
+      break;
+    case "map-widget":
+      content = <MapWidgetBlock obj={obj} kernel={kernel} />;
+      break;
+    case "tab-container":
+      content = <TabContainerBlock obj={obj} />;
+      break;
+    case "popover-widget":
+      content = <PopoverWidgetBlock obj={obj} />;
+      break;
+    case "slide-panel":
+      content = <SlidePanelBlock obj={obj} />;
       break;
     default:
       content = (

@@ -175,12 +175,72 @@ export interface ContainerSlot {
   zIndex?: number;
 }
 
+// ── Container slot kinds — tab / popover / slide ───────────────────────────
+// These slots hold nested FacetSlot arrays and render as interactive containers
+// inside form/report layouts. They are layout-only: they hold no field binding
+// themselves; their contents do.
+
+export interface TabGroup {
+  /** Stable identifier for the tab (used by automation targeting). */
+  id: string;
+  label: string;
+  /** Nested slots shown when this tab is active. */
+  slots: FacetSlot[];
+}
+
+export interface TabSlot {
+  tabs: TabGroup[];
+  /** Which layout part this tab container belongs to. */
+  part: LayoutPartKind;
+  order: number;
+  /** Tab displayed by default (index into `tabs`). Defaults to 0. */
+  defaultTab?: number;
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
+  zIndex?: number;
+}
+
+export interface PopoverSlot {
+  /** Text shown on the trigger button. */
+  triggerLabel: string;
+  /** Content slots rendered inside the popover body. */
+  contentSlots: FacetSlot[];
+  part: LayoutPartKind;
+  order: number;
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
+  zIndex?: number;
+}
+
+export interface SlideSlot {
+  /** Collapsible header label. */
+  label: string;
+  /** Whether the slide is collapsed by default. */
+  collapsed?: boolean;
+  /** Content slots rendered inside the slide body. */
+  contentSlots: FacetSlot[];
+  part: LayoutPartKind;
+  order: number;
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
+  zIndex?: number;
+}
+
 export type FacetSlot =
   | { kind: 'field'; slot: FieldSlot }
   | { kind: 'portal'; slot: PortalSlot }
   | { kind: 'text'; slot: TextSlot }
   | { kind: 'drawing'; slot: DrawingSlot }
-  | { kind: 'container'; slot: ContainerSlot };
+  | { kind: 'container'; slot: ContainerSlot }
+  | { kind: 'tab'; slot: TabSlot }
+  | { kind: 'popover'; slot: PopoverSlot }
+  | { kind: 'slide'; slot: SlideSlot };
 
 // ── Summary fields ───────────────────────────────────────────────────────────
 
@@ -335,6 +395,21 @@ export class FacetDefinitionBuilder {
 
   addContainer(slot: ContainerSlot): this {
     this._def.slots.push({ kind: 'container', slot });
+    return this;
+  }
+
+  addTabContainer(slot: TabSlot): this {
+    this._def.slots.push({ kind: 'tab', slot });
+    return this;
+  }
+
+  addPopoverContainer(slot: PopoverSlot): this {
+    this._def.slots.push({ kind: 'popover', slot });
+    return this;
+  }
+
+  addSlideContainer(slot: SlideSlot): this {
+    this._def.slots.push({ kind: 'slide', slot });
     return this;
   }
 

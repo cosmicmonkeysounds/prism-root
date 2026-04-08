@@ -283,6 +283,94 @@ A branded binary (e.g., "Flux Desktop") that is the Prism Host hardcoded to a sp
 
 ---
 
+## Studio as a Self-Replicating Meta-Builder
+
+Prism Studio is not only **the universal host for apps** — it is also **the factory that produces them**. The process of making Flux, Lattice, Cadence, or Grip ends inside Studio: the user composes an **App Profile**, selects build targets, and Studio emits a web build, a Tauri desktop bundle, and Capacitor mobile apps. The same pipeline deploys Relays (via the composable builder pattern) as Dockerized services or static Node bundles.
+
+This is the **Glass Flip at the ecosystem level**: just as any running app can flip into its IDE, the IDE can flip into a factory that produces *other* apps from the same codebase and plugin set.
+
+### The Core Principles
+
+1. **One codebase, many focused apps**: Flux Desktop is not a fork of Studio — it *is* Studio, launched with a pinned App Profile that filters the visible plugin surface, lens registry, and KBar commands. All runtimes remain injectable; the "focus" is purely configuration.
+2. **Never compile the framework twice**: Web, Tauri, and Capacitor share the same Vite output. The shell (browser/Tauri/Capacitor) is the only thing that changes.
+3. **Option to "Run in Studio" is always preserved**: Even a stripped "Flux Desktop" exposes a hidden toggle to promote itself back to the full universal host, because the underlying binary is identical.
+4. **Relay deployment is just another build target**: The same Studio lens that composes Flux can compose a Relay (pick modules, generate `relay.config.json`, emit Docker/PM2/systemd artifact).
+
+### The App Profile
+
+An **App Profile** is a YAML/JSON document (`.prism-app.json`) that pins a slice of Studio to a specific app:
+
+```json
+{
+  "id": "flux",
+  "name": "Flux",
+  "version": "0.1.0",
+  "plugins": ["work", "finance", "crm"],
+  "lenses": ["editor", "canvas", "record-browser", "record-browser", "automation"],
+  "defaultLens": "record-browser",
+  "theme": { "primary": "#6C5CE7", "brandIcon": "flux.svg" },
+  "kbarCommands": ["new-invoice", "start-timer", "open-contact"],
+  "manifest": "flux.prism.json"
+}
+```
+
+When Studio boots with a profile, the Kernel:
+- Installs only the listed `PluginBundle`s (not the default six)
+- Registers only the listed lenses (hiding the Glass Flip's developer lenses unless explicitly re-enabled)
+- Overrides the default theme and brand icon
+- Narrows KBar to the profile's `kbarCommands` list at the App depth
+
+An **unprofiled** Studio is the universal host — full IDE, all plugins, no branding.
+
+### Build Targets
+
+| Target | Shell | Output | Use Case |
+|--------|-------|--------|----------|
+| `web` | Vite SPA | Static `dist/` directory | Hosted on any CDN or Relay Sovereign Portal |
+| `tauri` | Tauri 2.0 | `.dmg` / `.msi` / `.AppImage` / `.deb` | Desktop distribution |
+| `capacitor-ios` | Capacitor + Swift | `.ipa` (via Xcode) | iOS App Store or TestFlight |
+| `capacitor-android` | Capacitor + Kotlin | `.apk` / `.aab` | Google Play or sideload |
+| `relay-node` | Node server | `dist/` + `relay.config.json` | Self-hosted Relay (PM2/systemd) |
+| `relay-docker` | Multi-stage Dockerfile | OCI image tarball | Docker Hub, private registry |
+
+### The Build Plan
+
+The Studio BuilderManager converts an App Profile + target into a deterministic **BuildPlan**: a list of ordered `BuildStep` entries (each one a command, a file to emit, or a Tauri IPC call into the daemon). BuildPlans are inspectable in the UI before execution and serializable for CI.
+
+```typescript
+interface BuildPlan {
+  profileId: string;
+  target: BuildTarget;
+  steps: BuildStep[];           // e.g. "emit-manifest", "vite-build", "tauri-build"
+  artifacts: ArtifactDescriptor[]; // expected outputs
+  env: Record<string, string>;
+}
+```
+
+### The Execution Model
+
+BuildPlans are executed by the **Prism Daemon** (Rust), not the browser, because they call `cargo`, `pnpm`, `tauri`, and `capacitor` CLIs. Studio calls `invoke('run_build_plan', { plan })` and subscribes to progress events via Tauri's event bus. In the browser-only fallback (pure Vite SPA with no daemon), the BuilderManager downgrades to "dry-run mode": it emits the manifest + plan files as JSON for the user to run manually. All E2E testing uses dry-run mode by default.
+
+### The App Builder Lens
+
+A new Studio lens (`app-builder`, shortcut `Shift+B`) exposes the pipeline in the UI:
+
+- **Profile editor** — select base profile (Flux, Lattice, Cadence, Grip, Custom, or Relay), toggle plugins, edit metadata
+- **Target selector** — checkboxes for web, Tauri, Capacitor iOS/Android, Relay Node, Relay Docker
+- **BuildPlan preview** — rendered list of steps and expected artifacts
+- **Run / Dry-Run toggle** — execute via daemon or emit plan JSON for inspection
+- **Progress log** — streaming output from each BuildStep with status badges
+
+### Why This Matters
+
+- **Ship-ability**: The same monorepo produces the flagship Studio *and* four focused apps without duplicating business logic.
+- **Discoverability**: Users adopt a focused app (Flux) without confronting the full Glass IDE; power users flip it open.
+- **Consistency**: Every app inherits Studio's data layer, CRDT, sandbox, and trust stack for free.
+- **Self-hosting**: Non-technical users can run a Relay without touching a terminal — "Click to Compose Relay → Click to Build Docker → Click to Deploy."
+- **Relay symmetry**: The same UI used to compose an app composes a Relay. The builder pattern (`.use(module)`) is exposed as a visual module picker.
+
+---
+
 ## Sovereign Portals (The Meta-CMS)
 
 Prism replaces traditional CMS platforms by acting as a sovereign backend. Designed in Studio and routed by **any** Relay, these scale across four levels:

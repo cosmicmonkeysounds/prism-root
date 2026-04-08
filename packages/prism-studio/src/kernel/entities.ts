@@ -287,6 +287,151 @@ const dataPortalDef: EntityDef<string> = {
   ],
 };
 
+// ── Data-Aware Widgets (Puck-draggable visualisations) ─────────────────────
+
+const kanbanWidgetDef: EntityDef<string> = {
+  type: "kanban-widget",
+  category: "component",
+  label: "Kanban Widget",
+  pluralLabel: "Kanban Widgets",
+  icon: "\uD83D\uDCCB",
+  color: "#0ea5e9",
+  childOnly: true,
+  fields: [
+    { id: "collectionType", type: "string", label: "Object Type", required: true, ui: { placeholder: "task" } },
+    { id: "groupField", type: "string", label: "Group Field", default: "status" },
+    { id: "titleField", type: "string", label: "Title Field", default: "name" },
+    { id: "colorField", type: "string", label: "Color Field" },
+    { id: "maxCardsPerColumn", type: "int", label: "Max Cards / Column", default: 50 },
+  ],
+};
+
+const calendarWidgetDef: EntityDef<string> = {
+  type: "calendar-widget",
+  category: "component",
+  label: "Calendar Widget",
+  pluralLabel: "Calendar Widgets",
+  icon: "\uD83D\uDCC5",
+  color: "#22c55e",
+  childOnly: true,
+  fields: [
+    { id: "collectionType", type: "string", label: "Object Type", required: true, ui: { placeholder: "event" } },
+    { id: "dateField", type: "string", label: "Date Field", default: "date" },
+    { id: "titleField", type: "string", label: "Title Field", default: "name" },
+    {
+      id: "viewType",
+      type: "enum",
+      label: "View",
+      default: "month",
+      enumOptions: [
+        { value: "month", label: "Month" },
+        { value: "week", label: "Week" },
+        { value: "day", label: "Day" },
+      ],
+    },
+  ],
+};
+
+const chartWidgetDef: EntityDef<string> = {
+  type: "chart-widget",
+  category: "component",
+  label: "Chart Widget",
+  pluralLabel: "Chart Widgets",
+  icon: "\uD83D\uDCCA",
+  color: "#a855f7",
+  childOnly: true,
+  fields: [
+    { id: "collectionType", type: "string", label: "Object Type", required: true, ui: { placeholder: "sale" } },
+    {
+      id: "chartType",
+      type: "enum",
+      label: "Chart Type",
+      default: "bar",
+      enumOptions: [
+        { value: "bar", label: "Bar" },
+        { value: "line", label: "Line" },
+        { value: "pie", label: "Pie" },
+        { value: "area", label: "Area" },
+      ],
+    },
+    { id: "groupField", type: "string", label: "Group By Field", required: true },
+    { id: "valueField", type: "string", label: "Value Field" },
+    {
+      id: "aggregation",
+      type: "enum",
+      label: "Aggregation",
+      default: "count",
+      enumOptions: [
+        { value: "count", label: "Count" },
+        { value: "sum", label: "Sum" },
+        { value: "avg", label: "Average" },
+        { value: "min", label: "Min" },
+        { value: "max", label: "Max" },
+      ],
+    },
+  ],
+};
+
+const mapWidgetDef: EntityDef<string> = {
+  type: "map-widget",
+  category: "component",
+  label: "Map Widget",
+  pluralLabel: "Map Widgets",
+  icon: "\uD83D\uDDFA",
+  color: "#059669",
+  childOnly: true,
+  fields: [
+    { id: "collectionType", type: "string", label: "Object Type", required: true, ui: { placeholder: "place" } },
+    { id: "latField", type: "string", label: "Latitude Field", default: "lat" },
+    { id: "lngField", type: "string", label: "Longitude Field", default: "lng" },
+    { id: "titleField", type: "string", label: "Title Field", default: "name" },
+    { id: "initialZoom", type: "int", label: "Initial Zoom", default: 10 },
+  ],
+};
+
+const tabContainerDef: EntityDef<string> = {
+  type: "tab-container",
+  category: "component",
+  label: "Tab Container",
+  pluralLabel: "Tab Containers",
+  icon: "\uD83D\uDDC2",
+  color: "#f97316",
+  childOnly: true,
+  fields: [
+    { id: "tabs", type: "string", label: "Tab Labels (comma-separated)", required: true, default: "Tab 1,Tab 2" },
+    { id: "activeTab", type: "int", label: "Default Active Tab", default: 0 },
+  ],
+};
+
+const popoverWidgetDef: EntityDef<string> = {
+  type: "popover-widget",
+  category: "component",
+  label: "Popover",
+  pluralLabel: "Popovers",
+  icon: "\u2699",
+  color: "#ec4899",
+  childOnly: true,
+  fields: [
+    { id: "triggerLabel", type: "string", label: "Trigger Label", required: true, default: "Open" },
+    { id: "content", type: "text", label: "Content", ui: { multiline: true } },
+  ],
+};
+
+const slidePanelDef: EntityDef<string> = {
+  type: "slide-panel",
+  category: "component",
+  label: "Slide Panel",
+  pluralLabel: "Slide Panels",
+  icon: "\u2630",
+  color: "#6366f1",
+  childOnly: true,
+  fields: [
+    { id: "label", type: "string", label: "Label", required: true, default: "Details" },
+    { id: "content", type: "text", label: "Content", ui: { multiline: true } },
+    { id: "collapsed", type: "bool", label: "Start Collapsed", default: false },
+  ],
+};
+
 // ── Edge Type Definitions ───────────────────────────────────────────────────
 
 const referencesEdge: EdgeTypeDef = {
@@ -322,6 +467,13 @@ export function createPageBuilderRegistry(): ObjectRegistry<string> {
   registry.register(facetViewDef);
   registry.register(spatialCanvasDef);
   registry.register(dataPortalDef);
+  registry.register(kanbanWidgetDef);
+  registry.register(calendarWidgetDef);
+  registry.register(chartWidgetDef);
+  registry.register(mapWidgetDef);
+  registry.register(tabContainerDef);
+  registry.register(popoverWidgetDef);
+  registry.register(slidePanelDef);
 
   registry.registerEdge(referencesEdge);
   registry.registerEdge(linksToEdge);

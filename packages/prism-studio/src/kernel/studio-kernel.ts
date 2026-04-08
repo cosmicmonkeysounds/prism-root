@@ -48,6 +48,8 @@ import { createPageBuilderRegistry } from "./entities.js";
 import { createBuiltinBundles, installPluginBundles } from "@prism/core/layer1";
 import { createRelayManager } from "./relay-manager.js";
 import type { RelayManager } from "./relay-manager.js";
+import { createBuilderManager } from "./builder-manager.js";
+import type { BuilderManager } from "./builder-manager.js";
 import { ConfigRegistry, ConfigModel } from "@prism/core/config";
 import { createPresenceManager } from "@prism/core/presence";
 import type { PresenceManager } from "@prism/core/presence";
@@ -183,6 +185,7 @@ export interface StudioKernel {
   readonly activity: ActivityStore;
   readonly activityTracker: ActivityTracker;
   readonly relay: RelayManager;
+  readonly builder: BuilderManager;
   readonly config: ConfigModel;
   readonly configRegistry: ConfigRegistry;
   readonly presence: PresenceManager;
@@ -632,6 +635,7 @@ export function createStudioKernel(): StudioKernel {
   const trackableAdapter = createTrackableAdapter(store);
 
   const relay = createRelayManager();
+  const builder = createBuilderManager();
   const configRegistry = new ConfigRegistry();
   const config = new ConfigModel(configRegistry);
   const viewReg = createViewRegistry();
@@ -1634,6 +1638,7 @@ export function createStudioKernel(): StudioKernel {
     activity: activityStore,
     activityTracker: tracker,
     relay,
+    builder,
     config,
     configRegistry,
     presence,

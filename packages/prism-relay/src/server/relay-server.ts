@@ -27,6 +27,7 @@ import {
   createTemplateRoutes,
   createSeoRoutes,
   createAuthRoutes,
+  createPasswordAuthRoutes,
   createSafetyRoutes,
   createAutoRestRoutes,
   createPingRoutes,
@@ -38,7 +39,11 @@ import {
   createVaultHostRoutes,
   createDirectoryRoutes,
 } from "../routes/index.js";
-import type { AuthRoutesOptions, LogBuffer } from "../routes/index.js";
+import type {
+  AuthRoutesOptions,
+  LogBuffer,
+  PasswordAuthRoutesOptions,
+} from "../routes/index.js";
 import type { ResolvedRelayConfig } from "../config/relay-config.js";
 import { handleWsOpen, handleWsMessage, handleWsClose, createConnectionRegistry, createPresenceStore } from "../transport/index.js";
 import type { WsConnection } from "../transport/index.js";
@@ -58,6 +63,8 @@ export interface RelayServerOptions {
   publicUrl?: string;
   /** OAuth provider configuration for auth routes. */
   auth?: AuthRoutesOptions;
+  /** Password auth route options (e.g. session TTL). */
+  passwordAuth?: PasswordAuthRoutesOptions;
   /** Maximum request body size in bytes. Default: from relay config or 1MB. */
   maxBodySize?: number;
   /** Disable CSRF protection (for testing). Default: false. */
@@ -82,6 +89,7 @@ export function createRelayServer(options: RelayServerOptions): RelayServer {
     corsOrigins,
     publicUrl,
     auth,
+    passwordAuth,
     maxBodySize = 1_048_576,
     disableCsrf = false,
   } = options;
@@ -139,6 +147,7 @@ export function createRelayServer(options: RelayServerOptions): RelayServer {
 
   // ── New feature routes ──────────────────────────────────────────────
   app.route("/api/auth", createAuthRoutes(relay, auth));
+  app.route("/api/auth/password", createPasswordAuthRoutes(relay, passwordAuth));
   app.route("/api/safety", createSafetyRoutes(relay));
   app.route("/api/rest", createAutoRestRoutes(relay));
   app.route("/api/pings", createPingRoutes(relay));

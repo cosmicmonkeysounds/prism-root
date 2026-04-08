@@ -45,6 +45,9 @@ export const FIELD_TYPE_MAP: FieldTypeMapping = {
   date: "string",
   datetime: "string",
   url: "string",
+  // Computed field types — runtime resolves to underlying value type; default unknown.
+  lookup: "unknown",
+  rollup: "number",
 };
 
 /** Maps EntityFieldType to Lua type names. */
@@ -60,6 +63,8 @@ const LUA_TYPE_MAP: Record<EntityFieldType, string> = {
   date: "string",
   datetime: "string",
   url: "string",
+  lookup: "any",
+  rollup: "number",
 };
 
 /** Built-in function signatures. */
@@ -73,6 +78,30 @@ export const BUILTIN_FUNCTIONS: FunctionSignature[] = [
   { name: "min", params: [{ name: "a", type: "number" }, { name: "b", type: "number" }], returnType: "number", description: "Minimum of two values" },
   { name: "max", params: [{ name: "a", type: "number" }, { name: "b", type: "number" }], returnType: "number", description: "Maximum of two values" },
   { name: "clamp", params: [{ name: "value", type: "number" }, { name: "low", type: "number" }, { name: "high", type: "number" }], returnType: "number", description: "Clamp value between low and high" },
+
+  // String
+  { name: "len", params: [{ name: "s", type: "string" }], returnType: "number", description: "Length of a string" },
+  { name: "lower", params: [{ name: "s", type: "string" }], returnType: "string", description: "Lowercase a string" },
+  { name: "upper", params: [{ name: "s", type: "string" }], returnType: "string", description: "Uppercase a string" },
+  { name: "trim", params: [{ name: "s", type: "string" }], returnType: "string", description: "Trim leading/trailing whitespace" },
+  { name: "concat", params: [{ name: "...parts", type: "string" }], returnType: "string", description: "Concatenate strings" },
+  { name: "left", params: [{ name: "s", type: "string" }, { name: "n", type: "number" }], returnType: "string", description: "Leftmost n characters" },
+  { name: "right", params: [{ name: "s", type: "string" }, { name: "n", type: "number" }], returnType: "string", description: "Rightmost n characters" },
+  { name: "mid", params: [{ name: "s", type: "string" }, { name: "start", type: "number" }, { name: "len", type: "number" }], returnType: "string", description: "Substring from start of length len" },
+  { name: "substitute", params: [{ name: "s", type: "string" }, { name: "old", type: "string" }, { name: "new", type: "string" }], returnType: "string", description: "Replace all occurrences of old with new" },
+
+  // Date
+  { name: "today", params: [], returnType: "string", description: "Today's date as YYYY-MM-DD" },
+  { name: "now", params: [], returnType: "string", description: "Current ISO timestamp" },
+  { name: "year", params: [{ name: "iso", type: "string" }], returnType: "number", description: "Year component of an ISO date" },
+  { name: "month", params: [{ name: "iso", type: "string" }], returnType: "number", description: "Month component (1-12)" },
+  { name: "day", params: [{ name: "iso", type: "string" }], returnType: "number", description: "Day of month (1-31)" },
+  { name: "datediff", params: [{ name: "a", type: "string" }, { name: "b", type: "string" }, { name: "unit", type: "string" }], returnType: "number", description: "Difference between two dates (days/months/years)" },
+
+  // Aggregate (variadic over literal arg lists)
+  { name: "sum", params: [{ name: "...values", type: "number" }], returnType: "number", description: "Sum of values" },
+  { name: "avg", params: [{ name: "...values", type: "number" }], returnType: "number", description: "Average of values" },
+  { name: "count", params: [{ name: "...values", type: "unknown" }], returnType: "number", description: "Count of arguments" },
 ];
 
 const BUILTIN_FN_MAP = new Map(BUILTIN_FUNCTIONS.map(f => [f.name, f]));

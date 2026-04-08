@@ -11,6 +11,9 @@ import {
   type TextSlot,
   type DrawingSlot,
   type ContainerSlot,
+  type TabSlot,
+  type PopoverSlot,
+  type SlideSlot,
   type SummaryField,
   type PrintConfig,
 } from './facet-schema.js';
@@ -668,6 +671,90 @@ describe('ContainerSlot', () => {
     expect(def.slots.map((s) => s.kind)).toEqual([
       'field', 'container', 'text', 'portal', 'drawing',
     ]);
+  });
+});
+
+// ── Container slot kinds: tab / popover / slide ─────────────────────────────
+
+describe('TabSlot', () => {
+  it('addTabContainer() adds a tab slot', () => {
+    const tab: TabSlot = {
+      part: 'body',
+      order: 0,
+      tabs: [
+        { id: 'general', label: 'General', slots: [] },
+        { id: 'details', label: 'Details', slots: [] },
+      ],
+    };
+    const def = facetDefinitionBuilder('id', 'obj', 'form').addTabContainer(tab).build();
+    expect(def.slots).toHaveLength(1);
+    expect(def.slots[0].kind).toBe('tab');
+    if (def.slots[0].kind === 'tab') {
+      expect(def.slots[0].slot.tabs).toHaveLength(2);
+      expect(def.slots[0].slot.tabs[0]?.label).toBe('General');
+    }
+  });
+
+  it('tabs may carry nested slots', () => {
+    const def = facetDefinitionBuilder('id', 'obj', 'form')
+      .addTabContainer({
+        part: 'body',
+        order: 0,
+        tabs: [
+          {
+            id: 'main',
+            label: 'Main',
+            slots: [
+              { kind: 'field', slot: { fieldPath: 'name', part: 'body', order: 0 } },
+            ],
+          },
+        ],
+      })
+      .build();
+    const slot = def.slots[0];
+    if (slot.kind === 'tab') {
+      expect(slot.slot.tabs[0]?.slots).toHaveLength(1);
+      const nested = slot.slot.tabs[0]?.slots[0];
+      if (nested?.kind === 'field') {
+        expect(nested.slot.fieldPath).toBe('name');
+      }
+    }
+  });
+});
+
+describe('PopoverSlot', () => {
+  it('addPopoverContainer() adds a popover slot', () => {
+    const popover: PopoverSlot = {
+      triggerLabel: 'More',
+      contentSlots: [],
+      part: 'body',
+      order: 0,
+    };
+    const def = facetDefinitionBuilder('id', 'obj', 'form').addPopoverContainer(popover).build();
+    expect(def.slots).toHaveLength(1);
+    expect(def.slots[0].kind).toBe('popover');
+    if (def.slots[0].kind === 'popover') {
+      expect(def.slots[0].slot.triggerLabel).toBe('More');
+    }
+  });
+});
+
+describe('SlideSlot', () => {
+  it('addSlideContainer() adds a slide slot', () => {
+    const slide: SlideSlot = {
+      label: 'Advanced',
+      collapsed: true,
+      contentSlots: [],
+      part: 'body',
+      order: 0,
+    };
+    const def = facetDefinitionBuilder('id', 'obj', 'form').addSlideContainer(slide).build();
+    expect(def.slots).toHaveLength(1);
+    expect(def.slots[0].kind).toBe('slide');
+    if (def.slots[0].kind === 'slide') {
+      expect(def.slots[0].slot.label).toBe('Advanced');
+      expect(def.slots[0].slot.collapsed).toBe(true);
+    }
   });
 });
 

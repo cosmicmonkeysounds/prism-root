@@ -16,7 +16,8 @@ export type FieldType =
   | "color"
   | "select"
   | "multi-select"
-  | "tags";
+  | "tags"
+  | "formula";
 
 export interface SelectOption {
   value: string;
@@ -41,4 +42,6 @@ export interface FieldSchema {
   hidden?: boolean;
   readOnly?: boolean;
   section?: string;
+  /** For type="formula" — the expression to evaluate at render time. */
+  expression?: string;
 }

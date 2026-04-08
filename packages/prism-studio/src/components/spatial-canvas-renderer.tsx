@@ -118,6 +118,12 @@ function slotLabel(slot: FacetSlot): string {
       return slot.slot.shape;
     case "container":
       return slot.slot.label ?? `File: ${slot.slot.fieldPath}`;
+    case "tab":
+      return `Tabs: ${slot.slot.tabs.map((t) => t.label).join(", ")}`;
+    case "popover":
+      return `Popover: ${slot.slot.triggerLabel}`;
+    case "slide":
+      return `Slide: ${slot.slot.label}`;
   }
 }
 
@@ -132,6 +138,10 @@ function slotStyle(slot: FacetSlot): Record<string, string> {
     case "drawing":
       return canvasStyles.slotDrawing;
     case "container":
+      return canvasStyles.slotContainer;
+    case "tab":
+    case "popover":
+    case "slide":
       return canvasStyles.slotContainer;
   }
 }

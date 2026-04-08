@@ -37,6 +37,9 @@ import type {
 import type { SpellChecker } from "../../layer1/syntax/spell-check-types.js";
 import type { FormSchema } from "../../layer1/forms/form-schema.js";
 import { useCodemirror } from "../codemirror/use-codemirror.js";
+import { FormSurface } from "./form-surface.js";
+import { CsvSurface } from "./csv-surface.js";
+import { ReportSurface } from "./report-surface.js";
 import { markdownLivePreview } from "../codemirror/markdown-live-preview.js";
 import { spellCheckExtension } from "../codemirror/spell-check-extension.js";
 import { yamlLanguageSupport } from "../codemirror/yaml-language.js";
@@ -164,25 +167,6 @@ function CodeSurface({ doc, text, extensions, readOnly }: CodeSurfaceProps) {
   );
 }
 
-// ── Placeholder surfaces ─────────────────────────────────────────────────────
-
-function PlaceholderSurface({ mode }: { mode: string }) {
-  return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        height: "100%",
-        color: "#71717a",
-        fontSize: 14,
-      }}
-    >
-      {mode} surface — not yet implemented
-    </div>
-  );
-}
-
 function SvgPreview({ value }: { value: string }) {
   return (
     <div
@@ -286,7 +270,7 @@ export function DocumentSurface({
   readOnly = false,
   className,
   hideToolbar = false,
-  formSchema: _formSchema,
+  formSchema,
   spellChecker,
   registry,
   modeRenderers,
@@ -415,14 +399,26 @@ export function DocumentSurface({
               />
             )}
 
-            {/* Spreadsheet surface — placeholder */}
-            {mode === "spreadsheet" && <PlaceholderSurface mode="Spreadsheet" />}
+            {/* Spreadsheet surface — CSV/TSV grid editor */}
+            {mode === "spreadsheet" && (
+              <CsvSurface value={value} onChange={onChange} readOnly={readOnly} />
+            )}
 
-            {/* Form surface — placeholder */}
-            {mode === "form" && <PlaceholderSurface mode="Form" />}
+            {/* Form surface — schema-driven field editor */}
+            {mode === "form" && (
+              <FormSurface
+                value={value}
+                onChange={onChange}
+                schema={formSchema}
+                filePath={filePath}
+                readOnly={readOnly}
+              />
+            )}
 
-            {/* Report/layout mode — placeholder */}
-            {mode === "report" && <PlaceholderSurface mode="Report" />}
+            {/* Report/layout mode — grouped/summarised read-only view */}
+            {mode === "report" && (
+              <ReportSurface value={value} filePath={filePath} />
+            )}
           </>
         )}
       </div>

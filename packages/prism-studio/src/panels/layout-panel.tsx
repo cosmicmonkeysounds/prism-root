@@ -19,6 +19,13 @@ import { parseLuaUi, renderUINode } from "./lua-facet-panel.js";
 import { FacetViewRenderer } from "../components/facet-view-renderer.js";
 import { SpatialCanvasRenderer } from "../components/spatial-canvas-renderer.js";
 import { DataPortalRenderer } from "../components/data-portal-renderer.js";
+import { KanbanWidgetRenderer } from "../components/kanban-widget-renderer.js";
+import { CalendarWidgetRenderer } from "../components/calendar-widget-renderer.js";
+import { ChartWidgetRenderer, type ChartType, type ChartAggregation } from "../components/chart-widget-renderer.js";
+import { MapWidgetRenderer } from "../components/map-widget-renderer.js";
+import { TabContainerRenderer } from "../components/tab-container-renderer.js";
+import { PopoverWidgetRenderer } from "../components/popover-widget-renderer.js";
+import { SlidePanelRenderer } from "../components/slide-panel-renderer.js";
 
 // ── Styles ──────────────────────────────────────────────────────────────────
 
@@ -569,6 +576,245 @@ export function LayoutPanel() {
                     visibleRows={visibleRows}
                     sortField={sortField || undefined}
                   />
+                </div>
+              );
+            },
+          };
+          continue;
+        }
+
+        // ── Data-aware widgets ─────────────────────────────────────────────
+
+        if (def.type === "kanban-widget") {
+          components[kebabToPascal(def.type)] = {
+            fields: {
+              collectionType: { type: "text" } as unknown as Fields[string],
+              groupField: { type: "text" } as unknown as Fields[string],
+              titleField: { type: "text" } as unknown as Fields[string],
+              colorField: { type: "text" } as unknown as Fields[string],
+              maxCardsPerColumn: { type: "number" } as unknown as Fields[string],
+            },
+            defaultProps: { collectionType: "", groupField: "status", titleField: "name", colorField: "", maxCardsPerColumn: 50 },
+            render: (props) => {
+              const p = props as Record<string, unknown>;
+              const collectionType = (p["collectionType"] as string) ?? "";
+              const groupField = (p["groupField"] as string) ?? "status";
+              const titleField = (p["titleField"] as string) ?? "name";
+              const colorField = (p["colorField"] as string) || undefined;
+              const maxCards = (p["maxCardsPerColumn"] as number) ?? 50;
+              const objects = collectionType
+                ? kernel.store.allObjects().filter((o) => o.type === collectionType && !o.deletedAt)
+                : [];
+              return (
+                <div data-testid="puck-kanban-widget" style={{ margin: "4px 0" }}>
+                  <KanbanWidgetRenderer
+                    objects={objects}
+                    groupField={groupField}
+                    titleField={titleField}
+                    colorField={colorField}
+                    maxCardsPerColumn={maxCards}
+                    onMoveObject={(id, newValue) => {
+                      kernel.updateObject(id as ObjectId, { [groupField]: newValue });
+                    }}
+                  />
+                </div>
+              );
+            },
+          };
+          continue;
+        }
+
+        if (def.type === "calendar-widget") {
+          components[kebabToPascal(def.type)] = {
+            fields: {
+              collectionType: { type: "text" } as unknown as Fields[string],
+              dateField: { type: "text" } as unknown as Fields[string],
+              titleField: { type: "text" } as unknown as Fields[string],
+              viewType: {
+                type: "select",
+                options: [
+                  { label: "Month", value: "month" },
+                  { label: "Week", value: "week" },
+                  { label: "Day", value: "day" },
+                ],
+              } as unknown as Fields[string],
+            },
+            defaultProps: { collectionType: "", dateField: "date", titleField: "name", viewType: "month" },
+            render: (props) => {
+              const p = props as Record<string, unknown>;
+              const collectionType = (p["collectionType"] as string) ?? "";
+              const dateField = (p["dateField"] as string) ?? "date";
+              const titleField = (p["titleField"] as string) ?? "name";
+              const viewType = (p["viewType"] as "month" | "week" | "day") ?? "month";
+              const objects = collectionType
+                ? kernel.store.allObjects().filter((o) => o.type === collectionType && !o.deletedAt)
+                : [];
+              return (
+                <div data-testid="puck-calendar-widget" style={{ margin: "4px 0" }}>
+                  <CalendarWidgetRenderer
+                    objects={objects}
+                    dateField={dateField}
+                    titleField={titleField}
+                    viewType={viewType}
+                  />
+                </div>
+              );
+            },
+          };
+          continue;
+        }
+
+        if (def.type === "chart-widget") {
+          components[kebabToPascal(def.type)] = {
+            fields: {
+              collectionType: { type: "text" } as unknown as Fields[string],
+              chartType: {
+                type: "select",
+                options: [
+                  { label: "Bar", value: "bar" },
+                  { label: "Line", value: "line" },
+                  { label: "Pie", value: "pie" },
+                  { label: "Area", value: "area" },
+                ],
+              } as unknown as Fields[string],
+              groupField: { type: "text" } as unknown as Fields[string],
+              valueField: { type: "text" } as unknown as Fields[string],
+              aggregation: {
+                type: "select",
+                options: [
+                  { label: "Count", value: "count" },
+                  { label: "Sum", value: "sum" },
+                  { label: "Average", value: "avg" },
+                  { label: "Min", value: "min" },
+                  { label: "Max", value: "max" },
+                ],
+              } as unknown as Fields[string],
+            },
+            defaultProps: { collectionType: "", chartType: "bar", groupField: "", valueField: "", aggregation: "count" },
+            render: (props) => {
+              const p = props as Record<string, unknown>;
+              const collectionType = (p["collectionType"] as string) ?? "";
+              const chartType = (p["chartType"] as ChartType) ?? "bar";
+              const groupField = (p["groupField"] as string) ?? "";
+              const valueField = (p["valueField"] as string) || undefined;
+              const aggregation = (p["aggregation"] as ChartAggregation) ?? "count";
+              const objects = collectionType
+                ? kernel.store.allObjects().filter((o) => o.type === collectionType && !o.deletedAt)
+                : [];
+              return (
+                <div data-testid="puck-chart-widget" style={{ margin: "4px 0" }}>
+                  <ChartWidgetRenderer
+                    objects={objects}
+                    chartType={chartType}
+                    groupField={groupField}
+                    valueField={valueField}
+                    aggregation={aggregation}
+                  />
+                </div>
+              );
+            },
+          };
+          continue;
+        }
+
+        if (def.type === "map-widget") {
+          components[kebabToPascal(def.type)] = {
+            fields: {
+              collectionType: { type: "text" } as unknown as Fields[string],
+              latField: { type: "text" } as unknown as Fields[string],
+              lngField: { type: "text" } as unknown as Fields[string],
+              titleField: { type: "text" } as unknown as Fields[string],
+              initialZoom: { type: "number" } as unknown as Fields[string],
+            },
+            defaultProps: { collectionType: "", latField: "lat", lngField: "lng", titleField: "name", initialZoom: 10 },
+            render: (props) => {
+              const p = props as Record<string, unknown>;
+              const collectionType = (p["collectionType"] as string) ?? "";
+              const latField = (p["latField"] as string) ?? "lat";
+              const lngField = (p["lngField"] as string) ?? "lng";
+              const titleField = (p["titleField"] as string) ?? "name";
+              const objects = collectionType
+                ? kernel.store.allObjects().filter((o) => o.type === collectionType && !o.deletedAt)
+                : [];
+              return (
+                <div data-testid="puck-map-widget" style={{ margin: "4px 0" }}>
+                  <MapWidgetRenderer
+                    objects={objects}
+                    latField={latField}
+                    lngField={lngField}
+                    titleField={titleField}
+                  />
+                </div>
+              );
+            },
+          };
+          continue;
+        }
+
+        if (def.type === "tab-container") {
+          components[kebabToPascal(def.type)] = {
+            fields: {
+              tabs: { type: "text" } as unknown as Fields[string],
+              activeTab: { type: "number" } as unknown as Fields[string],
+            },
+            defaultProps: { tabs: "Tab 1,Tab 2", activeTab: 0 },
+            render: (props) => {
+              const p = props as Record<string, unknown>;
+              const tabs = (p["tabs"] as string) ?? "";
+              const activeTab = (p["activeTab"] as number) ?? 0;
+              return (
+                <div data-testid="puck-tab-container" style={{ margin: "4px 0" }}>
+                  <TabContainerRenderer tabs={tabs} activeTab={activeTab} />
+                </div>
+              );
+            },
+          };
+          continue;
+        }
+
+        if (def.type === "popover-widget") {
+          components[kebabToPascal(def.type)] = {
+            fields: {
+              triggerLabel: { type: "text" } as unknown as Fields[string],
+              content: { type: "textarea" } as unknown as Fields[string],
+            },
+            defaultProps: { triggerLabel: "Open", content: "" },
+            render: (props) => {
+              const p = props as Record<string, unknown>;
+              const triggerLabel = (p["triggerLabel"] as string) ?? "Open";
+              const content = (p["content"] as string) ?? "";
+              return (
+                <div data-testid="puck-popover-widget" style={{ margin: "4px 0" }}>
+                  <PopoverWidgetRenderer triggerLabel={triggerLabel} content={content} />
+                </div>
+              );
+            },
+          };
+          continue;
+        }
+
+        if (def.type === "slide-panel") {
+          components[kebabToPascal(def.type)] = {
+            fields: {
+              label: { type: "text" } as unknown as Fields[string],
+              content: { type: "textarea" } as unknown as Fields[string],
+              collapsed: {
+                type: "radio",
+                options: [
+                  { label: "Open", value: "false" },
+                  { label: "Collapsed", value: "true" },
+                ],
+              } as unknown as Fields[string],
+            },
+            defaultProps: { label: "Details", content: "", collapsed: "false" },
+            render: (props) => {
+              const p = props as Record<string, unknown>;
+              const label = (p["label"] as string) ?? "Details";
+              const content = (p["content"] as string) ?? "";
+              const collapsed = p["collapsed"] === "true" || p["collapsed"] === true;
+              return (
+                <div data-testid="puck-slide-panel" style={{ margin: "4px 0" }}>
+                  <SlidePanelRenderer label={label} content={content} collapsed={collapsed} />
                 </div>
               );
             },

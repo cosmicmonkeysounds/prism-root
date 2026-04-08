@@ -295,6 +295,24 @@ function cloneSlot(s: FacetSlot): FacetSlot {
       return { kind: "drawing", slot: { ...s.slot } };
     case "container":
       return { kind: "container", slot: { ...s.slot } };
+    case "tab":
+      return {
+        kind: "tab",
+        slot: {
+          ...s.slot,
+          tabs: s.slot.tabs.map((t) => ({ ...t, slots: t.slots.map(cloneSlot) })),
+        },
+      };
+    case "popover":
+      return {
+        kind: "popover",
+        slot: { ...s.slot, contentSlots: s.slot.contentSlots.map(cloneSlot) },
+      };
+    case "slide":
+      return {
+        kind: "slide",
+        slot: { ...s.slot, contentSlots: s.slot.contentSlots.map(cloneSlot) },
+      };
   }
 }
 

@@ -29,6 +29,7 @@ export {
   useSequencer,
   useEmitters,
   useFacetDefinitions,
+  useBuilder,
 } from "./kernel-context.js";
 
 export { createPageBuilderRegistry } from "./entities.js";
@@ -44,3 +45,22 @@ export type {
   RelayHttpClient,
   RelayManagerOptions,
 } from "./relay-manager.js";
+
+export {
+  createBuilderManager,
+  createDryRunExecutor,
+  createTauriExecutor,
+} from "./builder-manager.js";
+export type {
+  BuilderManager,
+  BuilderManagerOptions,
+  BuildExecutor,
+  AppProfile,
+  BuildPlan,
+  BuildTarget,
+  BuildStep,
+  BuildStepResult,
+  BuildRun,
+  BuiltInProfileId,
+  ArtifactDescriptor,
+} from "./builder-manager.js";

@@ -273,6 +273,82 @@ export interface EscrowManager {
   evictExpired(): number;
   /** Get a deposit by ID. */
   get(depositId: string): EscrowDeposit | undefined;
+  /** List every deposit (claimed or unclaimed) — used for persistence. */
+  listAll(): EscrowDeposit[];
+}
+
+// ── Password Authentication ────────────────────────────────────────────────
+
+/**
+ * Persistent record for a password-authenticated user.
+ *
+ * Password material is stored as a PBKDF2-SHA256 hash with a per-user salt.
+ * The relay never stores the plaintext password, and the manager exposes no
+ * way to recover it — only verify(username, password) and replaceHash().
+ */
+export interface PasswordAuthRecord {
+  /** Unique username (lowercased). */
+  username: string;
+  /** DID associated with this user (e.g. did:password:<username>). */
+  did: string;
+  /** Base64-encoded random salt used for PBKDF2. */
+  salt: string;
+  /** Base64-encoded PBKDF2-SHA256 hash of (password + salt). */
+  passwordHash: string;
+  /** PBKDF2 iteration count used to derive `passwordHash`. */
+  iterations: number;
+  /** ISO-8601 timestamp when the user was created. */
+  createdAt: string;
+  /** ISO-8601 timestamp when the password was last changed. */
+  updatedAt: string;
+  /** Optional caller-supplied metadata (display name, email, etc.). */
+  metadata?: Record<string, string>;
+}
+
+/** Result of attempting to authenticate a username/password pair. */
+export type PasswordAuthResult =
+  | { ok: true; record: PasswordAuthRecord }
+  | { ok: false; reason: "unknown-user" | "wrong-password" };
+
+/**
+ * Manager for password-authenticated users on a relay.
+ *
+ * Storage is in-memory; persistence is the relay's job (file store).
+ * All hashing is PBKDF2-SHA256 with a configurable iteration count.
+ */
+export interface PasswordAuthManager {
+  /** Register a new user. Throws if `username` already exists. */
+  register(input: {
+    username: string;
+    password: string;
+    did?: string;
+    metadata?: Record<string, string>;
+  }): Promise<PasswordAuthRecord>;
+  /** Verify a username/password pair. */
+  verify(username: string, password: string): Promise<PasswordAuthResult>;
+  /** Change a user's password (requires the existing password). */
+  changePassword(
+    username: string,
+    oldPassword: string,
+    newPassword: string,
+  ): Promise<PasswordAuthResult>;
+  /** Look up a user record by username (without verifying credentials). */
+  get(username: string): PasswordAuthRecord | undefined;
+  /** List every user record — used for persistence. */
+  list(): PasswordAuthRecord[];
+  /** Restore a previously serialised record (used by file-store on load). */
+  restore(record: PasswordAuthRecord): void;
+  /** Delete a user record. Returns true if it existed. */
+  remove(username: string): boolean;
+  /** Number of registered users. */
+  size(): number;
+}
+
+export interface PasswordAuthManagerOptions {
+  /** PBKDF2 iteration count. Default: 600_000. */
+  iterations?: number;
+  /** Salt length in bytes. Default: 16. */
+  saltBytes?: number;
 }
 
 // ── Options ────────────────────────────────────────────────────────────────

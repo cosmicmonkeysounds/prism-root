@@ -13,6 +13,8 @@ export { createTemplateRoutes } from "./template-routes.js";
 export { createSeoRoutes } from "./seo-routes.js";
 export { createAuthRoutes } from "./auth-routes.js";
 export type { OAuthProviderConfig, AuthRoutesOptions } from "./auth-routes.js";
+export { createPasswordAuthRoutes } from "./password-auth-routes.js";
+export type { PasswordAuthRoutesOptions } from "./password-auth-routes.js";
 export { createSafetyRoutes } from "./safety-routes.js";
 export { createAutoRestRoutes } from "./autorest-routes.js";
 export { createPingRoutes } from "./ping-routes.js";
@@ -27,3 +29,14 @@ export { createPresenceRoutes } from "./presence-routes.js";
 export { createBackupRoutes } from "./backup-routes.js";
 export { createLogsRoutes, createLogBuffer } from "./logs-routes.js";
 export type { LogBuffer, LogEntry } from "./logs-routes.js";
+export {
+  createEmailRoutes,
+  createMemoryEmailTransport,
+  interpolate,
+} from "./email-routes.js";
+export type {
+  EmailTransport,
+  EmailSendRequest,
+  EmailSendResult,
+  EmailRoutesOptions,
+} from "./email-routes.js";

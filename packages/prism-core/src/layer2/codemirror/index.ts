@@ -29,3 +29,13 @@ export {
   createTokenPreviewExtension,
   inlineTokenTheme,
 } from "./inline-tokens.js";
+export {
+  findLuaBlocks,
+  formatBlockResult,
+  processLuaBlocks,
+} from "./lua-markdown-plugin.js";
+export type {
+  LuaRunner,
+  LuaRunnerResult,
+  LuaMarkdownBlock,
+} from "./lua-markdown-plugin.js";

@@ -7,6 +7,7 @@ import {
   createPeerTrustGraph,
   createShamirSplitter,
   createEscrowManager,
+  createPasswordAuthManager,
 } from "./trust.js";
 import type {
   SandboxPolicy,
@@ -557,5 +558,127 @@ describe("EscrowManager", () => {
     // Can still claim since not expired
     const claimed = escrow.claim(dep.id);
     expect(claimed).not.toBeNull();
+  });
+
+  it("listAll returns claimed and unclaimed deposits", () => {
+    const escrow = createEscrowManager();
+    const dep1 = escrow.deposit("alice", "key-1");
+    escrow.deposit("bob", "key-2");
+    escrow.claim(dep1.id);
+    const all = escrow.listAll();
+    expect(all).toHaveLength(2);
+    expect(all.filter(d => d.claimed)).toHaveLength(1);
+  });
+});
+
+// ── Password Authentication ────────────────────────────────────────────────
+
+describe("PasswordAuthManager", () => {
+  // Use a low iteration count to keep the unit tests fast.
+  const fastOpts = { iterations: 1000 };
+
+  it("registers a new user and returns a record without leaking the plaintext", async () => {
+    const auth = createPasswordAuthManager(fastOpts);
+    const record = await auth.register({
+      username: "Alice",
+      password: "correct horse battery staple",
+    });
+    expect(record.username).toBe("alice"); // normalized
+    expect(record.did).toBe("did:password:alice");
+    expect(record.passwordHash).toBeTruthy();
+    expect(record.passwordHash).not.toContain("correct horse");
+    expect(record.iterations).toBe(1000);
+    expect(auth.size()).toBe(1);
+  });
+
+  it("verifies the correct password and rejects the wrong one", async () => {
+    const auth = createPasswordAuthManager(fastOpts);
+    await auth.register({ username: "alice", password: "secret" });
+    const ok = await auth.verify("alice", "secret");
+    expect(ok.ok).toBe(true);
+    const bad = await auth.verify("alice", "wrong");
+    expect(bad.ok).toBe(false);
+    if (!bad.ok) expect(bad.reason).toBe("wrong-password");
+  });
+
+  it("returns unknown-user for missing accounts", async () => {
+    const auth = createPasswordAuthManager(fastOpts);
+    const result = await auth.verify("ghost", "anything");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe("unknown-user");
+  });
+
+  it("rejects duplicate registration", async () => {
+    const auth = createPasswordAuthManager(fastOpts);
+    await auth.register({ username: "alice", password: "secret" });
+    await expect(
+      auth.register({ username: "ALICE", password: "again" }),
+    ).rejects.toThrow(/already registered/);
+  });
+
+  it("changePassword rotates the hash and invalidates the old password", async () => {
+    const auth = createPasswordAuthManager(fastOpts);
+    await auth.register({ username: "alice", password: "old-pass" });
+    const change = await auth.changePassword("alice", "old-pass", "new-pass");
+    expect(change.ok).toBe(true);
+
+    const stillOld = await auth.verify("alice", "old-pass");
+    expect(stillOld.ok).toBe(false);
+
+    const withNew = await auth.verify("alice", "new-pass");
+    expect(withNew.ok).toBe(true);
+  });
+
+  it("changePassword refuses with wrong old password", async () => {
+    const auth = createPasswordAuthManager(fastOpts);
+    await auth.register({ username: "alice", password: "secret" });
+    const result = await auth.changePassword("alice", "guess", "new");
+    expect(result.ok).toBe(false);
+  });
+
+  it("remove deletes a user", async () => {
+    const auth = createPasswordAuthManager(fastOpts);
+    await auth.register({ username: "alice", password: "secret" });
+    expect(auth.remove("alice")).toBe(true);
+    expect(auth.get("alice")).toBeUndefined();
+    expect(auth.remove("alice")).toBe(false);
+  });
+
+  it("restore round-trips a record (used by file-store)", async () => {
+    const auth = createPasswordAuthManager(fastOpts);
+    const record = await auth.register({ username: "alice", password: "secret" });
+
+    const auth2 = createPasswordAuthManager(fastOpts);
+    auth2.restore(record);
+    const verified = await auth2.verify("alice", "secret");
+    expect(verified.ok).toBe(true);
+  });
+
+  it("uses a unique salt per user", async () => {
+    const auth = createPasswordAuthManager(fastOpts);
+    const a = await auth.register({ username: "alice", password: "samepass" });
+    const b = await auth.register({ username: "bob", password: "samepass" });
+    expect(a.salt).not.toBe(b.salt);
+    expect(a.passwordHash).not.toBe(b.passwordHash);
+  });
+
+  it("accepts a custom DID at registration", async () => {
+    const auth = createPasswordAuthManager(fastOpts);
+    const record = await auth.register({
+      username: "alice",
+      password: "secret",
+      did: "did:key:zCustom",
+    });
+    expect(record.did).toBe("did:key:zCustom");
+  });
+
+  it("stores caller-supplied metadata", async () => {
+    const auth = createPasswordAuthManager(fastOpts);
+    const record = await auth.register({
+      username: "alice",
+      password: "secret",
+      metadata: { email: "alice@example.com" },
+    });
+    expect(record.metadata).toEqual({ email: "alice@example.com" });
   });
 });

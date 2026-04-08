@@ -66,7 +66,12 @@ export type EntityFieldType =
   | "object_ref"
   | "date"
   | "datetime"
-  | "url";
+  | "url"
+  | "lookup"
+  | "rollup";
+
+/** Aggregation function used by rollup fields. */
+export type RollupFunction = "sum" | "avg" | "count" | "min" | "max" | "list";
 
 /**
  * Defines one typed field in an entity's payload schema.
@@ -114,6 +119,20 @@ export interface EntityFieldDef {
    * Empty/omitted means any type is allowed.
    */
   refTypes?: string[];
+
+  // ── Lookup fields ────────────────────────────────────────────────────────
+  /** For type='lookup' — the edge relation to traverse from this object. */
+  lookupRelation?: string;
+  /** For type='lookup' — dot-path into the target object's data (or a shell field). */
+  lookupField?: string;
+
+  // ── Rollup fields ────────────────────────────────────────────────────────
+  /** For type='rollup' — the edge relation to aggregate across. */
+  rollupRelation?: string;
+  /** For type='rollup' — dot-path into the target object's data to aggregate. */
+  rollupField?: string;
+  /** For type='rollup' — how to aggregate the collected values. */
+  rollupFunction?: RollupFunction;
 
   /** UI rendering hints. Do not affect the stored value. */
   ui?: {
@@ -207,13 +226,16 @@ export type ResolvedEdge<TObject = GraphObject> = ObjectEdge & {
  *   dependency — Source cannot proceed without target (DAG semantics).
  *   membership — Source belongs to a group / collection (target).
  *   assignment — Source is assigned to a person / role (target).
+ *   stream     — Continuous data flow from source to target (pipeline/DSP semantics).
+ *                Rendered as an animated dashed line by graph views.
  */
 export type EdgeBehavior =
   | "weak"
   | "strong"
   | "dependency"
   | "membership"
-  | "assignment";
+  | "assignment"
+  | "stream";
 
 /**
  * Defines one edge type (relation) to the registry.

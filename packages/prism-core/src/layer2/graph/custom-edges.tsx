@@ -84,9 +84,73 @@ export function WeakRefEdgeComponent(props: EdgeProps<WeakRefEdge>) {
   return <BaseEdge {...(baseProps as { path: string })} />;
 }
 
+// ─── Stream Edge (animated dashed bezier) ────────────────────
+//
+// For EdgeBehavior = "stream": continuous data flow from source to
+// target (DSP/pipeline semantics). Visually animated dashes crawl
+// along the curve to indicate direction and "liveness".
+
+type StreamRefData = {
+  wireType: "stream";
+};
+
+export type StreamEdge = Edge<StreamRefData, "stream">;
+
+const STREAM_KEYFRAMES_ID = "prism-stream-edge-keyframes";
+
+function ensureStreamKeyframes(): void {
+  if (typeof document === "undefined") return;
+  if (document.getElementById(STREAM_KEYFRAMES_ID)) return;
+  const style = document.createElement("style");
+  style.id = STREAM_KEYFRAMES_ID;
+  style.textContent = `
+    @keyframes prism-stream-dash {
+      from { stroke-dashoffset: 24; }
+      to   { stroke-dashoffset: 0; }
+    }
+    .prism-stream-edge {
+      animation: prism-stream-dash 0.6s linear infinite;
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+export function StreamEdgeComponent(props: EdgeProps<StreamEdge>) {
+  // Inject keyframes once per document. Safe to call on every render —
+  // getElementById short-circuits after the first mount.
+  ensureStreamKeyframes();
+
+  const [edgePath] = getBezierPath({
+    sourceX: props.sourceX,
+    sourceY: props.sourceY,
+    targetX: props.targetX,
+    targetY: props.targetY,
+    sourcePosition: props.sourcePosition,
+    targetPosition: props.targetPosition,
+  });
+
+  const baseProps: Record<string, unknown> = {
+    id: props.id,
+    path: edgePath,
+    className: "prism-stream-edge",
+    style: {
+      stroke: "var(--prism-edge-stream, #10b981)",
+      strokeWidth: 2,
+      strokeDasharray: "8 4",
+      ...props.style,
+    },
+  };
+  if (props.markerEnd !== undefined) {
+    baseProps["markerEnd"] = props.markerEnd;
+  }
+
+  return <BaseEdge {...(baseProps as { path: string })} />;
+}
+
 // ─── Edge type registry ──────────────────────────────────────
 
 export const prismEdgeTypes = {
   hardRef: HardRefEdgeComponent,
   weakRef: WeakRefEdgeComponent,
+  stream: StreamEdgeComponent,
 } as const;

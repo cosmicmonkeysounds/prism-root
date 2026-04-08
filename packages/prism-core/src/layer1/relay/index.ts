@@ -95,3 +95,4 @@ export { hashcashModule } from "./hashcash-module.js";
 export { peerTrustModule } from "./peer-trust-module.js";
 export { escrowModule } from "./escrow-module.js";
 export { federationModule } from "./federation-module.js";
+export { passwordAuthModule } from "./password-auth-module.js";

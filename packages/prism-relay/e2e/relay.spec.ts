@@ -27,6 +27,7 @@ import {
   portalTemplateModule,
   webrtcSignalingModule,
   vaultHostModule,
+  passwordAuthModule,
 } from "@prism/core/relay";
 import type {
   RelayInstance,
@@ -62,6 +63,8 @@ test.beforeAll(async () => {
     .use(portalTemplateModule())
     .use(webrtcSignalingModule())
     .use(vaultHostModule())
+    // Use a low PBKDF2 iteration count so e2e tests stay fast.
+    .use(passwordAuthModule({ iterations: 1000 }))
     .build();
   await relay.start();
 
@@ -86,13 +89,13 @@ test.describe("HTTP API", () => {
     const body = await res.json();
     expect(body.running).toBe(true);
     expect(body.did).toBe(identity.did);
-    expect(body.modules).toHaveLength(16);
+    expect(body.modules).toHaveLength(17);
   });
 
   test("GET /api/modules lists all installed modules", async ({ request }) => {
     const res = await request.get(`${baseUrl}/api/modules`);
     const body = await res.json();
-    expect(body).toHaveLength(16);
+    expect(body).toHaveLength(17);
     const names = body.map((m: { name: string }) => m.name);
     expect(names).toContain("blind-mailbox");
     expect(names).toContain("relay-router");
@@ -103,6 +106,7 @@ test.describe("HTTP API", () => {
     expect(names).toContain("federation");
     expect(names).toContain("acme-certificates");
     expect(names).toContain("portal-templates");
+    expect(names).toContain("password-auth");
   });
 
   // ── Webhooks ────────────────────────────────────────────────────────────
@@ -237,6 +241,149 @@ test.describe("HTTP API", () => {
     const res = await request.get(`${baseUrl}/api/escrow/e2e-user`);
     const body = await res.json();
     expect(body.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test("escrow rejects claim of expired deposit", async ({ request }) => {
+    const pastDate = new Date(Date.now() - 86_400_000).toISOString();
+    let res = await request.post(`${baseUrl}/api/escrow/deposit`, {
+      data: {
+        depositorId: "e2e-expired-user",
+        encryptedPayload: "expired-payload",
+        expiresAt: pastDate,
+      },
+    });
+    expect(res.status()).toBe(201);
+    const deposit = await res.json();
+    expect(deposit.expiresAt).toBe(pastDate);
+
+    res = await request.post(`${baseUrl}/api/escrow/claim`, {
+      data: { depositId: deposit.id },
+    });
+    expect(res.status()).toBe(404);
+  });
+
+  test("escrow stores multiple deposits per depositor", async ({ request }) => {
+    for (let i = 0; i < 3; i++) {
+      const res = await request.post(`${baseUrl}/api/escrow/deposit`, {
+        data: { depositorId: "e2e-multi-user", encryptedPayload: `payload-${i}` },
+      });
+      expect(res.status()).toBe(201);
+    }
+    const res = await request.get(`${baseUrl}/api/escrow/e2e-multi-user`);
+    expect(res.status()).toBe(200);
+    const body = await res.json();
+    expect(body.length).toBeGreaterThanOrEqual(3);
+  });
+
+  test("escrow GET on unknown depositor returns empty array", async ({ request }) => {
+    const res = await request.get(`${baseUrl}/api/escrow/never-deposited`);
+    expect(res.status()).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual([]);
+  });
+
+  // ── Password Auth ───────────────────────────────────────────────────────
+
+  test("password-auth register → login → token round-trip", async ({ request }) => {
+    let res = await request.post(`${baseUrl}/api/auth/password/register`, {
+      data: { username: "e2e-alice", password: "correct-horse-battery" },
+    });
+    expect(res.status()).toBe(201);
+    let body = await res.json();
+    expect(body.username).toBe("e2e-alice");
+    expect(body.did).toBe("did:password:e2e-alice");
+    expect(body).not.toHaveProperty("passwordHash");
+    expect(body).not.toHaveProperty("salt");
+
+    res = await request.post(`${baseUrl}/api/auth/password/login`, {
+      data: { username: "e2e-alice", password: "correct-horse-battery" },
+    });
+    expect(res.status()).toBe(200);
+    body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.did).toBe("did:password:e2e-alice");
+    expect(typeof body.token).toBe("string");
+    expect(body.expiresAt).toBeTruthy();
+
+    // The returned token should verify against /api/tokens/verify
+    const decoded = JSON.parse(Buffer.from(body.token as string, "base64").toString("utf-8"));
+    res = await request.post(`${baseUrl}/api/tokens/verify`, { data: decoded });
+    expect(res.status()).toBe(200);
+    const verifyBody = await res.json();
+    expect(verifyBody.valid).toBe(true);
+  });
+
+  test("password-auth rejects duplicate registration", async ({ request }) => {
+    await request.post(`${baseUrl}/api/auth/password/register`, {
+      data: { username: "e2e-dup", password: "secret" },
+    });
+    const res = await request.post(`${baseUrl}/api/auth/password/register`, {
+      data: { username: "e2e-dup", password: "another" },
+    });
+    expect(res.status()).toBe(409);
+  });
+
+  test("password-auth login rejects wrong password", async ({ request }) => {
+    await request.post(`${baseUrl}/api/auth/password/register`, {
+      data: { username: "e2e-bob", password: "real-pass" },
+    });
+    const res = await request.post(`${baseUrl}/api/auth/password/login`, {
+      data: { username: "e2e-bob", password: "guess-pass" },
+    });
+    expect(res.status()).toBe(401);
+  });
+
+  test("password-auth login returns 404 for unknown user", async ({ request }) => {
+    const res = await request.post(`${baseUrl}/api/auth/password/login`, {
+      data: { username: "e2e-ghost", password: "anything" },
+    });
+    expect(res.status()).toBe(404);
+  });
+
+  test("password-auth change password rotates credentials", async ({ request }) => {
+    await request.post(`${baseUrl}/api/auth/password/register`, {
+      data: { username: "e2e-carol", password: "old-pass" },
+    });
+    let res = await request.post(`${baseUrl}/api/auth/password/change`, {
+      data: { username: "e2e-carol", oldPassword: "old-pass", newPassword: "new-pass" },
+    });
+    expect(res.status()).toBe(200);
+
+    res = await request.post(`${baseUrl}/api/auth/password/login`, {
+      data: { username: "e2e-carol", password: "old-pass" },
+    });
+    expect(res.status()).toBe(401);
+
+    res = await request.post(`${baseUrl}/api/auth/password/login`, {
+      data: { username: "e2e-carol", password: "new-pass" },
+    });
+    expect(res.status()).toBe(200);
+  });
+
+  test("password-auth DELETE requires current password", async ({ request }) => {
+    await request.post(`${baseUrl}/api/auth/password/register`, {
+      data: { username: "e2e-dave", password: "delete-me" },
+    });
+
+    let res = await request.delete(`${baseUrl}/api/auth/password/e2e-dave`, {
+      data: { password: "wrong" },
+    });
+    expect(res.status()).toBe(401);
+
+    res = await request.delete(`${baseUrl}/api/auth/password/e2e-dave`, {
+      data: { password: "delete-me" },
+    });
+    expect(res.status()).toBe(200);
+
+    res = await request.get(`${baseUrl}/api/auth/password/e2e-dave`);
+    expect(res.status()).toBe(404);
+  });
+
+  test("password-auth validates required fields", async ({ request }) => {
+    const res = await request.post(`${baseUrl}/api/auth/password/register`, {
+      data: { username: "missing-pass" },
+    });
+    expect(res.status()).toBe(400);
   });
 
   // ── Federation ──────────────────────────────────────────────────────────
@@ -1765,7 +1912,7 @@ test.describe("Directory Feed", () => {
 
     // Relay profile
     expect(body.relay.did).toBe(identity.did);
-    expect(body.relay.modules.length).toBe(16);
+    expect(body.relay.modules.length).toBe(17);
     expect(typeof body.relay.uptime).toBe("number");
     expect(body.relay.federation).toHaveProperty("peers");
 

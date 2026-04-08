@@ -14,7 +14,12 @@ function toBoolean(v: ExprValue): boolean {
   return v.length > 0;
 }
 
+function toStringVal(v: ExprValue): string {
+  return typeof v === "string" ? v : String(v);
+}
+
 type BuiltinFn = (...args: number[]) => number;
+type ExtendedBuiltinFn = (...args: ExprValue[]) => ExprValue;
 
 const BUILTINS: Record<string, BuiltinFn> = {
   abs: (a) => Math.abs(a),
@@ -26,6 +31,83 @@ const BUILTINS: Record<string, BuiltinFn> = {
   min: (a, b) => Math.min(a, b),
   max: (a, b) => Math.max(a, b),
   clamp: (v, lo, hi) => Math.min(hi, Math.max(lo, v)),
+};
+
+// ── Extended builtins — string, date, aggregate ─────────────────────────────
+
+function parseIsoDate(v: ExprValue): Date | null {
+  const s = toStringVal(v);
+  if (!s) return null;
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function toIsoDate(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+const EXTENDED_BUILTINS: Record<string, ExtendedBuiltinFn> = {
+  // String
+  len: (s) => toStringVal(s ?? "").length,
+  lower: (s) => toStringVal(s ?? "").toLowerCase(),
+  upper: (s) => toStringVal(s ?? "").toUpperCase(),
+  trim: (s) => toStringVal(s ?? "").trim(),
+  concat: (...args) => args.map((a) => toStringVal(a ?? "")).join(""),
+  left: (s, n) => toStringVal(s ?? "").slice(0, Math.max(0, Math.floor(toNumber(n ?? 0)))),
+  right: (s, n) => {
+    const str = toStringVal(s ?? "");
+    const count = Math.max(0, Math.floor(toNumber(n ?? 0)));
+    return count === 0 ? "" : str.slice(-count);
+  },
+  mid: (s, start, len) => {
+    const str = toStringVal(s ?? "");
+    const startIdx = Math.max(0, Math.floor(toNumber(start ?? 0)));
+    const length = Math.max(0, Math.floor(toNumber(len ?? 0)));
+    return str.slice(startIdx, startIdx + length);
+  },
+  substitute: (s, oldStr, newStr) => {
+    const str = toStringVal(s ?? "");
+    const find = toStringVal(oldStr ?? "");
+    const replace = toStringVal(newStr ?? "");
+    if (find.length === 0) return str;
+    return str.split(find).join(replace);
+  },
+
+  // Date
+  today: () => toIsoDate(new Date()),
+  now: () => new Date().toISOString(),
+  year: (iso) => {
+    const d = parseIsoDate(iso ?? "");
+    return d ? d.getUTCFullYear() : 0;
+  },
+  month: (iso) => {
+    const d = parseIsoDate(iso ?? "");
+    return d ? d.getUTCMonth() + 1 : 0;
+  },
+  day: (iso) => {
+    const d = parseIsoDate(iso ?? "");
+    return d ? d.getUTCDate() : 0;
+  },
+  datediff: (a, b, unit) => {
+    const da = parseIsoDate(a ?? "");
+    const db = parseIsoDate(b ?? "");
+    if (!da || !db) return 0;
+    const diffMs = db.getTime() - da.getTime();
+    const unitStr = toStringVal(unit ?? "days").toLowerCase();
+    if (unitStr === "months") {
+      return (db.getUTCFullYear() - da.getUTCFullYear()) * 12 + (db.getUTCMonth() - da.getUTCMonth());
+    }
+    if (unitStr === "years") {
+      return db.getUTCFullYear() - da.getUTCFullYear();
+    }
+    // default: days
+    return Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  },
+
+  // Aggregate (variadic over literal arg lists; rollup integration lives in field-resolver.ts)
+  sum: (...args) => args.reduce<number>((acc, v) => acc + toNumber(v), 0),
+  avg: (...args) => (args.length === 0 ? 0 : args.reduce<number>((acc, v) => acc + toNumber(v), 0) / args.length),
+  count: (...args) => args.length,
 };
 
 export function evaluate(node: AnyExprNode, store: ValueStore): ExprValue {
@@ -52,7 +134,13 @@ function evalNode(node: AnyExprNode, store: ValueStore): ExprValue {
       return evalBinary(node.op, node.left, node.right, store);
 
     case "call": {
-      const fn = BUILTINS[node.name.toLowerCase()];
+      const name = node.name.toLowerCase();
+      const extFn = EXTENDED_BUILTINS[name];
+      if (extFn) {
+        const args = node.args.map((a) => evalNode(a, store));
+        return extFn(...args);
+      }
+      const fn = BUILTINS[name];
       if (!fn) return 0;
       const args = node.args.map((a) => toNumber(evalNode(a, store)));
       return fn(...args);
@@ -112,7 +200,7 @@ function evalBinary(
   }
 }
 
-const BUILTIN_NAMES = new Set(Object.keys(BUILTINS));
+const BUILTIN_NAMES = new Set([...Object.keys(BUILTINS), ...Object.keys(EXTENDED_BUILTINS)]);
 const KEYWORDS = new Set(["true", "false", "and", "or", "not"]);
 
 function wrapBareIdentifiers(formula: string): string {

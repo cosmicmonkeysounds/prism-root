@@ -706,5 +706,159 @@ export function createEscrowManager(): EscrowManager {
     get(depositId: string): EscrowDeposit | undefined {
       return deposits.get(depositId);
     },
+
+    listAll(): EscrowDeposit[] {
+      return [...deposits.values()];
+    },
+  };
+}
+
+// ── Password Authentication ────────────────────────────────────────────────
+
+const DEFAULT_PBKDF2_ITERATIONS = 600_000;
+const DEFAULT_PASSWORD_SALT_BYTES = 16;
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return globalThis.btoa(bin);
+}
+
+function base64ToBytes(b64: string): Uint8Array {
+  const bin = globalThis.atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+function constantTimeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+async function pbkdf2Hash(
+  password: string,
+  saltBytes: Uint8Array,
+  iterations: number,
+): Promise<string> {
+  const enc = new TextEncoder();
+  const keyMaterial = await globalThis.crypto.subtle.importKey(
+    "raw",
+    enc.encode(password),
+    "PBKDF2",
+    false,
+    ["deriveBits"],
+  );
+  const derived = await globalThis.crypto.subtle.deriveBits(
+    {
+      name: "PBKDF2",
+      salt: buf(saltBytes),
+      iterations,
+      hash: "SHA-256",
+    },
+    keyMaterial,
+    256,
+  );
+  return bytesToBase64(new Uint8Array(derived));
+}
+
+function normalizeUsername(username: string): string {
+  return username.trim().toLowerCase();
+}
+
+export function createPasswordAuthManager(
+  options: import("./trust-types.js").PasswordAuthManagerOptions = {},
+): import("./trust-types.js").PasswordAuthManager {
+  const iterations = options.iterations ?? DEFAULT_PBKDF2_ITERATIONS;
+  const saltBytes = options.saltBytes ?? DEFAULT_PASSWORD_SALT_BYTES;
+  const records = new Map<string, import("./trust-types.js").PasswordAuthRecord>();
+
+  function freshSalt(): Uint8Array {
+    const bytes = new Uint8Array(saltBytes);
+    globalThis.crypto.getRandomValues(bytes);
+    return bytes;
+  }
+
+  return {
+    async register(input) {
+      const username = normalizeUsername(input.username);
+      if (!username) throw new Error("username is required");
+      if (!input.password) throw new Error("password is required");
+      if (records.has(username)) {
+        throw new Error(`username "${username}" is already registered`);
+      }
+      const salt = freshSalt();
+      const passwordHash = await pbkdf2Hash(input.password, salt, iterations);
+      const now = new Date().toISOString();
+      const record: import("./trust-types.js").PasswordAuthRecord = {
+        username,
+        did: input.did ?? `did:password:${username}`,
+        salt: bytesToBase64(salt),
+        passwordHash,
+        iterations,
+        createdAt: now,
+        updatedAt: now,
+      };
+      if (input.metadata) record.metadata = { ...input.metadata };
+      records.set(username, record);
+      return record;
+    },
+
+    async verify(username, password) {
+      const key = normalizeUsername(username);
+      const record = records.get(key);
+      if (!record) return { ok: false, reason: "unknown-user" };
+      const candidate = await pbkdf2Hash(
+        password,
+        base64ToBytes(record.salt),
+        record.iterations,
+      );
+      if (!constantTimeEqual(candidate, record.passwordHash)) {
+        return { ok: false, reason: "wrong-password" };
+      }
+      return { ok: true, record };
+    },
+
+    async changePassword(username, oldPassword, newPassword) {
+      const result = await this.verify(username, oldPassword);
+      if (!result.ok) return result;
+      if (!newPassword) throw new Error("newPassword is required");
+      const key = normalizeUsername(username);
+      const existing = records.get(key);
+      if (!existing) return { ok: false, reason: "unknown-user" };
+      const salt = freshSalt();
+      const passwordHash = await pbkdf2Hash(newPassword, salt, iterations);
+      const next: import("./trust-types.js").PasswordAuthRecord = {
+        ...existing,
+        salt: bytesToBase64(salt),
+        passwordHash,
+        iterations,
+        updatedAt: new Date().toISOString(),
+      };
+      records.set(key, next);
+      return { ok: true, record: next };
+    },
+
+    get(username) {
+      return records.get(normalizeUsername(username));
+    },
+
+    list() {
+      return [...records.values()];
+    },
+
+    restore(record) {
+      records.set(normalizeUsername(record.username), record);
+    },
+
+    remove(username) {
+      return records.delete(normalizeUsername(username));
+    },
+
+    size() {
+      return records.size;
+    },
   };
 }

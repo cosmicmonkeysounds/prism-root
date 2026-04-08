@@ -150,13 +150,27 @@ export interface RunAutomationAction {
   automationId: string;
 }
 
+/** Send an email via an external transport (e.g. Relay webhook → SendGrid/Mailgun). */
+export interface EmailAction {
+  type: "email:send";
+  /** Recipient email address. Supports {{field}} interpolation. */
+  to: string;
+  /** Email subject. Supports {{field}} interpolation. */
+  subject: string;
+  /** Email body (plain text or HTML). Supports {{field}} interpolation. */
+  body: string;
+  /** Optional template id stored on the Relay side. When present, body/subject may be overridden by the template. */
+  templateId?: string | undefined;
+}
+
 export type AutomationAction =
   | CreateObjectAction
   | UpdateObjectAction
   | DeleteObjectAction
   | NotificationAction
   | DelayAction
-  | RunAutomationAction;
+  | RunAutomationAction
+  | EmailAction;
 
 // ── Automation ────────────────────────────────────────────────────────────────
 

@@ -11,6 +11,7 @@ import type { StudioKernel } from "./studio-kernel.js";
 import type { GraphObject, ObjectId } from "@prism/core/object-model";
 import type { Notification, NotificationKind } from "@prism/core/notification";
 import type { RelayEntry } from "./relay-manager.js";
+import type { AppProfile, BuildRun } from "./builder-manager.js";
 import type { SettingDefinition } from "@prism/core/config";
 import type { PresenceState } from "@prism/core/presence";
 import type { ViewMode } from "@prism/core/view";
@@ -224,6 +225,48 @@ export function useRelay(): {
   }
 
   return { relays: cacheRef.current.relays, manager: kernel.relay };
+}
+
+/** Reactive builder state (profiles, active profile, build runs). */
+export function useBuilder(): {
+  profiles: AppProfile[];
+  activeProfile: AppProfile | null;
+  runs: BuildRun[];
+  manager: StudioKernel["builder"];
+} {
+  const kernel = useKernel();
+  const cacheRef = useRef<{
+    profiles: AppProfile[];
+    activeProfile: AppProfile | null;
+    runs: BuildRun[];
+    version: string;
+  }>({ profiles: [], activeProfile: null, runs: [], version: "" });
+
+  const version = useSyncExternalStore(
+    (cb) => kernel.builder.subscribe(cb),
+    () => {
+      const profiles = kernel.builder.listProfiles();
+      const active = kernel.builder.getActiveProfile();
+      const runs = kernel.builder.listRuns();
+      return `${profiles.length}:${active?.id ?? "_"}:${runs.length}:${runs[0]?.status ?? "_"}`;
+    },
+  );
+
+  if (cacheRef.current.version !== version) {
+    cacheRef.current = {
+      profiles: kernel.builder.listProfiles(),
+      activeProfile: kernel.builder.getActiveProfile(),
+      runs: kernel.builder.listRuns(),
+      version,
+    };
+  }
+
+  return {
+    profiles: cacheRef.current.profiles,
+    activeProfile: cacheRef.current.activeProfile,
+    runs: cacheRef.current.runs,
+    manager: kernel.builder,
+  };
 }
 
 /** Reactive config value by key. */

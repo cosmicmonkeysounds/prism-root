@@ -1,5 +1,84 @@
 # Current Plan
 
+## Foundation Widgets + Core Enhancements (Complete — 2026-04-08)
+
+Expansion of Prism's foundation: expression/field primitives, document surface
+completion, a suite of composable Puck widgets, and relay-side template/email
+endpoints. All new views land as drag-and-drop Puck widgets in Layout/Canvas —
+the legacy ViewMode registry is dead.
+
+### Phase A — Layer 1 primitives
+
+- [x] **A1** Expression builtins — string (`len`, `lower`, `upper`, `trim`, `concat`, `left`, `right`, `mid`, `substitute`), date (`today`, `now`, `year`, `month`, `day`, `datediff`), aggregate (`sum`, `avg`, `count`) wired into `evaluator.ts` + `syntax-engine.ts` autocomplete
+- [x] **A2** `"formula"` field type with `expression` body in `FieldSchema`
+- [x] **A3** `"lookup" | "rollup"` entity field types + `field-resolver.ts` dispatcher for formula/lookup/rollup computation across edge relations
+- [x] **A4** `FacetSlot` extended with `tab` / `popover` / `slide` container kinds; `FacetDefinitionBuilder.addTabContainer()` / `addPopoverContainer()` / `addSlideContainer()`
+- [x] **A5** `EmailAction` (`email:send`) with `{{field}}` interpolation alongside existing automation actions
+- [x] **A6** `"stream"` added to `EdgeBehavior` union
+
+### Phase B — Document Surface completion
+
+- [x] **B1** `FormSurface` — YAML/JSON source → auto-derived field schema → round-trip form
+- [x] **B2** `CsvSurface` — quoted fields, TSV autodetect, contentEditable table, add/delete row/column
+- [x] **B3** `ReportSurface` — grouped reports with count/sum/avg/min/max summaries, print-ready
+- [x] **B4** `print-renderer.ts` — `@page`/`@media print` CSS from `PrintConfig`, hidden-iframe browser print trigger
+- [x] **B5** `lua-markdown-plugin.ts` — inline ```lua fenced blocks executed and rendered into markdown previews
+
+### Phase C — Puck widgets
+
+All seven widgets follow the existing `facet-view` / `spatial-canvas` / `data-portal`
+pattern: entity def in `entities.ts`, renderer component under `components/`, wired
+into both `layout-panel.tsx` (Puck builder) and `canvas-panel.tsx` (canvas preview).
+
+- [x] **C1** `kanban-widget` — HTML5 drag-drop groups cards by a field; drop reassigns the group value via kernel.updateObject (no `@dnd-kit` dep)
+- [x] **C2** `calendar-widget` — CSS grid month view with event dots, prev/next/today navigation, click-to-create
+- [x] **C3** `chart-widget` — pure SVG bar/line/pie/area with count/sum/avg/min/max aggregations (no `recharts` dep)
+- [x] **C4** `map-widget` — SVG lat/lng scatter with auto-bounds projection (swap in `react-leaflet` later for tile layers)
+- [x] **C5** `tab-container` — horizontal tab bar, JSON-array or CSV label parsing
+- [x] **C6** `popover-widget` + `slide-panel` — trigger-button popover and collapsible accordion
+- [x] **C7** `FacetViewRenderer` — renders nested `tab`/`popover`/`slide` slots from FacetDefinitions
+
+### Phase D — Independent items
+
+- [x] **D1** Import Panel (Lens #28, Shift+Y) — CSV/TSV/JSON file drop, column→field mapping table, 10-row preview, bulk `kernel.createObject` (pure helpers exported for tests)
+- [x] **D2** `GET /api/portals/:id/export` — bundles portal manifest + backing collection snapshot into a downloadable JSON template
+- [x] **D3** `POST /api/email/send` + `GET /api/email/status` — pluggable `EmailTransport` interface with `createMemoryEmailTransport` for tests; `{{field}}` subject/body interpolation; 503 unconfigured, 502 on delivery failure
+- [x] **D4** `StreamEdgeComponent` — animated dashed bezier (`@keyframes prism-stream-dash`) registered in `prismEdgeTypes`
+
+### Test Summary
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| Vitest (full repo) | 3359 | Pass (159 files) |
+| New colocated tests this plan | 143 | Pass |
+
+Pre-existing TS errors in `kernel/builder-manager.ts` + `panels/app-builder-panel.tsx` (staged WIP, not part of this plan) remain; full-repo typecheck is otherwise clean.
+
+## Self-Replicating Studio (Complete)
+
+Prism Studio is now a meta-builder: it can produce focused Prism apps (Flux, Lattice, Cadence, Grip), Studio itself, and Relay deployments as build targets — while remaining the universal host. See `SPEC.md` § "Studio as a Self-Replicating Meta-Builder".
+
+### Completed
+
+- [x] SPEC.md — documented App Profiles, BuildTargets, BuildPlan execution model, App Builder Lens
+- [x] Layer 1 builder primitives (`@prism/core/builder`) — `AppProfile`, `BuildTarget`, `BuildStep` (emit-file/run-command/invoke-ipc), `BuildPlan`, `BuildRun`, `serializeAppProfile`/`parseAppProfile`, `createBuildPlan`, `serializeBuildPlan`
+- [x] Six built-in profiles — `studio` (universal host, no plugin filter), `flux` (work/finance/crm), `lattice` (assets/platform), `cadence` (life/platform), `grip` (work/assets/platform), `relay` (no plugins, 6 relay modules, glass flip disabled)
+- [x] Six build targets — `web`, `tauri`, `capacitor-ios`, `capacitor-android`, `relay-node`, `relay-docker` — each with deterministic step list and artifact descriptors
+- [x] Studio `BuilderManager` — profile registry, active-profile pin (null = universal host), planBuild/planBuilds, runPlan with executor injection, run history, subscriptions
+- [x] Two executors — `createDryRunExecutor` (default; emit-file→success, run-command→skipped, no daemon required) and `createTauriExecutor({ invoke })` (dispatches via `invoke('run_build_step', ...)`, stops on first failure)
+- [x] App Builder Lens (#28, Shift+B, 🏭) — profile grid, target pills, preview plan, dry-run build, run history, raw BuildPlan JSON
+- [x] `useBuilder` kernel hook — version key tracks profiles/active/runs/last status
+- [x] `@prism/core/builder` wired into root `vitest.config.ts` alias map and `package.json` exports
+
+### Test Summary
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| Vitest (`@prism/core/builder`) | 20 | Pass |
+| Vitest (Studio `builder-manager`) | 29 | Pass |
+| Vitest (full repo) | 3218 | Pass |
+| Playwright (`app-builder.spec.ts`) | 11 | Pass |
+
 ## Unified Builder System (Complete)
 
 Puck/Lua/Canvas/Facet builder system unified and fully working.

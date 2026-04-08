@@ -54,6 +54,7 @@ export default defineConfig({
       "@prism/core/viewport3d": core("layer2/viewport3d/index.ts"),
       "@prism/core/facet": core("layer1/facet/index.ts"),
       "@prism/core/flux": core("layer1/flux/index.ts"),
+      "@prism/core/builder": core("layer1/builder/index.ts"),
       "@prism/core/machines": core("layer1/machines/index.ts"),
       "@prism/core/lua": core("layer1/lua/index.ts"),
       // Catch-all for deep imports like @prism/core/layer2/codemirror/editor-setup

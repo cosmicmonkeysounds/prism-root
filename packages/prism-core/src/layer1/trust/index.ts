@@ -26,6 +26,10 @@ export type {
   ShamirSplitter,
   EscrowDeposit,
   EscrowManager,
+  PasswordAuthRecord,
+  PasswordAuthResult,
+  PasswordAuthManager,
+  PasswordAuthManagerOptions,
 } from "./trust-types.js";
 
 export {
@@ -36,4 +40,5 @@ export {
   createPeerTrustGraph,
   createShamirSplitter,
   createEscrowManager,
+  createPasswordAuthManager,
 } from "./trust.js";

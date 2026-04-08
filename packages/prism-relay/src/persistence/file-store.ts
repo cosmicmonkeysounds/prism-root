@@ -34,8 +34,13 @@ import type {
   HostedVault,
 } from "@prism/core/relay";
 import { RELAY_CAPABILITIES } from "@prism/core/relay";
-import type { PeerTrustGraph, EscrowDeposit } from "@prism/core/trust";
-import type { EscrowManager } from "@prism/core/trust";
+import type {
+  PeerTrustGraph,
+  EscrowDeposit,
+  EscrowManager,
+  PasswordAuthManager,
+  PasswordAuthRecord,
+} from "@prism/core/trust";
 
 export interface FileStoreOptions {
   /** Directory for state files. */
@@ -52,6 +57,7 @@ interface PersistedState {
   challenges: AcmeChallenge[];
   federationPeers: FederationPeer[];
   escrowDeposits: EscrowDeposit[];
+  passwordAuthUsers: PasswordAuthRecord[];
   flaggedHashes: Array<{ hash: string; category: string; reportedBy: string; reportedAt: string }>;
   revokedTokens: string[];
   collections: Record<string, string>; // collectionId → base64 snapshot
@@ -69,6 +75,7 @@ const EMPTY_STATE: PersistedState = {
   challenges: [],
   federationPeers: [],
   escrowDeposits: [],
+  passwordAuthUsers: [],
   flaggedHashes: [],
   revokedTokens: [],
   collections: {},
@@ -180,6 +187,16 @@ export class RelayFileStore {
       }
     }
 
+    // Restore password-auth users
+    const passwordAuth = relay.getCapability<PasswordAuthManager>(
+      RELAY_CAPABILITIES.PASSWORD_AUTH,
+    );
+    if (passwordAuth) {
+      for (const record of state.passwordAuthUsers) {
+        passwordAuth.restore(record);
+      }
+    }
+
     // Restore revoked tokens
     const tokens = relay.getCapability<CapabilityTokenManager>(RELAY_CAPABILITIES.TOKENS);
     if (tokens) {
@@ -271,9 +288,14 @@ export class RelayFileStore {
 
     const escrow = relay.getCapability<EscrowManager>(RELAY_CAPABILITIES.ESCROW);
     if (escrow) {
-      // Save all unclaimed deposits
-      // EscrowManager doesn't have a listAll — we save depositor-indexed
-      state.escrowDeposits = [];
+      state.escrowDeposits = escrow.listAll();
+    }
+
+    const passwordAuth = relay.getCapability<PasswordAuthManager>(
+      RELAY_CAPABILITIES.PASSWORD_AUTH,
+    );
+    if (passwordAuth) {
+      state.passwordAuthUsers = passwordAuth.list();
     }
 
     // Save hosted vaults

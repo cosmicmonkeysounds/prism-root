@@ -10,8 +10,9 @@ export {
   prismEdgeTypes,
   HardRefEdgeComponent,
   WeakRefEdgeComponent,
+  StreamEdgeComponent,
 } from "./custom-edges.js";
-export type { HardRefEdge, WeakRefEdge } from "./custom-edges.js";
+export type { HardRefEdge, WeakRefEdge, StreamEdge } from "./custom-edges.js";
 
 export { applyElkLayout } from "./auto-layout.js";
 export type { LayoutOptions } from "./auto-layout.js";

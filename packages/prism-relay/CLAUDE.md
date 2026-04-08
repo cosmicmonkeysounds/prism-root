@@ -60,8 +60,8 @@ See `prism-relay --help` for full options.
 - `@prism/relay/config` — Config resolution, arg parsing, logger
 - `@prism/relay/cli` — CLI entry point
 
-## Modules (16 total)
-blind-mailbox, relay-router, relay-timestamp, blind-ping, capability-tokens, webhooks, sovereign-portals, collection-host, hashcash, peer-trust, escrow, federation, acme-certificates, portal-templates, webrtc-signaling, vault-host
+## Modules (17 total)
+blind-mailbox, relay-router, relay-timestamp, blind-ping, capability-tokens, webhooks, sovereign-portals, collection-host, hashcash, peer-trust, escrow, federation, acme-certificates, portal-templates, webrtc-signaling, vault-host, password-auth
 
 ## Protocol
 WebSocket at `/ws/relay`:
@@ -108,6 +108,17 @@ WebSocket at `/ws/relay`:
 ## Blind Escrow (Key Recovery)
 - `POST /api/auth/escrow/derive` — PBKDF2 key derivation (password + OAuth salt) → store encrypted vault key
 - `POST /api/auth/escrow/recover` — verify password + salt → return encrypted vault key
+
+## Password Auth (Traditional Web 2.0 login)
+- **Module**: `password-auth` — opt-in via `.use(passwordAuthModule({ iterations? }))`
+- PBKDF2-SHA256 (default 600k iterations) with per-user random salt; relay never stores plaintext passwords.
+- `POST /api/auth/password/register` — `{username,password,did?,metadata?}` → 201 redacted record (409 on duplicate)
+- `POST /api/auth/password/login` — `{username,password}` → `{ok,did,token,expiresAt}` (token issued only when `capability-tokens` module is also installed)
+- `POST /api/auth/password/change` — `{username,oldPassword,newPassword}` → 200
+- `GET /api/auth/password/:username` — fetch redacted record (no salt/hash)
+- `DELETE /api/auth/password/:username` — body `{password}`, requires the current password
+- All endpoints return 404 when the `password-auth` module is not installed → relays can be built with escrow only, password only, both, or neither.
+- Records are persisted via the relay file store alongside escrow deposits.
 
 ## AutoREST API Gateway
 - `GET /api/rest/:collectionId` — list objects (supports `type`, `status`, `tag`, `limit`, `offset` query params)

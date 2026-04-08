@@ -910,6 +910,7 @@ export {
   createPeerTrustGraph,
   createShamirSplitter,
   createEscrowManager,
+  createPasswordAuthManager,
 } from "./trust/index.js";
 
 // ── NLE / Timeline ────────────────────────────────────────────────────────
@@ -974,6 +975,10 @@ export type {
   ShamirSplitter,
   EscrowDeposit,
   EscrowManager,
+  PasswordAuthRecord,
+  PasswordAuthResult,
+  PasswordAuthManager,
+  PasswordAuthManagerOptions,
 } from "./trust/index.js";
 
 // ── Facet System ──────────────────────────────────────────────────────────
@@ -1159,3 +1164,6 @@ export type {
 
 // ── Plugin Bundles ───────────────────────────────────────────────────────
 export * from "./plugins/index.js";
+
+// ── Self-Replicating Builder ─────────────────────────────────────────────
+export * from "./builder/index.js";

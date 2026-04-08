@@ -5,8 +5,8 @@
  * FacetDefinition as form/list/table/report/card views.
  */
 
-import { useMemo } from "react";
-import type { FacetDefinition, FacetLayout } from "@prism/core/facet";
+import { useMemo, useState } from "react";
+import type { FacetDefinition, FacetLayout, FacetSlot } from "@prism/core/facet";
 import type { GraphObject } from "@prism/core/object-model";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -99,15 +99,170 @@ const styles = {
 
 // ── Field extraction ────────────────────────────────────────────────────────
 
+/**
+ * Walk every slot in the facet (including nested tab/popover/slide containers)
+ * and yield the child field slots in the order they appear.
+ */
+function flattenFieldSlots(slots: FacetSlot[]): Array<Extract<FacetSlot, { kind: "field" }>> {
+  const out: Array<Extract<FacetSlot, { kind: "field" }>> = [];
+  for (const s of [...slots].sort((a, b) => a.slot.order - b.slot.order)) {
+    if (s.kind === "field") {
+      out.push(s);
+    } else if (s.kind === "tab") {
+      for (const tab of s.slot.tabs) out.push(...flattenFieldSlots(tab.slots));
+    } else if (s.kind === "popover") {
+      out.push(...flattenFieldSlots(s.slot.contentSlots));
+    } else if (s.kind === "slide") {
+      out.push(...flattenFieldSlots(s.slot.contentSlots));
+    }
+  }
+  return out;
+}
+
 function getFieldPaths(def: FacetDefinition): string[] {
-  return def.slots
-    .filter((s) => s.kind === "field")
-    .sort((a, b) => a.slot.order - b.slot.order)
-    .map((s) => {
-      if (s.kind === "field") return s.slot.fieldPath;
-      return "";
-    })
+  return flattenFieldSlots(def.slots)
+    .map((s) => s.slot.fieldPath)
     .filter(Boolean);
+}
+
+// ── Container slot renderers (tab / popover / slide) ────────────────────────
+
+function TabSlotRenderer({
+  slot,
+  obj,
+}: {
+  slot: Extract<FacetSlot, { kind: "tab" }>;
+  obj: GraphObject | undefined;
+}) {
+  const [active, setActive] = useState(0);
+  const tabs = slot.slot.tabs;
+  const current = tabs[active];
+
+  return (
+    <div style={{ border: "1px solid #333", borderRadius: 4, marginBottom: 8 }}>
+      <div style={{ display: "flex", borderBottom: "1px solid #333" }}>
+        {tabs.map((t, i) => (
+          <button
+            key={t.id}
+            onClick={() => setActive(i)}
+            style={{
+              padding: "6px 12px",
+              background: i === active ? "#2a2a2a" : "transparent",
+              color: i === active ? "#e5e5e5" : "#888",
+              border: "none",
+              borderRight: "1px solid #333",
+              cursor: "pointer",
+              fontSize: 11,
+            }}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      <div style={{ padding: 8 }}>
+        {current && obj ? (
+          flattenFieldSlots(current.slots).map((fs) => (
+            <div key={fs.slot.fieldPath} style={styles.formField}>
+              <span style={styles.formLabel}>{fs.slot.label ?? fs.slot.fieldPath}</span>
+              <span style={styles.formValue}>{getFieldValue(obj, fs.slot.fieldPath) || "\u2014"}</span>
+            </div>
+          ))
+        ) : (
+          <div style={styles.empty}>No content</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PopoverSlotRenderer({
+  slot,
+  obj,
+}: {
+  slot: Extract<FacetSlot, { kind: "popover" }>;
+  obj: GraphObject | undefined;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ position: "relative", display: "inline-block", marginBottom: 8 }}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          padding: "6px 12px",
+          background: "#2a2a2a",
+          color: "#e5e5e5",
+          border: "1px solid #444",
+          borderRadius: 4,
+          cursor: "pointer",
+          fontSize: 11,
+        }}
+      >
+        {slot.slot.triggerLabel}
+      </button>
+      {open && (
+        <div
+          style={{
+            position: "absolute",
+            top: "100%",
+            left: 0,
+            marginTop: 4,
+            background: "#1e1e1e",
+            border: "1px solid #444",
+            borderRadius: 4,
+            padding: 8,
+            minWidth: 200,
+            zIndex: 10,
+          }}
+        >
+          {obj && flattenFieldSlots(slot.slot.contentSlots).map((fs) => (
+            <div key={fs.slot.fieldPath} style={styles.formField}>
+              <span style={styles.formLabel}>{fs.slot.label ?? fs.slot.fieldPath}</span>
+              <span style={styles.formValue}>{getFieldValue(obj, fs.slot.fieldPath) || "\u2014"}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SlideSlotRenderer({
+  slot,
+  obj,
+}: {
+  slot: Extract<FacetSlot, { kind: "slide" }>;
+  obj: GraphObject | undefined;
+}) {
+  const [open, setOpen] = useState(!slot.slot.collapsed);
+  return (
+    <div style={{ border: "1px solid #333", borderRadius: 4, marginBottom: 8 }}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          width: "100%",
+          textAlign: "left",
+          padding: "6px 10px",
+          background: "#2a2a2a",
+          color: "#e5e5e5",
+          border: "none",
+          cursor: "pointer",
+          fontSize: 11,
+        }}
+      >
+        {open ? "\u25BC" : "\u25B6"} {slot.slot.label}
+      </button>
+      {open && (
+        <div style={{ padding: 8 }}>
+          {obj && flattenFieldSlots(slot.slot.contentSlots).map((fs) => (
+            <div key={fs.slot.fieldPath} style={styles.formField}>
+              <span style={styles.formLabel}>{fs.slot.label ?? fs.slot.fieldPath}</span>
+              <span style={styles.formValue}>{getFieldValue(obj, fs.slot.fieldPath) || "\u2014"}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function getFieldValue(obj: GraphObject, path: string): string {
@@ -124,17 +279,28 @@ function getFieldValue(obj: GraphObject, path: string): string {
 
 // ── View renderers ──────────────────────────────────────────────────────────
 
-function FormView({ objects, fields }: { objects: GraphObject[]; fields: string[] }) {
+function FormView({ objects, definition }: { objects: GraphObject[]; definition: FacetDefinition }) {
   const obj = objects[0];
   if (!obj) return <div style={styles.empty}>No record selected</div>;
+  // Render top-level slots in order. Container slots (tab/popover/slide)
+  // render as interactive containers; field slots render inline.
+  const ordered = [...definition.slots].sort((a, b) => a.slot.order - b.slot.order);
   return (
     <div>
-      {fields.map((f) => (
-        <div key={f} style={styles.formField}>
-          <span style={styles.formLabel}>{f}</span>
-          <span style={styles.formValue}>{getFieldValue(obj, f) || "\u2014"}</span>
-        </div>
-      ))}
+      {ordered.map((s, i) => {
+        if (s.kind === "field") {
+          return (
+            <div key={`f-${i}`} style={styles.formField}>
+              <span style={styles.formLabel}>{s.slot.label ?? s.slot.fieldPath}</span>
+              <span style={styles.formValue}>{getFieldValue(obj, s.slot.fieldPath) || "\u2014"}</span>
+            </div>
+          );
+        }
+        if (s.kind === "tab") return <TabSlotRenderer key={`t-${i}`} slot={s} obj={obj} />;
+        if (s.kind === "popover") return <PopoverSlotRenderer key={`p-${i}`} slot={s} obj={obj} />;
+        if (s.kind === "slide") return <SlideSlotRenderer key={`s-${i}`} slot={s} obj={obj} />;
+        return null;
+      })}
     </div>
   );
 }
@@ -266,7 +432,7 @@ export function FacetViewRenderer({
       <div style={styles.header}>
         {"\uD83D\uDCCB"} {definition.name} ({mode})
       </div>
-      {mode === "form" && <FormView objects={objects} fields={fields} />}
+      {mode === "form" && <FormView objects={objects} definition={definition} />}
       {mode === "list" && <ListView objects={objects} fields={fields} maxRows={maxRows} />}
       {mode === "table" && <TableView objects={objects} fields={fields} maxRows={maxRows} />}
       {mode === "report" && <ReportView objects={objects} fields={fields} definition={definition} maxRows={maxRows} />}

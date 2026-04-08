@@ -386,6 +386,7 @@ export const RELAY_CAPABILITIES = {
   TEMPLATES: "relay:templates",
   SIGNALING: "relay:signaling",
   VAULT_HOST: "relay:vault-host",
+  PASSWORD_AUTH: "relay:password-auth",
 } as const;
 
 // ── Collection Hosting ─────────────────────────────────────────────────────

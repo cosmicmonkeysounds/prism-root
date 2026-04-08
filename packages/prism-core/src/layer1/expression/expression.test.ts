@@ -382,3 +382,98 @@ describe("evaluateExpression (convenience)", () => {
     expect(result).toBe(5);
   });
 });
+
+describe("evaluator — extended string builtins", () => {
+  it("len", () => {
+    expect(evaluate(parseOk("len('hello')"), EMPTY_STORE)).toBe(5);
+  });
+
+  it("lower", () => {
+    expect(evaluate(parseOk("lower('HeLLo')"), EMPTY_STORE)).toBe("hello");
+  });
+
+  it("upper", () => {
+    expect(evaluate(parseOk("upper('hey')"), EMPTY_STORE)).toBe("HEY");
+  });
+
+  it("trim", () => {
+    const { result } = evaluateExpression("trim(s)", { s: "  hi  " });
+    expect(result).toBe("hi");
+  });
+
+  it("concat", () => {
+    expect(evaluate(parseOk("concat('a', 'b', 'c')"), EMPTY_STORE)).toBe("abc");
+  });
+
+  it("left", () => {
+    expect(evaluate(parseOk("left('prism', 3)"), EMPTY_STORE)).toBe("pri");
+  });
+
+  it("right", () => {
+    expect(evaluate(parseOk("right('prism', 3)"), EMPTY_STORE)).toBe("ism");
+  });
+
+  it("mid", () => {
+    expect(evaluate(parseOk("mid('prism', 1, 3)"), EMPTY_STORE)).toBe("ris");
+  });
+
+  it("substitute", () => {
+    expect(evaluate(parseOk("substitute('foo bar foo', 'foo', 'baz')"), EMPTY_STORE)).toBe("baz bar baz");
+  });
+});
+
+describe("evaluator — extended date builtins", () => {
+  it("year", () => {
+    expect(evaluate(parseOk("year('2025-06-15')"), EMPTY_STORE)).toBe(2025);
+  });
+
+  it("month", () => {
+    expect(evaluate(parseOk("month('2025-06-15')"), EMPTY_STORE)).toBe(6);
+  });
+
+  it("day", () => {
+    expect(evaluate(parseOk("day('2025-06-15')"), EMPTY_STORE)).toBe(15);
+  });
+
+  it("datediff days", () => {
+    expect(evaluate(parseOk("datediff('2025-01-01', '2025-01-11', 'days')"), EMPTY_STORE)).toBe(10);
+  });
+
+  it("datediff months", () => {
+    expect(evaluate(parseOk("datediff('2025-01-01', '2025-04-01', 'months')"), EMPTY_STORE)).toBe(3);
+  });
+
+  it("datediff years", () => {
+    expect(evaluate(parseOk("datediff('2020-01-01', '2025-01-01', 'years')"), EMPTY_STORE)).toBe(5);
+  });
+
+  it("today returns YYYY-MM-DD", () => {
+    const result = evaluate(parseOk("today()"), EMPTY_STORE);
+    expect(typeof result).toBe("string");
+    expect(result as string).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it("now returns ISO timestamp", () => {
+    const result = evaluate(parseOk("now()"), EMPTY_STORE);
+    expect(typeof result).toBe("string");
+    expect(result as string).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+});
+
+describe("evaluator — aggregate builtins", () => {
+  it("sum", () => {
+    expect(evaluate(parseOk("sum(1, 2, 3, 4)"), EMPTY_STORE)).toBe(10);
+  });
+
+  it("avg", () => {
+    expect(evaluate(parseOk("avg(2, 4, 6)"), EMPTY_STORE)).toBe(4);
+  });
+
+  it("count", () => {
+    expect(evaluate(parseOk("count(1, 2, 3, 4, 5)"), EMPTY_STORE)).toBe(5);
+  });
+
+  it("avg of empty returns 0", () => {
+    expect(evaluate(parseOk("avg()"), EMPTY_STORE)).toBe(0);
+  });
+});

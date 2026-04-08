@@ -41,6 +41,8 @@ import { CrmPanel } from "../panels/crm-panel.js";
 import { LifePanel } from "../panels/life-panel.js";
 import { AssetsMgmtPanel } from "../panels/assets-mgmt-panel.js";
 import { PlatformPanel } from "../panels/platform-panel.js";
+import { AppBuilderPanel } from "../panels/app-builder-panel.js";
+import { ImportPanel } from "../panels/import-panel.js";
 
 export const EDITOR_LENS_ID = lensId("editor");
 export const GRAPH_LENS_ID = lensId("graph");
@@ -75,6 +77,8 @@ export const CRM_LENS_ID = lensId("crm");
 export const LIFE_LENS_ID = lensId("life");
 export const ASSETS_MGMT_LENS_ID = lensId("assets-mgmt");
 export const PLATFORM_LENS_ID = lensId("platform");
+export const APP_BUILDER_LENS_ID = lensId("app-builder");
+export const IMPORT_LENS_ID = lensId("import");
 
 const editorManifest: LensManifest = {
   id: EDITOR_LENS_ID,
@@ -439,6 +443,28 @@ const platformManifest: LensManifest = {
   },
 };
 
+const appBuilderManifest: LensManifest = {
+  id: APP_BUILDER_LENS_ID,
+  name: "App Builder",
+  icon: "\u{1F3ED}",
+  category: "custom",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-app-builder", name: "Switch to App Builder", shortcut: ["shift+b"], section: "Navigation" }],
+  },
+};
+
+const importManifest: LensManifest = {
+  id: IMPORT_LENS_ID,
+  name: "Import",
+  icon: "\u{1F4E5}",
+  category: "custom",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-import", name: "Switch to Import", shortcut: ["shift+y"], section: "Navigation" }],
+  },
+};
+
 export const ALL_MANIFESTS: LensManifest[] = [
   editorManifest,
   graphManifest,
@@ -473,6 +499,8 @@ export const ALL_MANIFESTS: LensManifest[] = [
   lifeManifest,
   assetsMgmtManifest,
   platformManifest,
+  appBuilderManifest,
+  importManifest,
 ];
 
 export function registerBuiltinLenses(registry: LensRegistry): () => void {
@@ -515,5 +543,7 @@ export function createLensComponentMap(): Map<LensId, ComponentType> {
   map.set(LIFE_LENS_ID, LifePanel);
   map.set(ASSETS_MGMT_LENS_ID, AssetsMgmtPanel);
   map.set(PLATFORM_LENS_ID, PlatformPanel);
+  map.set(APP_BUILDER_LENS_ID, AppBuilderPanel);
+  map.set(IMPORT_LENS_ID, ImportPanel);
   return map;
 }
