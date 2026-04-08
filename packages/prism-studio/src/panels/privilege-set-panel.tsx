@@ -140,7 +140,7 @@ export function PrivilegeSetPanel() {
   );
 
   return (
-    <div style={s.root}>
+    <div style={s.root} data-testid="privilege-set-panel">
       {/* Sidebar */}
       <div style={s.sidebar}>
         <div style={{ fontWeight: 700, marginBottom: 8, color: "#aaa" }}>Privilege Sets</div>

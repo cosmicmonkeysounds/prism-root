@@ -5,8 +5,9 @@ Runtime server for Prism Relay — wraps Layer 1 relay primitives in HTTP + WebS
 ## Build & Test
 - `pnpm dev` — start with tsx watch (dev mode)
 - `pnpm typecheck`
-- `npx vitest run` — unit tests (30+ test files)
-- `pnpm test:e2e` — Playwright E2E tests (169 tests across 3 spec files, no browser needed)
+- `npx vitest run` — unit tests (35+ test files)
+- `pnpm test:e2e` — Playwright E2E tests (4 spec files, no browser needed)
+- `pnpm test:docker` — Docker E2E tests (builds image, runs containers, tests API/WS/federation)
 
 ## CLI
 Installable as `prism-relay` via the `bin` field. 30+ subcommands:
@@ -59,8 +60,8 @@ See `prism-relay --help` for full options.
 - `@prism/relay/config` — Config resolution, arg parsing, logger
 - `@prism/relay/cli` — CLI entry point
 
-## Modules (15 total)
-blind-mailbox, relay-router, relay-timestamp, blind-ping, capability-tokens, webhooks, sovereign-portals, collection-host, hashcash, peer-trust, escrow, federation, acme-certificates, portal-templates, webrtc-signaling
+## Modules (16 total)
+blind-mailbox, relay-router, relay-timestamp, blind-ping, capability-tokens, webhooks, sovereign-portals, collection-host, hashcash, peer-trust, escrow, federation, acme-certificates, portal-templates, webrtc-signaling, vault-host
 
 ## Protocol
 WebSocket at `/ws/relay`:
@@ -131,10 +132,30 @@ WebSocket at `/ws/relay`:
 - `POST /api/pings/wake` — send pings to all devices for a DID
 - `createPushPingTransport(config)` — concrete APNs/FCM transport factory
 
+## Vault Host (Persistent Vault Storage)
+- **Module**: `vault-host` — opt-in via `.use(vaultHostModule())`
+- Relays can act as persistent storage nodes for complete vaults (manifest + collection snapshots)
+- Stores opaque binary blobs — encryption is client-side (relay is storage-agnostic)
+- `POST /api/vaults` — publish vault (manifest + base64 collection snapshots)
+- `GET /api/vaults` — list vaults (`?public=true`, `?search=term`)
+- `GET /api/vaults/:id` — vault metadata + manifest
+- `GET /api/vaults/:id/collections` — list collection IDs with sizes
+- `GET /api/vaults/:id/collections/:cid` — single collection snapshot (base64)
+- `GET /api/vaults/:id/download` — full vault (manifest + all snapshots)
+- `PUT /api/vaults/:id/collections` — update snapshots (owner-authenticated via ownerDid)
+- `DELETE /api/vaults/:id` — remove vault (owner-authenticated)
+
+## Directory Feed (Relay Discovery)
+- `GET /api/directory` — public JSON feed of relay profile + public portals + public vaults
+- Cacheable (5 min TTL via Cache-Control header), no auth required
+- Config: `directory.name`, `directory.description`, `directory.listed` (default: true)
+- Returns: relay DID, modules, federation info, uptime, public portals list, public vaults list
+- Designed for aggregation by Nexus or other directory crawlers
+
 ## Persistence
-- **File store**: `{dataDir}/relay-state.json` saves all module state
+- **File store**: `{dataDir}/relay-state.json` saves all module state (including hosted vaults)
 - **Auto-save**: configurable interval (default 5s), immediate save on shutdown
-- **Restores on startup**: portals, webhooks, templates, certs, peers, flagged hashes, revoked tokens, collection CRDT snapshots
+- **Restores on startup**: portals, webhooks, templates, certs, peers, flagged hashes, revoked tokens, collection CRDT snapshots, hosted vaults
 
 ## ACME / SSL
 - `GET /.well-known/acme-challenge/:token` — ACME HTTP-01 challenge response
@@ -177,6 +198,7 @@ WebSocket at `/ws/relay`:
 - `.dockerignore` — excludes node_modules, dist, tests, legacy packages
 - `docker-compose.yml` — single-relay deployment
 - `docker-compose.federation.yml` — two-relay federated mesh
+- `docker-compose.test.yml` — test-specific (ephemeral ports, profiles: single/persist/dev/federation)
 - `.env.example` — environment variable template
 
 ## Docs

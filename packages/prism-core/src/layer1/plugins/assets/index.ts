@@ -13,4 +13,4 @@ export {
   SCAN_STATUSES,
   MEDIA_KINDS,
 } from "./assets-types.js";
-export { createAssetsRegistry } from "./assets.js";
+export { createAssetsRegistry, createAssetsBundle } from "./assets.js";

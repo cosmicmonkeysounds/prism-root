@@ -17,4 +17,4 @@ export {
   CYCLE_PHASES,
   FLOW_LEVELS,
 } from "./life-types.js";
-export { createLifeRegistry } from "./life.js";
+export { createLifeRegistry, createLifeBundle } from "./life.js";

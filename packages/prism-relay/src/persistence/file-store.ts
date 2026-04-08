@@ -30,6 +30,8 @@ import type {
   PortalTemplate,
   FederationRegistry,
   FederationPeer,
+  VaultHost,
+  HostedVault,
 } from "@prism/core/relay";
 import { RELAY_CAPABILITIES } from "@prism/core/relay";
 import type { PeerTrustGraph, EscrowDeposit } from "@prism/core/trust";
@@ -53,6 +55,10 @@ interface PersistedState {
   flaggedHashes: Array<{ hash: string; category: string; reportedBy: string; reportedAt: string }>;
   revokedTokens: string[];
   collections: Record<string, string>; // collectionId → base64 snapshot
+  hostedVaults: Array<{
+    vault: HostedVault;
+    collections: Record<string, string>; // collectionId → base64 snapshot
+  }>;
 }
 
 const EMPTY_STATE: PersistedState = {
@@ -66,6 +72,7 @@ const EMPTY_STATE: PersistedState = {
   flaggedHashes: [],
   revokedTokens: [],
   collections: {},
+  hostedVaults: [],
 };
 
 export class RelayFileStore {
@@ -181,6 +188,23 @@ export class RelayFileStore {
       }
     }
 
+    // Restore hosted vaults
+    const vaultHost = relay.getCapability<VaultHost>(RELAY_CAPABILITIES.VAULT_HOST);
+    if (vaultHost) {
+      for (const entry of state.hostedVaults) {
+        const collections: Record<string, Uint8Array> = {};
+        for (const [id, b64] of Object.entries(entry.collections)) {
+          collections[id] = Buffer.from(b64, "base64");
+        }
+        vaultHost.publish({
+          manifest: entry.vault.manifest,
+          ownerDid: entry.vault.ownerDid,
+          isPublic: entry.vault.isPublic,
+          collections,
+        });
+      }
+    }
+
     // Restore collection snapshots
     const collections = relay.getCapability<CollectionHost>(RELAY_CAPABILITIES.COLLECTIONS);
     if (collections) {
@@ -250,6 +274,19 @@ export class RelayFileStore {
       // Save all unclaimed deposits
       // EscrowManager doesn't have a listAll — we save depositor-indexed
       state.escrowDeposits = [];
+    }
+
+    // Save hosted vaults
+    const vaultHost = relay.getCapability<VaultHost>(RELAY_CAPABILITIES.VAULT_HOST);
+    if (vaultHost) {
+      state.hostedVaults = vaultHost.list().map((vault) => {
+        const snapshots = vaultHost.getAllSnapshots(vault.id) ?? {};
+        const collections: Record<string, string> = {};
+        for (const [id, data] of Object.entries(snapshots)) {
+          collections[id] = Buffer.from(data).toString("base64");
+        }
+        return { vault, collections };
+      });
     }
 
     // Save collection snapshots

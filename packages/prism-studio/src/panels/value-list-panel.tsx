@@ -128,7 +128,7 @@ export function ValueListPanel() {
   }, [selected, registry]);
 
   return (
-    <div style={s.root}>
+    <div style={s.root} data-testid="value-list-panel">
       {/* List sidebar */}
       <div style={s.list}>
         <div style={{ fontWeight: 700, marginBottom: 8, color: "#aaa" }}>Value Lists</div>

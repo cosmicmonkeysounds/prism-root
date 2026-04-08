@@ -12,4 +12,4 @@ export {
   GRANT_STATUSES,
   BUDGET_STATUSES,
 } from "./finance-types.js";
-export { createFinanceRegistry } from "./finance.js";
+export { createFinanceRegistry, createFinanceBundle } from "./finance.js";

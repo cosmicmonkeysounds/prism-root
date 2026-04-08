@@ -3,4 +3,4 @@ export {
   CRM_DEAL_STAGES,
   CRM_ACTIVITY_TYPES,
 } from "./crm-types.js";
-export { createCrmRegistry } from "./crm.js";
+export { createCrmRegistry, createCrmBundle } from "./crm.js";

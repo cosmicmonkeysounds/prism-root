@@ -304,3 +304,20 @@ export function createLifeRegistry(): LifeRegistry {
     getPlugin: () => plugin,
   };
 }
+
+// ── Self-Registering Bundle ──────────────────────────────────────────────
+
+import type { PluginBundle, PluginInstallContext } from "../plugin-install.js";
+
+export function createLifeBundle(): PluginBundle {
+  return {
+    id: "prism.plugin.life",
+    name: "Life",
+    install(ctx: PluginInstallContext) {
+      const reg = createLifeRegistry();
+      ctx.objectRegistry.registerAll(reg.getEntityDefs());
+      ctx.objectRegistry.registerEdges(reg.getEdgeDefs());
+      return ctx.pluginRegistry.register(reg.getPlugin());
+    },
+  };
+}

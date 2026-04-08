@@ -215,7 +215,7 @@ export function VisualScriptPanel() {
   }, [lua, kernel]);
 
   return (
-    <div style={s.root}>
+    <div style={s.root} data-testid="visual-script-panel">
       {/* Step Palette */}
       <div style={s.sidebar}>
         <div style={{ fontWeight: 700, marginBottom: 8, color: "#aaa" }}>Step Palette</div>

@@ -42,6 +42,7 @@ import {
   acmeCertificateModule,
   portalTemplateModule,
   webrtcSignalingModule,
+  vaultHostModule,
 } from "@prism/core/relay";
 import type { RelayModule, FederationRegistry, WebhookHttpClient, BlindMailbox, AcmeCertificateManager, SignalingHub } from "@prism/core/relay";
 import { RELAY_CAPABILITIES } from "@prism/core/relay";
@@ -181,6 +182,7 @@ function createModules(
     "acme-certificates": () => acmeCertificateModule(),
     "portal-templates": () => portalTemplateModule(),
     "webrtc-signaling": () => webrtcSignalingModule(),
+    "vault-host": () => vaultHostModule(),
   };
 
   const modules: RelayModule[] = [];
@@ -364,6 +366,7 @@ function cmdModulesList(): void {
     "acme-certificates": "Let's Encrypt ACME HTTP-01 certificate management",
     "portal-templates": "Reusable portal HTML template blueprints",
     "webrtc-signaling": "P2P/SFU WebRTC connection negotiation",
+    "vault-host": "Persistent vault storage for visitor access",
   };
 
   process.stdout.write("Available Relay Modules:\n\n");

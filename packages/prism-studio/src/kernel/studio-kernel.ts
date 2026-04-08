@@ -45,6 +45,7 @@ import { createLiveView } from "@prism/core/view";
 import type { LiveView, LiveViewOptions } from "@prism/core/view";
 import type { ObjectTemplate, TemplateNode, InstantiateResult } from "@prism/core/template";
 import { createPageBuilderRegistry } from "./entities.js";
+import { createBuiltinBundles, installPluginBundles } from "@prism/core/layer1";
 import { createRelayManager } from "./relay-manager.js";
 import type { RelayManager } from "./relay-manager.js";
 import { ConfigRegistry, ConfigModel } from "@prism/core/config";
@@ -116,6 +117,8 @@ import {
   YamlWriter,
   TomlWriter,
   facetDefinitionBuilder,
+  createFacetStore,
+  createValueListRegistry,
 } from "@prism/core/facet";
 import type {
   SourceFormat,
@@ -126,7 +129,17 @@ import type {
   SequencerConditionState,
   SequencerScriptState,
   SpellChecker,
+  FacetStore,
+  ValueListRegistry,
 } from "@prism/core/facet";
+import {
+  createSavedViewRegistry,
+} from "@prism/core/view";
+import type { SavedViewRegistry } from "@prism/core/view";
+import {
+  createPrivilegeEnforcer,
+} from "@prism/core/manifest";
+import type { PrivilegeSet, PrivilegeEnforcer, RoleAssignment } from "@prism/core/manifest";
 import type { FieldSchema } from "@prism/core/forms";
 import type {
   PeerTrustGraph,
@@ -451,6 +464,53 @@ export interface StudioKernel {
   /** Subscribe to facet definition changes. */
   onFacetChange(listener: () => void): () => void;
 
+  // ── FacetStore (persistent facets/scripts/value-lists) ──────────────────
+
+  /** The persistent FacetStore instance. */
+  readonly facetStore: FacetStore;
+
+  // ── Saved Views ─────────────────────────────────────────────────────────
+
+  /** The SavedViewRegistry instance. */
+  readonly savedViews: SavedViewRegistry;
+
+  /** Subscribe to saved view changes. */
+  onSavedViewChange(listener: () => void): () => void;
+
+  // ── Value Lists ─────────────────────────────────────────────────────────
+
+  /** The ValueListRegistry instance. */
+  readonly valueLists: ValueListRegistry;
+
+  /** Subscribe to value list changes. */
+  onValueListChange(listener: () => void): () => void;
+
+  // ── Privilege Sets ──────────────────────────────────────────────────────
+
+  /** List all privilege sets. */
+  listPrivilegeSets(): PrivilegeSet[];
+
+  /** Add or update a privilege set. */
+  savePrivilegeSet(ps: PrivilegeSet): void;
+
+  /** Remove a privilege set by ID. */
+  removePrivilegeSet(id: string): boolean;
+
+  /** Get enforcer for a given privilege set. */
+  getEnforcer(privilegeSetId: string): PrivilegeEnforcer | undefined;
+
+  /** List all role assignments. */
+  listRoleAssignments(): RoleAssignment[];
+
+  /** Assign a DID to a privilege set. */
+  assignRole(did: string, privilegeSetId: string): void;
+
+  /** Remove a role assignment. */
+  removeRoleAssignment(did: string): void;
+
+  /** Subscribe to privilege set changes. */
+  onPrivilegeSetChange(listener: () => void): () => void;
+
   /** Get the active view mode. */
   readonly viewMode: ViewMode;
   /** Set the active view mode. */
@@ -459,7 +519,7 @@ export interface StudioKernel {
   onViewModeChange(listener: () => void): () => void;
 
   /** Create a new object in the collection, emit bus event, push undo. */
-  createObject(obj: Omit<GraphObject, "id" | "createdAt" | "updatedAt">): GraphObject;
+  createObject(obj: Pick<GraphObject, "type" | "name" | "parentId" | "position" | "data"> & Partial<Omit<GraphObject, "id" | "createdAt" | "updatedAt">>): GraphObject;
 
   /** Update an existing object, emit bus event, push undo. */
   updateObject(id: ObjectId, patch: Partial<GraphObject>): GraphObject | undefined;
@@ -583,6 +643,12 @@ export function createStudioKernel(): StudioKernel {
     for (const fn of pluginListeners) fn();
   });
 
+  // Install built-in plugin bundles (self-register entities, edges, plugins)
+  const uninstallBundles = installPluginBundles(
+    createBuiltinBundles(),
+    { objectRegistry: registry, pluginRegistry },
+  );
+
   // ── Input System ───────────────────────────────────────────────────────────
   const inputRouter = new InputRouter();
   const globalScope = new InputScope("global", "Global");
@@ -644,6 +710,33 @@ export function createStudioKernel(): StudioKernel {
 
   function notifyFacetListeners() {
     for (const fn of facetListeners) fn();
+  }
+
+  // ── FacetStore (persistent facets/scripts/value-lists) ──────────────────
+  const facetStore = createFacetStore();
+
+  // ── Saved Views ────────────────────────────────────────────────────────
+  const savedViewRegistry = createSavedViewRegistry();
+  const savedViewListeners = new Set<() => void>();
+  function notifySavedViewListeners() {
+    for (const fn of savedViewListeners) fn();
+  }
+  savedViewRegistry.subscribe(() => notifySavedViewListeners());
+
+  // ── Value Lists ────────────────────────────────────────────────────────
+  const valueListRegistry = createValueListRegistry();
+  const valueListListeners = new Set<() => void>();
+  function notifyValueListListeners() {
+    for (const fn of valueListListeners) fn();
+  }
+  valueListRegistry.subscribe(() => notifyValueListListeners());
+
+  // ── Privilege Sets ─────────────────────────────────────────────────────
+  const privilegeSets = new Map<string, PrivilegeSet>();
+  const roleAssignments = new Map<string, RoleAssignment>();
+  const privilegeSetListeners = new Set<() => void>();
+  function notifyPrivilegeSetListeners() {
+    for (const fn of privilegeSetListeners) fn();
   }
 
   // Build spell checker with mock backend + static dictionary provider
@@ -910,10 +1003,18 @@ export function createStudioKernel(): StudioKernel {
   // ── CRUD with undo + bus + activity tracking ───────────────────────────
 
   function createObject(
-    partial: Omit<GraphObject, "id" | "createdAt" | "updatedAt">,
+    partial: Pick<GraphObject, "type" | "name" | "parentId" | "position" | "data"> & Partial<Omit<GraphObject, "id" | "createdAt" | "updatedAt">>,
   ): GraphObject {
     const now = new Date().toISOString();
     const obj: GraphObject = {
+      status: null,
+      tags: [],
+      date: null,
+      endDate: null,
+      description: "",
+      color: null,
+      image: null,
+      pinned: false,
       ...partial,
       id: objectId(genId()),
       createdAt: now,
@@ -1491,6 +1592,7 @@ export function createStudioKernel(): StudioKernel {
   }
 
   function dispose(): void {
+    uninstallBundles();
     automationEngine.stop();
     disconnectAutomationCreated();
     disconnectAutomationUpdated();
@@ -1513,6 +1615,11 @@ export function createStudioKernel(): StudioKernel {
     trustListeners.clear();
     sandboxes.clear();
     facetListeners.clear();
+    savedViewListeners.clear();
+    valueListListeners.clear();
+    privilegeSetListeners.clear();
+    privilegeSets.clear();
+    roleAssignments.clear();
   }
 
   return {
@@ -1731,6 +1838,53 @@ export function createStudioKernel(): StudioKernel {
     onFacetChange(listener: () => void) {
       facetListeners.add(listener);
       return () => facetListeners.delete(listener);
+    },
+
+    // ── FacetStore ──────────────────────────────────────────────────────────
+    facetStore,
+
+    // ── Saved Views ─────────────────────────────────────────────────────────
+    savedViews: savedViewRegistry,
+    onSavedViewChange(listener: () => void) {
+      savedViewListeners.add(listener);
+      return () => savedViewListeners.delete(listener);
+    },
+
+    // ── Value Lists ─────────────────────────────────────────────────────────
+    valueLists: valueListRegistry,
+    onValueListChange(listener: () => void) {
+      valueListListeners.add(listener);
+      return () => valueListListeners.delete(listener);
+    },
+
+    // ── Privilege Sets ──────────────────────────────────────────────────────
+    listPrivilegeSets() { return [...privilegeSets.values()]; },
+    savePrivilegeSet(ps: PrivilegeSet) {
+      privilegeSets.set(ps.id, ps);
+      notifyPrivilegeSetListeners();
+    },
+    removePrivilegeSet(id: string) {
+      const result = privilegeSets.delete(id);
+      if (result) notifyPrivilegeSetListeners();
+      return result;
+    },
+    getEnforcer(privilegeSetId: string) {
+      const ps = privilegeSets.get(privilegeSetId);
+      if (!ps) return undefined;
+      return createPrivilegeEnforcer(ps);
+    },
+    listRoleAssignments() { return [...roleAssignments.values()]; },
+    assignRole(did: string, privilegeSetId: string) {
+      roleAssignments.set(did, { did, privilegeSetId });
+      notifyPrivilegeSetListeners();
+    },
+    removeRoleAssignment(did: string) {
+      roleAssignments.delete(did);
+      notifyPrivilegeSetListeners();
+    },
+    onPrivilegeSetChange(listener: () => void) {
+      privilegeSetListeners.add(listener);
+      return () => privilegeSetListeners.delete(listener);
     },
 
     dispose,

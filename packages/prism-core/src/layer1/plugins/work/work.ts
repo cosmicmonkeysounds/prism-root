@@ -225,3 +225,21 @@ export function createWorkRegistry(): WorkRegistry {
     getPlugin: () => plugin,
   };
 }
+
+// ── Self-Registering Bundle ─��────────────────────────────────────────────
+
+import type { PluginBundle, PluginInstallContext } from "../plugin-install.js";
+
+export function createWorkBundle(): PluginBundle {
+  return {
+    id: "prism.plugin.work",
+    name: "Work",
+    install(ctx: PluginInstallContext) {
+      const reg = createWorkRegistry();
+      ctx.objectRegistry.registerAll(reg.getEntityDefs());
+      ctx.objectRegistry.registerEdges(reg.getEdgeDefs());
+      const unsub = ctx.pluginRegistry.register(reg.getPlugin());
+      return unsub;
+    },
+  };
+}

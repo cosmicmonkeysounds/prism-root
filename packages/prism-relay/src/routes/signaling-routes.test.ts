@@ -10,6 +10,7 @@ import {
   blindMailboxModule,
   relayRouterModule,
   webrtcSignalingModule,
+  vaultHostModule,
 } from "@prism/core/relay";
 import { createIdentity } from "@prism/core/identity";
 
@@ -22,6 +23,7 @@ describe("signaling routes", () => {
       .use(blindMailboxModule())
       .use(relayRouterModule())
       .use(webrtcSignalingModule())
+      .use(vaultHostModule())
       .build();
 
     app = new Hono();

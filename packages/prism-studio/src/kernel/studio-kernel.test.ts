@@ -1,6 +1,11 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createStudioKernel } from "./studio-kernel.js";
 import type { StudioKernel } from "./studio-kernel.js";
+import {
+  createSavedView,
+  createStaticValueList,
+  createPrivilegeSet,
+} from "@prism/core/layer1";
 
 describe("StudioKernel", () => {
   let kernel: StudioKernel;
@@ -1662,6 +1667,119 @@ describe("StudioKernel", () => {
         .listObjects({ parentId: page.id })
         .filter((o) => !o.deletedAt);
       expect(liveChildren).toHaveLength(0);
+    });
+  });
+
+  // ── FacetStore ──────────────────────────────────────────────────────────
+
+  describe("facetStore", () => {
+    it("exposes a FacetStore instance", () => {
+      expect(kernel.facetStore).toBeDefined();
+      expect(typeof kernel.facetStore.putFacet).toBe("function");
+    });
+  });
+
+  // ── Saved Views ────────────────────────────────────────────────────────
+
+  describe("savedViews", () => {
+    it("exposes a SavedViewRegistry", () => {
+      expect(kernel.savedViews).toBeDefined();
+      expect(typeof kernel.savedViews.add).toBe("function");
+      expect(typeof kernel.savedViews.all).toBe("function");
+    });
+
+    it("can add and list saved views", () => {
+      const view = createSavedView("test-view", "task", {}, "Test View");
+      kernel.savedViews.add(view);
+      expect(kernel.savedViews.all()).toHaveLength(1);
+      expect(kernel.savedViews.all()[0]?.name).toBe("Test View");
+    });
+
+    it("notifies listeners on change", () => {
+      const listener = vi.fn();
+      kernel.onSavedViewChange(listener);
+      kernel.savedViews.add(createSavedView("sv2", "task", {}, "V2"));
+      expect(listener).toHaveBeenCalled();
+    });
+  });
+
+  // ── Value Lists ────────────────────────────────────────────────────────
+
+  describe("valueLists", () => {
+    it("exposes a ValueListRegistry", () => {
+      expect(kernel.valueLists).toBeDefined();
+      expect(typeof kernel.valueLists.register).toBe("function");
+      expect(typeof kernel.valueLists.all).toBe("function");
+    });
+
+    it("can register and list value lists", () => {
+      const vl = createStaticValueList("test-vl", "Colors", [
+        { value: "red", label: "Red" },
+        { value: "blue", label: "Blue" },
+      ]);
+      kernel.valueLists.register(vl);
+      expect(kernel.valueLists.all().length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("notifies listeners on change", () => {
+      const listener = vi.fn();
+      kernel.onValueListChange(listener);
+      kernel.valueLists.register(createStaticValueList("vl2", "Sizes", []));
+      expect(listener).toHaveBeenCalled();
+    });
+  });
+
+  // ── Privilege Sets ─────────────────────────────────────────────────────
+
+  describe("privilegeSets", () => {
+    it("starts with no privilege sets", () => {
+      expect(kernel.listPrivilegeSets()).toHaveLength(0);
+    });
+
+    it("can save and list privilege sets", () => {
+
+      const ps = createPrivilegeSet("admin", "Admin", { collections: { "*": "full" } });
+      kernel.savePrivilegeSet(ps);
+      expect(kernel.listPrivilegeSets()).toHaveLength(1);
+      expect(kernel.listPrivilegeSets()[0]?.name).toBe("Admin");
+    });
+
+    it("can remove a privilege set", () => {
+
+      kernel.savePrivilegeSet(createPrivilegeSet("rm-test", "Remove Me", { collections: {} }));
+      expect(kernel.removePrivilegeSet("rm-test")).toBe(true);
+      expect(kernel.listPrivilegeSets().find((p) => p.id === "rm-test")).toBeUndefined();
+    });
+
+    it("can get an enforcer for a privilege set", () => {
+
+      kernel.savePrivilegeSet(createPrivilegeSet("enf-test", "Enforced", { collections: { "*": "read" } }));
+      const enforcer = kernel.getEnforcer("enf-test");
+      expect(enforcer).toBeDefined();
+    });
+
+    it("returns undefined for unknown privilege set", () => {
+      expect(kernel.getEnforcer("nonexistent")).toBeUndefined();
+    });
+
+    it("can assign and list roles", () => {
+      kernel.assignRole("did:key:abc", "admin");
+      const roles = kernel.listRoleAssignments();
+      expect(roles.find((r) => r.did === "did:key:abc")).toBeDefined();
+    });
+
+    it("can remove a role assignment", () => {
+      kernel.assignRole("did:key:remove-me", "admin");
+      kernel.removeRoleAssignment("did:key:remove-me");
+      expect(kernel.listRoleAssignments().find((r) => r.did === "did:key:remove-me")).toBeUndefined();
+    });
+
+    it("notifies listeners on change", () => {
+
+      const listener = vi.fn();
+      kernel.onPrivilegeSetChange(listener);
+      kernel.savePrivilegeSet(createPrivilegeSet("notify-test", "N", { collections: {} }));
+      expect(listener).toHaveBeenCalled();
     });
   });
 

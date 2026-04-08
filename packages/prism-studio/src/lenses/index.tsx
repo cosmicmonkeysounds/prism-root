@@ -35,6 +35,12 @@ import { VisualScriptPanel } from "../panels/visual-script-panel.js";
 import { SavedViewPanel } from "../panels/saved-view-panel.js";
 import { ValueListPanel } from "../panels/value-list-panel.js";
 import { PrivilegeSetPanel } from "../panels/privilege-set-panel.js";
+import { WorkPanel } from "../panels/work-panel.js";
+import { FinancePanel } from "../panels/finance-panel.js";
+import { CrmPanel } from "../panels/crm-panel.js";
+import { LifePanel } from "../panels/life-panel.js";
+import { AssetsMgmtPanel } from "../panels/assets-mgmt-panel.js";
+import { PlatformPanel } from "../panels/platform-panel.js";
 
 export const EDITOR_LENS_ID = lensId("editor");
 export const GRAPH_LENS_ID = lensId("graph");
@@ -63,6 +69,12 @@ export const VISUAL_SCRIPT_LENS_ID = lensId("visual-script");
 export const SAVED_VIEW_LENS_ID = lensId("saved-view");
 export const VALUE_LIST_LENS_ID = lensId("value-list");
 export const PRIVILEGE_SET_LENS_ID = lensId("privilege-set");
+export const WORK_LENS_ID = lensId("work");
+export const FINANCE_LENS_ID = lensId("finance");
+export const CRM_LENS_ID = lensId("crm");
+export const LIFE_LENS_ID = lensId("life");
+export const ASSETS_MGMT_LENS_ID = lensId("assets-mgmt");
+export const PLATFORM_LENS_ID = lensId("platform");
 
 const editorManifest: LensManifest = {
   id: EDITOR_LENS_ID,
@@ -361,6 +373,72 @@ const privilegeSetManifest: LensManifest = {
   },
 };
 
+const workManifest: LensManifest = {
+  id: WORK_LENS_ID,
+  name: "Work",
+  icon: "\u{1F4BC}",
+  category: "custom",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-work", name: "Switch to Work", shortcut: ["shift+w"], section: "Navigation" }],
+  },
+};
+
+const financeManifest: LensManifest = {
+  id: FINANCE_LENS_ID,
+  name: "Finance",
+  icon: "\u{1F4B0}",
+  category: "custom",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-finance", name: "Switch to Finance", shortcut: ["shift+f"], section: "Navigation" }],
+  },
+};
+
+const crmManifest: LensManifest = {
+  id: CRM_LENS_ID,
+  name: "CRM",
+  icon: "\u{1F465}",
+  category: "custom",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-crm", name: "Switch to CRM", shortcut: ["shift+c"], section: "Navigation" }],
+  },
+};
+
+const lifeManifest: LensManifest = {
+  id: LIFE_LENS_ID,
+  name: "Life",
+  icon: "\u{1F33F}",
+  category: "custom",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-life", name: "Switch to Life", shortcut: ["shift+h"], section: "Navigation" }],
+  },
+};
+
+const assetsMgmtManifest: LensManifest = {
+  id: ASSETS_MGMT_LENS_ID,
+  name: "Asset Manager",
+  icon: "\u{1F4E6}",
+  category: "custom",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-assets-mgmt", name: "Switch to Asset Manager", shortcut: ["shift+m"], section: "Navigation" }],
+  },
+};
+
+const platformManifest: LensManifest = {
+  id: PLATFORM_LENS_ID,
+  name: "Platform",
+  icon: "\u{1F4E1}",
+  category: "custom",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-platform", name: "Switch to Platform", shortcut: ["shift+i"], section: "Navigation" }],
+  },
+};
+
 export const ALL_MANIFESTS: LensManifest[] = [
   editorManifest,
   graphManifest,
@@ -389,6 +467,12 @@ export const ALL_MANIFESTS: LensManifest[] = [
   savedViewManifest,
   valueListManifest,
   privilegeSetManifest,
+  workManifest,
+  financeManifest,
+  crmManifest,
+  lifeManifest,
+  assetsMgmtManifest,
+  platformManifest,
 ];
 
 export function registerBuiltinLenses(registry: LensRegistry): () => void {
@@ -425,5 +509,11 @@ export function createLensComponentMap(): Map<LensId, ComponentType> {
   map.set(SAVED_VIEW_LENS_ID, SavedViewPanel);
   map.set(VALUE_LIST_LENS_ID, ValueListPanel);
   map.set(PRIVILEGE_SET_LENS_ID, PrivilegeSetPanel);
+  map.set(WORK_LENS_ID, WorkPanel);
+  map.set(FINANCE_LENS_ID, FinancePanel);
+  map.set(CRM_LENS_ID, CrmPanel);
+  map.set(LIFE_LENS_ID, LifePanel);
+  map.set(ASSETS_MGMT_LENS_ID, AssetsMgmtPanel);
+  map.set(PLATFORM_LENS_ID, PlatformPanel);
   return map;
 }

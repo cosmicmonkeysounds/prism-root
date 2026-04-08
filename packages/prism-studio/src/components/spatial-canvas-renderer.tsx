@@ -12,7 +12,9 @@ import Selecto from "react-selecto";
 import type {
   FacetDefinition,
   FacetSlot,
+  ContainerSlot,
 } from "@prism/core/facet";
+import { ContainerFieldRenderer } from "./container-field-renderer.js";
 import {
   computePartBands,
   snapToGrid,
@@ -375,6 +377,13 @@ export function SpatialCanvasRenderer({
             >
               {slot.kind === "drawing" ? (
                 <DrawingShape slot={slot as FacetSlot & { kind: "drawing" }} />
+              ) : slot.kind === "container" ? (
+                <ContainerFieldRenderer
+                  fileName={(slot.slot as ContainerSlot).label ?? (slot.slot as ContainerSlot).fieldPath}
+                  renderMode={(slot.slot as ContainerSlot).renderMode ?? "preview"}
+                  width={rect.w}
+                  height={rect.h}
+                />
               ) : (
                 <span style={{ padding: "0 6px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {slotLabel(slot)}

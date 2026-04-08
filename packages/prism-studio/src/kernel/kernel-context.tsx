@@ -23,8 +23,10 @@ import type { RosterEntry } from "@prism/core/discovery";
 import type { PrismIdentity, ExportedIdentity } from "@prism/core/identity";
 import type { BinaryRef, BinaryLock } from "@prism/core/vfs";
 import type { PeerReputation, SchemaValidationResult, ContentHash, SandboxPolicy, LuaSandbox, ShamirShare, ShamirConfig, EscrowDeposit } from "@prism/core/trust";
-import type { SourceFormat, FacetDefinition, FacetLayout, ProseNode, SchemaModel, SequencerConditionState, SequencerScriptState } from "@prism/core/facet";
+import type { SourceFormat, FacetDefinition, FacetLayout, ProseNode, SchemaModel, SequencerConditionState, SequencerScriptState, FacetStore, ValueListRegistry, ValueList } from "@prism/core/facet";
 import type { FieldSchema } from "@prism/core/forms";
+import type { SavedView, SavedViewRegistry } from "@prism/core/view";
+import type { PrivilegeSet, PrivilegeEnforcer, RoleAssignment } from "@prism/core/manifest";
 
 // ── Context ─────────────────────────────────────────────────────────────────
 
@@ -719,5 +721,93 @@ export function useFacetDefinitions(): {
     remove: kernel.removeFacetDefinition,
     get: kernel.getFacetDefinition,
     buildDefinition: kernel.buildFacetDefinition,
+  };
+}
+
+/** Reactive FacetStore access (persistent facets/scripts/value-lists). */
+export function useFacetStore(): FacetStore {
+  const kernel = useKernel();
+  return kernel.facetStore;
+}
+
+/** Reactive saved views state. */
+export function useSavedViews(): {
+  views: SavedView[];
+  registry: SavedViewRegistry;
+} {
+  const kernel = useKernel();
+  const versionRef = useRef(0);
+
+  const version = useSyncExternalStore(
+    (cb) => kernel.onSavedViewChange(() => {
+      versionRef.current++;
+      cb();
+    }),
+    () => versionRef.current,
+  );
+
+  void version;
+
+  return {
+    views: kernel.savedViews.all(),
+    registry: kernel.savedViews,
+  };
+}
+
+/** Reactive value lists state. */
+export function useValueLists(): {
+  lists: ValueList[];
+  registry: ValueListRegistry;
+} {
+  const kernel = useKernel();
+  const versionRef = useRef(0);
+
+  const version = useSyncExternalStore(
+    (cb) => kernel.onValueListChange(() => {
+      versionRef.current++;
+      cb();
+    }),
+    () => versionRef.current,
+  );
+
+  void version;
+
+  return {
+    lists: kernel.valueLists.all(),
+    registry: kernel.valueLists,
+  };
+}
+
+/** Reactive privilege set state. */
+export function usePrivilegeSets(): {
+  sets: PrivilegeSet[];
+  roles: RoleAssignment[];
+  save: (ps: PrivilegeSet) => void;
+  remove: (id: string) => boolean;
+  getEnforcer: (id: string) => PrivilegeEnforcer | undefined;
+  assignRole: (did: string, privilegeSetId: string) => void;
+  removeRole: (did: string) => void;
+} {
+  const kernel = useKernel();
+  const versionRef = useRef(0);
+
+  const version = useSyncExternalStore(
+    (cb) => kernel.onPrivilegeSetChange(() => {
+      versionRef.current++;
+      cb();
+    }),
+    () => versionRef.current,
+  );
+
+  void version;
+
+  return {
+    sets: kernel.listPrivilegeSets(),
+    roles: kernel.listRoleAssignments(),
+    save: kernel.savePrivilegeSet,
+    remove: kernel.removePrivilegeSet,
+    getEnforcer: kernel.getEnforcer,
+    assignRole: kernel.assignRole,
+    removeRole: kernel.removeRoleAssignment,
   };
 }

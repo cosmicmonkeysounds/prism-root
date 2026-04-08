@@ -264,3 +264,20 @@ export function createPlatformRegistry(): PlatformRegistry {
     getPlugin: () => plugin,
   };
 }
+
+// ── Self-Registering Bundle ──────────────────────────────────────────────
+
+import type { PluginBundle, PluginInstallContext } from "../plugin-install.js";
+
+export function createPlatformBundle(): PluginBundle {
+  return {
+    id: "prism.plugin.platform",
+    name: "Platform",
+    install(ctx: PluginInstallContext) {
+      const reg = createPlatformRegistry();
+      ctx.objectRegistry.registerAll(reg.getEntityDefs());
+      ctx.objectRegistry.registerEdges(reg.getEdgeDefs());
+      return ctx.pluginRegistry.register(reg.getPlugin());
+    },
+  };
+}

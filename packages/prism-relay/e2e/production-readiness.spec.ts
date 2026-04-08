@@ -32,6 +32,7 @@ import {
   acmeCertificateModule,
   portalTemplateModule,
   webrtcSignalingModule,
+  vaultHostModule,
 } from "@prism/core/relay";
 import type {
   RelayInstance,
@@ -74,6 +75,7 @@ async function buildFullRelay(identity: PrismIdentity): Promise<RelayInstance> {
     .use(acmeCertificateModule())
     .use(portalTemplateModule())
     .use(webrtcSignalingModule())
+    .use(vaultHostModule())
     .build();
   await relay.start();
   return relay;
@@ -1307,7 +1309,7 @@ test.describe("Deployment Modes", () => {
     await relay.stop();
   });
 
-  test("server with all 15 modules responds to every route group", async ({ request }) => {
+  test("server with all 16 modules responds to every route group", async ({ request }) => {
     const identity = await createIdentity({ method: "key" });
     const relay = await buildFullRelay(identity);
     const { close, url } = await startServer(relay);

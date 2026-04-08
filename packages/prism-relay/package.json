@@ -18,7 +18,8 @@
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/cli.js",
     "typecheck": "tsc --noEmit",
-    "test:e2e": "playwright test --config=e2e/playwright.config.ts"
+    "test:e2e": "playwright test --config=e2e/playwright.config.ts",
+    "test:docker": "playwright test --config=e2e/playwright.config.ts e2e/docker.spec.ts"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.0",

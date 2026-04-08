@@ -45,6 +45,8 @@ export type {
   RelayBuilder,
   RelayBuilderOptions,
   CollectionHost,
+  HostedVault,
+  VaultHost,
   HashcashGate,
   HashcashModuleOptions,
   FederationPeer,
@@ -88,6 +90,7 @@ export type {
 
 // ── Phase 2 modules ─────────────────────────────────────────────────────────
 export { collectionHostModule } from "./collection-host-module.js";
+export { vaultHostModule } from "./vault-host-module.js";
 export { hashcashModule } from "./hashcash-module.js";
 export { peerTrustModule } from "./peer-trust-module.js";
 export { escrowModule } from "./escrow-module.js";

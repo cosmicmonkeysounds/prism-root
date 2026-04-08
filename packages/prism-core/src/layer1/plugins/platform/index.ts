@@ -15,4 +15,4 @@ export {
   REMINDER_STATUSES,
   REMINDER_PRIORITIES,
 } from "./platform-types.js";
-export { createPlatformRegistry } from "./platform.js";
+export { createPlatformRegistry, createPlatformBundle } from "./platform.js";

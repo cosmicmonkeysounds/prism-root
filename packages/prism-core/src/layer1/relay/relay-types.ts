@@ -385,6 +385,7 @@ export const RELAY_CAPABILITIES = {
   ACME: "relay:acme",
   TEMPLATES: "relay:templates",
   SIGNALING: "relay:signaling",
+  VAULT_HOST: "relay:vault-host",
 } as const;
 
 // ── Collection Hosting ─────────────────────────────────────────────────────
@@ -401,6 +402,53 @@ export interface CollectionHost {
   list(): string[];
   /** Remove a hosted collection. */
   remove(id: string): boolean;
+}
+
+// ── Vault Hosting ─────────────────────────────────────────────────────────
+
+import type { PrismManifest } from "../manifest/manifest-types.js";
+
+/** Metadata for a vault hosted on a Relay. */
+export interface HostedVault {
+  /** Vault ID (from manifest.id). */
+  id: string;
+  /** The vault's manifest. */
+  manifest: PrismManifest;
+  /** Owner DID — who published this vault to the relay. */
+  ownerDid: DID;
+  /** Whether this vault is publicly browsable. */
+  isPublic: boolean;
+  /** ISO-8601 when the vault was first hosted. */
+  hostedAt: string;
+  /** ISO-8601 last update. */
+  updatedAt: string;
+  /** Total size in bytes (sum of collection snapshots). */
+  totalBytes: number;
+}
+
+/** Hosts complete vaults (manifest + collection snapshots) on a Relay. */
+export interface VaultHost {
+  /** Publish a vault (manifest + collection snapshots) to this relay. */
+  publish(params: {
+    manifest: PrismManifest;
+    ownerDid: DID;
+    isPublic?: boolean;
+    collections: Record<string, Uint8Array>;
+  }): HostedVault;
+  /** Get vault metadata by ID. */
+  get(vaultId: string): HostedVault | undefined;
+  /** List all hosted vaults. */
+  list(opts?: { publicOnly?: boolean }): HostedVault[];
+  /** Get a single collection snapshot from a hosted vault. */
+  getSnapshot(vaultId: string, collectionId: string): Uint8Array | undefined;
+  /** Get all collection snapshots for a vault (bulk download). */
+  getAllSnapshots(vaultId: string): Record<string, Uint8Array> | undefined;
+  /** Update collection snapshots (owner-only). */
+  updateCollections(vaultId: string, ownerDid: DID, updates: Record<string, Uint8Array>): boolean;
+  /** Remove a hosted vault (owner-only). */
+  remove(vaultId: string, ownerDid: DID): boolean;
+  /** Search vaults by name or description. */
+  search(query: string): HostedVault[];
 }
 
 // ── ACME / SSL Certificate Management ─────────────────────────────────────

@@ -46,3 +46,18 @@ export function createCrmRegistry(): CrmRegistry {
     getPlugin: () => plugin,
   };
 }
+
+// ── Self-Registering Bundle ──────────────────────────────────────────────
+
+import type { PluginBundle, PluginInstallContext } from "../plugin-install.js";
+
+export function createCrmBundle(): PluginBundle {
+  return {
+    id: "prism.plugin.crm",
+    name: "CRM",
+    install(ctx: PluginInstallContext) {
+      const reg = createCrmRegistry();
+      return ctx.pluginRegistry.register(reg.getPlugin());
+    },
+  };
+}

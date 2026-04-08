@@ -39,12 +39,13 @@ FileMaker Pro-style absolute positioning as nestable Puck components. See `docs/
 
 | Suite | Tests | Status |
 |-------|-------|--------|
-| Vitest (studio-kernel) | 97 | Pass |
-| Vitest (all) | 3006 | Pass |
+| Vitest (studio-kernel) | 112 | Pass |
+| Vitest (all) | 3081 | Pass |
 | Playwright (builder) | 49 | Pass |
 | Playwright (spatial-canvas) | 14 | Pass |
+| Playwright (filemaker-panels) | 60 | Pass |
 | Playwright (relay deployment) | 34 | Pass |
-| **Playwright (total)** | **311** | **Pass** |
+| **Playwright (total)** | **371** | **Pass** |
 
 ## FileMaker Pro Core Schemas (Complete)
 
@@ -121,7 +122,16 @@ Layer 1 agnostic TypeScript. See `docs/dev/filemaker-gap-analysis.md` for full g
 | script-steps | 37 | Pass |
 | facet-store | 14 | Pass |
 | privilege-enforcer | 16 | Pass |
-| **Vitest (all)** | **3006** | **Pass** |
+| studio-kernel (new) | 15 | Pass |
+| **Vitest (all)** | **3081** | **Pass** |
+| E2E filemaker-panels | 60 | Written |
+
+### Kernel Integration
+
+- [x] **Kernel wiring** — facetStore, savedViews, valueLists, privilegeSets on StudioKernel
+- [x] **Reactive hooks** — useFacetStore, useSavedViews, useValueLists, usePrivilegeSets in kernel-context
+- [x] **E2E tests** — 60 Playwright tests across Visual Script, Saved Views, Value Lists, Privilege Sets, Container Field, Kernel Integration
+- [x] **Kernel unit tests** — 15 new tests for facetStore, savedViews, valueLists, privilegeSets CRUD + listener notification
 
 ### Remaining FileMaker Gaps (Phase 3+)
 

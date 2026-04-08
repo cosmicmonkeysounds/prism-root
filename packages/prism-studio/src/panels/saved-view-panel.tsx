@@ -130,7 +130,7 @@ export function SavedViewPanel() {
   };
 
   return (
-    <div style={s.root}>
+    <div style={s.root} data-testid="saved-view-panel">
       <div style={s.header}>
         <div style={s.title}>Saved Views</div>
         <button style={s.btnPrimary} onClick={() => setShowCreate(!showCreate)}>

@@ -81,6 +81,16 @@ export interface RelayConfigFile {
     /** Output format. "text" for human-readable, "json" for structured. */
     format?: "text" | "json";
   };
+
+  /** Directory feed settings (GET /api/directory). */
+  directory?: {
+    /** Human-readable relay name shown in directory feeds. */
+    name?: string;
+    /** Relay description shown in directory feeds. */
+    description?: string;
+    /** Whether to expose the /api/directory endpoint. Default: true. */
+    listed?: boolean;
+  };
 }
 
 // ── Resolved Config ──────────────────────────────────────────────────────
@@ -124,6 +134,11 @@ export interface ResolvedRelayConfig {
     level: "debug" | "info" | "warn" | "error";
     format: "text" | "json";
   };
+  directory: {
+    name: string | undefined;
+    description: string | undefined;
+    listed: boolean;
+  };
 }
 
 // ── Module Presets ────────────────────────────────────────────────────────
@@ -144,6 +159,7 @@ const ALL_MODULES = [
   "acme-certificates",
   "portal-templates",
   "webrtc-signaling",
+  "vault-host",
 ];
 
 /** Minimal modules for p2p mode — routing + federation + trust. */
@@ -236,6 +252,11 @@ export function resolveConfig(
     logging: {
       level: envStr("PRISM_RELAY_LOG_LEVEL", merged.logging?.level) as ResolvedRelayConfig["logging"]["level"] ?? (defaults.logging as ResolvedRelayConfig["logging"]).level,
       format: merged.logging?.format ?? (defaults.logging as ResolvedRelayConfig["logging"]).format,
+    },
+    directory: {
+      name: merged.directory?.name,
+      description: merged.directory?.description,
+      listed: merged.directory?.listed ?? true,
     },
   };
 }

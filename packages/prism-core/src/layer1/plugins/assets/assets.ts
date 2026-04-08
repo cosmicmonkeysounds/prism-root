@@ -221,3 +221,20 @@ export function createAssetsRegistry(): AssetsRegistry {
     getPlugin: () => plugin,
   };
 }
+
+// ── Self-Registering Bundle ──────────────────────────────────────────────
+
+import type { PluginBundle, PluginInstallContext } from "../plugin-install.js";
+
+export function createAssetsBundle(): PluginBundle {
+  return {
+    id: "prism.plugin.assets",
+    name: "Assets",
+    install(ctx: PluginInstallContext) {
+      const reg = createAssetsRegistry();
+      ctx.objectRegistry.registerAll(reg.getEntityDefs());
+      ctx.objectRegistry.registerEdges(reg.getEdgeDefs());
+      return ctx.pluginRegistry.register(reg.getPlugin());
+    },
+  };
+}

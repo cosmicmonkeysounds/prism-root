@@ -26,6 +26,7 @@ import {
   acmeCertificateModule,
   portalTemplateModule,
   webrtcSignalingModule,
+  vaultHostModule,
 } from "@prism/core/relay";
 import type {
   RelayInstance,
@@ -60,6 +61,7 @@ test.beforeAll(async () => {
     .use(acmeCertificateModule())
     .use(portalTemplateModule())
     .use(webrtcSignalingModule())
+    .use(vaultHostModule())
     .build();
   await relay.start();
 
@@ -84,13 +86,13 @@ test.describe("HTTP API", () => {
     const body = await res.json();
     expect(body.running).toBe(true);
     expect(body.did).toBe(identity.did);
-    expect(body.modules).toHaveLength(15);
+    expect(body.modules).toHaveLength(16);
   });
 
   test("GET /api/modules lists all installed modules", async ({ request }) => {
     const res = await request.get(`${baseUrl}/api/modules`);
     const body = await res.json();
-    expect(body).toHaveLength(15);
+    expect(body).toHaveLength(16);
     const names = body.map((m: { name: string }) => m.name);
     expect(names).toContain("blind-mailbox");
     expect(names).toContain("relay-router");
@@ -1274,7 +1276,7 @@ test.describe("Health Check", () => {
     expect(typeof body.uptime).toBe("number");
     expect(body.uptime).toBeGreaterThan(0);
     expect(typeof body.modules).toBe("number");
-    expect(body.modules).toBeGreaterThanOrEqual(15);
+    expect(body.modules).toBeGreaterThanOrEqual(16);
     expect(typeof body.peers).toBe("number");
     expect(typeof body.federationPeers).toBe("number");
     expect(body.memory).toBeDefined();
@@ -1640,5 +1642,150 @@ test.describe("Rate Limiting", () => {
     }
     // Should have gotten at least one 429
     expect(responses).toContain(429);
+  });
+});
+
+// ── Vault Host API ──────────────────────────────────────────────────────────
+
+test.describe("Vault Host API", () => {
+  const vaultManifest = {
+    id: "e2e-vault-1",
+    name: "E2E Test Vault",
+    version: "1",
+    storage: { backend: "loro", path: "data" },
+    schema: { module: "@prism/core" },
+    createdAt: new Date().toISOString(),
+    description: "A test vault for E2E",
+  };
+
+  test("publish, list, get, download vault round-trip", async ({ request }) => {
+    // Publish vault
+    const pubRes = await request.post(`${baseUrl}/api/vaults`, {
+      data: {
+        manifest: vaultManifest,
+        ownerDid: identity.did,
+        isPublic: true,
+        collections: {
+          contacts: Buffer.from("contacts-snapshot").toString("base64"),
+          tasks: Buffer.from("tasks-snapshot").toString("base64"),
+        },
+      },
+    });
+    expect(pubRes.status()).toBe(201);
+    const vault = await pubRes.json();
+    expect(vault.id).toBe("e2e-vault-1");
+    expect(vault.isPublic).toBe(true);
+
+    // List vaults
+    const listRes = await request.get(`${baseUrl}/api/vaults`);
+    const vaults = await listRes.json();
+    expect(vaults.some((v: { id: string }) => v.id === "e2e-vault-1")).toBe(true);
+
+    // Get vault
+    const getRes = await request.get(`${baseUrl}/api/vaults/e2e-vault-1`);
+    expect(getRes.status()).toBe(200);
+    const got = await getRes.json();
+    expect(got.manifest.name).toBe("E2E Test Vault");
+
+    // Download full vault
+    const dlRes = await request.get(`${baseUrl}/api/vaults/e2e-vault-1/download`);
+    expect(dlRes.status()).toBe(200);
+    const dl = await dlRes.json();
+    expect(dl.manifest.id).toBe("e2e-vault-1");
+    expect(dl.collections.contacts).toBe(Buffer.from("contacts-snapshot").toString("base64"));
+    expect(dl.collections.tasks).toBe(Buffer.from("tasks-snapshot").toString("base64"));
+  });
+
+  test("list collection sizes for a vault", async ({ request }) => {
+    const res = await request.get(`${baseUrl}/api/vaults/e2e-vault-1/collections`);
+    expect(res.status()).toBe(200);
+    const cols = await res.json();
+    expect(cols.length).toBe(2);
+    expect(cols.every((c: { bytes: number }) => c.bytes > 0)).toBe(true);
+  });
+
+  test("update collections (owner-only)", async ({ request }) => {
+    const res = await request.put(`${baseUrl}/api/vaults/e2e-vault-1/collections`, {
+      data: {
+        ownerDid: identity.did,
+        collections: { contacts: Buffer.from("updated-contacts").toString("base64") },
+      },
+    });
+    expect(res.status()).toBe(200);
+
+    // Verify update
+    const snap = await request.get(`${baseUrl}/api/vaults/e2e-vault-1/collections/contacts`);
+    const body = await snap.json();
+    expect(body.snapshot).toBe(Buffer.from("updated-contacts").toString("base64"));
+  });
+
+  test("reject update from non-owner", async ({ request }) => {
+    const res = await request.put(`${baseUrl}/api/vaults/e2e-vault-1/collections`, {
+      data: {
+        ownerDid: "did:key:zStranger",
+        collections: { contacts: Buffer.from("evil").toString("base64") },
+      },
+    });
+    expect(res.status()).toBe(403);
+  });
+
+  test("search vaults by name", async ({ request }) => {
+    const res = await request.get(`${baseUrl}/api/vaults?search=E2E`);
+    const vaults = await res.json();
+    expect(vaults.some((v: { id: string }) => v.id === "e2e-vault-1")).toBe(true);
+  });
+
+  test("delete vault (owner-only)", async ({ request }) => {
+    // Create a vault to delete
+    await request.post(`${baseUrl}/api/vaults`, {
+      data: {
+        manifest: { ...vaultManifest, id: "e2e-vault-delete" },
+        ownerDid: identity.did,
+        collections: {},
+      },
+    });
+
+    const res = await request.delete(`${baseUrl}/api/vaults/e2e-vault-delete`, {
+      data: { ownerDid: identity.did },
+    });
+    expect(res.status()).toBe(200);
+
+    const getRes = await request.get(`${baseUrl}/api/vaults/e2e-vault-delete`);
+    expect(getRes.status()).toBe(404);
+  });
+});
+
+// ── Directory Feed ──────────────────────────────────────────────────────────
+
+test.describe("Directory Feed", () => {
+  test("GET /api/directory returns relay profile with portals and vaults", async ({ request }) => {
+    const res = await request.get(`${baseUrl}/api/directory`);
+    expect(res.status()).toBe(200);
+    const body = await res.json();
+
+    // Relay profile
+    expect(body.relay.did).toBe(identity.did);
+    expect(body.relay.modules.length).toBe(16);
+    expect(typeof body.relay.uptime).toBe("number");
+    expect(body.relay.federation).toHaveProperty("peers");
+
+    // Should have portals and vaults arrays
+    expect(Array.isArray(body.portals)).toBe(true);
+    expect(Array.isArray(body.vaults)).toBe(true);
+
+    // generatedAt timestamp
+    expect(body).toHaveProperty("generatedAt");
+  });
+
+  test("directory only shows public portals", async ({ request }) => {
+    const res = await request.get(`${baseUrl}/api/directory`);
+    const body = await res.json();
+    expect(body.portals.every((p: { isPublic: boolean }) => p.isPublic)).toBe(true);
+  });
+
+  test("directory sets Cache-Control header", async ({ request }) => {
+    const res = await request.get(`${baseUrl}/api/directory`);
+    const cacheControl = res.headers()["cache-control"];
+    expect(cacheControl).toContain("max-age=300");
   });
 });

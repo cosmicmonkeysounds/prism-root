@@ -35,8 +35,11 @@ import {
   createBackupRoutes,
   createLogsRoutes,
   createLogBuffer,
+  createVaultHostRoutes,
+  createDirectoryRoutes,
 } from "../routes/index.js";
 import type { AuthRoutesOptions, LogBuffer } from "../routes/index.js";
+import type { ResolvedRelayConfig } from "../config/relay-config.js";
 import { handleWsOpen, handleWsMessage, handleWsClose, createConnectionRegistry, createPresenceStore } from "../transport/index.js";
 import type { WsConnection } from "../transport/index.js";
 import {
@@ -61,6 +64,8 @@ export interface RelayServerOptions {
   disableCsrf?: boolean;
   /** Log buffer for /api/logs endpoint. */
   logBuffer?: LogBuffer;
+  /** Resolved relay config (for directory feed, etc.). */
+  config?: ResolvedRelayConfig;
 }
 
 export interface RelayServer {
@@ -141,6 +146,18 @@ export function createRelayServer(options: RelayServerOptions): RelayServer {
   app.route("/api/presence", createPresenceRoutes(presenceStore));
   app.route("/api/backup", createBackupRoutes(relay));
   app.route("/api/logs", createLogsRoutes(logBuffer));
+  app.route("/api/vaults", createVaultHostRoutes(relay));
+
+  // ── Directory feed ──────────────────────────────────────────────────
+  const directoryConfig = options.config ?? {
+    directory: { name: undefined, description: undefined, listed: true },
+    federation: { enabled: false, bootstrapPeers: [], publicUrl: undefined },
+  } as unknown as ResolvedRelayConfig;
+  app.route("/api/directory", createDirectoryRoutes({
+    relay,
+    publicUrl,
+    config: directoryConfig,
+  }));
 
   // ── ACME HTTP-01 challenge response (Let's Encrypt) ─────────────────
   app.route("/.well-known/acme-challenge", createAcmeRoutes(relay));

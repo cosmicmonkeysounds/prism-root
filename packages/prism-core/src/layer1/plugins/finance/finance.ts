@@ -201,7 +201,7 @@ function buildPlugin(): PrismPlugin {
   };
 }
 
-// ── Factory ────────────────────���─────────────────────────────────────────
+// ── Factory ──────────────────────────────────────────────────────────────
 
 export function createFinanceRegistry(): FinanceRegistry {
   const entityDefs = buildEntityDefs();
@@ -216,5 +216,22 @@ export function createFinanceRegistry(): FinanceRegistry {
     getEdgeDef: (relation: FinanceEdgeType) => edgeDefs.find(d => d.relation === relation),
     getAutomationPresets: () => presets,
     getPlugin: () => plugin,
+  };
+}
+
+// ── Self-Registering Bundle ──────────────────────────────────────────────
+
+import type { PluginBundle, PluginInstallContext } from "../plugin-install.js";
+
+export function createFinanceBundle(): PluginBundle {
+  return {
+    id: "prism.plugin.finance",
+    name: "Finance",
+    install(ctx: PluginInstallContext) {
+      const reg = createFinanceRegistry();
+      ctx.objectRegistry.registerAll(reg.getEntityDefs());
+      ctx.objectRegistry.registerEdges(reg.getEdgeDefs());
+      return ctx.pluginRegistry.register(reg.getPlugin());
+    },
   };
 }

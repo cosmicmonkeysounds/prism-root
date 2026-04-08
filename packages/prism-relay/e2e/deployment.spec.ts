@@ -37,6 +37,7 @@ import {
   acmeCertificateModule,
   portalTemplateModule,
   webrtcSignalingModule,
+  vaultHostModule,
 } from "@prism/core/relay";
 import type { RelayInstance } from "@prism/core/relay";
 import { createRelayServer } from "@prism/relay/server";
@@ -73,6 +74,7 @@ async function buildRelay(identity: PrismIdentity, opts?: { hashcashBits?: numbe
     .use(acmeCertificateModule())
     .use(portalTemplateModule())
     .use(webrtcSignalingModule())
+    .use(vaultHostModule())
     .build();
   await relay.start();
   return relay;
@@ -410,7 +412,7 @@ test.describe("Health Check Endpoint", () => {
     expect(typeof body.uptime).toBe("number");
     expect(body).toHaveProperty("modules");
     expect(typeof body.modules).toBe("number");
-    expect(body.modules).toBeGreaterThanOrEqual(15);
+    expect(body.modules).toBeGreaterThanOrEqual(16);
     expect(body).toHaveProperty("memory");
     expect(body.memory).toHaveProperty("rss");
     expect(body.memory).toHaveProperty("heapUsed");
@@ -430,15 +432,15 @@ test.describe("Health Check Endpoint", () => {
     expect(body).toHaveProperty("did");
     expect(body).toHaveProperty("modules");
     expect(Array.isArray(body.modules)).toBe(true);
-    expect(body.modules.length).toBeGreaterThanOrEqual(15);
+    expect(body.modules.length).toBeGreaterThanOrEqual(16);
   });
 
-  test("GET /api/modules returns all 15 modules", async () => {
+  test("GET /api/modules returns all 16 modules", async () => {
     const res = await fetch(`${server.url}/api/modules`);
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(Array.isArray(body)).toBe(true);
-    expect(body.length).toBe(15);
+    expect(body.length).toBe(16);
   });
 });
 
@@ -812,14 +814,14 @@ test.describe("Identity Persistence", () => {
 // ════════════════════════════════════════════════════════════════════════════════
 
 test.describe("Multi-Mode Startup", () => {
-  test("server mode starts with all 15 modules", async () => {
+  test("server mode starts with all 16 modules", async () => {
     const identity = await createIdentity({ method: "key" });
     const relay = await buildRelay(identity);
     const server = await startServer(relay);
 
     const res = await fetch(`${server.url}/api/modules`);
     const modules = await res.json();
-    expect(modules.length).toBe(15);
+    expect(modules.length).toBe(16);
 
     await server.close();
     await relay.stop();
