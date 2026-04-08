@@ -50,6 +50,7 @@ Libraries: `react-moveable` + `react-selecto` + `@scena/react-guides` (Scena eco
 | Tab controls | Tabbed container on layout | Not started | Todo |
 | Slide panels | Swipeable panel container | Not started | Todo |
 | Popovers | Click-to-open floating panels | Not started | Todo |
+| Container field | Inline files/images/PDFs via VFS | `ContainerSlot` type + `addContainer()` builder | **Done** |
 
 ### P2 — Calculations & Automation
 
@@ -66,20 +67,54 @@ Libraries: `react-moveable` + `react-selecto` + `@scena/react-guides` (Scena eco
 | Gap | FileMaker | Prism | Status |
 |-----|-----------|-------|--------|
 | Themes / styles | Built-in themes, custom styles | Not started | Todo |
-| Print layout | Page margins, breaks, print header/footer | Not started | Todo |
-| PDF export | Export as PDF | Not started | Todo |
+| Print layout | Page margins, breaks, print header/footer | `PrintConfig` on FacetDefinition | **Done** |
+| PDF export | Export as PDF | Not started | Todo — PrintConfig enables this |
 | Sliding fields | Collapse when empty | Not started | Todo |
 | Field label formatting | Font/size/color per field label | `TextSlot` has styling; FieldSlot needs it | Todo |
 | Button bar | Segmented button control | Not started | Todo |
 | Web viewer | Embedded browser | Not started | Todo |
-| Container field | Inline files/images/PDFs | VfsManager exists | **Partial** |
 
 ### P4 — Security & Multi-User
 
 | Gap | FileMaker | Prism | Status |
 |-----|-----------|-------|--------|
-| Layout privilege sets | Per-layout/field access control | Identity + PeerTrustGraph exist | Todo — needs layout binding |
+| Layout privilege sets | Per-layout/field access control | `PrivilegeSet` in manifest schema | **Done** |
+| Field-level security | Per-field read/write/hidden | `FieldPermission` in PrivilegeSet | **Done** |
+| Row-level security | Record-level access filtering | `recordFilter` expression in PrivilegeSet | **Done** |
 | CRDT persistence | FacetDefinitions survive restart | Currently in-memory Map | Todo |
+
+### P5 — Data Model & Views (NEW)
+
+| Gap | FileMaker | Prism | Status |
+|-----|-----------|-------|--------|
+| Saved views / Found Sets | Named, saveable filtered subsets | `SavedView` type + persistence schema | **Done** |
+| Value lists | Static + dynamic dropdown options | `ValueList` registry with relationship sourcing | **Done** |
+| Starter templates | Ready-to-use workspace templates | Template system exists | Todo — needs gallery UI |
+| Schema designer | Visual entity/relationship editor | Graph panel (view-only) | Todo — needs write mode |
+| Script debugger | Step-through with breakpoints | Sequencer + Lua runtime | Todo — needs DAP |
+
+---
+
+## FileMaker → Prism Concept Mapping
+
+| FileMaker Concept | Prism Equivalent | Notes |
+|-------------------|------------------|-------|
+| Layout | `FacetDefinition` | Visual projection of an entity type |
+| Layout Part | `LayoutPart` | header/body/footer/summary bands |
+| Field (on layout) | `FieldSlot` | Positioned field reference |
+| Portal | `PortalSlot` + `DataPortalRenderer` | Related records inline |
+| Container Field | `ContainerSlot` | VFS blob with MIME rendering |
+| Value List | `ValueList` | Static or relationship-sourced |
+| Found Set | `SavedView` | Named ViewConfig persisted to Loro |
+| Privilege Set | `PrivilegeSet` | DID role → permission mapping |
+| Script | Lua 5.4 + Automation Engine | Visual builder + code editor |
+| Script Workspace | Sequencer Panel | Condition/action builder |
+| Relationship Graph | Graph Panel + `@xyflow/react` | View-only (editor TODO) |
+| Theme | Not yet | Todo |
+| Print Layout | `PrintConfig` on `FacetDefinition` | Page dims, margins, breaks |
+| Table | Collection | Loro CRDT array |
+| Record | `GraphObject` | Core data unit |
+| Field (schema) | `EntityFieldDef` | Registry-driven field defs |
 
 ---
 
@@ -87,19 +122,30 @@ Libraries: `react-moveable` + `react-selecto` + `@scena/react-guides` (Scena eco
 
 | Area | Tests | Framework |
 |------|-------|-----------|
-| FacetSchema types + builder | 90 | Vitest |
+| FacetSchema types + builder | 90+ | Vitest |
 | Spatial layout pure functions | 45 | Vitest |
+| SavedView schema | 20+ | Vitest |
+| ValueList schema | 20+ | Vitest |
+| ContainerSlot schema | 10+ | Vitest |
+| PrivilegeSet schema | 20+ | Vitest |
+| PrintConfig schema | 10+ | Vitest |
 | Studio kernel integration | 97 | Vitest |
 | Layout builder E2E | 49 | Playwright |
 | Spatial canvas E2E | 14 | Playwright |
-| **Total new tests** | **30** | — |
-| **Total test count** | **2828** | All passing |
 
 ---
 
 ## Files Added/Modified
 
-### New Files
+### New Files (Phase 2 — Core Schemas)
+- `packages/prism-core/src/layer1/view/saved-view.ts` — SavedView types + CRUD
+- `packages/prism-core/src/layer1/view/saved-view.test.ts` — SavedView tests
+- `packages/prism-core/src/layer1/facet/value-list.ts` — ValueList types + resolution
+- `packages/prism-core/src/layer1/facet/value-list.test.ts` — ValueList tests
+- `packages/prism-core/src/layer1/manifest/privilege-set.ts` — PrivilegeSet types
+- `packages/prism-core/src/layer1/manifest/privilege-set.test.ts` — PrivilegeSet tests
+
+### New Files (Phase 1 — Layout)
 - `packages/prism-core/src/layer1/facet/spatial-layout.ts` — pure geometry helpers
 - `packages/prism-core/src/layer1/facet/spatial-layout.test.ts` — 45 tests
 - `packages/prism-studio/src/components/spatial-canvas-renderer.tsx` — free-form canvas
@@ -109,11 +155,8 @@ Libraries: `react-moveable` + `react-selecto` + `@scena/react-guides` (Scena eco
 - `packages/prism-studio/e2e/spatial-canvas.spec.ts` — 14 Playwright E2E tests
 
 ### Modified Files
-- `packages/prism-core/src/layer1/facet/facet-schema.ts` — spatial types, TextSlot, DrawingSlot, ConditionalFormat
-- `packages/prism-core/src/layer1/facet/facet-schema.test.ts` — extended with spatial + new slot tests
+- `packages/prism-core/src/layer1/facet/facet-schema.ts` — ContainerSlot, PrintConfig
+- `packages/prism-core/src/layer1/facet/facet-schema.test.ts` — ContainerSlot + PrintConfig tests
 - `packages/prism-core/src/layer1/facet/index.ts` — new exports
-- `packages/prism-studio/src/kernel/entities.ts` — 3 new entity types
-- `packages/prism-studio/src/panels/layout-panel.tsx` — Puck renderers for new entities
-- `packages/prism-studio/src/panels/facet-designer-panel.tsx` — handle text/drawing slots
-- `packages/prism-studio/src/lenses/index.tsx` — spatial-canvas lens registration
-- `packages/prism-studio/package.json` — react-moveable, react-selecto, @scena/react-guides
+- `packages/prism-core/src/layer1/view/index.ts` — SavedView exports
+- `packages/prism-core/src/layer1/manifest/manifest-types.ts` — PrivilegeSet on PrismManifest

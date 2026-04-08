@@ -26,3 +26,23 @@ export {
 } from "./manifest.js";
 
 export type { ManifestValidationError } from "./manifest.js";
+
+// ── Privilege Sets (access control) ─────────────────────────────────────
+export type {
+  CollectionPermission,
+  FieldPermission,
+  LayoutPermission,
+  ScriptPermission,
+  PrivilegeSet,
+  PrivilegeSetOptions,
+  RoleAssignment,
+} from "./privilege-set.js";
+export {
+  createPrivilegeSet,
+  getCollectionPermission,
+  getFieldPermission,
+  getLayoutPermission,
+  getScriptPermission,
+  canWrite,
+  canRead,
+} from "./privilege-set.js";

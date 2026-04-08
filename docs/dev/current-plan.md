@@ -45,6 +45,54 @@ FileMaker Pro-style absolute positioning as nestable Puck components. See `docs/
 | Playwright (spatial-canvas) | 14 | Pass |
 | **Playwright (total)** | **277** | **Pass** |
 
+## FileMaker Pro Core Schemas (Complete)
+
+Five new core type systems inspired by FileMaker Pro's 40-year-old patterns, implemented as
+Layer 1 agnostic TypeScript. See `docs/dev/filemaker-gap-analysis.md` for full gap tracker.
+
+### Completed
+
+- [x] **SavedView** (Found Sets) — `saved-view.ts` in `@prism/core/view`
+  - Persistable named ViewConfig with mode, filters, sorts, groups
+  - SavedViewRegistry with add/update/remove/pin/search/serialize/load
+  - 28 Vitest tests
+- [x] **ValueList** — `value-list.ts` in `@prism/core/facet`
+  - Static (hardcoded items) + dynamic (relationship-sourced) value lists
+  - ValueListResolver interface for CollectionStore integration
+  - ValueListRegistry with register/resolve/search/serialize/load
+  - 25 Vitest tests
+- [x] **ContainerSlot** — added to `facet-schema.ts`
+  - New slot kind for VFS BinaryRef fields (images, PDFs, audio, video)
+  - MIME type filtering, max size, render mode (preview/icon), thumbnail dims
+  - `addContainer()` builder method
+  - 4 Vitest tests
+- [x] **PrintConfig** — added to `facet-schema.ts`
+  - Page size (letter/legal/a4/a3/custom), orientation, margins
+  - Page numbers, headers/footers, page breaks per group
+  - `printConfig()` builder method, `createPrintConfig()` factory
+  - 3 Vitest tests
+- [x] **PrivilegeSet** — `privilege-set.ts` in `@prism/core/manifest`
+  - Collection-level (full/read/create/none), field-level (readwrite/readonly/hidden)
+  - Layout visibility, script execution permissions
+  - Row-level security via ExpressionEngine filter
+  - RoleAssignment maps DID → PrivilegeSet
+  - Helper functions: getCollectionPermission, getFieldPermission, canWrite, canRead
+  - Added `privilegeSets` and `roleAssignments` to PrismManifest
+  - 21 Vitest tests
+- [x] **FacetDefinition extensions** — valueListBindings, requiredPrivilegeSet on FacetDefinition
+  - `bindValueList()` and `requiredPrivilegeSet()` builder methods
+  - 4 Vitest tests
+
+### Test Summary
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| facet-schema | 103 | Pass |
+| value-list | 25 | Pass |
+| saved-view | 28 | Pass |
+| privilege-set | 21 | Pass |
+| **Vitest (all)** | **2915** | **Pass** |
+
 ### Remaining FileMaker Gaps (Phase 3+)
 
 - [ ] Tab controls / slide panels / popovers (P1)
@@ -53,8 +101,11 @@ FileMaker Pro-style absolute positioning as nestable Puck components. See `docs/
 - [ ] Merge field `{{fieldName}}` runtime interpolation (P2)
 - [ ] Per-field calculation binding (P2)
 - [ ] Themes / custom styles (P3)
-- [ ] Print layout / PDF export (P3)
+- [ ] PDF export via PrintConfig (P3 — schema done, renderer TODO)
 - [ ] CRDT persistence for FacetDefinitions (P4)
+- [ ] Starter Manifest gallery UI (P5)
+- [ ] Schema Designer write mode in Graph Panel (P5)
+- [ ] Lua step-through debugger / DAP (P5)
 
 ## Phase 1: The Heartbeat (Complete)
 
@@ -1856,6 +1907,19 @@ Three tiers:
 - [x] **Kernel hooks** — useFacetParser, useSpellCheck, useProseCodec, useSequencer, useEmitters, useFacetDefinitions
 - [x] **Facet Designer lens** — visual layout builder (like FileMaker Layout Mode)
 - [x] **Record Browser** — form/list/table/report/card toggle per collection (like FileMaker Browse Mode)
+
+## Phase 34: Relay Production Readiness (Complete)
+
+Full test coverage, CLI expansion, Studio integration, and documentation for Prism Relay.
+
+### Completed
+
+- [x] **Unit test gaps filled** — 9 new test files: file-store, logger, presence-store, push-transport, collection-routes, escrow-routes, hashcash-routes, trust-routes, presence-routes (69 new tests, 2828 total)
+- [x] **CLI management commands** — 22 new subcommands: peers (list/ban/unban), collections (list/inspect/export/import/delete), portals (list/inspect/delete), webhooks (list/delete/test), tokens (list/revoke), certs (list/renew), backup, restore, logs
+- [x] **New API endpoints** — GET/POST /api/backup, GET/DELETE /api/logs, GET /api/tokens (list), POST /api/webhooks/:id/test, DELETE /api/collections/:id
+- [x] **Studio relay integration** — RelayManager expanded with 13 new methods (collections, webhooks, peers, certs, backup/restore, health, discovery). RelayPanel expanded with 7 new management sections (health, collections, federation, webhooks, certificates, backup/restore) + relay auto-discovery
+- [x] **Documentation** — docs/deployment.md (Docker, TLS, federation, monitoring, security), docs/development.md (architecture, modules, testing, contributing), updated README.md and CLAUDE.md
+- [x] **Full CLI E2E test** — 44 commands tested against running relay, all passing including error cases
 
 ## Phase 33: Ecosystem Apps — Cadence & Grip
 

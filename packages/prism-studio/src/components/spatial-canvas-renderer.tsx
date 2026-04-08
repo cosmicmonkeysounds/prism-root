@@ -94,6 +94,10 @@ const canvasStyles = {
     background: "rgba(16,185,129,0.08)",
     borderColor: "#10b981",
   },
+  slotContainer: {
+    background: "rgba(236,72,153,0.08)",
+    borderColor: "#ec4899",
+  },
 } as const;
 
 // ── Slot label helper ───────────────────────────────────────────────────────
@@ -110,6 +114,8 @@ function slotLabel(slot: FacetSlot): string {
         : slot.slot.text;
     case "drawing":
       return slot.slot.shape;
+    case "container":
+      return slot.slot.label ?? `File: ${slot.slot.fieldPath}`;
   }
 }
 
@@ -123,6 +129,8 @@ function slotStyle(slot: FacetSlot): Record<string, string> {
       return canvasStyles.slotText;
     case "drawing":
       return canvasStyles.slotDrawing;
+    case "container":
+      return canvasStyles.slotContainer;
   }
 }
 

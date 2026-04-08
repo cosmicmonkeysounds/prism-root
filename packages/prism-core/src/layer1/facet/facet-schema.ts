@@ -149,11 +149,38 @@ export interface DrawingSlot {
   zIndex?: number;
 }
 
+export interface ContainerSlot {
+  /** Field path to a BinaryRef in GraphObject.data. */
+  fieldPath: string;
+  /** Override field label. */
+  label?: string;
+  /** Allowed MIME type patterns (e.g. "image/*", "application/pdf"). Empty = all. */
+  allowedMimeTypes?: string[];
+  /** Maximum file size in bytes. */
+  maxSize?: number;
+  /** Rendering mode: 'preview' shows inline thumbnail/player, 'icon' shows file icon. */
+  renderMode?: 'preview' | 'icon';
+  /** Thumbnail dimensions for preview mode. */
+  thumbnailWidth?: number;
+  thumbnailHeight?: number;
+  /** Which layout part this container belongs to. */
+  part: LayoutPartKind;
+  /** Sort order within the part. */
+  order: number;
+  /** Spatial position. */
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
+  zIndex?: number;
+}
+
 export type FacetSlot =
   | { kind: 'field'; slot: FieldSlot }
   | { kind: 'portal'; slot: PortalSlot }
   | { kind: 'text'; slot: TextSlot }
-  | { kind: 'drawing'; slot: DrawingSlot };
+  | { kind: 'drawing'; slot: DrawingSlot }
+  | { kind: 'container'; slot: ContainerSlot };
 
 // ── Summary fields ───────────────────────────────────────────────────────────
 
@@ -161,6 +188,49 @@ export interface SummaryField {
   fieldPath: string;
   operation: 'count' | 'sum' | 'average' | 'min' | 'max' | 'list';
   label?: string;
+}
+
+// ── Print configuration ─────────────────────────────────────────────────────
+
+export type PageOrientation = 'portrait' | 'landscape';
+export type PageSize = 'letter' | 'legal' | 'a4' | 'a3' | 'custom';
+
+export interface PageMargins {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+}
+
+export interface PrintConfig {
+  /** Page size preset or 'custom'. */
+  pageSize: PageSize;
+  /** Page orientation. Default: 'portrait'. */
+  orientation?: PageOrientation;
+  /** Page margins in points (1/72 inch). */
+  margins?: PageMargins;
+  /** Custom page width in points (only when pageSize === 'custom'). */
+  customWidth?: number;
+  /** Custom page height in points (only when pageSize === 'custom'). */
+  customHeight?: number;
+  /** Show page numbers. */
+  showPageNumbers?: boolean;
+  /** Page number position. */
+  pageNumberPosition?: 'top-left' | 'top-center' | 'top-right' | 'bottom-left' | 'bottom-center' | 'bottom-right';
+  /** Print header text (appears on every page). */
+  pageHeader?: string;
+  /** Print footer text (appears on every page). */
+  pageFooter?: string;
+  /** Insert page break before each group in report layout. */
+  pageBreakBeforeGroup?: boolean;
+  /** Insert page break after each group in report layout. */
+  pageBreakAfterGroup?: boolean;
+  /** Maximum records per page (0 = auto-fit). */
+  recordsPerPage?: number;
+}
+
+export function createPrintConfig(pageSize: PageSize = 'letter'): PrintConfig {
+  return { pageSize };
 }
 
 // ── Facet definition ─────────────────────────────────────────────────────────
@@ -194,6 +264,12 @@ export interface FacetDefinition {
   canvasWidth?: number;
   /** Design canvas height in points. */
   canvasHeight?: number;
+  /** Print/PDF layout configuration. */
+  printConfig?: PrintConfig;
+  /** Value list bindings: fieldPath → ValueList ID. */
+  valueListBindings?: Record<string, string>;
+  /** Privilege set ID required to access this layout. */
+  requiredPrivilegeSet?: string;
 }
 
 // ── Factory ──────────────────────────────────────────────────────────────────
@@ -257,6 +333,11 @@ export class FacetDefinitionBuilder {
     return this;
   }
 
+  addContainer(slot: ContainerSlot): this {
+    this._def.slots.push({ kind: 'container', slot });
+    return this;
+  }
+
   layoutMode(mode: FacetLayoutMode): this {
     this._def.layoutMode = mode;
     return this;
@@ -296,6 +377,24 @@ export class FacetDefinitionBuilder {
 
   onRecordCommit(automationId: string): this {
     this._def.onRecordCommit = automationId;
+    return this;
+  }
+
+  printConfig(config: PrintConfig): this {
+    this._def.printConfig = config;
+    return this;
+  }
+
+  bindValueList(fieldPath: string, valueListId: string): this {
+    if (!this._def.valueListBindings) {
+      this._def.valueListBindings = {};
+    }
+    this._def.valueListBindings[fieldPath] = valueListId;
+    return this;
+  }
+
+  requiredPrivilegeSet(privilegeSetId: string): this {
+    this._def.requiredPrivilegeSet = privilegeSetId;
     return this;
   }
 

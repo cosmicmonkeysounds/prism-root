@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   createFacetDefinition,
+  createPrintConfig,
   FacetDefinitionBuilder,
   facetDefinitionBuilder,
   type FacetLayout,
@@ -9,7 +10,9 @@ import {
   type PortalSlot,
   type TextSlot,
   type DrawingSlot,
+  type ContainerSlot,
   type SummaryField,
+  type PrintConfig,
 } from './facet-schema.js';
 
 // ── createFacetDefinition factory ───────────────────────────────────────────
@@ -599,5 +602,152 @@ describe('DrawingSlot', () => {
       .addDrawing({ shape: 'line', part: 'body', order: 3 })
       .build();
     expect(def.slots.map((s) => s.kind)).toEqual(['field', 'text', 'portal', 'drawing']);
+  });
+});
+
+// ── ContainerSlot ───────────────────────────────────────────────────────────
+
+describe('ContainerSlot', () => {
+  it('addContainer() adds a container slot', () => {
+    const container: ContainerSlot = {
+      fieldPath: 'photo',
+      part: 'body',
+      order: 0,
+    };
+    const def = facetDefinitionBuilder('id', 'obj', 'form').addContainer(container).build();
+    expect(def.slots).toHaveLength(1);
+    expect(def.slots[0].kind).toBe('container');
+    if (def.slots[0].kind === 'container') {
+      expect(def.slots[0].slot.fieldPath).toBe('photo');
+    }
+  });
+
+  it('preserves all container properties', () => {
+    const container: ContainerSlot = {
+      fieldPath: 'attachment',
+      label: 'Photo',
+      allowedMimeTypes: ['image/*', 'application/pdf'],
+      maxSize: 10_000_000,
+      renderMode: 'preview',
+      thumbnailWidth: 200,
+      thumbnailHeight: 150,
+      part: 'body',
+      order: 1,
+      x: 50,
+      y: 100,
+      w: 200,
+      h: 150,
+      zIndex: 3,
+    };
+    const def = facetDefinitionBuilder('id', 'obj', 'form').addContainer(container).build();
+    const slot = def.slots[0];
+    if (slot.kind === 'container') {
+      expect(slot.slot.label).toBe('Photo');
+      expect(slot.slot.allowedMimeTypes).toEqual(['image/*', 'application/pdf']);
+      expect(slot.slot.maxSize).toBe(10_000_000);
+      expect(slot.slot.renderMode).toBe('preview');
+      expect(slot.slot.thumbnailWidth).toBe(200);
+      expect(slot.slot.x).toBe(50);
+      expect(slot.slot.zIndex).toBe(3);
+    }
+  });
+
+  it('addContainer() is chainable', () => {
+    const builder = facetDefinitionBuilder('id', 'obj', 'form');
+    expect(builder.addContainer({ fieldPath: 'f', part: 'body', order: 0 })).toBe(builder);
+  });
+
+  it('interleaves with all five slot kinds', () => {
+    const def = facetDefinitionBuilder('id', 'obj', 'form')
+      .addField({ fieldPath: 'name', part: 'body', order: 0 })
+      .addContainer({ fieldPath: 'photo', part: 'body', order: 1 })
+      .addText({ text: 'Label', part: 'body', order: 2 })
+      .addPortal({ relationshipId: 'r', displayFields: [], part: 'body', order: 3 })
+      .addDrawing({ shape: 'line', part: 'body', order: 4 })
+      .build();
+    expect(def.slots.map((s) => s.kind)).toEqual([
+      'field', 'container', 'text', 'portal', 'drawing',
+    ]);
+  });
+});
+
+// ── PrintConfig ─────────────────────────────────────────────────────────────
+
+describe('PrintConfig', () => {
+  it('createPrintConfig() creates default letter config', () => {
+    const config = createPrintConfig();
+    expect(config.pageSize).toBe('letter');
+  });
+
+  it('createPrintConfig() accepts page size', () => {
+    const config = createPrintConfig('a4');
+    expect(config.pageSize).toBe('a4');
+  });
+
+  it('printConfig() builder sets print configuration', () => {
+    const config: PrintConfig = {
+      pageSize: 'a4',
+      orientation: 'landscape',
+      margins: { top: 36, right: 36, bottom: 36, left: 36 },
+      showPageNumbers: true,
+      pageNumberPosition: 'bottom-center',
+      pageHeader: 'Monthly Report',
+      pageFooter: 'Confidential',
+      pageBreakBeforeGroup: true,
+    };
+    const def = facetDefinitionBuilder('report', 'transaction', 'report')
+      .printConfig(config)
+      .build();
+    expect(def.printConfig?.pageSize).toBe('a4');
+    expect(def.printConfig?.orientation).toBe('landscape');
+    expect(def.printConfig?.margins?.top).toBe(36);
+    expect(def.printConfig?.showPageNumbers).toBe(true);
+    expect(def.printConfig?.pageHeader).toBe('Monthly Report');
+    expect(def.printConfig?.pageBreakBeforeGroup).toBe(true);
+  });
+
+  it('FacetDefinition has no printConfig by default', () => {
+    const def = createFacetDefinition('id', 'obj', 'report');
+    expect(def.printConfig).toBeUndefined();
+  });
+});
+
+// ── Value List Bindings ─────────────────────────────────────────────────────
+
+describe('valueListBindings', () => {
+  it('bindValueList() sets a field→valueList mapping', () => {
+    const def = facetDefinitionBuilder('id', 'obj', 'form')
+      .bindValueList('status', 'status-list')
+      .build();
+    expect(def.valueListBindings?.['status']).toBe('status-list');
+  });
+
+  it('accumulates multiple bindings', () => {
+    const def = facetDefinitionBuilder('id', 'obj', 'form')
+      .bindValueList('status', 'status-list')
+      .bindValueList('priority', 'priority-list')
+      .build();
+    expect(Object.keys(def.valueListBindings ?? {})).toHaveLength(2);
+  });
+
+  it('FacetDefinition has no bindings by default', () => {
+    const def = createFacetDefinition('id', 'obj', 'form');
+    expect(def.valueListBindings).toBeUndefined();
+  });
+});
+
+// ── Required Privilege Set ──────────────────────────────────────────────────
+
+describe('requiredPrivilegeSet', () => {
+  it('sets the required privilege set id', () => {
+    const def = facetDefinitionBuilder('id', 'obj', 'form')
+      .requiredPrivilegeSet('admin')
+      .build();
+    expect(def.requiredPrivilegeSet).toBe('admin');
+  });
+
+  it('FacetDefinition has no required privilege set by default', () => {
+    const def = createFacetDefinition('id', 'obj', 'form');
+    expect(def.requiredPrivilegeSet).toBeUndefined();
   });
 });

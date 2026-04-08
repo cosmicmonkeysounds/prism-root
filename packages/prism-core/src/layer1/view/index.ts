@@ -31,3 +31,14 @@ export type {
   LiveViewOptions,
   LiveView,
 } from "./live-view.js";
+
+// ── Saved Views (persistable Found Sets) ────────────────────────────────
+export type {
+  SavedView,
+  SavedViewListener,
+  SavedViewRegistry,
+} from "./saved-view.js";
+export {
+  createSavedView,
+  createSavedViewRegistry,
+} from "./saved-view.js";

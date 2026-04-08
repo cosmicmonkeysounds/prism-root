@@ -293,6 +293,8 @@ function cloneSlot(s: FacetSlot): FacetSlot {
       return { kind: "text", slot: { ...s.slot } };
     case "drawing":
       return { kind: "drawing", slot: { ...s.slot } };
+    case "container":
+      return { kind: "container", slot: { ...s.slot } };
   }
 }
 
@@ -309,11 +311,12 @@ function cloneDef(def: FacetDefinition): FacetDefinition {
 function countSlotsByPart(
   slots: ReadonlyArray<FacetSlot>,
   partKind: LayoutPartKind,
-): { fields: number; portals: number; texts: number; drawings: number } {
+): { fields: number; portals: number; texts: number; drawings: number; containers: number } {
   let fields = 0;
   let portals = 0;
   let texts = 0;
   let drawings = 0;
+  let containers = 0;
   for (const s of slots) {
     if (s.slot.part === partKind) {
       switch (s.kind) {
@@ -321,10 +324,11 @@ function countSlotsByPart(
         case "portal": portals++; break;
         case "text": texts++; break;
         case "drawing": drawings++; break;
+        case "container": containers++; break;
       }
     }
   }
-  return { fields, portals, texts, drawings };
+  return { fields, portals, texts, drawings, containers };
 }
 
 // ── Part Card ───────────────────────────────────────────────────────────────
@@ -337,7 +341,7 @@ function PartCard({
 }: {
   part: LayoutPart;
   index: number;
-  slotCounts: { fields: number; portals: number; texts: number; drawings: number };
+  slotCounts: { fields: number; portals: number; texts: number; drawings: number; containers: number };
   onRemove: () => void;
 }) {
   return (
@@ -352,6 +356,7 @@ function PartCard({
           <span style={styles.badgePortal}>{slotCounts.portals}P</span>
           {slotCounts.texts > 0 && <span style={styles.badge}>{slotCounts.texts}T</span>}
           {slotCounts.drawings > 0 && <span style={styles.badge}>{slotCounts.drawings}D</span>}
+          {slotCounts.containers > 0 && <span style={styles.badge}>{slotCounts.containers}C</span>}
           <button
             style={styles.btnDanger}
             onClick={onRemove}

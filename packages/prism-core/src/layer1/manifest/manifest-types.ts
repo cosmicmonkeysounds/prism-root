@@ -161,4 +161,11 @@ export interface PrismManifest {
   visibility?: ManifestVisibility | undefined;
   /** Human-readable description. */
   description?: string | undefined;
+
+  // ── Access Control ──────────────────────────────────────────────────────
+
+  /** Privilege set definitions for this workspace. */
+  privilegeSets?: import("./privilege-set.js").PrivilegeSet[] | undefined;
+  /** DID → PrivilegeSet role assignments. */
+  roleAssignments?: import("./privilege-set.js").RoleAssignment[] | undefined;
 }

@@ -24,15 +24,40 @@ export type {
   TextSlot,
   DrawingShape,
   DrawingSlot,
+  ContainerSlot,
   FacetSlot,
   SummaryField,
+  PageOrientation,
+  PageSize,
+  PageMargins,
+  PrintConfig,
   FacetDefinition,
 } from "./facet-schema.js";
 export {
   createFacetDefinition,
+  createPrintConfig,
   FacetDefinitionBuilder,
   facetDefinitionBuilder,
 } from "./facet-schema.js";
+
+// ── Value Lists (static + dynamic constrained field input) ──────────────
+export type {
+  ValueListItem,
+  StaticValueListSource,
+  DynamicValueListSource,
+  ValueListSource,
+  ValueListDisplay,
+  ValueList,
+  ValueListResolver,
+  ValueListListener,
+  ValueListRegistry,
+} from "./value-list.js";
+export {
+  createStaticValueList,
+  createDynamicValueList,
+  resolveValueList,
+  createValueListRegistry,
+} from "./value-list.js";
 
 // ── Spatial Layout (pure geometry helpers for free-form layouts) ─────────
 export type {
