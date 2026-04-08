@@ -9,6 +9,9 @@ import { useState, useCallback, useMemo } from "react";
 import { useTrust, useKernel } from "../kernel/index.js";
 import type { PeerReputation, TrustLevel } from "@prism/core/trust";
 
+import { lensId } from "@prism/core/lens";
+import type { LensManifest } from "@prism/core/lens";
+import { defineLensBundle, type LensBundle } from "../lenses/bundle.js";
 // ── Styles ──────────────────────────────────────────────────────────────────
 
 const styles = {
@@ -502,3 +505,25 @@ export function TrustPanel() {
     </div>
   );
 }
+
+
+// ── Lens registration ──────────────────────────────────────────────────────
+
+export const TRUST_LENS_ID = lensId("trust");
+
+export const trustLensManifest: LensManifest = {
+
+  id: TRUST_LENS_ID,
+  name: "Trust",
+  icon: "\uD83D\uDEE1",
+  category: "custom",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-trust", name: "Switch to Trust", shortcut: ["t"], section: "Navigation" }],
+  },
+};
+
+export const trustLensBundle: LensBundle = defineLensBundle(
+  trustLensManifest,
+  TrustPanel,
+);

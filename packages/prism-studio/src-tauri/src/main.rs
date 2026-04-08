@@ -18,6 +18,7 @@ fn main() {
             commands::crdt_read,
             commands::crdt_export,
             commands::lua_exec,
+            commands::run_build_step,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Prism Studio");

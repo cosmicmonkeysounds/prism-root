@@ -24,3 +24,12 @@ export type {
   ShellStore,
 } from "./shell-store.js";
 export { createShellStore } from "./shell-store.js";
+
+export type {
+  LensBundle,
+  LensInstallContext,
+} from "./lens-install.js";
+export {
+  installLensBundles,
+  defineLensBundle,
+} from "./lens-install.js";

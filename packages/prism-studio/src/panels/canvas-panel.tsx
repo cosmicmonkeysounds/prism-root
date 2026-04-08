@@ -13,15 +13,66 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import type { GraphObject, ObjectId } from "@prism/core/object-model";
 import { useKernel, useSelection, useObject } from "../kernel/index.js";
+import {
+  computeBlockStyle,
+  extractBlockStyle,
+  mergeCss,
+} from "../kernel/block-style.js";
+import { resolveObjectRefs, evaluateVisibleWhen } from "../kernel/data-binding.js";
 import { parseLuaUi, renderUINode } from "./lua-facet-panel.js";
 import { KanbanWidgetRenderer } from "../components/kanban-widget-renderer.js";
+import { ListWidgetRenderer } from "../components/list-widget-renderer.js";
+import {
+  TableWidgetRenderer,
+  parseTableColumns,
+  type TableSortDir,
+} from "../components/table-widget-renderer.js";
+import { CardGridWidgetRenderer } from "../components/card-grid-widget-renderer.js";
+import {
+  ReportWidgetRenderer,
+  type ReportAggregation,
+} from "../components/report-widget-renderer.js";
 import { CalendarWidgetRenderer } from "../components/calendar-widget-renderer.js";
 import { ChartWidgetRenderer, type ChartType, type ChartAggregation } from "../components/chart-widget-renderer.js";
 import { MapWidgetRenderer } from "../components/map-widget-renderer.js";
 import { TabContainerRenderer } from "../components/tab-container-renderer.js";
 import { PopoverWidgetRenderer } from "../components/popover-widget-renderer.js";
 import { SlidePanelRenderer } from "../components/slide-panel-renderer.js";
+import {
+  TextInputRenderer,
+  TextareaInputRenderer,
+  SelectInputRenderer,
+  CheckboxInputRenderer,
+  NumberInputRenderer,
+  DateInputRenderer,
+} from "../components/form-input-renderers.js";
+import {
+  ColumnsRenderer,
+  DividerRenderer,
+  SpacerRenderer,
+} from "../components/layout-primitive-renderers.js";
+import {
+  StatWidgetRenderer,
+  BadgeRenderer,
+  AlertRenderer,
+  ProgressBarRenderer,
+  type StatAggregation,
+  type BadgeTone,
+} from "../components/data-display-renderers.js";
+import {
+  MarkdownWidgetRenderer,
+  IframeWidgetRenderer,
+} from "../components/content-renderers.js";
+import { CodeBlockRenderer } from "../components/code-block-renderer.js";
+import {
+  VideoWidgetRenderer,
+  AudioWidgetRenderer,
+} from "../components/media-renderers.js";
+import { PeerCursorsBar } from "../components/peer-cursors-overlay.js";
 
+import { lensId } from "@prism/core/lens";
+import type { LensManifest } from "@prism/core/lens";
+import { defineLensBundle, type LensBundle } from "../lenses/bundle.js";
 // ── Block Toolbar ─────────────────────────────────────────────────────────
 
 const toolbarStyles = {
@@ -189,15 +240,6 @@ function markdownToHtml(md: string): string {
     .replace(/^(.+)$/, "<p>$1</p>");
 }
 
-// ── Padding map ────────────────────────────────────────────────────────────
-
-const PADDING_MAP: Record<string, string> = {
-  none: "0",
-  sm: "12px",
-  md: "24px",
-  lg: "48px",
-};
-
 // ── Button variant styles ──────────────────────────────────────────────────
 
 const BUTTON_VARIANTS: Record<string, CSSProperties> = {
@@ -280,8 +322,10 @@ function useResolvePage(): GraphObject | undefined {
 // ── Component renderers ────────────────────────────────────────────────────
 
 function HeadingRenderer({ obj }: { obj: GraphObject }) {
+  const kernel = useKernel();
   const data = obj.data as { text?: string; level?: string; align?: string };
-  const text = data.text ?? obj.name;
+  const pool = kernel.store.allObjects();
+  const text = resolveObjectRefs(data.text ?? obj.name, pool, obj);
   const level = data.level ?? "h2";
   const align = (data.align ?? "left") as CSSProperties["textAlign"];
 
@@ -304,8 +348,10 @@ function HeadingRenderer({ obj }: { obj: GraphObject }) {
 }
 
 function TextBlockRenderer({ obj }: { obj: GraphObject }) {
+  const kernel = useKernel();
   const data = obj.data as { content?: string; format?: string };
-  const content = data.content ?? "";
+  const pool = kernel.store.allObjects();
+  const content = resolveObjectRefs(data.content ?? "", pool, obj);
   const format = data.format ?? "markdown";
 
   if (format === "plain") {
@@ -505,6 +551,106 @@ function KanbanWidgetBlock({ obj, kernel }: { obj: GraphObject; kernel: ReturnTy
   );
 }
 
+function ListWidgetBlock({ obj, kernel }: { obj: GraphObject; kernel: ReturnType<typeof useKernel> }) {
+  const { selectedId } = useSelection();
+  const data = obj.data as {
+    collectionType?: string;
+    titleField?: string;
+    subtitleField?: string;
+    showStatus?: boolean;
+    showTimestamp?: boolean;
+  };
+  const collectionType = data.collectionType ?? "";
+  const objects = collectionType
+    ? kernel.store.allObjects().filter((o) => o.type === collectionType && !o.deletedAt)
+    : [];
+  return (
+    <ListWidgetRenderer
+      objects={objects}
+      titleField={data.titleField ?? "name"}
+      subtitleField={data.subtitleField ?? "type"}
+      showStatus={data.showStatus !== false}
+      showTimestamp={data.showTimestamp !== false}
+      selectedId={selectedId}
+      onSelectObject={(id) => kernel.select(id as ObjectId)}
+    />
+  );
+}
+
+function TableWidgetBlock({ obj, kernel }: { obj: GraphObject; kernel: ReturnType<typeof useKernel> }) {
+  const { selectedId } = useSelection();
+  const data = obj.data as {
+    collectionType?: string;
+    columns?: string;
+    sortField?: string;
+    sortDir?: TableSortDir;
+  };
+  const collectionType = data.collectionType ?? "";
+  const objects = collectionType
+    ? kernel.store.allObjects().filter((o) => o.type === collectionType && !o.deletedAt)
+    : [];
+  return (
+    <TableWidgetRenderer
+      objects={objects}
+      columns={parseTableColumns(data.columns ?? "")}
+      sortField={data.sortField ?? "name"}
+      sortDir={data.sortDir ?? "asc"}
+      selectedId={selectedId}
+      onSelectObject={(id) => kernel.select(id as ObjectId)}
+    />
+  );
+}
+
+function CardGridWidgetBlock({ obj, kernel }: { obj: GraphObject; kernel: ReturnType<typeof useKernel> }) {
+  const { selectedId } = useSelection();
+  const data = obj.data as {
+    collectionType?: string;
+    titleField?: string;
+    subtitleField?: string;
+    minColumnWidth?: number;
+    showStatus?: boolean;
+  };
+  const collectionType = data.collectionType ?? "";
+  const objects = collectionType
+    ? kernel.store.allObjects().filter((o) => o.type === collectionType && !o.deletedAt)
+    : [];
+  return (
+    <CardGridWidgetRenderer
+      objects={objects}
+      titleField={data.titleField ?? "name"}
+      subtitleField={data.subtitleField ?? "type"}
+      minColumnWidth={data.minColumnWidth ?? 220}
+      showStatus={data.showStatus !== false}
+      selectedId={selectedId}
+      onSelectObject={(id) => kernel.select(id as ObjectId)}
+    />
+  );
+}
+
+function ReportWidgetBlock({ obj, kernel }: { obj: GraphObject; kernel: ReturnType<typeof useKernel> }) {
+  const data = obj.data as {
+    collectionType?: string;
+    groupField?: string;
+    titleField?: string;
+    valueField?: string;
+    aggregation?: ReportAggregation;
+  };
+  const collectionType = data.collectionType ?? "";
+  const objects = collectionType
+    ? kernel.store.allObjects().filter((o) => o.type === collectionType && !o.deletedAt)
+    : [];
+  return (
+    <ReportWidgetRenderer
+      objects={objects}
+      groupField={data.groupField ?? "type"}
+      titleField={data.titleField ?? "name"}
+      valueField={data.valueField || undefined}
+      aggregation={data.aggregation ?? "count"}
+      onSelectObject={(id) => kernel.select(id as ObjectId)}
+    />
+  );
+}
+
 function CalendarWidgetBlock({ obj, kernel }: { obj: GraphObject; kernel: ReturnType<typeof useKernel> }) {
   const data = obj.data as {
     collectionType?: string;
@@ -585,6 +731,323 @@ function SlidePanelBlock({ obj }: { obj: GraphObject }) {
   return <SlidePanelRenderer label={data.label ?? "Details"} content={data.content ?? ""} collapsed={!!data.collapsed} />;
 }
 
+// ── Form input blocks ──────────────────────────────────────────────────────
+
+function TextInputBlock({ obj }: { obj: GraphObject }) {
+  const d = obj.data as {
+    label?: string;
+    placeholder?: string;
+    defaultValue?: string;
+    inputType?: "text" | "email" | "url" | "tel" | "password";
+    required?: boolean;
+    help?: string;
+  };
+  return (
+    <TextInputRenderer
+      label={d.label}
+      placeholder={d.placeholder}
+      defaultValue={d.defaultValue}
+      inputType={d.inputType ?? "text"}
+      required={!!d.required}
+      help={d.help}
+    />
+  );
+}
+
+function TextareaInputBlock({ obj }: { obj: GraphObject }) {
+  const d = obj.data as {
+    label?: string;
+    placeholder?: string;
+    defaultValue?: string;
+    rows?: number;
+    required?: boolean;
+    help?: string;
+  };
+  return (
+    <TextareaInputRenderer
+      label={d.label}
+      placeholder={d.placeholder}
+      defaultValue={d.defaultValue}
+      rows={d.rows ?? 4}
+      required={!!d.required}
+      help={d.help}
+    />
+  );
+}
+
+function SelectInputBlock({ obj }: { obj: GraphObject }) {
+  const d = obj.data as {
+    label?: string;
+    options?: string;
+    defaultValue?: string;
+    required?: boolean;
+    help?: string;
+  };
+  return (
+    <SelectInputRenderer
+      label={d.label}
+      options={d.options ?? ""}
+      defaultValue={d.defaultValue}
+      required={!!d.required}
+      help={d.help}
+    />
+  );
+}
+
+function CheckboxInputBlock({ obj }: { obj: GraphObject }) {
+  const d = obj.data as { label?: string; defaultChecked?: boolean; help?: string };
+  return (
+    <CheckboxInputRenderer
+      label={d.label}
+      defaultChecked={!!d.defaultChecked}
+      help={d.help}
+    />
+  );
+}
+
+function NumberInputBlock({ obj }: { obj: GraphObject }) {
+  const d = obj.data as {
+    label?: string;
+    defaultValue?: number;
+    min?: number;
+    max?: number;
+    step?: number;
+    required?: boolean;
+    help?: string;
+  };
+  return (
+    <NumberInputRenderer
+      label={d.label}
+      defaultValue={d.defaultValue}
+      min={d.min}
+      max={d.max}
+      step={d.step}
+      required={!!d.required}
+      help={d.help}
+    />
+  );
+}
+
+function DateInputBlock({ obj }: { obj: GraphObject }) {
+  const d = obj.data as {
+    label?: string;
+    defaultValue?: string;
+    dateKind?: "date" | "datetime-local" | "time";
+    required?: boolean;
+    help?: string;
+  };
+  return (
+    <DateInputRenderer
+      label={d.label}
+      defaultValue={d.defaultValue}
+      dateKind={d.dateKind ?? "date"}
+      required={!!d.required}
+      help={d.help}
+    />
+  );
+}
+
+// ── Layout primitive blocks ────────────────────────────────────────────────
+
+function ColumnsBlock({ obj }: { obj: GraphObject }) {
+  const d = obj.data as {
+    columnCount?: number;
+    gap?: number;
+    align?: "start" | "center" | "end" | "stretch";
+  };
+  return (
+    <ColumnsRenderer
+      columnCount={d.columnCount ?? 2}
+      gap={d.gap ?? 16}
+      align={d.align ?? "stretch"}
+    />
+  );
+}
+
+function DividerBlock({ obj }: { obj: GraphObject }) {
+  const d = obj.data as {
+    dividerStyle?: "solid" | "dashed" | "dotted";
+    thickness?: number;
+    color?: string;
+    spacing?: number;
+    label?: string;
+  };
+  return (
+    <DividerRenderer
+      style={d.dividerStyle ?? "solid"}
+      thickness={d.thickness ?? 1}
+      color={d.color ?? "#cbd5e1"}
+      spacing={d.spacing ?? 12}
+      label={d.label}
+    />
+  );
+}
+
+function SpacerBlock({ obj }: { obj: GraphObject }) {
+  const d = obj.data as { size?: number; axis?: "vertical" | "horizontal" };
+  return <SpacerRenderer size={d.size ?? 16} axis={d.axis ?? "vertical"} />;
+}
+
+// ── Data display blocks ────────────────────────────────────────────────────
+
+function StatWidgetBlock({ obj, kernel }: { obj: GraphObject; kernel: ReturnType<typeof useKernel> }) {
+  const d = obj.data as {
+    collectionType?: string;
+    label?: string;
+    aggregation?: StatAggregation;
+    valueField?: string;
+    prefix?: string;
+    suffix?: string;
+    decimals?: number;
+    thousands?: boolean;
+  };
+  const collectionType = d.collectionType ?? "";
+  const objects = collectionType
+    ? kernel.store.allObjects().filter((o) => o.type === collectionType && !o.deletedAt)
+    : [];
+  return (
+    <StatWidgetRenderer
+      objects={objects}
+      label={d.label ?? "Total"}
+      aggregation={d.aggregation ?? "count"}
+      valueField={d.valueField || undefined}
+      prefix={d.prefix ?? ""}
+      suffix={d.suffix ?? ""}
+      decimals={d.decimals ?? 0}
+      thousands={d.thousands !== false}
+    />
+  );
+}
+
+function BadgeBlock({ obj }: { obj: GraphObject }) {
+  const d = obj.data as { label?: string; tone?: BadgeTone; icon?: string; outline?: boolean };
+  return (
+    <BadgeRenderer
+      label={d.label ?? "Badge"}
+      tone={d.tone ?? "neutral"}
+      icon={d.icon || undefined}
+      outline={!!d.outline}
+    />
+  );
+}
+
+function AlertBlock({ obj }: { obj: GraphObject }) {
+  const d = obj.data as { title?: string; message?: string; tone?: BadgeTone; icon?: string };
+  return (
+    <AlertRenderer
+      title={d.title || undefined}
+      message={d.message ?? ""}
+      tone={d.tone ?? "info"}
+      icon={d.icon || undefined}
+    />
+  );
+}
+
+function ProgressBarBlock({ obj }: { obj: GraphObject }) {
+  const d = obj.data as {
+    label?: string;
+    value?: number;
+    max?: number;
+    tone?: BadgeTone;
+    showPercent?: boolean;
+  };
+  return (
+    <ProgressBarRenderer
+      label={d.label || undefined}
+      value={d.value ?? 0}
+      max={d.max ?? 100}
+      tone={d.tone ?? "info"}
+      showPercent={d.showPercent !== false}
+    />
+  );
+}
+
+// ── Content blocks ─────────────────────────────────────────────────────────
+
+function MarkdownWidgetBlock({ obj }: { obj: GraphObject }) {
+  const d = obj.data as { source?: string };
+  return <MarkdownWidgetRenderer source={d.source ?? ""} />;
+}
+
+function IframeWidgetBlock({ obj }: { obj: GraphObject }) {
+  const d = obj.data as { src?: string; title?: string; height?: number; allowFullscreen?: boolean };
+  return (
+    <IframeWidgetRenderer
+      src={d.src ?? ""}
+      title={d.title ?? "Embedded content"}
+      height={d.height ?? 360}
+      allowFullscreen={d.allowFullscreen !== false}
+    />
+  );
+}
+
+function CodeBlockBlock({ obj }: { obj: GraphObject }) {
+  const d = obj.data as {
+    source?: string;
+    language?: string;
+    caption?: string;
+    lineNumbers?: boolean;
+    wrap?: boolean;
+  };
+  return (
+    <CodeBlockRenderer
+      source={d.source ?? ""}
+      language={d.language}
+      caption={d.caption}
+      lineNumbers={d.lineNumbers !== false}
+      wrap={d.wrap === true}
+    />
+  );
+}
+
+function VideoWidgetBlock({ obj }: { obj: GraphObject }) {
+  const d = obj.data as {
+    src?: string;
+    poster?: string;
+    caption?: string;
+    width?: number;
+    height?: number;
+    controls?: boolean;
+    autoplay?: boolean;
+    loop?: boolean;
+    muted?: boolean;
+  };
+  return (
+    <VideoWidgetRenderer
+      src={d.src}
+      poster={d.poster}
+      caption={d.caption}
+      width={d.width}
+      height={d.height}
+      controls={d.controls !== false}
+      autoplay={d.autoplay === true}
+      loop={d.loop === true}
+      muted={d.muted === true}
+    />
+  );
+}
+
+function AudioWidgetBlock({ obj }: { obj: GraphObject }) {
+  const d = obj.data as {
+    src?: string;
+    caption?: string;
+    controls?: boolean;
+    autoplay?: boolean;
+    loop?: boolean;
+    muted?: boolean;
+  };
+  return (
+    <AudioWidgetRenderer
+      src={d.src}
+      caption={d.caption}
+      controls={d.controls !== false}
+      autoplay={d.autoplay === true}
+      loop={d.loop === true}
+      muted={d.muted === true}
+    />
+  );
+}
+
 // ── Block wrapper (selection highlight + click) ────────────────────────────
 
 function BlockWrapper({
@@ -608,18 +1071,27 @@ function BlockWrapper({
     [obj.id, onSelect],
   );
 
+  const styleOverride = computeBlockStyle(extractBlockStyle(obj.data));
+  const data = obj.data as { visibleWhen?: string };
+  const visible = evaluateVisibleWhen(data.visibleWhen, kernel.store.allObjects(), obj);
+  if (!visible && !isSelected) return null;
+
   return (
     <div
       data-testid={`canvas-block-${obj.id}`}
       onClick={handleClick}
-      style={{
-        position: "relative",
-        outline: isSelected ? "2px solid #3b82f6" : "2px solid transparent",
-        outlineOffset: "2px",
-        borderRadius: "4px",
-        cursor: "pointer",
-        transition: "outline-color 0.15s",
-      }}
+      style={mergeCss(
+        {
+          position: "relative",
+          outline: isSelected ? "2px solid #3b82f6" : "2px solid transparent",
+          outlineOffset: "2px",
+          borderRadius: "4px",
+          cursor: "pointer",
+          transition: "outline-color 0.15s",
+          opacity: visible ? 1 : 0.35,
+        },
+        styleOverride,
+      )}
     >
       {isSelected && <BlockToolbar obj={obj} kernel={kernel} />}
       {children}
@@ -664,6 +1136,18 @@ function ComponentBlock({
     case "kanban-widget":
       content = <KanbanWidgetBlock obj={obj} kernel={kernel} />;
       break;
+    case "list-widget":
+      content = <ListWidgetBlock obj={obj} kernel={kernel} />;
+      break;
+    case "table-widget":
+      content = <TableWidgetBlock obj={obj} kernel={kernel} />;
+      break;
+    case "card-grid-widget":
+      content = <CardGridWidgetBlock obj={obj} kernel={kernel} />;
+      break;
+    case "report-widget":
+      content = <ReportWidgetBlock obj={obj} kernel={kernel} />;
+      break;
     case "calendar-widget":
       content = <CalendarWidgetBlock obj={obj} kernel={kernel} />;
       break;
@@ -681,6 +1165,60 @@ function ComponentBlock({
       break;
     case "slide-panel":
       content = <SlidePanelBlock obj={obj} />;
+      break;
+    case "text-input":
+      content = <TextInputBlock obj={obj} />;
+      break;
+    case "textarea-input":
+      content = <TextareaInputBlock obj={obj} />;
+      break;
+    case "select-input":
+      content = <SelectInputBlock obj={obj} />;
+      break;
+    case "checkbox-input":
+      content = <CheckboxInputBlock obj={obj} />;
+      break;
+    case "number-input":
+      content = <NumberInputBlock obj={obj} />;
+      break;
+    case "date-input":
+      content = <DateInputBlock obj={obj} />;
+      break;
+    case "columns":
+      content = <ColumnsBlock obj={obj} />;
+      break;
+    case "divider":
+      content = <DividerBlock obj={obj} />;
+      break;
+    case "spacer":
+      content = <SpacerBlock obj={obj} />;
+      break;
+    case "stat-widget":
+      content = <StatWidgetBlock obj={obj} kernel={kernel} />;
+      break;
+    case "badge":
+      content = <BadgeBlock obj={obj} />;
+      break;
+    case "alert":
+      content = <AlertBlock obj={obj} />;
+      break;
+    case "progress-bar":
+      content = <ProgressBarBlock obj={obj} />;
+      break;
+    case "markdown-widget":
+      content = <MarkdownWidgetBlock obj={obj} />;
+      break;
+    case "iframe-widget":
+      content = <IframeWidgetBlock obj={obj} />;
+      break;
+    case "code-block":
+      content = <CodeBlockBlock obj={obj} />;
+      break;
+    case "video-widget":
+      content = <VideoWidgetBlock obj={obj} />;
+      break;
+    case "audio-widget":
+      content = <AudioWidgetBlock obj={obj} />;
       break;
     default:
       content = (
@@ -711,8 +1249,7 @@ function SectionBlock({
   kernel: ReturnType<typeof useKernel>;
 }) {
   const children = useChildren(obj.id);
-  const data = obj.data as { padding?: string; background?: string; variant?: string };
-  const padding = PADDING_MAP[data.padding ?? "md"] ?? PADDING_MAP.md;
+  const styleOverride = computeBlockStyle(extractBlockStyle(obj.data));
   const isSelected = selectedId === obj.id;
 
   const handleSectionClick = useCallback(
@@ -729,17 +1266,20 @@ function SectionBlock({
     <div
       data-testid={`canvas-section-${obj.id}`}
       onClick={handleSectionClick}
-      style={{
-        border: "1px solid #e5e5e5",
-        borderRadius: "6px",
-        padding,
-        marginBottom: "16px",
-        background: data.background ?? "transparent",
-        outline: isSelected ? "2px solid #3b82f6" : "2px solid transparent",
-        outlineOffset: "2px",
-        cursor: "pointer",
-        transition: "outline-color 0.15s",
-      }}
+      style={mergeCss(
+        {
+          border: "1px solid #e5e5e5",
+          borderRadius: "6px",
+          padding: "24px",
+          marginBottom: "16px",
+          background: "transparent",
+          outline: isSelected ? "2px solid #3b82f6" : "2px solid transparent",
+          outlineOffset: "2px",
+          cursor: "pointer",
+          transition: "outline-color 0.15s",
+        },
+        styleOverride,
+      )}
     >
       {children.length === 0 ? (
         <div
@@ -952,10 +1492,11 @@ export function CanvasPanel() {
         height: "100%",
         overflow: "auto",
         background: "#1e1e1e",
-        padding: "24px",
         fontFamily: "system-ui, sans-serif",
       }}
     >
+      <PeerCursorsBar />
+      <div style={{ padding: "24px" }}>
       <div
         onClick={handleCanvasClick}
         style={{
@@ -994,6 +1535,29 @@ export function CanvasPanel() {
         )}
         <QuickCreate parentId={page.id} parentType={page.type} kernel={kernel} />
       </div>
+      </div>
     </div>
   );
 }
+
+
+// ── Lens registration ──────────────────────────────────────────────────────
+
+export const CANVAS_LENS_ID = lensId("canvas");
+
+export const canvasLensManifest: LensManifest = {
+
+  id: CANVAS_LENS_ID,
+  name: "Canvas",
+  icon: "\uD83D\uDDBC",
+  category: "visual",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-canvas", name: "Switch to Canvas Preview", shortcut: ["v"], section: "Navigation" }],
+  },
+};
+
+export const canvasLensBundle: LensBundle = defineLensBundle(
+  canvasLensManifest,
+  CanvasPanel,
+);

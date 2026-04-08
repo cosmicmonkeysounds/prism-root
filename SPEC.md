@@ -316,9 +316,59 @@ An **App Profile** is a YAML/JSON document (`.prism-app.json`) that pins a slice
 
 When Studio boots with a profile, the Kernel:
 - Installs only the listed `PluginBundle`s (not the default six)
-- Registers only the listed lenses (hiding the Glass Flip's developer lenses unless explicitly re-enabled)
+- Installs only the listed `LensBundle`s (hiding the Glass Flip's developer lenses unless explicitly re-enabled)
+- Runs only the `StudioInitializer`s the profile opts into (seed content, default templates, …)
 - Overrides the default theme and brand icon
 - Narrows KBar to the profile's `kbarCommands` list at the App depth
+
+### Kernel Composition & Self-Registering Bundles
+
+Studio's Kernel is a pure composition root. Nothing inside a panel, plugin,
+or initializer reaches *up* into the host — instead, every subsystem
+exposes a **self-registering bundle** that the host hands to the Kernel at
+construction time. This is what makes the App Profile filter above a
+one-liner: profiles are just subsets of bundle arrays.
+
+There are three bundle kinds, all sharing the same `install(ctx) => uninstall`
+contract:
+
+| Bundle | Module | Installs into | Registers |
+|--------|--------|---------------|-----------|
+| `PluginBundle` | `@prism/core/plugin` | `ObjectRegistry` + `PluginRegistry` | Entity defs, edge defs, plugins with views/commands/keybindings |
+| `LensBundle` | `@prism/core/lens` | `LensRegistry` + a component map | A `LensManifest` and its React component for a single lens |
+| `StudioInitializer` | `@prism/studio/kernel` | The fully-constructed `StudioKernel` | Templates, seed/demo data, action handlers — any post-boot side effect |
+
+`LensBundle` is generic over its component type (`LensBundle<TComponent>`)
+so Layer 1 stays React-free; Studio specializes it to
+`LensBundle<ComponentType>` at its own layer.
+
+The Kernel's factory reads like a menu:
+
+```typescript
+const kernel = createStudioKernel({
+  lensBundles: createBuiltinLensBundles(),
+  initializers: createBuiltinInitializers(),
+});
+```
+
+- `createBuiltinLensBundles()` returns the 40 built-in Studio lens bundles,
+  each colocated with its panel (`panels/editor-panel.tsx` exports
+  `editorLensBundle`, etc). Adding a new lens is one file + one line in
+  `lenses/index.tsx`.
+- `createBuiltinInitializers()` returns the post-boot hooks (page
+  templates, section templates, demo workspace). Initializers receive the
+  live kernel, so they can freely call `registerTemplate`, `createObject`,
+  etc. The kernel owns their disposers.
+- The host (`App.tsx`) no longer seeds data, registers templates, or
+  wires a parallel lens registry — it just constructs the kernel and
+  reads `kernel.lensRegistry`, `kernel.lensComponents`, `kernel.shellStore`.
+
+The payoff is that layers flow strictly bottom-up: plugins don't know
+about the kernel, panels don't know about `App.tsx`, and an App Profile
+filters by passing a subset of the canonical bundle arrays. The same
+pattern scales to third-party apps — a plugin package just exports its
+own `LensBundle[]` / `PluginBundle[]` / `StudioInitializer[]`, and the
+host concatenates them into the `createStudioKernel` call.
 
 An **unprofiled** Studio is the universal host — full IDE, all plugins, no branding.
 
@@ -340,16 +390,26 @@ The Studio BuilderManager converts an App Profile + target into a deterministic 
 ```typescript
 interface BuildPlan {
   profileId: string;
+  profileName: string;
   target: BuildTarget;
-  steps: BuildStep[];           // e.g. "emit-manifest", "vite-build", "tauri-build"
+  steps: BuildStep[];              // emit-file, run-command, or invoke-ipc
   artifacts: ArtifactDescriptor[]; // expected outputs
   env: Record<string, string>;
+  workingDir: string;              // resolved against monorepo root
+  dryRun: boolean;                 // true = preview only, no side-effects
 }
+
+type BuildStep =
+  | { kind: "emit-file"; path: string; contents: string; description: string }
+  | { kind: "run-command"; command: string; args: string[]; cwd?: string; description: string }
+  | { kind: "invoke-ipc"; name: string; payload: Record<string, unknown>; description: string };
 ```
 
 ### The Execution Model
 
-BuildPlans are executed by the **Prism Daemon** (Rust), not the browser, because they call `cargo`, `pnpm`, `tauri`, and `capacitor` CLIs. Studio calls `invoke('run_build_plan', { plan })` and subscribes to progress events via Tauri's event bus. In the browser-only fallback (pure Vite SPA with no daemon), the BuilderManager downgrades to "dry-run mode": it emits the manifest + plan files as JSON for the user to run manually. All E2E testing uses dry-run mode by default.
+BuildPlans are executed by the **Prism Daemon** (Rust), not the browser, because they call `cargo`, `pnpm`, `tauri`, and `capacitor` CLIs. Studio dispatches **one step at a time** via `invoke('run_build_step', { step, workingDir, env })`, which maps to `prism_daemon::commands::build::run_build_step`. The daemon resolves relative paths against `workingDir`, executes the step (`emit-file` writes the file + creates parent dirs; `run-command` spawns a child process with the plan's env applied and captures stdout/stderr; `invoke-ipc` is reserved for cross-command chaining), and returns `{ stdout?, stderr? }`. Studio's `BuilderManager.runPlan` walks the step array, threading the execution context through, halting on the first failure.
+
+In the browser-only fallback (pure Vite SPA with no daemon), the BuilderManager swaps in a **dry-run executor** that marks `emit-file` steps successful (buffering their contents into `stdout` for preview) and skips `run-command`/`invoke-ipc` entirely. All vitest coverage runs through either the dry-run executor or a Node-backed invoke fn that mirrors the daemon's contract faithfully (`builder-manager-e2e.test.ts`), so the pipeline is proven end-to-end without spawning real `vite`/`tauri`/`cap` processes in unit tests.
 
 ### The App Builder Lens
 

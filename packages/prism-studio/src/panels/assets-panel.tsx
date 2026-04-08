@@ -8,6 +8,9 @@ import { useState, useCallback } from "react";
 import { useVfs, useKernel } from "../kernel/index.js";
 import type { BinaryRef } from "@prism/core/vfs";
 
+import { lensId } from "@prism/core/lens";
+import type { LensManifest } from "@prism/core/lens";
+import { defineLensBundle, type LensBundle } from "../lenses/bundle.js";
 // ── Styles ──────────────────────────────────────────────────────────────────
 
 const styles = {
@@ -183,6 +186,61 @@ export function AssetsPanel() {
     kernel.notifications.add({ title: `Imported: ${ref.filename}`, kind: "success" });
   }, [importName, importMime, importData, importFile, kernel]);
 
+  /**
+   * Import a File picked from the OS file picker. Reads the whole blob,
+   * routes it through the VFS, and — when an image is dropped — offers to
+   * create a matching `image` block under the current selection.
+   */
+  const handleImportBinary = useCallback(
+    async (fileList: FileList | null) => {
+      if (!fileList || fileList.length === 0) return;
+      for (const file of Array.from(fileList)) {
+        const buffer = await file.arrayBuffer();
+        const ref = await importFile(
+          new Uint8Array(buffer),
+          file.name,
+          file.type || "application/octet-stream",
+        );
+        kernel.notifications.add({
+          title: `Imported: ${ref.filename}`,
+          body: `${ref.size} bytes — ${ref.mimeType}`,
+          kind: "success",
+        });
+
+        // Auto-create an image block when the selection is a page/section
+        // and the file is actually an image.
+        if (file.type.startsWith("image/")) {
+          const sel = kernel.atoms.getState().selectedId;
+          const parent = sel ? kernel.store.getObject(sel) : null;
+          if (parent && (parent.type === "section" || parent.type === "page")) {
+            const siblings = kernel.store.listObjects({ parentId: parent.id });
+            kernel.createObject({
+              type: "image",
+              name: file.name,
+              parentId: parent.id,
+              position: siblings.length,
+              status: null,
+              tags: [],
+              date: null,
+              endDate: null,
+              description: "",
+              color: null,
+              image: `vfs://${ref.hash}`,
+              pinned: false,
+              data: {
+                src: `vfs://${ref.hash}`,
+                alt: file.name,
+                mimeType: ref.mimeType,
+                hash: ref.hash,
+              },
+            });
+          }
+        }
+      }
+    },
+    [importFile, kernel],
+  );
+
   const handleRemove = useCallback(
     async (hash: string, filename: string) => {
       await removeFile(hash);
@@ -230,6 +288,40 @@ export function AssetsPanel() {
         <span style={{ fontSize: "0.75rem", color: "#666" }}>
           {files.length} file(s) | {locks.length} lock(s)
         </span>
+      </div>
+
+      {/* Upload binary file(s) from the OS */}
+      <div style={styles.card} data-testid="upload-binary-form">
+        <div style={styles.sectionTitle}>Upload File(s)</div>
+        <label
+          style={{
+            display: "block",
+            padding: "8px 10px",
+            fontSize: 11,
+            background: "#333",
+            border: "1px dashed #555",
+            borderRadius: 3,
+            color: "#ccc",
+            cursor: "pointer",
+            textAlign: "center",
+          }}
+          data-testid="upload-binary-label"
+        >
+          Choose image or binary file(s)…
+          <input
+            type="file"
+            multiple
+            style={{ display: "none" }}
+            data-testid="upload-binary-input"
+            onChange={(e) => {
+              void handleImportBinary(e.target.files);
+              e.target.value = "";
+            }}
+          />
+        </label>
+        <div style={{ fontSize: 10, color: "#888", marginTop: 4 }}>
+          Selecting an image while a page or section is selected will auto-create an image block.
+        </div>
       </div>
 
       {/* Import form */}
@@ -317,3 +409,25 @@ export function AssetsPanel() {
     </div>
   );
 }
+
+
+// ── Lens registration ──────────────────────────────────────────────────────
+
+export const ASSETS_LENS_ID = lensId("assets");
+
+export const assetsLensManifest: LensManifest = {
+
+  id: ASSETS_LENS_ID,
+  name: "Assets",
+  icon: "\uD83D\uDCC1",
+  category: "custom",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-assets", name: "Switch to Assets", shortcut: ["f"], section: "Navigation" }],
+  },
+};
+
+export const assetsLensBundle: LensBundle = defineLensBundle(
+  assetsLensManifest,
+  AssetsPanel,
+);

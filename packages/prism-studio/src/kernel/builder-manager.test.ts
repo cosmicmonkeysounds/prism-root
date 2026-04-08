@@ -180,6 +180,27 @@ describe("BuilderManager — Tauri executor", () => {
     expect(invoke).toHaveBeenCalledWith("run_build_step", expect.any(Object));
   });
 
+  it("passes workingDir and env from the plan with every invocation", async () => {
+    const invoke = vi.fn(
+      async (_cmd: string, _payload: Record<string, unknown>) => ({ stdout: "ok" }),
+    );
+    const executor = createTauriExecutor({ invoke });
+    const manager = createBuilderManager({ executor });
+
+    const plan = manager.planBuild("flux", "web");
+    await manager.runPlan(plan);
+
+    expect(invoke.mock.calls.length).toBe(plan.steps.length);
+    for (const [cmd, payload] of invoke.mock.calls) {
+      expect(cmd).toBe("run_build_step");
+      expect(payload).toMatchObject({
+        step: expect.any(Object),
+        workingDir: plan.workingDir,
+        env: plan.env,
+      });
+    }
+  });
+
   it("marks the run as failed when the daemon throws", async () => {
     const invoke = vi.fn(async () => {
       throw new Error("build failed: vite crashed");

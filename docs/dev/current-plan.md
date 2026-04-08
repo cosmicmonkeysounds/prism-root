@@ -1,5 +1,325 @@
 # Current Plan
 
+## Kernel Composition & Self-Registering Bundles (Complete — 2026-04-08)
+
+Goal: make layers flow strictly bottom-up. Apps don't know about lenses,
+lenses don't know about apps, templates/seed data don't live in `App.tsx`.
+Closes every DI / registration gap between the host and its subsystems.
+
+### What landed
+
+1. **`LensBundle` in `@prism/core/lens`**. New `lens-install.ts` adds
+   `LensBundle<TComponent>`, `LensInstallContext<TComponent>`,
+   `installLensBundles`, and `defineLensBundle`. Generic over component
+   type so Layer 1 stays React-free. Covered by `lens-install.test.ts`
+   (5 cases). Re-exported from `@prism/core/lens/index.ts`.
+2. **Studio React specialization** (`src/lenses/bundle.ts`). A thin
+   `ComponentType`-pinned re-export of the generic primitive so panels
+   get a `LensBundle` / `defineLensBundle` with the correct component
+   type without leaking React into Layer 1.
+3. **40 self-registering panels**. Every file in `src/panels/*.tsx` now
+   exports both its React component and its `xxxLensBundle` right next
+   to the manifest. `src/lenses/index.tsx` collapsed from a manifest +
+   component-map aggregator into a 40-line bundle aggregator with a
+   single `createBuiltinLensBundles()` export.
+4. **Kernel owns the lens lifecycle**. `createStudioKernel()` now takes
+   `{ lensBundles?, initializers? }`. It creates its own `LensRegistry`,
+   `lensComponents: Map<LensId, ComponentType>`, and `shellStore`, runs
+   `installLensBundles`, and exposes all three as kernel fields.
+   `dispose()` unwinds bundle disposers in reverse order.
+5. **`StudioInitializer` pipeline**. New `kernel/initializer.ts`
+   (`install({ kernel }) => uninstall` interface + `installInitializers`
+   helper). Initializers run AFTER the kernel's return object exists, so
+   they can freely call `kernel.registerTemplate`, `kernel.createObject`,
+   etc. Symmetric with `PluginBundle` / `LensBundle` but scoped to
+   post-boot side effects.
+6. **`kernel/builtin-initializers.ts`**. Moves the old top-of-`App.tsx`
+   seeders into three self-installing bundles:
+   - `pageTemplatesInitializer` — blog + landing page `ObjectTemplate`s
+   - `sectionTemplatesInitializer` — delegates to
+     `registerSectionTemplates(kernel)`
+   - `demoWorkspaceInitializer` — seeds Home + About pages into an empty
+     store, clears undo history, selects the home page
+   Exposed via `createBuiltinInitializers()`.
+7. **`App.tsx` collapsed from ~400 → ~140 lines**. No more
+   `seedDemoData`, `registerSeedTemplates`, or parallel lens-registry
+   wiring. Just:
+   ```ts
+   const kernel = createStudioKernel({
+     lensBundles: createBuiltinLensBundles(),
+     initializers: createBuiltinInitializers(),
+   });
+   const { lensRegistry, lensComponents, shellStore } = kernel;
+   ```
+8. **Export surface**. `src/kernel/index.ts` re-exports
+   `StudioKernelOptions`, `StudioInitializer`, `StudioInitializerContext`,
+   `installInitializers`, `createBuiltinInitializers`, and the three
+   individual initializers so profile-aware hosts can cherry-pick.
+
+### Verification
+
+- `pnpm --filter @prism/core typecheck` clean
+- `pnpm --filter @prism/studio typecheck` clean
+- `pnpm --filter @prism/studio exec vitest run src/kernel src/lenses` —
+  254 tests green (including 113 `studio-kernel.test.ts` cases against
+  the new options shape)
+- `pnpm exec vitest run packages/prism-core/src/layer1/lens` —
+  33 tests green across `lens-install.test.ts`, `lens-registry.test.ts`,
+  `shell-store.test.ts`
+- The only remaining red in `pnpm --filter @prism/studio test` is
+  Vitest accidentally picking up `e2e/*.spec.ts` Playwright files —
+  pre-existing glob config issue, unrelated to this work.
+
+### Docs updated
+
+- `SPEC.md` — new `Kernel Composition & Self-Registering Bundles`
+  subsection inside "Studio as a Self-Replicating Meta-Builder";
+  bundle-kind table; App Profile filter bullet now lists `LensBundle`s
+  and `StudioInitializer`s alongside `PluginBundle`s.
+- `README.md` — Layer 1 Lens Shell row mentions
+  `LensBundle`/`installLensBundles`/`defineLensBundle`; new Philosophy
+  bullet: "Layers Flow Bottom-Up".
+- `packages/prism-core/CLAUDE.md` — `@prism/core/lens` description
+  covers the new bundle primitives and the Layer-1 React-free rationale.
+- `packages/prism-studio/CLAUDE.md` — kernel description rewritten
+  around `createStudioKernel({ lensBundles, initializers })`; new
+  `initializer.ts` + `builtin-initializers.ts` kernel entries; Lenses
+  section rewritten around the self-registering bundle pattern with a
+  2-step "adding a new lens" recipe.
+- `docs/dev/current-plan.md` — this section.
+
+---
+
+## Studio Checklist — Full Closeout (Complete — 2026-04-08)
+
+Every tier in `docs/dev/studio-checklist.md` is now implemented, wired into a
+registered lens, and exercised by both vitest unit tests and Playwright E2E
+specs. Totals: 3513 unit tests across 174 files, `tsc --noEmit` clean
+workspace-wide.
+
+### New in this sprint
+
+- **3E Design Tokens** — `design-tokens-panel.tsx` + `kernel/design-tokens.ts`
+  (shift+T). CSS variables for colors/spacing/fonts.
+- **4A/4B/4C/4D Expressions + Bindings** — `inspector-panel.tsx`
+  `ComputedFieldDisplay` runs `EntityFieldDef.expression` via
+  `@prism/core/expression`; the Expression Bar drives a
+  `createSyntaxEngine()` completion dropdown; `kernel/data-binding.ts`
+  handles `[obj:pageTitle]` resolution and `visibleWhen` gating on the canvas.
+- **5B/5D Section Templates + Save-as-Template** —
+  `kernel/section-templates.ts` registers six blueprints; Inspector exposes
+  "Save as Template" via new `studio-kernel.templateFromObject()`.
+- **7A Rich Text Toolbar** — `editor-panel.tsx` Markdown toolbar, backed by
+  the pure `computeMarkdownEdit()` helper (7 vitest cases).
+- **7D Media / VFS Upload** — `assets-panel.tsx` `handleImportBinary()` reads
+  `File` → VFS → auto-creates image blocks when the parent is a
+  section/page.
+- **8B Form Builder** — `form-builder-panel.tsx` (shift+G). Composes form
+  inputs under the nearest container ancestor; walks parent chain.
+- **8D Multi-Page Nav** — `site-nav-panel.tsx` + `siteNavDef` /
+  `breadcrumbsDef` in `kernel/entities.ts`. Pure `buildSiteNav()` helper
+  covered by `site-nav-panel.test.ts`.
+- **8E Peer Cursors** — `components/peer-cursors-overlay.tsx` renders
+  `PeerCursorsBar` at the top of the canvas and exports
+  `PeerSelectionBadge` + a pure `groupPeerSelections()` helper. Driven
+  entirely by `usePresence()`. Tests: `peer-cursors-overlay.test.ts`.
+- **9A Entity Builder** — `entity-builder-panel.tsx` (shift+E). UI for
+  authoring `EntityDef`s at runtime and registering them into
+  `kernel.registry`.
+- **9B Relationship Builder** — `relationship-builder-panel.tsx` (shift+R).
+  UI for authoring `EdgeTypeDef`s (behavior / color / source-target type
+  restrictions). Uses conditional assignment for `exactOptionalPropertyTypes`.
+
+### E2E coverage
+
+`e2e/new-panels.spec.ts` (new) adds Playwright coverage for design-tokens,
+form-builder, site-nav, entity-builder, relationship-builder, publish, and
+the canvas peer-cursors bar. Pattern: open the lens via its activity icon,
+assert the panel `data-testid` is visible, then interact with at least one
+key control (e.g. add a draft field in the Entity Builder).
+
+### Docs updated
+
+- `docs/dev/studio-checklist.md` — every Tier 3-9 item flipped to `[x]`
+  with file references; added Verification section.
+- `packages/prism-studio/CLAUDE.md` — new panel list entries.
+- `docs/dev/current-plan.md` — this section.
+
+---
+
+## Styling System + Publish Workflow + Rich Media (Complete — 2026-04-08)
+
+Three more checklist tiers land together because they all share the same
+block-style foundation: a per-block `BlockStyleData` bag that every renderer
+and the HTML exporter apply uniformly.
+
+### Tier 3 — Block styling + typography (`block-style.ts`)
+
+- [x] `BlockStyleData` shape — background, text color, padding/margin
+  (X/Y), border (width/color/radius), shadow (preset or raw), font
+  (family/size/weight/line-height/letter-spacing), text-align, flex
+  (display/direction/gap/align/justify)
+- [x] `STYLE_FIELD_DEFS` — single shared array spread into the existing
+  `section`, `heading`, `text-block`, `button`, and `card` entity defs
+  so the inspector now shows `Style` and `Typography` groups for every
+  core block. Replaces the old section-only `padding`/`background` enums.
+- [x] `computeBlockStyle()` — pure bag → `CSSProperties` (shadow preset
+  resolver, stringy-number coercion, 0-padding tolerance)
+- [x] `extractBlockStyle()` / `mergeCss()` — extractor + merger used by
+  both `BlockWrapper` and `SectionBlock` in `canvas-panel.tsx` so every
+  block picks up the author's style overrides on top of the base CSS
+
+### Tier 6 — Publish & Export (`page-export.ts`, `publish-panel.tsx`)
+
+- [x] **6A HTML Export** — `exportPageToHtml()` walks the page tree
+  into dependency-free HTML + default inline CSS, with per-node
+  `blockStyleAttr()` emitting sanitized inline styles, safe for offline
+  viewing. Escapes all text + attributes (`escapeHtml`/`escapeAttr`).
+  Supports `fragmentOnly` output and CSS overrides.
+- [x] **6B JSON Export** — `exportPageToJson()` emits a deterministic
+  `prism-page/v1` snapshot (`ExportedNode` tree with inlined children in
+  position order, deleted objects skipped, data cloned).
+- [x] **6C Publish Workflow** — `nextStatus()` / `statusColor()` pure
+  helpers drive a `draft → review → published` transition on the page's
+  `status` field. Advance / Back-to-Draft buttons in the Publish panel
+  update the kernel object, with colored status pills.
+- [x] **6D Preview Mode** — Publish panel toggles an inline preview that
+  runs the same `renderNodeHtml()` pipeline as the exporter (so authors
+  see exactly what the exported HTML contains).
+- [x] **Publish lens** — Lens #29, `Shift+U`, rocket icon 🚀, registered
+  in `lenses/index.tsx`. Resolves the current page from selection by
+  walking parentId, drops a placeholder when nothing is selected.
+
+### Tier 7C / 7D — Code + Media blocks
+
+- [x] **code-block** — `CodeBlockRenderer` with language label, caption,
+  line-number gutter (auto-width), wrap toggle, dark theme, dependency-
+  free pre/code. Pure helpers `splitCodeLines()` / `gutterWidth()`.
+- [x] **video-widget** — `VideoWidgetRenderer` backed by native HTML5
+  video, poster + caption + width/height (clamped), controls/autoplay/
+  loop/muted flags. Refuses non-http(s) URLs via `isSafeMediaUrl`.
+- [x] **audio-widget** — `AudioWidgetRenderer` backed by native HTML5
+  audio, same URL allow-list + captions + control flags.
+- [x] Three new defs registered in `entities.ts`, wired into Puck
+  (`layout-panel.tsx`) and the canvas switch (`canvas-panel.tsx`), and
+  covered by the widget-registration check in `studio-kernel.test.ts`.
+- [x] HTML exporter knows about `code-block`, `video-widget`,
+  `audio-widget`, `iframe-widget`, `markdown-widget`, `divider`,
+  `spacer` so exported pages render all the same content as the canvas.
+
+### Files touched
+
+- `packages/prism-studio/src/kernel/block-style.ts` (new)
+- `packages/prism-studio/src/kernel/block-style.test.ts` (new)
+- `packages/prism-studio/src/kernel/page-export.ts` (new)
+- `packages/prism-studio/src/kernel/page-export.test.ts` (new)
+- `packages/prism-studio/src/panels/publish-panel.tsx` (new)
+- `packages/prism-studio/src/panels/publish-panel.test.ts` (new)
+- `packages/prism-studio/src/components/code-block-renderer.tsx` (new)
+- `packages/prism-studio/src/components/code-block-renderer.test.ts` (new)
+- `packages/prism-studio/src/components/media-renderers.tsx` (new)
+- `packages/prism-studio/src/components/media-renderers.test.ts` (new)
+- `packages/prism-studio/src/kernel/entities.ts` — spread
+  `STYLE_FIELD_DEFS` into section/heading/text-block/button/card; add
+  `code-block`, `video-widget`, `audio-widget` defs
+- `packages/prism-studio/src/panels/canvas-panel.tsx` — drop legacy
+  `PADDING_MAP`, apply `computeBlockStyle()` + `mergeCss()` in
+  `BlockWrapper` and `SectionBlock`, add block components + switch
+  cases for the three new rich-content types
+- `packages/prism-studio/src/panels/layout-panel.tsx` — Puck config
+  entries for the three new rich-content types
+- `packages/prism-studio/src/lenses/index.tsx` — register Publish lens
+- `packages/prism-studio/src/kernel/studio-kernel.test.ts` — extend
+  registration check to cover code-block/video-widget/audio-widget
+
+### Test Summary
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| Vitest (`block-style`) | 15 | Pass |
+| Vitest (`page-export`) | 16 | Pass |
+| Vitest (`publish-panel`) | 6 | Pass |
+| Vitest (`code-block-renderer`) | 6 | Pass |
+| Vitest (`media-renderers`) | 8 | Pass |
+| **Vitest (full repo)** | **3461** | **Pass (168 files)** |
+| `tsc --noEmit` (studio) | — | Clean |
+
+## App Builder Widgets — Form / Layout / Display / Content (Complete — 2026-04-08)
+
+Prism Studio now ships 15 additional drag-and-drop Puck widgets so that
+non-programmers can assemble real apps (forms, dashboards, docs) without
+reaching for code. All widgets follow the established pattern: entity
+def in `entities.ts` → renderer in `components/` → Puck config in
+`layout-panel.tsx` → canvas block + switch case in `canvas-panel.tsx`.
+
+### Form Inputs (6)
+
+- [x] **text-input** — label, placeholder, default value, input type
+  (text/email/url/tel/password), required flag, help text
+- [x] **textarea-input** — multi-line with configurable rows
+- [x] **select-input** — dropdown; options accept either `a,b,c`,
+  `value:Label` pairs, or a JSON array
+- [x] **checkbox-input** — labeled boolean
+- [x] **number-input** — min/max/step/default
+- [x] **date-input** — date / datetime-local / time kinds
+
+### Layout Primitives (3)
+
+- [x] **columns** — 1-6 column grid with gap + cross-axis alignment,
+  empty-state placeholders so the widget is visible on first drop
+- [x] **divider** — solid/dashed/dotted with thickness, color,
+  spacing, optional centered label
+- [x] **spacer** — vertical or horizontal gap, clamped to 0-512px
+
+### Data Display (4)
+
+- [x] **stat-widget** — KPI card computing count/sum/avg/min/max over
+  `kernel.store.allObjects()` filtered by `collectionType`, with
+  prefix/suffix, decimals, and thousands separator
+- [x] **badge** — neutral/info/success/warning/danger tones, optional
+  emoji icon, solid or outline
+- [x] **alert** — callout box with title + message, the same tone
+  palette, auto-chosen icon per tone
+- [x] **progress-bar** — labeled bar with percent display and tone
+  color, value/max clamped to [0,1]
+
+### Content (2)
+
+- [x] **markdown-widget** — dependency-free markdown → HTML with
+  headings, lists, blockquotes, fenced code blocks, horizontal rules,
+  inline bold/italic/code/links (escaped)
+- [x] **iframe-widget** — embed http(s) URL with sandbox attrs
+  (`allow-scripts allow-same-origin allow-forms allow-popups`),
+  javascript/data/file schemes rejected
+
+### Files touched
+
+- `packages/prism-studio/src/components/form-input-renderers.tsx` (new)
+- `packages/prism-studio/src/components/layout-primitive-renderers.tsx` (new)
+- `packages/prism-studio/src/components/data-display-renderers.tsx` (new)
+- `packages/prism-studio/src/components/content-renderers.tsx` (new)
+- `packages/prism-studio/src/components/*.test.ts` (4 new test files)
+- `packages/prism-studio/src/kernel/entities.ts` — 15 new EntityDefs
+  registered
+- `packages/prism-studio/src/panels/layout-panel.tsx` — 15 new Puck
+  component configs with live-bound renderers
+- `packages/prism-studio/src/panels/canvas-panel.tsx` — 15 new canvas
+  block components + switch cases in `ComponentBlock`
+- `packages/prism-studio/src/kernel/studio-kernel.test.ts` — registry
+  coverage extended
+
+### Test Summary
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| Vitest (form-input-renderers) | 7 | Pass |
+| Vitest (layout-primitive-renderers) | 6 | Pass |
+| Vitest (data-display-renderers) | 14 | Pass |
+| Vitest (content-renderers) | 15 | Pass |
+| Vitest (studio-kernel — new widget registration) | +1 | Pass |
+| **Vitest (full repo)** | **3402** | **Pass** |
+| `tsc --noEmit` (studio) | — | Clean |
+
 ## Foundation Widgets + Core Enhancements (Complete — 2026-04-08)
 
 Expansion of Prism's foundation: expression/field primitives, document surface
@@ -37,6 +357,7 @@ into both `layout-panel.tsx` (Puck builder) and `canvas-panel.tsx` (canvas previ
 - [x] **C5** `tab-container` — horizontal tab bar, JSON-array or CSV label parsing
 - [x] **C6** `popover-widget` + `slide-panel` — trigger-button popover and collapsible accordion
 - [x] **C7** `FacetViewRenderer` — renders nested `tab`/`popover`/`slide` slots from FacetDefinitions
+- [x] **C8** `list-widget` / `table-widget` / `card-grid-widget` / `report-widget` — data-driven data view widgets bound to a `collectionType`; renderers live in `components/*-widget-renderer.tsx` with exported pure helpers (`readListField`, `parseTableColumns`/`readCellValue`/`sortObjects`, `clampColumnWidth`, `buildReportGroups`/`computeAggregate`/`formatAggregate`). Replaces the legacy `record-browser-panel.tsx` (deleted) and the object-explorer view-mode switcher — all "views" are now composable Puck widgets.
 
 ### Phase D — Independent items
 
@@ -91,7 +412,7 @@ Puck/Lua/Canvas/Facet builder system unified and fully working.
 - [x] Lua Facet Panel — bound to kernel objects: selecting a lua-block auto-loads its source, edits auto-save (debounced 400ms)
 - [x] Component Palette — wired into sidebar (below ObjectExplorer), includes lua-block type, search, drag-to-add
 - [x] Facet Designer Panel — visual FacetDefinition builder with parts, field slots, portal slots, summaries, sort/group, hooks
-- [x] Record Browser Panel — unified data browser with Form/List/Table/Report/Card mode toggle, search, navigation
+- [x] Record Browser — superseded: list/table/card-grid/report are now composable Puck widgets (`components/*-widget-renderer.tsx`), the standalone panel was removed
 - [x] Cross-panel integration — Canvas reflects inspector edits, palette→canvas, delete→undo, graph renders all types
 - [x] Seed data includes lua-block "Status Widget" demo on Home page
 
@@ -221,7 +542,23 @@ Layer 1 agnostic TypeScript. See `docs/dev/filemaker-gap-analysis.md` for full g
 - [ ] PDF export via PrintConfig (P3 — schema done, renderer TODO)
 - [ ] Starter Manifest gallery UI (P5)
 - [ ] Schema Designer write mode in Graph Panel (P5)
+  - [ ] `graph-panel.tsx` mode toggle (`view` / `design`)
+  - [ ] Persist node x/y via new `schemaLayout` LoroMap on kernel
+  - [ ] Double-click-blank → new EntityDef (reuse entity-builder logic)
+  - [ ] Double-click-node → field CRUD popover (add/remove/rename/type)
+  - [ ] Port-drag between nodes → registerEdge dialog (reuse relationship-builder logic)
+  - [ ] Playwright E2E: draw edge + add field round-trip
 - [ ] Lua step-through debugger / DAP (P5)
+  - [ ] `layer1/lua/lua-debugger.ts` — wasmoon `debug.sethook`-based stepper
+  - [ ] Breakpoint gutter in `visual-script-panel.tsx` Lua preview
+  - [ ] Paused-frame UI: locals table + step/continue/stop controls
+  - [ ] Breakpoint gutter in `editor-panel.tsx` for `lua-block` objects
+  - [ ] Vitest unit suite + Playwright E2E (breakpoint → pause → inspect)
+
+**Already landed (no action):** Value Lists, Container Fields, Found Sets /
+SavedView are all shipped — see the P5 table above. Any future FileMaker
+feedback that references these should update the existing panels rather than
+introducing new ones.
 
 ## Phase 1: The Heartbeat (Complete)
 

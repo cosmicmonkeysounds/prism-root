@@ -8,13 +8,16 @@
  *   - Search views by name
  *   - Delete views
  *
- * Integrates with record-browser-panel's active filter state.
+ * Found Sets are applied to list/table/card-grid/report widgets composed into pages.
  *
  * Lens #25 (Shift+V)
  */
 
 import { useState, useMemo, useCallback, type CSSProperties } from "react";
 import { useKernel } from "../kernel/kernel-context.js";
+import { lensId } from "@prism/core/lens";
+import type { LensManifest } from "@prism/core/lens";
+import { defineLensBundle, type LensBundle } from "../lenses/bundle.js";
 import {
   type SavedView,
   type ViewConfig,
@@ -270,3 +273,25 @@ function ViewCard({
     </div>
   );
 }
+
+
+// ── Lens registration ──────────────────────────────────────────────────────
+
+export const SAVED_VIEW_LENS_ID = lensId("saved-view");
+
+export const savedViewLensManifest: LensManifest = {
+
+  id: SAVED_VIEW_LENS_ID,
+  name: "Saved Views",
+  icon: "\u{1F516}",
+  category: "facet",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-saved-view", name: "Switch to Saved Views", shortcut: ["shift+v"], section: "Navigation" }],
+  },
+};
+
+export const savedViewLensBundle: LensBundle = defineLensBundle(
+  savedViewLensManifest,
+  SavedViewPanel,
+);

@@ -1,5 +1,18 @@
 export { createStudioKernel } from "./studio-kernel.js";
-export type { StudioKernel } from "./studio-kernel.js";
+export type { StudioKernel, StudioKernelOptions } from "./studio-kernel.js";
+
+export type {
+  StudioInitializer,
+  StudioInitializerContext,
+} from "./initializer.js";
+export { installInitializers } from "./initializer.js";
+
+export {
+  pageTemplatesInitializer,
+  sectionTemplatesInitializer,
+  demoWorkspaceInitializer,
+  createBuiltinInitializers,
+} from "./builtin-initializers.js";
 
 export {
   KernelProvider,
@@ -13,7 +26,6 @@ export {
   useConfig,
   useConfigSettings,
   usePresence,
-  useViewMode,
   useAutomation,
   useGraphAnalysis,
   useExpression,

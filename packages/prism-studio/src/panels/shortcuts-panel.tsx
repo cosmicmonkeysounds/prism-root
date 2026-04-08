@@ -8,6 +8,9 @@
 import { useState, useCallback } from "react";
 import { useInputRouter, useKernel } from "../kernel/index.js";
 
+import { lensId } from "@prism/core/lens";
+import type { LensManifest } from "@prism/core/lens";
+import { defineLensBundle, type LensBundle } from "../lenses/bundle.js";
 // ── Styles ──────────────────────────────────────────────────────────────────
 
 const styles = {
@@ -349,3 +352,25 @@ export function ShortcutsPanel() {
     </div>
   );
 }
+
+
+// ── Lens registration ──────────────────────────────────────────────────────
+
+export const SHORTCUTS_LENS_ID = lensId("shortcuts");
+
+export const shortcutsLensManifest: LensManifest = {
+
+  id: SHORTCUTS_LENS_ID,
+  name: "Shortcuts",
+  icon: "\u2328",
+  category: "custom",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-shortcuts", name: "Switch to Shortcuts", shortcut: ["k"], section: "Navigation" }],
+  },
+};
+
+export const shortcutsLensBundle: LensBundle = defineLensBundle(
+  shortcutsLensManifest,
+  ShortcutsPanel,
+);

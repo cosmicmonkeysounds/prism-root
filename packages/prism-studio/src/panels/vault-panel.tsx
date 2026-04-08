@@ -9,6 +9,9 @@ import { useState, useCallback, useMemo } from "react";
 import { useVaultRoster, useKernel } from "../kernel/index.js";
 import type { RosterEntry } from "@prism/core/discovery";
 
+import { lensId } from "@prism/core/lens";
+import type { LensManifest } from "@prism/core/lens";
+import { defineLensBundle, type LensBundle } from "../lenses/bundle.js";
 // ── Styles ──────────────────────────────────────────────────────────────────
 
 const styles = {
@@ -336,3 +339,25 @@ export function VaultPanel() {
     </div>
   );
 }
+
+
+// ── Lens registration ──────────────────────────────────────────────────────
+
+export const VAULT_LENS_ID = lensId("vault");
+
+export const vaultLensManifest: LensManifest = {
+
+  id: VAULT_LENS_ID,
+  name: "Vaults",
+  icon: "\uD83D\uDD12",
+  category: "custom",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-vaults", name: "Switch to Vaults", shortcut: ["w"], section: "Navigation" }],
+  },
+};
+
+export const vaultLensBundle: LensBundle = defineLensBundle(
+  vaultLensManifest,
+  VaultPanel,
+);

@@ -139,6 +139,23 @@ describe("ObjectRegistry", () => {
     expect(registry.canConnect("unknown-rel", "task", "note")).toBe(true);
   });
 
+  it("remove deletes an entity type and returns whether it existed", () => {
+    expect(registry.has("task")).toBe(true);
+    expect(registry.remove("task")).toBe(true);
+    expect(registry.has("task")).toBe(false);
+    expect(registry.get("task")).toBeUndefined();
+    // Removing an unknown type returns false, does not throw.
+    expect(registry.remove("does-not-exist")).toBe(false);
+  });
+
+  it("removeEdge deletes an edge type and returns whether it existed", () => {
+    registry.registerEdge({ relation: "blocks", label: "Blocks" });
+    expect(registry.getEdgeType("blocks")).toBeDefined();
+    expect(registry.removeEdge("blocks")).toBe(true);
+    expect(registry.getEdgeType("blocks")).toBeUndefined();
+    expect(registry.removeEdge("does-not-exist")).toBe(false);
+  });
+
   it("filters edges by source/target type", () => {
     registry.registerEdges([
       {

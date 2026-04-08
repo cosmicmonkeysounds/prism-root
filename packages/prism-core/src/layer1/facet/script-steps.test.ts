@@ -3,6 +3,7 @@ import {
   createStep,
   createVisualScript,
   emitStepsLua,
+  emitStepsLuaWithMap,
   validateSteps,
   getStepMeta,
   getStepCategories,
@@ -225,6 +226,63 @@ describe("emitStepsLua", () => {
     expect(lines[2]).toBe("elseif a > 0 then");
     expect(lines[3]).toBe('  Prism.setField("x", 0)');
     expect(lines[4]).toBe("end");
+  });
+});
+
+// ── emitStepsLuaWithMap ─────────────────────────────────────────────────────
+
+describe("emitStepsLuaWithMap", () => {
+  it("returns code matching emitStepsLua", () => {
+    const steps = [
+      createStep("set-field", { target: "a", value: "1" }),
+      createStep("commit-record"),
+    ];
+    const result = emitStepsLuaWithMap(steps);
+    expect(result.code).toBe(emitStepsLua(steps));
+  });
+
+  it("maps each step id to its 1-based Lua line", () => {
+    const a = createStep("set-field", { target: "a", value: "1" });
+    const b = createStep("set-field", { target: "b", value: "2" });
+    const c = createStep("commit-record");
+    const result = emitStepsLuaWithMap([a, b, c]);
+    expect(result.stepToLine.get(a.id)).toBe(1);
+    expect(result.stepToLine.get(b.id)).toBe(2);
+    expect(result.stepToLine.get(c.id)).toBe(3);
+  });
+
+  it("maps lines back to step ids", () => {
+    const a = createStep("set-field", { target: "a", value: "1" });
+    const b = createStep("commit-record");
+    const result = emitStepsLuaWithMap([a, b]);
+    expect(result.lineToStep.get(1)).toBe(a.id);
+    expect(result.lineToStep.get(2)).toBe(b.id);
+  });
+
+  it("maps steps inside indented blocks to the correct lines", () => {
+    const ifStep = createStep("if", { condition: "x > 0" });
+    const inner = createStep("set-field", { target: "y", value: "1" });
+    const endStep = createStep("end-if");
+    const result = emitStepsLuaWithMap([ifStep, inner, endStep]);
+    expect(result.code.split("\n")).toEqual([
+      "if x > 0 then",
+      '  Prism.setField("y", 1)',
+      "end",
+    ]);
+    expect(result.stepToLine.get(ifStep.id)).toBe(1);
+    expect(result.stepToLine.get(inner.id)).toBe(2);
+    expect(result.stepToLine.get(endStep.id)).toBe(3);
+  });
+
+  it("records disabled steps as their comment line", () => {
+    const a = createStep("set-field", { target: "a", value: "1" });
+    const disabled = createStep("delete-record");
+    disabled.disabled = true;
+    const b = createStep("commit-record");
+    const result = emitStepsLuaWithMap([a, disabled, b]);
+    expect(result.stepToLine.get(disabled.id)).toBe(2);
+    expect(result.lineToStep.get(2)).toBe(disabled.id);
+    expect(result.stepToLine.get(b.id)).toBe(3);
   });
 });
 

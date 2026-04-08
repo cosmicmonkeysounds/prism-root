@@ -22,7 +22,7 @@ Client-side execution environment — Layer 1 (agnostic TS) + Layer 2 (React ren
 - `@prism/core/graph` — Spatial node graph (PrismGraph, custom nodes/edges, elkjs layout)
 - `@prism/core/machines` — XState tool machine (hand/select/edit FSM)
 - `@prism/core/object-model` — Object Model (GraphObject, registry, tree, edges, weak refs, NSID, query)
-- `@prism/core/lens` — Lens system + shell state (LensManifest, LensRegistry, ShellStore, tab/panel management).
+- `@prism/core/lens` — Lens system + shell state (LensManifest, LensRegistry, ShellStore, tab/panel management). Includes `LensBundle<TComponent>` / `installLensBundles` / `defineLensBundle` — self-registering bundles that pair a manifest with its component and install into both the registry and a host-owned component map. Generic over component type so Layer 1 stays React-free; Studio specializes it to `ComponentType` at its own layer.
 - `@prism/core/shell` — Shell React components (ShellLayout, ActivityBar, TabBar, LensProvider)
 - `@prism/core/input` — Input System (KeyboardModel, InputScope, InputRouter)
 - `@prism/core/forms` — Forms & Validation (FieldSchema, DocumentSchema, FormState, wiki-links, markdown)

@@ -10,16 +10,23 @@
 
 import { useState, useMemo, useCallback, type CSSProperties } from "react";
 import { useKernel } from "../kernel/kernel-context.js";
+import { lensId } from "@prism/core/lens";
+import type { LensManifest } from "@prism/core/lens";
+import { defineLensBundle, type LensBundle } from "../lenses/bundle.js";
 import {
   type ScriptStep,
   type ScriptStepKind,
   type VisualScript,
+  type DebugRunResult,
+  type TraceFrame,
   createStep,
   createVisualScript,
   emitStepsLua,
+  emitStepsLuaWithMap,
   validateSteps,
   getStepMeta,
   getStepCategories,
+  createLuaDebugger,
 } from "@prism/core/layer1";
 
 // ── Styles ──────────────────────────────────────────────────────────────────
@@ -56,6 +63,9 @@ function StepCard({
   onRemove,
   onMove,
   onToggle,
+  breakpoint,
+  onToggleBreakpoint,
+  isCurrent,
 }: {
   step: ScriptStep;
   index: number;
@@ -64,17 +74,43 @@ function StepCard({
   onRemove: () => void;
   onMove: (dir: -1 | 1) => void;
   onToggle: () => void;
+  breakpoint: boolean;
+  onToggleBreakpoint: () => void;
+  isCurrent: boolean;
 }) {
   const meta = getStepMeta(step.kind);
 
   return (
     <div
+      data-testid={`visual-script-step-${index}`}
+      data-current={isCurrent ? "true" : "false"}
+      data-breakpoint={breakpoint ? "true" : "false"}
       style={{
         ...s.card,
         ...(step.disabled ? s.cardDisabled : {}),
-        marginLeft: indent * 16,
+        ...(isCurrent ? { borderColor: "#ffcc00", boxShadow: "0 0 0 1px #ffcc00" } : {}),
+        marginLeft: indent * 16 + 20,
+        position: "relative",
       }}
     >
+      <button
+        aria-label="toggle breakpoint"
+        data-testid={`visual-script-bp-${index}`}
+        onClick={onToggleBreakpoint}
+        style={{
+          position: "absolute",
+          left: -18,
+          top: 8,
+          width: 14,
+          height: 14,
+          borderRadius: "50%",
+          border: "1px solid #666",
+          background: breakpoint ? "#e74c3c" : "transparent",
+          cursor: "pointer",
+          padding: 0,
+        }}
+        title={breakpoint ? "Clear breakpoint" : "Set breakpoint"}
+      />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div style={s.cardLabel}>
           <span style={{ color: "#666", marginRight: 4 }}>{index + 1}.</span>
@@ -148,15 +184,157 @@ function StepCard({
   );
 }
 
+// ── Debug Frames Panel ──────────────────────────────────────────────────────
+
+function DebugFramesPanel({
+  result,
+  activeIdx,
+  onSelect,
+  onStepToNextBreakpoint,
+  onClose,
+}: {
+  result: DebugRunResult;
+  activeIdx: number;
+  onSelect: (idx: number) => void;
+  onStepToNextBreakpoint: () => void;
+  onClose: () => void;
+}) {
+  const frame: TraceFrame | undefined = result.frames[activeIdx];
+  return (
+    <div
+      data-testid="debug-frames-panel"
+      style={{
+        borderTop: "1px solid #533",
+        background: "#181818",
+        display: "flex",
+        flexDirection: "column",
+        maxHeight: 220,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          padding: "4px 8px",
+          borderBottom: "1px solid #333",
+          fontSize: 11,
+        }}
+      >
+        <strong style={{ color: result.success ? "#6c6" : "#f88" }}>
+          {result.success ? "✓ Debug" : "✗ Debug"}
+        </strong>
+        <span style={{ color: "#888" }}>
+          {result.frames.length} frame{result.frames.length === 1 ? "" : "s"}
+        </span>
+        {!result.success && result.error && (
+          <span style={{ color: "#f88" }}>· {result.error}</span>
+        )}
+        <div style={{ flex: 1 }} />
+        <button
+          data-testid="debug-prev-frame"
+          style={s.btn}
+          onClick={() => onSelect(Math.max(0, activeIdx - 1))}
+          disabled={activeIdx === 0}
+        >
+          ◀ Prev
+        </button>
+        <button
+          data-testid="debug-next-frame"
+          style={s.btn}
+          onClick={() => onSelect(Math.min(result.frames.length - 1, activeIdx + 1))}
+          disabled={activeIdx >= result.frames.length - 1}
+        >
+          Next ▶
+        </button>
+        <button
+          data-testid="debug-continue"
+          style={s.btn}
+          onClick={onStepToNextBreakpoint}
+          title="Jump to next breakpoint"
+        >
+          ⇥ Continue
+        </button>
+        <button data-testid="debug-close" style={s.btn} onClick={onClose}>✕</button>
+      </div>
+      <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
+        <div
+          style={{
+            width: 160,
+            overflow: "auto",
+            borderRight: "1px solid #333",
+            fontSize: 11,
+          }}
+          data-testid="debug-frame-list"
+        >
+          {result.frames.map((f, i) => (
+            <div
+              key={i}
+              data-testid={`debug-frame-${i}`}
+              onClick={() => onSelect(i)}
+              style={{
+                padding: "2px 8px",
+                cursor: "pointer",
+                background: i === activeIdx ? "#2a3040" : "transparent",
+                color: f.breakpoint ? "#f88" : "#ccc",
+              }}
+            >
+              #{i} · line {f.line}
+              {f.breakpoint ? " ●" : ""}
+            </div>
+          ))}
+        </div>
+        <div
+          style={{ flex: 1, overflow: "auto", padding: 8, fontSize: 11, fontFamily: "monospace" }}
+          data-testid="debug-locals"
+        >
+          {frame === undefined ? (
+            <div style={{ color: "#666" }}>no frame selected</div>
+          ) : Object.keys(frame.locals).length === 0 ? (
+            <div style={{ color: "#666" }}>(no locals at line {frame.line})</div>
+          ) : (
+            Object.entries(frame.locals).map(([k, v]) => (
+              <div key={k}>
+                <span style={{ color: "#9cdcfe" }}>{k}</span>
+                <span style={{ color: "#888" }}> = </span>
+                <span style={{ color: "#ce9178" }}>{v}</span>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Panel ───────────────────────────────────────────────────────────────────
 
 export function VisualScriptPanel() {
   const kernel = useKernel();
   const [script, setScript] = useState<VisualScript>(() => createVisualScript("new-script", "New Script"));
 
+  // ── Debugger state ────────────────────────────────────────────────────────
+  /** Step-id → has-breakpoint. */
+  const [breakpoints, setBreakpoints] = useState<Set<string>>(() => new Set());
+  /** Last debug run result, if any. */
+  const [debugResult, setDebugResult] = useState<DebugRunResult | null>(null);
+  /** Index into debugResult.frames — drives the yellow step highlight. */
+  const [activeFrameIdx, setActiveFrameIdx] = useState(0);
+  const [isDebugging, setIsDebugging] = useState(false);
+
   const categories = useMemo(() => getStepCategories(), []);
   const lua = useMemo(() => emitStepsLua(script.steps), [script.steps]);
+  const emittedWithMap = useMemo(() => emitStepsLuaWithMap(script.steps), [script.steps]);
   const errors = useMemo(() => validateSteps(script.steps), [script.steps]);
+
+  // Currently-focused step id (for highlighting) = owner of the line in the
+  // currently-selected trace frame. emittedWithMap.lineToStep does the lookup.
+  const currentStepId = useMemo(() => {
+    if (!debugResult || debugResult.frames.length === 0) return null;
+    const frame = debugResult.frames[activeFrameIdx];
+    if (!frame) return null;
+    return emittedWithMap.lineToStep.get(frame.line) ?? null;
+  }, [debugResult, activeFrameIdx, emittedWithMap]);
 
   // Compute indentation levels
   const indents = useMemo(() => {
@@ -214,6 +392,74 @@ export function VisualScriptPanel() {
     kernel.notifications.add({ title: "Lua copied to clipboard", kind: "success" });
   }, [lua, kernel]);
 
+  const toggleBreakpoint = useCallback((stepId: string) => {
+    setBreakpoints((prev) => {
+      const next = new Set(prev);
+      if (next.has(stepId)) next.delete(stepId);
+      else next.add(stepId);
+      return next;
+    });
+  }, []);
+
+  const debugRun = useCallback(async () => {
+    if (errors.length > 0) {
+      kernel.notifications.add({
+        title: `Fix ${errors.length} validation error${errors.length === 1 ? "" : "s"} first`,
+        kind: "warning",
+      });
+      return;
+    }
+    if (script.steps.length === 0) {
+      kernel.notifications.add({ title: "No steps to debug", kind: "warning" });
+      return;
+    }
+    setIsDebugging(true);
+    try {
+      const dbg = await createLuaDebugger();
+      try {
+        // Apply breakpoints — translate step ids to Lua line numbers.
+        for (const stepId of breakpoints) {
+          const line = emittedWithMap.stepToLine.get(stepId);
+          if (line !== undefined) dbg.setBreakpoint(line);
+        }
+        const result = await dbg.run(emittedWithMap.code);
+        setDebugResult(result);
+        setActiveFrameIdx(0);
+        if (result.success) {
+          kernel.notifications.add({
+            title: `Debug: ${result.frames.length} frame${result.frames.length === 1 ? "" : "s"} captured`,
+            kind: "success",
+          });
+        } else {
+          kernel.notifications.add({
+            title: `Debug error: ${result.error ?? "unknown"}`,
+            kind: "error",
+          });
+        }
+      } finally {
+        await dbg.dispose();
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      kernel.notifications.add({ title: `Debug failed: ${message}`, kind: "error" });
+    } finally {
+      setIsDebugging(false);
+    }
+  }, [breakpoints, emittedWithMap, errors, script.steps.length, kernel]);
+
+  const stepToNextBreakpoint = useCallback(() => {
+    if (!debugResult) return;
+    const frames = debugResult.frames;
+    for (let i = activeFrameIdx + 1; i < frames.length; i++) {
+      if (frames[i]?.breakpoint) {
+        setActiveFrameIdx(i);
+        return;
+      }
+    }
+    // No next breakpoint — jump to end.
+    setActiveFrameIdx(Math.max(0, frames.length - 1));
+  }, [debugResult, activeFrameIdx]);
+
   return (
     <div style={s.root} data-testid="visual-script-panel">
       {/* Step Palette */}
@@ -252,6 +498,15 @@ export function VisualScriptPanel() {
             {script.steps.length} step{script.steps.length !== 1 ? "s" : ""}
           </span>
           <button style={s.btn} onClick={copyLua}>Copy Lua</button>
+          <button
+            data-testid="visual-script-debug-btn"
+            style={s.btn}
+            onClick={() => void debugRun()}
+            disabled={isDebugging}
+            title="Run script under the step debugger"
+          >
+            {isDebugging ? "\u25B6 Running\u2026" : "\u25B6 Debug"}
+          </button>
         </div>
 
         {/* Step List */}
@@ -271,6 +526,9 @@ export function VisualScriptPanel() {
               onRemove={() => removeStep(i)}
               onMove={(dir) => moveStep(i, dir)}
               onToggle={() => toggleStep(i)}
+              breakpoint={breakpoints.has(step.id)}
+              onToggleBreakpoint={() => toggleBreakpoint(step.id)}
+              isCurrent={currentStepId === step.id}
             />
           ))}
         </div>
@@ -284,6 +542,17 @@ export function VisualScriptPanel() {
           </div>
         )}
 
+        {/* Debugger Frames Panel */}
+        {debugResult && (
+          <DebugFramesPanel
+            result={debugResult}
+            activeIdx={activeFrameIdx}
+            onSelect={setActiveFrameIdx}
+            onStepToNextBreakpoint={stepToNextBreakpoint}
+            onClose={() => setDebugResult(null)}
+          />
+        )}
+
         {/* Lua Preview */}
         <div style={s.preview}>
           {lua || "-- Empty script"}
@@ -292,3 +561,25 @@ export function VisualScriptPanel() {
     </div>
   );
 }
+
+
+// ── Lens registration ──────────────────────────────────────────────────────
+
+export const VISUAL_SCRIPT_LENS_ID = lensId("visual-script");
+
+export const visualScriptLensManifest: LensManifest = {
+
+  id: VISUAL_SCRIPT_LENS_ID,
+  name: "Visual Script",
+  icon: "\u{1F9E9}",
+  category: "facet",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-visual-script", name: "Switch to Visual Script Editor", shortcut: ["shift+s"], section: "Navigation" }],
+  },
+};
+
+export const visualScriptLensBundle: LensBundle = defineLensBundle(
+  visualScriptLensManifest,
+  VisualScriptPanel,
+);

@@ -9,6 +9,9 @@ import { useKernel, useObjects } from "../kernel/kernel-context.js";
 import type { GraphObject, ObjectId } from "@prism/core/object-model";
 import { PLATFORM_TYPES, EVENT_STATUSES, MESSAGE_STATUSES, REMINDER_STATUSES } from "@prism/core/layer1";
 
+import { lensId } from "@prism/core/lens";
+import type { LensManifest } from "@prism/core/lens";
+import { defineLensBundle, type LensBundle } from "../lenses/bundle.js";
 const s: Record<string, CSSProperties> = {
   root: { padding: 16, height: "100%", overflow: "auto", fontFamily: "system-ui", fontSize: 13, color: "#ccc", background: "#1a1a1a" },
   header: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
@@ -123,3 +126,25 @@ export function PlatformPanel() {
     </div>
   );
 }
+
+
+// ── Lens registration ──────────────────────────────────────────────────────
+
+export const PLATFORM_LENS_ID = lensId("platform");
+
+export const platformLensManifest: LensManifest = {
+
+  id: PLATFORM_LENS_ID,
+  name: "Platform",
+  icon: "\u{1F4E1}",
+  category: "custom",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-platform", name: "Switch to Platform", shortcut: ["shift+i"], section: "Navigation" }],
+  },
+};
+
+export const platformLensBundle: LensBundle = defineLensBundle(
+  platformLensManifest,
+  PlatformPanel,
+);

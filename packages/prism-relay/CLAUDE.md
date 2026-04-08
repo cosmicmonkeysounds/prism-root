@@ -5,8 +5,8 @@ Runtime server for Prism Relay — wraps Layer 1 relay primitives in HTTP + WebS
 ## Build & Test
 - `pnpm dev` — start with tsx watch (dev mode)
 - `pnpm typecheck`
-- `npx vitest run` — unit tests (35+ test files)
-- `pnpm test:e2e` — Playwright E2E tests (4 spec files, no browser needed)
+- `npx vitest run` — unit tests (37+ test files)
+- `pnpm test:e2e` — Playwright E2E tests (5 spec files: relay, production-readiness, deployment, docker, modular-auth)
 - `pnpm test:docker` — Docker E2E tests (builds image, runs containers, tests API/WS/federation)
 
 ## CLI
@@ -187,6 +187,19 @@ WebSocket at `/ws/relay`:
 - `POST /api/signaling/rooms/:roomId/poll` — poll buffered signals for a peer
 - Signal types: `offer`, `answer`, `ice-candidate`, `leave`
 - Relay is transport-agnostic: routes opaque payloads between peers
+
+## Observability / Metrics
+- `GET /metrics` — Prometheus text exposition (version 0.0.4), no auth, no CSRF, mounted outside `/api/*` for plain scraping.
+- Series exposed:
+  - `relay_requests_total{method,route,status}` — counter of HTTP requests handled, including 4xx/5xx rejections from CSRF/rate-limit/banned-peer middleware.
+  - `relay_request_duration_seconds_bucket{method,route,le}` + `_sum` + `_count` — latency histogram (default buckets: 5ms → 10s).
+  - `relay_modules_total` — installed module count.
+  - `relay_peers_online` — router-tracked online peers.
+  - `relay_federation_peers` — federation peer count.
+  - `relay_websocket_connections` — currently open WS connections.
+  - `relay_uptime_seconds` — process uptime.
+- Cardinality is bounded: route labels come from Hono's `c.req.routePath` (e.g. `/portals/:id`, not the raw URL), and the registry caps distinct label sets at 5,000 by default.
+- The registry is exposed on the `RelayServer` return value as `.metrics` for tests and custom gauges.
 
 ## HTTP API (Core)
 - `GET /api/status` — relay state

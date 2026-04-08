@@ -17,6 +17,8 @@ export interface ConnectionRegistry {
   add(ws: WSContext): TrackedConnection;
   remove(ws: WSContext): void;
   get(ws: WSContext): TrackedConnection | undefined;
+  /** Number of currently tracked connections. */
+  size(): number;
   broadcastToCollection(collectionId: string, msg: ServerMessage, exclude?: WSContext): void;
   broadcastAll(msg: ServerMessage, exclude?: WSContext): void;
 }
@@ -40,6 +42,10 @@ export function createConnectionRegistry(): ConnectionRegistry {
 
     get(ws) {
       return connections.get(ws);
+    },
+
+    size() {
+      return connections.size;
     },
 
     broadcastToCollection(collectionId, msg, exclude) {

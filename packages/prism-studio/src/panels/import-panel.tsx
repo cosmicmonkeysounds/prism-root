@@ -12,6 +12,9 @@ import { useCallback, useMemo, useState } from "react";
 import type { ChangeEvent, DragEvent } from "react";
 import { useKernel } from "../kernel/index.js";
 
+import { lensId } from "@prism/core/lens";
+import type { LensManifest } from "@prism/core/lens";
+import { defineLensBundle, type LensBundle } from "../lenses/bundle.js";
 // ── Helpers (exported for unit tests) ───────────────────────────────────────
 
 export type ImportFormat = "csv" | "json";
@@ -451,3 +454,25 @@ const styles = {
     fontSize: 12,
   },
 };
+
+
+// ── Lens registration ──────────────────────────────────────────────────────
+
+export const IMPORT_LENS_ID = lensId("import");
+
+export const importLensManifest: LensManifest = {
+
+  id: IMPORT_LENS_ID,
+  name: "Import",
+  icon: "\u{1F4E5}",
+  category: "custom",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-import", name: "Switch to Import", shortcut: ["shift+y"], section: "Navigation" }],
+  },
+};
+
+export const importLensBundle: LensBundle = defineLensBundle(
+  importLensManifest,
+  ImportPanel,
+);

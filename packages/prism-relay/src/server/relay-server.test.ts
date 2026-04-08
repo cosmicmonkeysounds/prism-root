@@ -333,4 +333,44 @@ describe("relay-server integration", () => {
     expect(text).toContain("User-agent:");
     expect(text).toContain("Disallow: /api/");
   });
+
+  // ── Metrics ────────────────────────────────────────────────────────────
+
+  it("GET /metrics serves Prometheus exposition with live gauges", async () => {
+    // Generate at least one HTTP request so the histogram has a sample.
+    await fetch(url("/api/status"));
+
+    const res = await fetch(url("/metrics"));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type") ?? "").toContain("text/plain");
+    expect(res.headers.get("content-type") ?? "").toContain("version=0.0.4");
+
+    const text = await res.text();
+    // Required series are present.
+    expect(text).toContain("# TYPE relay_requests_total counter");
+    expect(text).toContain("# TYPE relay_request_duration_seconds histogram");
+    expect(text).toContain("# TYPE relay_modules_total gauge");
+    expect(text).toContain("# TYPE relay_uptime_seconds gauge");
+    expect(text).toContain("# TYPE relay_websocket_connections gauge");
+
+    // Modules gauge reflects the 10 modules wired up in beforeAll().
+    expect(text).toMatch(/relay_modules_total 10/);
+
+    // The earlier /api/status hit must show up in the counter. Hono's
+    // routePath may surface as "/status" or "/api/status" depending on
+    // sub-app mounting; accept either.
+    expect(text).toMatch(
+      /relay_requests_total\{method="GET",route="(?:\/api)?\/status",status="200"\} \d+/,
+    );
+
+    // Trailing newline per Prometheus spec.
+    expect(text.endsWith("\n")).toBe(true);
+  });
+
+  it("GET /metrics does not require the CSRF header", async () => {
+    // /metrics is intentionally outside the /api/* CSRF gate. A bare GET
+    // (with no X-Prism-CSRF) must succeed so Prometheus can scrape it.
+    const res = await fetch(url("/metrics"));
+    expect(res.status).toBe(200);
+  });
 });

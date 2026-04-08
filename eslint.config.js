@@ -22,6 +22,7 @@ export default tseslint.config(
       "packages/prism-daemon/",
       "packages/prism-studio/src-tauri/",
       "$legacy-inspiration-only/",
+      "tmp-*",
     ],
   },
 );

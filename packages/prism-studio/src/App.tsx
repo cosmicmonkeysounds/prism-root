@@ -1,279 +1,43 @@
-import { useMemo, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import type { Action } from "kbar";
-import type { ObjectTemplate } from "@prism/core/template";
-import { createLensRegistry, createShellStore } from "@prism/core/lens";
 import { LensProvider } from "@prism/core/shell";
 import { PrismKBarProvider } from "@prism/core/kbar";
 import { StudioShell } from "./components/studio-shell.js";
 import {
   createStudioKernel,
+  createBuiltinInitializers,
   KernelProvider,
 } from "./kernel/index.js";
-import type { StudioKernel } from "./kernel/index.js";
 import {
-  registerBuiltinLenses,
-  createLensComponentMap,
+  createBuiltinLensBundles,
   EDITOR_LENS_ID,
 } from "./lenses/index.js";
 import { NotificationToast } from "./components/notification-toast.js";
 
 // ── Kernel (singleton for app lifetime) ─────────────────────────────────────
+// The kernel is fully self-wiring: it installs the built-in lens bundles
+// (registering their manifests + React components into its own lens
+// registry and component map) and runs the built-in initializers (which
+// seed templates + demo workspace). App.tsx just constructs it and pulls
+// state off the resulting instance — no seeding helpers, no parallel
+// lens-registry wiring at this layer.
 
-const kernel = createStudioKernel();
-registerSeedTemplates(kernel);
-seedDemoData(kernel);
-
-function seedDemoData(k: StudioKernel) {
-  // Only seed if store is empty
-  if (k.store.objectCount() > 0) return;
-
-  const page = k.createObject({
-    type: "page",
-    name: "Home",
-    parentId: null,
-    position: 0,
-    status: "draft",
-    tags: [],
-    date: null,
-    endDate: null,
-    description: "The landing page",
-    color: null,
-    image: null,
-    pinned: false,
-    data: { title: "Welcome to Prism", slug: "/", layout: "single", published: false },
-  });
-
-  k.createObject({
-    type: "section",
-    name: "Hero",
-    parentId: page.id,
-    position: 0,
-    status: null,
-    tags: [],
-    date: null,
-    endDate: null,
-    description: "",
-    color: null,
-    image: null,
-    pinned: false,
-    data: { variant: "hero", padding: "lg" },
-  });
-
-  const contentSection = k.createObject({
-    type: "section",
-    name: "Content",
-    parentId: page.id,
-    position: 1,
-    status: null,
-    tags: [],
-    date: null,
-    endDate: null,
-    description: "",
-    color: null,
-    image: null,
-    pinned: false,
-    data: { variant: "default", padding: "md" },
-  });
-
-  k.createObject({
-    type: "heading",
-    name: "Main Heading",
-    parentId: contentSection.id,
-    position: 0,
-    status: null,
-    tags: [],
-    date: null,
-    endDate: null,
-    description: "",
-    color: null,
-    image: null,
-    pinned: false,
-    data: { text: "Build anything with Prism", level: "h1", align: "center" },
-  });
-
-  k.createObject({
-    type: "text-block",
-    name: "Intro Text",
-    parentId: contentSection.id,
-    position: 1,
-    status: null,
-    tags: [],
-    date: null,
-    endDate: null,
-    description: "",
-    color: null,
-    image: null,
-    pinned: false,
-    data: {
-      content: "Prism is a **distributed visual operating system**. Every app is an IDE.",
-      format: "markdown",
-    },
-  });
-
-  k.createObject({
-    type: "lua-block",
-    name: "Status Widget",
-    parentId: contentSection.id,
-    position: 2,
-    status: null,
-    tags: [],
-    date: null,
-    endDate: null,
-    description: "",
-    color: null,
-    image: null,
-    pinned: false,
-    data: {
-      title: "Status Widget",
-      source: `-- Status Widget\nreturn ui.column({\n  ui.row({\n    ui.badge("Online", "green"),\n    ui.badge("v1.0", "blue"),\n    ui.spacer(),\n    ui.label("Prism Studio"),\n  }),\n  ui.divider(),\n  ui.row({\n    ui.button("Refresh"),\n    ui.button("Settings"),\n  }),\n})`,
-    },
-  });
-
-  k.createObject({
-    type: "page",
-    name: "About",
-    parentId: null,
-    position: 1,
-    status: "draft",
-    tags: [],
-    date: null,
-    endDate: null,
-    description: "About page",
-    color: null,
-    image: null,
-    pinned: false,
-    data: { title: "About Us", slug: "/about", layout: "sidebar", published: false },
-  });
-
-  // Clear undo history so seed data isn't undoable
-  k.undo.clear();
-
-  // Select the home page by default
-  k.select(page.id);
-}
-
-function registerSeedTemplates(k: StudioKernel) {
-  const blogPage: ObjectTemplate = {
-    id: "blog-page",
-    name: "Blog Post",
-    description: "A page with hero section, heading, and body text",
-    category: "page",
-    createdAt: new Date().toISOString(),
-    root: {
-      placeholderId: "root",
-      type: "page",
-      name: "{{title}}",
-      data: { title: "{{title}}", slug: "", layout: "single", published: false },
-      children: [
-        {
-          placeholderId: "hero",
-          type: "section",
-          name: "Hero",
-          data: { variant: "hero", padding: "lg" },
-        },
-        {
-          placeholderId: "body",
-          type: "section",
-          name: "Body",
-          data: { variant: "default", padding: "md" },
-          children: [
-            {
-              placeholderId: "heading",
-              type: "heading",
-              name: "Title",
-              data: { text: "{{title}}", level: "h1", align: "left" },
-            },
-            {
-              placeholderId: "text",
-              type: "text-block",
-              name: "Content",
-              data: { content: "Start writing here...", format: "markdown" },
-            },
-          ],
-        },
-      ],
-    },
-    variables: [
-      { name: "title", label: "Page Title", required: true },
-    ],
-  };
-
-  const landingPage: ObjectTemplate = {
-    id: "landing-page",
-    name: "Landing Page",
-    description: "Hero + features + CTA sections",
-    category: "page",
-    createdAt: new Date().toISOString(),
-    root: {
-      placeholderId: "root",
-      type: "page",
-      name: "{{title}}",
-      data: { title: "{{title}}", slug: "", layout: "single", published: false },
-      children: [
-        {
-          placeholderId: "hero",
-          type: "section",
-          name: "Hero",
-          data: { variant: "hero", padding: "lg" },
-          children: [
-            {
-              placeholderId: "h1",
-              type: "heading",
-              name: "Headline",
-              data: { text: "{{title}}", level: "h1", align: "center" },
-            },
-            {
-              placeholderId: "sub",
-              type: "text-block",
-              name: "Subtitle",
-              data: { content: "Describe your product or service here.", format: "markdown" },
-            },
-            {
-              placeholderId: "cta",
-              type: "button",
-              name: "CTA Button",
-              data: { label: "Get Started", variant: "primary", url: "#" },
-            },
-          ],
-        },
-        {
-          placeholderId: "features",
-          type: "section",
-          name: "Features",
-          data: { variant: "default", padding: "md" },
-          children: [
-            {
-              placeholderId: "fh",
-              type: "heading",
-              name: "Features Heading",
-              data: { text: "Features", level: "h2", align: "center" },
-            },
-          ],
-        },
-      ],
-    },
-    variables: [
-      { name: "title", label: "Page Title", required: true },
-    ],
-  };
-
-  k.registerTemplate(blogPage);
-  k.registerTemplate(landingPage);
-}
+const kernel = createStudioKernel({
+  lensBundles: createBuiltinLensBundles(),
+  initializers: createBuiltinInitializers(),
+});
 
 // ── App ─────────────────────────────────────────────────────────────────────
 
 export function App() {
-  const lensRegistry = useMemo(() => createLensRegistry(), []);
-  const shellStore = useMemo(() => createShellStore(), []);
-  const components = useMemo(() => createLensComponentMap(), []);
+  const { lensRegistry, lensComponents, shellStore } = kernel;
 
   const [globalActions, setGlobalActions] = useState<Action[]>([]);
 
-  // Register built-in lenses and derive KBar actions
+  // Derive KBar actions from the lens registry. Bundles were installed
+  // inside createStudioKernel(), so by the time this effect runs the
+  // registry is already populated — we just subscribe for future changes.
   useEffect(() => {
-    const unregister = registerBuiltinLenses(lensRegistry);
-
     function deriveActions(): void {
       const lensActions: Action[] = lensRegistry.allLenses().map((m) => {
         const action: Action = {
@@ -309,12 +73,7 @@ export function App() {
     }
     deriveActions();
 
-    const unsubscribe = lensRegistry.subscribe(() => deriveActions());
-
-    return () => {
-      unregister();
-      unsubscribe();
-    };
+    return lensRegistry.subscribe(() => deriveActions());
   }, [lensRegistry, shellStore]);
 
   // Open default editor tab and show inspector
@@ -379,7 +138,7 @@ export function App() {
         <LensProvider
           registry={lensRegistry}
           store={shellStore}
-          components={components}
+          components={lensComponents}
         >
           <StudioShell />
           <NotificationToast />

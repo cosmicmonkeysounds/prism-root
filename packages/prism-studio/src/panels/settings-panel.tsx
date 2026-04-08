@@ -10,6 +10,9 @@ import { useState, useCallback } from "react";
 import { useKernel, useConfigSettings } from "../kernel/index.js";
 import type { SettingDefinition } from "@prism/core/config";
 
+import { lensId } from "@prism/core/lens";
+import type { LensManifest } from "@prism/core/lens";
+import { defineLensBundle, type LensBundle } from "../lenses/bundle.js";
 // ── Styles ────────────────────────────────────────────────────────────────
 
 const styles = {
@@ -326,3 +329,25 @@ export function SettingsPanel() {
     </div>
   );
 }
+
+
+// ── Lens registration ──────────────────────────────────────────────────────
+
+export const SETTINGS_LENS_ID = lensId("settings");
+
+export const settingsLensManifest: LensManifest = {
+
+  id: SETTINGS_LENS_ID,
+  name: "Settings",
+  icon: "\u2699",
+  category: "custom",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-settings", name: "Switch to Settings", shortcut: [","], section: "Navigation" }],
+  },
+};
+
+export const settingsLensBundle: LensBundle = defineLensBundle(
+  settingsLensManifest,
+  SettingsPanel,
+);

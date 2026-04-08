@@ -143,6 +143,7 @@ export type {
   StepKindMeta,
   ScriptStep,
   VisualScript,
+  StepsLuaEmitResult,
 } from "./script-steps.js";
 export {
   STEP_KINDS,
@@ -150,6 +151,7 @@ export {
   createStep,
   createVisualScript,
   emitStepsLua,
+  emitStepsLuaWithMap,
   validateSteps,
   getStepCategories,
 } from "./script-steps.js";

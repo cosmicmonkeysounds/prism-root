@@ -10,6 +10,9 @@ import { useState, useCallback, useMemo } from "react";
 import { useFacetParser, useSpellCheck, useKernel } from "../kernel/index.js";
 import type { FieldSchema } from "@prism/core/forms";
 
+import { lensId } from "@prism/core/lens";
+import type { LensManifest } from "@prism/core/lens";
+import { defineLensBundle, type LensBundle } from "../lenses/bundle.js";
 // ── Styles ──────────────────────────────────────────────────────────────────
 
 const styles = {
@@ -388,3 +391,25 @@ export function FormFacetPanel() {
     </div>
   );
 }
+
+
+// ── Lens registration ──────────────────────────────────────────────────────
+
+export const FORM_FACET_LENS_ID = lensId("form-facet");
+
+export const formFacetLensManifest: LensManifest = {
+
+  id: FORM_FACET_LENS_ID,
+  name: "Form",
+  icon: "\uD83D\uDCDD",
+  category: "facet",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-form-facet", name: "Switch to Form Facet", shortcut: ["d"], section: "Navigation" }],
+  },
+};
+
+export const formFacetLensBundle: LensBundle = defineLensBundle(
+  formFacetLensManifest,
+  FormFacetPanel,
+);

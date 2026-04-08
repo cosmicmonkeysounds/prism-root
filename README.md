@@ -85,7 +85,7 @@ prism/
 | **Prism Core** | Client-side glass + logic. Layer 1 (domain-agnostic pure TS) + Layer 2 (React renderers). |
 | **Prism Daemon** | Rust background engine on sovereign hardware. CRDT merging, VFS, Actors, hardware protocols. |
 | **Prism Relay** | Open-source zero-knowledge routing infrastructure. E2EE store-and-forward, Sovereign Portals via SSR, AutoREST API gateway, federation mesh. 15 composable modules. |
-| **Prism Studio** | The Universal Host app. Vite SPA in Tauri (desktop) / Capacitor (mobile). Every app is a Studio instance. |
+| **Prism Studio** | The Universal Host app **and** the factory that builds every other app. Vite SPA in Tauri (desktop) / Capacitor (mobile). The App Builder lens composes focused apps (Flux/Lattice/Cadence/Grip/Relay) from the same codebase via `BuilderManager` → `run_build_step` daemon IPC. |
 | **Prism Nexus** | Commercial SaaS wrapper: managed Relays + cloud Studio + App Repo. Fully ejectable to local. |
 
 ### The Stack
@@ -96,6 +96,7 @@ prism/
 | State | Zustand | Atomic stores subscribed to specific Loro node IDs. |
 | Scripting | Lua 5.4 | Same scripts run in browser (wasmoon) and daemon (mlua). |
 | Desktop | Tauri 2.0 | Native shell, Rust backend, IPC bridge. |
+| Mobile | Capacitor 7 | iOS/Android native wrapper around the same Vite SPA. |
 | Frontend | Vite + React | SPA for all client apps. SSR strictly on Relays. |
 | Editor | CodeMirror 6 | Sole text/code editor. No Monaco anywhere. |
 
@@ -128,7 +129,7 @@ Layer 1 is the domain-agnostic core. Zero React, zero DOM, zero runtime assumpti
 | Graph Analysis | `@prism/core/graph-analysis` | Dependency graph, topological sort, cycle detection, CPM planning engine |
 | Automation | `@prism/core/automation` | Trigger/condition/action rules, condition evaluator, template interpolation, cron scheduling |
 | Manifest | `@prism/core/manifest` | PrismManifest (`.prism.json`), CollectionRef, StorageConfig, SyncConfig, validation |
-| Lens Shell | `@prism/core/lens` | LensManifest, LensRegistry, ShellStore (IDE chrome infrastructure) |
+| Lens Shell | `@prism/core/lens` | LensManifest, LensRegistry, ShellStore, `LensBundle` / `installLensBundles` / `defineLensBundle` self-registration |
 | Persistence | `@prism/core/persistence` | CollectionStore (Loro CRDT-backed object/edge storage) |
 | Undo/Redo | `@prism/core/undo` | UndoRedoManager with labeled snapshots |
 | Notifications | `@prism/core/notification` | NotificationStore with kind/unread/dismiss |
@@ -185,6 +186,7 @@ Four apps share the same Object-Graph and Prism Core. Each is a set of Lenses an
 - **Ownership Over Convenience**: MIT-only deps, no vendor lock-in.
 - **Blockchain-Free**: W3C DIDs + E2EE CRDTs, not ledgers or tokens.
 - **Loro Is the Hidden Constant**: All state lives in Loro. Editors are projections.
+- **Layers Flow Bottom-Up**: Plugins, lenses, and initializers self-register via `PluginBundle` / `LensBundle` / `StudioInitializer`. The host composes — it never reaches into its children. See `SPEC.md → Kernel Composition & Self-Registering Bundles`.
 
 ## Development
 

@@ -8,6 +8,9 @@
 import { useState, useCallback } from "react";
 import { useIdentity, useKernel } from "../kernel/index.js";
 
+import { lensId } from "@prism/core/lens";
+import type { LensManifest } from "@prism/core/lens";
+import { defineLensBundle, type LensBundle } from "../lenses/bundle.js";
 // ── Styles ──────────────────────────────────────────────────────────────────
 
 const styles = {
@@ -303,3 +306,25 @@ export function IdentityPanel() {
     </div>
   );
 }
+
+
+// ── Lens registration ──────────────────────────────────────────────────────
+
+export const IDENTITY_LENS_ID = lensId("identity");
+
+export const identityLensManifest: LensManifest = {
+
+  id: IDENTITY_LENS_ID,
+  name: "Identity",
+  icon: "\uD83D\uDD11",
+  category: "custom",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-identity", name: "Switch to Identity", shortcut: ["i"], section: "Navigation" }],
+  },
+};
+
+export const identityLensBundle: LensBundle = defineLensBundle(
+  identityLensManifest,
+  IdentityPanel,
+);

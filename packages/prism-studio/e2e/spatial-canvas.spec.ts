@@ -150,22 +150,6 @@ test.describe("Lens Registration", () => {
     await expect(page.locator('[data-testid="activity-icon-form-facet"]')).toBeVisible();
     await expect(page.locator('[data-testid="activity-icon-table-facet"]')).toBeVisible();
     await expect(page.locator('[data-testid="activity-icon-facet-designer"]')).toBeVisible();
-    await expect(page.locator('[data-testid="activity-icon-record-browser"]')).toBeVisible();
     await expect(page.locator('[data-testid="activity-icon-spatial-canvas"]')).toBeVisible();
-  });
-});
-
-// ── Record Browser — Slot Filtering ────────────────────────────────────────
-
-test.describe("Record Browser Panel", () => {
-  test.beforeEach(async ({ page }) => {
-    await page.goto("/");
-    await page.locator('[data-testid="activity-icon-record-browser"]').click();
-    await expect(page.locator('[data-testid="record-browser-panel"]')).toBeVisible();
-  });
-
-  test("record browser loads and shows view mode controls", async ({ page }) => {
-    const panel = page.locator('[data-testid="record-browser-panel"]');
-    await expect(panel).toBeVisible();
   });
 });

@@ -14,7 +14,6 @@ import type { RelayEntry } from "./relay-manager.js";
 import type { AppProfile, BuildRun } from "./builder-manager.js";
 import type { SettingDefinition } from "@prism/core/config";
 import type { PresenceState } from "@prism/core/presence";
-import type { ViewMode } from "@prism/core/view";
 import type { Automation, AutomationRun } from "@prism/core/automation";
 import type { PlanResult, SlipImpact } from "@prism/core/graph-analysis";
 import type { ExprValue } from "@prism/core/expression";
@@ -327,26 +326,6 @@ export function usePresence(): {
     peers: cacheRef.current.peers,
     localPeer: kernel.presence.local,
     peerCount: version,
-  };
-}
-
-/** Reactive view mode. */
-export function useViewMode(): {
-  mode: ViewMode;
-  setMode: (mode: ViewMode) => void;
-  availableModes: ViewMode[];
-} {
-  const kernel = useKernel();
-
-  const mode = useSyncExternalStore(
-    (cb) => kernel.onViewModeChange(cb),
-    () => kernel.viewMode,
-  );
-
-  return {
-    mode,
-    setMode: kernel.setViewMode,
-    availableModes: kernel.viewRegistry.all().map((v) => v.mode),
   };
 }
 

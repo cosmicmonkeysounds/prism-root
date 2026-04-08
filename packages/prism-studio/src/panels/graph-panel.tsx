@@ -18,6 +18,9 @@ import type { StoreApi } from "zustand";
 import type { GraphObject } from "@prism/core/object-model";
 import { useKernel } from "../kernel/index.js";
 
+import { lensId } from "@prism/core/lens";
+import type { LensManifest } from "@prism/core/lens";
+import { defineLensBundle, type LensBundle } from "../lenses/bundle.js";
 /**
  * Build (or rebuild) graph nodes and edges from the kernel's current state.
  * Returns the set of node IDs for diffing.
@@ -191,3 +194,25 @@ export function GraphPanel() {
     </div>
   );
 }
+
+
+// ── Lens registration ──────────────────────────────────────────────────────
+
+export const GRAPH_LENS_ID = lensId("graph");
+
+export const graphLensManifest: LensManifest = {
+
+  id: GRAPH_LENS_ID,
+  name: "Graph",
+  icon: "\u2B21",
+  category: "visual",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-graph", name: "Switch to Graph", shortcut: ["g"], section: "Navigation" }],
+  },
+};
+
+export const graphLensBundle: LensBundle = defineLensBundle(
+  graphLensManifest,
+  GraphPanel,
+);

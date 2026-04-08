@@ -1,20 +1,22 @@
 # @prism/studio
 
-The Universal Host — every Prism app is a Studio instance. Vite SPA + Tauri 2.0 desktop shell.
+The Universal Host — every Prism app is a Studio instance. Vite SPA + Tauri 2.0 desktop shell + Capacitor 7 mobile wrapper.
 
 ## Quick Start
 
 ```bash
-pnpm dev              # Vite dev server on http://localhost:1420
-pnpm tauri dev        # Tauri desktop with hot reload
-pnpm build            # Production build
-pnpm typecheck        # TypeScript strict
-pnpm test:e2e         # Playwright E2E tests (requires dev server on :1420)
+pnpm dev                          # Vite dev server on http://localhost:1420
+pnpm tauri dev                    # Tauri desktop with hot reload
+pnpm build                        # Production build
+pnpm typecheck                    # TypeScript strict
+pnpm test:e2e                     # Playwright E2E (requires dev server on :1420)
+pnpm exec cap add ios|android     # One-time native scaffold (not checked in)
+pnpm exec cap sync ios|android    # Inject built dist/ into native shells
 ```
 
 ## Architecture
 
-Studio is a **local-first Vite SPA** (not Next.js). It wraps in Tauri for desktop. All daemon communication goes through `src/ipc-bridge.ts` using Tauri `invoke()` — never raw HTTP.
+Studio is a **local-first Vite SPA** (not Next.js). The **same Vite output** is wrapped by Tauri for desktop and by Capacitor for iOS/Android — no forks, one codebase. All daemon communication goes through `src/ipc-bridge.ts` using Tauri `invoke()` — never raw HTTP.
 
 ### Kernel (`src/kernel/`)
 
@@ -75,6 +77,28 @@ User action → kernel.createObject/updateObject/deleteObject
   → SearchEngine auto-reindex
 ```
 
+## Self-Replicating Builds (App Builder)
+
+Studio is not only the universal host — it is also the **factory that produces focused apps** (Flux, Lattice, Cadence, Grip, Relay) from the same codebase. The pipeline lives entirely in the kernel and is exposed via the **App Builder lens** (`Shift+B`).
+
+```
+AppProfile + BuildTarget
+  → BuilderManager.planBuild() — composes a deterministic BuildPlan
+  → BuilderManager.runPlan()   — walks plan.steps one at a time
+  → executor.executeStep()     — tauri OR dry-run
+  → invoke("run_build_step", { step, workingDir, env })
+  → prism_daemon::commands::build::run_build_step
+  → structured { stdout?, stderr? } back to the kernel
+```
+
+- **`src/kernel/builder-manager.ts`** — profile registry (6 built-ins: `studio`, `flux`, `lattice`, `cadence`, `grip`, `relay`), active-profile pinning, plan composition via `@prism/core/builder`, step-by-step execution through an injectable `BuildExecutor`, run history.
+- **`BuildExecutor` modes** — `tauri` (real daemon IPC) and `dry-run` (browser/tests; `emit-file` steps succeed with contents buffered into `stdout`, `run-command`/`invoke-ipc` are skipped).
+- **Build targets** — `web` (Vite SPA), `tauri` (desktop binary via `pnpm tauri build`), `capacitor-ios` / `capacitor-android` (mobile via `cap sync` + `cap build`), `relay-node` / `relay-docker` (relay deployments).
+- **Capacitor scaffolding** — `capacitor.config.ts` is checked in; the generated `ios/` and `android/` directories are not. Run `pnpm cap add ios|android` once per checkout to create them.
+- **Tests** — `builder-manager.test.ts` (30 tests, dry-run + mocked Tauri executor) and `builder-manager-e2e.test.ts` (5 tests, Node-backed invoke fn that faithfully mirrors the daemon's `run_build_step` contract: real `fs.writeFile`, real `spawnSync` with env propagation, real failure surfacing). The full TS↔Rust loop is covered without spawning actual `vite`/`tauri`/`cap` processes in unit tests.
+
+See SPEC.md → *Studio as a Self-Replicating Meta-Builder* for the architectural rationale and `packages/prism-daemon/README.md` for the Rust-side `run_build_step` contract.
+
 ## Key Design Decisions
 
 - Kernel is a **singleton** created at app startup, not per-component.
@@ -82,3 +106,4 @@ User action → kernel.createObject/updateObject/deleteObject
 - Studio has **no server code**. Relay servers are managed via CLI; Studio connects as a client.
 - Canvas resolves the selected page (walking up parentId) and renders live.
 - Editor creates per-object LoroText buffers, debounce-syncs back to kernel.
+- The build pipeline dispatches **one step at a time** to the daemon (not a whole plan) so Studio can surface per-step progress and halt on the first failure without leaking a half-executed plan back to the kernel.

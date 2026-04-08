@@ -9,6 +9,9 @@ import { useKernel, useObjects } from "../kernel/kernel-context.js";
 import type { GraphObject, ObjectId } from "@prism/core/object-model";
 import { ASSETS_TYPES, MEDIA_STATUSES, CONTENT_STATUSES, SCAN_STATUSES, MEDIA_KINDS } from "@prism/core/layer1";
 
+import { lensId } from "@prism/core/lens";
+import type { LensManifest } from "@prism/core/lens";
+import { defineLensBundle, type LensBundle } from "../lenses/bundle.js";
 const s: Record<string, CSSProperties> = {
   root: { padding: 16, height: "100%", overflow: "auto", fontFamily: "system-ui", fontSize: 13, color: "#ccc", background: "#1a1a1a" },
   header: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
@@ -115,3 +118,25 @@ export function AssetsMgmtPanel() {
     </div>
   );
 }
+
+
+// ── Lens registration ──────────────────────────────────────────────────────
+
+export const ASSETS_MGMT_LENS_ID = lensId("assets-mgmt");
+
+export const assetsMgmtLensManifest: LensManifest = {
+
+  id: ASSETS_MGMT_LENS_ID,
+  name: "Asset Manager",
+  icon: "\u{1F4E6}",
+  category: "custom",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-assets-mgmt", name: "Switch to Asset Manager", shortcut: ["shift+m"], section: "Navigation" }],
+  },
+};
+
+export const assetsMgmtLensBundle: LensBundle = defineLensBundle(
+  assetsMgmtLensManifest,
+  AssetsMgmtPanel,
+);

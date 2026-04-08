@@ -45,16 +45,31 @@ import { createLiveView } from "@prism/core/view";
 import type { LiveView, LiveViewOptions } from "@prism/core/view";
 import type { ObjectTemplate, TemplateNode, InstantiateResult } from "@prism/core/template";
 import { createPageBuilderRegistry } from "./entities.js";
+import { createDesignTokenRegistry, DEFAULT_TOKENS } from "./design-tokens.js";
+import type { DesignTokenRegistry } from "./design-tokens.js";
 import { createBuiltinBundles, installPluginBundles } from "@prism/core/layer1";
+import type { ComponentType } from "react";
+import type { StoreApi } from "zustand";
+import {
+  createLensRegistry,
+  createShellStore,
+  installLensBundles,
+} from "@prism/core/lens";
+import type {
+  LensRegistry,
+  LensId,
+  LensBundle,
+  ShellStore,
+} from "@prism/core/lens";
 import { createRelayManager } from "./relay-manager.js";
 import type { RelayManager } from "./relay-manager.js";
 import { createBuilderManager } from "./builder-manager.js";
 import type { BuilderManager } from "./builder-manager.js";
+import { installInitializers } from "./initializer.js";
+import type { StudioInitializer } from "./initializer.js";
 import { ConfigRegistry, ConfigModel } from "@prism/core/config";
 import { createPresenceManager } from "@prism/core/presence";
 import type { PresenceManager } from "@prism/core/presence";
-import { createViewRegistry } from "@prism/core/view";
-import type { ViewRegistry, ViewMode } from "@prism/core/view";
 import { AutomationEngine } from "@prism/core/automation";
 import type {
   AutomationStore,
@@ -189,7 +204,6 @@ export interface StudioKernel {
   readonly config: ConfigModel;
   readonly configRegistry: ConfigRegistry;
   readonly presence: PresenceManager;
-  readonly viewRegistry: ViewRegistry;
 
   // ── Automation ─────────────────────────────────────────────────────────────
 
@@ -514,13 +528,6 @@ export interface StudioKernel {
   /** Subscribe to privilege set changes. */
   onPrivilegeSetChange(listener: () => void): () => void;
 
-  /** Get the active view mode. */
-  readonly viewMode: ViewMode;
-  /** Set the active view mode. */
-  setViewMode(mode: ViewMode): void;
-  /** Subscribe to view mode changes. */
-  onViewModeChange(listener: () => void): () => void;
-
   /** Create a new object in the collection, emit bus event, push undo. */
   createObject(obj: Pick<GraphObject, "type" | "name" | "parentId" | "position" | "data"> & Partial<Omit<GraphObject, "id" | "createdAt" | "updatedAt">>): GraphObject;
 
@@ -579,13 +586,63 @@ export interface StudioKernel {
     options?: { parentId?: ObjectId | null; position?: number; variables?: Record<string, string> },
   ): InstantiateResult | null;
 
+  /**
+   * Build a reusable template from an existing GraphObject and all of
+   * its descendants. The caller is responsible for passing this to
+   * registerTemplate() if they want it to appear in the gallery.
+   */
+  templateFromObject(
+    rootObjectId: ObjectId,
+    meta: { id: string; name: string; description?: string; category?: string },
+  ): ObjectTemplate | null;
+
   // ── LiveView ─────────────────────────────────────────────────────────────
 
   /** Create a live materialized view of the collection. */
   createLiveView(options?: LiveViewOptions): LiveView;
 
+  // ── Design Tokens ────────────────────────────────────────────────────────
+
+  /** CSS variable registry for theme colors / spacing / fonts. */
+  readonly designTokens: DesignTokenRegistry;
+
+  // ── Lens System ──────────────────────────────────────────────────────────
+
+  /** Registry of lens manifests. Lens bundles register into this. */
+  readonly lensRegistry: LensRegistry;
+
+  /** Lens id → React component map, populated by LensBundles. */
+  readonly lensComponents: Map<LensId, ComponentType>;
+
+  /** Shell tab/panel state store (zustand). */
+  readonly shellStore: StoreApi<ShellStore>;
+
   /** Dispose all subscriptions. */
   dispose(): void;
+}
+
+// ── Factory Options ─────────────────────────────────────────────────────────
+
+export interface StudioKernelOptions {
+  /**
+   * Lens bundles to install at startup. Each bundle self-registers its
+   * manifest into `lensRegistry` and its component into `lensComponents`.
+   *
+   * Typically `createBuiltinLensBundles()` from `../lenses/index.js`. Tests
+   * can pass an empty array or a minimal subset.
+   */
+  readonly lensBundles?: LensBundle<ComponentType>[];
+
+  /**
+   * Studio initializers that run AFTER the kernel has been fully
+   * constructed. Each initializer receives a reference to the kernel and
+   * can call any of its methods (register templates, seed demo data,
+   * install action handlers, etc).
+   *
+   * Typically `createBuiltinInitializers()` from `./builtin-initializers.js`.
+   * Tests can pass an empty array or a minimal subset.
+   */
+  readonly initializers?: StudioInitializer[];
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -622,7 +679,7 @@ function createTrackableAdapter(store: CollectionStore) {
 
 // ── Factory ─────────────────────────────────────────────────────────────────
 
-export function createStudioKernel(): StudioKernel {
+export function createStudioKernel(options: StudioKernelOptions = {}): StudioKernel {
   const registry = createPageBuilderRegistry();
   const store = createCollectionStore();
   const bus = createPrismBus();
@@ -636,9 +693,9 @@ export function createStudioKernel(): StudioKernel {
 
   const relay = createRelayManager();
   const builder = createBuilderManager();
+  const designTokens = createDesignTokenRegistry(DEFAULT_TOKENS);
   const configRegistry = new ConfigRegistry();
   const config = new ConfigModel(configRegistry);
-  const viewReg = createViewRegistry();
 
   // ── Plugin System ──────────────────────────────────────────────────────────
   const pluginRegistry = new PluginRegistry();
@@ -652,6 +709,19 @@ export function createStudioKernel(): StudioKernel {
     createBuiltinBundles(),
     { objectRegistry: registry, pluginRegistry },
   );
+
+  // ── Lens System ────────────────────────────────────────────────────────────
+  // Kernel owns the lens lifecycle end-to-end. Callers pass in the bundle
+  // list (typically createBuiltinLensBundles from ../lenses/index.js) and
+  // each bundle self-registers its manifest + component. No parallel
+  // manifest/component lists live at the App level anymore.
+  const lensRegistry = createLensRegistry();
+  const lensComponents = new Map<LensId, ComponentType>();
+  const shellStore = createShellStore();
+  const uninstallLensBundles = installLensBundles(options.lensBundles ?? [], {
+    lensRegistry,
+    componentMap: lensComponents,
+  });
 
   // ── Input System ───────────────────────────────────────────────────────────
   const inputRouter = new InputRouter();
@@ -792,9 +862,6 @@ export function createStudioKernel(): StudioKernel {
       color: "#4a9eff",
     },
   });
-
-  let currentViewMode: ViewMode = "list";
-  const viewModeListeners = new Set<() => void>();
 
   // ── Automation ──────────────────────────────────────────────────────────────
 
@@ -1455,18 +1522,91 @@ export function createStudioKernel(): StudioKernel {
     return { created, createdEdges, idMap };
   }
 
+  function templateFromObject(
+    rootObjectId: ObjectId,
+    meta: { id: string; name: string; description?: string; category?: string },
+  ): ObjectTemplate | null {
+    const root = store.getObject(rootObjectId);
+    if (!root || root.deletedAt) return null;
+
+    const placeholderMap = new Map<string, string>();
+    let counter = 0;
+    const getPlaceholder = (id: string): string => {
+      const existing = placeholderMap.get(id);
+      if (existing) return existing;
+      const ph = `placeholder-${++counter}`;
+      placeholderMap.set(id, ph);
+      return ph;
+    };
+
+    const buildNode = (obj: GraphObject): TemplateNode => {
+      const children = store
+        .listObjects({ parentId: obj.id })
+        .filter((o) => !o.deletedAt)
+        .sort((a, b) => a.position - b.position);
+      return {
+        placeholderId: getPlaceholder(obj.id),
+        type: obj.type,
+        name: obj.name,
+        status: obj.status,
+        tags: obj.tags.length > 0 ? [...obj.tags] : undefined,
+        description: obj.description || undefined,
+        color: obj.color,
+        pinned: obj.pinned || undefined,
+        data:
+          Object.keys(obj.data).length > 0 ? structuredClone(obj.data) : undefined,
+        children: children.length > 0 ? children.map(buildNode) : undefined,
+      };
+    };
+
+    const templateRoot = buildNode(root);
+
+    // Collect internal edges
+    const descendantIds = new Set<string>([rootObjectId as string]);
+    for (const d of getDescendants(rootObjectId)) descendantIds.add(d.id as string);
+
+    const templateEdges: Array<{
+      sourcePlaceholderId: string;
+      targetPlaceholderId: string;
+      relation: string;
+      data?: Record<string, unknown>;
+    }> = [];
+    for (const edge of store.listEdges()) {
+      if (
+        descendantIds.has(edge.sourceId as string) &&
+        descendantIds.has(edge.targetId as string)
+      ) {
+        const hasData = Object.keys(edge.data).length > 0;
+        const entry: {
+          sourcePlaceholderId: string;
+          targetPlaceholderId: string;
+          relation: string;
+          data?: Record<string, unknown>;
+        } = {
+          sourcePlaceholderId: getPlaceholder(edge.sourceId as string),
+          targetPlaceholderId: getPlaceholder(edge.targetId as string),
+          relation: edge.relation,
+        };
+        if (hasData) entry.data = structuredClone(edge.data);
+        templateEdges.push(entry);
+      }
+    }
+
+    return {
+      id: meta.id,
+      name: meta.name,
+      description: meta.description,
+      category: meta.category,
+      root: templateRoot,
+      edges: templateEdges.length > 0 ? templateEdges : undefined,
+      createdAt: new Date().toISOString(),
+    };
+  }
+
   // ── LiveView factory ─────────────────────────────────────────────────────
 
   function makeLiveView(options?: LiveViewOptions): LiveView {
     return createLiveView(store, options);
-  }
-
-  // ── Dispose ──────────────────────────────────────────────────────────────
-
-  function setViewMode(mode: ViewMode): void {
-    if (mode === currentViewMode) return;
-    currentViewMode = mode;
-    for (const fn of viewModeListeners) fn();
   }
 
   // ── Graph Analysis helpers ─────────────────────────────────────────────────
@@ -1595,7 +1735,14 @@ export function createStudioKernel(): StudioKernel {
     notifyVfsListeners();
   }
 
+  // Forward-declared disposer for initializers, populated after the kernel
+  // object is built. `dispose()` runs it first so initializer-owned state
+  // tears down before core subsystems.
+  let uninstallInitializers: () => void = () => {};
+
   function dispose(): void {
+    uninstallInitializers();
+    uninstallLensBundles();
     uninstallBundles();
     automationEngine.stop();
     disconnectAutomationCreated();
@@ -1610,7 +1757,6 @@ export function createStudioKernel(): StudioKernel {
     disconnectObjectAtoms();
     disconnectStoreSync();
     tracker.untrackAll();
-    viewModeListeners.clear();
     identityListeners.clear();
     vfsListeners.clear();
     vfs.dispose();
@@ -1626,7 +1772,7 @@ export function createStudioKernel(): StudioKernel {
     roleAssignments.clear();
   }
 
-  return {
+  const kernel: StudioKernel = {
     registry,
     store,
     bus,
@@ -1642,7 +1788,6 @@ export function createStudioKernel(): StudioKernel {
     config,
     configRegistry,
     presence,
-    viewRegistry: viewReg,
     automationEngine,
     listAutomations() { return automationStore.list(); },
     getAutomation(id: string) { return automationStore.get(id); },
@@ -1668,12 +1813,6 @@ export function createStudioKernel(): StudioKernel {
     analyzeSlipImpact,
     analyzePlan,
     evaluateFormula,
-    get viewMode() { return currentViewMode; },
-    setViewMode,
-    onViewModeChange(listener: () => void) {
-      viewModeListeners.add(listener);
-      return () => viewModeListeners.delete(listener);
-    },
     createObject,
     updateObject,
     deleteObject,
@@ -1690,7 +1829,14 @@ export function createStudioKernel(): StudioKernel {
     registerTemplate,
     listTemplates,
     instantiateTemplate,
+    templateFromObject,
     createLiveView: makeLiveView,
+    designTokens,
+
+    // ── Lens System ──────────────────────────────────────────────────────
+    lensRegistry,
+    lensComponents,
+    shellStore,
 
     // ── Plugin System ──────────────────────────────────────────────────────
     plugins: pluginRegistry,
@@ -1894,4 +2040,12 @@ export function createStudioKernel(): StudioKernel {
 
     dispose,
   };
+
+  // Initializers run last, after every kernel method is in place, so they
+  // can freely call registerTemplate, createObject, etc.
+  uninstallInitializers = installInitializers(options.initializers ?? [], {
+    kernel,
+  });
+
+  return kernel;
 }

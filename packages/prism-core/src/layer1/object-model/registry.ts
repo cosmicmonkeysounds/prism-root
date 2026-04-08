@@ -121,6 +121,17 @@ export class ObjectRegistry<TIcon = unknown> {
     return this;
   }
 
+  /**
+   * Remove an entity type from the registry. Returns true if the type
+   * existed and was removed. Safe to call on unknown types.
+   *
+   * Note: does not delete existing GraphObjects of that type — callers
+   * should decide whether to also purge or migrate instances.
+   */
+  remove(type: string): boolean {
+    return this.types.delete(type);
+  }
+
   addCategoryRule(rule: CategoryRule): this {
     this.rules.set(rule.category, rule);
     return this;
@@ -204,6 +215,14 @@ export class ObjectRegistry<TIcon = unknown> {
   registerEdges(defs: EdgeTypeDef[]): this {
     for (const def of defs) this.registerEdge(def);
     return this;
+  }
+
+  /**
+   * Remove an edge type from the registry. Returns true if the relation
+   * existed and was removed. Does not delete existing ObjectEdges.
+   */
+  removeEdge(relation: string): boolean {
+    return this.edgeTypes.delete(relation);
   }
 
   getEdgeType(relation: string): EdgeTypeDef | undefined {

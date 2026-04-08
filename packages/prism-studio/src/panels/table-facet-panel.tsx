@@ -10,6 +10,9 @@ import { useState, useCallback, useMemo, useRef } from "react";
 import { useKernel, useObjects, useSelection } from "../kernel/index.js";
 import type { GraphObject, ObjectId } from "@prism/core/object-model";
 
+import { lensId } from "@prism/core/lens";
+import type { LensManifest } from "@prism/core/lens";
+import { defineLensBundle, type LensBundle } from "../lenses/bundle.js";
 // ── Styles ──────────────────────────────────────────────────────────────────
 
 const styles = {
@@ -373,3 +376,25 @@ export function TableFacetPanel() {
     </div>
   );
 }
+
+
+// ── Lens registration ──────────────────────────────────────────────────────
+
+export const TABLE_FACET_LENS_ID = lensId("table-facet");
+
+export const tableFacetLensManifest: LensManifest = {
+
+  id: TABLE_FACET_LENS_ID,
+  name: "Table",
+  icon: "\uD83D\uDCCA",
+  category: "facet",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-table-facet", name: "Switch to Table Facet", shortcut: ["b"], section: "Navigation" }],
+  },
+};
+
+export const tableFacetLensBundle: LensBundle = defineLensBundle(
+  tableFacetLensManifest,
+  TableFacetPanel,
+);

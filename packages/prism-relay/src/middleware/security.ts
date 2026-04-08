@@ -104,10 +104,13 @@ export function rateLimitMiddleware(opts?: {
   refillRate?: number;
   /** Max tracked IPs (LRU eviction above this). Default: 10000. */
   maxEntries?: number;
+  /** Clock source in milliseconds. Default: Date.now. Injectable for tests. */
+  now?: () => number;
 }) {
   const max = opts?.max ?? 100;
   const refillRate = opts?.refillRate ?? 20;
   const maxEntries = opts?.maxEntries ?? 10_000;
+  const now = opts?.now ?? Date.now;
   const buckets = new Map<string, RateBucket>();
 
   function getClientKey(c: Context): string {
@@ -121,16 +124,16 @@ export function rateLimitMiddleware(opts?: {
     return `ip:${c.req.header("x-real-ip") ?? "unknown"}`;
   }
 
-  function refill(bucket: RateBucket, now: number): void {
-    const elapsed = (now - bucket.lastRefill) / 1000;
+  function refill(bucket: RateBucket, nowMs: number): void {
+    const elapsed = (nowMs - bucket.lastRefill) / 1000;
     bucket.tokens = Math.min(max, bucket.tokens + elapsed * refillRate);
-    bucket.lastRefill = now;
+    bucket.lastRefill = nowMs;
   }
 
   // Periodic eviction of stale entries (every 60s)
   setInterval(() => {
     if (buckets.size > maxEntries) {
-      const cutoff = Date.now() - 120_000; // 2 min inactive
+      const cutoff = now() - 120_000; // 2 min inactive
       for (const [key, bucket] of buckets) {
         if (bucket.lastRefill < cutoff) buckets.delete(key);
         if (buckets.size <= maxEntries * 0.75) break;
@@ -140,15 +143,15 @@ export function rateLimitMiddleware(opts?: {
 
   return async (c: Context, next: Next) => {
     const key = getClientKey(c);
-    const now = Date.now();
+    const nowMs = now();
 
     let bucket = buckets.get(key);
     if (!bucket) {
-      bucket = { tokens: max, lastRefill: now };
+      bucket = { tokens: max, lastRefill: nowMs };
       buckets.set(key, bucket);
     }
 
-    refill(bucket, now);
+    refill(bucket, nowMs);
 
     if (bucket.tokens < 1) {
       c.header("Retry-After", String(Math.ceil(1 / refillRate)));

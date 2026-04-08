@@ -9,6 +9,9 @@ import { useState, useCallback } from "react";
 import { useAutomation, useKernel } from "../kernel/index.js";
 import type { Automation, AutomationTrigger, AutomationAction } from "@prism/core/automation";
 
+import { lensId } from "@prism/core/lens";
+import type { LensManifest } from "@prism/core/lens";
+import { defineLensBundle, type LensBundle } from "../lenses/bundle.js";
 // ── Styles ──────────────────────────────────────────────────────────────────
 
 const styles = {
@@ -404,3 +407,25 @@ export function AutomationPanel() {
     </div>
   );
 }
+
+
+// ── Lens registration ──────────────────────────────────────────────────────
+
+export const AUTOMATION_LENS_ID = lensId("automation");
+
+export const automationLensManifest: LensManifest = {
+
+  id: AUTOMATION_LENS_ID,
+  name: "Automation",
+  icon: "\u26A1",
+  category: "custom",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-automation", name: "Switch to Automation", shortcut: ["a"], section: "Navigation" }],
+  },
+};
+
+export const automationLensBundle: LensBundle = defineLensBundle(
+  automationLensManifest,
+  AutomationPanel,
+);

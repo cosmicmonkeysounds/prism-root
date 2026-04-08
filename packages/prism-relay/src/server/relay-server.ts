@@ -38,7 +38,10 @@ import {
   createLogBuffer,
   createVaultHostRoutes,
   createDirectoryRoutes,
+  createMetricsRoutes,
 } from "../routes/index.js";
+import { createMetricsRegistry, metricsMiddleware } from "../middleware/metrics.js";
+import type { MetricsRegistry } from "../middleware/metrics.js";
 import type {
   AuthRoutesOptions,
   LogBuffer,
@@ -78,6 +81,8 @@ export interface RelayServerOptions {
 export interface RelayServer {
   app: Hono;
   logBuffer: LogBuffer;
+  /** Prometheus metrics registry — exposed for tests and custom gauges. */
+  metrics: MetricsRegistry;
   start(): Promise<{ port: number; close(): Promise<void> }>;
 }
 
@@ -94,6 +99,8 @@ export function createRelayServer(options: RelayServerOptions): RelayServer {
     disableCsrf = false,
   } = options;
   const logBuffer = options.logBuffer ?? createLogBuffer();
+  const metrics = createMetricsRegistry();
+  const serverStartedAt = Date.now();
   const app = new Hono();
 
   // ── CORS middleware ────────────────────────────────────────────────────
@@ -113,6 +120,10 @@ export function createRelayServer(options: RelayServerOptions): RelayServer {
     });
   }
 
+  // ── Metrics instrumentation ─────────────────────────────────────────
+  // Sits before security gates so 4xx rejections still feed the histogram.
+  app.use("/*", metricsMiddleware(metrics));
+
   // ── Security middleware ──────────────────────────────────────────────
   // Rate limiting (token bucket per IP/DID)
   app.use("/api/*", rateLimitMiddleware());
@@ -131,6 +142,16 @@ export function createRelayServer(options: RelayServerOptions): RelayServer {
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
   const connectionRegistry = createConnectionRegistry();
   const presenceStore = createPresenceStore();
+
+  // ── Metrics scrape endpoint ─────────────────────────────────────────
+  // Mounted on the bare path so Prometheus servers can scrape without the
+  // CSRF header. Read-only GET, no mutations.
+  app.route("/metrics", createMetricsRoutes({
+    relay,
+    registry: metrics,
+    websocketCount: () => connectionRegistry.size(),
+    startedAt: serverStartedAt,
+  }));
 
   // ── HTTP routes ──────────────────────────────────────────────────────
   app.route("/api", createStatusRoutes(relay));
@@ -228,6 +249,7 @@ export function createRelayServer(options: RelayServerOptions): RelayServer {
   return {
     app,
     logBuffer,
+    metrics,
     start() {
       return new Promise<{ port: number; close(): Promise<void> }>((resolve) => {
         const server = serve({ fetch: app.fetch, port, hostname: host }, (info) => {

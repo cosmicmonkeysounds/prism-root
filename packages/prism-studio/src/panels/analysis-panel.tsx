@@ -14,6 +14,9 @@ import type { ObjectId } from "@prism/core/object-model";
 import { objectId } from "@prism/core/object-model";
 import type { PlanResult, SlipImpact } from "@prism/core/graph-analysis";
 
+import { lensId } from "@prism/core/lens";
+import type { LensManifest } from "@prism/core/lens";
+import { defineLensBundle, type LensBundle } from "../lenses/bundle.js";
 // ── Styles ──────────────────────────────────────────────────────────────────
 
 const styles = {
@@ -421,3 +424,25 @@ export function AnalysisPanel() {
     </div>
   );
 }
+
+
+// ── Lens registration ──────────────────────────────────────────────────────
+
+export const ANALYSIS_LENS_ID = lensId("analysis");
+
+export const analysisLensManifest: LensManifest = {
+
+  id: ANALYSIS_LENS_ID,
+  name: "Analysis",
+  icon: "\uD83D\uDCC8",
+  category: "custom",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-analysis", name: "Switch to Analysis", shortcut: ["n"], section: "Navigation" }],
+  },
+};
+
+export const analysisLensBundle: LensBundle = defineLensBundle(
+  analysisLensManifest,
+  AnalysisPanel,
+);

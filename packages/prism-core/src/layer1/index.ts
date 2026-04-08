@@ -3,6 +3,8 @@ export type { LoroBridge, LoroChangeHandler } from "./loro-bridge.js";
 export { createCrdtStore } from "./stores/use-crdt-store.js";
 export type { CrdtStore, CrdtStoreState, CrdtStoreActions } from "./stores/use-crdt-store.js";
 export { executeLua, createLuaEngine } from "./lua/lua-runtime.js";
+export { createLuaDebugger } from "./lua/lua-debugger.js";
+export type { LuaDebugger, TraceFrame, DebugRunResult } from "./lua/lua-debugger.js";
 
 // ── Object Model ───────────────────────────────────────────────────────────────
 export {
@@ -1046,6 +1048,7 @@ export {
   createStep,
   createVisualScript,
   emitStepsLua,
+  emitStepsLuaWithMap,
   validateSteps,
   getStepCategories,
   createFacetStore,
@@ -1112,6 +1115,7 @@ export type {
   StepKindMeta,
   ScriptStep,
   VisualScript,
+  StepsLuaEmitResult,
   ValueListItem,
   StaticValueListSource,
   DynamicValueListSource,

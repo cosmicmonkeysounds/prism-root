@@ -8,6 +8,9 @@
 
 import { useState, useCallback } from "react";
 import { useSequencer, useKernel } from "../kernel/index.js";
+import { lensId } from "@prism/core/lens";
+import type { LensManifest } from "@prism/core/lens";
+import { defineLensBundle, type LensBundle } from "../lenses/bundle.js";
 import type {
   SequencerConditionState,
   SequencerConditionClause,
@@ -484,3 +487,25 @@ export function SequencerPanel() {
     </div>
   );
 }
+
+
+// ── Lens registration ──────────────────────────────────────────────────────
+
+export const SEQUENCER_LENS_ID = lensId("sequencer");
+
+export const sequencerLensManifest: LensManifest = {
+
+  id: SEQUENCER_LENS_ID,
+  name: "Sequencer",
+  icon: "\uD83C\uDFBC",
+  category: "facet",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-sequencer", name: "Switch to Sequencer", shortcut: ["q"], section: "Navigation" }],
+  },
+};
+
+export const sequencerLensBundle: LensBundle = defineLensBundle(
+  sequencerLensManifest,
+  SequencerPanel,
+);

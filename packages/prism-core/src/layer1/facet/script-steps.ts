@@ -291,12 +291,43 @@ function emitStep(step: ScriptStep): string {
  * Handles indentation based on control flow blocks.
  */
 export function emitStepsLua(steps: ScriptStep[]): string {
+  return emitStepsLuaWithMap(steps).code;
+}
+
+/**
+ * Result of emitting visual script steps to Lua, with a bidirectional map
+ * linking each step to the 1-based Lua source line it generated.
+ *
+ * This is how the Lua debugger unifies visual-script debugging with raw
+ * Lua debugging: a breakpoint set on a visual step finds the emitted line,
+ * and when the debugger pauses on a line it can highlight the owning step.
+ */
+export interface StepsLuaEmitResult {
+  /** The full Lua source. */
+  code: string;
+  /** Map from ScriptStep.id → 1-based line number in `code`. */
+  stepToLine: Map<string, number>;
+  /** Map from 1-based line number → ScriptStep.id. */
+  lineToStep: Map<number, string>;
+}
+
+/**
+ * Emit ScriptSteps as Lua code with a source map linking each step
+ * to its generated line. Disabled steps produce a comment line and
+ * are still recorded in the map so the UI can highlight them.
+ */
+export function emitStepsLuaWithMap(steps: ScriptStep[]): StepsLuaEmitResult {
   const lines: string[] = [];
+  const stepToLine = new Map<string, number>();
+  const lineToStep = new Map<number, string>();
   let indent = 0;
 
   for (const step of steps) {
     if (step.disabled) {
+      const lineNo = lines.length + 1;
       lines.push(`${"  ".repeat(indent)}-- [disabled] ${step.kind}`);
+      stepToLine.set(step.id, lineNo);
+      lineToStep.set(lineNo, step.id);
       continue;
     }
 
@@ -309,7 +340,10 @@ export function emitStepsLua(steps: ScriptStep[]): string {
 
     const code = emitStep(step);
     if (code) {
+      const lineNo = lines.length + 1;
       lines.push(`${"  ".repeat(indent)}${code}`);
+      stepToLine.set(step.id, lineNo);
+      lineToStep.set(lineNo, step.id);
     }
 
     // Increase indent after opening/continuing blocks
@@ -318,7 +352,7 @@ export function emitStepsLua(steps: ScriptStep[]): string {
     }
   }
 
-  return lines.join("\n");
+  return { code: lines.join("\n"), stepToLine, lineToStep };
 }
 
 /**

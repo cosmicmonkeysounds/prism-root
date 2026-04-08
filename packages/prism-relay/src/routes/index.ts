@@ -29,6 +29,8 @@ export { createPresenceRoutes } from "./presence-routes.js";
 export { createBackupRoutes } from "./backup-routes.js";
 export { createLogsRoutes, createLogBuffer } from "./logs-routes.js";
 export type { LogBuffer, LogEntry } from "./logs-routes.js";
+export { createMetricsRoutes } from "./metrics-routes.js";
+export type { MetricsRoutesOptions } from "./metrics-routes.js";
 export {
   createEmailRoutes,
   createMemoryEmailTransport,

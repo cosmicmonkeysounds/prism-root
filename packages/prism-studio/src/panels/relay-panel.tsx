@@ -16,6 +16,9 @@ import { useKernel, useRelay } from "../kernel/index.js";
 import type { StudioKernel, RelayEntry, RelayManager, DeployedPortal } from "../kernel/index.js";
 import type { PortalLevel } from "@prism/core/relay";
 
+import { lensId } from "@prism/core/lens";
+import type { LensManifest } from "@prism/core/lens";
+import { defineLensBundle, type LensBundle } from "../lenses/bundle.js";
 // ── Styles ────────────────────────────────────────────────────────────────
 
 const styles = {
@@ -871,3 +874,25 @@ export function RelayPanel() {
     </div>
   );
 }
+
+
+// ── Lens registration ──────────────────────────────────────────────────────
+
+export const RELAY_LENS_ID = lensId("relay");
+
+export const relayLensManifest: LensManifest = {
+
+  id: RELAY_LENS_ID,
+  name: "Relay",
+  icon: "\u21C6",
+  category: "custom",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-relay", name: "Switch to Relay Manager", shortcut: ["r"], section: "Navigation" }],
+  },
+};
+
+export const relayLensBundle: LensBundle = defineLensBundle(
+  relayLensManifest,
+  RelayPanel,
+);

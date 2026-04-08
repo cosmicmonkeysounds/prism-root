@@ -6,15 +6,98 @@
  * Otherwise shows the shared scratch document.
  */
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useCallback } from "react";
 import { useCodemirror, prismJSLang } from "@prism/core/codemirror";
 import type { ObjectId } from "@prism/core/object-model";
 import { useKernel, useSelection, useObject } from "../kernel/index.js";
+
+import { lensId } from "@prism/core/lens";
+import type { LensManifest } from "@prism/core/lens";
+import { defineLensBundle, type LensBundle } from "../lenses/bundle.js";
+/** Non-null EditorView handle exposed by `useCodemirror`. */
+type CmView = NonNullable<ReturnType<typeof useCodemirror>["view"]>;
+
+export type MarkdownAction =
+  | { wrap: { before: string; after: string } }
+  | { linePrefix: string }
+  | { link: true };
+
+/**
+ * Pure edit builder for markdown toolbar actions. Given the current source,
+ * selection, and a markdown action, returns the replacement range + text and
+ * where the new caret/selection should land. Exported for unit testing so we
+ * don't need a live EditorView to verify toolbar behaviour.
+ */
+export function computeMarkdownEdit(
+  doc: string,
+  from: number,
+  to: number,
+  action: MarkdownAction,
+): { from: number; to: number; insert: string; anchor: number; head: number } {
+  const text = doc.slice(from, to);
+
+  if ("wrap" in action) {
+    const { before, after } = action.wrap;
+    const insert = `${before}${text}${after}`;
+    return {
+      from,
+      to,
+      insert,
+      anchor: from + before.length,
+      head: from + before.length + text.length,
+    };
+  }
+
+  if ("linePrefix" in action) {
+    const prefix = action.linePrefix;
+    // Expand to full-line boundaries
+    const lineStart = doc.lastIndexOf("\n", from - 1) + 1;
+    const nextNl = doc.indexOf("\n", to);
+    const lineEnd = nextNl === -1 ? doc.length : nextNl;
+    const region = doc.slice(lineStart, lineEnd);
+    const insert = region
+      .split("\n")
+      .map((line) => prefix + line)
+      .join("\n");
+    return {
+      from: lineStart,
+      to: lineEnd,
+      insert,
+      anchor: lineStart,
+      head: lineStart + insert.length,
+    };
+  }
+
+  // link
+  const label = text || "link text";
+  const insert = `[${label}](https://)`;
+  return {
+    from,
+    to,
+    insert,
+    anchor: from + 1,
+    head: from + 1 + label.length,
+  };
+}
+
+/** Apply a markdown transformation to the current CodeMirror selection. */
+export function applyMarkdown(view: CmView, action: MarkdownAction): void {
+  const state = view.state;
+  const { from, to } = state.selection.main;
+  const edit = computeMarkdownEdit(state.doc.toString(), from, to, action);
+  view.dispatch({
+    changes: { from: edit.from, to: edit.to, insert: edit.insert },
+    selection: { anchor: edit.anchor, head: edit.head },
+  });
+  view.focus();
+}
 
 /** Map editable object types to their text data field key. */
 const EDITABLE_FIELD: Record<string, string> = {
   "text-block": "content",
   heading: "text",
+  "code-block": "source",
+  "lua-block": "source",
 };
 
 export function EditorPanel() {
@@ -107,11 +190,23 @@ export function EditorPanel() {
 
   const extensions = useMemo(() => [prismJSLang()], []);
 
-  const { containerRef } = useCodemirror({
+  const { containerRef, view } = useCodemirror({
     doc,
     text,
     extensions,
   });
+
+  const isMarkdownBlock =
+    selectedObj?.type === "text-block" &&
+    ((selectedObj.data as Record<string, unknown>)?.format ?? "markdown") === "markdown";
+
+  const runMarkdown = useCallback(
+    (kind: Parameters<typeof applyMarkdown>[1]) => {
+      if (!view) return;
+      applyMarkdown(view, kind);
+    },
+    [view],
+  );
 
   // Header label
   const editLabel =
@@ -139,6 +234,45 @@ export function EditorPanel() {
           </span>
         )}
       </div>
+      {isMarkdownBlock && (
+        <div
+          data-testid="markdown-toolbar"
+          style={{
+            display: "flex",
+            gap: 4,
+            padding: "4px 8px",
+            borderBottom: "1px solid #333",
+            background: "#1f1f1f",
+          }}
+        >
+          <ToolbarButton
+            label="B"
+            title="Bold"
+            onClick={() => runMarkdown({ wrap: { before: "**", after: "**" } })}
+            bold
+          />
+          <ToolbarButton
+            label="I"
+            title="Italic"
+            onClick={() => runMarkdown({ wrap: { before: "_", after: "_" } })}
+            italic
+          />
+          <ToolbarButton
+            label="</>"
+            title="Inline code"
+            onClick={() => runMarkdown({ wrap: { before: "`", after: "`" } })}
+          />
+          <div style={{ width: 1, background: "#333", margin: "2px 4px" }} />
+          <ToolbarButton label="H1" title="Heading 1" onClick={() => runMarkdown({ linePrefix: "# " })} />
+          <ToolbarButton label="H2" title="Heading 2" onClick={() => runMarkdown({ linePrefix: "## " })} />
+          <ToolbarButton label="H3" title="Heading 3" onClick={() => runMarkdown({ linePrefix: "### " })} />
+          <div style={{ width: 1, background: "#333", margin: "2px 4px" }} />
+          <ToolbarButton label="•" title="Bullet list" onClick={() => runMarkdown({ linePrefix: "- " })} />
+          <ToolbarButton label="1." title="Numbered list" onClick={() => runMarkdown({ linePrefix: "1. " })} />
+          <ToolbarButton label="❝" title="Quote" onClick={() => runMarkdown({ linePrefix: "> " })} />
+          <ToolbarButton label="🔗" title="Link" onClick={() => runMarkdown({ link: true })} />
+        </div>
+      )}
       <div
         ref={containerRef}
         style={{ flex: 1, overflow: "auto" }}
@@ -146,3 +280,62 @@ export function EditorPanel() {
     </div>
   );
 }
+
+function ToolbarButton({
+  label,
+  title,
+  onClick,
+  bold,
+  italic,
+}: {
+  label: string;
+  title: string;
+  onClick: () => void;
+  bold?: boolean;
+  italic?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      onClick={onClick}
+      data-testid={`md-${title.toLowerCase().replace(/\s+/g, "-")}`}
+      style={{
+        padding: "3px 8px",
+        fontSize: 12,
+        minWidth: 26,
+        background: "#2a2a2a",
+        border: "1px solid #444",
+        borderRadius: 3,
+        color: "#ccc",
+        cursor: "pointer",
+        fontWeight: bold ? 700 : 400,
+        fontStyle: italic ? "italic" : "normal",
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
+
+// ── Lens registration ──────────────────────────────────────────────────────
+
+export const EDITOR_LENS_ID = lensId("editor");
+
+export const editorLensManifest: LensManifest = {
+
+  id: EDITOR_LENS_ID,
+  name: "Editor",
+  icon: "\u270E",
+  category: "editor",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-editor", name: "Switch to Editor", shortcut: ["e"], section: "Navigation" }],
+  },
+};
+
+export const editorLensBundle: LensBundle = defineLensBundle(
+  editorLensManifest,
+  EditorPanel,
+);

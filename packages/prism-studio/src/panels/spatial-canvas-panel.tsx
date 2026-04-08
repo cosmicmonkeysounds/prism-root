@@ -16,6 +16,9 @@ import { SpatialCanvasRenderer } from "../components/spatial-canvas-renderer.js"
 import type { FacetDefinition, FacetSlot } from "@prism/core/facet";
 import { facetDefinitionBuilder } from "@prism/core/facet";
 
+import { lensId } from "@prism/core/lens";
+import type { LensManifest } from "@prism/core/lens";
+import { defineLensBundle, type LensBundle } from "../lenses/bundle.js";
 // ── Styles ──────────────────────────────────────────────────────────────────
 
 const styles = {
@@ -453,3 +456,25 @@ export function SpatialCanvasPanel() {
     </div>
   );
 }
+
+
+// ── Lens registration ──────────────────────────────────────────────────────
+
+export const SPATIAL_CANVAS_LENS_ID = lensId("spatial-canvas");
+
+export const spatialCanvasLensManifest: LensManifest = {
+
+  id: SPATIAL_CANVAS_LENS_ID,
+  name: "Spatial Canvas",
+  icon: "\uD83D\uDCD0",
+  category: "facet",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-spatial-canvas", name: "Switch to Spatial Canvas Editor", shortcut: ["shift+x"], section: "Navigation" }],
+  },
+};
+
+export const spatialCanvasLensBundle: LensBundle = defineLensBundle(
+  spatialCanvasLensManifest,
+  SpatialCanvasPanel,
+);

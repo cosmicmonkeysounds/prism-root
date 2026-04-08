@@ -10,6 +10,9 @@ import { useState, useCallback, useMemo } from "react";
 import { useObjects, useFacetDefinitions } from "../kernel/index.js";
 import type { GraphObject } from "@prism/core/object-model";
 
+import { lensId } from "@prism/core/lens";
+import type { LensManifest } from "@prism/core/lens";
+import { defineLensBundle, type LensBundle } from "../lenses/bundle.js";
 // ── Styles ──────────────────────────────────────────────────────────────────
 
 const styles = {
@@ -631,3 +634,25 @@ export default function ReportFacetPanel() {
     </div>
   );
 }
+
+
+// ── Lens registration ──────────────────────────────────────────────────────
+
+export const REPORT_FACET_LENS_ID = lensId("report-facet");
+
+export const reportFacetLensManifest: LensManifest = {
+
+  id: REPORT_FACET_LENS_ID,
+  name: "Report",
+  icon: "\uD83D\uDCCB",
+  category: "facet",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-report-facet", name: "Switch to Report Facet", shortcut: ["o"], section: "Navigation" }],
+  },
+};
+
+export const reportFacetLensBundle: LensBundle = defineLensBundle(
+  reportFacetLensManifest,
+  ReportFacetPanel,
+);

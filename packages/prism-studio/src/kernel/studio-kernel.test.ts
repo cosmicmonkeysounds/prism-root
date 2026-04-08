@@ -1563,6 +1563,39 @@ describe("StudioKernel", () => {
       expect(types).toContain("lua-block");
     });
 
+    it("should register new form-input / layout / data / content widgets", () => {
+      const types = kernel.registry
+        .allDefs()
+        .filter((d) => d.category === "component")
+        .map((d) => d.type);
+
+      // Form inputs
+      expect(types).toContain("text-input");
+      expect(types).toContain("textarea-input");
+      expect(types).toContain("select-input");
+      expect(types).toContain("checkbox-input");
+      expect(types).toContain("number-input");
+      expect(types).toContain("date-input");
+
+      // Layout primitives
+      expect(types).toContain("columns");
+      expect(types).toContain("divider");
+      expect(types).toContain("spacer");
+
+      // Data display
+      expect(types).toContain("stat-widget");
+      expect(types).toContain("badge");
+      expect(types).toContain("alert");
+      expect(types).toContain("progress-bar");
+
+      // Content
+      expect(types).toContain("markdown-widget");
+      expect(types).toContain("iframe-widget");
+      expect(types).toContain("code-block");
+      expect(types).toContain("video-widget");
+      expect(types).toContain("audio-widget");
+    });
+
     it("should create and update lua-block with Lua source", () => {
       const page = kernel.createObject({
         type: "page",

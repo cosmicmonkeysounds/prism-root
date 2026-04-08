@@ -5,21 +5,42 @@
  * inputs. Saves changes back through the kernel (with undo support).
  */
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import type { EntityFieldDef } from "@prism/core/object-model";
+import {
+  createSyntaxEngine,
+  type CompletionItem,
+  type SchemaContext,
+  type SyntaxEngine,
+} from "@prism/core/syntax";
 import { useKernel, useSelection, useObject, useExpression } from "../kernel/index.js";
+
+/** Lazily constructed shared syntax engine for expression completions. */
+let sharedSyntaxEngine: SyntaxEngine | null = null;
+function getSyntaxEngine(): SyntaxEngine {
+  if (!sharedSyntaxEngine) sharedSyntaxEngine = createSyntaxEngine();
+  return sharedSyntaxEngine;
+}
 
 // ── Field Renderer ──────────────────────────────────────────────────────────
 
 function FieldInput({
   field,
   value,
+  objectId,
   onChange,
 }: {
   field: EntityFieldDef;
   value: unknown;
+  objectId: string;
   onChange: (value: unknown) => void;
 }) {
+  // Computed fields: rollup/lookup + any field with an inline expression
+  // are rendered read-only and evaluated live.
+  if (field.expression || field.type === "lookup" || field.type === "rollup") {
+    return <ComputedFieldDisplay field={field} objectId={objectId} />;
+  }
+
   const commonStyle = {
     width: "100%",
     padding: "4px 6px",
@@ -163,6 +184,66 @@ function FieldInput({
   }
 }
 
+/**
+ * Read-only renderer for computed fields (formula / lookup / rollup).
+ * Calls the kernel's expression evaluator when an `expression` is present,
+ * otherwise reports the field type as unresolved. Errors are surfaced inline
+ * so authors can fix their formulas without hunting through logs.
+ */
+function ComputedFieldDisplay({
+  field,
+  objectId,
+}: {
+  field: EntityFieldDef;
+  objectId: string;
+}) {
+  const { evaluate } = useExpression();
+  const result = useMemo(() => {
+    if (field.expression) {
+      const { result: val, errors } = evaluate(
+        field.expression,
+        objectId as Parameters<typeof evaluate>[1],
+      );
+      if (errors.length > 0) {
+        return { value: errors.join("; "), isError: true };
+      }
+      return { value: String(val), isError: false };
+    }
+    // lookup / rollup without inline expression — resolved at projection time.
+    return { value: `(${field.type} — resolved at view time)`, isError: false };
+  }, [field, objectId, evaluate]);
+
+  return (
+    <div
+      data-testid={`computed-field-${field.id}`}
+      style={{
+        padding: "4px 6px",
+        fontSize: 12,
+        fontFamily: "monospace",
+        background: result.isError ? "#3b1111" : "#1a2e1a",
+        border: `1px solid ${result.isError ? "#5c2020" : "#2d4a2d"}`,
+        borderRadius: 3,
+        color: result.isError ? "#f87171" : "#4ade80",
+      }}
+    >
+      {result.isError ? "⚠ " : "= "}
+      {result.value}
+      {field.expression && (
+        <div
+          style={{
+            marginTop: 3,
+            color: "#666",
+            fontSize: 10,
+            fontFamily: "monospace",
+          }}
+        >
+          {field.expression}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Inspector Panel ─────────────────────────────────────────────────────────
 
 export function InspectorPanel() {
@@ -219,6 +300,31 @@ export function InspectorPanel() {
         kind: "success",
       });
     }
+  }, [kernel, obj]);
+
+  const handleSaveAsTemplate = useCallback(() => {
+    if (!obj) return;
+    const name = window.prompt("Template name:", `${obj.name} Template`);
+    if (!name) return;
+    const id = `user-${obj.type}-${Date.now()}`;
+    const template = kernel.templateFromObject(obj.id, {
+      id,
+      name,
+      description: `Saved from ${obj.name}`,
+      category: obj.type === "section" ? "section" : "user",
+    });
+    if (!template) {
+      kernel.notifications.add({
+        title: "Could not build template",
+        kind: "error",
+      });
+      return;
+    }
+    kernel.registerTemplate(template);
+    kernel.notifications.add({
+      title: `Saved template "${name}"`,
+      kind: "success",
+    });
   }, [kernel, obj]);
 
   const handleAddChild = useCallback(
@@ -386,6 +492,7 @@ export function InspectorPanel() {
                 <FieldInput
                   field={field}
                   value={obj.data[field.id]}
+                  objectId={obj.id}
                   onChange={(v) => handleDataFieldChange(field.id, v)}
                 />
               </FieldRow>
@@ -497,8 +604,28 @@ export function InspectorPanel() {
           </div>
         </div>
 
+        {/* Save as Template */}
+        <div style={{ marginBottom: 12 }}>
+          <button
+            data-testid="save-as-template-btn"
+            onClick={handleSaveAsTemplate}
+            style={{
+              width: "100%",
+              padding: "6px 8px",
+              fontSize: 11,
+              background: "#1a2e1a",
+              border: "1px solid #2d4a2d",
+              borderRadius: 3,
+              color: "#4ade80",
+              cursor: "pointer",
+            }}
+          >
+            Save as Template
+          </button>
+        </div>
+
         {/* Expression */}
-        <ExpressionBar objectId={obj.id} />
+        <ExpressionBar objectId={obj.id} objectType={obj.type} schemaFields={fields} />
 
         {/* Delete */}
         <button
@@ -525,10 +652,68 @@ export function InspectorPanel() {
 
 // ── Expression Bar ──────────────────────────────────────────────────────────
 
-function ExpressionBar({ objectId }: { objectId: string }) {
+function ExpressionBar({
+  objectId,
+  objectType,
+  schemaFields,
+}: {
+  objectId: string;
+  objectType: string;
+  schemaFields: EntityFieldDef[];
+}) {
   const { evaluate } = useExpression();
   const [formula, setFormula] = useState("");
+  const [cursor, setCursor] = useState(0);
   const [result, setResult] = useState<{ value: string; isError: boolean } | null>(null);
+  const [showCompletions, setShowCompletions] = useState(false);
+  const [selectedCompletion, setSelectedCompletion] = useState(0);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  const schemaContext = useMemo<SchemaContext>(
+    () => ({ objectType, fields: schemaFields }),
+    [objectType, schemaFields],
+  );
+
+  const completions = useMemo<CompletionItem[]>(() => {
+    if (!showCompletions) return [];
+    try {
+      return getSyntaxEngine().complete(formula, cursor, schemaContext).slice(0, 8);
+    } catch {
+      return [];
+    }
+  }, [formula, cursor, schemaContext, showCompletions]);
+
+  const diagnostics = useMemo(() => {
+    if (!formula.trim()) return [];
+    try {
+      return getSyntaxEngine().diagnose(formula, schemaContext);
+    } catch {
+      return [];
+    }
+  }, [formula, schemaContext]);
+
+  useEffect(() => {
+    if (selectedCompletion >= completions.length) setSelectedCompletion(0);
+  }, [completions.length, selectedCompletion]);
+
+  const applyCompletion = useCallback(
+    (item: CompletionItem) => {
+      const insertText = item.insertText ?? item.label;
+      const before = formula.slice(0, cursor).replace(/[A-Za-z_][A-Za-z0-9_]*$/, "");
+      const after = formula.slice(cursor);
+      const next = before + insertText + after;
+      setFormula(next);
+      setShowCompletions(false);
+      setSelectedCompletion(0);
+      requestAnimationFrame(() => {
+        inputRef.current?.focus();
+        const pos = before.length + insertText.length;
+        inputRef.current?.setSelectionRange(pos, pos);
+        setCursor(pos);
+      });
+    },
+    [formula, cursor],
+  );
 
   const handleEvaluate = useCallback(() => {
     if (!formula.trim()) return;
@@ -540,8 +725,48 @@ function ExpressionBar({ objectId }: { objectId: string }) {
     }
   }, [formula, evaluate, objectId]);
 
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (showCompletions && completions.length > 0) {
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          setSelectedCompletion((i) => (i + 1) % completions.length);
+          return;
+        }
+        if (e.key === "ArrowUp") {
+          e.preventDefault();
+          setSelectedCompletion((i) => (i - 1 + completions.length) % completions.length);
+          return;
+        }
+        if (e.key === "Tab" || (e.key === "Enter" && showCompletions)) {
+          e.preventDefault();
+          const pick = completions[selectedCompletion];
+          if (pick) applyCompletion(pick);
+          return;
+        }
+        if (e.key === "Escape") {
+          e.preventDefault();
+          setShowCompletions(false);
+          return;
+        }
+      }
+      if (e.key === "Enter") handleEvaluate();
+      if (e.key === " " && e.ctrlKey) {
+        e.preventDefault();
+        setShowCompletions(true);
+      }
+    },
+    [showCompletions, completions, selectedCompletion, applyCompletion, handleEvaluate],
+  );
+
+  const handleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    setFormula(e.target.value);
+    setCursor(e.target.selectionStart ?? e.target.value.length);
+    setShowCompletions(true);
+  }, []);
+
   return (
-    <div style={{ marginBottom: 12 }} data-testid="expression-bar">
+    <div style={{ marginBottom: 12, position: "relative" }} data-testid="expression-bar">
       <div
         style={{
           fontSize: 10,
@@ -556,11 +781,15 @@ function ExpressionBar({ objectId }: { objectId: string }) {
       </div>
       <div style={{ display: "flex", gap: 4 }}>
         <input
+          ref={inputRef}
           type="text"
           value={formula}
-          onChange={(e) => setFormula(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") handleEvaluate();
+          onChange={handleChange}
+          onKeyDown={handleKeyDown}
+          onFocus={() => setShowCompletions(true)}
+          onBlur={() => {
+            // Delay so click on completion item fires first
+            setTimeout(() => setShowCompletions(false), 120);
           }}
           placeholder="e.g. position + 1"
           data-testid="expression-input"
@@ -592,6 +821,81 @@ function ExpressionBar({ objectId }: { objectId: string }) {
           Eval
         </button>
       </div>
+
+      {showCompletions && completions.length > 0 && (
+        <ul
+          data-testid="expression-completions"
+          style={{
+            position: "absolute",
+            left: 0,
+            right: 0,
+            top: "100%",
+            zIndex: 10,
+            margin: 0,
+            padding: 0,
+            listStyle: "none",
+            background: "#1e1e1e",
+            border: "1px solid #444",
+            borderRadius: 3,
+            maxHeight: 180,
+            overflowY: "auto",
+            fontSize: 12,
+            fontFamily: "monospace",
+          }}
+        >
+          {completions.map((item, i) => (
+            <li
+              key={`${item.kind}:${item.label}`}
+              data-testid={`completion-${item.label}`}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                applyCompletion(item);
+              }}
+              style={{
+                padding: "4px 8px",
+                cursor: "pointer",
+                display: "flex",
+                gap: 8,
+                alignItems: "center",
+                background: i === selectedCompletion ? "#2a2a2a" : "transparent",
+                color: "#ccc",
+              }}
+            >
+              <span style={{ color: kindColor(item.kind), width: 60, fontSize: 10 }}>
+                {item.kind}
+              </span>
+              <span style={{ flex: 1 }}>{item.label}</span>
+              {item.detail && (
+                <span style={{ color: "#666", fontSize: 10 }}>{item.detail}</span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {diagnostics.length > 0 && !result && (
+        <div
+          data-testid="expression-diagnostics"
+          style={{
+            marginTop: 4,
+            padding: "4px 6px",
+            fontSize: 11,
+            fontFamily: "monospace",
+            background: "#2a1f0a",
+            border: "1px solid #5c4420",
+            borderRadius: 3,
+            color: "#fbbf24",
+          }}
+        >
+          {diagnostics.map((d, i) => (
+            <div key={i}>
+              {d.severity === "error" ? "⚠ " : "ℹ "}
+              {d.message}
+            </div>
+          ))}
+        </div>
+      )}
+
       {result && (
         <div
           data-testid="expression-result"
@@ -612,6 +916,25 @@ function ExpressionBar({ objectId }: { objectId: string }) {
       )}
     </div>
   );
+}
+
+function kindColor(kind: CompletionItem["kind"]): string {
+  switch (kind) {
+    case "field":
+      return "#4ade80";
+    case "function":
+      return "#60a5fa";
+    case "keyword":
+      return "#f472b6";
+    case "operator":
+      return "#fbbf24";
+    case "type":
+      return "#a78bfa";
+    case "value":
+      return "#fb923c";
+    default:
+      return "#888";
+  }
 }
 
 const clipboardBtnStyle = {

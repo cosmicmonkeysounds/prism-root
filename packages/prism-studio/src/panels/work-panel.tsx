@@ -13,6 +13,9 @@ import type { GraphObject, ObjectId } from "@prism/core/object-model";
 
 import { WORK_TYPES, GIG_STATUSES, TIME_ENTRY_STATUSES, FOCUS_BLOCK_STATUSES } from "@prism/core/layer1";
 
+import { lensId } from "@prism/core/lens";
+import type { LensManifest } from "@prism/core/lens";
+import { defineLensBundle, type LensBundle } from "../lenses/bundle.js";
 // ── Styles ──────────────────────────────────────────────────────────────────
 
 const s: Record<string, CSSProperties> = {
@@ -122,3 +125,25 @@ export function WorkPanel() {
     </div>
   );
 }
+
+
+// ── Lens registration ──────────────────────────────────────────────────────
+
+export const WORK_LENS_ID = lensId("work");
+
+export const workLensManifest: LensManifest = {
+
+  id: WORK_LENS_ID,
+  name: "Work",
+  icon: "\u{1F4BC}",
+  category: "custom",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-work", name: "Switch to Work", shortcut: ["shift+w"], section: "Navigation" }],
+  },
+};
+
+export const workLensBundle: LensBundle = defineLensBundle(
+  workLensManifest,
+  WorkPanel,
+);

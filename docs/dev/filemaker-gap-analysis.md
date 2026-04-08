@@ -93,6 +93,55 @@ Libraries: `react-moveable` + `react-selecto` + `@scena/react-guides` (Scena eco
 | Schema designer | Visual entity/relationship editor | Graph panel (view-only) | Todo — needs write mode |
 | Script debugger | Step-through with breakpoints | Sequencer + Lua runtime | Todo — needs DAP |
 
+### P5 Design Notes — Schema Designer write mode
+
+The existing `graph-panel.tsx` rebuilds its @xyflow/react graph from kernel state
+on every change — it is purely projective. Turning it into a Relationship Graph
+editor means treating the canvas as the authoritative UX for three already-wired
+kernel operations rather than introducing a new data model:
+
+1. **Entity CRUD** — `kernel.registry.register(EntityDef)` — already used by
+   `entity-builder-panel.tsx`. Expose as double-click-on-blank-canvas (new type)
+   and double-click-on-node (edit fields inline).
+2. **Field CRUD** — `EntityDef.fields` mutation + re-register. Surface as a
+   per-node popover listing `EntityFieldDef[]` with add/remove/rename/type controls.
+3. **Relationship CRUD** — `kernel.registry.registerEdge(EdgeTypeDef)` —
+   already used by `relationship-builder-panel.tsx`. Expose as port-drag
+   between nodes that opens an inline dialog prefilled with source/target types.
+
+Node x/y/zIndex persist to a new `schemaLayout` LoroMap on the kernel (same
+pattern as `facetStore`) so positions survive reloads. No new schemas required.
+Graph panel gains a mode toggle (`view` / `design`) so the existing live-reactive
+projection keeps working unchanged.
+
+### P5 Design Notes — Lua step debugger
+
+`lua-runtime.ts` is a 57-line wasmoon wrapper — wasmoon exposes the full Lua
+`debug` library including `debug.sethook(hook, mask)`. The debugger is a pure
+addition to Layer 1 (`layer1/lua/lua-debugger.ts`) with no changes to existing
+script-steps or sequencer code:
+
+```
+createLuaDebugger(engine) → {
+  setBreakpoint(line: number)
+  clearBreakpoint(line: number)
+  run(source: string)                // runs with hook installed
+  step()                             // resume one line
+  resume()                           // resume to next breakpoint
+  onPause((frame) => void)           // { line, locals, globals, stack }
+  onComplete((result) => void)
+}
+```
+
+Integration points:
+- `visual-script-panel.tsx` — breakpoint gutter on the live Lua preview,
+  step/continue/stop buttons, locals table bound to the paused frame.
+- `editor-panel.tsx` — same breakpoint gutter for raw `lua-block` editing.
+
+Runs entirely client-side in wasmoon; no DAP wire protocol needed. Tests:
+vitest unit suite for the debugger + one Playwright E2E that sets a breakpoint
+in `visual-script-panel`, runs, and asserts on the paused-frame UI.
+
 ---
 
 ## FileMaker → Prism Concept Mapping
@@ -109,7 +158,7 @@ Libraries: `react-moveable` + `react-selecto` + `@scena/react-guides` (Scena eco
 | Privilege Set | `PrivilegeSet` | DID role → permission mapping |
 | Script | Lua 5.4 + Automation Engine | Visual builder + code editor |
 | Script Workspace | VisualScriptPanel + Sequencer | 31 step types, Lua codegen, palette + live preview |
-| Relationship Graph | Graph Panel + `@xyflow/react` | View-only (editor TODO) |
+| Relationship Graph | Graph Panel + `@xyflow/react` | View-only today; design mode planned (see P5 design notes) |
 | Theme | Not yet | Todo |
 | Print Layout | `PrintConfig` on `FacetDefinition` | Page dims, margins, breaks |
 | Table | Collection | Loro CRDT array |

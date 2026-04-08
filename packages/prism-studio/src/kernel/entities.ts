@@ -8,6 +8,7 @@
 
 import { ObjectRegistry } from "@prism/core/object-model";
 import type { EntityDef, EdgeTypeDef, CategoryRule } from "@prism/core/object-model";
+import { STYLE_FIELD_DEFS } from "./block-style.js";
 
 // ── Category Rules ──────────────────────────────────────────────────────────
 
@@ -80,13 +81,7 @@ const sectionDef: EntityDef<string> = {
         { value: "columns", label: "Columns" },
       ],
     },
-    { id: "background", type: "color", label: "Background Color" },
-    { id: "padding", type: "enum", label: "Padding", default: "md", enumOptions: [
-      { value: "none", label: "None" },
-      { value: "sm", label: "Small" },
-      { value: "md", label: "Medium" },
-      { value: "lg", label: "Large" },
-    ]},
+    ...STYLE_FIELD_DEFS,
   ],
 };
 
@@ -117,6 +112,7 @@ const headingDef: EntityDef<string> = {
       { value: "center", label: "Center" },
       { value: "right", label: "Right" },
     ]},
+    ...STYLE_FIELD_DEFS,
   ],
 };
 
@@ -134,6 +130,7 @@ const textBlockDef: EntityDef<string> = {
       { value: "plain", label: "Plain Text" },
       { value: "markdown", label: "Markdown" },
     ]},
+    ...STYLE_FIELD_DEFS,
   ],
 };
 
@@ -176,6 +173,7 @@ const buttonDef: EntityDef<string> = {
       { value: "md", label: "Medium" },
       { value: "lg", label: "Large" },
     ]},
+    ...STYLE_FIELD_DEFS,
   ],
 };
 
@@ -192,6 +190,7 @@ const cardDef: EntityDef<string> = {
     { id: "body", type: "text", label: "Body", ui: { multiline: true } },
     { id: "imageUrl", type: "url", label: "Image URL" },
     { id: "linkUrl", type: "url", label: "Link URL" },
+    ...STYLE_FIELD_DEFS,
   ],
 };
 
@@ -303,6 +302,100 @@ const kanbanWidgetDef: EntityDef<string> = {
     { id: "titleField", type: "string", label: "Title Field", default: "name" },
     { id: "colorField", type: "string", label: "Color Field" },
     { id: "maxCardsPerColumn", type: "int", label: "Max Cards / Column", default: 50 },
+  ],
+};
+
+const listWidgetDef: EntityDef<string> = {
+  type: "list-widget",
+  category: "component",
+  label: "List Widget",
+  pluralLabel: "List Widgets",
+  icon: "\u2630",
+  color: "#0ea5e9",
+  childOnly: true,
+  fields: [
+    { id: "collectionType", type: "string", label: "Object Type", required: true, ui: { placeholder: "task" } },
+    { id: "titleField", type: "string", label: "Title Field", default: "name" },
+    { id: "subtitleField", type: "string", label: "Subtitle Field", default: "type" },
+    { id: "showStatus", type: "bool", label: "Show Status", default: true },
+    { id: "showTimestamp", type: "bool", label: "Show Timestamp", default: true },
+  ],
+};
+
+const tableWidgetDef: EntityDef<string> = {
+  type: "table-widget",
+  category: "component",
+  label: "Table Widget",
+  pluralLabel: "Table Widgets",
+  icon: "\u2637",
+  color: "#0ea5e9",
+  childOnly: true,
+  fields: [
+    { id: "collectionType", type: "string", label: "Object Type", required: true, ui: { placeholder: "task" } },
+    {
+      id: "columns",
+      type: "text",
+      label: "Columns",
+      default: "name:Name, type:Type, status:Status, updatedAt:Updated",
+      ui: { multiline: true, placeholder: "name:Name, status:Status, data.priority:Priority" },
+    },
+    { id: "sortField", type: "string", label: "Default Sort Field", default: "name" },
+    {
+      id: "sortDir",
+      type: "enum",
+      label: "Default Sort Direction",
+      default: "asc",
+      enumOptions: [
+        { value: "asc", label: "Ascending" },
+        { value: "desc", label: "Descending" },
+      ],
+    },
+  ],
+};
+
+const cardGridWidgetDef: EntityDef<string> = {
+  type: "card-grid-widget",
+  category: "component",
+  label: "Card Grid Widget",
+  pluralLabel: "Card Grid Widgets",
+  icon: "\u25A6",
+  color: "#0ea5e9",
+  childOnly: true,
+  fields: [
+    { id: "collectionType", type: "string", label: "Object Type", required: true, ui: { placeholder: "task" } },
+    { id: "titleField", type: "string", label: "Title Field", default: "name" },
+    { id: "subtitleField", type: "string", label: "Subtitle Field", default: "type" },
+    { id: "minColumnWidth", type: "int", label: "Min Column Width (px)", default: 220 },
+    { id: "showStatus", type: "bool", label: "Show Status", default: true },
+  ],
+};
+
+const reportWidgetDef: EntityDef<string> = {
+  type: "report-widget",
+  category: "component",
+  label: "Report Widget",
+  pluralLabel: "Report Widgets",
+  icon: "\uD83D\uDCCB",
+  color: "#0ea5e9",
+  childOnly: true,
+  fields: [
+    { id: "collectionType", type: "string", label: "Object Type", required: true, ui: { placeholder: "task" } },
+    { id: "groupField", type: "string", label: "Group By Field", default: "type" },
+    { id: "titleField", type: "string", label: "Title Field", default: "name" },
+    { id: "valueField", type: "string", label: "Value Field" },
+    {
+      id: "aggregation",
+      type: "enum",
+      label: "Aggregation",
+      default: "count",
+      enumOptions: [
+        { value: "count", label: "Count" },
+        { value: "sum", label: "Sum" },
+        { value: "avg", label: "Average" },
+        { value: "min", label: "Min" },
+        { value: "max", label: "Max" },
+      ],
+    },
   ],
 };
 
@@ -432,6 +525,510 @@ const slidePanelDef: EntityDef<string> = {
   ],
 };
 
+// ── Form Input Widgets ─────────────────────────────────────────────────────
+
+const textInputDef: EntityDef<string> = {
+  type: "text-input",
+  category: "component",
+  label: "Text Input",
+  pluralLabel: "Text Inputs",
+  icon: "\u270E",
+  color: "#0ea5e9",
+  childOnly: true,
+  fields: [
+    { id: "label", type: "string", label: "Label" },
+    { id: "placeholder", type: "string", label: "Placeholder" },
+    { id: "defaultValue", type: "string", label: "Default Value" },
+    {
+      id: "inputType",
+      type: "enum",
+      label: "Input Type",
+      default: "text",
+      enumOptions: [
+        { value: "text", label: "Text" },
+        { value: "email", label: "Email" },
+        { value: "url", label: "URL" },
+        { value: "tel", label: "Phone" },
+        { value: "password", label: "Password" },
+      ],
+    },
+    { id: "required", type: "bool", label: "Required", default: false },
+    { id: "help", type: "string", label: "Help Text" },
+  ],
+};
+
+const textareaInputDef: EntityDef<string> = {
+  type: "textarea-input",
+  category: "component",
+  label: "Textarea",
+  pluralLabel: "Textareas",
+  icon: "\u00B6",
+  color: "#0ea5e9",
+  childOnly: true,
+  fields: [
+    { id: "label", type: "string", label: "Label" },
+    { id: "placeholder", type: "string", label: "Placeholder" },
+    { id: "defaultValue", type: "text", label: "Default Value", ui: { multiline: true } },
+    { id: "rows", type: "int", label: "Rows", default: 4 },
+    { id: "required", type: "bool", label: "Required", default: false },
+    { id: "help", type: "string", label: "Help Text" },
+  ],
+};
+
+const selectInputDef: EntityDef<string> = {
+  type: "select-input",
+  category: "component",
+  label: "Select",
+  pluralLabel: "Selects",
+  icon: "\u25BE",
+  color: "#0ea5e9",
+  childOnly: true,
+  fields: [
+    { id: "label", type: "string", label: "Label" },
+    {
+      id: "options",
+      type: "text",
+      label: "Options (CSV or JSON)",
+      default: "one,two,three",
+      ui: { multiline: true, placeholder: "value:Label, another:Another" },
+    },
+    { id: "defaultValue", type: "string", label: "Default Value" },
+    { id: "required", type: "bool", label: "Required", default: false },
+    { id: "help", type: "string", label: "Help Text" },
+  ],
+};
+
+const checkboxInputDef: EntityDef<string> = {
+  type: "checkbox-input",
+  category: "component",
+  label: "Checkbox",
+  pluralLabel: "Checkboxes",
+  icon: "\u2611",
+  color: "#0ea5e9",
+  childOnly: true,
+  fields: [
+    { id: "label", type: "string", label: "Label", default: "Accept" },
+    { id: "defaultChecked", type: "bool", label: "Checked", default: false },
+    { id: "help", type: "string", label: "Help Text" },
+  ],
+};
+
+const numberInputDef: EntityDef<string> = {
+  type: "number-input",
+  category: "component",
+  label: "Number Input",
+  pluralLabel: "Number Inputs",
+  icon: "#",
+  color: "#0ea5e9",
+  childOnly: true,
+  fields: [
+    { id: "label", type: "string", label: "Label" },
+    { id: "defaultValue", type: "float", label: "Default Value" },
+    { id: "min", type: "float", label: "Min" },
+    { id: "max", type: "float", label: "Max" },
+    { id: "step", type: "float", label: "Step" },
+    { id: "required", type: "bool", label: "Required", default: false },
+    { id: "help", type: "string", label: "Help Text" },
+  ],
+};
+
+const dateInputDef: EntityDef<string> = {
+  type: "date-input",
+  category: "component",
+  label: "Date Input",
+  pluralLabel: "Date Inputs",
+  icon: "\uD83D\uDCC6",
+  color: "#0ea5e9",
+  childOnly: true,
+  fields: [
+    { id: "label", type: "string", label: "Label" },
+    { id: "defaultValue", type: "string", label: "Default Value (ISO)" },
+    {
+      id: "dateKind",
+      type: "enum",
+      label: "Kind",
+      default: "date",
+      enumOptions: [
+        { value: "date", label: "Date" },
+        { value: "datetime-local", label: "Date + Time" },
+        { value: "time", label: "Time" },
+      ],
+    },
+    { id: "required", type: "bool", label: "Required", default: false },
+    { id: "help", type: "string", label: "Help Text" },
+  ],
+};
+
+// ── Layout Primitives ──────────────────────────────────────────────────────
+
+const columnsDef: EntityDef<string> = {
+  type: "columns",
+  category: "component",
+  label: "Columns",
+  pluralLabel: "Columns",
+  icon: "\u2551",
+  color: "#6366f1",
+  childOnly: true,
+  fields: [
+    { id: "columnCount", type: "int", label: "Column Count", default: 2 },
+    { id: "gap", type: "int", label: "Gap (px)", default: 16 },
+    {
+      id: "align",
+      type: "enum",
+      label: "Align Items",
+      default: "stretch",
+      enumOptions: [
+        { value: "start", label: "Start" },
+        { value: "center", label: "Center" },
+        { value: "end", label: "End" },
+        { value: "stretch", label: "Stretch" },
+      ],
+    },
+  ],
+};
+
+const dividerDef: EntityDef<string> = {
+  type: "divider",
+  category: "component",
+  label: "Divider",
+  pluralLabel: "Dividers",
+  icon: "\u2014",
+  color: "#94a3b8",
+  childOnly: true,
+  fields: [
+    {
+      id: "dividerStyle",
+      type: "enum",
+      label: "Style",
+      default: "solid",
+      enumOptions: [
+        { value: "solid", label: "Solid" },
+        { value: "dashed", label: "Dashed" },
+        { value: "dotted", label: "Dotted" },
+      ],
+    },
+    { id: "thickness", type: "int", label: "Thickness (px)", default: 1 },
+    { id: "color", type: "color", label: "Color", default: "#cbd5e1" },
+    { id: "spacing", type: "int", label: "Spacing (px)", default: 12 },
+    { id: "label", type: "string", label: "Label" },
+  ],
+};
+
+const spacerDef: EntityDef<string> = {
+  type: "spacer",
+  category: "component",
+  label: "Spacer",
+  pluralLabel: "Spacers",
+  icon: "\u2B1A",
+  color: "#94a3b8",
+  childOnly: true,
+  fields: [
+    { id: "size", type: "int", label: "Size (px)", default: 16 },
+    {
+      id: "axis",
+      type: "enum",
+      label: "Axis",
+      default: "vertical",
+      enumOptions: [
+        { value: "vertical", label: "Vertical" },
+        { value: "horizontal", label: "Horizontal" },
+      ],
+    },
+  ],
+};
+
+// ── Data Display Widgets ───────────────────────────────────────────────────
+
+const statWidgetDef: EntityDef<string> = {
+  type: "stat-widget",
+  category: "component",
+  label: "Stat (KPI)",
+  pluralLabel: "Stats",
+  icon: "\u2116",
+  color: "#0ea5e9",
+  childOnly: true,
+  fields: [
+    { id: "collectionType", type: "string", label: "Object Type", required: true, ui: { placeholder: "task" } },
+    { id: "label", type: "string", label: "Label", default: "Total" },
+    {
+      id: "aggregation",
+      type: "enum",
+      label: "Aggregation",
+      default: "count",
+      enumOptions: [
+        { value: "count", label: "Count" },
+        { value: "sum", label: "Sum" },
+        { value: "avg", label: "Average" },
+        { value: "min", label: "Min" },
+        { value: "max", label: "Max" },
+      ],
+    },
+    { id: "valueField", type: "string", label: "Value Field" },
+    { id: "prefix", type: "string", label: "Prefix" },
+    { id: "suffix", type: "string", label: "Suffix" },
+    { id: "decimals", type: "int", label: "Decimals", default: 0 },
+    { id: "thousands", type: "bool", label: "Thousands Separator", default: true },
+  ],
+};
+
+const badgeDef: EntityDef<string> = {
+  type: "badge",
+  category: "component",
+  label: "Badge",
+  pluralLabel: "Badges",
+  icon: "\u25CF",
+  color: "#22c55e",
+  childOnly: true,
+  fields: [
+    { id: "label", type: "string", label: "Label", required: true, default: "New" },
+    {
+      id: "tone",
+      type: "enum",
+      label: "Tone",
+      default: "neutral",
+      enumOptions: [
+        { value: "neutral", label: "Neutral" },
+        { value: "info", label: "Info" },
+        { value: "success", label: "Success" },
+        { value: "warning", label: "Warning" },
+        { value: "danger", label: "Danger" },
+      ],
+    },
+    { id: "icon", type: "string", label: "Icon (emoji)" },
+    { id: "outline", type: "bool", label: "Outline", default: false },
+  ],
+};
+
+const alertDef: EntityDef<string> = {
+  type: "alert",
+  category: "component",
+  label: "Alert",
+  pluralLabel: "Alerts",
+  icon: "\u26A0",
+  color: "#f59e0b",
+  childOnly: true,
+  fields: [
+    { id: "title", type: "string", label: "Title" },
+    { id: "message", type: "text", label: "Message", required: true, default: "Notice.", ui: { multiline: true } },
+    {
+      id: "tone",
+      type: "enum",
+      label: "Tone",
+      default: "info",
+      enumOptions: [
+        { value: "neutral", label: "Neutral" },
+        { value: "info", label: "Info" },
+        { value: "success", label: "Success" },
+        { value: "warning", label: "Warning" },
+        { value: "danger", label: "Danger" },
+      ],
+    },
+    { id: "icon", type: "string", label: "Icon (emoji)" },
+  ],
+};
+
+const progressBarDef: EntityDef<string> = {
+  type: "progress-bar",
+  category: "component",
+  label: "Progress Bar",
+  pluralLabel: "Progress Bars",
+  icon: "\u25B0",
+  color: "#22c55e",
+  childOnly: true,
+  fields: [
+    { id: "label", type: "string", label: "Label" },
+    { id: "value", type: "float", label: "Value", default: 50 },
+    { id: "max", type: "float", label: "Max", default: 100 },
+    {
+      id: "tone",
+      type: "enum",
+      label: "Tone",
+      default: "info",
+      enumOptions: [
+        { value: "neutral", label: "Neutral" },
+        { value: "info", label: "Info" },
+        { value: "success", label: "Success" },
+        { value: "warning", label: "Warning" },
+        { value: "danger", label: "Danger" },
+      ],
+    },
+    { id: "showPercent", type: "bool", label: "Show Percent", default: true },
+  ],
+};
+
+// ── Content Widgets ────────────────────────────────────────────────────────
+
+const markdownWidgetDef: EntityDef<string> = {
+  type: "markdown-widget",
+  category: "component",
+  label: "Markdown",
+  pluralLabel: "Markdown Blocks",
+  icon: "M",
+  color: "#0f172a",
+  childOnly: true,
+  fields: [
+    {
+      id: "source",
+      type: "text",
+      label: "Markdown",
+      required: true,
+      default: "# Heading\n\nSome **bold** content.",
+      ui: { multiline: true },
+    },
+  ],
+};
+
+const iframeWidgetDef: EntityDef<string> = {
+  type: "iframe-widget",
+  category: "component",
+  label: "Embed (iframe)",
+  pluralLabel: "Embeds",
+  icon: "\u25A2",
+  color: "#64748b",
+  childOnly: true,
+  fields: [
+    { id: "src", type: "url", label: "URL", required: true },
+    { id: "title", type: "string", label: "Title", default: "Embedded content" },
+    { id: "height", type: "int", label: "Height (px)", default: 360 },
+    { id: "allowFullscreen", type: "bool", label: "Allow Fullscreen", default: true },
+  ],
+};
+
+const codeBlockDef: EntityDef<string> = {
+  type: "code-block",
+  category: "component",
+  label: "Code Block",
+  pluralLabel: "Code Blocks",
+  icon: "\u003C\u003E",
+  color: "#a78bfa",
+  childOnly: true,
+  fields: [
+    {
+      id: "source",
+      type: "text",
+      label: "Source",
+      required: true,
+      default: "function hello() {\n  return \"world\";\n}",
+      ui: { multiline: true },
+    },
+    {
+      id: "language",
+      type: "enum",
+      label: "Language",
+      default: "typescript",
+      enumOptions: [
+        { value: "typescript", label: "TypeScript" },
+        { value: "javascript", label: "JavaScript" },
+        { value: "json", label: "JSON" },
+        { value: "lua", label: "Lua" },
+        { value: "rust", label: "Rust" },
+        { value: "python", label: "Python" },
+        { value: "bash", label: "Bash" },
+        { value: "yaml", label: "YAML" },
+        { value: "markdown", label: "Markdown" },
+        { value: "text", label: "Plain Text" },
+      ],
+    },
+    { id: "caption", type: "string", label: "Caption" },
+    { id: "lineNumbers", type: "bool", label: "Line Numbers", default: true },
+    { id: "wrap", type: "bool", label: "Wrap Long Lines", default: false },
+  ],
+};
+
+const videoWidgetDef: EntityDef<string> = {
+  type: "video-widget",
+  category: "component",
+  label: "Video",
+  pluralLabel: "Videos",
+  icon: "\uD83C\uDFAC",
+  color: "#ef4444",
+  childOnly: true,
+  fields: [
+    { id: "src", type: "url", label: "Video URL", required: true },
+    { id: "poster", type: "url", label: "Poster URL" },
+    { id: "caption", type: "string", label: "Caption" },
+    { id: "width", type: "int", label: "Width (px)", default: 640 },
+    { id: "height", type: "int", label: "Height (px)", default: 360 },
+    { id: "controls", type: "bool", label: "Show Controls", default: true },
+    { id: "autoplay", type: "bool", label: "Autoplay", default: false },
+    { id: "loop", type: "bool", label: "Loop", default: false },
+    { id: "muted", type: "bool", label: "Muted", default: false },
+  ],
+};
+
+const audioWidgetDef: EntityDef<string> = {
+  type: "audio-widget",
+  category: "component",
+  label: "Audio",
+  pluralLabel: "Audio Clips",
+  icon: "\uD83D\uDD0A",
+  color: "#f97316",
+  childOnly: true,
+  fields: [
+    { id: "src", type: "url", label: "Audio URL", required: true },
+    { id: "caption", type: "string", label: "Caption" },
+    { id: "controls", type: "bool", label: "Show Controls", default: true },
+    { id: "autoplay", type: "bool", label: "Autoplay", default: false },
+    { id: "loop", type: "bool", label: "Loop", default: false },
+    { id: "muted", type: "bool", label: "Muted", default: false },
+  ],
+};
+
+// ── Navigation Widgets ─────────────────────────────────────────────────────
+
+const siteNavDef: EntityDef<string> = {
+  type: "site-nav",
+  category: "component",
+  label: "Site Nav",
+  pluralLabel: "Site Navs",
+  icon: "\u{1F5FA}",
+  color: "#6366f1",
+  childOnly: true,
+  fields: [
+    {
+      id: "layout",
+      type: "enum",
+      label: "Layout",
+      default: "horizontal",
+      enumOptions: [
+        { value: "horizontal", label: "Horizontal" },
+        { value: "vertical", label: "Vertical" },
+      ],
+    },
+    {
+      id: "source",
+      type: "enum",
+      label: "Source",
+      default: "pages",
+      enumOptions: [
+        { value: "pages", label: "All pages in site" },
+        { value: "manual", label: "Manual links" },
+      ],
+    },
+    {
+      id: "links",
+      type: "text",
+      label: "Manual Links (label|url per line)",
+      ui: { multiline: true, placeholder: "Home|/\nAbout|/about" },
+    },
+    { id: "showIcons", type: "bool", label: "Show Icons", default: false },
+  ],
+};
+
+const breadcrumbsDef: EntityDef<string> = {
+  type: "breadcrumbs",
+  category: "component",
+  label: "Breadcrumbs",
+  pluralLabel: "Breadcrumbs",
+  icon: "\u{1F4CD}",
+  color: "#6366f1",
+  childOnly: true,
+  fields: [
+    { id: "separator", type: "string", label: "Separator", default: "/" },
+    { id: "showHome", type: "bool", label: "Show Home", default: true },
+  ],
+};
+
 // ── Edge Type Definitions ───────────────────────────────────────────────────
 
 const referencesEdge: EdgeTypeDef = {
@@ -468,12 +1065,36 @@ export function createPageBuilderRegistry(): ObjectRegistry<string> {
   registry.register(spatialCanvasDef);
   registry.register(dataPortalDef);
   registry.register(kanbanWidgetDef);
+  registry.register(listWidgetDef);
+  registry.register(tableWidgetDef);
+  registry.register(cardGridWidgetDef);
+  registry.register(reportWidgetDef);
   registry.register(calendarWidgetDef);
   registry.register(chartWidgetDef);
   registry.register(mapWidgetDef);
   registry.register(tabContainerDef);
   registry.register(popoverWidgetDef);
   registry.register(slidePanelDef);
+  registry.register(textInputDef);
+  registry.register(textareaInputDef);
+  registry.register(selectInputDef);
+  registry.register(checkboxInputDef);
+  registry.register(numberInputDef);
+  registry.register(dateInputDef);
+  registry.register(columnsDef);
+  registry.register(dividerDef);
+  registry.register(spacerDef);
+  registry.register(statWidgetDef);
+  registry.register(badgeDef);
+  registry.register(alertDef);
+  registry.register(progressBarDef);
+  registry.register(markdownWidgetDef);
+  registry.register(iframeWidgetDef);
+  registry.register(codeBlockDef);
+  registry.register(videoWidgetDef);
+  registry.register(audioWidgetDef);
+  registry.register(siteNavDef);
+  registry.register(breadcrumbsDef);
 
   registry.registerEdge(referencesEdge);
   registry.registerEdge(linksToEdge);

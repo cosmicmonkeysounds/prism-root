@@ -6,6 +6,9 @@
 import { useSyncExternalStore, useState, useRef } from "react";
 import { useKernel } from "../kernel/index.js";
 
+import { lensId } from "@prism/core/lens";
+import type { LensManifest } from "@prism/core/lens";
+import { defineLensBundle, type LensBundle } from "../lenses/bundle.js";
 export function CrdtPanel() {
   const kernel = useKernel();
   const [tab, setTab] = useState<"objects" | "edges" | "json">("objects");
@@ -164,3 +167,25 @@ export function CrdtPanel() {
     </div>
   );
 }
+
+
+// ── Lens registration ──────────────────────────────────────────────────────
+
+export const CRDT_LENS_ID = lensId("crdt");
+
+export const crdtLensManifest: LensManifest = {
+
+  id: CRDT_LENS_ID,
+  name: "CRDT",
+  icon: "\u29C9",
+  category: "debug",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-crdt", name: "Switch to CRDT Inspector", shortcut: ["c"], section: "Navigation" }],
+  },
+};
+
+export const crdtLensBundle: LensBundle = defineLensBundle(
+  crdtLensManifest,
+  CrdtPanel,
+);

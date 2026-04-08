@@ -10,6 +10,9 @@ import { usePlugins, useKernel } from "../kernel/index.js";
 import type { PrismPlugin } from "@prism/core/plugin";
 import { pluginId } from "@prism/core/plugin";
 
+import { lensId } from "@prism/core/lens";
+import type { LensManifest } from "@prism/core/lens";
+import { defineLensBundle, type LensBundle } from "../lenses/bundle.js";
 // ── Styles ──────────────────────────────────────────────────────────────────
 
 const styles = {
@@ -358,3 +361,25 @@ export function PluginPanel() {
     </div>
   );
 }
+
+
+// ── Lens registration ──────────────────────────────────────────────────────
+
+export const PLUGIN_LENS_ID = lensId("plugin");
+
+export const pluginLensManifest: LensManifest = {
+
+  id: PLUGIN_LENS_ID,
+  name: "Plugins",
+  icon: "\uD83E\uDDE9",
+  category: "custom",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-plugins", name: "Switch to Plugins", shortcut: ["p"], section: "Navigation" }],
+  },
+};
+
+export const pluginLensBundle: LensBundle = defineLensBundle(
+  pluginLensManifest,
+  PluginPanel,
+);

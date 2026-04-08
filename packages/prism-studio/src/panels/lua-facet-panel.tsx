@@ -9,6 +9,13 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { useKernel, useSelection, useObject } from "../kernel/index.js";
 
+import { lensId } from "@prism/core/lens";
+import type { LensManifest } from "@prism/core/lens";
+import { defineLensBundle, type LensBundle } from "../lenses/bundle.js";
+import {
+  createLuaDebugger,
+  type DebugRunResult,
+} from "@prism/core/layer1";
 // ── Types ──────────────────────────────────────────────────────────────────
 
 export interface UINode {
@@ -638,6 +645,12 @@ export default function LuaFacetPanel() {
   const [copied, setCopied] = useState(false);
   const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Debugger state — parallels visual-script-panel.
+  const [debugResult, setDebugResult] = useState<DebugRunResult | null>(null);
+  const [activeFrameIdx, setActiveFrameIdx] = useState(0);
+  const [isDebugging, setIsDebugging] = useState(false);
+  const [breakpointLines, setBreakpointLines] = useState<Set<number>>(() => new Set());
+
   // Track whether we're editing a lua-block object
   const isLuaBlock = selectedObj?.type === "lua-block";
   const objectSource = isLuaBlock
@@ -688,6 +701,48 @@ export default function LuaFacetPanel() {
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   }, [source, kernel]);
+
+  const handleDebug = useCallback(async () => {
+    if (!source.trim()) {
+      kernel.notifications.add({ title: "Nothing to debug", kind: "warning" });
+      return;
+    }
+    setIsDebugging(true);
+    try {
+      const dbg = await createLuaDebugger();
+      try {
+        for (const line of breakpointLines) dbg.setBreakpoint(line);
+        const result = await dbg.run(source);
+        setDebugResult(result);
+        setActiveFrameIdx(0);
+        kernel.notifications.add({
+          title: result.success
+            ? `Debug: ${result.frames.length} frame${result.frames.length === 1 ? "" : "s"} captured`
+            : `Debug error: ${result.error ?? "unknown"}`,
+          kind: result.success ? "success" : "error",
+        });
+      } finally {
+        await dbg.dispose();
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      kernel.notifications.add({ title: `Debug failed: ${message}`, kind: "error" });
+    } finally {
+      setIsDebugging(false);
+    }
+  }, [source, breakpointLines, kernel]);
+
+  const toggleLineBreakpoint = useCallback((line: number) => {
+    setBreakpointLines((prev) => {
+      const next = new Set(prev);
+      if (next.has(line)) next.delete(line);
+      else next.add(line);
+      return next;
+    });
+  }, []);
+
+  const sourceLines = useMemo(() => source.split("\n"), [source]);
+  const activeFrame = debugResult?.frames[activeFrameIdx];
 
   const handleLoadSample = useCallback(
     (name: string) => {
@@ -759,6 +814,15 @@ export default function LuaFacetPanel() {
         >
           {copied ? "Copied" : "Copy"}
         </button>
+        <button
+          style={styles.btn}
+          onClick={() => void handleDebug()}
+          disabled={isDebugging}
+          data-testid="lua-debug-btn"
+          title="Step-through debug the Lua source"
+        >
+          {isDebugging ? "\u25B6 Running\u2026" : "\u25B6 Debug"}
+        </button>
       </div>
 
       {/* Object binding indicator */}
@@ -792,7 +856,163 @@ export default function LuaFacetPanel() {
           spellCheck={false}
           data-testid="lua-editor"
         />
+        {/* Line gutter with breakpoint toggles + current-line highlight. */}
+        <div
+          data-testid="lua-line-gutter"
+          style={{
+            marginTop: 4,
+            fontFamily: "monospace",
+            fontSize: 11,
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 4,
+          }}
+        >
+          {sourceLines.map((_, i) => {
+            const line = i + 1;
+            const hasBp = breakpointLines.has(line);
+            const isCurrent = activeFrame?.line === line;
+            return (
+              <button
+                key={line}
+                data-testid={`lua-line-btn-${line}`}
+                data-breakpoint={hasBp ? "true" : "false"}
+                data-current={isCurrent ? "true" : "false"}
+                onClick={() => toggleLineBreakpoint(line)}
+                style={{
+                  width: 22,
+                  height: 18,
+                  fontSize: 10,
+                  padding: 0,
+                  border: "1px solid #444",
+                  borderRadius: 2,
+                  background: hasBp ? "#e74c3c" : isCurrent ? "#ffcc00" : "#333",
+                  color: hasBp || isCurrent ? "#000" : "#888",
+                  cursor: "pointer",
+                }}
+                title={`Line ${line}${hasBp ? " (breakpoint)" : ""}`}
+              >
+                {line}
+              </button>
+            );
+          })}
+        </div>
       </div>
+
+      {/* Debug frames panel (visible after a debug run) */}
+      {debugResult && (
+        <div
+          data-testid="lua-debug-frames-panel"
+          style={{
+            ...styles.card,
+            borderColor: debugResult.success ? "#2e7d32" : "#c62828",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              marginBottom: 4,
+            }}
+          >
+            <strong style={{ color: debugResult.success ? "#6c6" : "#f88" }}>
+              {debugResult.success ? "✓ Debug" : "✗ Debug"}
+            </strong>
+            <span style={{ color: "#888", fontSize: 11 }}>
+              {debugResult.frames.length} frame
+              {debugResult.frames.length === 1 ? "" : "s"}
+            </span>
+            {!debugResult.success && debugResult.error && (
+              <span style={{ color: "#f88", fontSize: 11 }}>
+                · {debugResult.error}
+              </span>
+            )}
+            <div style={{ flex: 1 }} />
+            <button
+              data-testid="lua-debug-prev-frame"
+              style={styles.btn}
+              onClick={() => setActiveFrameIdx((i) => Math.max(0, i - 1))}
+              disabled={activeFrameIdx === 0}
+            >
+              ◀ Prev
+            </button>
+            <button
+              data-testid="lua-debug-next-frame"
+              style={styles.btn}
+              onClick={() =>
+                setActiveFrameIdx((i) =>
+                  Math.min(debugResult.frames.length - 1, i + 1),
+                )
+              }
+              disabled={activeFrameIdx >= debugResult.frames.length - 1}
+            >
+              Next ▶
+            </button>
+            <button
+              data-testid="lua-debug-close"
+              style={styles.btn}
+              onClick={() => setDebugResult(null)}
+            >
+              ✕
+            </button>
+          </div>
+          <div style={{ display: "flex", gap: 8, fontSize: 11 }}>
+            <div
+              data-testid="lua-debug-frame-list"
+              style={{
+                width: 140,
+                maxHeight: 140,
+                overflow: "auto",
+                borderRight: "1px solid #333",
+                paddingRight: 6,
+              }}
+            >
+              {debugResult.frames.map((f, i) => (
+                <div
+                  key={i}
+                  data-testid={`lua-debug-frame-${i}`}
+                  onClick={() => setActiveFrameIdx(i)}
+                  style={{
+                    padding: "2px 4px",
+                    cursor: "pointer",
+                    background: i === activeFrameIdx ? "#2a3040" : "transparent",
+                    color: f.breakpoint ? "#f88" : "#ccc",
+                  }}
+                >
+                  #{i} · line {f.line}
+                  {f.breakpoint ? " ●" : ""}
+                </div>
+              ))}
+            </div>
+            <div
+              data-testid="lua-debug-locals"
+              style={{
+                flex: 1,
+                maxHeight: 140,
+                overflow: "auto",
+                fontFamily: "monospace",
+              }}
+            >
+              {activeFrame === undefined ? (
+                <div style={{ color: "#666" }}>no frame selected</div>
+              ) : Object.keys(activeFrame.locals).length === 0 ? (
+                <div style={{ color: "#666" }}>
+                  (no locals at line {activeFrame.line})
+                </div>
+              ) : (
+                Object.entries(activeFrame.locals).map(([k, v]) => (
+                  <div key={k}>
+                    <span style={{ color: "#9cdcfe" }}>{k}</span>
+                    <span style={{ color: "#888" }}> = </span>
+                    <span style={{ color: "#ce9178" }}>{v}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Preview */}
       <div style={styles.card}>
@@ -817,3 +1037,25 @@ export default function LuaFacetPanel() {
 }
 
 export { LuaFacetPanel };
+
+
+// ── Lens registration ──────────────────────────────────────────────────────
+
+export const LUA_FACET_LENS_ID = lensId("lua-facet");
+
+export const luaFacetLensManifest: LensManifest = {
+
+  id: LUA_FACET_LENS_ID,
+  name: "Lua Facet",
+  icon: "\uD83C\uDF19",
+  category: "facet",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-lua-facet", name: "Switch to Lua Facet", shortcut: ["u"], section: "Navigation" }],
+  },
+};
+
+export const luaFacetLensBundle: LensBundle = defineLensBundle(
+  luaFacetLensManifest,
+  LuaFacetPanel,
+);

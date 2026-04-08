@@ -8,6 +8,9 @@
  */
 
 import { useState, useMemo, useCallback, type CSSProperties } from "react";
+import { lensId } from "@prism/core/lens";
+import type { LensManifest } from "@prism/core/lens";
+import { defineLensBundle, type LensBundle } from "../lenses/bundle.js";
 import {
   type PrivilegeSet,
   type CollectionPermission,
@@ -307,3 +310,25 @@ export function PrivilegeSetPanel() {
     </div>
   );
 }
+
+
+// ── Lens registration ──────────────────────────────────────────────────────
+
+export const PRIVILEGE_SET_LENS_ID = lensId("privilege-set");
+
+export const privilegeSetLensManifest: LensManifest = {
+
+  id: PRIVILEGE_SET_LENS_ID,
+  name: "Privilege Sets",
+  icon: "\u{1F46E}",
+  category: "custom",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-privilege-set", name: "Switch to Privilege Set Manager", shortcut: ["shift+p"], section: "Navigation" }],
+  },
+};
+
+export const privilegeSetLensBundle: LensBundle = defineLensBundle(
+  privilegeSetLensManifest,
+  PrivilegeSetPanel,
+);

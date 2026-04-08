@@ -8,6 +8,9 @@
  */
 
 import { useState, useMemo, useCallback, type CSSProperties } from "react";
+import { lensId } from "@prism/core/lens";
+import type { LensManifest } from "@prism/core/lens";
+import { defineLensBundle, type LensBundle } from "../lenses/bundle.js";
 import {
   type ValueListItem,
   createStaticValueList,
@@ -240,3 +243,25 @@ export function ValueListPanel() {
     </div>
   );
 }
+
+
+// ── Lens registration ──────────────────────────────────────────────────────
+
+export const VALUE_LIST_LENS_ID = lensId("value-list");
+
+export const valueListLensManifest: LensManifest = {
+
+  id: VALUE_LIST_LENS_ID,
+  name: "Value Lists",
+  icon: "\u{1F4C3}",
+  category: "facet",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-value-list", name: "Switch to Value List Editor", shortcut: ["shift+l"], section: "Navigation" }],
+  },
+};
+
+export const valueListLensBundle: LensBundle = defineLensBundle(
+  valueListLensManifest,
+  ValueListPanel,
+);

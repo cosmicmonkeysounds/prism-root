@@ -9,6 +9,9 @@
 
 import { useState, useCallback, useMemo } from "react";
 import { useFacetDefinitions } from "../kernel/index.js";
+import { lensId } from "@prism/core/lens";
+import type { LensManifest } from "@prism/core/lens";
+import { defineLensBundle, type LensBundle } from "../lenses/bundle.js";
 import type {
   FacetLayout,
   LayoutPartKind,
@@ -1248,3 +1251,25 @@ export function FacetDesignerPanel() {
 }
 
 export default FacetDesignerPanel;
+
+
+// ── Lens registration ──────────────────────────────────────────────────────
+
+export const FACET_DESIGNER_LENS_ID = lensId("facet-designer");
+
+export const facetDesignerLensManifest: LensManifest = {
+
+  id: FACET_DESIGNER_LENS_ID,
+  name: "Facet Designer",
+  icon: "\u{1F3A8}",
+  category: "facet",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-facet-designer", name: "Switch to Facet Designer", shortcut: ["x"], section: "Navigation" }],
+  },
+};
+
+export const facetDesignerLensBundle: LensBundle = defineLensBundle(
+  facetDesignerLensManifest,
+  FacetDesignerPanel,
+);

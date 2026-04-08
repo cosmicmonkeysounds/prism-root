@@ -11,6 +11,9 @@ import { useKernel, useObjects } from "../kernel/kernel-context.js";
 import type { GraphObject, ObjectId } from "@prism/core/object-model";
 import { FLUX_TYPES, CONTACT_TYPES } from "@prism/core/layer1";
 
+import { lensId } from "@prism/core/lens";
+import type { LensManifest } from "@prism/core/lens";
+import { defineLensBundle, type LensBundle } from "../lenses/bundle.js";
 const s: Record<string, CSSProperties> = {
   root: { padding: 16, height: "100%", overflow: "auto", fontFamily: "system-ui", fontSize: 13, color: "#ccc", background: "#1a1a1a" },
   header: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
@@ -117,3 +120,25 @@ export function CrmPanel() {
     </div>
   );
 }
+
+
+// ── Lens registration ──────────────────────────────────────────────────────
+
+export const CRM_LENS_ID = lensId("crm");
+
+export const crmLensManifest: LensManifest = {
+
+  id: CRM_LENS_ID,
+  name: "CRM",
+  icon: "\u{1F465}",
+  category: "custom",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-crm", name: "Switch to CRM", shortcut: ["shift+c"], section: "Navigation" }],
+  },
+};
+
+export const crmLensBundle: LensBundle = defineLensBundle(
+  crmLensManifest,
+  CrmPanel,
+);

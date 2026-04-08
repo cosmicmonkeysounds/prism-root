@@ -11,6 +11,9 @@
 
 import { useState, useCallback, useMemo, type CSSProperties } from "react";
 import { useKernel, useBuilder } from "../kernel/index.js";
+import { lensId } from "@prism/core/lens";
+import type { LensManifest } from "@prism/core/lens";
+import { defineLensBundle, type LensBundle } from "../lenses/bundle.js";
 import type {
   BuildTarget,
   BuildPlan,
@@ -567,3 +570,25 @@ export function AppBuilderPanel() {
     </div>
   );
 }
+
+
+// ── Lens registration ──────────────────────────────────────────────────────
+
+export const APP_BUILDER_LENS_ID = lensId("app-builder");
+
+export const appBuilderLensManifest: LensManifest = {
+
+  id: APP_BUILDER_LENS_ID,
+  name: "App Builder",
+  icon: "\u{1F3ED}",
+  category: "custom",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-app-builder", name: "Switch to App Builder", shortcut: ["shift+b"], section: "Navigation" }],
+  },
+};
+
+export const appBuilderLensBundle: LensBundle = defineLensBundle(
+  appBuilderLensManifest,
+  AppBuilderPanel,
+);

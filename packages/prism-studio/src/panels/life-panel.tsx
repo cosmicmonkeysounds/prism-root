@@ -9,6 +9,9 @@ import { useKernel, useObjects } from "../kernel/kernel-context.js";
 import type { GraphObject, ObjectId } from "@prism/core/object-model";
 import { LIFE_TYPES, JOURNAL_MOODS, WORKOUT_TYPES, SLEEP_QUALITY } from "@prism/core/layer1";
 
+import { lensId } from "@prism/core/lens";
+import type { LensManifest } from "@prism/core/lens";
+import { defineLensBundle, type LensBundle } from "../lenses/bundle.js";
 const s: Record<string, CSSProperties> = {
   root: { padding: 16, height: "100%", overflow: "auto", fontFamily: "system-ui", fontSize: 13, color: "#ccc", background: "#1a1a1a" },
   header: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
@@ -149,3 +152,25 @@ export function LifePanel() {
     </div>
   );
 }
+
+
+// ── Lens registration ──────────────────────────────────────────────────────
+
+export const LIFE_LENS_ID = lensId("life");
+
+export const lifeLensManifest: LensManifest = {
+
+  id: LIFE_LENS_ID,
+  name: "Life",
+  icon: "\u{1F33F}",
+  category: "custom",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-life", name: "Switch to Life", shortcut: ["shift+h"], section: "Navigation" }],
+  },
+};
+
+export const lifeLensBundle: LensBundle = defineLensBundle(
+  lifeLensManifest,
+  LifePanel,
+);

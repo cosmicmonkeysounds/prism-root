@@ -11,10 +11,13 @@
  *   Studio UI (app-builder-panel)
  *     ↓ useKernel().builder.planBuild(profile, target)
  *     ↓ BuilderManager composes BuildPlan via @prism/core/builder
- *     ↓ BuilderManager.runPlan(plan) dispatches to BuildExecutor
+ *     ↓ BuilderManager.runPlan(plan) walks plan.steps one at a time,
+ *       dispatching each BuildStep through the injected BuildExecutor
  *     ↓ Executor either:
- *        - Tauri mode: invoke('run_build_plan', { plan })
- *        - Dry-run mode: emit plan JSON + profile files for inspection
+ *        - Tauri mode: invoke('run_build_step', { step, workingDir, env })
+ *          → prism_daemon::commands::build::run_build_step
+ *        - Dry-run mode: mark emit-file steps success (buffering contents
+ *          into stdout for preview), skip run-command / invoke-ipc
  */
 
 import {
@@ -41,12 +44,22 @@ import type {
 type Listener = () => void;
 
 /**
+ * Per-plan context passed to each step. The daemon needs this to resolve
+ * relative paths (`emit-file`) and to apply plan-level env vars to child
+ * processes (`run-command`). Derived from the BuildPlan by `runPlan`.
+ */
+export interface BuildExecutionContext {
+  workingDir: string;
+  env: Record<string, string>;
+}
+
+/**
  * Abstract build executor. Injected at construction so the kernel can
  * choose between Tauri IPC (desktop) and dry-run mode (browser/tests).
  */
 export interface BuildExecutor {
   readonly mode: "tauri" | "dry-run";
-  executeStep(step: BuildStep): Promise<BuildStepResult>;
+  executeStep(step: BuildStep, context?: BuildExecutionContext): Promise<BuildStepResult>;
 }
 
 export interface BuilderManagerOptions {
@@ -152,10 +165,21 @@ export function createTauriExecutor(options: TauriExecutorOptions): BuildExecuto
   const { invoke } = options;
   return {
     mode: "tauri",
-    async executeStep(step: BuildStep): Promise<BuildStepResult> {
+    async executeStep(
+      step: BuildStep,
+      context?: BuildExecutionContext,
+    ): Promise<BuildStepResult> {
       const startedAt = Date.now();
       try {
-        const result = (await invoke("run_build_step", { step })) as {
+        // The Rust command is `run_build_step(step, working_dir, env)`.
+        // Tauri auto-converts camelCase JS args to snake_case Rust params, so
+        // we send `workingDir` / `env` alongside the step.
+        const payload: Record<string, unknown> = { step };
+        if (context) {
+          payload.workingDir = context.workingDir;
+          payload.env = context.env;
+        }
+        const result = (await invoke("run_build_step", payload)) as {
           stdout?: string;
           stderr?: string;
         };
@@ -277,8 +301,13 @@ export function createBuilderManager(options: BuilderManagerOptions = {}): Build
     runs.set(run.id, run);
     notify();
 
+    const context: BuildExecutionContext = {
+      workingDir: plan.workingDir,
+      env: plan.env,
+    };
+
     for (const step of plan.steps) {
-      const result = await executor.executeStep(step);
+      const result = await executor.executeStep(step, context);
       run.steps.push(result);
       if (result.status === "failed") {
         run.status = "failed";
