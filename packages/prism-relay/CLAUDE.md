@@ -6,7 +6,7 @@ Runtime server for Prism Relay — wraps Layer 1 relay primitives in HTTP + WebS
 - `pnpm dev` — start with tsx watch (dev mode)
 - `pnpm typecheck`
 - `npx vitest run` — unit tests (30+ test files)
-- `pnpm test:e2e` — Playwright E2E tests (135 tests across 2 spec files, no browser needed)
+- `pnpm test:e2e` — Playwright E2E tests (169 tests across 3 spec files, no browser needed)
 
 ## CLI
 Installable as `prism-relay` via the `bin` field. 30+ subcommands:
@@ -171,6 +171,13 @@ WebSocket at `/ws/relay`:
 - Signaling: `GET /api/signaling/rooms`, `GET /rooms/:id/peers`, `POST /rooms/:id/{join,leave,signal,poll}`
 - Backup: `GET/POST /api/backup` — export/import full relay state
 - Logs: `GET /api/logs` (with `?level=` and `?limit=` filters), `DELETE /api/logs`
+
+## Deployment Files
+- `Dockerfile` — multi-stage Docker build (non-root user, HEALTHCHECK, VOLUME)
+- `.dockerignore` — excludes node_modules, dist, tests, legacy packages
+- `docker-compose.yml` — single-relay deployment
+- `docker-compose.federation.yml` — two-relay federated mesh
+- `.env.example` — environment variable template
 
 ## Docs
 - [Deployment Guide](docs/deployment.md) — Docker, TLS, federation, monitoring, security

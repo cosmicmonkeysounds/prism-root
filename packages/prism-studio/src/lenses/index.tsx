@@ -31,6 +31,10 @@ import { LuaFacetPanel } from "../panels/lua-facet-panel.js";
 import { FacetDesignerPanel } from "../panels/facet-designer-panel.js";
 import { RecordBrowserPanel } from "../panels/record-browser-panel.js";
 import { SpatialCanvasPanel } from "../panels/spatial-canvas-panel.js";
+import { VisualScriptPanel } from "../panels/visual-script-panel.js";
+import { SavedViewPanel } from "../panels/saved-view-panel.js";
+import { ValueListPanel } from "../panels/value-list-panel.js";
+import { PrivilegeSetPanel } from "../panels/privilege-set-panel.js";
 
 export const EDITOR_LENS_ID = lensId("editor");
 export const GRAPH_LENS_ID = lensId("graph");
@@ -55,6 +59,10 @@ export const LUA_FACET_LENS_ID = lensId("lua-facet");
 export const FACET_DESIGNER_LENS_ID = lensId("facet-designer");
 export const RECORD_BROWSER_LENS_ID = lensId("record-browser");
 export const SPATIAL_CANVAS_LENS_ID = lensId("spatial-canvas");
+export const VISUAL_SCRIPT_LENS_ID = lensId("visual-script");
+export const SAVED_VIEW_LENS_ID = lensId("saved-view");
+export const VALUE_LIST_LENS_ID = lensId("value-list");
+export const PRIVILEGE_SET_LENS_ID = lensId("privilege-set");
 
 const editorManifest: LensManifest = {
   id: EDITOR_LENS_ID,
@@ -309,6 +317,50 @@ const spatialCanvasManifest: LensManifest = {
   },
 };
 
+const visualScriptManifest: LensManifest = {
+  id: VISUAL_SCRIPT_LENS_ID,
+  name: "Visual Script",
+  icon: "\u{1F9E9}",
+  category: "facet",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-visual-script", name: "Switch to Visual Script Editor", shortcut: ["shift+s"], section: "Navigation" }],
+  },
+};
+
+const savedViewManifest: LensManifest = {
+  id: SAVED_VIEW_LENS_ID,
+  name: "Saved Views",
+  icon: "\u{1F516}",
+  category: "facet",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-saved-view", name: "Switch to Saved Views", shortcut: ["shift+v"], section: "Navigation" }],
+  },
+};
+
+const valueListManifest: LensManifest = {
+  id: VALUE_LIST_LENS_ID,
+  name: "Value Lists",
+  icon: "\u{1F4C3}",
+  category: "facet",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-value-list", name: "Switch to Value List Editor", shortcut: ["shift+l"], section: "Navigation" }],
+  },
+};
+
+const privilegeSetManifest: LensManifest = {
+  id: PRIVILEGE_SET_LENS_ID,
+  name: "Privilege Sets",
+  icon: "\u{1F46E}",
+  category: "custom",
+  contributes: {
+    views: [{ slot: "main" }],
+    commands: [{ id: "switch-privilege-set", name: "Switch to Privilege Set Manager", shortcut: ["shift+p"], section: "Navigation" }],
+  },
+};
+
 export const ALL_MANIFESTS: LensManifest[] = [
   editorManifest,
   graphManifest,
@@ -333,6 +385,10 @@ export const ALL_MANIFESTS: LensManifest[] = [
   facetDesignerManifest,
   recordBrowserManifest,
   spatialCanvasManifest,
+  visualScriptManifest,
+  savedViewManifest,
+  valueListManifest,
+  privilegeSetManifest,
 ];
 
 export function registerBuiltinLenses(registry: LensRegistry): () => void {
@@ -365,5 +421,9 @@ export function createLensComponentMap(): Map<LensId, ComponentType> {
   map.set(FACET_DESIGNER_LENS_ID, FacetDesignerPanel);
   map.set(RECORD_BROWSER_LENS_ID, RecordBrowserPanel);
   map.set(SPATIAL_CANVAS_LENS_ID, SpatialCanvasPanel);
+  map.set(VISUAL_SCRIPT_LENS_ID, VisualScriptPanel);
+  map.set(SAVED_VIEW_LENS_ID, SavedViewPanel);
+  map.set(VALUE_LIST_LENS_ID, ValueListPanel);
+  map.set(PRIVILEGE_SET_LENS_ID, PrivilegeSetPanel);
   return map;
 }

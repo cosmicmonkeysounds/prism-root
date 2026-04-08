@@ -421,6 +421,17 @@ export {
   getCollection,
 } from "./manifest/index.js";
 
+export {
+  createPrivilegeSet,
+  getCollectionPermission,
+  getFieldPermission,
+  getLayoutPermission,
+  getScriptPermission,
+  canWrite,
+  canRead,
+  createPrivilegeEnforcer,
+} from "./manifest/index.js";
+
 export type {
   StorageBackend,
   LoroStorageConfig,
@@ -434,6 +445,14 @@ export type {
   ManifestVisibility,
   PrismManifest,
   ManifestValidationError,
+  CollectionPermission,
+  FieldPermission,
+  LayoutPermission,
+  ScriptPermission,
+  PrivilegeSet,
+  PrivilegeSetOptions,
+  RoleAssignment,
+  PrivilegeEnforcer,
 } from "./manifest/index.js";
 
 // ── CRDT Persistence ──────────────────────────────────────────────────────
@@ -514,6 +533,8 @@ export {
   applyGroups,
   applyViewConfig,
   createLiveView,
+  createSavedView,
+  createSavedViewRegistry,
 } from "./view/index.js";
 
 export type {
@@ -530,6 +551,9 @@ export type {
   LiveViewListener,
   LiveViewOptions,
   LiveView,
+  SavedView,
+  SavedViewListener,
+  SavedViewRegistry,
 } from "./view/index.js";
 
 // ── Notification System ────────────────────────────────────────────────────
@@ -1000,18 +1024,65 @@ export {
   luaStatsCommand,
   luaMenuItem,
   luaCommand,
+  createStaticValueList,
+  createDynamicValueList,
+  resolveValueList,
+  createValueListRegistry,
+  createPrintConfig,
+  evaluateConditionalFormats,
+  computeFieldStyle,
+  interpolateMergeFields,
+  renderTextSlot,
+  createCollectionValueListResolver,
+  getValueListId,
+  getBoundFields,
+  STEP_KINDS,
+  getStepMeta,
+  createStep,
+  createVisualScript,
+  emitStepsLua,
+  validateSteps,
+  getStepCategories,
+  createFacetStore,
+  computePartBands,
+  snapToGrid,
+  alignSlots,
+  distributeSlots,
+  detectOverlaps,
+  slotHitTest,
+  partForY,
+  clampToBand,
+  sortByZIndex,
 } from "./facet/index.js";
 
 export type {
   SourceFormat,
   FacetLayout,
+  FacetLayoutMode,
   LayoutPartKind,
   LayoutPart,
+  SpatialRect,
+  ConditionalFormat,
   FieldSlot,
   PortalSlot,
+  TextSlot,
+  DrawingShape,
+  DrawingSlot,
+  ContainerSlot,
   FacetSlot,
   SummaryField,
+  PageOrientation,
+  PageSize,
+  PageMargins,
+  PrintConfig,
   FacetDefinition,
+  ComputedStyle,
+  ValueListDataSource,
+  ComputedBand,
+  Alignment,
+  FacetStoreListener,
+  FacetStoreSnapshot,
+  FacetStore,
   DictionaryData,
   DictionaryProvider,
   PersonalDictionaryStorage,
@@ -1032,6 +1103,19 @@ export type {
   SequencerActionKind,
   SequencerScriptStep,
   SequencerScriptState,
+  ScriptStepKind,
+  StepKindMeta,
+  ScriptStep,
+  VisualScript,
+  ValueListItem,
+  StaticValueListSource,
+  DynamicValueListSource,
+  ValueListSource,
+  ValueListDisplay,
+  ValueList,
+  ValueListResolver,
+  ValueListListener,
+  ValueListRegistry,
   SchemaField,
   SchemaInterface,
   SchemaEnum,
@@ -1072,3 +1156,6 @@ export type {
   FluxImportResult,
   FluxRegistry,
 } from "./flux/index.js";
+
+// ── Plugin Bundles ───────────────────────────────────────────────────────
+export * from "./plugins/index.js";

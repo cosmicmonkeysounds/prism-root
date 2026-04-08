@@ -120,8 +120,8 @@ export interface FluxAutomationPreset {
   id: string;
   /** Human-readable name. */
   name: string;
-  /** Which entity type this preset applies to. */
-  entityType: FluxEntityType;
+  /** Which entity type this preset applies to (FluxEntityType or plugin-extended). */
+  entityType: FluxEntityType | (string & {});
   /** Trigger event. */
   trigger: FluxTriggerKind;
   /** Condition expression (expression engine syntax). */

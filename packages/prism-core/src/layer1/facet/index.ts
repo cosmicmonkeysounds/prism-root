@@ -118,6 +118,46 @@ export type { MockSpellCheckConfig } from "./spell-engine.js";
 export type { ProseNode, ProseMark } from "./prose-codec.js";
 export { markdownToNodes, nodesToMarkdown } from "./prose-codec.js";
 
+// ── Facet Runtime (conditional formatting, merge fields, value list resolver) ──
+export type {
+  ComputedStyle,
+  ValueListDataSource,
+} from "./facet-runtime.js";
+export {
+  evaluateConditionalFormats,
+  computeFieldStyle,
+  interpolateMergeFields,
+  renderTextSlot,
+  createCollectionValueListResolver,
+  getValueListId,
+  getBoundFields,
+} from "./facet-runtime.js";
+
+// ── Script Steps (FileMaker-style visual scripting → Lua) ────────────────
+export type {
+  ScriptStepKind,
+  StepKindMeta,
+  ScriptStep,
+  VisualScript,
+} from "./script-steps.js";
+export {
+  STEP_KINDS,
+  getStepMeta,
+  createStep,
+  createVisualScript,
+  emitStepsLua,
+  validateSteps,
+  getStepCategories,
+} from "./script-steps.js";
+
+// ── Facet Store (persistent FacetDefinition + Script + ValueList registry) ──
+export type {
+  FacetStoreListener,
+  FacetStoreSnapshot,
+  FacetStore,
+} from "./facet-store.js";
+export { createFacetStore } from "./facet-store.js";
+
 // ── Sequencer (visual condition/script builder → Lua) ────────────────────
 export type {
   SequencerSubjectKind,

@@ -57,9 +57,13 @@ The Studio kernel wires all Layer 1 systems together:
 - `facet-designer-panel.tsx` — Visual layout builder for FacetDefinitions (parts, slots, summary fields, sort/group, automation hooks)
 - `record-browser-panel.tsx` — Unified data browser with form/list/table/report/card mode toggle, record navigation, search
 - `spatial-canvas-panel.tsx` — Free-form layout editor: field palette, slot inspector, grid/snap, alignment tools. Lens #23 (Shift+X)
+- `visual-script-panel.tsx` — FileMaker-style step-based script editor: categorized step palette (31 step types across 7 categories), drag-to-add, per-step parameter inputs, move/disable/remove controls, indented control flow blocks, live Lua preview via emitStepsLua(), block validation. Lens #24 (Shift+S)
+- `saved-view-panel.tsx` — Found Set manager: create/delete/pin/search saved views, filter summary display, active view highlighting, integrates with record-browser-panel. Lens #25 (Shift+V)
+- `value-list-panel.tsx` — Value list editor: CRUD for static lists (inline value/label/color rows) and dynamic lists (collection source, value/display/sort fields). Lens #26 (Shift+L)
+- `privilege-set-panel.tsx` — Access control manager: collection/field/layout permission matrix, row-level security expression, DID-to-role assignment, default/admin options. Lens #27 (Shift+P)
 
 ## Lenses
-23 lenses: Editor (e), Graph (g), Layout (l), Canvas (v), CRDT (c), Relay (r), Settings (,), Automation (a), Analysis (n), Plugins (p), Shortcuts (k), Vaults (w), Identity (i), Assets (f), Trust (t), Form (d), Table (b), Sequencer (q), Report (o), Lua Facet (u), Facet Designer (x), Record Browser (z), Spatial Canvas (Shift+X)
+27 lenses: Editor (e), Graph (g), Layout (l), Canvas (v), CRDT (c), Relay (r), Settings (,), Automation (a), Analysis (n), Plugins (p), Shortcuts (k), Vaults (w), Identity (i), Assets (f), Trust (t), Form (d), Table (b), Sequencer (q), Report (o), Lua Facet (u), Facet Designer (x), Record Browser (z), Spatial Canvas (Shift+X), Visual Script (Shift+S), Saved Views (Shift+V), Value Lists (Shift+L), Privilege Sets (Shift+P)
 
 ## Data Flow
 ```

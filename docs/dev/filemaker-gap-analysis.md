@@ -46,7 +46,7 @@ Libraries: `react-moveable` + `react-selecto` + `@scena/react-guides` (Scena eco
 | Multiple layouts per table | Many layouts, switch freely | FacetDefinition per objectType, FacetViewRenderer | **Done** |
 | Layout picker | UI to select which layout is active | `facet-view` component with `viewMode` prop | **Partial** — needs dropdown UI |
 | Portal rendering | Related records inline | `DataPortalRenderer` + `data-portal` Puck component | **Done** |
-| Conditional formatting | Color/style fields based on value | `conditionalFormats` on FieldSlot (schema done) | **Schema done** — needs runtime eval |
+| Conditional formatting | Color/style fields based on value | `evaluateConditionalFormats()` in facet-runtime.ts | **Done** |
 | Tab controls | Tabbed container on layout | Not started | Todo |
 | Slide panels | Swipeable panel container | Not started | Todo |
 | Popovers | Click-to-open floating panels | Not started | Todo |
@@ -58,9 +58,9 @@ Libraries: `react-moveable` + `react-selecto` + `@scena/react-guides` (Scena eco
 |-----|-----------|-------|--------|
 | Calculation fields | Auto-compute from other fields | ExpressionEngine exists | Todo — needs per-field binding |
 | Auto-enter options | Serial number, timestamps, calculated | `createdAt`/`updatedAt` built in | **Partial** — no user-defined |
-| Merge fields | `<<FieldName>>` in text objects | `{{fieldName}}` syntax in TextSlot | **Schema done** — needs runtime |
+| Merge fields | `<<FieldName>>` in text objects | `interpolateMergeFields()` + `renderTextSlot()` | **Done** |
 | Script triggers | Per-layout automation hooks | `onRecordLoad/Commit/LayoutEnter/Exit` | **Done** |
-| Visual script builder | Drag conditions/actions | Sequencer panel | **Done** |
+| Visual script builder | Drag conditions/actions | VisualScriptPanel (31 steps → Lua) | **Done** |
 
 ### P3 — Theming & Print
 
@@ -81,7 +81,7 @@ Libraries: `react-moveable` + `react-selecto` + `@scena/react-guides` (Scena eco
 | Layout privilege sets | Per-layout/field access control | `PrivilegeSet` in manifest schema | **Done** |
 | Field-level security | Per-field read/write/hidden | `FieldPermission` in PrivilegeSet | **Done** |
 | Row-level security | Record-level access filtering | `recordFilter` expression in PrivilegeSet | **Done** |
-| CRDT persistence | FacetDefinitions survive restart | Currently in-memory Map | Todo |
+| CRDT persistence | FacetDefinitions survive restart | `FacetStore` with serialize/load | **Done** |
 
 ### P5 — Data Model & Views (NEW)
 
@@ -108,7 +108,7 @@ Libraries: `react-moveable` + `react-selecto` + `@scena/react-guides` (Scena eco
 | Found Set | `SavedView` | Named ViewConfig persisted to Loro |
 | Privilege Set | `PrivilegeSet` | DID role → permission mapping |
 | Script | Lua 5.4 + Automation Engine | Visual builder + code editor |
-| Script Workspace | Sequencer Panel | Condition/action builder |
+| Script Workspace | VisualScriptPanel + Sequencer | 31 step types, Lua codegen, palette + live preview |
 | Relationship Graph | Graph Panel + `@xyflow/react` | View-only (editor TODO) |
 | Theme | Not yet | Todo |
 | Print Layout | `PrintConfig` on `FacetDefinition` | Page dims, margins, breaks |
@@ -122,13 +122,17 @@ Libraries: `react-moveable` + `react-selecto` + `@scena/react-guides` (Scena eco
 
 | Area | Tests | Framework |
 |------|-------|-----------|
-| FacetSchema types + builder | 90+ | Vitest |
+| FacetSchema types + builder | 103 | Vitest |
 | Spatial layout pure functions | 45 | Vitest |
-| SavedView schema | 20+ | Vitest |
-| ValueList schema | 20+ | Vitest |
+| SavedView schema | 28 | Vitest |
+| ValueList schema | 25 | Vitest |
 | ContainerSlot schema | 10+ | Vitest |
-| PrivilegeSet schema | 20+ | Vitest |
+| PrivilegeSet schema | 21 | Vitest |
 | PrintConfig schema | 10+ | Vitest |
+| Facet runtime (conditional fmt, merge fields) | 24 | Vitest |
+| Script steps (31 kinds, Lua codegen) | 37 | Vitest |
+| FacetStore (CRDT persistence) | 14 | Vitest |
+| PrivilegeEnforcer (row/field security) | 16 | Vitest |
 | Studio kernel integration | 97 | Vitest |
 | Layout builder E2E | 49 | Playwright |
 | Spatial canvas E2E | 14 | Playwright |
@@ -136,6 +140,21 @@ Libraries: `react-moveable` + `react-selecto` + `@scena/react-guides` (Scena eco
 ---
 
 ## Files Added/Modified
+
+### New Files (Phase 3 — Runtime + Studio UI)
+- `packages/prism-core/src/layer1/manifest/privilege-enforcer.ts` — PrivilegeSet runtime enforcement
+- `packages/prism-core/src/layer1/manifest/privilege-enforcer.test.ts` — 16 tests
+- `packages/prism-core/src/layer1/facet/facet-runtime.ts` — Conditional formatting, merge fields, value list resolver
+- `packages/prism-core/src/layer1/facet/facet-runtime.test.ts` — 24 tests
+- `packages/prism-core/src/layer1/facet/script-steps.ts` — 31 visual script step types + Lua codegen
+- `packages/prism-core/src/layer1/facet/script-steps.test.ts` — 37 tests
+- `packages/prism-core/src/layer1/facet/facet-store.ts` — Persistent FacetDefinition + Script + ValueList registry
+- `packages/prism-core/src/layer1/facet/facet-store.test.ts` — 14 tests
+- `packages/prism-studio/src/components/container-field-renderer.tsx` — MIME-aware file preview component
+- `packages/prism-studio/src/panels/visual-script-panel.tsx` — Visual script editor (lens #24, Shift+S)
+- `packages/prism-studio/src/panels/saved-view-panel.tsx` — Saved view manager (lens #25, Shift+V)
+- `packages/prism-studio/src/panels/value-list-panel.tsx` — Value list editor (lens #26, Shift+L)
+- `packages/prism-studio/src/panels/privilege-set-panel.tsx` — Privilege set manager (lens #27, Shift+P)
 
 ### New Files (Phase 2 — Core Schemas)
 - `packages/prism-core/src/layer1/view/saved-view.ts` — SavedView types + CRUD

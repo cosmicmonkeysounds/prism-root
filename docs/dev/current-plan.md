@@ -40,10 +40,11 @@ FileMaker Pro-style absolute positioning as nestable Puck components. See `docs/
 | Suite | Tests | Status |
 |-------|-------|--------|
 | Vitest (studio-kernel) | 97 | Pass |
-| Vitest (all) | 2828 | Pass |
+| Vitest (all) | 3006 | Pass |
 | Playwright (builder) | 49 | Pass |
 | Playwright (spatial-canvas) | 14 | Pass |
-| **Playwright (total)** | **277** | **Pass** |
+| Playwright (relay deployment) | 34 | Pass |
+| **Playwright (total)** | **311** | **Pass** |
 
 ## FileMaker Pro Core Schemas (Complete)
 
@@ -93,16 +94,42 @@ Layer 1 agnostic TypeScript. See `docs/dev/filemaker-gap-analysis.md` for full g
 | privilege-set | 21 | Pass |
 | **Vitest (all)** | **2915** | **Pass** |
 
+### Runtime + UI (Complete)
+
+- [x] **PrivilegeEnforcer** — `privilege-enforcer.ts`: filterObjects with row-level security, redactObject for hidden fields, visibleFields/canEditField/canSeeLayout
+- [x] **Conditional formatting runtime** — `facet-runtime.ts`: evaluateConditionalFormats, computeFieldStyle with expression parsing
+- [x] **Merge field interpolation** — `facet-runtime.ts`: interpolateMergeFields `{{fieldName}}`, renderTextSlot, dot-notation path resolution
+- [x] **CollectionValueListResolver** — `facet-runtime.ts`: resolves dynamic value lists from CollectionStore data
+- [x] **Visual Scripting** — `script-steps.ts`: 31 step types across 7 categories, emitStepsLua Lua codegen with proper indentation, validateSteps block matching, getStepCategories palette builder
+- [x] **FacetStore** — `facet-store.ts`: persistent registry for FacetDefinitions + VisualScripts + ValueLists with serialize/load
+- [x] **Studio panels** — 4 new lenses registered (Shift+S/V/L/P):
+  - Visual Script Editor (step palette, parameter inputs, live Lua preview, block validation)
+  - Saved Views (create/delete/pin/search, filter summary, active view highlighting)
+  - Value Lists (static inline editor, dynamic source config)
+  - Privilege Sets (permission matrix, row-level security, role assignments)
+- [x] **ContainerFieldRenderer** — MIME-aware inline preview (image/audio/video/PDF/file icon) with drag-drop upload
+
+### Test Summary (Updated)
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| facet-schema | 103 | Pass |
+| value-list | 25 | Pass |
+| saved-view | 28 | Pass |
+| privilege-set | 21 | Pass |
+| facet-runtime | 24 | Pass |
+| script-steps | 37 | Pass |
+| facet-store | 14 | Pass |
+| privilege-enforcer | 16 | Pass |
+| **Vitest (all)** | **3006** | **Pass** |
+
 ### Remaining FileMaker Gaps (Phase 3+)
 
 - [ ] Tab controls / slide panels / popovers (P1)
 - [ ] Layout picker dropdown UI (P1)
-- [ ] Conditional formatting runtime eval (P1)
-- [ ] Merge field `{{fieldName}}` runtime interpolation (P2)
 - [ ] Per-field calculation binding (P2)
 - [ ] Themes / custom styles (P3)
 - [ ] PDF export via PrintConfig (P3 — schema done, renderer TODO)
-- [ ] CRDT persistence for FacetDefinitions (P4)
 - [ ] Starter Manifest gallery UI (P5)
 - [ ] Schema Designer write mode in Graph Panel (P5)
 - [ ] Lua step-through debugger / DAP (P5)
@@ -1920,6 +1947,31 @@ Full test coverage, CLI expansion, Studio integration, and documentation for Pri
 - [x] **Studio relay integration** — RelayManager expanded with 13 new methods (collections, webhooks, peers, certs, backup/restore, health, discovery). RelayPanel expanded with 7 new management sections (health, collections, federation, webhooks, certificates, backup/restore) + relay auto-discovery
 - [x] **Documentation** — docs/deployment.md (Docker, TLS, federation, monitoring, security), docs/development.md (architecture, modules, testing, contributing), updated README.md and CLAUDE.md
 - [x] **Full CLI E2E test** — 44 commands tested against running relay, all passing including error cases
+
+## Phase 35: Relay Deployment Infrastructure (Complete)
+
+All deployment options fully developed, documented, and tested.
+
+### Completed
+
+- [x] **Dockerfile hardened** — multi-stage build with non-root `prism` user, built-in HEALTHCHECK, VOLUME for persistent data, `pnpm prune --prod` for slim production image
+- [x] **.dockerignore** — excludes node_modules, dist, tests, legacy packages, .git
+- [x] **docker-compose.yml** — single-relay deployment with health checks, volumes, env overrides
+- [x] **docker-compose.federation.yml** — two-relay federated mesh with shared network, dependency ordering, separate volumes
+- [x] **.env.example** — environment variable template documenting all 6 PRISM_RELAY_* vars
+- [x] **Deployment E2E tests** — 37 tests (34 run, 3 skip when Docker unavailable): Dockerfile structure, Docker Compose validation, config system, health check contract, CSRF enforcement, CORS behavior, backup/restore API round-trip, graceful shutdown + state persistence, SEO endpoints, rate limiting, identity persistence, multi-mode startup, WebSocket connectivity
+- [x] **Pre-existing test fix** — "many collections" resource exhaustion test fixed (rate-limit retry on GET /api/collections)
+- [x] **Deployment docs updated** — references actual file paths, Docker user/volume changes, federation compose, .env.example
+
+### Test Summary
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| Vitest (all) | 3006 | Pass |
+| Playwright (relay) | 87 | Pass |
+| Playwright (production-readiness) | 48 | Pass |
+| Playwright (deployment) | 34 | Pass |
+| **Playwright (relay total)** | **169** | **Pass** |
 
 ## Phase 33: Ecosystem Apps — Cadence & Grip
 

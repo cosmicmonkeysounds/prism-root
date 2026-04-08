@@ -46,3 +46,10 @@ export {
   canWrite,
   canRead,
 } from "./privilege-set.js";
+
+// ── Privilege Enforcer (runtime evaluation) ─────────────────────────────
+export type {
+  PrivilegeContext,
+  PrivilegeEnforcer,
+} from "./privilege-enforcer.js";
+export { createPrivilegeEnforcer } from "./privilege-enforcer.js";

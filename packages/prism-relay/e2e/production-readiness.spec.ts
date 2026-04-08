@@ -1130,9 +1130,17 @@ test.describe("Resource Exhaustion", () => {
       expect([200, 201]).toContain(res.status());
     }
 
-    // Verify all are listed
-    const listRes = await request.get(`${url}/api/collections`);
-    const collections = await listRes.json();
+    // Verify all are listed (retry if rate-limited)
+    let collections: string[] = [];
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const listRes = await request.get(`${url}/api/collections`);
+      if (listRes.status() === 200) {
+        collections = await listRes.json();
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    expect(Array.isArray(collections)).toBe(true);
     expect(collections.length).toBeGreaterThanOrEqual(count);
   });
 

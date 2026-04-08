@@ -1,0 +1,44 @@
+# Dependencies (installed fresh in build stage)
+node_modules/
+packages/*/node_modules/
+
+# Build output (rebuilt in build stage)
+packages/*/dist/
+
+# Git
+.git/
+.gitignore
+
+# Tests
+packages/*/e2e/
+packages/*/*.test.ts
+packages/*/test-results/
+packages/*/playwright-report/
+
+# Development
+*.tsbuildinfo
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Legacy / non-relay packages
+$legacy-inspiration-only/
+packages/prism-daemon/
+packages/prism-studio/
+packages/prism-flux/
+packages/prism-lattice/
+packages/prism-musica/
+packages/prism-cadence/
+packages/prism-grip/
+
+# Docs (not needed at runtime)
+docs/
+*.md
+!packages/prism-relay/package.json
+!packages/prism-core/package.json
+!packages/shared/package.json
+
+# OS files
+.DS_Store
+Thumbs.db

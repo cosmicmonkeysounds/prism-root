@@ -33,7 +33,11 @@ The relay generates a persistent Ed25519 identity on first run, saved to `~/.pri
 
 ## Docker Deployment
 
-The Dockerfile is a multi-stage build (build stage + slim runtime).
+The Dockerfile (`packages/prism-relay/Dockerfile`) is a multi-stage build with a slim production image:
+
+- **Build stage**: installs deps, compiles TypeScript, prunes dev dependencies
+- **Production stage**: non-root `prism` user, built-in HEALTHCHECK, VOLUME for persistent data
+- **`.dockerignore`**: excludes node_modules, dist, tests, legacy packages, and git history
 
 ```bash
 # Build image (from monorepo root)
@@ -42,42 +46,41 @@ docker build -f packages/prism-relay/Dockerfile -t prism-relay .
 # Run
 docker run -d \
   -p 4444:4444 \
-  -v prism-relay-data:/root/.prism/relay \
+  -v prism-relay-data:/home/prism/.prism/relay \
   --name prism-relay \
   prism-relay
 ```
 
-The identity file and relay state are stored in the volume, so the relay keeps its DID and data across container restarts.
+The container runs as a non-root `prism` user. Identity and state are stored in the volume at `/home/prism/.prism/relay`, so the relay keeps its DID and data across container restarts.
 
-### Docker Compose
+### Docker Compose (Single Relay)
 
-```yaml
-version: "3.8"
-services:
-  relay:
-    build:
-      context: .
-      dockerfile: packages/prism-relay/Dockerfile
-    ports:
-      - "4444:4444"
-    volumes:
-      - relay-data:/root/.prism/relay
-    environment:
-      PRISM_RELAY_MODE: server
-      PRISM_RELAY_HOST: "0.0.0.0"
-      PRISM_RELAY_PORT: "4444"
-      PRISM_RELAY_PUBLIC_URL: https://relay.example.com
-      PRISM_RELAY_LOG_LEVEL: info
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:4444/api/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
+Use the provided `docker-compose.yml`:
 
-volumes:
-  relay-data:
+```bash
+cd packages/prism-relay
+docker compose up -d --build
+```
+
+### Docker Compose (Federation Mesh)
+
+For a two-relay federated mesh, use `docker-compose.federation.yml`:
+
+```bash
+cd packages/prism-relay
+docker compose -f docker-compose.federation.yml up -d --build
+```
+
+This starts Relay A on port 4444 and Relay B on port 4445, connected via a shared Docker network. Relay B waits for Relay A to be healthy before starting.
+
+### Environment Template
+
+Copy `.env.example` to `.env` for local customization:
+
+```bash
+cp .env.example .env
+# Edit .env with your values
+docker compose --env-file .env up -d --build
 ```
 
 ## Configuration
@@ -360,3 +363,16 @@ The relay identity (`~/.prism/relay/identity.json`) contains the Ed25519 private
 - **Collection data is in-memory** -- plan memory based on active collection count and average collection size
 - **Separate workloads** -- consider dedicated relays for public portals vs. private sync vs. federation hubs
 - **Stateless HTTP** -- the relay can sit behind a load balancer for HTTP API requests, but WebSocket connections are sticky to a single instance
+
+## Deployment Files Reference
+
+| File | Purpose |
+|------|---------|
+| `Dockerfile` | Multi-stage Docker build (build + slim production) |
+| `.dockerignore` | Excludes unnecessary files from Docker context |
+| `docker-compose.yml` | Single-relay deployment with health checks and volumes |
+| `docker-compose.federation.yml` | Two-relay federated mesh deployment |
+| `.env.example` | Environment variable template with all supported vars |
+| `docs/deployment.md` | This guide |
+| `docs/development.md` | Architecture, modules, testing, contributing |
+| `e2e/deployment.spec.ts` | Deployment test suite (Dockerfile, config, modes, CORS, CSRF, backup) |
