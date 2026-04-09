@@ -56,37 +56,57 @@
                 // runtime. None of these stubs are ever called — they
                 // exist solely to satisfy WebAssembly.instantiate.
                 instantiateWasm(imports, receiveInstance) {
-                    // Provide no-op stubs for the __wbindgen_placeholder__
-                    // module. Emscripten's prepared `imports` object only
-                    // contains its own modules (env, wasi_snapshot_preview1,
-                    // etc.). The wasm binary *also* declares imports from
-                    // __wbindgen_placeholder__ (baked in by wasm-bindgen at
-                    // compile time), which only wasm-pack's generated JS
-                    // normally provides. Since our code never calls these
-                    // imports, a Proxy returning no-op functions is safe.
-                    imports["__wbindgen_placeholder__"] = new Proxy(
-                        {},
-                        { get: () => () => 0 },
-                    );
-                    imports["__wbindgen_externref_xform__"] = new Proxy(
-                        {},
-                        { get: () => () => 0 },
-                    );
+                    // loro-internal 1.10 pulls wasm-bindgen into the
+                    // binary unconditionally for wasm32 (a Cargo.toml
+                    // typo: `not(features = "wasm")` — note the 's').
+                    // The compiled wasm therefore imports from the
+                    // `__wbindgen_placeholder__` module (dev builds) or
+                    // a minified single-letter module (prod builds with
+                    // -O3). These imports are dead code — nothing in
+                    // our stack calls them — but WebAssembly.instantiate
+                    // requires every declared import to be satisfied.
+                    //
+                    // Strategy: fetch the wasm bytes, compile the module
+                    // to discover its import list, then fill any gap
+                    // between what emscripten provides and what the wasm
+                    // declares with no-op stubs before instantiating.
+                    (async () => {
+                        const resp = await fetch("prism_daemon_wasm.wasm");
+                        const bytes = await resp.arrayBuffer();
+                        const compiled = await WebAssembly.compile(bytes);
+                        const declared = WebAssembly.Module.imports(compiled);
 
-                    WebAssembly.instantiateStreaming(
-                        fetch("prism_daemon_wasm.wasm"),
-                        imports,
-                    ).then(
-                        (result) =>
-                            receiveInstance(
-                                result.instance,
-                                result.module,
-                            ),
-                        (err) => {
-                            write("[harness] wasm instantiation failed: " + err);
-                            throw err;
-                        },
-                    );
+                        // Collect every {module, name} the wasm wants.
+                        const needed = new Map();
+                        for (const imp of declared) {
+                            if (!needed.has(imp.module)) {
+                                needed.set(imp.module, new Set());
+                            }
+                            needed.get(imp.module).add(imp.name);
+                        }
+
+                        // Ensure every module exists in `imports`, then
+                        // fill missing names with no-op stubs.
+                        for (const [mod, names] of needed) {
+                            if (!imports[mod]) {
+                                imports[mod] = {};
+                            }
+                            for (const name of names) {
+                                if (!(name in imports[mod])) {
+                                    imports[mod][name] = () => 0;
+                                }
+                            }
+                        }
+
+                        const instance = await WebAssembly.instantiate(
+                            compiled,
+                            imports,
+                        );
+                        receiveInstance(instance, compiled);
+                    })().catch((err) => {
+                        write("[harness] wasm instantiation failed: " + err);
+                        throw err;
+                    });
                     return {};
                 },
             });
