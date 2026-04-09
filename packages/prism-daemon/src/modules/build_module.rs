@@ -1,32 +1,32 @@
-//! Build step execution — the daemon side of Studio's self-replicating
-//! build pipeline.
+//! Build module — the daemon side of Studio's self-replicating build
+//! pipeline. Exposes `build.run_step`.
 //!
-//! Studio's BuilderManager composes a BuildPlan (a deterministic, JSON-
-//! serializable list of BuildSteps) from an AppProfile + BuildTarget and
-//! dispatches each step to the daemon via Tauri IPC. The daemon executes
-//! the step in the real filesystem / process environment and returns a
-//! structured result.
+//! Studio's [`BuilderManager`](../../../../prism-studio/src/kernel/builder-manager.ts)
+//! composes a `BuildPlan` from an `AppProfile` + `BuildTarget` and dispatches
+//! each step through this module. The daemon executes the step against the
+//! real filesystem / process environment and returns captured stdout/stderr.
 //!
 //! Three step kinds are supported:
-//!   - `emit-file`: write a file (creating parent dirs as needed).
-//!   - `run-command`: spawn a child process, capture stdout/stderr,
-//!     fail on non-zero exit code.
-//!   - `invoke-ipc`: placeholder for cross-command chaining; currently
-//!     returns an error since no plan emits these yet.
+//!   - `emit-file` — write a file, creating parent dirs as needed.
+//!   - `run-command` — spawn a child process, capture output, fail on
+//!     non-zero exit.
+//!   - `invoke-ipc` — placeholder for cross-command chaining; returns an
+//!     error today since no plan emits these yet.
 //!
-//! Path resolution: every relative path in a step is resolved against the
-//! `working_dir` passed by Studio (which comes from `BuildPlan.workingDir`).
-//! Absolute paths are used as-is.
+//! Path resolution: relative paths in a step are resolved against
+//! `working_dir`. Absolute paths are used as-is.
 
+use crate::builder::DaemonBuilder;
+use crate::module::DaemonModule;
+use crate::registry::CommandError;
 use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 // ── Wire types (mirror @prism/core/builder) ─────────────────────────────
 
-/// A single step in a BuildPlan. Deserialized from the JSON shape that
-/// @prism/core/builder emits. The `kind` tag discriminates variants.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum BuildStep {
@@ -44,13 +44,11 @@ pub enum BuildStep {
     },
     InvokeIpc {
         name: String,
-        payload: serde_json::Value,
+        payload: JsonValue,
         description: String,
     },
 }
 
-/// Structured result returned to the Tauri frontend. Matches the shape
-/// the TS-side `createTauriExecutor` expects: `{ stdout?, stderr? }`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct BuildStepOutput {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -59,14 +57,42 @@ pub struct BuildStepOutput {
     pub stderr: Option<String>,
 }
 
-// ── Entry point ─────────────────────────────────────────────────────────
+pub struct BuildModule;
 
-/// Execute a single BuildStep in the context of `working_dir`.
-///
-/// `working_dir` is the plan-level working directory (relative to the
-/// monorepo root, or absolute). It's used to resolve relative paths for
-/// `emit-file` and as the default cwd for `run-command`. `env` is an
-/// extra set of environment variables applied to child processes.
+impl DaemonModule for BuildModule {
+    fn id(&self) -> &str {
+        "prism.build"
+    }
+
+    fn install(&self, builder: &mut DaemonBuilder) -> Result<(), CommandError> {
+        builder.registry().register("build.run_step", |payload| {
+            let args: RunStepArgs = serde_json::from_value(payload)
+                .map_err(|e| CommandError::handler("build.run_step", e.to_string()))?;
+            let cwd = args
+                .working_dir
+                .map(PathBuf::from)
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+            let env = args.env.unwrap_or_default();
+            let out = run_build_step(&args.step, &cwd, &env)
+                .map_err(|e| CommandError::handler("build.run_step", e))?;
+            serde_json::to_value(out)
+                .map_err(|e| CommandError::handler("build.run_step", e.to_string()))
+        })?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RunStepArgs {
+    step: BuildStep,
+    #[serde(rename = "workingDir", default)]
+    working_dir: Option<String>,
+    #[serde(default)]
+    env: Option<HashMap<String, String>>,
+}
+
+/// Execute a single [`BuildStep`]. Kept as a free function so the Tauri
+/// shell can call it directly without re-serializing through JSON.
 pub fn run_build_step(
     step: &BuildStep,
     working_dir: &Path,
@@ -75,10 +101,7 @@ pub fn run_build_step(
     match step {
         BuildStep::EmitFile { path, contents, .. } => emit_file(working_dir, path, contents),
         BuildStep::RunCommand {
-            command,
-            args,
-            cwd,
-            ..
+            command, args, cwd, ..
         } => run_command(working_dir, command, args, cwd.as_deref(), env),
         BuildStep::InvokeIpc { name, .. } => Err(format!(
             "invoke-ipc step '{}' is not yet supported by the daemon",
@@ -86,8 +109,6 @@ pub fn run_build_step(
         )),
     }
 }
-
-// ── emit-file ───────────────────────────────────────────────────────────
 
 fn emit_file(working_dir: &Path, path: &str, contents: &str) -> Result<BuildStepOutput, String> {
     let resolved = resolve_path(working_dir, path);
@@ -98,12 +119,14 @@ fn emit_file(working_dir: &Path, path: &str, contents: &str) -> Result<BuildStep
     std::fs::write(&resolved, contents)
         .map_err(|e| format!("failed to write {}: {}", resolved.display(), e))?;
     Ok(BuildStepOutput {
-        stdout: Some(format!("wrote {} ({} bytes)", resolved.display(), contents.len())),
+        stdout: Some(format!(
+            "wrote {} ({} bytes)",
+            resolved.display(),
+            contents.len()
+        )),
         stderr: None,
     })
 }
-
-// ── run-command ─────────────────────────────────────────────────────────
 
 fn run_command(
     working_dir: &Path,
@@ -152,12 +175,18 @@ fn run_command(
     }
 
     Ok(BuildStepOutput {
-        stdout: if stdout.is_empty() { None } else { Some(stdout) },
-        stderr: if stderr.is_empty() { None } else { Some(stderr) },
+        stdout: if stdout.is_empty() {
+            None
+        } else {
+            Some(stdout)
+        },
+        stderr: if stderr.is_empty() {
+            None
+        } else {
+            Some(stderr)
+        },
     })
 }
-
-// ── path resolution ─────────────────────────────────────────────────────
 
 fn resolve_path(working_dir: &Path, path: &str) -> PathBuf {
     let p = Path::new(path);
@@ -168,15 +197,23 @@ fn resolve_path(working_dir: &Path, path: &str) -> PathBuf {
     }
 }
 
-// ── Tests ───────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::builder::DaemonBuilder;
+    use serde_json::json;
     use tempfile::tempdir;
 
     fn empty_env() -> HashMap<String, String> {
         HashMap::new()
+    }
+
+    #[test]
+    fn build_module_registers_run_step() {
+        let kernel = DaemonBuilder::new().with_build().build().unwrap();
+        assert!(kernel
+            .capabilities()
+            .contains(&"build.run_step".to_string()));
     }
 
     #[test]
@@ -257,7 +294,6 @@ mod tests {
         std::fs::create_dir(&sub).unwrap();
         std::fs::write(sub.join("marker.txt"), "here").unwrap();
 
-        // `ls` in the sub dir should list marker.txt
         let step = BuildStep::RunCommand {
             command: "ls".to_string(),
             args: vec![],
@@ -305,7 +341,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let step = BuildStep::InvokeIpc {
             name: "some.ipc".to_string(),
-            payload: serde_json::json!({}),
+            payload: json!({}),
             description: "".to_string(),
         };
 
@@ -316,13 +352,13 @@ mod tests {
 
     #[test]
     fn build_step_deserializes_kebab_kind() {
-        let json = r#"{
+        let json_str = r#"{
             "kind": "emit-file",
             "path": "a.txt",
             "contents": "x",
             "description": "d"
         }"#;
-        let step: BuildStep = serde_json::from_str(json).unwrap();
+        let step: BuildStep = serde_json::from_str(json_str).unwrap();
         match step {
             BuildStep::EmitFile { path, .. } => assert_eq!(path, "a.txt"),
             _ => panic!("wrong variant"),
@@ -330,21 +366,30 @@ mod tests {
     }
 
     #[test]
-    fn build_step_deserializes_run_command_without_cwd() {
-        let json = r#"{
-            "kind": "run-command",
-            "command": "pnpm",
-            "args": ["build"],
-            "description": "d"
-        }"#;
-        let step: BuildStep = serde_json::from_str(json).unwrap();
-        match step {
-            BuildStep::RunCommand { command, args, cwd, .. } => {
-                assert_eq!(command, "pnpm");
-                assert_eq!(args, vec!["build"]);
-                assert_eq!(cwd, None);
-            }
-            _ => panic!("wrong variant"),
-        }
+    fn registry_invoke_emits_file_through_kernel() {
+        let kernel = DaemonBuilder::new().with_build().build().unwrap();
+        let dir = tempdir().unwrap();
+
+        let out = kernel
+            .invoke(
+                "build.run_step",
+                json!({
+                    "step": {
+                        "kind": "emit-file",
+                        "path": "hello.txt",
+                        "contents": "hi",
+                        "description": "d"
+                    },
+                    "workingDir": dir.path().to_string_lossy(),
+                    "env": {},
+                }),
+            )
+            .unwrap();
+
+        assert!(out["stdout"].as_str().unwrap().contains("wrote"));
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("hello.txt")).unwrap(),
+            "hi"
+        );
     }
 }

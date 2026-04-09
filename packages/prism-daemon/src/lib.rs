@@ -1,82 +1,78 @@
-//! Prism Daemon — the local Rust physics engine.
+//! Prism Daemon — the local physics engine.
 //!
-//! Handles CRDT merging (Loro), Lua scripting (mlua), VFS routing,
-//! and hardware protocol bridges. Communicates with the frontend
-//! exclusively via Tauri IPC.
+//! The daemon is a **transport-agnostic Rust kernel** for Prism's local
+//! capabilities (CRDT merging, Lua scripting, filesystem watching, build-
+//! plan execution, hardware bridges, …). Every capability lives behind a
+//! [`DaemonModule`] that self-registers JSON-in/JSON-out handlers on a
+//! shared [`CommandRegistry`]. Modules are plugged in via the fluent
+//! [`DaemonBuilder`], producing a [`DaemonKernel`] that hosts talk to
+//! through a single entry point: [`DaemonKernel::invoke`].
+//!
+//! This is the same self-replicating paradigm Studio uses (bundle +
+//! initializer + kernel registry), ported to Rust so the exact same
+//! assembly works whether the kernel is embedded behind Tauri on desktop,
+//! compiled into a Capacitor native shell on iOS/Android, run as a
+//! headless daemon on a server, or wrapped by a UniFFI bridge for any
+//! other host.
+//!
+//! ### Quick start
+//!
+//! ```ignore
+//! use prism_daemon::DaemonBuilder;
+//! use serde_json::json;
+//!
+//! let kernel = DaemonBuilder::new()
+//!     .with_defaults() // every feature the current build enabled
+//!     .build()
+//!     .unwrap();
+//!
+//! kernel.invoke(
+//!     "crdt.write",
+//!     json!({ "docId": "notes", "key": "title", "value": "Hello" }),
+//! ).unwrap();
+//! ```
+//!
+//! ### Feature flags
+//!
+//! | Feature   | Pulls in                  | Commands registered |
+//! |-----------|---------------------------|---------------------|
+//! | `crdt`    | `loro`                    | `crdt.{write,read,export,import}` |
+//! | `lua`     | `mlua` (lua54 + vendored) | `lua.exec` |
+//! | `build`   | —                         | `build.run_step` |
+//! | `watcher` | `notify`                  | `watcher.{watch,poll,stop}` |
+//! | `cli`     | `tokio`                   | (enables the `prism-daemond` binary) |
+//!
+//! `default = ["full"]`. Mobile shells override with `mobile` (crdt + lua
+//! only); embedded targets can pick `embedded` (crdt only).
 
 #![deny(clippy::all)]
 
-pub mod commands;
+pub mod builder;
+pub mod initializer;
+pub mod kernel;
+pub mod module;
+pub mod modules;
+pub mod registry;
 
-use loro::LoroDoc;
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+#[cfg(feature = "crdt")]
+pub mod doc_manager;
 
-/// Manages all active CRDT documents in the daemon.
-pub struct DocManager {
-    docs: Arc<Mutex<HashMap<String, LoroDoc>>>,
-}
+// ── Re-exports — the public surface hosts import from. ─────────────────
 
-impl DocManager {
-    pub fn new() -> Self {
-        Self {
-            docs: Arc::new(Mutex::new(HashMap::new())),
-        }
-    }
+pub use builder::DaemonBuilder;
+pub use initializer::{DaemonInitializer, InitializerHandle};
+pub use kernel::DaemonKernel;
+pub use module::DaemonModule;
+pub use registry::{CommandError, CommandHandler, CommandRegistry};
 
-    /// Ensure a LoroDoc exists for the given ID, creating one if needed.
-    pub fn get_or_create(&self, doc_id: &str) {
-        let mut docs = self.docs.lock().unwrap();
-        if !docs.contains_key(doc_id) {
-            docs.insert(doc_id.to_string(), LoroDoc::new());
-        }
-    }
+#[cfg(feature = "crdt")]
+pub use doc_manager::DocManager;
 
-    /// Write a key-value pair to a document's root map.
-    pub fn write(&self, doc_id: &str, key: &str, value: &str) -> Result<Vec<u8>, DaemonError> {
-        let docs = self.docs.lock().map_err(|_| DaemonError::LockPoisoned)?;
-        let doc = docs.get(doc_id).ok_or(DaemonError::DocNotFound(doc_id.to_string()))?;
-        let root = doc.get_map("root");
-        root.insert(key, value).map_err(|e| DaemonError::Loro(e.to_string()))?;
-        doc.commit();
-        let update = doc.export(loro::ExportMode::Snapshot)
-            .map_err(|e| DaemonError::Loro(e.to_string()))?;
-        Ok(update)
-    }
-
-    /// Read a value from a document's root map.
-    pub fn read(&self, doc_id: &str, key: &str) -> Result<Option<String>, DaemonError> {
-        let docs = self.docs.lock().map_err(|_| DaemonError::LockPoisoned)?;
-        let doc = docs.get(doc_id).ok_or(DaemonError::DocNotFound(doc_id.to_string()))?;
-        let root = doc.get_map("root");
-        let value = root.get(key).map(|v| {
-            serde_json::to_string(&v.as_value().unwrap_or(&loro::LoroValue::Null)).unwrap_or_default()
-        });
-        Ok(value)
-    }
-
-    /// Export a document's full state.
-    pub fn export_snapshot(&self, doc_id: &str) -> Result<Vec<u8>, DaemonError> {
-        let docs = self.docs.lock().map_err(|_| DaemonError::LockPoisoned)?;
-        let doc = docs.get(doc_id).ok_or(DaemonError::DocNotFound(doc_id.to_string()))?;
-        doc.export(loro::ExportMode::Snapshot)
-            .map_err(|e| DaemonError::Loro(e.to_string()))
-    }
-
-    /// Import a snapshot into a document.
-    pub fn import_snapshot(&self, doc_id: &str, data: &[u8]) -> Result<(), DaemonError> {
-        let mut docs = self.docs.lock().map_err(|_| DaemonError::LockPoisoned)?;
-        let doc = docs.entry(doc_id.to_string()).or_insert_with(LoroDoc::new);
-        doc.import(data).map_err(|e| DaemonError::Loro(e.to_string()))?;
-        Ok(())
-    }
-}
-
-impl Default for DocManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+// ── Daemon-level error surface ─────────────────────────────────────────
+//
+// Kept at the crate root because the built-in CRDT service (and any host
+// that accesses `DocManager` directly, like the Tauri shell) speaks this
+// error shape.
 
 /// Daemon-level errors.
 #[derive(Debug, thiserror::Error)]

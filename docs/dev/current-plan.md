@@ -1,5 +1,94 @@
 # Current Plan
 
+## Prism Daemon: Cross-Platform Kernel + DI Builder (Complete — 2026-04-08)
+
+Goal: port Studio's self-replicating kernel paradigm to `prism-daemon` so the
+same Rust engine can run on any device — desktop (Tauri), mobile
+(Capacitor/FFI), headless (CLI) — with modules plugged in via a fluent
+builder instead of being hardcoded.
+
+### What landed
+
+1. **`CommandRegistry` (`src/registry.rs`)** — the transport-agnostic IPC
+   layer. Maps name → `Arc<dyn Fn(JsonValue) -> Result<JsonValue, CommandError>>`.
+   Every transport adapter (Tauri `#[command]`, UniFFI, stdio CLI, future
+   HTTP) funnels through `kernel.invoke(name, payload)`. Mirrors Studio's
+   `LensRegistry` role.
+2. **`DaemonModule` trait (`src/module.rs`)** — Rust analogue of
+   `LensBundle` / `PluginBundle`. `install(&self, builder: &mut DaemonBuilder)`
+   self-registers the module's commands + stashes any shared service on the
+   builder.
+3. **`DaemonInitializer` trait + `InitializerHandle` (`src/initializer.rs`)**
+    — post-boot side-effect hooks, equivalent of `StudioInitializer`. Run
+   in install order after the kernel exists, torn down in reverse on
+   `dispose()`.
+4. **`DaemonBuilder` (`src/builder.rs`)** — fluent builder:
+   `DaemonBuilder::new().with_crdt().with_lua().with_build().with_watcher()
+   .with_module(custom).with_initializer(init).build()`. `with_defaults()`
+   installs every module the current feature flags allow. Tauri/CLI/mobile
+   all use the identical shape.
+5. **`DaemonKernel` (`src/kernel.rs`)** — cheaply-cloneable runtime
+   (everything behind `Arc`). Exposes `invoke`, `capabilities`,
+   `installed_modules`, `doc_manager()`, `watcher_manager()`, `dispose()`.
+   Hot paths can skip JSON round-trips by grabbing the `Arc<DocManager>`
+   directly — same idea as Studio's direct `kernel.store` access.
+6. **Feature-gated built-in modules (`src/modules/*`)**:
+   - `crdt_module.rs` → `prism.crdt` → `crdt.{write,read,export,import}`
+   - `lua_module.rs` → `prism.lua` → `lua.exec`
+   - `build_module.rs` → `prism.build` → `build.run_step` (emit-file /
+     run-command / invoke-ipc)
+   - `watcher_module.rs` → `prism.watcher` → `watcher.{watch,poll,stop}`
+     backed by a new `WatcherManager` that multiplexes `notify`
+     subscriptions by ID.
+7. **Feature matrix** (`Cargo.toml`):
+   - `full` (default) — every capability, enables the CLI bin
+   - `mobile` — `crdt + lua` only (iOS bans process spawning, no notify)
+   - `embedded` — `crdt` only (minimum kernel)
+   Individual flags: `crdt`, `lua`, `build`, `watcher`, `cli`. Mobile /
+   embedded builds don't contain the code they can't run.
+8. **`DocManager` extracted to `src/doc_manager.rs`** behind the `crdt`
+   feature. Injectable via `builder.set_doc_manager(Arc<DocManager>)` so
+   hosts can preload docs from disk before booting the kernel.
+9. **Standalone `prism-daemond` bin (`src/bin/prism_daemond.rs`)** —
+   minimal stdio-JSON loop proving the kernel runs detached from Tauri.
+   Emits a capabilities banner on startup; reads one JSON request per
+   line; exposes `daemon.capabilities` + `daemon.modules` alongside
+   module-contributed commands.
+10. **Studio Tauri shell migrated** (`packages/prism-studio/src-tauri/
+    src/{main,commands}.rs`). `main.rs` constructs the kernel via the
+    builder and `.manage()`s `Arc<DaemonKernel>`. Tauri commands forward
+    to `kernel.invoke(...)` for generic paths and to
+    `kernel.doc_manager()` for the CRDT hot path. New
+    `daemon_capabilities` command exposes kernel introspection to the
+    frontend. Old `prism_daemon::commands::*` legacy shim was removed
+    entirely — call sites now import from `prism_daemon::modules::*`.
+11. **Tests**: 33 unit tests across `registry` + `modules` + 7 integration
+    tests in `tests/kernel_integration.rs` covering builder composition,
+    custom modules, initializer ordering, kernel clone/share semantics,
+    and empty-kernel behavior. `cargo clippy --all-targets -- -D warnings`
+    passes. `cargo build --no-default-features --features mobile` and
+    `--features embedded` both compile.
+
+### Studio ↔ Daemon mapping
+
+| Studio (TS)              | Daemon (Rust)            |
+|--------------------------|--------------------------|
+| `createStudioKernel`     | `DaemonBuilder::build`   |
+| `LensBundle`             | `DaemonModule`           |
+| `StudioInitializer`      | `DaemonInitializer`      |
+| `LensRegistry`           | `CommandRegistry`        |
+| `installLensBundles`     | `DaemonBuilder::with_module` |
+| `installInitializers`    | `DaemonBuilder::with_initializer` |
+| `kernel.dispose()`       | `kernel.dispose()`       |
+| `kernel.shellStore`      | `kernel.doc_manager()` + `kernel.watcher_manager()` |
+
+The self-replicating paradigm now spans the entire stack: Studio composes
+apps + kernels with bundles + initializers; the Daemon composes
+capabilities with modules + initializers; both emit builds via the same
+`BuildStep` wire format flowing through the build module.
+
+---
+
 ## Kernel Composition & Self-Registering Bundles (Complete — 2026-04-08)
 
 Goal: make layers flow strictly bottom-up. Apps don't know about lenses,

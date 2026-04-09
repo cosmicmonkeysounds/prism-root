@@ -8,7 +8,9 @@
 
 ## Core Philosophy & Identity
 
-Prism is a **Distributed Visual Operating System** and the architectural blueprint for what we call **Web 4.0**. In Prism, Applications are **Lenses** and Automations/Intelligence are **Actors** — all operating on a unified, sovereign **Object-Graph** residing on local hardware. The traditional cloud is reduced to a blind, encrypted routing fabric.
+Prism is a **Distributed Visual Operating System** and the architectural blueprint for what we call **Web 4.0**. Where Web 1.0 was the wild-west, Web 2.0 was the corporate take over, Web 3.0 was the finance-bro take over, Web 4.0 is the post-capitalist anarchist-socialist take over. Where Web 3.0 operates on the principle of "no trust", Web 4.0 is diametrically opposed, assuming "maximum trust" (and which does not also mean "security free").
+
+In Prism, Applications are **Lenses** and Automations/Intelligence are **Actors** — all operating on a unified, sovereign **Object-Graph** residing on local hardware. The traditional cloud is reduced to a blind, encrypted routing fabric.
 
 **The defining insight**: Every Prism app is an IDE. There is no wall between "using" and "building." The difference between a consumer app and a developer tool is a single toggle — the **"Glass Flip."**
 
@@ -57,9 +59,8 @@ Renamed from "Prism Server" to avoid confusion with Web 2.0 server concepts. It'
 - **Stack**: Rust, Loro CRDT, VFS (`object_store` crate), local SQLite indexing
 - Handles CRDT merging, VFS routing, Binary Forking, OS file watching (`notify` crate)
 - Executes local Actors (Whisper, Python workers, local LLMs) as sidecars
-- Talks to hardware protocols (Art-Net, VISCA, OSC, MIDI) for show control
+- Talks to hardware protocols (Art-Net, VISCA, DMX, OSC, MIDI) for show control
 - Bridges the React/Vite frontend via **Tauri IPC** (`invoke('write_crdt', {...})`)
-- **For users**: marketed as "Prism Engine" or "Prism Core" — "Daemon" is the engineering term
 
 ### 3. Prism Relay (The Network & Bridge)
 
@@ -69,7 +70,7 @@ Open-source routing infrastructure and Web 2.5 translator. **Any server running 
 - **Zero-knowledge store-and-forward** routing with Blind Mailbox queues for offline peers
 - Hono JSX SSR for Sovereign Portals (served from **any** Relay, not just Nexus)
 - **AutoREST gateway** with Webhook support (outgoing HTTP when CRDT changes — for Zapier/Slack integrations)
-- Web 2.0 OAuth/Blind Escrow recovery for non-technical users
+- Web 2.0 OAuth *and/or* Web 3.0 Blind Escrow recovery for non-technical users
 - **Sovereign Indexer**: XML sitemaps + AutoREST endpoints for SEO — a primitive of the open Relay protocol, not a Nexus-only feature
 - **Blind Pings**: Empty "alarm clock" pings via APNs/FCM to wake mobile Capacitor apps for background CRDT syncing without exposing payload data
 
@@ -79,22 +80,21 @@ Open-source routing infrastructure and Web 2.5 translator. **Any server running 
 
 The "Universal Host" application users actually download. Contains the full dual-engine meta-builder.
 
-- **Stack**: Vite SPA (**NOT** Next.js) bundled in Tauri 2.0 (Desktop) and Capacitor (Mobile)
+- **Stack**: Vite SPA bundled in Tauri 2.0 (Desktop) and Capacitor (Mobile)
 - Every Prism app is a Studio instance at its core — the IDE is always present beneath the surface (the "Glass Flip")
 - Can deploy and manage self-hosted Relays from within Studio
 - Power users (devs, enterprises, tinkerers) live here
 
-**Why NOT Next.js for any Prism component**: Next.js's SSR philosophy (Server is King) conflicts with Prism's philosophy (Local Hardware is King). Using Next.js in Tauri/Capacitor means dragging a Node.js server to render files already on the hard drive. The App Router's RSC push means `"use client"` everywhere. WASM/CRDT state doesn't exist at server render time → hydration mismatch errors. **Vite SPA for all local apps; Hono JSX on Relays for Sovereign Portals.** Hono is lightweight, edge-compatible, and its built-in JSX renderer produces static HTML from CRDT state without React hydration overhead.
-
 ### 5. Prism Nexus (The Cloud & SaaS)
 
-Your monetized commercial wrapper — Studio + Relay + App Repo as a turnkey subscription.
+Monetized commercial wrapper — Studio + Relay(s) + App Repo as a turnkey subscription.
 
 **Three products in one:**
 
 1. **Managed Relays** — 99.999% uptime, global edge routing, SFU WebRTC fallback, Encrypted Escrow for key recovery
 2. **Nexus Cloud Studio** — A full browser-based Prism Studio for Web 2.0 users; builds sites/apps entirely in the cloud like a "new-age Wix/SquareSpace" without ever touching local-first concepts
 3. **Central App Repo** — Marketplace for Manifests, Prefabs, full apps, UI components
+
 
 **The "Eject" Button**: Sites/apps built on Nexus SaaS are architecturally identical to local Prism apps. A user can click "Eject to Local," receive a `.prism` archive, import it into the Universal Host, and point it to a free self-hosted Relay. No other builder on earth can offer this.
 
@@ -150,7 +150,7 @@ Two distinct builders sharing the same Loro CRDT data source:
 
 **Purpose**: Visual programming, architecture diagrams, storyboarding, spatial document viewing
 **Paradigm**: Infinite spatial canvas, absolute X/Y, orthogonal wire routing, bounding-box collision
-**Analogy**: Unreal Engine Blueprints, Wwise, Miro, Obsidian Graph View, Blender Node Editor
+**Analogy**: MaxMSP, Unreal Engine Blueprints, Miro, Obsidian Graph View, Blender Node Editor
 
 **Core Libraries** (all MIT-licensed):
 - `@xyflow/react` (React Flow) — The foundational node-wire graph engine (MIT, used by Stripe, Typeform, Stately). Handles structured node placement, edge routing, viewport math, multi-select, and custom React node/edge rendering. Supports custom edge types for Hard Ref and Weak Ref wire rendering

@@ -2,31 +2,65 @@
 name = "prism-daemon"
 version = "0.1.0"
 edition = "2021"
-description = "Prism Daemon — local Rust physics engine for CRDT, Lua, and hardware"
+description = "Prism Daemon — the local physics engine. Cross-platform kernel with pluggable modules (CRDT, Lua, build, watcher) assembled via a fluent builder, transport-agnostic so it can be embedded behind Tauri, a mobile FFI, a CLI, or an HTTP adapter."
 
 [lib]
 name = "prism_daemon"
 path = "src/lib.rs"
 
+[[bin]]
+name = "prism-daemond"
+path = "src/bin/prism_daemond.rs"
+required-features = ["cli"]
+
+# ── Features ──────────────────────────────────────────────────────────────
+#
+# The daemon is a composable kernel. Each capability is its own feature so
+# mobile/embedded builds can opt out of what they can't (or don't want to)
+# carry. `full` is the desktop default. Mobile shells typically pick
+# `mobile` which drops process spawning (iOS bans it) but keeps CRDT + Lua.
+
+[features]
+default = ["full"]
+
+# Full desktop/server build — all modules + standalone CLI.
+full = ["crdt", "lua", "build", "watcher", "cli"]
+
+# Mobile build — no process spawning, no notify (iOS/Android prefer
+# their own filesystem APIs).
+mobile = ["crdt", "lua"]
+
+# Embedded / minimum build — just CRDT.
+embedded = ["crdt"]
+
+# Individual capabilities.
+crdt = ["dep:loro"]
+lua = ["dep:mlua"]
+build = []
+watcher = ["dep:notify"]
+cli = ["dep:tokio"]
+
 [dependencies]
-# CRDT source of truth
-loro = "1.4"
+# CRDT source of truth — pure Rust, works on every target.
+loro = { version = "1.4", optional = true }
 
-# Lua 5.4 scripting — vendored for zero system deps
-mlua = { version = "0.10", features = ["lua54", "vendored", "serialize"] }
+# Lua 5.4 scripting — vendored for zero system deps (builds on iOS/Android).
+mlua = { version = "0.10", features = ["lua54", "vendored", "serialize"], optional = true }
 
-# Serialization
+# Serialization — always on; every module speaks JSON at the registry edge.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-# Error handling
+# Error handling.
 thiserror = "2"
 
-# Async runtime
-tokio = { version = "1", features = ["rt", "macros", "sync"] }
+# Async runtime — only needed by the standalone CLI bin. Library code is
+# intentionally sync so it can be embedded from any host runtime.
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "io-std", "io-util"], optional = true }
 
-# File system watching
-notify = "7"
+# File system watching — not available on every target (e.g. iOS).
+notify = { version = "7", optional = true }
 
 [dev-dependencies]
 tempfile = "3"
+serde_json = "1"
