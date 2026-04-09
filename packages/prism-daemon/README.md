@@ -1,6 +1,6 @@
 # prism-daemon
 
-Rust library + standalone binary — the local physics engine for sovereign hardware. A transport-agnostic kernel of composable modules (CRDT, Lua, build, watcher) assembled via a fluent builder, so the same engine can run behind Tauri on desktop, behind a UniFFI bridge on iOS/Android, or as a headless stdio daemon on a server.
+Rust library + standalone binary — the local physics engine for sovereign hardware. A transport-agnostic kernel of composable modules (CRDT, Lua, build, watcher) assembled via a fluent builder, so the same engine can run behind Tauri on desktop, behind a UniFFI bridge on iOS/Android, as a headless stdio daemon on a server, **or directly in the browser via WebAssembly**.
 
 ## Paradigm
 
@@ -84,13 +84,67 @@ Initializers are post-boot side-effect hooks that can call `kernel.invoke(...)` 
 | `full`    | yes     | Shorthand for `crdt + lua + build + watcher + cli` |
 | `mobile`  | no      | `crdt + lua` only — no process spawning, no notify |
 | `embedded`| no      | `crdt` only                                        |
+| `wasm`    | no      | `crdt + lua` + C-ABI adapter (`wasm32-unknown-emscripten`) |
 | `crdt`    | via `full` | Loro-backed CRDT service                        |
 | `lua`     | via `full` | mlua (lua54 + vendored)                         |
 | `build`   | via `full` | `std::process`-based build step executor       |
 | `watcher` | via `full` | `notify`-based filesystem watcher                |
 | `cli`     | via `full` | Enables the standalone `prism-daemond` binary    |
 
-Mobile/embedded builds opt out at the feature level so the shipped binary literally does not contain the code it can't run.
+Mobile/embedded/wasm builds opt out at the feature level so the shipped binary literally does not contain the code it can't run.
+
+## Browser / WebAssembly
+
+The same kernel that Studio embeds over Tauri IPC also runs in Chrome, Firefox, and Safari as a plain WebAssembly module. Both CRDT and Lua travel along — the Lua runtime is still real, C-vendored Lua 5.4 via `mlua`, not a JavaScript interpreter.
+
+Why `wasm32-unknown-emscripten` instead of `wasm32-unknown-unknown` + `wasm-bindgen`? Because Lua's C source needs a libc, and emscripten is the only WASM triple that provides one. Pure-Rust Lua VMs (piccolo, hematita, …) are too experimental to swap in without losing Lua 5.4 parity, and we'd rather keep one Lua everywhere.
+
+The adapter in [`src/wasm.rs`](src/wasm.rs) exposes the kernel through a small C ABI that emscripten wraps automatically via `ccall`/`cwrap`:
+
+```c
+DaemonKernel*   prism_daemon_create(void);
+void            prism_daemon_destroy(DaemonKernel*);
+char*           prism_daemon_invoke(DaemonKernel*, const char* name, const char* payload_json);
+void            prism_daemon_free_string(char*);
+```
+
+### Build
+
+```bash
+# one-time setup
+source /path/to/emsdk/emsdk_env.sh      # activate emscripten
+rustup target add wasm32-unknown-emscripten
+
+cargo build --release \
+  --target wasm32-unknown-emscripten \
+  --no-default-features \
+  --features wasm
+```
+
+Emscripten produces `prism_daemon.wasm` + a tiny `prism_daemon.js` loader.
+
+### Use from JavaScript
+
+```js
+import createModule from './prism_daemon.js';
+
+const Module = await createModule();
+const invoke = Module.cwrap(
+  'prism_daemon_invoke', 'number',
+  ['number', 'string', 'string'],
+);
+const freeString = Module.cwrap('prism_daemon_free_string', null, ['number']);
+
+const kernel = Module.ccall('prism_daemon_create', 'number', [], []);
+
+// Round-trip through Lua:
+const ptr = invoke(kernel, 'lua.exec', JSON.stringify({ script: 'return 21 * 2' }));
+const response = JSON.parse(Module.UTF8ToString(ptr));
+freeString(ptr);
+console.log(response); // { ok: true, result: 42 }
+```
+
+The response envelope is always `{ ok: true, result }` or `{ ok: false, error }`. Two reserved commands — `daemon.capabilities` and `daemon.modules` — are available alongside every registered module command.
 
 ## Standalone Binary — `prism-daemond`
 
@@ -127,6 +181,8 @@ tauri::Builder::default()
 cargo build                                 # default (full)
 cargo build --no-default-features --features mobile
 cargo build --no-default-features --features embedded
+cargo build --release --target wasm32-unknown-emscripten \
+  --no-default-features --features wasm       # browser
 cargo test
 cargo clippy --all-targets -- -D warnings
 cargo fmt

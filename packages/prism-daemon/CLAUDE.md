@@ -2,12 +2,15 @@
 
 Rust library + standalone binary — the local physics engine. Transport-agnostic
 kernel of composable modules assembled via a fluent builder. Runs anywhere Rust
-runs (desktop via Tauri, mobile via Capacitor/FFI, headless via `prism-daemond`).
+runs (desktop via Tauri, mobile via Capacitor/FFI, headless via `prism-daemond`,
+**browser via `wasm32-unknown-emscripten`**).
 
 ## Build
 - `cargo build` / `cargo test` / `cargo clippy --all-targets -- -D warnings`
 - `cargo fmt` before every commit
-- Feature matrix: `full` (default), `mobile`, `embedded`
+- Feature matrix: `full` (default), `mobile`, `embedded`, `wasm`
+- WASM build (requires emscripten SDK + `rustup target add wasm32-unknown-emscripten`):
+  `cargo build --release --target wasm32-unknown-emscripten --no-default-features --features wasm`
 
 ## Architecture
 Mirrors Studio's `createStudioKernel` / `LensBundle` / `StudioInitializer`
@@ -36,6 +39,12 @@ paradigm, ported to Rust:
   - `watcher_module.rs` → `prism.watcher` → `watcher.{watch,poll,stop}`
 - `src/bin/prism_daemond.rs` — standalone stdio JSON daemon binary. Proves
   the kernel runs detached from Tauri. Gated on the `cli` feature.
+- `src/wasm.rs` — C-ABI adapter for the browser. Gated on the `wasm`
+  feature. Exposes `prism_daemon_{create,destroy,invoke,free_string}` so
+  emscripten can wrap them via `ccall`/`cwrap`. Uses a hand-rolled C ABI
+  (not `wasm-bindgen`) because `mlua`'s vendored Lua 5.4 only compiles on
+  `wasm32-unknown-emscripten`, which is incompatible with `wasm-bindgen`'s
+  `wasm32-unknown-unknown` glue. One real Lua everywhere.
 
 ## Feature Flags
 | Feature    | Pulls in               | Why                                       |
@@ -43,8 +52,9 @@ paradigm, ported to Rust:
 | `full`     | everything (default)   | Desktop/server                            |
 | `mobile`   | crdt + lua             | iOS bans process spawning; no notify      |
 | `embedded` | crdt                   | Minimum viable kernel                     |
+| `wasm`     | crdt + lua + C-ABI     | Browser (emscripten); no notify, no spawn |
 
-Mobile/embedded builds don't contain the code they can't run.
+Mobile/embedded/wasm builds don't contain the code they can't run.
 
 ## Transport-Agnostic
 `kernel.invoke(name, payload)` is the single entry point. Transport adapters
@@ -56,6 +66,10 @@ are thin wrappers:
   functions forward to `kernel.invoke()` or reach into `kernel.doc_manager()`
   for hot paths (CRDT byte arrays).
 - **CLI**: `prism-daemond` wraps `kernel.invoke()` in a stdio JSON loop.
+- **Browser (WASM)**: `src/wasm.rs` wraps `kernel.invoke()` in a C ABI.
+  Cross-compile to `wasm32-unknown-emscripten`; emscripten produces
+  `prism_daemon.wasm` + a `prism_daemon.js` loader; JS calls
+  `Module.ccall('prism_daemon_invoke', ...)`.
 - **Mobile / HTTP / gRPC**: follow the same pattern — build the kernel, wrap
   `invoke()` in whatever the platform expects.
 
@@ -68,7 +82,11 @@ are thin wrappers:
    `kernel.invoke()` roundtrip.
 
 ## Tests
-- 33 unit tests across registry + modules.
+- 33 unit tests across registry + modules (default feature set).
+- 6 unit tests in `src/wasm.rs` drive the C ABI from the host (run with
+  `cargo test --no-default-features --features wasm --lib`) so the
+  create/invoke/free/destroy ownership dance is exercised without needing
+  an actual browser.
 - 7 integration tests in `tests/kernel_integration.rs` covering builder
   composition, custom modules, initializer ordering, kernel clone/share,
   dispose lifecycle.

@@ -41,9 +41,11 @@
 //! | `build`   | —                         | `build.run_step` |
 //! | `watcher` | `notify`                  | `watcher.{watch,poll,stop}` |
 //! | `cli`     | `tokio`                   | (enables the `prism-daemond` binary) |
+//! | `wasm`    | `crdt + lua`              | (enables the C-ABI adapter in [`wasm`]) |
 //!
 //! `default = ["full"]`. Mobile shells override with `mobile` (crdt + lua
-//! only); embedded targets can pick `embedded` (crdt only).
+//! only); embedded targets can pick `embedded` (crdt only); browser shells
+//! pick `wasm` and cross-compile to `wasm32-unknown-emscripten`.
 
 #![deny(clippy::all)]
 
@@ -56,6 +58,9 @@ pub mod registry;
 
 #[cfg(feature = "crdt")]
 pub mod doc_manager;
+
+#[cfg(feature = "wasm")]
+pub mod wasm;
 
 // ── Re-exports — the public surface hosts import from. ─────────────────
 

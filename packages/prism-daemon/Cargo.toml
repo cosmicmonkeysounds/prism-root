@@ -7,6 +7,10 @@ description = "Prism Daemon — the local physics engine. Cross-platform kernel 
 [lib]
 name = "prism_daemon"
 path = "src/lib.rs"
+# `cdylib` makes the library linkable as a C shared object, which is what
+# emscripten needs to emit a `.wasm` + `.js` glue pair for the browser.
+# `rlib` keeps the Rust-native linkage path (Tauri, tests, the CLI bin).
+crate-type = ["cdylib", "rlib"]
 
 [[bin]]
 name = "prism-daemond"
@@ -16,9 +20,11 @@ required-features = ["cli"]
 # ── Features ──────────────────────────────────────────────────────────────
 #
 # The daemon is a composable kernel. Each capability is its own feature so
-# mobile/embedded builds can opt out of what they can't (or don't want to)
-# carry. `full` is the desktop default. Mobile shells typically pick
-# `mobile` which drops process spawning (iOS bans it) but keeps CRDT + Lua.
+# mobile/embedded/WASM builds can opt out of what they can't (or don't
+# want to) carry. `full` is the desktop default. Mobile shells typically
+# pick `mobile` (drops process spawning + notify, keeps CRDT + Lua).
+# Browser shells pick `wasm` (emscripten target, CRDT + Lua only, exposed
+# through a C ABI adapter instead of Tauri IPC).
 
 [features]
 default = ["full"]
@@ -32,6 +38,13 @@ mobile = ["crdt", "lua"]
 
 # Embedded / minimum build — just CRDT.
 embedded = ["crdt"]
+
+# WebAssembly build — targets `wasm32-unknown-emscripten` (the only WASM
+# triple mlua's vendored Lua 5.4 supports). Pulls in CRDT + Lua (both are
+# browser-safe) plus the C-ABI adapter in `src/wasm.rs`. No `watcher`
+# (no inotify/kqueue in the browser), no `build` (process spawning is a
+# no-op on WASM), no `cli` (no stdio loop in a browser).
+wasm = ["crdt", "lua"]
 
 # Individual capabilities.
 crdt = ["dep:loro"]
