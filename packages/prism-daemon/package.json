@@ -1,0 +1,23 @@
+{
+  "name": "@prism/daemon",
+  "version": "0.1.0",
+  "private": true,
+  "description": "pnpm wrapper around the Rust prism-daemon crate — owns the wasm build pipeline + browser E2E suite. The Rust source of truth lives in src/ and Cargo.toml; this package.json only exists so pnpm/turbo can drive `cargo` and Playwright on the same build the Studio app consumes.",
+  "type": "module",
+  "scripts": {
+    "setup:wasm": "bash scripts/setup-wasm.sh",
+    "build:wasm:dev": "bash scripts/build-wasm.sh dev",
+    "build:wasm:prod": "bash scripts/build-wasm.sh prod",
+    "build:wasm": "pnpm run build:wasm:dev && pnpm run build:wasm:prod",
+    "test:unit": "cargo test",
+    "test:unit:wasm-feature": "cargo test --no-default-features --features wasm --lib",
+    "test:e2e:dev": "DAEMON_WASM_PROFILE=dev playwright test --config=e2e/playwright.config.ts",
+    "test:e2e:prod": "DAEMON_WASM_PROFILE=prod playwright test --config=e2e/playwright.config.ts",
+    "test:e2e": "pnpm run build:wasm:dev && pnpm run test:e2e:dev && pnpm run build:wasm:prod && pnpm run test:e2e:prod",
+    "test": "pnpm run test:unit && pnpm run test:unit:wasm-feature && pnpm run test:e2e",
+    "clean:wasm": "rm -rf dist-wasm target/wasm32-unknown-emscripten"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0"
+  }
+}

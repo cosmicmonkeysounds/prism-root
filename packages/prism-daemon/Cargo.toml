@@ -7,15 +7,30 @@ description = "Prism Daemon — the local physics engine. Cross-platform kernel 
 [lib]
 name = "prism_daemon"
 path = "src/lib.rs"
-# `cdylib` makes the library linkable as a C shared object, which is what
-# emscripten needs to emit a `.wasm` + `.js` glue pair for the browser.
-# `rlib` keeps the Rust-native linkage path (Tauri, tests, the CLI bin).
-crate-type = ["cdylib", "rlib"]
+# `rlib` is the Rust-native linkage path (Tauri, tests, the CLI bin, the
+# wasm `prism_daemon_wasm` bin stub). We intentionally do NOT emit a
+# `cdylib` here: on `wasm32-unknown-emscripten`, a cdylib triggers a
+# second emcc link step that produces a bare `.wasm` with no JS glue,
+# which clashes with the `MODULARIZE`/`EXPORT_ES6` flags we pass for the
+# bin target. The `prism_daemon_wasm` bin in `src/bin/` is the single
+# emcc-link trigger and keeps the `#[no_mangle]` C ABI symbols alive
+# through LTO via `black_box` references.
+crate-type = ["rlib"]
 
 [[bin]]
 name = "prism-daemond"
 path = "src/bin/prism_daemond.rs"
 required-features = ["cli"]
+
+# Empty-main shim that exists only so `cargo build --target
+# wasm32-unknown-emscripten --features wasm` produces a `.js` + `.wasm`
+# pair (emscripten's linker requires a `main` symbol). The library's
+# `#[no_mangle] extern "C"` surface in `src/wasm.rs` is what the browser
+# actually calls via `Module.ccall`.
+[[bin]]
+name = "prism_daemon_wasm"
+path = "src/bin/prism_daemon_wasm.rs"
+required-features = ["wasm"]
 
 # ── Features ──────────────────────────────────────────────────────────────
 #

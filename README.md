@@ -39,7 +39,7 @@ pnpm install                    # Install all dependencies
 ```bash
 pnpm dev                        # Start all packages (Turborepo)
 pnpm --filter prism-studio dev  # Studio only — Vite SPA on http://localhost:1420
-pnpm --filter prism-relay dev   # Relay only — Next.js on http://localhost:3000
+pnpm --filter prism-relay dev   # Relay only on http://localhost:3000
 ```
 
 ### Testing

@@ -1,0 +1,99 @@
+# Emscripten link arguments for the browser build.
+#
+# These flags are only consulted when cargo builds for the
+# `wasm32-unknown-emscripten` target — every other target (desktop Tauri,
+# the `prism-daemond` stdio bin, iOS/Android FFI) links as normal.
+#
+# Why each flag is here:
+#
+# - `-sMODULARIZE=1` + `-sEXPORT_ES6=1`
+#   Wrap the generated JS glue in a factory function and emit it as an
+#   ES module, so browsers can `import createPrismDaemon from './prism_daemon.js'`
+#   and await it like any other ES module loader.
+#
+# - `-sEXPORT_NAME=createPrismDaemon`
+#   Name of the default-exported factory, used in the import shown in
+#   src/wasm.rs and the E2E harness.
+#
+# - `-sEXPORTED_FUNCTIONS=...`
+#   Keeps the C ABI surface (`prism_daemon_{create,destroy,invoke,free_string}`)
+#   in the final binary despite LTO/dead-code elimination. `_malloc` and
+#   `_free` are also preserved so `ccall`/`cwrap` string marshalling works.
+#   Emscripten expects each symbol prefixed with `_`.
+#
+# - `-sEXPORTED_RUNTIME_METHODS=...`
+#   Without this, emscripten strips `ccall`, `cwrap`, and `UTF8ToString`
+#   from the Module object (they default to not being exposed), and the
+#   JS side of our adapter can't call into the C ABI.
+#
+# - `-sALLOW_MEMORY_GROWTH=1`
+#   Loro documents can grow unpredictably; pre-allocating a fixed heap is
+#   a recipe for OOM. Lets the WASM linear memory grow up to ~4 GB.
+#
+# - `-sINITIAL_MEMORY=16MB`
+#   Enough headroom that small demos don't spend their first second
+#   repeatedly growing the heap.
+#
+# - `-sSTACK_SIZE=1MB`
+#   Rust closures and serde recursion can blow through the default 64 KB
+#   emscripten stack on non-trivial CRDT imports.
+#
+# - `-sENVIRONMENT=web,worker`
+#   Strips Node-only runtime code from the generated JS glue, shrinking
+#   the bundle. We support both main-thread and worker contexts.
+#
+# - `-sINVOKE_RUN=0`
+#   The `prism_daemon_wasm` bin has a `main()` only to satisfy
+#   emscripten's linker. We don't want emcc to auto-run it on module
+#   instantiation — the browser harness drives the C ABI directly and
+#   never touches main. This replaces the old `-sNO_EXIT_RUNTIME=1`,
+#   which is incompatible with programs that have a `main` function
+#   (emscripten treats main-having binaries as "programs" and derives
+#   EXIT_RUNTIME from that; passing the flag explicitly is an error).
+#
+# - `-sSUPPORT_LONGJMP=wasm`
+#   Lua's error-handling machinery is built on C++ exceptions in
+#   emscripten builds (lua-src's build.rs compiles Lua as C++ with
+#   `-fexceptions` so `lua_error` unwinds instead of longjmping — see
+#   lua-src/src/lib.rs target="emscripten" branch). `=wasm` picks the
+#   native WebAssembly exceptions lowering, which *must* match the
+#   `-fwasm-exceptions` that rustc unconditionally passes on
+#   wasm32-unknown-emscripten. Using `=emscripten` here is rejected by
+#   emcc with "SUPPORT_LONGJMP=emscripten is not compatible with
+#   -fwasm-exceptions". We also export `EMCC_CFLAGS=-fwasm-exceptions`
+#   from build-wasm.sh so lua-src's C++ TU's get compiled with the same
+#   EH ABI — otherwise lua gets emscripten-style `invoke_` trampolines
+#   and emcc fails its post-link sanity assert.
+#
+# - `-sERROR_ON_UNDEFINED_SYMBOLS=0`
+#   Needed because loro-internal 1.10 transitively pulls in wasm-bindgen
+#   via a typo-bug in its Cargo.toml — `cfg(not(features = "wasm"))`
+#   (note the `s`) is always-true on wasm32, so wasm-bindgen is pulled
+#   in whether or not loro's `wasm` feature is enabled. The wasm-bindgen
+#   crate contains `#[no_mangle]` stubs that reference `__wbg_now_*` and
+#   `__cxa_find_matching_catch_3` — both would be hard link errors, but
+#   the code that references them is *dead* (nothing in loro-internal
+#   calls wasm-bindgen with `wasm` feature off). Letting emcc emit
+#   stubs-that-abort-when-called is safe and keeps the link green.
+#   If you're chasing a runtime "abort from stub" error, look here
+#   first: a missing real symbol will only fail at call time now.
+#
+# - `-sASSERTIONS=1` (debug only, via RUSTFLAGS in build-wasm.sh)
+#   Left out here so `cargo build --release` produces lean output;
+#   build-wasm.sh layers assertions on for dev builds.
+
+[target.wasm32-unknown-emscripten]
+rustflags = [
+    "-C", "link-arg=-sMODULARIZE=1",
+    "-C", "link-arg=-sEXPORT_ES6=1",
+    "-C", "link-arg=-sEXPORT_NAME=createPrismDaemon",
+    "-C", "link-arg=-sEXPORTED_FUNCTIONS=_prism_daemon_create,_prism_daemon_destroy,_prism_daemon_invoke,_prism_daemon_free_string,_malloc,_free",
+    "-C", "link-arg=-sEXPORTED_RUNTIME_METHODS=ccall,cwrap,UTF8ToString,stringToUTF8,lengthBytesUTF8",
+    "-C", "link-arg=-sALLOW_MEMORY_GROWTH=1",
+    "-C", "link-arg=-sINITIAL_MEMORY=16777216",
+    "-C", "link-arg=-sSTACK_SIZE=1048576",
+    "-C", "link-arg=-sENVIRONMENT=web,worker",
+    "-C", "link-arg=-sINVOKE_RUN=0",
+    "-C", "link-arg=-sSUPPORT_LONGJMP=wasm",
+    "-C", "link-arg=-sERROR_ON_UNDEFINED_SYMBOLS=0",
+]
