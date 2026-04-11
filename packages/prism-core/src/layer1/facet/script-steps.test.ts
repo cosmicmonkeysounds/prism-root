@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   createStep,
   createVisualScript,
-  emitStepsLua,
-  emitStepsLuaWithMap,
+  emitStepsLuau,
+  emitStepsLuauWithMap,
   validateSteps,
   getStepMeta,
   getStepCategories,
@@ -83,43 +83,43 @@ describe("getStepCategories", () => {
   });
 });
 
-// ── emitStepsLua ────────────────────────────────────────────────────────────
+// ── emitStepsLuau ────────────────────────────────────────────────────────────
 
-describe("emitStepsLua", () => {
+describe("emitStepsLuau", () => {
   it("emits set-field step", () => {
-    const lua = emitStepsLua([createStep("set-field", { target: "status", value: '"active"' })]);
+    const lua = emitStepsLuau([createStep("set-field", { target: "status", value: '"active"' })]);
     expect(lua).toBe('Prism.setField("status", "active")');
   });
 
   it("emits set-variable step", () => {
-    const lua = emitStepsLua([createStep("set-variable", { name: "total", value: "100" })]);
+    const lua = emitStepsLuau([createStep("set-variable", { name: "total", value: "100" })]);
     expect(lua).toBe("local total = 100");
   });
 
   it("emits new-record step", () => {
-    const lua = emitStepsLua([createStep("new-record", { objectType: "contact" })]);
+    const lua = emitStepsLuau([createStep("new-record", { objectType: "contact" })]);
     expect(lua).toBe('Prism.newRecord("contact")');
   });
 
   it("emits commit-record step", () => {
-    const lua = emitStepsLua([createStep("commit-record")]);
+    const lua = emitStepsLuau([createStep("commit-record")]);
     expect(lua).toBe("Prism.commitRecord()");
   });
 
   it("emits show-notification step", () => {
-    const lua = emitStepsLua([
+    const lua = emitStepsLuau([
       createStep("show-notification", { title: '"Saved!"', kind: '"success"' }),
     ]);
     expect(lua).toBe('Prism.notify("Saved!", "success")');
   });
 
   it("emits comment as Lua comment", () => {
-    const lua = emitStepsLua([createStep("comment", { text: "Initialize variables" })]);
+    const lua = emitStepsLuau([createStep("comment", { text: "Initialize variables" })]);
     expect(lua).toBe("-- Initialize variables");
   });
 
   it("emits custom lua directly", () => {
-    const lua = emitStepsLua([createStep("custom-lua", { code: 'print("hello")' })]);
+    const lua = emitStepsLuau([createStep("custom-luau", { code: 'print("hello")' })]);
     expect(lua).toBe('print("hello")');
   });
 
@@ -131,7 +131,7 @@ describe("emitStepsLua", () => {
       createStep("set-field", { target: "priority", value: '"normal"' }),
       createStep("end-if"),
     ];
-    const lua = emitStepsLua(steps);
+    const lua = emitStepsLuau(steps);
     const lines = lua.split("\n");
     expect(lines[0]).toBe("if amount > 1000 then");
     expect(lines[1]).toBe('  Prism.setField("priority", "high")');
@@ -148,7 +148,7 @@ describe("emitStepsLua", () => {
       createStep("end-if"),
       createStep("end-loop"),
     ];
-    const lua = emitStepsLua(steps);
+    const lua = emitStepsLuau(steps);
     const lines = lua.split("\n");
     expect(lines[0]).toBe("while true do");
     expect(lines[1]).toBe("  if done then");
@@ -160,7 +160,7 @@ describe("emitStepsLua", () => {
   it("marks disabled steps as comments", () => {
     const step = createStep("delete-record");
     step.disabled = true;
-    const lua = emitStepsLua([step]);
+    const lua = emitStepsLuau([step]);
     expect(lua).toContain("-- [disabled]");
   });
 
@@ -170,44 +170,44 @@ describe("emitStepsLua", () => {
       createStep("set-field", { target: "b", value: "2" }),
       createStep("commit-record"),
     ];
-    const lua = emitStepsLua(steps);
+    const lua = emitStepsLuau(steps);
     expect(lua.split("\n")).toHaveLength(3);
   });
 
   it("emits perform-find step", () => {
-    const lua = emitStepsLua([createStep("perform-find", { field: "status", value: '"active"' })]);
+    const lua = emitStepsLuau([createStep("perform-find", { field: "status", value: '"active"' })]);
     expect(lua).toBe('Prism.performFind("status", "active")');
   });
 
   it("emits sort-records step", () => {
-    const lua = emitStepsLua([createStep("sort-records", { field: "name", direction: "asc" })]);
+    const lua = emitStepsLuau([createStep("sort-records", { field: "name", direction: "asc" })]);
     expect(lua).toBe('Prism.sortRecords("name", "asc")');
   });
 
   it("emits run-script step", () => {
-    const lua = emitStepsLua([createStep("run-script", { scriptId: "calc-totals" })]);
+    const lua = emitStepsLuau([createStep("run-script", { scriptId: "calc-totals" })]);
     expect(lua).toBe('Prism.runScript("calc-totals")');
   });
 
   it("emits run-script with parameter", () => {
-    const lua = emitStepsLua([
+    const lua = emitStepsLuau([
       createStep("run-script", { scriptId: "calc-totals", parameter: '"2026"' }),
     ]);
     expect(lua).toBe('Prism.runScript("calc-totals", "2026")');
   });
 
   it("emits exit-script with result", () => {
-    const lua = emitStepsLua([createStep("exit-script", { result: '"done"' })]);
+    const lua = emitStepsLuau([createStep("exit-script", { result: '"done"' })]);
     expect(lua).toBe('return "done"');
   });
 
   it("emits exit-script without result", () => {
-    const lua = emitStepsLua([createStep("exit-script")]);
+    const lua = emitStepsLuau([createStep("exit-script")]);
     expect(lua).toBe("return");
   });
 
   it("emits go-to-layout step", () => {
-    const lua = emitStepsLua([createStep("go-to-layout", { layoutId: "contact-form" })]);
+    const lua = emitStepsLuau([createStep("go-to-layout", { layoutId: "contact-form" })]);
     expect(lua).toBe('Prism.goToLayout("contact-form")');
   });
 
@@ -219,7 +219,7 @@ describe("emitStepsLua", () => {
       createStep("set-field", { target: "x", value: "0" }),
       createStep("end-if"),
     ];
-    const lua = emitStepsLua(steps);
+    const lua = emitStepsLuau(steps);
     const lines = lua.split("\n");
     expect(lines[0]).toBe("if a > 1 then");
     expect(lines[1]).toBe('  Prism.setField("x", 1)');
@@ -229,23 +229,23 @@ describe("emitStepsLua", () => {
   });
 });
 
-// ── emitStepsLuaWithMap ─────────────────────────────────────────────────────
+// ── emitStepsLuauWithMap ─────────────────────────────────────────────────────
 
-describe("emitStepsLuaWithMap", () => {
-  it("returns code matching emitStepsLua", () => {
+describe("emitStepsLuauWithMap", () => {
+  it("returns code matching emitStepsLuau", () => {
     const steps = [
       createStep("set-field", { target: "a", value: "1" }),
       createStep("commit-record"),
     ];
-    const result = emitStepsLuaWithMap(steps);
-    expect(result.code).toBe(emitStepsLua(steps));
+    const result = emitStepsLuauWithMap(steps);
+    expect(result.code).toBe(emitStepsLuau(steps));
   });
 
   it("maps each step id to its 1-based Lua line", () => {
     const a = createStep("set-field", { target: "a", value: "1" });
     const b = createStep("set-field", { target: "b", value: "2" });
     const c = createStep("commit-record");
-    const result = emitStepsLuaWithMap([a, b, c]);
+    const result = emitStepsLuauWithMap([a, b, c]);
     expect(result.stepToLine.get(a.id)).toBe(1);
     expect(result.stepToLine.get(b.id)).toBe(2);
     expect(result.stepToLine.get(c.id)).toBe(3);
@@ -254,7 +254,7 @@ describe("emitStepsLuaWithMap", () => {
   it("maps lines back to step ids", () => {
     const a = createStep("set-field", { target: "a", value: "1" });
     const b = createStep("commit-record");
-    const result = emitStepsLuaWithMap([a, b]);
+    const result = emitStepsLuauWithMap([a, b]);
     expect(result.lineToStep.get(1)).toBe(a.id);
     expect(result.lineToStep.get(2)).toBe(b.id);
   });
@@ -263,7 +263,7 @@ describe("emitStepsLuaWithMap", () => {
     const ifStep = createStep("if", { condition: "x > 0" });
     const inner = createStep("set-field", { target: "y", value: "1" });
     const endStep = createStep("end-if");
-    const result = emitStepsLuaWithMap([ifStep, inner, endStep]);
+    const result = emitStepsLuauWithMap([ifStep, inner, endStep]);
     expect(result.code.split("\n")).toEqual([
       "if x > 0 then",
       '  Prism.setField("y", 1)',
@@ -279,7 +279,7 @@ describe("emitStepsLuaWithMap", () => {
     const disabled = createStep("delete-record");
     disabled.disabled = true;
     const b = createStep("commit-record");
-    const result = emitStepsLuaWithMap([a, disabled, b]);
+    const result = emitStepsLuauWithMap([a, disabled, b]);
     expect(result.stepToLine.get(disabled.id)).toBe(2);
     expect(result.lineToStep.get(2)).toBe(disabled.id);
     expect(result.stepToLine.get(b.id)).toBe(3);

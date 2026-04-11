@@ -1173,7 +1173,7 @@ describe("StudioKernel", () => {
 
   describe("sequencer", () => {
     it("should emit condition Lua", () => {
-      const lua = kernel.emitConditionLua({
+      const lua = kernel.emitConditionLuau({
         combinator: "all",
         clauses: [
           { id: "c1", subjectKind: "variable", subject: "score", operator: "gt", value: "100" },
@@ -1183,7 +1183,7 @@ describe("StudioKernel", () => {
     });
 
     it("should emit script Lua", () => {
-      const lua = kernel.emitScriptLua({
+      const lua = kernel.emitScriptLuau({
         steps: [
           { id: "s1", actionKind: "set-variable", target: "scope.health", value: "100" },
         ],
@@ -1192,7 +1192,7 @@ describe("StudioKernel", () => {
     });
 
     it("should emit empty condition as true", () => {
-      const lua = kernel.emitConditionLua({ combinator: "all", clauses: [] });
+      const lua = kernel.emitConditionLuau({ combinator: "all", clauses: [] });
       expect(lua).toBe("true");
     });
   });

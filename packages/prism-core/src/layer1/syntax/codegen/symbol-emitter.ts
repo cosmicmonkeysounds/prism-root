@@ -337,7 +337,7 @@ export class SymbolCSharpEmitter extends SymbolEmitter {
 // -- Lua EmmyDoc emitter ----------------------------------------------------
 
 /**
- * SymbolEmmyDocEmitter -- emits LuaLS-compatible .d.lua stubs from SymbolDef[].
+ * SymbolEmmyDocEmitter -- emits LuaLS-compatible .d.luau stubs (Luau) from SymbolDef[].
  *
  * Output pattern:
  *   ---@class MyModule
@@ -351,8 +351,8 @@ export class SymbolCSharpEmitter extends SymbolEmitter {
  */
 export class SymbolEmmyDocEmitter extends SymbolEmitter {
   readonly id = 'symbol-emmydoc';
-  protected readonly language = 'lua';
-  protected readonly fileExtension = '.d.lua';
+  protected readonly language = 'luau';
+  protected readonly fileExtension = '.d.luau';
 
   constructor(
     private opts: {
@@ -368,7 +368,7 @@ export class SymbolEmmyDocEmitter extends SymbolEmitter {
   }
 
   protected filename(meta: CodegenMeta): string {
-    return this.opts.filename ?? `${this.opts.globalName ?? meta.projectName}.d.lua`;
+    return this.opts.filename ?? `${this.opts.globalName ?? meta.projectName}.d.luau`;
   }
 
   protected override emitHeader(b: SourceBuilder, meta: CodegenMeta): void {

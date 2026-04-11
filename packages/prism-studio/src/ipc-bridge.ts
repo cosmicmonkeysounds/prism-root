@@ -5,7 +5,7 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import type { LuaResult } from "@prism/shared/types";
+import type { LuauResult } from "@prism/shared/types";
 
 /** Write a key-value pair to a CRDT document on the daemon. */
 export async function ipcCrdtWrite(
@@ -35,13 +35,13 @@ export async function ipcCrdtExport(docId: string): Promise<Uint8Array> {
   );
 }
 
-/** Execute a Lua script on the daemon via mlua. */
-export async function ipcLuaExec(
+/** Execute a Luau script on the daemon via mlua. */
+export async function ipcLuauExec(
   script: string,
   args?: Record<string, unknown>,
-): Promise<LuaResult> {
+): Promise<LuauResult> {
   try {
-    const value = await invoke<unknown>("lua_exec", { script, args });
+    const value = await invoke<unknown>("luau_exec", { script, args });
     return { success: true, value };
   } catch (err) {
     return {

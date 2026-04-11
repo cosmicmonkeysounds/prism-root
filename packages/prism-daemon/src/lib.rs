@@ -37,7 +37,7 @@
 //! | Feature   | Pulls in                  | Commands registered |
 //! |-----------|---------------------------|---------------------|
 //! | `crdt`    | `loro`                    | `crdt.{write,read,export,import}` |
-//! | `lua`     | `mlua` (lua54 + vendored) | `lua.exec` |
+//! | `lua`     | `mlua` (luau + vendored)  | `luau.exec` |
 //! | `build`   | —                         | `build.run_step` |
 //! | `watcher` | `notify`                  | `watcher.{watch,poll,stop}` |
 //! | `cli`     | `tokio`                   | (enables the `prism-daemond` binary) |

@@ -7,7 +7,7 @@
  *
  * Usage:
  *   const queue = createProcessQueue({ concurrency: 2 });
- *   queue.registerRuntime(createLuaActorRuntime());
+ *   queue.registerRuntime(createLuauActorRuntime());
  *   queue.enqueue({ name: "calc", runtime: "lua", payload: { script: "return 1+1" } });
  *   queue.start();
  */
@@ -251,23 +251,23 @@ export function createProcessQueue(
 // ── Lua Actor Runtime ───────────────────────────────────────────────────────
 
 /** Payload for the Lua actor runtime. */
-export interface LuaPayload {
+export interface LuauPayload {
   script: string;
   args?: Record<string, unknown>;
 }
 
 /**
- * Create a Lua actor runtime (browser-side via wasmoon).
- * Wraps the existing layer1/lua/lua-runtime.ts.
+ * Create a Luau actor runtime (browser-side via luau-web).
+ * Wraps the existing layer1/luau/luau-runtime.ts.
  *
- * The executeLua function is injected to avoid a hard import dependency
- * on wasmoon (which requires WASM loading).
+ * The executeLuau function is injected to avoid a hard import dependency
+ * on luau-web (which requires WASM loading).
  */
-export function createLuaActorRuntime(
+export function createLuauActorRuntime(
   executeFn: (script: string, args?: Record<string, unknown>) => Promise<{ success: boolean; value: unknown; error?: string }>,
 ): ActorRuntime {
   return {
-    name: "lua",
+    name: "luau",
 
     async isAvailable(): Promise<boolean> {
       try {
@@ -282,7 +282,7 @@ export function createLuaActorRuntime(
       payload: TPayload,
       _scope: CapabilityScope,
     ): Promise<RuntimeResult<TResult>> {
-      const { script, args } = payload as unknown as LuaPayload;
+      const { script, args } = payload as unknown as LuauPayload;
       const start = performance.now();
 
       try {
@@ -305,7 +305,7 @@ export function createLuaActorRuntime(
     },
 
     async dispose(): Promise<void> {
-      // wasmoon engines are disposed per-execution
+      // luau-web states are GC'd; no explicit teardown needed
     },
   };
 }

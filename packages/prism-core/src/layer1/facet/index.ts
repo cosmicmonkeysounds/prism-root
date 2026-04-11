@@ -137,21 +137,21 @@ export {
   getBoundFields,
 } from "./facet-runtime.js";
 
-// ── Script Steps (FileMaker-style visual scripting → Lua) ────────────────
+// ── Script Steps (FileMaker-style visual scripting → Luau) ────────────────
 export type {
   ScriptStepKind,
   StepKindMeta,
   ScriptStep,
   VisualScript,
-  StepsLuaEmitResult,
+  StepsLuauEmitResult,
 } from "./script-steps.js";
 export {
   STEP_KINDS,
   getStepMeta,
   createStep,
   createVisualScript,
-  emitStepsLua,
-  emitStepsLuaWithMap,
+  emitStepsLuau,
+  emitStepsLuauWithMap,
   validateSteps,
   getStepCategories,
 } from "./script-steps.js";
@@ -164,7 +164,7 @@ export type {
 } from "./facet-store.js";
 export { createFacetStore } from "./facet-store.js";
 
-// ── Sequencer (visual condition/script builder → Lua) ────────────────────
+// ── Sequencer (visual condition/script builder → Luau) ────────────────────
 export type {
   SequencerSubjectKind,
   SequencerSubject,
@@ -176,7 +176,7 @@ export type {
   SequencerScriptStep,
   SequencerScriptState,
 } from "./sequencer-types.js";
-export { emitConditionLua, emitScriptLua } from "./sequencer-types.js";
+export { emitConditionLuau, emitScriptLuau } from "./sequencer-types.js";
 
 // ── Facet Builders (Lua codegen helpers for plugin patterns) ────────────
 export type {

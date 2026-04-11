@@ -2,9 +2,10 @@ export { createLoroBridge } from "./loro-bridge.js";
 export type { LoroBridge, LoroChangeHandler } from "./loro-bridge.js";
 export { createCrdtStore } from "./stores/use-crdt-store.js";
 export type { CrdtStore, CrdtStoreState, CrdtStoreActions } from "./stores/use-crdt-store.js";
-export { executeLua, createLuaEngine } from "./lua/lua-runtime.js";
-export { createLuaDebugger } from "./lua/lua-debugger.js";
-export type { LuaDebugger, TraceFrame, DebugRunResult } from "./lua/lua-debugger.js";
+export { executeLuau, createLuauEngine } from "./luau/luau-runtime.js";
+export type { LuauEngine } from "./luau/luau-runtime.js";
+export { createLuauDebugger } from "./luau/luau-debugger.js";
+export type { LuauDebugger, TraceFrame, DebugRunResult } from "./luau/luau-debugger.js";
 
 // ── Object Model ───────────────────────────────────────────────────────────────
 export {
@@ -788,7 +789,7 @@ export type {
 export {
   DEFAULT_CAPABILITY_SCOPE,
   createProcessQueue,
-  createLuaActorRuntime,
+  createLuauActorRuntime,
   createSidecarRuntime,
   createTestRuntime,
 } from "./actor/index.js";
@@ -805,7 +806,7 @@ export type {
   QueueListener,
   ProcessQueue,
   ProcessQueueOptions,
-  LuaPayload,
+  LuauPayload,
   SidecarPayload,
   SidecarExecutor,
 } from "./actor/index.js";
@@ -825,7 +826,7 @@ export {
   BUILTIN_FUNCTIONS,
   inferNodeType,
   createExpressionProvider,
-  generateLuaTypeDef,
+  generateLuauTypeDef,
   createSyntaxEngine,
 } from "./syntax/index.js";
 
@@ -839,7 +840,7 @@ export type {
   FieldTypeMapping,
   TypeInfo,
   SchemaContext,
-  LuaTypeDef,
+  LuauTypeDef,
   FunctionSignature,
   SyntaxProvider,
   SyntaxEngineOptions,
@@ -905,7 +906,7 @@ export type {
 
 // ── Trust & Safety ─────────────────────────────────────────────────────────
 export {
-  createLuaSandbox,
+  createLuauSandbox,
   createSchemaValidator,
   createHashcashMinter,
   createHashcashVerifier,
@@ -954,7 +955,7 @@ export type {
   SandboxCapability,
   SandboxPolicy,
   SandboxViolation,
-  LuaSandbox,
+  LuauSandbox,
   SchemaValidationSeverity,
   SchemaValidationIssue,
   SchemaValidationResult,
@@ -1017,8 +1018,8 @@ export {
   MockSpellCheckBackend,
   markdownToNodes,
   nodesToMarkdown,
-  emitConditionLua,
-  emitScriptLua,
+  emitConditionLuau,
+  emitScriptLuau,
   TypeScriptWriter,
   JavaScriptWriter,
   CSharpWriter,
@@ -1047,8 +1048,8 @@ export {
   getStepMeta,
   createStep,
   createVisualScript,
-  emitStepsLua,
-  emitStepsLuaWithMap,
+  emitStepsLuau,
+  emitStepsLuauWithMap,
   validateSteps,
   getStepCategories,
   createFacetStore,
@@ -1115,7 +1116,7 @@ export type {
   StepKindMeta,
   ScriptStep,
   VisualScript,
-  StepsLuaEmitResult,
+  StepsLuauEmitResult,
   ValueListItem,
   StaticValueListSource,
   DynamicValueListSource,

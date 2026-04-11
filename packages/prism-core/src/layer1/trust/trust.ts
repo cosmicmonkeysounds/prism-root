@@ -11,7 +11,7 @@ import type {
   SandboxCapability,
   SandboxPolicy,
   SandboxViolation,
-  LuaSandbox,
+  LuauSandbox,
   SchemaValidationIssue,
   SchemaValidationResult,
   SchemaValidationRule,
@@ -56,7 +56,7 @@ function globToRegex(pattern: string): RegExp {
 
 // ── Lua Sandbox ────────────────────────────────────────────────────────────
 
-export function createLuaSandbox(policy: SandboxPolicy): LuaSandbox {
+export function createLuauSandbox(policy: SandboxPolicy): LuauSandbox {
   const capSet = new Set<SandboxCapability>(policy.capabilities);
   const urlRegexes = policy.allowedUrls.map(globToRegex);
   const pathRegexes = policy.allowedPaths.map(globToRegex);

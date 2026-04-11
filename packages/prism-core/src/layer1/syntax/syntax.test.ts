@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   createSyntaxEngine,
   createExpressionProvider,
-  generateLuaTypeDef,
+  generateLuauTypeDef,
   inferNodeType,
   BUILTIN_FUNCTIONS,
   FIELD_TYPE_MAP,
@@ -401,7 +401,7 @@ describe("SyntaxEngine", () => {
 describe("Lua type definition generation", () => {
   it("generates .d.lua for object type", () => {
     const ctx = taskContext();
-    const result = generateLuaTypeDef(ctx);
+    const result = generateLuauTypeDef(ctx);
 
     expect(result.objectType).toBe("Task");
     expect(result.content).toContain("---@class Task");
@@ -414,25 +414,25 @@ describe("Lua type definition generation", () => {
   });
 
   it("marks optional fields with ?", () => {
-    const result = generateLuaTypeDef(taskContext());
+    const result = generateLuauTypeDef(taskContext());
     // priority is not required, so should have ?
     expect(result.content).toContain("---@field priority?");
   });
 
   it("marks required fields without ?", () => {
-    const result = generateLuaTypeDef(taskContext());
+    const result = generateLuauTypeDef(taskContext());
     // is_blocked is required
     expect(result.content).toMatch(/---@field is_blocked boolean/);
     expect(result.content).not.toMatch(/---@field is_blocked\?/);
   });
 
   it("generates enum values as union type", () => {
-    const result = generateLuaTypeDef(taskContext());
+    const result = generateLuauTypeDef(taskContext());
     expect(result.content).toContain(`"todo"|"doing"|"done"`);
   });
 
   it("includes standard GraphObject fields", () => {
-    const result = generateLuaTypeDef(taskContext());
+    const result = generateLuauTypeDef(taskContext());
     expect(result.content).toContain("---@field id string");
     expect(result.content).toContain("---@field name string");
     expect(result.content).toContain("---@field type string");
@@ -441,7 +441,7 @@ describe("Lua type definition generation", () => {
   });
 
   it("includes builtin function stubs", () => {
-    const result = generateLuaTypeDef(taskContext());
+    const result = generateLuauTypeDef(taskContext());
     expect(result.content).toContain("function abs(x) end");
     expect(result.content).toContain("function clamp(value, low, high) end");
     expect(result.content).toContain("---@return number");
@@ -460,7 +460,7 @@ describe("Lua type definition generation", () => {
       },
     ];
 
-    const defs = engine.generateLuaTypeDefs(contexts);
+    const defs = engine.generateLuauTypeDefs(contexts);
     expect(defs).toHaveLength(2);
     expect(defs[0].objectType).toBe("Task");
     expect(defs[1].objectType).toBe("Contact");

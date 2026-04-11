@@ -1,35 +1,31 @@
 /**
- * Lua step-through debugger — unified for raw Lua source and
- * visual-script-generated Lua.
+ * Luau step-through debugger — unified for raw Luau source and
+ * visual-script-generated Luau.
  *
- * Approach: trace-based. The debugger wraps the user's Lua in a chunk
- * loaded separately from the instrumentation wrapper, installs a Lua
- * line hook (`debug.sethook(..., "l")`), and records every line hit
- * together with a tostring()-snapshot of the local variables into a
- * frame list. The debugger then exposes that frame list to the UI,
- * which drives step / continue / inspect interactions over the recorded
- * trace.
+ * Approach: source-instrumentation-based. The debugger preprocesses the
+ * user's Luau source by injecting `__prism_trace(n)` calls before each
+ * non-empty, non-comment line. A wrapper script defines `__prism_trace`
+ * using `debug.getlocal` to snapshot locals at the caller's level, then
+ * runs the instrumented user code inside a `pcall`. The returned frame
+ * list drives step / continue / inspect interactions.
  *
- * Why trace-based rather than live pause:
- *   - wasmoon runs Lua synchronously; pausing inside a hook to wait
- *     for a JS click would require coroutine yielding from inside a
- *     hook, which is fragile across wasmoon releases.
- *   - Every Prism script already goes through Prism.* JS bindings, so
- *     the observable state at each line is a snapshot — replaying a
- *     recorded trace is indistinguishable from live stepping for the
- *     user.
- *   - Trace-based is deterministic and test-friendly.
+ * Why source instrumentation instead of debug.sethook:
+ *   - Luau does not expose `debug.sethook` (removed from the Lua 5.x API
+ *     in favour of Luau's own profiling/coverage infrastructure).
+ *   - Source instrumentation is deterministic, testable, and works with
+ *     any Luau WASM runtime.
+ *   - `debug.getlocal` IS available in Luau and gives us per-frame locals.
  *
  * Unified debugging for visual scripts:
- *   - Visual scripts compile to Lua via emitStepsLuaWithMap(), which
- *     returns a Map<ScriptStepId, lineNumber>. Breakpoints set on a
- *     step translate to Lua line breakpoints. When the debugger pauses
- *     on a line, the owning step is found via the reverse map and the
- *     visual step card is highlighted.
+ *   - Visual scripts compile to Luau via emitStepsLuauWithMap(), which
+ *     returns a Map<ScriptStepId, lineNumber>. Breakpoints set on a step
+ *     translate to Luau line breakpoints. When the debugger pauses on a
+ *     line, the owning step is found via the reverse map and the visual
+ *     step card is highlighted.
  */
 
-import { LuaFactory } from "wasmoon";
-import type { LuaEngine } from "wasmoon";
+import { LuauState } from "luau-web";
+import { fromLuauValue } from "./luau-runtime.js";
 
 /** One recorded point in execution: line + locals snapshot. */
 export interface TraceFrame {
@@ -51,8 +47,8 @@ export interface DebugRunResult {
   frames: TraceFrame[];
 }
 
-/** A Lua step-through debugger for a single script. */
-export interface LuaDebugger {
+/** A Luau step-through debugger for a single script. */
+export interface LuauDebugger {
   /** Set a breakpoint on a 1-based line. */
   setBreakpoint(line: number): void;
   /** Clear a breakpoint. */
@@ -73,81 +69,79 @@ export interface LuaDebugger {
    * has a breakpoint set. This is what drives "continue to next breakpoint".
    */
   breakpointFrames(frames: TraceFrame[]): TraceFrame[];
-  /** Dispose the underlying Lua engine. */
+  /** Dispose the underlying Luau state. */
   dispose(): Promise<void>;
 }
 
-// ── Wrapper Lua ─────────────────────────────────────────────────────────────
-// The instrumentation wrapper. `__prism_user_source` is injected via
-// engine.global.set; this keeps the user source out of the wrapper's own
-// line numbering.
+// ── Source instrumentation ────────────────────────────────────────────────────
+// Inject __prism_trace(n) before each non-empty, non-comment line. Line numbers
+// in trace calls refer to the ORIGINAL source, not the instrumented output.
 
-const WRAPPER_LUA = `
+function instrumentSource(source: string): string {
+  const lines = source.split("\n");
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? "";
+    const trimmed = line.trimStart();
+    if (trimmed !== "" && !trimmed.startsWith("--")) {
+      const indent = line.slice(0, line.length - trimmed.length);
+      out.push(`${indent}__prism_trace(${i + 1})`);
+    }
+    out.push(line);
+  }
+  return out.join("\n");
+}
+
+// ── Wrapper template ──────────────────────────────────────────────────────────
+// __prism_trace is a Luau function (not a JS callback) so it can call
+// debug.getlocal at level 2 (= the pcall anonymous function = user code scope).
+
+const WRAPPER_PREFIX = `
 local __prism_frames = {}
+local __has_getlocal = type(debug) == "table" and type(debug.getlocal) == "function"
 
-local __chunk, __load_err = load(__prism_user_source, "user", "t", _ENV)
-if not __chunk then
-  return { ok = false, err = tostring(__load_err), frames = __prism_frames }
-end
-
--- Closure captures __chunk so the hook can match by function identity —
--- this is how we distinguish wrapper line events from user-chunk line
--- events without relying on source-name string matching (which varies
--- across Lua versions and chunkname prefix conventions).
-local function __prism_hook(event, line)
-  local info = debug.getinfo(2, "f")
-  if info == nil or info.func ~= __chunk then return end
+local function __prism_trace(line)
   local locals = {}
-  local i = 1
-  while true do
-    local name, value = debug.getlocal(2, i)
-    if name == nil then break end
-    -- skip internal ("(*temporary)") locals
-    if name:sub(1, 1) ~= "(" then
-      local ok, rendered = pcall(tostring, value)
-      locals[name] = ok and rendered or "<?>"
+  if __has_getlocal then
+    local i = 1
+    while true do
+      local name, value = debug.getlocal(2, i)
+      if name == nil then break end
+      if string.sub(name, 1, 1) ~= "(" then
+        local ok, rendered = pcall(tostring, value)
+        locals[name] = ok and rendered or "<?>"
+      end
+      i = i + 1
     end
-    i = i + 1
   end
-  table.insert(__prism_frames, { line = line, locals = locals })
+  table.insert(__prism_frames, {line = line, locals = locals})
 end
 
-debug.sethook(__prism_hook, "l")
-local __ok, __err = pcall(__chunk)
-debug.sethook()
-
-return { ok = __ok, err = __ok and "" or tostring(__err), frames = __prism_frames }
+local __ok, __err = pcall(function()
 `;
 
-// ── Engine factory ──────────────────────────────────────────────────────────
+const WRAPPER_SUFFIX = `
+end)
 
-let factory: LuaFactory | null = null;
+return {ok = __ok, err = __ok and "" or tostring(__err), frames = __prism_frames}
+`;
 
-async function getFactory(): Promise<LuaFactory> {
-  if (!factory) factory = new LuaFactory();
-  return factory;
+function buildScript(source: string): string {
+  return WRAPPER_PREFIX + instrumentSource(source) + WRAPPER_SUFFIX;
 }
 
 // ── Implementation ──────────────────────────────────────────────────────────
 
 /**
- * Create a Lua step debugger. Each debugger owns a persistent LuaEngine
- * so injected JS globals (Prism.*, etc.) remain available between runs.
- * Call `dispose()` when done.
+ * Create a Luau step debugger. Seed globals (e.g. Prism.* APIs) are merged
+ * into every run. Call `dispose()` when done.
  */
-export async function createLuaDebugger(options?: {
+export async function createLuauDebugger(options?: {
   /** Seed globals installed on the engine before every run. */
   globals?: Record<string, unknown>;
-}): Promise<LuaDebugger> {
-  const f = await getFactory();
-  const engine: LuaEngine = await f.createEngine();
+}): Promise<LuauDebugger> {
+  const seedGlobals: Record<string, unknown> = options?.globals ?? {};
   const breakpoints = new Set<number>();
-
-  if (options?.globals) {
-    for (const [key, value] of Object.entries(options.globals)) {
-      engine.global.set(key, value);
-    }
-  }
 
   return {
     setBreakpoint(line) {
@@ -172,17 +166,17 @@ export async function createLuaDebugger(options?: {
     },
 
     async run(source, args) {
-      if (args) {
-        for (const [key, value] of Object.entries(args)) {
-          engine.global.set(key, value);
-        }
-      }
-      engine.global.set("__prism_user_source", source);
-
+      const allGlobals = { ...seedGlobals, ...(args ?? {}) };
       try {
-        const raw = await engine.doString(WRAPPER_LUA);
+        const state = await LuauState.createAsync(allGlobals);
+        const fullScript = buildScript(source);
+        const fn = state.loadstring(fullScript, "debugger", true);
+        const results = await fn();
+        // luau-web returns an array of multi-return values; take the first
+        const rawResult = Array.isArray(results) ? results[0] : results;
+        // Convert LuauTable proxies into plain JS objects
+        const raw = fromLuauValue(rawResult);
         const result = normalizeRunResult(raw);
-        // Mark frames whose line is a current breakpoint.
         result.frames = result.frames.map((frame) => ({
           ...frame,
           breakpoint: breakpoints.has(frame.line),
@@ -199,18 +193,13 @@ export async function createLuaDebugger(options?: {
     },
 
     async dispose() {
-      engine.global.close();
+      // luau-web states are GC'd; no explicit teardown needed.
     },
   };
 }
 
 // ── Result normalization ────────────────────────────────────────────────────
 
-/**
- * Coerce the wrapper's Lua return table into a typed DebugRunResult.
- * wasmoon hands back Lua tables as plain JS objects, but Lua arrays are
- * 1-indexed — we must iterate both numeric keys and plain keys defensively.
- */
 function normalizeRunResult(raw: unknown): DebugRunResult {
   if (!raw || typeof raw !== "object") {
     return { success: false, error: "debugger returned no result", frames: [] };
@@ -227,7 +216,6 @@ function normalizeRunResult(raw: unknown): DebugRunResult {
 function normalizeFrames(raw: unknown): TraceFrame[] {
   if (!raw || typeof raw !== "object") return [];
   const out: TraceFrame[] = [];
-  // Lua arrays arrive as objects with 1-based numeric keys.
   const entries: unknown[] = Array.isArray(raw)
     ? raw
     : Object.keys(raw as Record<string, unknown>)

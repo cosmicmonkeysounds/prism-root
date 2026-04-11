@@ -32,7 +32,7 @@ fn main() {
             commands::crdt_write,
             commands::crdt_read,
             commands::crdt_export,
-            commands::lua_exec,
+            commands::luau_exec,
             commands::run_build_step,
             commands::daemon_capabilities,
         ])

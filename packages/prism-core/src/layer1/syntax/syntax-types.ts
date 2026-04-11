@@ -96,10 +96,10 @@ export interface SchemaContext {
 
 // ── Lua Type Definitions ───────────────────────────────────────────────────
 
-export interface LuaTypeDef {
+export interface LuauTypeDef {
   /** The object type this definition describes. */
   objectType: string;
-  /** Generated .d.lua content. */
+  /** Generated .d.luau content. */
   content: string;
 }
 
@@ -173,9 +173,9 @@ export interface SyntaxEngine {
   /** Validate an expression against a schema context (type-level checks). */
   validateTypes(source: string, context: SchemaContext): Diagnostic[];
 
-  /** Generate .d.lua type definitions for an object type's fields. */
-  generateLuaTypeDef(context: SchemaContext): LuaTypeDef;
+  /** Generate .d.luau type definitions for an object type's fields. */
+  generateLuauTypeDef(context: SchemaContext): LuauTypeDef;
 
-  /** Generate .d.lua type definitions for multiple object types. */
-  generateLuaTypeDefs(contexts: SchemaContext[]): LuaTypeDef[];
+  /** Generate .d.luau type definitions for multiple object types. */
+  generateLuauTypeDefs(contexts: SchemaContext[]): LuauTypeDef[];
 }

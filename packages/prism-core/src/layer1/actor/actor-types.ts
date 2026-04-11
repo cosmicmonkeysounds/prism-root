@@ -11,7 +11,7 @@
  *   3. External Provider — third-party API with Capability Token
  *
  * Runtimes:
- *   - Lua 5.4 via wasmoon (browser) / mlua (daemon)
+ *   - Luau via luau-web (browser) / mlua (daemon)
  *   - TypeScript via Deno sidecar
  *   - Python via sidecar
  */
@@ -106,7 +106,7 @@ export interface RuntimeResult<T = unknown> {
 
 /**
  * Pluggable language runtime. Implementations:
- *   - "lua" — wasmoon (browser) / mlua (daemon)
+ *   - "lua" — luau-web (browser) / mlua (daemon)
  *   - "typescript" — Deno sidecar
  *   - "python" — Python sidecar
  */

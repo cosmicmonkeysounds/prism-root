@@ -1,15 +1,15 @@
 /**
- * lua-markdown-plugin — scans markdown text for ```lua fenced blocks,
+ * luau-markdown-plugin — scans markdown text for ```luau fenced blocks,
  * executes each via an injected runner, and replaces the block with a
  * new fenced block containing both the source and its output.
  *
  * Runner is injected so the module stays testable and does not pull in
- * wasmoon at the type level. In the default browser wiring, pass
- * executeLua from `@prism/core/lua`.
+ * luau-web at the type level. In the default browser wiring, pass
+ * executeLuau from `@prism/core/luau`.
  *
  * Output format per block:
  *
- *     ```lua
+ *     ```luau
  *     print("hi")
  *     ```
  *     ```
@@ -19,40 +19,40 @@
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
-export interface LuaRunnerResult {
+export interface LuauRunnerResult {
   success: boolean;
   value: unknown;
   error?: string | undefined;
   stdout?: string | undefined;
 }
 
-export type LuaRunner = (script: string) => Promise<LuaRunnerResult>;
+export type LuauRunner = (script: string) => Promise<LuauRunnerResult>;
 
-export interface LuaMarkdownBlock {
+export interface LuauMarkdownBlock {
   /** Character offset of the opening fence. */
   start: number;
   /** Character offset just past the closing fence. */
   end: number;
-  /** The raw Lua source code inside the fence. */
+  /** The raw Luau source code inside the fence. */
   source: string;
 }
 
 // ── Block extraction ────────────────────────────────────────────────────────
 
 /**
- * Find every ```lua ... ``` block in the markdown text.
- * Only matches fenced code blocks whose info string is exactly `lua`
+ * Find every ```luau ... ``` block in the markdown text.
+ * Only matches fenced code blocks whose info string is exactly `luau`
  * (case-insensitive), followed by end-of-line.
  */
-export function findLuaBlocks(markdown: string): LuaMarkdownBlock[] {
-  const blocks: LuaMarkdownBlock[] = [];
+export function findLuauBlocks(markdown: string): LuauMarkdownBlock[] {
+  const blocks: LuauMarkdownBlock[] = [];
   const lines = markdown.split("\n");
   let offset = 0;
   let i = 0;
 
   while (i < lines.length) {
     const line = lines[i] ?? "";
-    const match = /^```lua\s*$/i.exec(line);
+    const match = /^```luau\s*$/i.exec(line);
     if (!match) {
       offset += line.length + 1; // +1 for newline
       i++;
@@ -94,14 +94,14 @@ export function findLuaBlocks(markdown: string): LuaMarkdownBlock[] {
 // ── Block replacement ───────────────────────────────────────────────────────
 
 /**
- * Format a LuaRunnerResult as a fenced output block.
+ * Format a LuauRunnerResult as a fenced output block.
  */
 export function formatBlockResult(
   source: string,
-  result: LuaRunnerResult,
+  result: LuauRunnerResult,
 ): string {
   const parts: string[] = [];
-  parts.push("```lua");
+  parts.push("```luau");
   parts.push(source);
   parts.push("```");
 
@@ -137,17 +137,17 @@ function formatValue(value: unknown): string {
 }
 
 /**
- * Execute every ```lua block in the markdown via the runner and return
+ * Execute every ```luau block in the markdown via the runner and return
  * the markdown with each block replaced by its source + output.
  */
-export async function processLuaBlocks(
+export async function processLuauBlocks(
   markdown: string,
-  runner: LuaRunner,
+  runner: LuauRunner,
 ): Promise<string> {
-  const blocks = findLuaBlocks(markdown);
+  const blocks = findLuauBlocks(markdown);
   if (blocks.length === 0) return markdown;
 
-  // Execute all blocks (sequentially — Lua runtimes may share state)
+  // Execute all blocks (sequentially — Luau runtimes may share state)
   const replacements: { start: number; end: number; text: string }[] = [];
   for (const block of blocks) {
     const result = await runner(block.source);

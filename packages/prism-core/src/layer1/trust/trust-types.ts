@@ -4,7 +4,7 @@
  * The Sovereign Immune System.
  *
  * Subsystems:
- *   1. Lua Sandbox — Capability Tokens restricting API surface per plugin
+ *   1. Luau Sandbox — Capability Tokens restricting API surface per plugin
  *   2. Schema Poison Pill — JSON schema validation before import
  *   3. Hashcash — proof-of-work spam protection for Relay messages
  *   4. Web of Trust — peer reputation, bans, toxic content hash gossip
@@ -12,7 +12,7 @@
  *   6. Encrypted Escrow — blind escrow for key recovery via Relay
  */
 
-// ── Lua Sandbox ────────────────────────────────────────────────────────────
+// ── Luau Sandbox ────────────────────────────────────────────────────────────
 
 /**
  * Capabilities a sandboxed Lua plugin may request.
@@ -57,7 +57,7 @@ export interface SandboxViolation {
   pluginId: string;
 }
 
-export interface LuaSandbox {
+export interface LuauSandbox {
   /** Check if a capability is granted. */
   hasCapability(capability: SandboxCapability): boolean;
   /** Check if a URL is allowed for fetch. */

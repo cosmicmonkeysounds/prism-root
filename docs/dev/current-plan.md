@@ -1,5 +1,17 @@
 # Current Plan
 
+## Lua → Luau Migration (Complete — 2026-04-10)
+
+Full codebase migration from Lua 5.4 (wasmoon) to Luau (luau-web / mlua+luau):
+
+- **Browser runtime**: replaced `wasmoon` with `luau-web` (`LuauState.createAsync`)
+- **Daemon runtime**: mlua feature flag `lua54` → `luau`; added `Value::Integer` handling; switched to `into_function().call()` for reliable multi-return capture
+- **IPC**: `lua_exec` → `luau_exec`; `prism.lua` → `prism.luau`; `lua.exec` → `luau.exec`
+- **Debugger**: source instrumentation approach (`__prism_trace`) unchanged; guarded `debug.getlocal` for environments where it's unavailable (luau-web sandbox)
+- **Types**: `LuaResult` → `LuauResult`, `LuaExecRequest` → `LuauExecRequest`, all `Lua*` public types renamed to `Luau*`
+- **Exports**: `@prism/core/lua` → `@prism/core/luau`; `.d.lua` → `.d.luau`
+- **Tests**: 3602 TS + 33 Rust unit + 7 integration + 12 wasm E2E — all green
+
 ## Prism Daemon: Cross-Platform Kernel + DI Builder (Complete — 2026-04-08)
 
 Goal: port Studio's self-replicating kernel paradigm to `prism-daemon` so the

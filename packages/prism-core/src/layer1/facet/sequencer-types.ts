@@ -1,9 +1,9 @@
 /**
- * Sequencer framework -- data model and Lua emission for visual condition/script builders.
+ * Sequencer framework -- data model and Luau emission for visual condition/script builders.
  *
  * Ported from Helm's Wizard framework. The Sequencer lets non-programmers compose
- * Lua condition expressions and action scripts by selecting from dropdown menus.
- * Pure functions: SequencerConditionState -> Lua string, SequencerScriptState -> Lua string.
+ * Luau condition expressions and action scripts by selecting from dropdown menus.
+ * Pure functions: SequencerConditionState -> Luau string, SequencerScriptState -> Luau string.
  *
  * Renamed: Wizard -> Sequencer throughout.
  */
@@ -15,7 +15,7 @@ export type SequencerSubjectKind =
   | 'variable'    // a named variable (Var["scope.id"])
   | 'field'       // a field on an entity (Entity["id"].fieldName)
   | 'event'       // whether an event has fired (Event.HasFired(id))
-  | 'custom';     // raw Lua expression (escape hatch)
+  | 'custom';     // raw Luau expression (escape hatch)
 
 /** A subject available for selection in the sequencer (populated from a registry). */
 export interface SequencerSubject {
@@ -69,8 +69,8 @@ export type SequencerActionKind =
   | 'set-variable'   // Var.set("scope", "id", value)
   | 'add-variable'   // Var.set("scope", "id", Var.get("scope","id") + amount)
   | 'emit-event'     // Event.emit("eventId", payload?)
-  | 'call-function'  // SomeLuaGlobal.method(args...)
-  | 'custom';        // raw Lua statement
+  | 'call-function'  // SomeLuauGlobal.method(args...)
+  | 'custom';        // raw Luau statement
 
 /** A single script action step. */
 export interface SequencerScriptStep {
@@ -89,7 +89,7 @@ export interface SequencerScriptState {
   steps: SequencerScriptStep[];
 }
 
-// -- Lua emission: conditions -------------------------------------------------
+// -- Luau emission: conditions -------------------------------------------------
 
 function emitSubject(clause: SequencerConditionClause): string {
   switch (clause.subjectKind) {
@@ -139,16 +139,16 @@ function emitClause(clause: SequencerConditionClause): string {
 }
 
 /**
- * Emit a Lua condition expression from a SequencerConditionState.
+ * Emit a Luau condition expression from a SequencerConditionState.
  *
  * @example
- *   emitConditionLua({ combinator: 'all', clauses: [
+ *   emitConditionLuau({ combinator: 'all', clauses: [
  *     { id: '1', subjectKind: 'variable', subject: 'player.gold', operator: 'gte', value: '50' },
  *     { id: '2', subjectKind: 'event', subject: 'quest_started', operator: 'is-true', value: '' },
  *   ]})
  *   // -> '(Var["player.gold"] >= 50 and Event.HasFired("quest_started") == true)'
  */
-export function emitConditionLua(state: SequencerConditionState): string {
+export function emitConditionLuau(state: SequencerConditionState): string {
   if (state.clauses.length === 0) return 'true';
 
   const parts = state.clauses
@@ -164,7 +164,7 @@ export function emitConditionLua(state: SequencerConditionState): string {
   return parts.length > 1 ? `(${expr})` : expr;
 }
 
-// -- Lua emission: scripts ----------------------------------------------------
+// -- Luau emission: scripts ----------------------------------------------------
 
 function emitStep(step: SequencerScriptStep): string {
   switch (step.actionKind) {
@@ -196,16 +196,16 @@ function emitStep(step: SequencerScriptStep): string {
 }
 
 /**
- * Emit a multi-line Lua script from a SequencerScriptState.
+ * Emit a multi-line Luau script from a SequencerScriptState.
  *
  * @example
- *   emitScriptLua({ steps: [
+ *   emitScriptLuau({ steps: [
  *     { id: '1', actionKind: 'set-variable', target: 'player.gold', value: '100' },
  *     { id: '2', actionKind: 'emit-event', target: 'quest_complete', value: '' },
  *   ]})
  *   // -> 'Var["player.gold"] = 100\nEvent.emit("quest_complete")'
  */
-export function emitScriptLua(state: SequencerScriptState): string {
+export function emitScriptLuau(state: SequencerScriptState): string {
   return state.steps
     .filter((s) => s.target.trim() !== '' || s.actionKind === 'custom')
     .map(emitStep)

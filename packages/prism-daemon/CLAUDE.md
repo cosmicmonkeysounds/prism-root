@@ -33,7 +33,7 @@ paradigm, ported to Rust:
   `builder.set_doc_manager(...)` so hosts can preload docs from disk.
 - `src/modules/` — built-in modules, each behind a feature flag:
   - `crdt_module.rs` → `prism.crdt` → `crdt.{write,read,export,import}`
-  - `lua_module.rs` → `prism.lua` → `lua.exec`
+  - `luau_module.rs` → `prism.luau` → `luau.exec`
   - `build_module.rs` → `prism.build` → `build.run_step` (+ `BuildStep`,
     `BuildStepOutput`, `run_build_step` kept as free fn for hot paths)
   - `watcher_module.rs` → `prism.watcher` → `watcher.{watch,poll,stop}`

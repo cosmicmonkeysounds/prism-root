@@ -1,7 +1,7 @@
 //! Tauri IPC bindings — thin wrappers over the Prism Daemon kernel.
 //!
 //! These preserve the existing frontend-facing command surface (crdt_*,
-//! lua_exec, run_build_step) while routing through the kernel instead of
+//! luau_exec, run_build_step) while routing through the kernel instead of
 //! touching the services directly. Hot paths that have a natural Rust
 //! shape (e.g. CRDT byte arrays) still call `kernel.doc_manager()` for
 //! zero-copy access; the rest funnel through `kernel.invoke(...)` which
@@ -9,7 +9,7 @@
 //! funnels through.
 
 use prism_daemon::modules::build_module::{run_build_step as daemon_run_build_step, BuildStep, BuildStepOutput};
-use prism_daemon::modules::lua_module::exec as daemon_lua_exec;
+use prism_daemon::modules::luau_module::exec as daemon_luau_exec;
 use prism_daemon::DaemonKernel;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -55,11 +55,11 @@ pub fn crdt_export(kernel: Kernel<'_>, doc_id: String) -> Result<Vec<u8>, String
 }
 
 #[tauri::command]
-pub fn lua_exec(
+pub fn luau_exec(
     script: String,
     args: Option<serde_json::Map<String, serde_json::Value>>,
 ) -> Result<serde_json::Value, String> {
-    daemon_lua_exec(&script, args.as_ref())
+    daemon_luau_exec(&script, args.as_ref())
 }
 
 /// Execute a single BuildStep from Studio's BuilderManager.

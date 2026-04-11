@@ -105,7 +105,7 @@ import type { VfsManager, BinaryRef, BinaryLock } from "@prism/core/vfs";
 import {
   createPeerTrustGraph,
   createSchemaValidator,
-  createLuaSandbox,
+  createLuauSandbox,
   createShamirSplitter,
   createEscrowManager,
 } from "@prism/core/trust";
@@ -124,8 +124,8 @@ import {
   FILE_PATH_FILTER,
   markdownToNodes,
   nodesToMarkdown,
-  emitConditionLua,
-  emitScriptLua,
+  emitConditionLuau,
+  emitScriptLuau,
   TypeScriptWriter,
   JavaScriptWriter,
   CSharpWriter,
@@ -161,7 +161,7 @@ import type { FieldSchema } from "@prism/core/forms";
 import type {
   PeerTrustGraph,
   SchemaValidator,
-  LuaSandbox,
+  LuauSandbox,
   SandboxPolicy,
   ShamirSplitter,
   ShamirShare,
@@ -403,7 +403,7 @@ export interface StudioKernel {
   validateImport(data: unknown): SchemaValidationResult;
 
   /** Create a sandbox for a plugin. */
-  createSandbox(policy: SandboxPolicy): LuaSandbox;
+  createSandbox(policy: SandboxPolicy): LuauSandbox;
 
   /** Flag content as toxic. */
   flagContent(hash: string, category: string): void;
@@ -455,10 +455,10 @@ export interface StudioKernel {
   nodesToMarkdown(nodes: ProseNode): string;
 
   /** Emit a condition state as Lua expression. */
-  emitConditionLua(state: SequencerConditionState): string;
+  emitConditionLuau(state: SequencerConditionState): string;
 
   /** Emit a script state as Lua statement block. */
-  emitScriptLua(state: SequencerScriptState): string;
+  emitScriptLuau(state: SequencerScriptState): string;
 
   /** Generate code from a schema model in a target language. */
   emitCode(model: SchemaModel, language: "typescript" | "javascript" | "csharp" | "lua" | "json" | "yaml" | "toml"): string;
@@ -767,7 +767,7 @@ export function createStudioKernel(options: StudioKernelOptions = {}): StudioKer
   const schemaValidator = createSchemaValidator();
   const shamirSplitter = createShamirSplitter();
   const escrowManager = createEscrowManager();
-  const sandboxes = new Map<string, LuaSandbox>();
+  const sandboxes = new Map<string, LuauSandbox>();
   const trustListeners = new Set<() => void>();
 
   function notifyTrustListeners() {
@@ -1924,7 +1924,7 @@ export function createStudioKernel(options: StudioKernelOptions = {}): StudioKer
     listPeers() { return trustGraph.allPeers(); },
     validateImport(data: unknown) { return schemaValidator.validate(data); },
     createSandbox(policy: SandboxPolicy) {
-      const sandbox = createLuaSandbox(policy);
+      const sandbox = createLuauSandbox(policy);
       sandboxes.set(policy.pluginId, sandbox);
       return sandbox;
     },
@@ -1964,8 +1964,8 @@ export function createStudioKernel(options: StudioKernelOptions = {}): StudioKer
     spellSuggest(word: string) { return spellChecker.suggest(word); },
     markdownToNodes(md: string) { return markdownToNodes(md); },
     nodesToMarkdown(node: ProseNode) { return nodesToMarkdown(node); },
-    emitConditionLua(state: SequencerConditionState) { return emitConditionLua(state); },
-    emitScriptLua(state: SequencerScriptState) { return emitScriptLua(state); },
+    emitConditionLuau(state: SequencerConditionState) { return emitConditionLuau(state); },
+    emitScriptLuau(state: SequencerScriptState) { return emitScriptLuau(state); },
     emitCode(model: SchemaModel, language: "typescript" | "javascript" | "csharp" | "lua" | "json" | "yaml" | "toml") {
       const writer = emitters[language];
       const meta = { projectName: "prism", generatedAt: new Date().toISOString() };

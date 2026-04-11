@@ -6,7 +6,7 @@
 pub mod crdt_module;
 
 #[cfg(feature = "lua")]
-pub mod lua_module;
+pub mod luau_module;
 
 #[cfg(feature = "build")]
 pub mod build_module;

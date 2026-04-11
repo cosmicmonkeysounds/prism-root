@@ -30,12 +30,12 @@ export {
   inlineTokenTheme,
 } from "./inline-tokens.js";
 export {
-  findLuaBlocks,
+  findLuauBlocks,
   formatBlockResult,
-  processLuaBlocks,
-} from "./lua-markdown-plugin.js";
+  processLuauBlocks,
+} from "./luau-markdown-plugin.js";
 export type {
-  LuaRunner,
-  LuaRunnerResult,
-  LuaMarkdownBlock,
-} from "./lua-markdown-plugin.js";
+  LuauRunner,
+  LuauRunnerResult,
+  LuauMarkdownBlock,
+} from "./luau-markdown-plugin.js";

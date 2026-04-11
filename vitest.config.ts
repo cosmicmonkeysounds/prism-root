@@ -56,7 +56,7 @@ export default defineConfig({
       "@prism/core/flux": core("layer1/flux/index.ts"),
       "@prism/core/builder": core("layer1/builder/index.ts"),
       "@prism/core/machines": core("layer1/machines/index.ts"),
-      "@prism/core/lua": core("layer1/lua/index.ts"),
+      "@prism/core/luau": core("layer1/luau/index.ts"),
       // Catch-all for deep imports like @prism/core/layer2/codemirror/editor-setup
       "@prism/core": resolve(__dirname, "packages/prism-core/src"),
       // @prism/relay subpath exports

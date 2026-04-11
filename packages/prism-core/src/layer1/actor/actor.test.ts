@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   createProcessQueue,
-  createLuaActorRuntime,
+  createLuauActorRuntime,
   createSidecarRuntime,
   createTestRuntime,
 } from "./actor.js";
@@ -281,7 +281,7 @@ describe("LuaActorRuntime", () => {
   };
 
   it("executes a lua payload", async () => {
-    const runtime = createLuaActorRuntime(mockLuaExecute);
+    const runtime = createLuauActorRuntime(mockLuaExecute);
     const result = await runtime.execute(
       { script: "return 42", args: {} },
       DEFAULT_CAPABILITY_SCOPE,
@@ -293,7 +293,7 @@ describe("LuaActorRuntime", () => {
   });
 
   it("reports lua errors", async () => {
-    const runtime = createLuaActorRuntime(mockLuaExecute);
+    const runtime = createLuauActorRuntime(mockLuaExecute);
     const result = await runtime.execute(
       { script: "error" },
       DEFAULT_CAPABILITY_SCOPE,
@@ -304,13 +304,13 @@ describe("LuaActorRuntime", () => {
   });
 
   it("checks availability", async () => {
-    const runtime = createLuaActorRuntime(async () => ({ success: true, value: true }));
+    const runtime = createLuauActorRuntime(async () => ({ success: true, value: true }));
     expect(await runtime.isAvailable()).toBe(true);
   });
 
-  it("name is lua", () => {
-    const runtime = createLuaActorRuntime(mockLuaExecute);
-    expect(runtime.name).toBe("lua");
+  it("name is luau", () => {
+    const runtime = createLuauActorRuntime(mockLuaExecute);
+    expect(runtime.name).toBe("luau");
   });
 });
 

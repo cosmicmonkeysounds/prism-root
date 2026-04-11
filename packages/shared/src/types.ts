@@ -20,8 +20,8 @@ export type CrdtSnapshot = Uint8Array;
 /** Serialized CRDT incremental update. */
 export type CrdtUpdate = Uint8Array;
 
-/** Result of a Lua script execution. */
-export type LuaResult = {
+/** Result of a Luau script execution. */
+export type LuauResult = {
   success: boolean;
   value: unknown;
   error?: string;

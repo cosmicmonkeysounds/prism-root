@@ -164,10 +164,10 @@ impl DaemonBuilder {
         self.with_module(crate::modules::crdt_module::CrdtModule)
     }
 
-    /// Install the Lua 5.4 scripting module (`lua.exec`).
+    /// Install the Luau scripting module (`luau.exec`).
     #[cfg(feature = "lua")]
     pub fn with_lua(self) -> Self {
-        self.with_module(crate::modules::lua_module::LuaModule)
+        self.with_module(crate::modules::luau_module::LuauModule)
     }
 
     /// Install the build-step executor (`build.run_step`). Not safe on

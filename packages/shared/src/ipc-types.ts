@@ -3,7 +3,7 @@
  * Every Tauri invoke() call uses these typed payloads.
  */
 
-import type { CrdtSnapshot, CrdtUpdate, LuaResult, NodeId } from "./types.js";
+import type { CrdtSnapshot, CrdtUpdate, LuauResult, NodeId } from "./types.js";
 
 /** Write a value to a CRDT map node. */
 export type CrdtWriteRequest = {
@@ -40,8 +40,8 @@ export type CrdtImportRequest = {
   snapshot: CrdtSnapshot;
 };
 
-/** Execute a Lua script on the daemon. */
-export type LuaExecRequest = {
+/** Execute a Luau script on the daemon. */
+export type LuauExecRequest = {
   script: string;
   args?: Record<string, unknown>;
 };
@@ -68,5 +68,5 @@ export type IpcCommands = {
   crdt_read: { request: CrdtReadRequest; response: CrdtReadResponse };
   crdt_export: { request: CrdtExportRequest; response: CrdtSnapshot };
   crdt_import: { request: CrdtImportRequest; response: { success: boolean } };
-  lua_exec: { request: LuaExecRequest; response: LuaResult };
+  luau_exec: { request: LuauExecRequest; response: LuauResult };
 };

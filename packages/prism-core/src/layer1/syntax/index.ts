@@ -9,7 +9,7 @@ export type {
   FieldTypeMapping,
   TypeInfo,
   SchemaContext,
-  LuaTypeDef,
+  LuauTypeDef,
   FunctionSignature,
   SyntaxProvider,
   SyntaxEngineOptions,
@@ -21,7 +21,7 @@ export {
   BUILTIN_FUNCTIONS,
   inferNodeType,
   createExpressionProvider,
-  generateLuaTypeDef,
+  generateLuauTypeDef,
   createSyntaxEngine,
 } from "./syntax.js";
 

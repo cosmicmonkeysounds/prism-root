@@ -21,12 +21,12 @@ import {
   type TraceFrame,
   createStep,
   createVisualScript,
-  emitStepsLua,
-  emitStepsLuaWithMap,
+  emitStepsLuau,
+  emitStepsLuauWithMap,
   validateSteps,
   getStepMeta,
   getStepCategories,
-  createLuaDebugger,
+  createLuauDebugger,
 } from "@prism/core/layer1";
 
 // ── Styles ──────────────────────────────────────────────────────────────────
@@ -323,8 +323,8 @@ export function VisualScriptPanel() {
   const [isDebugging, setIsDebugging] = useState(false);
 
   const categories = useMemo(() => getStepCategories(), []);
-  const lua = useMemo(() => emitStepsLua(script.steps), [script.steps]);
-  const emittedWithMap = useMemo(() => emitStepsLuaWithMap(script.steps), [script.steps]);
+  const lua = useMemo(() => emitStepsLuau(script.steps), [script.steps]);
+  const emittedWithMap = useMemo(() => emitStepsLuauWithMap(script.steps), [script.steps]);
   const errors = useMemo(() => validateSteps(script.steps), [script.steps]);
 
   // Currently-focused step id (for highlighting) = owner of the line in the
@@ -415,7 +415,7 @@ export function VisualScriptPanel() {
     }
     setIsDebugging(true);
     try {
-      const dbg = await createLuaDebugger();
+      const dbg = await createLuauDebugger();
       try {
         // Apply breakpoints — translate step ids to Lua line numbers.
         for (const stepId of breakpoints) {

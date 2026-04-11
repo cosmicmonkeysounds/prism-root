@@ -119,7 +119,7 @@ test.describe(`prism-daemon wasm (${PROFILE})`, () => {
         expect(commands).toEqual(expect.arrayContaining(["crdt.read"]));
         expect(commands).toEqual(expect.arrayContaining(["crdt.export"]));
         expect(commands).toEqual(expect.arrayContaining(["crdt.import"]));
-        expect(commands).toEqual(expect.arrayContaining(["lua.exec"]));
+        expect(commands).toEqual(expect.arrayContaining(["luau.exec"]));
         // Commands intentionally excluded from the wasm feature must
         // not show up — their presence would mean the feature gate leaked.
         expect(commands).not.toContain("watcher.watch");
@@ -153,7 +153,7 @@ test.describe(`prism-daemon wasm (${PROFILE})`, () => {
         if (!response.ok) return;
         const modules = (response.result as { modules: string[] }).modules;
         expect(modules).toEqual(
-            expect.arrayContaining(["prism.crdt", "prism.lua"]),
+            expect.arrayContaining(["prism.crdt", "prism.luau"]),
         );
         expect(modules).not.toContain("prism.watcher");
         expect(modules).not.toContain("prism.build");
@@ -267,7 +267,7 @@ test.describe(`prism-daemon wasm (${PROFILE})`, () => {
         });
     });
 
-    test("lua.exec runs a real Lua 5.4 VM in the browser", async ({
+    test("luau.exec runs a real Luau VM in the browser", async ({
         page,
     }) => {
         const response = (await page.evaluate(() => {
@@ -286,7 +286,7 @@ test.describe(`prism-daemon wasm (${PROFILE})`, () => {
             ).__prismDaemon;
             const k = d.createKernel();
             try {
-                return d.invoke(k, "lua.exec", { script: "return 21 * 2" });
+                return d.invoke(k, "luau.exec", { script: "return 21 * 2" });
             } finally {
                 d.destroyKernel(k);
             }
@@ -295,7 +295,7 @@ test.describe(`prism-daemon wasm (${PROFILE})`, () => {
         expect(response).toEqual({ ok: true, result: 42 });
     });
 
-    test("lua.exec honours args as globals", async ({ page }) => {
+    test("luau.exec honours args as globals", async ({ page }) => {
         const response = (await page.evaluate(() => {
             const d = (
                 window as unknown as {
@@ -312,7 +312,7 @@ test.describe(`prism-daemon wasm (${PROFILE})`, () => {
             ).__prismDaemon;
             const k = d.createKernel();
             try {
-                return d.invoke(k, "lua.exec", {
+                return d.invoke(k, "luau.exec", {
                     script: "return greeting .. ', ' .. name",
                     args: { greeting: "hello", name: "chrome" },
                 });
@@ -324,7 +324,7 @@ test.describe(`prism-daemon wasm (${PROFILE})`, () => {
         expect(response).toEqual({ ok: true, result: "hello, chrome" });
     });
 
-    test("lua.exec errors surface as structured error envelopes", async ({
+    test("luau.exec errors surface as structured error envelopes", async ({
         page,
     }) => {
         const response = (await page.evaluate(() => {
@@ -343,7 +343,7 @@ test.describe(`prism-daemon wasm (${PROFILE})`, () => {
             ).__prismDaemon;
             const k = d.createKernel();
             try {
-                return d.invoke(k, "lua.exec", {
+                return d.invoke(k, "luau.exec", {
                     script: "error('boom')",
                 });
             } finally {
@@ -422,7 +422,7 @@ test.describe(`prism-daemon wasm (${PROFILE})`, () => {
                 d.raw.freeString(ptr);
 
                 // Next call after an error must still succeed.
-                const good = d.invoke(k, "lua.exec", {
+                const good = d.invoke(k, "luau.exec", {
                     script: "return 1",
                 });
                 return { bad, good };
@@ -438,7 +438,7 @@ test.describe(`prism-daemon wasm (${PROFILE})`, () => {
         expect(result.good).toEqual({ ok: true, result: 1 });
     });
 
-    test("sequential invokes don't leak memory (500× lua.exec)", async ({
+    test("sequential invokes don't leak memory (500× luau.exec)", async ({
         page,
     }) => {
         // Smoke test for the create/invoke/free/destroy dance under
@@ -464,7 +464,7 @@ test.describe(`prism-daemon wasm (${PROFILE})`, () => {
             let okCount = 0;
             try {
                 for (let i = 0; i < 500; i++) {
-                    const r = d.invoke(k, "lua.exec", {
+                    const r = d.invoke(k, "luau.exec", {
                         script: `return ${i}`,
                     }) as { ok: true; result: number } | { ok: false };
                     if (r.ok && r.result === i) okCount++;

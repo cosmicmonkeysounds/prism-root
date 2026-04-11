@@ -1,19 +1,19 @@
 import { test, expect } from "@playwright/test";
 
 /**
- * Lua step-through debugger — E2E tests.
+ * Luau step-through debugger — E2E tests.
  *
  * Two integration surfaces are covered:
  *
- * 1. Visual Script Panel (Shift+S) — builds Lua from step cards and lets
+ * 1. Visual Script Panel (Shift+S) — builds Luau from step cards and lets
  *    the user set breakpoints per step. Trace frames map back to the owning
- *    step via emitStepsLuaWithMap().lineToStep.
+ *    step via emitStepsLuauWithMap().lineToStep.
  *
- * 2. Lua Facet Panel (Shift+U) — raw Lua editor with line-based breakpoints.
- *    Debug runs the textarea source through the same wasmoon debugger.
+ * 2. Luau Facet Panel (Shift+U) — raw Luau editor with line-based breakpoints.
+ *    Debug runs the textarea source through the same luau-web debugger.
  *
- * Both surfaces call createLuaDebugger() under the hood, so these tests also
- * smoke-check that wasmoon loads in the browser bundle.
+ * Both surfaces call createLuauDebugger() under the hood, so these tests also
+ * smoke-check that luau-web loads in the browser bundle.
  */
 
 // ── Visual Script debugger ─────────────────────────────────────────────────
@@ -51,7 +51,7 @@ test.describe("Visual Script Debugger", () => {
     page,
   }) => {
     const panel = page.locator('[data-testid="visual-script-panel"]');
-    // Add a benign step that emits trivial Lua (a comment) — passes validation.
+    // Add a benign step that emits trivial Luau (a comment) — passes validation.
     await panel.locator("text=Comment").first().click();
     await expect(
       panel.locator('[data-testid="visual-script-step-0"]'),
@@ -94,9 +94,9 @@ test.describe("Visual Script Debugger", () => {
   });
 });
 
-// ── Raw Lua debugger (Lua Facet Panel) ─────────────────────────────────────
+// ── Raw Luau debugger (Luau Facet Panel) ─────────────────────────────────────
 
-test.describe("Raw Lua Debugger", () => {
+test.describe("Raw Luau Debugger", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/");
     await page

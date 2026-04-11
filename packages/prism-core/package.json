@@ -7,7 +7,7 @@
     "./layer1": "./src/layer1/index.ts",
     "./layer2": "./src/layer2/index.ts",
     "./stores": "./src/layer1/stores/index.ts",
-    "./lua": "./src/layer1/lua/index.ts",
+    "./luau": "./src/layer1/lua/index.ts",
     "./codemirror": "./src/layer2/codemirror/index.ts",
     "./puck": "./src/layer2/puck/index.ts",
     "./kbar": "./src/layer2/kbar/index.ts",
@@ -89,7 +89,7 @@
     "react-dom": "^19.0.0",
     "react-markdown": "^9.0.0",
     "remark-gfm": "^4.0.0",
-    "wasmoon": "^1.16.0",
+    "luau-web": "^1.4.0",
     "xstate": "^5.19.0",
     "zustand": "^5.0.0"
   },

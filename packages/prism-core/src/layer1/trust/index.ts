@@ -3,7 +3,7 @@ export type {
   SandboxCapability,
   SandboxPolicy,
   SandboxViolation,
-  LuaSandbox,
+  LuauSandbox,
   SchemaValidationSeverity,
   SchemaValidationIssue,
   SchemaValidationResult,
@@ -33,7 +33,7 @@ export type {
 } from "./trust-types.js";
 
 export {
-  createLuaSandbox,
+  createLuauSandbox,
   createSchemaValidator,
   createHashcashMinter,
   createHashcashVerifier,

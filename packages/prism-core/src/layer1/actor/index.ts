@@ -19,13 +19,13 @@ export type {
 
 export {
   createProcessQueue,
-  createLuaActorRuntime,
+  createLuauActorRuntime,
   createSidecarRuntime,
   createTestRuntime,
 } from "./actor.js";
 
 export type {
-  LuaPayload,
+  LuauPayload,
   SidecarPayload,
   SidecarExecutor,
 } from "./actor.js";

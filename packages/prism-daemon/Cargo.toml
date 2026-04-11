@@ -55,7 +55,7 @@ mobile = ["crdt", "lua"]
 embedded = ["crdt"]
 
 # WebAssembly build — targets `wasm32-unknown-emscripten` (the only WASM
-# triple mlua's vendored Lua 5.4 supports). Pulls in CRDT + Lua (both are
+# triple mlua's vendored Luau supports). Pulls in CRDT + Luau (both are
 # browser-safe) plus the C-ABI adapter in `src/wasm.rs`. No `watcher`
 # (no inotify/kqueue in the browser), no `build` (process spawning is a
 # no-op on WASM), no `cli` (no stdio loop in a browser).
@@ -72,8 +72,8 @@ cli = ["dep:tokio"]
 # CRDT source of truth — pure Rust, works on every target.
 loro = { version = "1.4", optional = true }
 
-# Lua 5.4 scripting — vendored for zero system deps (builds on iOS/Android).
-mlua = { version = "0.10", features = ["lua54", "vendored", "serialize"], optional = true }
+# Luau scripting — vendored for zero system deps (builds on iOS/Android).
+mlua = { version = "0.10", features = ["luau", "vendored", "serialize"], optional = true }
 
 # Serialization — always on; every module speaks JSON at the registry edge.
 serde = { version = "1", features = ["derive"] }

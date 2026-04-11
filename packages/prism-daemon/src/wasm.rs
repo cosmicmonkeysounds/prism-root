@@ -283,10 +283,10 @@ mod tests {
 
     #[cfg(feature = "lua")]
     #[test]
-    fn lua_exec_runs_through_the_c_abi() {
+    fn luau_exec_runs_through_the_c_abi() {
         unsafe {
             let kernel = prism_daemon_create();
-            let name = cstr("lua.exec");
+            let name = cstr("luau.exec");
             let payload = cstr(r#"{"script":"return 21 * 2"}"#);
             let resp = prism_daemon_invoke(kernel, name.as_ptr(), payload.as_ptr());
             let value = take_response(resp);

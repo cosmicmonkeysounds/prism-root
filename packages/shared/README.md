@@ -6,8 +6,8 @@ Shared TypeScript types and IPC contracts used by all Prism packages. This packa
 
 | File | Purpose |
 |------|---------|
-| `types.ts` | Core branded IDs (`NodeId`, `VaultId`), CRDT types (`CrdtSnapshot`, `CrdtUpdate`), `LuaResult`, `Manifest` |
-| `ipc-types.ts` | Tauri IPC command contracts: `CrdtWriteRequest`, `CrdtReadRequest`, `LuaExecRequest`, `IpcCommands` |
+| `types.ts` | Core branded IDs (`NodeId`, `VaultId`), CRDT types (`CrdtSnapshot`, `CrdtUpdate`), `LuauResult`, `Manifest` |
+| `ipc-types.ts` | Tauri IPC command contracts: `CrdtWriteRequest`, `CrdtReadRequest`, `LuauExecRequest`, `IpcCommands` |
 
 ## Rules
 

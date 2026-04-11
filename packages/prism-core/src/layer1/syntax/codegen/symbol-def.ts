@@ -5,7 +5,7 @@
  * namespace). The same definition is fed to multiple emitters to produce:
  *   - TypeScript types/constants (.ts)
  *   - C# classes/enums (.cs)
- *   - Lua EmmyDoc stubs (.d.lua)
+ *   - Luau EmmyDoc stubs (.d.luau)
  *   - GDScript stubs (.gd) -- via a pluggable emitter
  *
  * This replaces the pattern of writing three separate emitters per package.

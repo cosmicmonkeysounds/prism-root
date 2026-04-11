@@ -13,7 +13,7 @@ import { lensId } from "@prism/core/lens";
 import type { LensManifest } from "@prism/core/lens";
 import { defineLensBundle, type LensBundle } from "../lenses/bundle.js";
 import {
-  createLuaDebugger,
+  createLuauDebugger,
   type DebugRunResult,
 } from "@prism/core/layer1";
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -709,7 +709,7 @@ export default function LuaFacetPanel() {
     }
     setIsDebugging(true);
     try {
-      const dbg = await createLuaDebugger();
+      const dbg = await createLuauDebugger();
       try {
         for (const line of breakpointLines) dbg.setBreakpoint(line);
         const result = await dbg.run(source);

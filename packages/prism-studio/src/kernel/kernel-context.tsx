@@ -22,7 +22,7 @@ import type { InputRouterEvent } from "@prism/core/input";
 import type { RosterEntry } from "@prism/core/discovery";
 import type { PrismIdentity, ExportedIdentity } from "@prism/core/identity";
 import type { BinaryRef, BinaryLock } from "@prism/core/vfs";
-import type { PeerReputation, SchemaValidationResult, ContentHash, SandboxPolicy, LuaSandbox, ShamirShare, ShamirConfig, EscrowDeposit } from "@prism/core/trust";
+import type { PeerReputation, SchemaValidationResult, ContentHash, SandboxPolicy, LuauSandbox, ShamirShare, ShamirConfig, EscrowDeposit } from "@prism/core/trust";
 import type { SourceFormat, FacetDefinition, FacetLayout, ProseNode, SchemaModel, SequencerConditionState, SequencerScriptState, FacetStore, ValueListRegistry, ValueList } from "@prism/core/facet";
 import type { FieldSchema } from "@prism/core/forms";
 import type { SavedView, SavedViewRegistry } from "@prism/core/view";
@@ -610,7 +610,7 @@ export function useTrust(): {
   banPeer: (peerId: string, reason: string) => void;
   unbanPeer: (peerId: string) => void;
   validateImport: (data: unknown) => SchemaValidationResult;
-  createSandbox: (policy: SandboxPolicy) => LuaSandbox;
+  createSandbox: (policy: SandboxPolicy) => LuauSandbox;
   flagContent: (hash: string, category: string) => void;
   splitSecret: (secret: Uint8Array, config: ShamirConfig) => ShamirShare[];
   combineShares: (shares: ShamirShare[], config: ShamirConfig) => Uint8Array;
@@ -693,14 +693,14 @@ export function useProseCodec(): {
 
 /** Sequencer (visual condition/script → Lua). */
 export function useSequencer(): {
-  emitConditionLua: (state: SequencerConditionState) => string;
-  emitScriptLua: (state: SequencerScriptState) => string;
+  emitConditionLuau: (state: SequencerConditionState) => string;
+  emitScriptLuau: (state: SequencerScriptState) => string;
 } {
   const kernel = useKernel();
 
   return {
-    emitConditionLua: kernel.emitConditionLua,
-    emitScriptLua: kernel.emitScriptLua,
+    emitConditionLuau: kernel.emitConditionLuau,
+    emitScriptLuau: kernel.emitScriptLuau,
   };
 }
 

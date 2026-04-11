@@ -3,7 +3,7 @@
  *
  * Compose conditions (subject → operator → value) and script steps
  * (set-variable, emit-event, call-function) via dropdown menus.
- * Live Lua preview via emitConditionLua / emitScriptLua.
+ * Live Luau preview via emitConditionLuau / emitScriptLuau.
  */
 
 import { useState, useCallback } from "react";
@@ -415,7 +415,7 @@ function ScriptBuilder({
 
 export function SequencerPanel() {
   const kernel = useKernel();
-  const { emitConditionLua, emitScriptLua } = useSequencer();
+  const { emitConditionLuau, emitScriptLuau } = useSequencer();
 
   const [tab, setTab] = useState<"condition" | "script">("condition");
 
@@ -428,21 +428,21 @@ export function SequencerPanel() {
     steps: [],
   });
 
-  // Live Lua preview
+  // Live Luau preview
   const luaOutput = tab === "condition"
-    ? (conditionState.clauses.length > 0 ? emitConditionLua(conditionState) : "-- Add clauses to see Lua output")
-    : (scriptState.steps.length > 0 ? emitScriptLua(scriptState) : "-- Add steps to see Lua output");
+    ? (conditionState.clauses.length > 0 ? emitConditionLuau(conditionState) : "-- Add clauses to see Luau output")
+    : (scriptState.steps.length > 0 ? emitScriptLuau(scriptState) : "-- Add steps to see Luau output");
 
-  const handleCopyLua = useCallback(() => {
+  const handleCopyLuau = useCallback(() => {
     void navigator.clipboard?.writeText(luaOutput);
-    kernel.notifications.add({ title: "Lua copied to clipboard", kind: "info" });
+    kernel.notifications.add({ title: "Luau copied to clipboard", kind: "info" });
   }, [luaOutput, kernel]);
 
   return (
     <div style={styles.container} data-testid="sequencer-panel">
       <div style={styles.header as React.CSSProperties}>
         <span>Sequencer</span>
-        <span style={styles.badge}>Lua</span>
+        <span style={styles.badge}>Luau</span>
       </div>
 
       {/* Tabs */}
@@ -472,11 +472,11 @@ export function SequencerPanel() {
         )}
       </div>
 
-      {/* Lua preview */}
+      {/* Luau preview */}
       <div style={styles.card}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div style={styles.sectionTitle}>Lua Output</div>
-          <button style={styles.btn} onClick={handleCopyLua} data-testid="copy-lua-btn">
+          <div style={styles.sectionTitle}>Luau Output</div>
+          <button style={styles.btn} onClick={handleCopyLuau} data-testid="copy-lua-btn">
             Copy
           </button>
         </div>

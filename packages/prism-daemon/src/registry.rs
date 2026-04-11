@@ -46,7 +46,7 @@ impl CommandError {
 pub type CommandHandler = Arc<dyn Fn(JsonValue) -> Result<JsonValue, CommandError> + Send + Sync>;
 
 /// Registry of command handlers keyed by fully-qualified name
-/// (e.g. `crdt.write`, `lua.exec`, `build.run_step`).
+/// (e.g. `crdt.write`, `luau.exec`, `build.run_step`).
 #[derive(Default)]
 pub struct CommandRegistry {
     handlers: RwLock<HashMap<String, CommandHandler>>,

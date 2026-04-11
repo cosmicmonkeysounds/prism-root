@@ -72,7 +72,9 @@ DEBUG_HITS=$(grep -rn --include="*.ts" --include="*.tsx" \
   -E "console\.(log|warn|error|debug)\(|debugger;" \
   "$REPO_ROOT/packages" 2>/dev/null \
   | grep -v "node_modules" \
+  | grep -v "\.emsdk/" \
   | grep -v "\.test\." \
+  | grep -v "\.spec\." \
   | grep -v "//.*console\." \
   | grep -vE "['\"].*console\.(log|warn|error|debug)" \
   || true)

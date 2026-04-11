@@ -1,10 +1,10 @@
 /**
  * ScriptSteps — FileMaker-style visual scripting for non-programmers.
  *
- * Each ScriptStep is a structured action that maps to Lua code.
+ * Each ScriptStep is a structured action that maps to Luau code.
  * Steps are arranged in a flat list with control flow (If/Loop/End).
  * Non-programmers configure steps via dropdowns and text fields.
- * The system emits valid Lua that runs in the Prism Lua runtime.
+ * The system emits valid Luau that runs in the Prism Luau runtime.
  *
  * Step categories:
  *   Navigation: Go To Layout, Go To Record
@@ -22,7 +22,7 @@
  *     createStep('end-if'),
  *     createStep('commit-record'),
  *   ];
- *   const lua = emitStepsLua(steps);
+ *   const lua = emitStepsLuau(steps);
  */
 
 // ── Step Kind Registry ──────────────────────────────────────────────────────
@@ -66,7 +66,7 @@ export type ScriptStepKind =
   | "halt-script"
   | "comment"
   // Custom
-  | "custom-lua";
+  | "custom-luau";
 
 // ── Step Metadata ───────────────────────────────────────────────────────────
 
@@ -131,7 +131,7 @@ export const STEP_KINDS: StepKindMeta[] = [
   { kind: "comment", label: "Comment", category: "script", params: ["text"], description: "Add a comment (no code generated)" },
 
   // Custom
-  { kind: "custom-lua", label: "Custom Lua", category: "custom", params: ["code"], description: "Insert raw Lua code (advanced)" },
+  { kind: "custom-luau", label: "Custom Luau", category: "custom", params: ["code"], description: "Insert raw Luau code (advanced)" },
 ];
 
 export function getStepMeta(kind: ScriptStepKind): StepKindMeta {
@@ -177,7 +177,7 @@ export function createVisualScript(id: string, name: string): VisualScript {
   return { id, name, steps: [] };
 }
 
-// ── Lua Code Generation ─────────────────────────────────────────────────────
+// ── Luau Code Generation ─────────────────────────────────────────────────────
 
 function luaValue(raw: string): string {
   if (!raw) return "nil";
@@ -281,29 +281,29 @@ function emitStep(step: ScriptStep): string {
       return `-- ${p.text ?? ""}`;
 
     // Custom
-    case "custom-lua":
+    case "custom-luau":
       return p.code ?? "";
   }
 }
 
 /**
- * Emit a list of ScriptSteps as formatted Lua code.
+ * Emit a list of ScriptSteps as formatted Luau code.
  * Handles indentation based on control flow blocks.
  */
-export function emitStepsLua(steps: ScriptStep[]): string {
-  return emitStepsLuaWithMap(steps).code;
+export function emitStepsLuau(steps: ScriptStep[]): string {
+  return emitStepsLuauWithMap(steps).code;
 }
 
 /**
- * Result of emitting visual script steps to Lua, with a bidirectional map
- * linking each step to the 1-based Lua source line it generated.
+ * Result of emitting visual script steps to Luau, with a bidirectional map
+ * linking each step to the 1-based Luau source line it generated.
  *
- * This is how the Lua debugger unifies visual-script debugging with raw
- * Lua debugging: a breakpoint set on a visual step finds the emitted line,
+ * This is how the Luau debugger unifies visual-script debugging with raw
+ * Luau debugging: a breakpoint set on a visual step finds the emitted line,
  * and when the debugger pauses on a line it can highlight the owning step.
  */
-export interface StepsLuaEmitResult {
-  /** The full Lua source. */
+export interface StepsLuauEmitResult {
+  /** The full Luau source. */
   code: string;
   /** Map from ScriptStep.id → 1-based line number in `code`. */
   stepToLine: Map<string, number>;
@@ -312,11 +312,11 @@ export interface StepsLuaEmitResult {
 }
 
 /**
- * Emit ScriptSteps as Lua code with a source map linking each step
+ * Emit ScriptSteps as Luau code with a source map linking each step
  * to its generated line. Disabled steps produce a comment line and
  * are still recorded in the map so the UI can highlight them.
  */
-export function emitStepsLuaWithMap(steps: ScriptStep[]): StepsLuaEmitResult {
+export function emitStepsLuauWithMap(steps: ScriptStep[]): StepsLuauEmitResult {
   const lines: string[] = [];
   const stepToLine = new Map<string, number>();
   const lineToStep = new Map<number, string>();

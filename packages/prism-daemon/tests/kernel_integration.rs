@@ -24,7 +24,7 @@ fn with_defaults_installs_every_feature_module() {
     }
     #[cfg(feature = "lua")]
     {
-        assert!(caps.contains(&"lua.exec".to_string()));
+        assert!(caps.contains(&"luau.exec".to_string()));
     }
     #[cfg(feature = "build")]
     {
@@ -51,7 +51,7 @@ fn installed_modules_reports_install_order() {
         modules,
         &[
             "prism.crdt".to_string(),
-            "prism.lua".to_string(),
+            "prism.luau".to_string(),
             "prism.build".to_string(),
             "prism.watcher".to_string(),
         ]

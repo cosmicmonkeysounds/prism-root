@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  createLuaSandbox,
+  createLuauSandbox,
   createSchemaValidator,
   createHashcashMinter,
   createHashcashVerifier,
@@ -16,7 +16,7 @@ import type {
 
 // ── Lua Sandbox ────────────────────────────────────────────────────────────
 
-describe("LuaSandbox", () => {
+describe("LuauSandbox", () => {
   function testPolicy(overrides: Partial<SandboxPolicy> = {}): SandboxPolicy {
     return {
       pluginId: "test-plugin",
@@ -30,36 +30,36 @@ describe("LuaSandbox", () => {
   }
 
   it("grants listed capabilities", () => {
-    const sandbox = createLuaSandbox(testPolicy());
+    const sandbox = createLuauSandbox(testPolicy());
     expect(sandbox.hasCapability("crdt:read")).toBe(true);
     expect(sandbox.hasCapability("net:fetch")).toBe(true);
   });
 
   it("denies unlisted capabilities", () => {
-    const sandbox = createLuaSandbox(testPolicy());
+    const sandbox = createLuauSandbox(testPolicy());
     expect(sandbox.hasCapability("crdt:write")).toBe(false);
     expect(sandbox.hasCapability("fs:read")).toBe(false);
     expect(sandbox.hasCapability("process:spawn")).toBe(false);
   });
 
   it("allows URLs matching glob patterns", () => {
-    const sandbox = createLuaSandbox(testPolicy());
+    const sandbox = createLuauSandbox(testPolicy());
     expect(sandbox.isUrlAllowed("https://api.example.com/v1/data")).toBe(true);
     expect(sandbox.isUrlAllowed("https://evil.com/attack")).toBe(false);
   });
 
   it("denies all URLs when net capability missing", () => {
-    const sandbox = createLuaSandbox(testPolicy({ capabilities: ["crdt:read"] }));
+    const sandbox = createLuauSandbox(testPolicy({ capabilities: ["crdt:read"] }));
     expect(sandbox.isUrlAllowed("https://api.example.com/v1/data")).toBe(false);
   });
 
   it("denies all URLs when allowedUrls is empty", () => {
-    const sandbox = createLuaSandbox(testPolicy({ allowedUrls: [] }));
+    const sandbox = createLuauSandbox(testPolicy({ allowedUrls: [] }));
     expect(sandbox.isUrlAllowed("https://api.example.com/v1/data")).toBe(false);
   });
 
   it("allows paths matching glob patterns", () => {
-    const sandbox = createLuaSandbox(testPolicy({
+    const sandbox = createLuauSandbox(testPolicy({
       capabilities: ["fs:read"],
       allowedPaths: ["/home/user/docs/*"],
     }));
@@ -68,7 +68,7 @@ describe("LuaSandbox", () => {
   });
 
   it("denies all paths when fs capability missing", () => {
-    const sandbox = createLuaSandbox(testPolicy({
+    const sandbox = createLuauSandbox(testPolicy({
       capabilities: ["crdt:read"],
       allowedPaths: ["/home/user/*"],
     }));
@@ -76,7 +76,7 @@ describe("LuaSandbox", () => {
   });
 
   it("records violations", () => {
-    const sandbox = createLuaSandbox(testPolicy());
+    const sandbox = createLuauSandbox(testPolicy());
     expect(sandbox.violations).toHaveLength(0);
 
     sandbox.recordViolation({
@@ -92,7 +92,7 @@ describe("LuaSandbox", () => {
 
   it("exposes the policy", () => {
     const policy = testPolicy();
-    const sandbox = createLuaSandbox(policy);
+    const sandbox = createLuauSandbox(policy);
     expect(sandbox.policy.pluginId).toBe("test-plugin");
     expect(sandbox.policy.maxDurationMs).toBe(5000);
   });
