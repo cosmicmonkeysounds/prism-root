@@ -17,7 +17,7 @@ import {
   type FieldPermission,
   type RoleAssignment,
   createPrivilegeSet,
-} from "@prism/core/layer1";
+} from "@prism/core/manifest";
 
 // ── Styles ──────────────────────────────────────────────────────────────────
 

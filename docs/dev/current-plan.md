@@ -1,5 +1,41 @@
 # Current Plan
 
+## ADR 002 Structural Reorganization (Complete — 2026-04-11)
+
+Moved `@prism/core` from its old `src/layer1/` + `src/layer2/` binary split into **8 domain categories** under `src/`:
+
+```
+foundation → language/identity → kernel/network → interaction/domain → bindings
+```
+
+- `foundation/` — pure data: object-model, persistence, vfs, crdt-stores, batch, clipboard, template, undo, loro-bridge
+- `language/` — expression, forms, syntax, luau, facet
+- `kernel/` — actor, automation, builder, config, plugin, plugin-bundles, state-machine
+- `interaction/` — atom, layout, lens, input, activity, notification, search, view (React-free)
+- `identity/` — did, encryption, trust, manifest
+- `network/` — relay, presence, session, discovery, server
+- `domain/` — flux, graph-analysis, timeline
+- `bindings/` — codemirror, puck, kbar, xyflow, react-shell, viewport3d, audio (the only layer allowed to import React / DOM / WebGL)
+
+### What landed
+
+1. **8 category directories** created under `packages/prism-core/src/`; every subsystem moved with `git mv` so history is preserved.
+2. **Path aliases extended** in `packages/prism-core/tsconfig.json` so `@prism/core/<subsystem>` resolves inside the package as well as from consumers. `rootDir: ".."` fixes TS2209 now that `package.json` no longer has a `"."` entry.
+3. **Vitest uses `vite-tsconfig-paths`** (`vitest.config.ts`) instead of a 60-line hand-maintained alias list.
+4. **Cross-category relative imports eliminated.** Two scripts under `/tmp/` rewrote 115/383 files to `@prism/core/<subsystem>` form, then corrected folder-name → public-export mismatches (`did→identity`, `crdt-stores→stores`, `react-shell→shell`, `xyflow→graph`). Intra-category sibling imports stay relative.
+5. **`@prism/core/layer1` barrel retired.** Studio kernel, panels, and tests split their old catch-all imports into specific subsystem imports (`@prism/core/plugin-bundles`, `@prism/core/facet`, `@prism/core/view`, `@prism/core/manifest`, `@prism/core/luau`, `@prism/core/flux`). The `layer1` and `layer2` subpath exports no longer exist.
+6. **Docs refreshed** — `packages/prism-core/CLAUDE.md`, `packages/prism-core/README.md`, `SPEC.md` §1, root `README.md`, `packages/prism-studio/CLAUDE.md`/`README.md`, `packages/prism-relay/CLAUDE.md` now describe the 8-category structure instead of the Layer 1 / Layer 2 framing.
+
+### Status
+
+- `pnpm typecheck` — green across all 6 packages.
+- `pnpm test` — **185 test files, 3643 tests passing**.
+- Next: Phase 1 of ADR 002 — introduce `PrismFile` + `LanguageContribution` + compat bridge on top of the reorganized structure.
+
+### Note on historical phase entries below
+
+The phase entries below this section were written when the codebase was still split into `layer1/` and `layer2/`. Paths like `layer1/syntax/...`, `layer2/viewport3d/...`, etc. are **historical**. The canonical current paths live under the 8 domain categories and are tracked in the subpath export table in `packages/prism-core/README.md`.
+
 ## Luau full-moon AST Integration (Complete — 2026-04-10)
 
 Ripped regex-based Luau parsing out of panels + debugger, replaced with a

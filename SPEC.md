@@ -30,17 +30,21 @@ In Prism, Applications are **Lenses** and Automations/Intelligence are **Actors*
 
 ### 1. Prism Core (The Glass & Logic)
 
-The client-side execution environment, split into two internal layers to protect business logic from UI framework churn:
+The client-side execution environment. Internally organized into **8 domain categories** forming a strict downward dependency DAG (`foundation → language/identity → kernel/network → interaction/domain → bindings`). External bindings (React, CodeMirror, Puck, xyflow, OpenDAW, OpenCASCADE) are isolated in `bindings/` so the rest of core stays framework-agnostic.
 
-**Layer 1 — Agnostic Primitives** (Pure TypeScript atoms):
-- Zustand state slices (atomic, subscribing to specific Loro node IDs)
-- XState interaction machines (tool mode management)
-- Loro CRDT subscriptions (reactive state from the Object-Graph)
-- Mathematical routing logic
-- *Knows what the data is, but not how to draw it*
+**The categories:**
 
-**Layer 2 — The Renderers** (Visual Implementation):
-- **React + TailwindCSS**: The UI framework and utility-first styling
+- **`foundation/`** — Pure data primitives: GraphObject / TreeModel / EdgeModel / ObjectRegistry, Loro bridge, Zustand CRDT stores, CollectionStore + VaultManager persistence, VFS, batch / clipboard / template / undo. Knows what the data is, but nothing about how to draw it.
+- **`language/`** — Expression engine, form schemas, syntax engine (LSP-like), Luau runtime (`luau-web`), Facet system (parser / sequencer / emitters / value lists / visual scripts).
+- **`identity/`** — W3C DIDs, Ed25519 sign/verify, multi-sig, vault key manager + snapshot encryption (AES-GCM-256), trust & safety (sandbox, hashcash, peer trust, Shamir, escrow), manifest + privilege sets.
+- **`kernel/`** — Runtime: actor/process queue + intelligence layer, automation engine, self-replicating app builder, config + feature flags, plugin registry + plugin bundles, flat state machines.
+- **`network/`** — Relay builder (8 composable modules), presence, communication fabric (sessions + transcripts + playback), vault discovery, framework-agnostic REST/OpenAPI server factory.
+- **`interaction/`** — UI-facing state, still React-free: reactive atoms + PrismBus, layout / selection / lens system + shell store, input router, activity log, notifications, search engine, derived views + saved views.
+- **`domain/`** — Higher-level domain models: Flux (productivity/people/finance/inventory), graph analysis + CPM planning, NLE timeline + tempo map.
+- **`bindings/`** — The only layer allowed to import React / DOM / WebGL / third-party UI libs. React shell, CodeMirror + LoroText sync, Puck + Loro layout bridge, KBar, xyflow spatial graph, 3D viewport (TSL → GLSL, OpenCASCADE), OpenDAW audio bridge.
+
+**External dependencies used across the categories:**
+- **React + TailwindCSS**: UI framework and utility-first styling (bindings only)
 - **Puck** (`@measured/puck`): CSS-based drag-and-drop layout builder for UI composition
 - **PixiJS** (`@pixi/react`): GPU-accelerated 2D rendering for spatial canvases, timelines, and performance-critical views
 - **@xyflow/react** (React Flow): MIT-licensed node-wire graph editor for logic routing and visual programming
@@ -339,7 +343,7 @@ contract:
 | `StudioInitializer` | `@prism/studio/kernel` | The fully-constructed `StudioKernel` | Templates, seed/demo data, action handlers — any post-boot side effect |
 
 `LensBundle` is generic over its component type (`LensBundle<TComponent>`)
-so Layer 1 stays React-free; Studio specializes it to
+so `@prism/core/lens` stays React-free; Studio specializes it to
 `LensBundle<ComponentType>` at its own layer.
 
 The Kernel's factory reads like a menu:
@@ -648,7 +652,7 @@ A Prism-native LMS/MOOC for interactive, multi-media music education (K-12 and b
 
 ### Grip (Live Production Management)
 
-A Layer 2 extension on Flux, bootstrapping its ecosystem for live production (film, theatre, concerts, events).
+A domain extension on Flux, bootstrapping its ecosystem for live production (film, theatre, concerts, events).
 
 - **Loom** abstracted as a strictly typed document-generating script for screenplays/run-of-shows
 - Obsidian weak refs connect every script line to lighting cues, sound triggers, wardrobe changes, stagehand tasks
@@ -725,7 +729,7 @@ Because the entire app ecosystem is React-based, performance requires strict arc
 |------|---------|----------|
 | Prism Daemon | Local Rust physics engine | Engineers |
 | Prism Engine | Same thing | End users |
-| Prism Core | Client-side glass + logic (Layer 1 + 2) | All |
+| Prism Core | Client-side glass + logic (8 domain categories) | All |
 | Prism Relay | Network routing infrastructure | All |
 | Prism Studio | Universal Host + IDE app | Power users |
 | Prism Nexus | Managed SaaS (Studio + Relay + App Repo) | General market |

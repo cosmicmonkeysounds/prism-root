@@ -20,7 +20,7 @@ Studio is a **local-first Vite SPA** (not Next.js). The **same Vite output** is 
 
 ### Kernel (`src/kernel/`)
 
-The kernel wires all Layer 1 systems together at app startup:
+The kernel wires all `@prism/core` subsystems together at app startup:
 
 - **`studio-kernel.ts`** — singleton that creates and connects ObjectRegistry, CollectionStore, PrismBus, AtomStore, UndoRedoManager, NotificationStore, SearchEngine, ActivityStore, RelayManager, AutomationEngine, PluginRegistry, InputRouter, Identity, VfsManager, Trust & Safety, Facet System, and more.
 - **`relay-manager.ts`** — manages WebSocket connections to Prism Relay servers. Studio connects as a client only (no server code).

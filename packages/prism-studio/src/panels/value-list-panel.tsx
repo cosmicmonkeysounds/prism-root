@@ -16,7 +16,7 @@ import {
   createStaticValueList,
   createDynamicValueList,
   createValueListRegistry,
-} from "@prism/core/layer1";
+} from "@prism/core/facet";
 
 // ── Styles ─��────────────────────────────────────────────────────────────────
 

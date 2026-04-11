@@ -30,6 +30,9 @@ use crate::doc_manager::DocManager;
 #[cfg(feature = "watcher")]
 use crate::modules::watcher_module::WatcherManager;
 
+#[cfg(feature = "vfs")]
+use crate::modules::vfs_module::VfsManager;
+
 /// Assembles a [`DaemonKernel`] by plugging modules + initializers into a
 /// shared [`CommandRegistry`].
 pub struct DaemonBuilder {
@@ -54,6 +57,13 @@ pub struct DaemonBuilder {
     /// Optional watcher manager. Same rationale as `doc_manager`.
     #[cfg(feature = "watcher")]
     pub(crate) watcher_manager: Option<Arc<WatcherManager>>,
+
+    /// Optional content-addressed blob store. Same rationale as
+    /// `doc_manager` — hosts can inject a pre-rooted manager so the
+    /// store lives in the app's data directory instead of the OS temp
+    /// dir that the module defaults to.
+    #[cfg(feature = "vfs")]
+    pub(crate) vfs_manager: Option<Arc<VfsManager>>,
 }
 
 impl Default for DaemonBuilder {
@@ -76,6 +86,8 @@ impl DaemonBuilder {
             doc_manager: None,
             #[cfg(feature = "watcher")]
             watcher_manager: None,
+            #[cfg(feature = "vfs")]
+            vfs_manager: None,
         }
     }
 

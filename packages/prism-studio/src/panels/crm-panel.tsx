@@ -9,7 +9,7 @@
 import { useState, useCallback, type CSSProperties } from "react";
 import { useKernel, useObjects } from "../kernel/kernel-context.js";
 import type { GraphObject, ObjectId } from "@prism/core/object-model";
-import { FLUX_TYPES, CONTACT_TYPES } from "@prism/core/layer1";
+import { FLUX_TYPES, CONTACT_TYPES } from "@prism/core/flux";
 
 import { lensId } from "@prism/core/lens";
 import type { LensManifest } from "@prism/core/lens";

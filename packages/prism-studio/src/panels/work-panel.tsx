@@ -11,7 +11,7 @@ import { useState, useCallback, type CSSProperties } from "react";
 import { useKernel, useObjects } from "../kernel/kernel-context.js";
 import type { GraphObject, ObjectId } from "@prism/core/object-model";
 
-import { WORK_TYPES, GIG_STATUSES, TIME_ENTRY_STATUSES, FOCUS_BLOCK_STATUSES } from "@prism/core/layer1";
+import { WORK_TYPES, GIG_STATUSES, TIME_ENTRY_STATUSES, FOCUS_BLOCK_STATUSES } from "@prism/core/plugin-bundles";
 
 import { lensId } from "@prism/core/lens";
 import type { LensManifest } from "@prism/core/lens";

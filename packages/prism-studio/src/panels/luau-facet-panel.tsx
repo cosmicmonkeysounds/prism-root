@@ -22,7 +22,7 @@ import { defineLensBundle, type LensBundle } from "../lenses/bundle.js";
 import {
   createLuauDebugger,
   type DebugRunResult,
-} from "@prism/core/layer1";
+} from "@prism/core/luau";
 import {
   initLuauSyntax,
   isLuauParserReady,

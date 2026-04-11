@@ -17,8 +17,6 @@ import {
   type ScriptStep,
   type ScriptStepKind,
   type VisualScript,
-  type DebugRunResult,
-  type TraceFrame,
   createStep,
   createVisualScript,
   emitStepsLuau,
@@ -26,8 +24,12 @@ import {
   validateSteps,
   getStepMeta,
   getStepCategories,
+} from "@prism/core/facet";
+import {
   createLuauDebugger,
-} from "@prism/core/layer1";
+  type DebugRunResult,
+  type TraceFrame,
+} from "@prism/core/luau";
 
 // ── Styles ──────────────────────────────────────────────────────────────────
 

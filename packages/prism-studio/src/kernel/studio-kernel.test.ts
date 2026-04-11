@@ -1,11 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createStudioKernel } from "./studio-kernel.js";
 import type { StudioKernel } from "./studio-kernel.js";
-import {
-  createSavedView,
-  createStaticValueList,
-  createPrivilegeSet,
-} from "@prism/core/layer1";
+import { createSavedView } from "@prism/core/view";
+import { createStaticValueList } from "@prism/core/facet";
+import { createPrivilegeSet } from "@prism/core/manifest";
 
 describe("StudioKernel", () => {
   let kernel: StudioKernel;

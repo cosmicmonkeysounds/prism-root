@@ -67,7 +67,7 @@ cd packages/prism-studio && pnpm tauri dev   # Tauri desktop with hot reload
 prism/
 ├── packages/
 │   ├── shared/           # TypeScript types and IPC contracts
-│   ├── prism-core/       # Layer 1 (pure TS) + Layer 2 (React renderers)
+│   ├── prism-core/       # 8 domain categories (foundation → … → bindings)
 │   ├── prism-daemon/     # Rust: Loro CRDT, mlua Luau, VFS, hardware
 │   ├── prism-relay/      # Modular relay server: Hono HTTP + WebSocket, CLI
 │   └── prism-studio/     # Vite SPA + Tauri 2.0 shell (Universal Host)
@@ -82,7 +82,7 @@ prism/
 
 | Pillar | Role |
 |--------|------|
-| **Prism Core** | Client-side glass + logic. Layer 1 (domain-agnostic pure TS) + Layer 2 (React renderers). |
+| **Prism Core** | Client-side glass + logic. 8 domain categories with a strict downward dependency DAG; React / DOM / WebGL live only in `bindings/`. |
 | **Prism Daemon** | Rust background engine on sovereign hardware. CRDT merging, VFS, Actors, hardware protocols. |
 | **Prism Relay** | Open-source zero-knowledge routing infrastructure. E2EE store-and-forward, Sovereign Portals via SSR, AutoREST API gateway, federation mesh. 15 composable modules. |
 | **Prism Studio** | The Universal Host app **and** the factory that builds every other app. Vite SPA in Tauri (desktop) / Capacitor (mobile). The App Builder lens composes focused apps (Flux/Lattice/Cadence/Grip/Relay) from the same codebase via `BuilderManager` → `run_build_step` daemon IPC. |
@@ -112,43 +112,25 @@ React UI  →  Zustand Store  →  Loro Bridge  →  LoroDoc (browser)
                                                mlua (Luau)
 ```
 
-### Layer 1 Systems (Pure TypeScript)
+### Subsystems (by category)
 
-Layer 1 is the domain-agnostic core. Zero React, zero DOM, zero runtime assumptions. Everything here works in any JavaScript environment.
+`@prism/core` is split into 8 domain categories forming a strict downward dependency DAG (`foundation → language/identity → kernel/network → interaction/domain → bindings`). Only `bindings/` is allowed to import React / DOM / WebGL; everything above it runs in any JavaScript environment. See `packages/prism-core/README.md` for the full export table.
 
-| System | Module | What it does |
-|--------|--------|-------------|
-| Object Model | `@prism/core/object-model` | GraphObject, ObjectRegistry, TreeModel, EdgeModel, WeakRefEngine, ContextEngine, NSID |
-| Input | `@prism/core/input` | KeyboardModel, InputScope, InputRouter (LIFO scope stack) |
-| Forms | `@prism/core/forms` | FieldSchema, DocumentSchema, FormState, wiki-link parser, markdown parser |
-| Layout | `@prism/core/layout` | SelectionModel, PageModel, PageRegistry, WorkspaceSlot, WorkspaceManager |
-| Expression | `@prism/core/expression` | Scanner, recursive descent parser, evaluator with builtins |
-| Plugin | `@prism/core/plugin` | PrismPlugin, PluginRegistry, ContributionRegistry (views, commands, keybindings, menus) |
-| Reactive Atoms | `@prism/core/atom` | PrismBus event bus, AtomStore, ObjectAtomStore, bus-to-atom bridges |
-| State Machines | `@prism/core/automaton` | Flat FSM with guards, actions, lifecycle hooks (onEnter/onExit) |
-| Graph Analysis | `@prism/core/graph-analysis` | Dependency graph, topological sort, cycle detection, CPM planning engine |
-| Automation | `@prism/core/automation` | Trigger/condition/action rules, condition evaluator, template interpolation, cron scheduling |
-| Manifest | `@prism/core/manifest` | PrismManifest (`.prism.json`), CollectionRef, StorageConfig, SyncConfig, validation |
-| Lens Shell | `@prism/core/lens` | LensManifest, LensRegistry, ShellStore, `LensBundle` / `installLensBundles` / `defineLensBundle` self-registration |
-| Persistence | `@prism/core/persistence` | CollectionStore (Loro CRDT-backed object/edge storage) |
-| Undo/Redo | `@prism/core/undo` | UndoRedoManager with labeled snapshots |
-| Notifications | `@prism/core/notification` | NotificationStore with kind/unread/dismiss |
-| Search | `@prism/core/search` | SearchEngine (prefix + fuzzy), SearchIndex |
-| Templates | `@prism/core/template` | ObjectTemplate, TemplateNode, variable interpolation, tree instantiation |
-| Activity | `@prism/core/activity` | ActivityStore, ActivityTracker, bus-driven event logging |
-| Clipboard | `@prism/core/clipboard` | ClipboardManager: copy/cut/paste with deep tree cloning |
+**`foundation/`** — pure data primitives: `@prism/core/object-model`, `@prism/core/persistence`, `@prism/core/vfs`, `@prism/core/stores`, `@prism/core/batch`, `@prism/core/clipboard`, `@prism/core/template`, `@prism/core/undo`
 
-### Layer 2 Systems (React Renderers)
+**`language/`** — languages, parsers, emitters: `@prism/core/expression`, `@prism/core/forms`, `@prism/core/syntax`, `@prism/core/luau`, `@prism/core/facet`
 
-Layer 2 projects Layer 1 state into visual form.
+**`kernel/`** — runtime/execution: `@prism/core/actor`, `@prism/core/automation`, `@prism/core/builder`, `@prism/core/config`, `@prism/core/plugin`, `@prism/core/plugin-bundles`, `@prism/core/automaton`
 
-| System | Module | What it does |
-|--------|--------|-------------|
-| CodeMirror | `@prism/core/codemirror` | LoroText bidirectional sync |
-| Puck | `@prism/core/puck` | Loro-backed visual layout builder |
-| KBar | `@prism/core/kbar` | Command palette with focus-depth routing |
-| Spatial Graph | `@prism/core/graph` | @xyflow/react + elkjs auto-layout |
-| Shell | `@prism/core/shell` | ShellLayout, ActivityBar, TabBar, LensProvider |
+**`interaction/`** — UI-facing state (React-free): `@prism/core/atom`, `@prism/core/layout`, `@prism/core/lens`, `@prism/core/input`, `@prism/core/activity`, `@prism/core/notification`, `@prism/core/search`, `@prism/core/view`
+
+**`identity/`** — DIDs, keys, trust, manifest: `@prism/core/identity`, `@prism/core/encryption`, `@prism/core/trust`, `@prism/core/manifest`
+
+**`network/`** — wire-crossing systems: `@prism/core/relay`, `@prism/core/presence`, `@prism/core/session`, `@prism/core/discovery`, `@prism/core/server`
+
+**`domain/`** — higher-level domain models: `@prism/core/flux`, `@prism/core/graph-analysis`, `@prism/core/timeline`
+
+**`bindings/`** — React / DOM / WebGL adapters: `@prism/core/codemirror`, `@prism/core/puck`, `@prism/core/kbar`, `@prism/core/graph` (xyflow), `@prism/core/shell`, `@prism/core/viewport3d`, `@prism/core/audio`
 
 ## Build Phases
 
@@ -158,7 +140,7 @@ Layer 2 projects Layer 1 state into visual form.
 | 2 | The Eyes | CodeMirror, Puck, KBar, multi-panel Studio | Complete |
 | 0 | The Object Model | GraphObject, Registry, Tree, Edges, WeakRef, NSID, Query | Complete |
 | 4 | The Shell | LensRegistry, ShellStore, ActivityBar, TabBar | Complete |
-| 5 | Input, Forms, Layout, Expression | Four Layer 1 systems ported from legacy | Complete |
+| 5 | Input, Forms, Layout, Expression | Four core subsystems ported from legacy | Complete |
 | 6 | Context Engine, Plugin, Atoms | ContextEngine, PluginRegistry, PrismBus, AtomStore | Complete |
 | 7 | Machines, Graph Analysis, Planning | FSM, dependency graph, CPM critical path | Complete |
 | 8 | Automation, Manifest | AutomationEngine, PrismManifest | Complete |

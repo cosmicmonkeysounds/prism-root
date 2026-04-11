@@ -47,7 +47,7 @@ import type { ObjectTemplate, TemplateNode, InstantiateResult } from "@prism/cor
 import { createPageBuilderRegistry } from "./entities.js";
 import { createDesignTokenRegistry, DEFAULT_TOKENS } from "./design-tokens.js";
 import type { DesignTokenRegistry } from "./design-tokens.js";
-import { createBuiltinBundles, installPluginBundles } from "@prism/core/layer1";
+import { createBuiltinBundles, installPluginBundles } from "@prism/core/plugin-bundles";
 import type { ComponentType } from "react";
 import type { StoreApi } from "zustand";
 import {

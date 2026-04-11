@@ -111,13 +111,13 @@ case "$(uname -s)" in
     *) err "unsupported host: $(uname -s)" ;;
 esac
 SYSROOT_LIB="$NDK_ROOT/toolchains/llvm/prebuilt/$HOST_TAG/sysroot/usr/lib"
-declare -A TRIPLE_FOR=(
-    [arm64-v8a]=aarch64-linux-android
-    [armeabi-v7a]=arm-linux-androideabi
-    [x86_64]=x86_64-linux-android
-)
-for abi in arm64-v8a armeabi-v7a x86_64; do
-    triple="${TRIPLE_FOR[$abi]}"
+# Plain positional parallel arrays; `declare -A` on macOS's bash 3.2 is
+# a pain to use with `set -u`.
+ABIS=(arm64-v8a armeabi-v7a x86_64)
+TRIPLES=(aarch64-linux-android arm-linux-androideabi x86_64-linux-android)
+for i in 0 1 2; do
+    abi="${ABIS[$i]}"
+    triple="${TRIPLES[$i]}"
     src="$SYSROOT_LIB/$triple/libc++_shared.so"
     [ -f "$src" ] || err "missing libc++_shared.so for $abi at $src"
     cp "$src" "$PLUGIN_JNI/$abi/libc++_shared.so"

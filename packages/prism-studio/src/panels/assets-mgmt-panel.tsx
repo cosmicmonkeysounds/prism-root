@@ -7,7 +7,7 @@
 import { useState, useCallback, type CSSProperties } from "react";
 import { useKernel, useObjects } from "../kernel/kernel-context.js";
 import type { GraphObject, ObjectId } from "@prism/core/object-model";
-import { ASSETS_TYPES, MEDIA_STATUSES, CONTENT_STATUSES, SCAN_STATUSES, MEDIA_KINDS } from "@prism/core/layer1";
+import { ASSETS_TYPES, MEDIA_STATUSES, CONTENT_STATUSES, SCAN_STATUSES, MEDIA_KINDS } from "@prism/core/plugin-bundles";
 
 import { lensId } from "@prism/core/lens";
 import type { LensManifest } from "@prism/core/lens";

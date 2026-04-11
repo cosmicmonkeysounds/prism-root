@@ -11,7 +11,7 @@
 //! module can mutate the builder, so wiring stays explicit and traceable.
 //!
 //! [`LensBundle`]: https://docs — see @prism/core/lens
-//! [`PluginBundle`]: https://docs — see @prism/core/layer1
+//! [`PluginBundle`]: https://docs — see @prism/core/plugin
 //! [`DaemonBuilder`]: crate::builder::DaemonBuilder
 
 use crate::builder::DaemonBuilder;

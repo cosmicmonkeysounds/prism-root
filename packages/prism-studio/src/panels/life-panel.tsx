@@ -7,7 +7,7 @@
 import { useState, useCallback, type CSSProperties } from "react";
 import { useKernel, useObjects } from "../kernel/kernel-context.js";
 import type { GraphObject, ObjectId } from "@prism/core/object-model";
-import { LIFE_TYPES, JOURNAL_MOODS, WORKOUT_TYPES, SLEEP_QUALITY } from "@prism/core/layer1";
+import { LIFE_TYPES, JOURNAL_MOODS, WORKOUT_TYPES, SLEEP_QUALITY } from "@prism/core/plugin-bundles";
 
 import { lensId } from "@prism/core/lens";
 import type { LensManifest } from "@prism/core/lens";

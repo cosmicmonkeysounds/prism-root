@@ -2,9 +2,21 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "baseUrl": ".",
+    "rootDir": "..",
     "outDir": "dist",
     "paths": {
-      "@prism/shared/*": ["../shared/src/*"]
+      "@prism/shared/*": ["../shared/src/*"],
+      "@prism/core/*": [
+        "./src/*",
+        "./src/foundation/*",
+        "./src/language/*",
+        "./src/kernel/*",
+        "./src/interaction/*",
+        "./src/identity/*",
+        "./src/network/*",
+        "./src/domain/*",
+        "./src/bindings/*"
+      ]
     }
   },
   "include": ["src"],

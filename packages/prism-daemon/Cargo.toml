@@ -54,27 +54,35 @@ required-features = ["wasm"]
 default = ["full"]
 
 # Full desktop/server build — all modules + standalone CLI.
-full = ["crdt", "luau", "build", "watcher", "cli"]
+full = ["crdt", "luau", "build", "watcher", "vfs", "crypto", "cli"]
 
 # Mobile build — no process spawning, no notify (iOS/Android prefer
-# their own filesystem APIs).
-mobile = ["crdt", "luau"]
+# their own filesystem APIs). Still pulls in VFS (the app sandbox has
+# plenty of filesystem access) and crypto (the whole point of mobile is
+# encrypted sync with other devices).
+mobile = ["crdt", "luau", "vfs", "crypto"]
 
-# Embedded / minimum build — just CRDT.
+# Embedded / minimum build — just CRDT. Intentionally stripped: no Luau,
+# no filesystem modules, no crypto. This is what would run on a hypothetical
+# no_std-leaning target (ESP32 simulators, microcontrollers with enough
+# flash to hold loro). Keeping it minimal keeps the door open for real
+# embedded work later without any existing dep leaking in.
 embedded = ["crdt"]
 
 # WebAssembly build — targets `wasm32-unknown-emscripten` (the only WASM
-# triple mlua's vendored Luau supports). Pulls in CRDT + Luau (both are
-# browser-safe) plus the C-ABI adapter in `src/wasm.rs`. No `watcher`
-# (no inotify/kqueue in the browser), no `build` (process spawning is a
-# no-op on WASM), no `cli` (no stdio loop in a browser).
-wasm = ["crdt", "luau"]
+# triple mlua's vendored Luau supports). Pulls in everything the browser
+# can actually run: CRDT + Luau + VFS (emscripten's MEMFS) + crypto.
+# No `watcher` (no inotify/kqueue in the browser), no `build` (process
+# spawning is a no-op on WASM), no `cli` (no stdio loop in a browser).
+wasm = ["crdt", "luau", "vfs", "crypto"]
 
 # Individual capabilities.
 crdt = ["dep:loro"]
 luau = ["dep:mlua"]
 build = []
 watcher = ["dep:notify"]
+vfs = ["dep:sha2", "dep:hex"]
+crypto = ["dep:chacha20poly1305", "dep:x25519-dalek", "dep:rand_core", "dep:hex"]
 cli = ["dep:tokio"]
 
 [dependencies]
@@ -97,6 +105,24 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", 
 
 # File system watching — not available on every target (e.g. iOS).
 notify = { version = "7", optional = true }
+
+# VFS content-addressing — pure Rust SHA-256 + hex encoder. Tiny, no
+# system deps, compiles clean on wasm32-unknown-emscripten and every
+# mobile target.
+sha2 = { version = "0.10", optional = true }
+hex = { version = "0.4", optional = true }
+
+# Crypto — pure Rust X25519 (ECDH) + XChaCha20-Poly1305 (AEAD) +
+# cryptographically secure RNG trait. Matches the SPEC's E2EE layer
+# (libsodium-equivalent primitives) without pulling in libsodium's C
+# source, so mobile/wasm builds stay dependency-light. Works on every
+# target we care about: desktop (arc4random/urandom), iOS/Android
+# (arc4random_buf/getrandom), and wasm32-unknown-emscripten (emscripten's
+# libc exposes a working getrandom backed by JavaScript's
+# `crypto.getRandomValues`).
+chacha20poly1305 = { version = "0.10", optional = true }
+x25519-dalek = { version = "2", features = ["static_secrets"], optional = true }
+rand_core = { version = "0.6", features = ["getrandom"], optional = true }
 
 [dev-dependencies]
 tempfile = "3"

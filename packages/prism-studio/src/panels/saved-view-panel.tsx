@@ -23,7 +23,7 @@ import {
   type ViewConfig,
   createSavedView,
   createSavedViewRegistry,
-} from "@prism/core/layer1";
+} from "@prism/core/view";
 
 // ── Styles ──────────────────────────────────────────────────────────────────
 

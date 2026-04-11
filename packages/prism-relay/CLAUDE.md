@@ -1,6 +1,6 @@
 # @prism/relay
 
-Runtime server for Prism Relay — wraps Layer 1 relay primitives in HTTP + WebSocket.
+Runtime server for Prism Relay — wraps `@prism/core/relay` primitives in HTTP + WebSocket.
 
 ## Build & Test
 - `pnpm dev` — start with tsx watch (dev mode)
