@@ -349,13 +349,13 @@ describe("SyntaxEngine", () => {
 
   it("accepts custom providers via options", () => {
     const custom: SyntaxProvider = {
-      name: "lua",
+      name: "luau",
       diagnose() { return []; },
       complete() { return []; },
       hover() { return null; },
     };
     const engine = createSyntaxEngine({ providers: [custom] });
-    expect(engine.listProviders()).toContain("lua");
+    expect(engine.listProviders()).toContain("luau");
   });
 
   it("delegates diagnose to expression provider", () => {
@@ -396,10 +396,10 @@ describe("SyntaxEngine", () => {
   });
 });
 
-// ── Lua Type Definition Generation ─────────────────────────────────────────
+// ── Luau Type Definition Generation ────────────────────────────────────────
 
-describe("Lua type definition generation", () => {
-  it("generates .d.lua for object type", () => {
+describe("Luau type definition generation", () => {
+  it("generates .d.luau for object type", () => {
     const ctx = taskContext();
     const result = generateLuauTypeDef(ctx);
 

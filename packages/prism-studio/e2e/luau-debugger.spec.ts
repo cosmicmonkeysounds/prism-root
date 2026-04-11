@@ -100,52 +100,52 @@ test.describe("Raw Luau Debugger", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/");
     await page
-      .locator('[data-testid="activity-icon-lua-facet"]')
+      .locator('[data-testid="activity-icon-luau-facet"]')
       .click();
     await expect(
-      page.locator('[data-testid="lua-facet-panel"]'),
+      page.locator('[data-testid="luau-facet-panel"]'),
     ).toBeVisible({ timeout: 10_000 });
   });
 
   test("Debug button and line gutter are rendered", async ({ page }) => {
-    const panel = page.locator('[data-testid="lua-facet-panel"]');
+    const panel = page.locator('[data-testid="luau-facet-panel"]');
     await expect(
-      panel.locator('[data-testid="lua-debug-btn"]'),
+      panel.locator('[data-testid="luau-debug-btn"]'),
     ).toBeVisible();
     await expect(
-      panel.locator('[data-testid="lua-line-gutter"]'),
+      panel.locator('[data-testid="luau-line-gutter"]'),
     ).toBeVisible();
   });
 
   test("running Debug on the seeded sample opens the frames panel", async ({
     page,
   }) => {
-    const panel = page.locator('[data-testid="lua-facet-panel"]');
+    const panel = page.locator('[data-testid="luau-facet-panel"]');
     // Replace the editor source with something simple and side-effect-free
     // so we don't depend on the specific seeded sample passing parse.
-    const editor = panel.locator('[data-testid="lua-editor"]');
+    const editor = panel.locator('[data-testid="luau-editor"]');
     await editor.fill("local x = 1\nlocal y = 2\nlocal z = x + y\n");
 
-    await panel.locator('[data-testid="lua-debug-btn"]').click();
+    await panel.locator('[data-testid="luau-debug-btn"]').click();
     await expect(
-      panel.locator('[data-testid="lua-debug-frames-panel"]'),
+      panel.locator('[data-testid="luau-debug-frames-panel"]'),
     ).toBeVisible({ timeout: 15_000 });
     await expect(
-      panel.locator('[data-testid="lua-debug-frame-list"]'),
+      panel.locator('[data-testid="luau-debug-frame-list"]'),
     ).toBeVisible();
     await expect(
-      panel.locator('[data-testid="lua-debug-locals"]'),
+      panel.locator('[data-testid="luau-debug-locals"]'),
     ).toBeVisible();
   });
 
   test("toggling a line breakpoint updates the gutter state", async ({
     page,
   }) => {
-    const panel = page.locator('[data-testid="lua-facet-panel"]');
-    const editor = panel.locator('[data-testid="lua-editor"]');
+    const panel = page.locator('[data-testid="luau-facet-panel"]');
+    const editor = panel.locator('[data-testid="luau-editor"]');
     await editor.fill("local a = 1\nlocal b = 2\n");
 
-    const btn = panel.locator('[data-testid="lua-line-btn-2"]');
+    const btn = panel.locator('[data-testid="luau-line-btn-2"]');
     await expect(btn).toBeVisible();
     await expect(btn).toHaveAttribute("data-breakpoint", "false");
     await btn.click();
@@ -153,16 +153,16 @@ test.describe("Raw Luau Debugger", () => {
   });
 
   test("closing the frames panel dismisses it", async ({ page }) => {
-    const panel = page.locator('[data-testid="lua-facet-panel"]');
-    const editor = panel.locator('[data-testid="lua-editor"]');
+    const panel = page.locator('[data-testid="luau-facet-panel"]');
+    const editor = panel.locator('[data-testid="luau-editor"]');
     await editor.fill("local a = 42\n");
-    await panel.locator('[data-testid="lua-debug-btn"]').click();
+    await panel.locator('[data-testid="luau-debug-btn"]').click();
     await expect(
-      panel.locator('[data-testid="lua-debug-frames-panel"]'),
+      panel.locator('[data-testid="luau-debug-frames-panel"]'),
     ).toBeVisible({ timeout: 15_000 });
-    await panel.locator('[data-testid="lua-debug-close"]').click();
+    await panel.locator('[data-testid="luau-debug-close"]').click();
     await expect(
-      panel.locator('[data-testid="lua-debug-frames-panel"]'),
+      panel.locator('[data-testid="luau-debug-frames-panel"]'),
     ).toHaveCount(0);
   });
 });

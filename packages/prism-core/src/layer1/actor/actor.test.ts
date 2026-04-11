@@ -261,10 +261,10 @@ describe("ProcessQueue auto-processing", () => {
   });
 });
 
-// ── Lua Actor Runtime ───────────────────────────────────────────────────────
+// ── Luau Actor Runtime ──────────────────────────────────────────────────────
 
-describe("LuaActorRuntime", () => {
-  const mockLuaExecute = async (script: string, _args?: Record<string, unknown>) => {
+describe("LuauActorRuntime", () => {
+  const mockLuauExecute = async (script: string, _args?: Record<string, unknown>) => {
     // Simple mock: evaluate "return X" as JSON
     if (script.startsWith("return ")) {
       const expr = script.slice(7);
@@ -275,13 +275,13 @@ describe("LuaActorRuntime", () => {
       }
     }
     if (script === "error") {
-      return { success: false, value: null, error: "lua error" };
+      return { success: false, value: null, error: "luau error" };
     }
     return { success: true, value: null };
   };
 
-  it("executes a lua payload", async () => {
-    const runtime = createLuauActorRuntime(mockLuaExecute);
+  it("executes a luau payload", async () => {
+    const runtime = createLuauActorRuntime(mockLuauExecute);
     const result = await runtime.execute(
       { script: "return 42", args: {} },
       DEFAULT_CAPABILITY_SCOPE,
@@ -292,15 +292,15 @@ describe("LuaActorRuntime", () => {
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
   });
 
-  it("reports lua errors", async () => {
-    const runtime = createLuauActorRuntime(mockLuaExecute);
+  it("reports luau errors", async () => {
+    const runtime = createLuauActorRuntime(mockLuauExecute);
     const result = await runtime.execute(
       { script: "error" },
       DEFAULT_CAPABILITY_SCOPE,
     );
 
     expect(result.success).toBe(false);
-    expect(result.error).toBe("lua error");
+    expect(result.error).toBe("luau error");
   });
 
   it("checks availability", async () => {
@@ -309,7 +309,7 @@ describe("LuaActorRuntime", () => {
   });
 
   it("name is luau", () => {
-    const runtime = createLuauActorRuntime(mockLuaExecute);
+    const runtime = createLuauActorRuntime(mockLuauExecute);
     expect(runtime.name).toBe("luau");
   });
 });

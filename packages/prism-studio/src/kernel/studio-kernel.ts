@@ -129,7 +129,7 @@ import {
   TypeScriptWriter,
   JavaScriptWriter,
   CSharpWriter,
-  LuaWriter,
+  LuauWriter,
   JsonWriter,
   YamlWriter,
   TomlWriter,
@@ -454,14 +454,14 @@ export interface StudioKernel {
   /** Convert ProseNode tree back to Markdown. */
   nodesToMarkdown(nodes: ProseNode): string;
 
-  /** Emit a condition state as Lua expression. */
+  /** Emit a condition state as Luau expression. */
   emitConditionLuau(state: SequencerConditionState): string;
 
-  /** Emit a script state as Lua statement block. */
+  /** Emit a script state as Luau statement block. */
   emitScriptLuau(state: SequencerScriptState): string;
 
   /** Generate code from a schema model in a target language. */
-  emitCode(model: SchemaModel, language: "typescript" | "javascript" | "csharp" | "lua" | "json" | "yaml" | "toml"): string;
+  emitCode(model: SchemaModel, language: "typescript" | "javascript" | "csharp" | "luau" | "json" | "yaml" | "toml"): string;
 
   /** Build a FacetDefinition using the builder API. */
   buildFacetDefinition(id: string, entityType: string, layout: FacetLayout): ReturnType<typeof facetDefinitionBuilder>;
@@ -848,7 +848,7 @@ export function createStudioKernel(options: StudioKernelOptions = {}): StudioKer
     typescript: new TypeScriptWriter(),
     javascript: new JavaScriptWriter(),
     csharp: new CSharpWriter(),
-    lua: new LuaWriter(),
+    luau: new LuauWriter(),
     json: new JsonWriter(),
     yaml: new YamlWriter(),
     toml: new TomlWriter(),
@@ -1966,7 +1966,7 @@ export function createStudioKernel(options: StudioKernelOptions = {}): StudioKer
     nodesToMarkdown(node: ProseNode) { return nodesToMarkdown(node); },
     emitConditionLuau(state: SequencerConditionState) { return emitConditionLuau(state); },
     emitScriptLuau(state: SequencerScriptState) { return emitScriptLuau(state); },
-    emitCode(model: SchemaModel, language: "typescript" | "javascript" | "csharp" | "lua" | "json" | "yaml" | "toml") {
+    emitCode(model: SchemaModel, language: "typescript" | "javascript" | "csharp" | "luau" | "json" | "yaml" | "toml") {
       const writer = emitters[language];
       const meta = { projectName: "prism", generatedAt: new Date().toISOString() };
       const result = writer.emit(model as never, meta);

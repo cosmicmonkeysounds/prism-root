@@ -17,8 +17,8 @@ Loro CRDT round-trips between browser and Rust daemon via Tauri IPC.
 
 ## packages/shared
 
-- [x] Core types: `NodeId`, `VaultId`, `CrdtSnapshot`, `CrdtUpdate`, `LuaResult`, `Manifest`
-- [x] IPC types: `CrdtWriteRequest`, `CrdtReadRequest`, `LuaExecRequest`, `IpcCommands`
+- [x] Core types: `NodeId`, `VaultId`, `CrdtSnapshot`, `CrdtUpdate`, `LuauResult`, `Manifest`
+- [x] IPC types: `CrdtWriteRequest`, `CrdtReadRequest`, `LuauExecRequest`, `IpcCommands`
 - [x] `package.json` with `exports` field
 - [x] `CLAUDE.md`
 
@@ -34,23 +34,23 @@ Loro CRDT round-trips between browser and Rust daemon via Tauri IPC.
   - [x] `set()` writes through to Loro (optimistic update)
   - [x] `get()` reads from local state
   - [x] Disconnect cleanup
-- [x] **Lua Runtime** (`lua-runtime.ts`): wasmoon browser Lua 5.4
-  - [x] `executeLua(script, args)` with global injection
-  - [x] `createLuaEngine()` for persistent contexts
-  - [x] Error handling with `LuaResult` type
-- [x] Package exports: `@prism/core/layer1`, `@prism/core/stores`, `@prism/core/lua`
+- [x] **Luau Runtime** (`luau-runtime.ts`): luau-web browser Luau
+  - [x] `executeLuau(script, args)` with global injection
+  - [x] `createLuauEngine()` for persistent contexts
+  - [x] Error handling with `LuauResult` type
+- [x] Package exports: `@prism/core/layer1`, `@prism/core/stores`, `@prism/core/luau`
 - [x] `CLAUDE.md`
 
 ## packages/prism-daemon (Rust)
 
-- [x] `Cargo.toml` with `loro`, `mlua` (lua54 + vendored), `serde`, `thiserror`
+- [x] `Cargo.toml` with `loro`, `mlua` (luau + vendored), `serde`, `thiserror`
 - [x] `DocManager` for multi-document CRDT management
 - [x] **CRDT commands** (`commands/crdt.rs`)
   - [x] `crdt_write()` / `crdt_read()` / `crdt_export()` / `crdt_import()`
   - [x] Rust tests: write/read, export/import, merge two peers
-- [x] **Lua commands** (`commands/lua.rs`)
-  - [x] `lua_exec()` with JSON args injection
-  - [x] JSON <-> Lua value conversion
+- [x] **Luau commands** (`modules/luau_module.rs`)
+  - [x] `luau.exec` with JSON args injection
+  - [x] JSON <-> Luau value conversion
   - [x] Rust tests: arithmetic, args, strings, tables, errors, factorial round-trip
 - [x] `DaemonError` enum with thiserror
 - [x] `CLAUDE.md`
@@ -61,7 +61,7 @@ Loro CRDT round-trips between browser and Rust daemon via Tauri IPC.
 - [x] `index.html` + `main.tsx` + `App.tsx` (Phase 1 demo UI)
 - [x] **IPC Bridge** (`ipc-bridge.ts`): typed wrappers around Tauri `invoke()`
   - [x] `ipcCrdtWrite()` / `ipcCrdtRead()` / `ipcCrdtExport()`
-  - [x] `ipcLuaExec()`
+  - [x] `ipcLuauExec()`
 - [x] **Tauri shell** (`src-tauri/`)
   - [x] `Cargo.toml` depending on `prism-daemon`
   - [x] `tauri.conf.json` (Tauri 2.0)
@@ -83,15 +83,15 @@ Loro CRDT round-trips between browser and Rust daemon via Tauri IPC.
   - [x] React to external bridge changes
   - [x] Zustand subscribe for reactive updates
   - [x] Error on write without connection
-- [x] **Lua round-trip tests** (`lua-runtime.test.ts`)
+- [x] **Luau round-trip tests** (`luau-runtime.test.ts`)
   - [x] Simple arithmetic
   - [x] Argument injection
   - [x] String operations
   - [x] Table returns
   - [x] Error handling
   - [x] Factorial parity test (same script as Rust mlua)
-- [x] **Rust CRDT tests** (in `commands/crdt.rs`)
-- [x] **Rust Lua tests** (in `commands/lua.rs`)
+- [x] **Rust CRDT tests** (in `modules/crdt_module.rs`)
+- [x] **Rust Luau tests** (in `modules/luau_module.rs`)
 
 ## Infrastructure
 
@@ -347,7 +347,7 @@ Pure Layer 1 TypeScript — no UI surface, no Playwright E2E needed.
 - [x] `command-palette.ts` — KBar already exists in Prism
 - [x] `tree-clipboard.ts` + `cascade.ts` — premature; add when needed
 - [x] `context-engine.ts` — deferred to later phase
-- [x] `lua-bridge.ts` — Prism has its own Lua integration
+- [x] `lua-bridge.ts` — Prism has its own Luau integration
 - [x] `presets/` — domain-specific; Lenses define their own
 
 ## Tests

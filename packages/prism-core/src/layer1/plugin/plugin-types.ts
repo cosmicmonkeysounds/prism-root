@@ -2,7 +2,7 @@
  * PrismPlugin — the universal extension unit.
  *
  * Every extension in the Prism ecosystem implements this interface.
- * The shell, build pipeline, and Lua runtime all discover
+ * The shell, build pipeline, and Luau runtime all discover
  * capabilities through plugins.
  *
  * All fields except `id` and `name` are optional. A module that only

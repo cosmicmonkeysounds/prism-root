@@ -691,7 +691,7 @@ export function useProseCodec(): {
   };
 }
 
-/** Sequencer (visual condition/script → Lua). */
+/** Sequencer (visual condition/script → Luau). */
 export function useSequencer(): {
   emitConditionLuau: (state: SequencerConditionState) => string;
   emitScriptLuau: (state: SequencerScriptState) => string;
@@ -706,7 +706,7 @@ export function useSequencer(): {
 
 /** Code emitters (SchemaModel → multi-language). */
 export function useEmitters(): {
-  emit: (model: SchemaModel, language: "typescript" | "javascript" | "csharp" | "lua" | "json" | "yaml" | "toml") => string;
+  emit: (model: SchemaModel, language: "typescript" | "javascript" | "csharp" | "luau" | "json" | "yaml" | "toml") => string;
 } {
   const kernel = useKernel();
 

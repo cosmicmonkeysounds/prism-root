@@ -68,7 +68,7 @@ prism/
 ├── packages/
 │   ├── shared/           # TypeScript types and IPC contracts
 │   ├── prism-core/       # Layer 1 (pure TS) + Layer 2 (React renderers)
-│   ├── prism-daemon/     # Rust: Loro CRDT, mlua Lua 5.4, VFS, hardware
+│   ├── prism-daemon/     # Rust: Loro CRDT, mlua Luau, VFS, hardware
 │   ├── prism-relay/      # Modular relay server: Hono HTTP + WebSocket, CLI
 │   └── prism-studio/     # Vite SPA + Tauri 2.0 shell (Universal Host)
 ├── docs/
@@ -94,7 +94,7 @@ prism/
 |-------|-----------|---------|
 | CRDT | Loro | Single source of truth. The hidden buffer beneath all editors. |
 | State | Zustand | Atomic stores subscribed to specific Loro node IDs. |
-| Scripting | Lua 5.4 | Same scripts run in browser (wasmoon) and daemon (mlua). |
+| Scripting | Luau | Same scripts run in browser (luau-web) and daemon (mlua). |
 | Desktop | Tauri 2.0 | Native shell, Rust backend, IPC bridge. |
 | Mobile | Capacitor 7 | iOS/Android native wrapper around the same Vite SPA. |
 | Frontend | Vite + React | SPA for all client apps. SSR strictly on Relays. |
@@ -109,7 +109,7 @@ React UI  →  Zustand Store  →  Loro Bridge  →  LoroDoc (browser)
                                                      │
                                                Rust Daemon  →  LoroDoc (native)
                                                      │
-                                               mlua (Lua 5.4)
+                                               mlua (Luau)
 ```
 
 ### Layer 1 Systems (Pure TypeScript)
@@ -162,7 +162,7 @@ Layer 2 projects Layer 1 state into visual form.
 | 6 | Context Engine, Plugin, Atoms | ContextEngine, PluginRegistry, PrismBus, AtomStore | Complete |
 | 7 | Machines, Graph Analysis, Planning | FSM, dependency graph, CPM critical path | Complete |
 | 8 | Automation, Manifest | AutomationEngine, PrismManifest | Complete |
-| 28-29 | NLE Timeline, Lua | NLE core, Timeline, Lua runtime, Tool FSM | Complete |
+| 28-29 | NLE Timeline, Luau | NLE core, Timeline, Luau runtime, Tool FSM | Complete |
 | 30a-d | Studio Kernel (Tier 0) | StudioKernel, Entities, Persistence, Undo, Notifications, Search, Clipboard, Templates, Activity | Complete |
 | 30e | Studio UI (Tier 1) | Clipboard UI, Template Gallery, Activity Feed, Object Reorder + 18 E2E | Complete |
 

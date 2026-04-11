@@ -11,7 +11,7 @@
  *   - If the reference is removed from the source content, the edge disappears.
  *   - Weak-ref edges cannot be manually created/deleted via normal edge APIs.
  *   - The system is live — changes propagate on every tree mutation.
- *   - Providers can be registered via TypeScript, Lua, or visual builders.
+ *   - Providers can be registered via TypeScript, Luau, or visual builders.
  */
 
 import type { GraphObject, ObjectId, ObjectEdge } from "./types.js";

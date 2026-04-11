@@ -9,7 +9,7 @@ import { test, expect, type Page } from "@playwright/test";
 // JS shim in e2e/fixtures/harness.html.
 //
 // They exist because the src/wasm.rs unit tests only exercise the C
-// ABI on the host (where mlua is running against native C Lua). That
+// ABI on the host (where mlua is running against native C++ Luau). That
 // catches ownership bugs but proves nothing about whether loro, mlua,
 // and the serde stack actually run correctly inside a browser
 // WebAssembly instance. These tests close that gap: every passing test
@@ -89,7 +89,7 @@ test.describe(`prism-daemon wasm (${PROFILE})`, () => {
         });
     });
 
-    test("daemon.capabilities lists crdt + lua commands", async ({ page }) => {
+    test("daemon.capabilities lists crdt + luau commands", async ({ page }) => {
         const response = (await page.evaluate(() => {
             const d = (
                 window as unknown as {
@@ -126,7 +126,7 @@ test.describe(`prism-daemon wasm (${PROFILE})`, () => {
         expect(commands).not.toContain("build.run_step");
     });
 
-    test("daemon.modules reports crdt + lua installed", async ({ page }) => {
+    test("daemon.modules reports crdt + luau installed", async ({ page }) => {
         const response = (await page.evaluate(() => {
             const d = (
                 window as unknown as {

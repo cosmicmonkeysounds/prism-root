@@ -14,7 +14,7 @@ import type {
   TrustGraphEvent,
 } from "./trust-types.js";
 
-// ── Lua Sandbox ────────────────────────────────────────────────────────────
+// ── Luau Sandbox ───────────────────────────────────────────────────────────
 
 describe("LuauSandbox", () => {
   function testPolicy(overrides: Partial<SandboxPolicy> = {}): SandboxPolicy {

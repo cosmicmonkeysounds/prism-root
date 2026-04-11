@@ -1,11 +1,11 @@
 /**
- * FacetBuilders — Lua codegen helpers that generate common Lua patterns
- * for Prism plugins. Each function is pure: config in → Lua string out.
+ * FacetBuilders — Luau codegen helpers that generate common Luau patterns
+ * for Prism plugins. Each function is pure: config in → Luau string out.
  */
 
 // -- Helper -------------------------------------------------------------------
 
-function luaString(s: string): string {
+function luauString(s: string): string {
   return `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
@@ -27,29 +27,29 @@ export interface BrowserViewConfig {
 }
 
 /**
- * Generate Lua for a collection browser view.
+ * Generate Luau for a collection browser view.
  *
  * Emits a `ui.column` layout with column headers and data rows
  * populated via `Collection.list()`.
  */
-export function luaBrowserView(config: BrowserViewConfig): string {
+export function luauBrowserView(config: BrowserViewConfig): string {
   const { collectionId, title, columns, sortField, sortDirection, filterExpression } = config;
 
   const headerCells = columns
     .map((col) => {
       const widthArg = col.width !== undefined ? `, width = ${col.width}` : '';
-      return `    ui.label(${luaString(col.label)}${widthArg})`;
+      return `    ui.label(${luauString(col.label)}${widthArg})`;
     })
     .join(',\n');
 
   const sortOpts: string[] = [];
-  if (sortField) sortOpts.push(`sort = ${luaString(sortField)}`);
-  if (sortDirection) sortOpts.push(`direction = ${luaString(sortDirection)}`);
-  if (filterExpression) sortOpts.push(`filter = ${luaString(filterExpression)}`);
+  if (sortField) sortOpts.push(`sort = ${luauString(sortField)}`);
+  if (sortDirection) sortOpts.push(`direction = ${luauString(sortDirection)}`);
+  if (filterExpression) sortOpts.push(`filter = ${luauString(filterExpression)}`);
 
   const listArgs = sortOpts.length > 0
-    ? `${luaString(collectionId)}, { ${sortOpts.join(', ')} }`
-    : luaString(collectionId);
+    ? `${luauString(collectionId)}, { ${sortOpts.join(', ')} }`
+    : luauString(collectionId);
 
   const rowCells = columns
     .map((col) => `      ui.text(item.${col.field})`)
@@ -65,7 +65,7 @@ export function luaBrowserView(config: BrowserViewConfig): string {
     `end`,
     ``,
     `local view = ui.column({`,
-    `  ui.label(${luaString(title)}),`,
+    `  ui.label(${luauString(title)}),`,
     `  ui.row({`,
     headerCells,
     `  }),`,
@@ -87,19 +87,19 @@ export interface CollectionRuleConfig {
 }
 
 /**
- * Generate Lua for a collection validation rule.
+ * Generate Luau for a collection validation rule.
  *
  * Emits a `validate_<ruleName>` function that checks a field condition
  * on entities of the given type.
  */
-export function luaCollectionRule(config: CollectionRuleConfig): string {
+export function luauCollectionRule(config: CollectionRuleConfig): string {
   const { ruleName, entityType, field, operator, value, message } = config;
 
   return [
     `function validate_${ruleName}(obj)`,
-    `  if obj.type == ${luaString(entityType)} then`,
+    `  if obj.type == ${luauString(entityType)} then`,
     `    if not (obj.${field} ${operator} ${value}) then`,
-    `      return { valid = false, message = ${luaString(message)} }`,
+    `      return { valid = false, message = ${luauString(message)} }`,
     `    end`,
     `  end`,
     `  return { valid = true }`,
@@ -123,12 +123,12 @@ export interface StatsCommandConfig {
 }
 
 /**
- * Generate Lua for a summary/statistics command.
+ * Generate Luau for a summary/statistics command.
  *
  * Emits a `cmd_<commandName>` function that iterates `Collection.list()`
  * and computes count/sum/avg/min/max for each specified field.
  */
-export function luaStatsCommand(config: StatsCommandConfig): string {
+export function luauStatsCommand(config: StatsCommandConfig): string {
   const { commandName, collectionId, fields } = config;
 
   const initLines: string[] = [];
@@ -167,7 +167,7 @@ export function luaStatsCommand(config: StatsCommandConfig): string {
 
   return [
     `function cmd_${commandName}()`,
-    `  local items = Collection.list(${luaString(collectionId)})`,
+    `  local items = Collection.list(${luauString(collectionId)})`,
     `  local stats = {}`,
     ...initLines,
     `  for _, item in ipairs(items) do`,
@@ -190,23 +190,23 @@ export interface MenuItemConfig {
 }
 
 /**
- * Generate Lua for a menu contribution.
+ * Generate Luau for a menu contribution.
  *
  * Emits a `Plugin.registerMenu()` call with the given properties.
  */
-export function luaMenuItem(config: MenuItemConfig): string {
+export function luauMenuItem(config: MenuItemConfig): string {
   const { id, label, icon, shortcut, action } = config;
 
   const fields: string[] = [
-    `  id = ${luaString(id)}`,
-    `  label = ${luaString(label)}`,
+    `  id = ${luauString(id)}`,
+    `  label = ${luauString(label)}`,
   ];
 
   if (icon !== undefined) {
-    fields.push(`  icon = ${luaString(icon)}`);
+    fields.push(`  icon = ${luauString(icon)}`);
   }
   if (shortcut !== undefined) {
-    fields.push(`  shortcut = ${luaString(shortcut)}`);
+    fields.push(`  shortcut = ${luauString(shortcut)}`);
   }
 
   fields.push(`  action = function()\n    ${action}\n  end`);
@@ -228,18 +228,18 @@ export interface CommandConfig {
 }
 
 /**
- * Generate Lua for a keyboard command.
+ * Generate Luau for a keyboard command.
  *
  * Emits a `Plugin.registerCommand()` call with an `execute` callback.
  */
-export function luaCommand(config: CommandConfig): string {
+export function luauCommand(config: CommandConfig): string {
   const { id, name, shortcut, body } = config;
 
   return [
     `Plugin.registerCommand({`,
-    `  id = ${luaString(id)},`,
-    `  name = ${luaString(name)},`,
-    `  shortcut = ${luaString(shortcut)},`,
+    `  id = ${luauString(id)},`,
+    `  name = ${luauString(name)},`,
+    `  shortcut = ${luauString(shortcut)},`,
     `  execute = function(ctx)`,
     `    ${body}`,
     `  end`,

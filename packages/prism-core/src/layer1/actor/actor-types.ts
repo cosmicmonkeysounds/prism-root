@@ -106,12 +106,12 @@ export interface RuntimeResult<T = unknown> {
 
 /**
  * Pluggable language runtime. Implementations:
- *   - "lua" — luau-web (browser) / mlua (daemon)
+ *   - "luau" — luau-web (browser) / mlua (daemon)
  *   - "typescript" — Deno sidecar
  *   - "python" — Python sidecar
  */
 export interface ActorRuntime {
-  /** Runtime identifier (e.g. "lua", "typescript", "python"). */
+  /** Runtime identifier (e.g. "luau", "typescript", "python"). */
   readonly name: string;
   /** Whether this runtime is available in the current environment. */
   isAvailable(): Promise<boolean>;

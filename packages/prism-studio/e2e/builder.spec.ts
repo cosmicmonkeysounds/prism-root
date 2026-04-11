@@ -3,10 +3,10 @@ import { test, expect } from "@playwright/test";
 /**
  * Builder Integration E2E Tests
  *
- * Tests the unified Puck/Lua/Canvas builder system:
+ * Tests the unified Puck/Luau/Canvas builder system:
  * - Layout Panel (Puck visual builder)
- * - Canvas Panel (WYSIWYG preview with lua-block rendering)
- * - Lua Facet Panel (Lua UI editor bound to kernel objects)
+ * - Canvas Panel (WYSIWYG preview with luau-block rendering)
+ * - Luau Facet Panel (Luau UI editor bound to kernel objects)
  * - Cross-panel integration (edit in one, see in another)
  */
 
@@ -40,9 +40,9 @@ test.describe("Layout Panel — Puck Builder", () => {
     await expect(page.locator("text=Image").first()).toBeVisible();
   });
 
-  test("component list includes Lua Block type", async ({ page }) => {
-    // The lua-block entity should appear as a Puck component
-    await expect(page.locator("text=Lua Block").first()).toBeVisible({ timeout: 10_000 });
+  test("component list includes Luau Block type", async ({ page }) => {
+    // The luau-block entity should appear as a Puck component
+    await expect(page.locator("text=Luau Block").first()).toBeVisible({ timeout: 10_000 });
   });
 
   test("shows existing page content from kernel", async ({ page }) => {
@@ -84,26 +84,26 @@ test.describe("Canvas Panel — WYSIWYG Preview", () => {
     await expect(sections.first()).toBeVisible();
   });
 
-  test("renders lua-block inline with Lua UI preview", async ({ page }) => {
+  test("renders luau-block inline with Luau UI preview", async ({ page }) => {
     const canvas = page.locator('[data-testid="canvas-panel"]');
-    // Seed data includes a lua-block "Status Widget" — should render
-    const luaPreview = canvas.locator('[data-testid^="lua-block-preview-"]').first();
-    await expect(luaPreview).toBeVisible({ timeout: 5_000 });
+    // Seed data includes a luau-block "Status Widget" — should render
+    const luauPreview = canvas.locator('[data-testid^="luau-block-preview-"]').first();
+    await expect(luauPreview).toBeVisible({ timeout: 5_000 });
     // Should show the title and have rendered content
-    await expect(luaPreview.locator("text=Status Widget")).toBeVisible();
+    await expect(luauPreview.locator("text=Status Widget")).toBeVisible();
   });
 
-  test("clicking a lua-block selects it in the kernel", async ({ page }) => {
+  test("clicking a luau-block selects it in the kernel", async ({ page }) => {
     const canvas = page.locator('[data-testid="canvas-panel"]');
-    const luaPreview = canvas.locator('[data-testid^="lua-block-preview-"]').first();
-    await expect(luaPreview).toBeVisible({ timeout: 5_000 });
+    const luauPreview = canvas.locator('[data-testid^="luau-block-preview-"]').first();
+    await expect(luauPreview).toBeVisible({ timeout: 5_000 });
 
-    // Click the lua-block
-    await luaPreview.click();
+    // Click the luau-block
+    await luauPreview.click();
 
-    // Inspector should show the lua-block type
+    // Inspector should show the luau-block type
     const inspector = page.locator('[data-testid="inspector-content"]');
-    await expect(inspector.locator("text=Type: lua-block")).toBeVisible();
+    await expect(inspector.locator("text=Type: luau-block")).toBeVisible();
   });
 
   test("block toolbar appears on selected blocks", async ({ page }) => {
@@ -148,8 +148,8 @@ test.describe("Canvas Panel — WYSIWYG Preview", () => {
     // Quick-create menu should show available component types
     const menu = canvas.locator('[data-testid="quick-create-menu"]').first();
     await expect(menu).toBeVisible();
-    // Should include lua-block as an option
-    await expect(menu.locator('[data-testid="quick-create-option-lua-block"]')).toBeVisible();
+    // Should include luau-block as an option
+    await expect(menu.locator('[data-testid="quick-create-option-luau-block"]')).toBeVisible();
   });
 
   test("quick-create adds a new block to the section", async ({ page }) => {
@@ -168,28 +168,28 @@ test.describe("Canvas Panel — WYSIWYG Preview", () => {
   });
 });
 
-// ── Lua Facet Panel ─────────────────────────────────────────────────────────
+// ── Luau Facet Panel ────────────────────────────────────────────────────────
 
-test.describe("Lua Facet Panel", () => {
+test.describe("Luau Facet Panel", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/");
-    await page.locator('[data-testid="activity-icon-lua-facet"]').click();
-    await expect(page.locator('[data-testid="lua-facet-panel"]')).toBeVisible();
+    await page.locator('[data-testid="activity-icon-luau-facet"]').click();
+    await expect(page.locator('[data-testid="luau-facet-panel"]')).toBeVisible();
   });
 
   test("renders with default Hello World sample", async ({ page }) => {
-    const editor = page.locator('[data-testid="lua-editor"]');
+    const editor = page.locator('[data-testid="luau-editor"]');
     await expect(editor).toBeVisible();
     // Default source should contain "Hello World"
     const value = await editor.inputValue();
     expect(value).toContain("Hello");
   });
 
-  test("preview renders Lua UI elements", async ({ page }) => {
+  test("preview renders Luau UI elements", async ({ page }) => {
     // Default sample should produce a preview
     const preview = page.locator('[data-testid="preview-pane"]');
     await expect(preview).toBeVisible();
-    // "Hello from Lua!" label should render
+    // "Hello from Luau!" label should render
     await expect(preview.locator('[data-testid="ui-label-0"]')).toBeVisible();
   });
 
@@ -198,7 +198,7 @@ test.describe("Lua Facet Panel", () => {
     await select.selectOption("Status Badge");
 
     // Editor should now have Status Badge source
-    const editor = page.locator('[data-testid="lua-editor"]');
+    const editor = page.locator('[data-testid="luau-editor"]');
     const value = await editor.inputValue();
     expect(value).toContain("badge");
 
@@ -208,7 +208,7 @@ test.describe("Lua Facet Panel", () => {
   });
 
   test("editing source updates preview live", async ({ page }) => {
-    const editor = page.locator('[data-testid="lua-editor"]');
+    const editor = page.locator('[data-testid="luau-editor"]');
     await editor.fill('return ui.button("Test Button")');
 
     // Preview should update
@@ -217,8 +217,8 @@ test.describe("Lua Facet Panel", () => {
     await expect(preview.locator("text=Test Button")).toBeVisible();
   });
 
-  test("invalid Lua shows parse error", async ({ page }) => {
-    const editor = page.locator('[data-testid="lua-editor"]');
+  test("invalid Luau shows parse error", async ({ page }) => {
+    const editor = page.locator('[data-testid="luau-editor"]');
     await editor.fill('return ui.unknown("oops")');
 
     // Error should display
@@ -228,7 +228,7 @@ test.describe("Lua Facet Panel", () => {
   });
 
   test("empty source shows empty state", async ({ page }) => {
-    const editor = page.locator('[data-testid="lua-editor"]');
+    const editor = page.locator('[data-testid="luau-editor"]');
     await editor.fill("");
 
     const empty = page.locator('[data-testid="preview-empty"]');
@@ -237,7 +237,7 @@ test.describe("Lua Facet Panel", () => {
   });
 
   test("copy button copies source to clipboard", async ({ page }) => {
-    const copyBtn = page.locator('[data-testid="copy-lua-btn"]');
+    const copyBtn = page.locator('[data-testid="copy-luau-btn"]');
     await copyBtn.click();
     await expect(copyBtn).toHaveText("Copied");
     // Toast notification
@@ -252,37 +252,37 @@ test.describe("Lua Facet Panel", () => {
     await expect(ctx).toContainText("instanceKey:");
   });
 
-  test("binding indicator shows when lua-block is selected", async ({ page }) => {
-    // First go to Editor to select a lua-block
+  test("binding indicator shows when luau-block is selected", async ({ page }) => {
+    // First go to Editor to select a luau-block
     await page.locator('[data-testid="activity-icon-editor"]').click();
     const explorer = page.locator('[data-testid="object-explorer"]');
-    // Expand tree to find the lua-block
+    // Expand tree to find the luau-block
     await explorer.locator("text=Status Widget").first().click();
 
-    // Switch to Lua Facet
-    await page.locator('[data-testid="activity-icon-lua-facet"]').click();
-    await expect(page.locator('[data-testid="lua-facet-panel"]')).toBeVisible();
+    // Switch to Luau Facet
+    await page.locator('[data-testid="activity-icon-luau-facet"]').click();
+    await expect(page.locator('[data-testid="luau-facet-panel"]')).toBeVisible();
 
     // Should show binding indicator
-    const binding = page.locator('[data-testid="lua-object-binding"]');
+    const binding = page.locator('[data-testid="luau-object-binding"]');
     await expect(binding).toBeVisible();
     await expect(binding).toContainText("Bound");
     await expect(binding).toContainText("Status Widget");
   });
 
-  test("editing bound lua-block updates kernel object", async ({ page }) => {
-    // Select the lua-block
+  test("editing bound luau-block updates kernel object", async ({ page }) => {
+    // Select the luau-block
     await page.locator('[data-testid="activity-icon-editor"]').click();
     const explorer = page.locator('[data-testid="object-explorer"]');
     await explorer.locator("text=Status Widget").first().click();
 
-    // Switch to Lua Facet
-    await page.locator('[data-testid="activity-icon-lua-facet"]').click();
-    await expect(page.locator('[data-testid="lua-object-binding"]')).toBeVisible();
+    // Switch to Luau Facet
+    await page.locator('[data-testid="activity-icon-luau-facet"]').click();
+    await expect(page.locator('[data-testid="luau-object-binding"]')).toBeVisible();
 
     // Edit the source
-    const editor = page.locator('[data-testid="lua-editor"]');
-    await editor.fill('return ui.label("Updated via Lua Facet")');
+    const editor = page.locator('[data-testid="luau-editor"]');
+    await editor.fill('return ui.label("Updated via Luau Facet")');
 
     // Wait for debounced save
     await page.waitForTimeout(600);
@@ -290,7 +290,7 @@ test.describe("Lua Facet Panel", () => {
     // Switch to Canvas to verify update
     await page.locator('[data-testid="activity-icon-canvas"]').click();
     const canvas = page.locator('[data-testid="canvas-panel"]');
-    await expect(canvas.locator("text=Updated via Lua Facet")).toBeVisible({ timeout: 5_000 });
+    await expect(canvas.locator("text=Updated via Luau Facet")).toBeVisible({ timeout: 5_000 });
   });
 });
 
@@ -311,18 +311,18 @@ test.describe("Component Palette", () => {
     await expect(palette.locator('[data-testid^="palette-item-"]').first()).toBeVisible();
   });
 
-  test("palette includes lua-block type", async ({ page }) => {
+  test("palette includes luau-block type", async ({ page }) => {
     const palette = page.locator('[data-testid="component-palette"]');
-    await expect(palette.locator('[data-testid="palette-item-lua-block"]')).toBeVisible();
+    await expect(palette.locator('[data-testid="palette-item-luau-block"]')).toBeVisible();
   });
 
   test("search filters palette items", async ({ page }) => {
     const palette = page.locator('[data-testid="component-palette"]');
     const search = palette.locator('[data-testid="palette-search"]');
-    await search.fill("lua");
+    await search.fill("luau");
 
-    // Should show lua-block, hide others
-    await expect(palette.locator('[data-testid="palette-item-lua-block"]')).toBeVisible();
+    // Should show luau-block, hide others
+    await expect(palette.locator('[data-testid="palette-item-luau-block"]')).toBeVisible();
     await expect(palette.locator('[data-testid="palette-item-heading"]')).not.toBeVisible();
   });
 

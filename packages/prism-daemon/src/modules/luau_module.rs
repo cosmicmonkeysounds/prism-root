@@ -126,13 +126,13 @@ mod tests {
 
     #[test]
     fn luau_module_registers_exec() {
-        let kernel = DaemonBuilder::new().with_lua().build().unwrap();
+        let kernel = DaemonBuilder::new().with_luau().build().unwrap();
         assert!(kernel.capabilities().contains(&"luau.exec".to_string()));
     }
 
     #[test]
     fn luau_exec_simple_expression() {
-        let kernel = DaemonBuilder::new().with_lua().build().unwrap();
+        let kernel = DaemonBuilder::new().with_luau().build().unwrap();
         let out = kernel
             .invoke("luau.exec", json!({ "script": "return 2 + 2" }))
             .unwrap();
@@ -141,7 +141,7 @@ mod tests {
 
     #[test]
     fn luau_exec_with_named_args() {
-        let kernel = DaemonBuilder::new().with_lua().build().unwrap();
+        let kernel = DaemonBuilder::new().with_luau().build().unwrap();
         let out = kernel
             .invoke(
                 "luau.exec",
@@ -153,7 +153,7 @@ mod tests {
 
     #[test]
     fn luau_exec_error_surfaces_as_command_error() {
-        let kernel = DaemonBuilder::new().with_lua().build().unwrap();
+        let kernel = DaemonBuilder::new().with_luau().build().unwrap();
         let err = kernel
             .invoke("luau.exec", json!({ "script": "error('boom')" }))
             .unwrap_err();

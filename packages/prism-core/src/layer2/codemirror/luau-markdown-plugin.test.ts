@@ -1,5 +1,5 @@
 /**
- * Tests for lua-markdown-plugin — fenced block scanning and execution.
+ * Tests for luau-markdown-plugin — fenced block scanning and execution.
  */
 
 import { describe, it, expect } from "vitest";
@@ -11,7 +11,7 @@ import {
 } from "./luau-markdown-plugin.js";
 
 describe("findLuauBlocks", () => {
-  it("finds a single lua block", () => {
+  it("finds a single luau block", () => {
     const md = '# Doc\n\n```luau\nprint("hi")\n```\n\nEnd.';
     const blocks = findLuauBlocks(md);
     expect(blocks).toHaveLength(1);
@@ -26,7 +26,7 @@ describe("findLuauBlocks", () => {
     expect(blocks[1]?.source).toBe("b = 2");
   });
 
-  it("ignores non-lua fences", () => {
+  it("ignores non-luau fences", () => {
     const md = '```js\nconsole.log(1)\n```\n\n```python\nprint(1)\n```';
     expect(findLuauBlocks(md)).toEqual([]);
   });
@@ -92,7 +92,7 @@ describe("processLuauBlocks", () => {
     expect(await processLuauBlocks(md, echoRunner)).toBe(md);
   });
 
-  it("replaces lua blocks with source+output fences", async () => {
+  it("replaces luau blocks with source+output fences", async () => {
     const md = 'a\n\n```luau\nprint(1)\nprint(2)\n```\n\nb';
     const out = await processLuauBlocks(md, echoRunner);
     expect(out).toContain("=> 2"); // two lines echoed back

@@ -22,7 +22,7 @@
  *     createStep('end-if'),
  *     createStep('commit-record'),
  *   ];
- *   const lua = emitStepsLuau(steps);
+ *   const luau = emitStepsLuau(steps);
  */
 
 // ── Step Kind Registry ──────────────────────────────────────────────────────
@@ -179,7 +179,7 @@ export function createVisualScript(id: string, name: string): VisualScript {
 
 // ── Luau Code Generation ─────────────────────────────────────────────────────
 
-function luaValue(raw: string): string {
+function luauValue(raw: string): string {
   if (!raw) return "nil";
   // Already quoted string
   if ((raw.startsWith('"') && raw.endsWith('"')) ||
@@ -206,19 +206,19 @@ function emitStep(step: ScriptStep): string {
   switch (step.kind) {
     // Navigation
     case "go-to-layout":
-      return `Prism.goToLayout(${luaValue(p.layoutId ?? "")})`;
+      return `Prism.goToLayout(${luauValue(p.layoutId ?? "")})`;
     case "go-to-record":
-      return `Prism.goToRecord(${luaValue(p.position ?? "next")})`;
+      return `Prism.goToRecord(${luauValue(p.position ?? "next")})`;
     case "go-to-related":
-      return `Prism.goToRelated(${luaValue(p.relationshipId ?? "")}, ${luaValue(p.layoutId ?? "")})`;
+      return `Prism.goToRelated(${luauValue(p.relationshipId ?? "")}, ${luauValue(p.layoutId ?? "")})`;
 
     // Data
     case "set-field":
-      return `Prism.setField(${luaValue(p.target ?? "")}, ${luaValue(p.value ?? "")})`;
+      return `Prism.setField(${luauValue(p.target ?? "")}, ${luauValue(p.value ?? "")})`;
     case "set-variable":
-      return `local ${p.name ?? "x"} = ${luaValue(p.value ?? "")}`;
+      return `local ${p.name ?? "x"} = ${luauValue(p.value ?? "")}`;
     case "new-record":
-      return `Prism.newRecord(${luaValue(p.objectType ?? "")})`;
+      return `Prism.newRecord(${luauValue(p.objectType ?? "")})`;
     case "duplicate-record":
       return "Prism.duplicateRecord()";
     case "delete-record":
@@ -246,9 +246,9 @@ function emitStep(step: ScriptStep): string {
 
     // UI
     case "show-dialog":
-      return `Prism.showDialog(${luaValue(p.title ?? "")}, ${luaValue(p.message ?? "")}, ${luaValue(p.buttons ?? '"OK"')})`;
+      return `Prism.showDialog(${luauValue(p.title ?? "")}, ${luauValue(p.message ?? "")}, ${luauValue(p.buttons ?? '"OK"')})`;
     case "show-notification":
-      return `Prism.notify(${luaValue(p.title ?? "")}, ${luaValue(p.kind ?? '"info"')})`;
+      return `Prism.notify(${luauValue(p.title ?? "")}, ${luauValue(p.kind ?? '"info"')})`;
     case "refresh-window":
       return "Prism.refreshWindow()";
     case "freeze-window":
@@ -258,23 +258,23 @@ function emitStep(step: ScriptStep): string {
 
     // Find/Sort
     case "perform-find":
-      return `Prism.performFind(${luaValue(p.field ?? "")}, ${luaValue(p.value ?? "")})`;
+      return `Prism.performFind(${luauValue(p.field ?? "")}, ${luauValue(p.value ?? "")})`;
     case "show-all-records":
       return "Prism.showAllRecords()";
     case "sort-records":
-      return `Prism.sortRecords(${luaValue(p.field ?? "")}, ${luaValue(p.direction ?? '"asc"')})`;
+      return `Prism.sortRecords(${luauValue(p.field ?? "")}, ${luauValue(p.direction ?? '"asc"')})`;
     case "constrain-found-set":
-      return `Prism.constrainFoundSet(${luaValue(p.field ?? "")}, ${luaValue(p.value ?? "")})`;
+      return `Prism.constrainFoundSet(${luauValue(p.field ?? "")}, ${luauValue(p.value ?? "")})`;
     case "extend-found-set":
-      return `Prism.extendFoundSet(${luaValue(p.field ?? "")}, ${luaValue(p.value ?? "")})`;
+      return `Prism.extendFoundSet(${luauValue(p.field ?? "")}, ${luauValue(p.value ?? "")})`;
 
     // Script
     case "run-script":
       return p.parameter
-        ? `Prism.runScript(${luaValue(p.scriptId ?? "")}, ${luaValue(p.parameter)})`
-        : `Prism.runScript(${luaValue(p.scriptId ?? "")})`;
+        ? `Prism.runScript(${luauValue(p.scriptId ?? "")}, ${luauValue(p.parameter)})`
+        : `Prism.runScript(${luauValue(p.scriptId ?? "")})`;
     case "exit-script":
-      return p.result ? `return ${luaValue(p.result)}` : "return";
+      return p.result ? `return ${luauValue(p.result)}` : "return";
     case "halt-script":
       return "Prism.halt()";
     case "comment":

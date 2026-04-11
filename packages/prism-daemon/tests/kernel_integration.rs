@@ -22,7 +22,7 @@ fn with_defaults_installs_every_feature_module() {
         assert!(caps.contains(&"crdt.write".to_string()));
         assert!(caps.contains(&"crdt.read".to_string()));
     }
-    #[cfg(feature = "lua")]
+    #[cfg(feature = "luau")]
     {
         assert!(caps.contains(&"luau.exec".to_string()));
     }
@@ -40,7 +40,7 @@ fn with_defaults_installs_every_feature_module() {
 fn installed_modules_reports_install_order() {
     let kernel = DaemonBuilder::new()
         .with_crdt()
-        .with_lua()
+        .with_luau()
         .with_build()
         .with_watcher()
         .build()

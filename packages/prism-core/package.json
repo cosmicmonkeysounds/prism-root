@@ -7,7 +7,7 @@
     "./layer1": "./src/layer1/index.ts",
     "./layer2": "./src/layer2/index.ts",
     "./stores": "./src/layer1/stores/index.ts",
-    "./luau": "./src/layer1/lua/index.ts",
+    "./luau": "./src/layer1/luau/index.ts",
     "./codemirror": "./src/layer2/codemirror/index.ts",
     "./puck": "./src/layer2/puck/index.ts",
     "./kbar": "./src/layer2/kbar/index.ts",

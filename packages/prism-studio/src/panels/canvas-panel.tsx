@@ -19,7 +19,7 @@ import {
   mergeCss,
 } from "../kernel/block-style.js";
 import { resolveObjectRefs, evaluateVisibleWhen } from "../kernel/data-binding.js";
-import { parseLuaUi, renderUINode } from "./lua-facet-panel.js";
+import { parseLuauUi, renderUINode } from "./luau-facet-panel.js";
 import { KanbanWidgetRenderer } from "../components/kanban-widget-renderer.js";
 import { ListWidgetRenderer } from "../components/list-widget-renderer.js";
 import {
@@ -479,15 +479,15 @@ function CardRenderer({ obj }: { obj: GraphObject }) {
   );
 }
 
-function LuaBlockRenderer({ obj }: { obj: GraphObject }) {
+function LuauBlockRenderer({ obj }: { obj: GraphObject }) {
   const data = obj.data as { source?: string; title?: string };
   const source = data.source ?? "";
   const title = data.title ?? obj.name;
-  const result = parseLuaUi(source);
+  const result = parseLuauUi(source);
 
   return (
     <div
-      data-testid={`lua-block-preview-${obj.id}`}
+      data-testid={`luau-block-preview-${obj.id}`}
       style={{
         border: "1px solid #06b6d4",
         borderRadius: 6,
@@ -512,10 +512,10 @@ function LuaBlockRenderer({ obj }: { obj: GraphObject }) {
         {"\uD83C\uDF19"} {title}
       </div>
       {result.error ? (
-        <div style={{ color: "#dc2626", fontSize: 12 }}>Lua error: {result.error}</div>
+        <div style={{ color: "#dc2626", fontSize: 12 }}>Luau error: {result.error}</div>
       ) : result.nodes.length === 0 ? (
         <div style={{ color: "#999", fontStyle: "italic", fontSize: 12 }}>
-          Empty Lua script
+          Empty Luau script
         </div>
       ) : (
         <div>{result.nodes.map((node, i) => renderUINode(node, i))}</div>
@@ -1130,8 +1130,8 @@ function ComponentBlock({
     case "card":
       content = <CardRenderer obj={obj} />;
       break;
-    case "lua-block":
-      content = <LuaBlockRenderer obj={obj} />;
+    case "luau-block":
+      content = <LuauBlockRenderer obj={obj} />;
       break;
     case "kanban-widget":
       content = <KanbanWidgetBlock obj={obj} kernel={kernel} />;

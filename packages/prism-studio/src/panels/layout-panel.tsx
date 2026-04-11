@@ -15,7 +15,7 @@ import type { GraphObject, ObjectId } from "@prism/core/object-model";
 import { objectId } from "@prism/core/object-model";
 import type { FacetLayout } from "@prism/core/facet";
 import { useKernel, useSelection } from "../kernel/index.js";
-import { parseLuaUi, renderUINode } from "./lua-facet-panel.js";
+import { parseLuauUi, renderUINode } from "./luau-facet-panel.js";
 import { FacetViewRenderer } from "../components/facet-view-renderer.js";
 import { SpatialCanvasRenderer } from "../components/spatial-canvas-renderer.js";
 import { DataPortalRenderer } from "../components/data-portal-renderer.js";
@@ -405,19 +405,19 @@ export function LayoutPanel() {
     for (const def of allDefs) {
       // Only component + section category entities become Puck components
       if (def.category === "component" || def.category === "section") {
-        // Special renderer for lua-block: parse and render Lua UI
-        if (def.type === "lua-block") {
+        // Special renderer for luau-block: parse and render Luau UI
+        if (def.type === "luau-block") {
           components[kebabToPascal(def.type)] = {
             fields: {
               source: { type: "textarea" } as unknown as Fields[string],
               title: { type: "text" } as unknown as Fields[string],
             },
-            defaultProps: { source: "return ui.label(\"Hello from Lua!\")", title: "Lua Block" },
+            defaultProps: { source: "return ui.label(\"Hello from Luau!\")", title: "Luau Block" },
             render: (props) => {
               const p = props as Record<string, unknown>;
               const source = (p["source"] as string) ?? "";
-              const title = (p["title"] as string) ?? "Lua Block";
-              const result = parseLuaUi(source);
+              const title = (p["title"] as string) ?? "Luau Block";
+              const result = parseLuauUi(source);
               return (
                 <div
                   style={{
@@ -427,7 +427,7 @@ export function LayoutPanel() {
                     margin: "4px 0",
                     background: "#0a1929",
                   }}
-                  data-testid="puck-lua-block"
+                  data-testid="puck-luau-block"
                 >
                   <div
                     style={{
@@ -1591,7 +1591,7 @@ export function LayoutPanel() {
                   { label: "TypeScript", value: "typescript" },
                   { label: "JavaScript", value: "javascript" },
                   { label: "JSON", value: "json" },
-                  { label: "Lua", value: "lua" },
+                  { label: "Luau", value: "luau" },
                   { label: "Rust", value: "rust" },
                   { label: "Python", value: "python" },
                   { label: "Bash", value: "bash" },

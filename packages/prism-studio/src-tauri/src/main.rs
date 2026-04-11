@@ -19,7 +19,7 @@ fn main() {
     let kernel: Arc<DaemonKernel> = Arc::new(
         DaemonBuilder::new()
             .with_crdt()
-            .with_lua()
+            .with_luau()
             .with_build()
             .with_watcher()
             .build()

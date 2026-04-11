@@ -1,7 +1,7 @@
 //! Prism Daemon — the local physics engine.
 //!
 //! The daemon is a **transport-agnostic Rust kernel** for Prism's local
-//! capabilities (CRDT merging, Lua scripting, filesystem watching, build-
+//! capabilities (CRDT merging, Luau scripting, filesystem watching, build-
 //! plan execution, hardware bridges, …). Every capability lives behind a
 //! [`DaemonModule`] that self-registers JSON-in/JSON-out handlers on a
 //! shared [`CommandRegistry`]. Modules are plugged in via the fluent
@@ -37,13 +37,13 @@
 //! | Feature   | Pulls in                  | Commands registered |
 //! |-----------|---------------------------|---------------------|
 //! | `crdt`    | `loro`                    | `crdt.{write,read,export,import}` |
-//! | `lua`     | `mlua` (luau + vendored)  | `luau.exec` |
+//! | `luau`    | `mlua` (luau + vendored)  | `luau.exec` |
 //! | `build`   | —                         | `build.run_step` |
 //! | `watcher` | `notify`                  | `watcher.{watch,poll,stop}` |
 //! | `cli`     | `tokio`                   | (enables the `prism-daemond` binary) |
-//! | `wasm`    | `crdt + lua`              | (enables the C-ABI adapter in [`wasm`]) |
+//! | `wasm`    | `crdt + luau`             | (enables the C-ABI adapter in [`wasm`]) |
 //!
-//! `default = ["full"]`. Mobile shells override with `mobile` (crdt + lua
+//! `default = ["full"]`. Mobile shells override with `mobile` (crdt + luau
 //! only); embedded targets can pick `embedded` (crdt only); browser shells
 //! pick `wasm` and cross-compile to `wasm32-unknown-emscripten`.
 
@@ -91,6 +91,6 @@ pub enum DaemonError {
     #[error("Loro error: {0}")]
     Loro(String),
 
-    #[error("Lua error: {0}")]
-    Lua(String),
+    #[error("Luau error: {0}")]
+    Luau(String),
 }

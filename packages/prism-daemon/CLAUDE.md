@@ -23,7 +23,7 @@ paradigm, ported to Rust:
   builder's shared `CommandRegistry`.
 - `src/initializer.rs` — `DaemonInitializer` trait + `InitializerHandle` for
   post-boot side effects. Torn down in reverse order on `dispose()`.
-- `src/builder.rs` — `DaemonBuilder`: fluent `with_crdt/with_lua/with_build/
+- `src/builder.rs` — `DaemonBuilder`: fluent `with_crdt/with_luau/with_build/
   with_watcher/with_module/with_initializer/with_defaults/build`. Equivalent
   of `createStudioKernel({ lensBundles, initializers })`.
 - `src/kernel.rs` — `DaemonKernel`: the assembled runtime. Cheaply cloneable
@@ -42,17 +42,17 @@ paradigm, ported to Rust:
 - `src/wasm.rs` — C-ABI adapter for the browser. Gated on the `wasm`
   feature. Exposes `prism_daemon_{create,destroy,invoke,free_string}` so
   emscripten can wrap them via `ccall`/`cwrap`. Uses a hand-rolled C ABI
-  (not `wasm-bindgen`) because `mlua`'s vendored Lua 5.4 only compiles on
+  (not `wasm-bindgen`) because `mlua`'s vendored Luau only compiles on
   `wasm32-unknown-emscripten`, which is incompatible with `wasm-bindgen`'s
-  `wasm32-unknown-unknown` glue. One real Lua everywhere.
+  `wasm32-unknown-unknown` glue. One real Luau everywhere.
 
 ## Feature Flags
 | Feature    | Pulls in               | Why                                       |
 |------------|------------------------|-------------------------------------------|
 | `full`     | everything (default)   | Desktop/server                            |
-| `mobile`   | crdt + lua             | iOS bans process spawning; no notify      |
+| `mobile`   | crdt + luau            | iOS bans process spawning; no notify      |
 | `embedded` | crdt                   | Minimum viable kernel                     |
-| `wasm`     | crdt + lua + C-ABI     | Browser (emscripten); no notify, no spawn |
+| `wasm`     | crdt + luau + C-ABI    | Browser (emscripten); no notify, no spawn |
 
 Mobile/embedded/wasm builds don't contain the code they can't run.
 
@@ -61,7 +61,7 @@ Mobile/embedded/wasm builds don't contain the code they can't run.
 are thin wrappers:
 
 - **Tauri**: `prism-studio/src-tauri/src/{main,commands}.rs` constructs a
-  `DaemonKernel` in `main()` via `DaemonBuilder::new().with_crdt().with_lua()
+  `DaemonKernel` in `main()` via `DaemonBuilder::new().with_crdt().with_luau()
   .with_build().with_watcher().build()`, `.manage()`s it, and `#[tauri::command]`
   functions forward to `kernel.invoke()` or reach into `kernel.doc_manager()`
   for hot paths (CRDT byte arrays).

@@ -46,7 +46,7 @@ log "using $(emcc --version | head -n1)"
 
 # ── 2. Cargo build ──────────────────────────────────────────────────────
 # `--no-default-features --features wasm` strips watcher/build/cli and
-# keeps only crdt + lua + the C-ABI adapter.
+# keeps only crdt + luau + the C-ABI adapter.
 # The .cargo/config.toml for target.wasm32-unknown-emscripten supplies
 # the -sMODULARIZE / EXPORTED_FUNCTIONS / EXPORT_ES6 link args.
 
@@ -59,11 +59,12 @@ CARGO_FLAGS=(
 
 # `-fwasm-exceptions` is forced into every emcc invocation because rustc
 # unconditionally passes it for the wasm32-unknown-emscripten target, and
-# lua-src's build.rs hard-codes `-fexceptions` when compiling Lua as C++
-# for emscripten. Those two EH ABIs are incompatible at link time (emcc
-# fails with "invoke_ functions exported but exceptions and longjmp are
-# both disabled"). Forcing wasm-exceptions for every C/C++ TU — including
-# the vendored Lua sources — makes everything speak the same EH dialect.
+# mlua's vendored Luau builds with `-fexceptions` when compiling the Luau
+# C++ source for emscripten. Those two EH ABIs are incompatible at link
+# time (emcc fails with "invoke_ functions exported but exceptions and
+# longjmp are both disabled"). Forcing wasm-exceptions for every C/C++
+# TU — including the vendored Luau sources — makes everything speak the
+# same EH dialect.
 BASE_EMCC_CFLAGS="-fwasm-exceptions"
 
 # Dev builds layer assertions on top of the pinned link args so

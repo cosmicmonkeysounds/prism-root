@@ -61,7 +61,7 @@ The kernel wires all Layer 1 systems together at app startup:
 | Table | `b` | Data grid with sort/filter/inline edit |
 | Sequencer | `q` | Visual automation/script builder |
 | Report | `o` | Grouped/summarized data with aggregates |
-| Lua Facet | `u` | Lua `ui.*` call parser → React renderer |
+| Luau Facet | `u` | Luau `ui.*` call parser → React renderer |
 | Facet Designer | `x` | Visual FacetDefinition layout builder |
 | Record Browser | `z` | Unified data browser (form/list/table/card modes) |
 

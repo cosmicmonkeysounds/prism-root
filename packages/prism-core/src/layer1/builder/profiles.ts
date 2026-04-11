@@ -54,7 +54,7 @@ export const LATTICE_PROFILE: AppProfile = {
     "graph",
     "spatial-canvas",
     "visual-script",
-    "lua-facet",
+    "luau-facet",
     "assets-mgmt",
   ],
   defaultLens: "graph",
@@ -75,7 +75,7 @@ export const CADENCE_PROFILE: AppProfile = {
   lenses: [
     "editor",
     "canvas",
-    "lua-facet",
+    "luau-facet",
     "record-browser",
     "life",
   ],

@@ -81,7 +81,7 @@ These systems exist in @prism/core and just need kernel integration.
 
 - [x] **7A. Rich Text Blocks** — `editor-panel.tsx` exposes a Markdown toolbar (bold/italic/heading/list/link) backed by the pure `computeMarkdownEdit()` helper.
 - [x] **7B. Markdown Blocks** — `components/content-renderers.tsx` `MarkdownWidgetRenderer` renders dependency-free markdown with escaping.
-- [x] **7C. Code Blocks** — `editor-panel.tsx` maps `code-block` / `lua-block` `source` into CodeMirror; static rendering via `components/code-block-renderer.tsx`.
+- [x] **7C. Code Blocks** — `editor-panel.tsx` maps `code-block` / `luau-block` `source` into CodeMirror; static rendering via `components/code-block-renderer.tsx`.
 - [x] **7D. Media Blocks** — `assets-panel.tsx` `handleImportBinary()` imports via VFS and auto-creates `image` blocks; `components/media-renderers.tsx` renders video/audio with an HTTPS allowlist.
 
 ## Tier 8 — Advanced Features

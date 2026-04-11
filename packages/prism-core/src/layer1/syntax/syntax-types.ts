@@ -94,7 +94,7 @@ export interface SchemaContext {
   fields: EntityFieldDef[];
 }
 
-// ── Lua Type Definitions ───────────────────────────────────────────────────
+// ── Luau Type Definitions ──────────────────────────────────────────────────
 
 export interface LuauTypeDef {
   /** The object type this definition describes. */
@@ -123,7 +123,7 @@ export interface FunctionSignature {
  * for a specific language or expression context.
  */
 export interface SyntaxProvider {
-  /** Provider identifier (e.g. "expression", "lua"). */
+  /** Provider identifier (e.g. "expression", "luau"). */
   readonly name: string;
 
   /** Produce diagnostics for the given source. */
@@ -145,7 +145,7 @@ export interface SyntaxEngineOptions {
 
 /**
  * The SyntaxEngine orchestrates multiple SyntaxProviders and provides
- * schema-aware type checking, Lua typedef generation, and a unified
+ * schema-aware type checking, Luau typedef generation, and a unified
  * API for IDE integration.
  */
 export interface SyntaxEngine {

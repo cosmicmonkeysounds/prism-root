@@ -97,7 +97,7 @@ const EDITABLE_FIELD: Record<string, string> = {
   "text-block": "content",
   heading: "text",
   "code-block": "source",
-  "lua-block": "source",
+  "luau-block": "source",
 };
 
 export function EditorPanel() {

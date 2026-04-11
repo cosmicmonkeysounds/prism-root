@@ -34,7 +34,7 @@ import { formFacetLensBundle } from "../panels/form-facet-panel.js";
 import { tableFacetLensBundle } from "../panels/table-facet-panel.js";
 import { sequencerLensBundle } from "../panels/sequencer-panel.js";
 import { reportFacetLensBundle } from "../panels/report-facet-panel.js";
-import { luaFacetLensBundle } from "../panels/lua-facet-panel.js";
+import { luauFacetLensBundle } from "../panels/luau-facet-panel.js";
 import { facetDesignerLensBundle } from "../panels/facet-designer-panel.js";
 import { spatialCanvasLensBundle } from "../panels/spatial-canvas-panel.js";
 import { visualScriptLensBundle } from "../panels/visual-script-panel.js";
@@ -86,7 +86,7 @@ export function createBuiltinLensBundles(): LensBundle[] {
     tableFacetLensBundle,
     sequencerLensBundle,
     reportFacetLensBundle,
-    luaFacetLensBundle,
+    luauFacetLensBundle,
     facetDesignerLensBundle,
     spatialCanvasLensBundle,
     visualScriptLensBundle,

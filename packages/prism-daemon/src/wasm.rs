@@ -3,18 +3,18 @@
 //!
 //! ## Why a C ABI (and not `wasm-bindgen`)?
 //!
-//! The only WASM triple `mlua` (our Lua 5.4 runtime) supports is
-//! `wasm32-unknown-emscripten`: emscripten ships a libc, which Lua's C
-//! source needs to compile. `wasm-bindgen` targets `wasm32-unknown-unknown`
-//! and produces its own JS glue, which does not cohabit with emscripten's
-//! glue. So the "other WASM option" — a C ABI surface that emscripten
-//! wraps automatically via `cwrap`/`ccall` — is the one that actually
-//! lets us keep real Lua in the browser build.
+//! The only WASM triple `mlua` (our Luau runtime) supports is
+//! `wasm32-unknown-emscripten`: emscripten ships a libc, which the vendored
+//! Luau C++ source needs to compile. `wasm-bindgen` targets
+//! `wasm32-unknown-unknown` and produces its own JS glue, which does not
+//! cohabit with emscripten's glue. So the "other WASM option" — a C ABI
+//! surface that emscripten wraps automatically via `cwrap`/`ccall` — is
+//! the one that actually lets us keep real Luau in the browser build.
 //!
-//! Pure-Rust Lua VMs (piccolo, hematita, …) would let us use
-//! `wasm-bindgen`, but they are experimental and not a drop-in replacement
-//! for Lua 5.4. Going through emscripten keeps the exact same mlua-backed
-//! runtime everywhere — desktop, mobile, browser.
+//! Pure-Rust Luau VMs would let us use `wasm-bindgen`, but there is no
+//! production-ready equivalent of `mlua` for Luau. Going through emscripten
+//! keeps the exact same mlua-backed runtime everywhere — desktop, mobile,
+//! browser.
 //!
 //! ## Build
 //!
@@ -92,7 +92,7 @@ fn into_leaked_cstring(value: &serde_json::Value) -> *mut c_char {
 }
 
 /// Build a fresh [`DaemonKernel`] with every capability the `wasm` feature
-/// enables (CRDT + Lua today). The returned pointer is owned by the caller
+/// enables (CRDT + Luau today). The returned pointer is owned by the caller
 /// and must be released with [`prism_daemon_destroy`].
 ///
 /// Returns `null` if kernel construction fails — which, given the current
@@ -281,7 +281,7 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "lua")]
+    #[cfg(feature = "luau")]
     #[test]
     fn luau_exec_runs_through_the_c_abi() {
         unsafe {

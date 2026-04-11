@@ -3,14 +3,14 @@ import {
   TypeScriptWriter,
   JavaScriptWriter,
   CSharpWriter,
-  LuaWriter,
+  LuauWriter,
   JsonWriter,
   YamlWriter,
   TomlWriter,
   emitTypeScript,
   emitJavaScript,
   emitCSharp,
-  emitLua,
+  emitLuau,
   serializeJson,
   serializeYaml,
   serializeToml,
@@ -263,18 +263,18 @@ describe('CSharpWriter', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Lua Writer
+// Luau Writer
 // ---------------------------------------------------------------------------
 
-describe('LuaWriter', () => {
+describe('LuauWriter', () => {
   it('emits enum as local table', () => {
-    const src = emitLua(makeModel());
+    const src = emitLuau(makeModel());
     expect(src).toContain('local Role = {');
     expect(src).toContain("Admin = 'Admin',");
   });
 
   it('emits interface as local table with field assignments', () => {
-    const src = emitLua(makeModel());
+    const src = emitLuau(makeModel());
     expect(src).toContain('local User = {}');
     expect(src).toContain('User.id = nil');
     expect(src).toContain('User.age = nil');
@@ -292,21 +292,21 @@ describe('LuaWriter', () => {
         ],
       }],
     };
-    const src = emitLua(model);
+    const src = emitLuau(model);
     expect(src).toContain('Cfg.name = "hello"');
     expect(src).toContain('Cfg.count = 42');
   });
 
   it('emits namespace comment', () => {
-    const src = emitLua(makeModel());
+    const src = emitLuau(makeModel());
     expect(src).toContain('// @module TestNs');
   });
 
-  it('Writer class produces .lua file', () => {
-    const writer = new LuaWriter();
+  it('Writer class produces .luau file', () => {
+    const writer = new LuauWriter();
     const result = writer.emit(makeModel(), META);
-    expect(result.files[0]?.filename).toBe('test-project.lua');
-    expect(result.files[0]?.language).toBe('lua');
+    expect(result.files[0]?.filename).toBe('test-project.luau');
+    expect(result.files[0]?.language).toBe('luau');
   });
 });
 

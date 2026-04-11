@@ -546,14 +546,14 @@ export function generateLuauTypeDef(context: SchemaContext): LuauTypeDef {
   ];
 
   for (const field of context.fields) {
-    const luaType = LUAU_TYPE_MAP[field.type] ?? "any";
+    const luauType = LUAU_TYPE_MAP[field.type] ?? "any";
     const desc = field.description ?? field.label ?? field.id;
     if (field.enumOptions) {
       const values = field.enumOptions.map(o => `"${o.value}"`).join("|");
       lines.push(`---@field ${field.id} ${values} ${desc}`);
     } else {
       const optional = field.required ? "" : "?";
-      lines.push(`---@field ${field.id}${optional} ${luaType} ${desc}`);
+      lines.push(`---@field ${field.id}${optional} ${luauType} ${desc}`);
     }
   }
 

@@ -15,7 +15,7 @@
 // ── Luau Sandbox ────────────────────────────────────────────────────────────
 
 /**
- * Capabilities a sandboxed Lua plugin may request.
+ * Capabilities a sandboxed Luau plugin may request.
  * Each capability maps to a set of API functions exposed in the sandbox.
  */
 export type SandboxCapability =

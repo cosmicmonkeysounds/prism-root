@@ -25,7 +25,7 @@ describe("StudioKernel", () => {
       expect(kernel.registry.has("image")).toBe(true);
       expect(kernel.registry.has("button")).toBe(true);
       expect(kernel.registry.has("card")).toBe(true);
-      expect(kernel.registry.has("lua-block")).toBe(true);
+      expect(kernel.registry.has("luau-block")).toBe(true);
       expect(kernel.registry.has("folder")).toBe(true);
     });
 
@@ -1172,28 +1172,28 @@ describe("StudioKernel", () => {
   });
 
   describe("sequencer", () => {
-    it("should emit condition Lua", () => {
-      const lua = kernel.emitConditionLuau({
+    it("should emit condition Luau", () => {
+      const luau = kernel.emitConditionLuau({
         combinator: "all",
         clauses: [
           { id: "c1", subjectKind: "variable", subject: "score", operator: "gt", value: "100" },
         ],
       });
-      expect(lua).toContain("100");
+      expect(luau).toContain("100");
     });
 
-    it("should emit script Lua", () => {
-      const lua = kernel.emitScriptLuau({
+    it("should emit script Luau", () => {
+      const luau = kernel.emitScriptLuau({
         steps: [
           { id: "s1", actionKind: "set-variable", target: "scope.health", value: "100" },
         ],
       });
-      expect(lua).toContain("health");
+      expect(luau).toContain("health");
     });
 
     it("should emit empty condition as true", () => {
-      const lua = kernel.emitConditionLuau({ combinator: "all", clauses: [] });
-      expect(lua).toBe("true");
+      const luau = kernel.emitConditionLuau({ combinator: "all", clauses: [] });
+      expect(luau).toBe("true");
     });
   });
 
@@ -1218,12 +1218,12 @@ describe("StudioKernel", () => {
       expect(code).toContain("Item");
     });
 
-    it("should emit Lua code", () => {
+    it("should emit Luau code", () => {
       const code = kernel.emitCode({
         declarations: [
           { kind: "interface", name: "Config", fields: [{ name: "enabled", type: "boolean" }] },
         ],
-      }, "lua");
+      }, "luau");
       expect(code).toContain("Config");
     });
   });
@@ -1282,14 +1282,14 @@ describe("StudioKernel", () => {
       expect(allowed).toContain("image");
       expect(allowed).toContain("button");
       expect(allowed).toContain("card");
-      expect(allowed).toContain("lua-block");
+      expect(allowed).toContain("luau-block");
     });
 
     it("should list allowed child types for section", () => {
       const allowed = kernel.registry.getAllowedChildTypes("section");
       expect(allowed).toContain("heading");
       expect(allowed).toContain("text-block");
-      expect(allowed).toContain("lua-block");
+      expect(allowed).toContain("luau-block");
       expect(allowed).not.toContain("page");
       expect(allowed).not.toContain("section");
     });
@@ -1551,7 +1551,7 @@ describe("StudioKernel", () => {
         (d) => d.category === "component" || d.category === "section",
       );
 
-      // Should have section + all component types including lua-block
+      // Should have section + all component types including luau-block
       expect(componentDefs.length).toBeGreaterThanOrEqual(7);
       const types = componentDefs.map((d) => d.type);
       expect(types).toContain("section");
@@ -1560,7 +1560,7 @@ describe("StudioKernel", () => {
       expect(types).toContain("image");
       expect(types).toContain("button");
       expect(types).toContain("card");
-      expect(types).toContain("lua-block");
+      expect(types).toContain("luau-block");
     });
 
     it("should register new form-input / layout / data / content widgets", () => {
@@ -1596,10 +1596,10 @@ describe("StudioKernel", () => {
       expect(types).toContain("audio-widget");
     });
 
-    it("should create and update lua-block with Lua source", () => {
+    it("should create and update luau-block with Luau source", () => {
       const page = kernel.createObject({
         type: "page",
-        name: "Lua Test Page",
+        name: "Luau Test Page",
         parentId: null,
         position: 0,
         status: "draft",
@@ -1610,12 +1610,12 @@ describe("StudioKernel", () => {
         color: null,
         image: null,
         pinned: false,
-        data: { title: "Lua Test", slug: "", layout: "single", published: false },
+        data: { title: "Luau Test", slug: "", layout: "single", published: false },
       });
 
       const section = kernel.createObject({
         type: "section",
-        name: "Lua Section",
+        name: "Luau Section",
         parentId: page.id,
         position: 0,
         status: "draft",
@@ -1629,8 +1629,8 @@ describe("StudioKernel", () => {
         data: {},
       });
 
-      const luaBlock = kernel.createObject({
-        type: "lua-block",
+      const luauBlock = kernel.createObject({
+        type: "luau-block",
         name: "Status Widget",
         parentId: section.id,
         position: 0,
@@ -1648,13 +1648,13 @@ describe("StudioKernel", () => {
         },
       });
 
-      expect(luaBlock.type).toBe("lua-block");
-      const data = luaBlock.data as Record<string, unknown>;
+      expect(luauBlock.type).toBe("luau-block");
+      const data = luauBlock.data as Record<string, unknown>;
       expect(data["source"]).toBe('return ui.label("Hello")');
       expect(data["title"]).toBe("Status");
 
-      // Update the Lua source
-      const updated = kernel.updateObject(luaBlock.id, {
+      // Update the Luau source
+      const updated = kernel.updateObject(luauBlock.id, {
         data: { ...data, source: 'return ui.button("Click")' },
       });
       expect(updated).toBeDefined();

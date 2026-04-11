@@ -48,7 +48,7 @@
  *   'function'  -- a callable
  *   'class'     -- a type / class declaration
  *   'enum'      -- an enumeration of string or number values
- *   'namespace' -- a grouping container (becomes a table in Lua, namespace in C#, const object in TS)
+ *   'namespace' -- a grouping container (becomes a table in Luau, namespace in C#, const object in TS)
  *   'field'     -- a field on a class or namespace (used inside 'class' or 'namespace' children)
  */
 export type SymbolKind = 'constant' | 'function' | 'class' | 'enum' | 'namespace' | 'field';
@@ -82,7 +82,7 @@ export interface SymbolDef {
 
   // -- Constant / field -----------------------------------------------------
   /**
-   * Value for 'constant' kind. Used to emit the actual value in TS/CS/Lua.
+   * Value for 'constant' kind. Used to emit the actual value in TS/CS/Luau.
    * e.g. 'tavern_intro' for a conversation ID constant.
    */
   value?: string | number | boolean;

@@ -78,7 +78,7 @@ describe('emitConditionLuau', () => {
     expect(emitConditionLuau(state)).toBe('Event.HasFired("quest_started") == true');
   });
 
-  it('emits custom subject as raw Lua', () => {
+  it('emits custom subject as raw Luau', () => {
     const state: SequencerConditionState = {
       combinator: 'all',
       clauses: [clause({ subjectKind: 'custom', subject: 'math.random()', operator: 'gt', value: '0.5' })],

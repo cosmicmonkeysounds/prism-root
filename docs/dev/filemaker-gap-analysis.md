@@ -12,7 +12,7 @@ Puck is the **top-level page compositor**. Data-aware components nest inside it:
 | `facet-view` | Renders a FacetDefinition as form/list/table/report/card | Done |
 | `spatial-canvas` | Free-form (x,y) absolute positioning of fields | Done |
 | `data-portal` | Related records via edge relationships (inline table) | Done |
-| `lua-block` | Custom UI via Lua scripting | Done |
+| `luau-block` | Custom UI via Luau scripting | Done |
 
 Libraries: `react-moveable` + `react-selecto` + `@scena/react-guides` (Scena ecosystem).
 
@@ -60,7 +60,7 @@ Libraries: `react-moveable` + `react-selecto` + `@scena/react-guides` (Scena eco
 | Auto-enter options | Serial number, timestamps, calculated | `createdAt`/`updatedAt` built in | **Partial** — no user-defined |
 | Merge fields | `<<FieldName>>` in text objects | `interpolateMergeFields()` + `renderTextSlot()` | **Done** |
 | Script triggers | Per-layout automation hooks | `onRecordLoad/Commit/LayoutEnter/Exit` | **Done** |
-| Visual script builder | Drag conditions/actions | VisualScriptPanel (31 steps → Lua) | **Done** |
+| Visual script builder | Drag conditions/actions | VisualScriptPanel (31 steps → Luau) | **Done** |
 
 ### P3 — Theming & Print
 
@@ -91,7 +91,7 @@ Libraries: `react-moveable` + `react-selecto` + `@scena/react-guides` (Scena eco
 | Value lists | Static + dynamic dropdown options | `ValueList` registry with relationship sourcing | **Done** |
 | Starter templates | Ready-to-use workspace templates | Template system exists | Todo — needs gallery UI |
 | Schema designer | Visual entity/relationship editor | Graph panel (view-only) | Todo — needs write mode |
-| Script debugger | Step-through with breakpoints | Sequencer + Lua runtime | Todo — needs DAP |
+| Script debugger | Step-through with breakpoints | Sequencer + Luau runtime | Todo — needs DAP |
 
 ### P5 Design Notes — Schema Designer write mode
 
@@ -114,15 +114,17 @@ pattern as `facetStore`) so positions survive reloads. No new schemas required.
 Graph panel gains a mode toggle (`view` / `design`) so the existing live-reactive
 projection keeps working unchanged.
 
-### P5 Design Notes — Lua step debugger
+### P5 Design Notes — Luau step debugger
 
-`lua-runtime.ts` is a 57-line wasmoon wrapper — wasmoon exposes the full Lua
-`debug` library including `debug.sethook(hook, mask)`. The debugger is a pure
-addition to Layer 1 (`layer1/lua/lua-debugger.ts`) with no changes to existing
-script-steps or sequencer code:
+`luau-runtime.ts` wraps `luau-web` (`LuauState.createAsync`). Luau ships a
+`debug` library with `debug.sethook(hook, mask)` in the host embedder API;
+in the browser sandbox we take the source-instrumentation approach
+(`__prism_trace`) already used by `luau-debugger.ts`. The stepper is a pure
+addition to Layer 1 (`layer1/luau/luau-debugger.ts`) with no changes to
+existing script-steps or sequencer code:
 
 ```
-createLuaDebugger(engine) → {
+createLuauDebugger(engine) → {
   setBreakpoint(line: number)
   clearBreakpoint(line: number)
   run(source: string)                // runs with hook installed
@@ -134,11 +136,11 @@ createLuaDebugger(engine) → {
 ```
 
 Integration points:
-- `visual-script-panel.tsx` — breakpoint gutter on the live Lua preview,
+- `visual-script-panel.tsx` — breakpoint gutter on the live Luau preview,
   step/continue/stop buttons, locals table bound to the paused frame.
-- `editor-panel.tsx` — same breakpoint gutter for raw `lua-block` editing.
+- `editor-panel.tsx` — same breakpoint gutter for raw `luau-block` editing.
 
-Runs entirely client-side in wasmoon; no DAP wire protocol needed. Tests:
+Runs entirely client-side in luau-web; no DAP wire protocol needed. Tests:
 vitest unit suite for the debugger + one Playwright E2E that sets a breakpoint
 in `visual-script-panel`, runs, and asserts on the paused-frame UI.
 
@@ -156,8 +158,8 @@ in `visual-script-panel`, runs, and asserts on the paused-frame UI.
 | Value List | `ValueList` | Static or relationship-sourced |
 | Found Set | `SavedView` | Named ViewConfig persisted to Loro |
 | Privilege Set | `PrivilegeSet` | DID role → permission mapping |
-| Script | Lua 5.4 + Automation Engine | Visual builder + code editor |
-| Script Workspace | VisualScriptPanel + Sequencer | 31 step types, Lua codegen, palette + live preview |
+| Script | Luau + Automation Engine | Visual builder + code editor |
+| Script Workspace | VisualScriptPanel + Sequencer | 31 step types, Luau codegen, palette + live preview |
 | Relationship Graph | Graph Panel + `@xyflow/react` | View-only today; design mode planned (see P5 design notes) |
 | Theme | Not yet | Todo |
 | Print Layout | `PrintConfig` on `FacetDefinition` | Page dims, margins, breaks |
@@ -179,7 +181,7 @@ in `visual-script-panel`, runs, and asserts on the paused-frame UI.
 | PrivilegeSet schema | 21 | Vitest |
 | PrintConfig schema | 10+ | Vitest |
 | Facet runtime (conditional fmt, merge fields) | 24 | Vitest |
-| Script steps (31 kinds, Lua codegen) | 37 | Vitest |
+| Script steps (31 kinds, Luau codegen) | 37 | Vitest |
 | FacetStore (CRDT persistence) | 14 | Vitest |
 | PrivilegeEnforcer (row/field security) | 16 | Vitest |
 | Studio kernel integration | 97 | Vitest |
@@ -195,7 +197,7 @@ in `visual-script-panel`, runs, and asserts on the paused-frame UI.
 - `packages/prism-core/src/layer1/manifest/privilege-enforcer.test.ts` — 16 tests
 - `packages/prism-core/src/layer1/facet/facet-runtime.ts` — Conditional formatting, merge fields, value list resolver
 - `packages/prism-core/src/layer1/facet/facet-runtime.test.ts` — 24 tests
-- `packages/prism-core/src/layer1/facet/script-steps.ts` — 31 visual script step types + Lua codegen
+- `packages/prism-core/src/layer1/facet/script-steps.ts` — 31 visual script step types + Luau codegen
 - `packages/prism-core/src/layer1/facet/script-steps.test.ts` — 37 tests
 - `packages/prism-core/src/layer1/facet/facet-store.ts` — Persistent FacetDefinition + Script + ValueList registry
 - `packages/prism-core/src/layer1/facet/facet-store.test.ts` — 14 tests

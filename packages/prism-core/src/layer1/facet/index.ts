@@ -178,7 +178,7 @@ export type {
 } from "./sequencer-types.js";
 export { emitConditionLuau, emitScriptLuau } from "./sequencer-types.js";
 
-// ── Facet Builders (Lua codegen helpers for plugin patterns) ────────────
+// ── Facet Builders (Luau codegen helpers for plugin patterns) ───────────
 export type {
   BrowserViewColumn,
   BrowserViewConfig,
@@ -190,14 +190,14 @@ export type {
   CommandConfig,
 } from "./facet-builders.js";
 export {
-  luaBrowserView,
-  luaCollectionRule,
-  luaStatsCommand,
-  luaMenuItem,
-  luaCommand,
+  luauBrowserView,
+  luauCollectionRule,
+  luauStatsCommand,
+  luauMenuItem,
+  luauCommand,
 } from "./facet-builders.js";
 
-// ── Emitters (SchemaModel → TS/JS/C#/Lua/JSON/YAML/TOML) ────────────────
+// ── Emitters (SchemaModel → TS/JS/C#/Luau/JSON/YAML/TOML) ────────────────
 export type {
   SchemaField,
   SchemaInterface,
@@ -209,7 +209,7 @@ export {
   TypeScriptWriter,
   JavaScriptWriter,
   CSharpWriter,
-  LuaWriter,
+  LuauWriter,
   JsonWriter,
   YamlWriter,
   TomlWriter,

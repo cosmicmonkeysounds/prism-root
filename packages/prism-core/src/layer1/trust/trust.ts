@@ -54,7 +54,7 @@ function globToRegex(pattern: string): RegExp {
   return new RegExp(`^${escaped}$`);
 }
 
-// ── Lua Sandbox ────────────────────────────────────────────────────────────
+// ── Luau Sandbox ───────────────────────────────────────────────────────────
 
 export function createLuauSandbox(policy: SandboxPolicy): LuauSandbox {
   const capSet = new Set<SandboxCapability>(policy.capabilities);

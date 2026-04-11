@@ -3,7 +3,7 @@
  *
  * Non-programmers configure scripts by adding steps from a categorized palette.
  * Each step renders as a card with dropdowns/inputs for its parameters.
- * Live Lua preview shows the generated code. Block validation catches errors.
+ * Live Luau preview shows the generated code. Block validation catches errors.
  *
  * Lens #24 (Shift+S)
  */
@@ -135,7 +135,7 @@ function StepCard({
                   style={{ ...s.input, fontFamily: "monospace" }}
                   value={step.params[param] ?? ""}
                   onChange={(e) => onUpdate({ ...step.params, [param]: e.target.value })}
-                  placeholder={param === "condition" ? "expression" : "lua code"}
+                  placeholder={param === "condition" ? "expression" : "luau code"}
                 />
               ) : param === "direction" ? (
                 <select
@@ -323,7 +323,7 @@ export function VisualScriptPanel() {
   const [isDebugging, setIsDebugging] = useState(false);
 
   const categories = useMemo(() => getStepCategories(), []);
-  const lua = useMemo(() => emitStepsLuau(script.steps), [script.steps]);
+  const luau = useMemo(() => emitStepsLuau(script.steps), [script.steps]);
   const emittedWithMap = useMemo(() => emitStepsLuauWithMap(script.steps), [script.steps]);
   const errors = useMemo(() => validateSteps(script.steps), [script.steps]);
 
@@ -387,10 +387,10 @@ export function VisualScriptPanel() {
     }));
   }, []);
 
-  const copyLua = useCallback(() => {
-    void navigator.clipboard.writeText(lua);
-    kernel.notifications.add({ title: "Lua copied to clipboard", kind: "success" });
-  }, [lua, kernel]);
+  const copyLuau = useCallback(() => {
+    void navigator.clipboard.writeText(luau);
+    kernel.notifications.add({ title: "Luau copied to clipboard", kind: "success" });
+  }, [luau, kernel]);
 
   const toggleBreakpoint = useCallback((stepId: string) => {
     setBreakpoints((prev) => {
@@ -417,7 +417,7 @@ export function VisualScriptPanel() {
     try {
       const dbg = await createLuauDebugger();
       try {
-        // Apply breakpoints — translate step ids to Lua line numbers.
+        // Apply breakpoints — translate step ids to Luau line numbers.
         for (const stepId of breakpoints) {
           const line = emittedWithMap.stepToLine.get(stepId);
           if (line !== undefined) dbg.setBreakpoint(line);
@@ -497,7 +497,7 @@ export function VisualScriptPanel() {
           <span style={{ color: "#666", fontSize: 11 }}>
             {script.steps.length} step{script.steps.length !== 1 ? "s" : ""}
           </span>
-          <button style={s.btn} onClick={copyLua}>Copy Lua</button>
+          <button style={s.btn} onClick={copyLuau}>Copy Luau</button>
           <button
             data-testid="visual-script-debug-btn"
             style={s.btn}
@@ -553,9 +553,9 @@ export function VisualScriptPanel() {
           />
         )}
 
-        {/* Lua Preview */}
+        {/* Luau Preview */}
         <div style={s.preview}>
-          {lua || "-- Empty script"}
+          {luau || "-- Empty script"}
         </div>
       </div>
     </div>

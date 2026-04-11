@@ -1,7 +1,7 @@
 /**
- * LuaFacet Panel — Lua render script editor with live React preview.
+ * LuauFacet Panel — Luau render script editor with live React preview.
  *
- * Users write Lua code using a `ui` builder table. The panel parses
+ * Users write Luau code using a `ui` builder table. The panel parses
  * `ui.xxx(...)` calls from the source and renders them as React elements.
  * Like FileMaker Pro custom functions but for building UI.
  */
@@ -154,7 +154,7 @@ const styles = {
 const SAMPLE_SCRIPTS: Record<string, string> = {
   "Hello World": `-- Hello World
 return ui.column({
-  ui.label("Hello from Lua!"),
+  ui.label("Hello from Luau!"),
   ui.spacer(),
   ui.button("Click Me"),
 })`,
@@ -193,13 +193,13 @@ return ui.row({
 
 const SAMPLE_NAMES = Object.keys(SAMPLE_SCRIPTS);
 
-// ── Lua UI Parser ──────────────────────────────────────────────────────────
+// ── Luau UI Parser ─────────────────────────────────────────────────────────
 
 /**
- * Simple parser that finds `ui.xxx(...)` patterns in Lua source and builds
+ * Simple parser that finds `ui.xxx(...)` patterns in Luau source and builds
  * a tree of UINode objects. Handles nested calls for container elements.
  */
-export function parseLuaUi(source: string): ParseResult {
+export function parseLuauUi(source: string): ParseResult {
   const trimmed = source.trim();
   if (trimmed.length === 0) {
     return { nodes: [], error: null };
@@ -271,7 +271,7 @@ function skipWhitespaceAndComments(source: string, i: number): number {
       i++;
       continue;
     }
-    // Lua single-line comment
+    // Luau single-line comment
     if (ch === "-" && source[i + 1] === "-") {
       const lineEnd = source.indexOf("\n", i);
       if (lineEnd === -1) {
@@ -636,7 +636,7 @@ function PreviewErrorFallback({ error }: { error: string }) {
 
 const DEFAULT_SOURCE = SAMPLE_SCRIPTS["Hello World"] ?? "";
 
-export default function LuaFacetPanel() {
+export default function LuauFacetPanel() {
   const kernel = useKernel();
   const { selectedId } = useSelection();
   const selectedObj = useObject(selectedId);
@@ -651,24 +651,24 @@ export default function LuaFacetPanel() {
   const [isDebugging, setIsDebugging] = useState(false);
   const [breakpointLines, setBreakpointLines] = useState<Set<number>>(() => new Set());
 
-  // Track whether we're editing a lua-block object
-  const isLuaBlock = selectedObj?.type === "lua-block";
-  const objectSource = isLuaBlock
+  // Track whether we're editing a luau-block object
+  const isLuauBlock = selectedObj?.type === "luau-block";
+  const objectSource = isLuauBlock
     ? ((selectedObj.data as Record<string, unknown>)["source"] as string) ?? ""
     : null;
 
-  // When a lua-block is selected, load its source
+  // When a luau-block is selected, load its source
   useEffect(() => {
     if (objectSource !== null) {
       setSource(objectSource);
     }
   }, [selectedId, objectSource]);
 
-  // Debounced save back to kernel when editing a lua-block
+  // Debounced save back to kernel when editing a luau-block
   const handleSourceChange = useCallback(
     (newSource: string) => {
       setSource(newSource);
-      if (isLuaBlock && selectedId) {
+      if (isLuauBlock && selectedId) {
         if (syncTimer.current) clearTimeout(syncTimer.current);
         syncTimer.current = setTimeout(() => {
           kernel.updateObject(selectedId, {
@@ -677,7 +677,7 @@ export default function LuaFacetPanel() {
         }, 400);
       }
     },
-    [isLuaBlock, selectedId, selectedObj, kernel],
+    [isLuauBlock, selectedId, selectedObj, kernel],
   );
 
   // Clean up timer
@@ -689,15 +689,15 @@ export default function LuaFacetPanel() {
 
   // Panel context info
   const viewId = selectedId ?? "(none)";
-  const instanceKey = `lua-facet-${viewId}`;
+  const instanceKey = `luau-facet-${viewId}`;
   const isActive = true;
 
-  // Parse UI tree from Lua source
-  const parseResult: ParseResult = useMemo(() => parseLuaUi(source), [source]);
+  // Parse UI tree from Luau source
+  const parseResult: ParseResult = useMemo(() => parseLuauUi(source), [source]);
 
   const handleCopy = useCallback(() => {
     void navigator.clipboard?.writeText(source);
-    kernel.notifications.add({ title: "Lua code copied to clipboard", kind: "info" });
+    kernel.notifications.add({ title: "Luau code copied to clipboard", kind: "info" });
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   }, [source, kernel]);
@@ -768,11 +768,11 @@ export default function LuaFacetPanel() {
   const nodeCount = parseResult.nodes.length;
 
   return (
-    <div style={styles.container} data-testid="lua-facet-panel">
+    <div style={styles.container} data-testid="luau-facet-panel">
       <div style={styles.header as React.CSSProperties}>
-        <span>Lua Facet</span>
+        <span>Luau Facet</span>
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          <span style={styles.badge}>Lua</span>
+          <span style={styles.badge}>Luau</span>
           <span style={styles.meta}>{nodeCount} node{nodeCount !== 1 ? "s" : ""}</span>
         </div>
       </div>
@@ -810,7 +810,7 @@ export default function LuaFacetPanel() {
         <button
           style={copied ? styles.btnPrimary : styles.btn}
           onClick={handleCopy}
-          data-testid="copy-lua-btn"
+          data-testid="copy-luau-btn"
         >
           {copied ? "Copied" : "Copy"}
         </button>
@@ -818,15 +818,15 @@ export default function LuaFacetPanel() {
           style={styles.btn}
           onClick={() => void handleDebug()}
           disabled={isDebugging}
-          data-testid="lua-debug-btn"
-          title="Step-through debug the Lua source"
+          data-testid="luau-debug-btn"
+          title="Step-through debug the Luau source"
         >
           {isDebugging ? "\u25B6 Running\u2026" : "\u25B6 Debug"}
         </button>
       </div>
 
       {/* Object binding indicator */}
-      {isLuaBlock && (
+      {isLuauBlock && (
         <div
           style={{
             ...styles.card,
@@ -835,7 +835,7 @@ export default function LuaFacetPanel() {
             alignItems: "center",
             gap: 8,
           }}
-          data-testid="lua-object-binding"
+          data-testid="luau-object-binding"
         >
           <span style={{ ...styles.badge, background: "#083344", color: "#06b6d4" }}>
             Bound
@@ -846,19 +846,19 @@ export default function LuaFacetPanel() {
         </div>
       )}
 
-      {/* Lua editor */}
+      {/* Luau editor */}
       <div style={styles.card}>
-        <div style={styles.sectionTitle}>Lua Source</div>
+        <div style={styles.sectionTitle}>Luau Source</div>
         <textarea
           style={{ ...styles.textarea, height: 180 } as React.CSSProperties}
           value={source}
           onChange={(e) => handleSourceChange(e.target.value)}
           spellCheck={false}
-          data-testid="lua-editor"
+          data-testid="luau-editor"
         />
         {/* Line gutter with breakpoint toggles + current-line highlight. */}
         <div
-          data-testid="lua-line-gutter"
+          data-testid="luau-line-gutter"
           style={{
             marginTop: 4,
             fontFamily: "monospace",
@@ -875,7 +875,7 @@ export default function LuaFacetPanel() {
             return (
               <button
                 key={line}
-                data-testid={`lua-line-btn-${line}`}
+                data-testid={`luau-line-btn-${line}`}
                 data-breakpoint={hasBp ? "true" : "false"}
                 data-current={isCurrent ? "true" : "false"}
                 onClick={() => toggleLineBreakpoint(line)}
@@ -902,7 +902,7 @@ export default function LuaFacetPanel() {
       {/* Debug frames panel (visible after a debug run) */}
       {debugResult && (
         <div
-          data-testid="lua-debug-frames-panel"
+          data-testid="luau-debug-frames-panel"
           style={{
             ...styles.card,
             borderColor: debugResult.success ? "#2e7d32" : "#c62828",
@@ -930,7 +930,7 @@ export default function LuaFacetPanel() {
             )}
             <div style={{ flex: 1 }} />
             <button
-              data-testid="lua-debug-prev-frame"
+              data-testid="luau-debug-prev-frame"
               style={styles.btn}
               onClick={() => setActiveFrameIdx((i) => Math.max(0, i - 1))}
               disabled={activeFrameIdx === 0}
@@ -938,7 +938,7 @@ export default function LuaFacetPanel() {
               ◀ Prev
             </button>
             <button
-              data-testid="lua-debug-next-frame"
+              data-testid="luau-debug-next-frame"
               style={styles.btn}
               onClick={() =>
                 setActiveFrameIdx((i) =>
@@ -950,7 +950,7 @@ export default function LuaFacetPanel() {
               Next ▶
             </button>
             <button
-              data-testid="lua-debug-close"
+              data-testid="luau-debug-close"
               style={styles.btn}
               onClick={() => setDebugResult(null)}
             >
@@ -959,7 +959,7 @@ export default function LuaFacetPanel() {
           </div>
           <div style={{ display: "flex", gap: 8, fontSize: 11 }}>
             <div
-              data-testid="lua-debug-frame-list"
+              data-testid="luau-debug-frame-list"
               style={{
                 width: 140,
                 maxHeight: 140,
@@ -971,7 +971,7 @@ export default function LuaFacetPanel() {
               {debugResult.frames.map((f, i) => (
                 <div
                   key={i}
-                  data-testid={`lua-debug-frame-${i}`}
+                  data-testid={`luau-debug-frame-${i}`}
                   onClick={() => setActiveFrameIdx(i)}
                   style={{
                     padding: "2px 4px",
@@ -986,7 +986,7 @@ export default function LuaFacetPanel() {
               ))}
             </div>
             <div
-              data-testid="lua-debug-locals"
+              data-testid="luau-debug-locals"
               style={{
                 flex: 1,
                 maxHeight: 140,
@@ -1036,26 +1036,26 @@ export default function LuaFacetPanel() {
   );
 }
 
-export { LuaFacetPanel };
+export { LuauFacetPanel };
 
 
 // ── Lens registration ──────────────────────────────────────────────────────
 
-export const LUA_FACET_LENS_ID = lensId("lua-facet");
+export const LUAU_FACET_LENS_ID = lensId("luau-facet");
 
-export const luaFacetLensManifest: LensManifest = {
+export const luauFacetLensManifest: LensManifest = {
 
-  id: LUA_FACET_LENS_ID,
-  name: "Lua Facet",
+  id: LUAU_FACET_LENS_ID,
+  name: "Luau Facet",
   icon: "\uD83C\uDF19",
   category: "facet",
   contributes: {
     views: [{ slot: "main" }],
-    commands: [{ id: "switch-lua-facet", name: "Switch to Lua Facet", shortcut: ["u"], section: "Navigation" }],
+    commands: [{ id: "switch-luau-facet", name: "Switch to Luau Facet", shortcut: ["u"], section: "Navigation" }],
   },
 };
 
-export const luaFacetLensBundle: LensBundle = defineLensBundle(
-  luaFacetLensManifest,
-  LuaFacetPanel,
+export const luauFacetLensBundle: LensBundle = defineLensBundle(
+  luauFacetLensManifest,
+  LuauFacetPanel,
 );

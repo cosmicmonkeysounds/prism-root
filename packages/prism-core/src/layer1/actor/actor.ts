@@ -2,13 +2,13 @@
  * @prism/core — Actor System (Layer 0B)
  *
  * Process queue for ordered execution of automation/script tasks.
- * Pluggable ActorRuntime for Lua, TypeScript, and Python.
+ * Pluggable ActorRuntime for Luau, TypeScript, and Python.
  * Capability-scoped sandboxing per task.
  *
  * Usage:
  *   const queue = createProcessQueue({ concurrency: 2 });
  *   queue.registerRuntime(createLuauActorRuntime());
- *   queue.enqueue({ name: "calc", runtime: "lua", payload: { script: "return 1+1" } });
+ *   queue.enqueue({ name: "calc", runtime: "luau", payload: { script: "return 1+1" } });
  *   queue.start();
  */
 
@@ -248,9 +248,9 @@ export function createProcessQueue(
   };
 }
 
-// ── Lua Actor Runtime ───────────────────────────────────────────────────────
+// ── Luau Actor Runtime ──────────────────────────────────────────────────────
 
-/** Payload for the Lua actor runtime. */
+/** Payload for the Luau actor runtime. */
 export interface LuauPayload {
   script: string;
   args?: Record<string, unknown>;

@@ -5,7 +5,7 @@
 //!
 //! let kernel = DaemonBuilder::new()
 //!     .with_crdt()
-//!     .with_lua()
+//!     .with_luau()
 //!     .with_build()
 //!     .with_watcher()
 //!     .build()
@@ -165,8 +165,8 @@ impl DaemonBuilder {
     }
 
     /// Install the Luau scripting module (`luau.exec`).
-    #[cfg(feature = "lua")]
-    pub fn with_lua(self) -> Self {
+    #[cfg(feature = "luau")]
+    pub fn with_luau(self) -> Self {
         self.with_module(crate::modules::luau_module::LuauModule)
     }
 
@@ -192,9 +192,9 @@ impl DaemonBuilder {
         {
             self = self.with_crdt();
         }
-        #[cfg(feature = "lua")]
+        #[cfg(feature = "luau")]
         {
-            self = self.with_lua();
+            self = self.with_luau();
         }
         #[cfg(feature = "build")]
         {

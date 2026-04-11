@@ -1,6 +1,6 @@
 # prism-daemon
 
-Rust library + standalone binary — the local physics engine for sovereign hardware. A transport-agnostic kernel of composable modules (CRDT, Lua, build, watcher) assembled via a fluent builder, so the same engine can run behind Tauri on desktop, behind a UniFFI bridge on iOS/Android, as a headless stdio daemon on a server, **or directly in the browser via WebAssembly**.
+Rust library + standalone binary — the local physics engine for sovereign hardware. A transport-agnostic kernel of composable modules (CRDT, Luau, build, watcher) assembled via a fluent builder, so the same engine can run behind Tauri on desktop, behind a UniFFI bridge on iOS/Android, as a headless stdio daemon on a server, **or directly in the browser via WebAssembly**.
 
 ## Paradigm
 
@@ -24,7 +24,7 @@ use serde_json::json;
 
 let kernel = DaemonBuilder::new()
     .with_crdt()
-    .with_lua()
+    .with_luau()
     .with_build()
     .with_watcher()
     .build()
@@ -46,7 +46,7 @@ let modules = kernel.installed_modules(); // install order
 | Module ID        | Feature   | Commands registered                                  |
 |------------------|-----------|------------------------------------------------------|
 | `prism.crdt`     | `crdt`    | `crdt.write`, `crdt.read`, `crdt.export`, `crdt.import` |
-| `prism.lua`      | `lua`     | `lua.exec`                                           |
+| `prism.luau`     | `luau`    | `luau.exec`                                          |
 | `prism.build`    | `build`   | `build.run_step`                                     |
 | `prism.watcher`  | `watcher` | `watcher.watch`, `watcher.poll`, `watcher.stop`      |
 
@@ -81,12 +81,12 @@ Initializers are post-boot side-effect hooks that can call `kernel.invoke(...)` 
 
 | Feature   | Default | Purpose                                            |
 |-----------|---------|----------------------------------------------------|
-| `full`    | yes     | Shorthand for `crdt + lua + build + watcher + cli` |
-| `mobile`  | no      | `crdt + lua` only — no process spawning, no notify |
-| `embedded`| no      | `crdt` only                                        |
-| `wasm`    | no      | `crdt + lua` + C-ABI adapter (`wasm32-unknown-emscripten`) |
-| `crdt`    | via `full` | Loro-backed CRDT service                        |
-| `lua`     | via `full` | mlua (lua54 + vendored)                         |
+| `full`    | yes     | Shorthand for `crdt + luau + build + watcher + cli` |
+| `mobile`  | no      | `crdt + luau` only — no process spawning, no notify |
+| `embedded`| no      | `crdt` only                                         |
+| `wasm`    | no      | `crdt + luau` + C-ABI adapter (`wasm32-unknown-emscripten`) |
+| `crdt`    | via `full` | Loro-backed CRDT service                         |
+| `luau`    | via `full` | mlua (luau + vendored)                           |
 | `build`   | via `full` | `std::process`-based build step executor       |
 | `watcher` | via `full` | `notify`-based filesystem watcher                |
 | `cli`     | via `full` | Enables the standalone `prism-daemond` binary    |
@@ -95,9 +95,9 @@ Mobile/embedded/wasm builds opt out at the feature level so the shipped binary l
 
 ## Browser / WebAssembly
 
-The same kernel that Studio embeds over Tauri IPC also runs in Chrome, Firefox, and Safari as a plain WebAssembly module. Both CRDT and Lua travel along — the Lua runtime is still real, C-vendored Lua 5.4 via `mlua`, not a JavaScript interpreter.
+The same kernel that Studio embeds over Tauri IPC also runs in Chrome, Firefox, and Safari as a plain WebAssembly module. Both CRDT and Luau travel along — the Luau runtime is still real, C++-vendored Luau via `mlua`, not a JavaScript interpreter.
 
-Why `wasm32-unknown-emscripten` instead of `wasm32-unknown-unknown` + `wasm-bindgen`? Because Lua's C source needs a libc, and emscripten is the only WASM triple that provides one. Pure-Rust Lua VMs (piccolo, hematita, …) are too experimental to swap in without losing Lua 5.4 parity, and we'd rather keep one Lua everywhere.
+Why `wasm32-unknown-emscripten` instead of `wasm32-unknown-unknown` + `wasm-bindgen`? Because Luau's C++ source needs a libc/libcxx, and emscripten is the only WASM triple that provides them. There's no production-ready pure-Rust Luau VM to swap in, so going through emscripten keeps one real Luau everywhere — desktop, mobile, browser.
 
 The adapter in [`src/wasm.rs`](src/wasm.rs) exposes the kernel through a small C ABI that emscripten wraps automatically via `ccall`/`cwrap`:
 
@@ -137,8 +137,8 @@ const freeString = Module.cwrap('prism_daemon_free_string', null, ['number']);
 
 const kernel = Module.ccall('prism_daemon_create', 'number', [], []);
 
-// Round-trip through Lua:
-const ptr = invoke(kernel, 'lua.exec', JSON.stringify({ script: 'return 21 * 2' }));
+// Round-trip through Luau:
+const ptr = invoke(kernel, 'luau.exec', JSON.stringify({ script: 'return 21 * 2' }));
 const response = JSON.parse(Module.UTF8ToString(ptr));
 freeString(ptr);
 console.log(response); // { ok: true, result: 42 }
@@ -165,7 +165,7 @@ Studio's Tauri shell constructs the kernel exactly like any other host:
 ```rust
 let kernel: Arc<DaemonKernel> = Arc::new(
     DaemonBuilder::new()
-        .with_crdt().with_lua().with_build().with_watcher()
+        .with_crdt().with_luau().with_build().with_watcher()
         .build().unwrap(),
 );
 
@@ -194,5 +194,5 @@ Module-shaped so new capabilities plug in without touching the core:
 - `prism.vfs` — content-addressed blob storage module
 - `prism.hardware.midi` / `.dmx` / `.osc` — hardware protocol bridges
 - `prism.canto` — audio engine (lock-free Rust signal graph)
-- `prism.actors` — sandboxed Lua actor execution
+- `prism.actors` — sandboxed Luau actor execution
 - Transport adapters: UniFFI (iOS/Android), axum HTTP, tonic gRPC

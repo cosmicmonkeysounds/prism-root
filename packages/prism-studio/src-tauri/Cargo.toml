@@ -9,7 +9,7 @@ tauri-build = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-# The daemon library provides CRDT and Lua capabilities
+# The daemon library provides CRDT and Luau capabilities
 prism-daemon = { path = "../../prism-daemon" }
 
 [build-dependencies]

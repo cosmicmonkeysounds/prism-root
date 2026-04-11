@@ -230,7 +230,7 @@ export const demoWorkspaceInitializer: StudioInitializer = {
     });
 
     kernel.createObject({
-      type: "lua-block",
+      type: "luau-block",
       name: "Status Widget",
       parentId: contentSection.id,
       position: 2,

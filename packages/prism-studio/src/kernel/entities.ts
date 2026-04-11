@@ -194,16 +194,16 @@ const cardDef: EntityDef<string> = {
   ],
 };
 
-const luaBlockDef: EntityDef<string> = {
-  type: "lua-block",
+const luauBlockDef: EntityDef<string> = {
+  type: "luau-block",
   category: "component",
-  label: "Lua Block",
-  pluralLabel: "Lua Blocks",
+  label: "Luau Block",
+  pluralLabel: "Luau Blocks",
   icon: "\uD83C\uDF19",
   color: "#06b6d4",
   childOnly: true,
   fields: [
-    { id: "source", type: "text", label: "Lua Source", required: true, ui: { multiline: true } },
+    { id: "source", type: "text", label: "Luau Source", required: true, ui: { multiline: true } },
     { id: "title", type: "string", label: "Title" },
   ],
 };
@@ -920,7 +920,7 @@ const codeBlockDef: EntityDef<string> = {
         { value: "typescript", label: "TypeScript" },
         { value: "javascript", label: "JavaScript" },
         { value: "json", label: "JSON" },
-        { value: "lua", label: "Lua" },
+        { value: "luau", label: "Luau" },
         { value: "rust", label: "Rust" },
         { value: "python", label: "Python" },
         { value: "bash", label: "Bash" },
@@ -1060,7 +1060,7 @@ export function createPageBuilderRegistry(): ObjectRegistry<string> {
   registry.register(imageDef);
   registry.register(buttonDef);
   registry.register(cardDef);
-  registry.register(luaBlockDef);
+  registry.register(luauBlockDef);
   registry.register(facetViewDef);
   registry.register(spatialCanvasDef);
   registry.register(dataPortalDef);

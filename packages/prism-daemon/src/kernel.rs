@@ -76,7 +76,7 @@ impl DaemonKernel {
 
     /// The underlying command registry. Modules can hand this around when
     /// they need to register additional handlers after boot (e.g. a
-    /// dynamic plugin loaded from Lua).
+    /// dynamic plugin loaded from Luau).
     pub fn registry(&self) -> &Arc<CommandRegistry> {
         &self.registry
     }

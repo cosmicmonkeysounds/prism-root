@@ -35,7 +35,7 @@ builder instead of being hardcoded.
    in install order after the kernel exists, torn down in reverse on
    `dispose()`.
 4. **`DaemonBuilder` (`src/builder.rs`)** — fluent builder:
-   `DaemonBuilder::new().with_crdt().with_lua().with_build().with_watcher()
+   `DaemonBuilder::new().with_crdt().with_luau().with_build().with_watcher()
    .with_module(custom).with_initializer(init).build()`. `with_defaults()`
    installs every module the current feature flags allow. Tauri/CLI/mobile
    all use the identical shape.
@@ -46,7 +46,7 @@ builder instead of being hardcoded.
    directly — same idea as Studio's direct `kernel.store` access.
 6. **Feature-gated built-in modules (`src/modules/*`)**:
    - `crdt_module.rs` → `prism.crdt` → `crdt.{write,read,export,import}`
-   - `lua_module.rs` → `prism.lua` → `lua.exec`
+   - `luau_module.rs` → `prism.luau` → `luau.exec`
    - `build_module.rs` → `prism.build` → `build.run_step` (emit-file /
      run-command / invoke-ipc)
    - `watcher_module.rs` → `prism.watcher` → `watcher.{watch,poll,stop}`
@@ -54,9 +54,9 @@ builder instead of being hardcoded.
      subscriptions by ID.
 7. **Feature matrix** (`Cargo.toml`):
    - `full` (default) — every capability, enables the CLI bin
-   - `mobile` — `crdt + lua` only (iOS bans process spawning, no notify)
+   - `mobile` — `crdt + luau` only (iOS bans process spawning, no notify)
    - `embedded` — `crdt` only (minimum kernel)
-   Individual flags: `crdt`, `lua`, `build`, `watcher`, `cli`. Mobile /
+   Individual flags: `crdt`, `luau`, `build`, `watcher`, `cli`. Mobile /
    embedded builds don't contain the code they can't run.
 8. **`DocManager` extracted to `src/doc_manager.rs`** behind the `crdt`
    feature. Injectable via `builder.set_doc_manager(Arc<DocManager>)` so
@@ -443,7 +443,7 @@ the legacy ViewMode registry is dead.
 - [x] **B2** `CsvSurface` — quoted fields, TSV autodetect, contentEditable table, add/delete row/column
 - [x] **B3** `ReportSurface` — grouped reports with count/sum/avg/min/max summaries, print-ready
 - [x] **B4** `print-renderer.ts` — `@page`/`@media print` CSS from `PrintConfig`, hidden-iframe browser print trigger
-- [x] **B5** `lua-markdown-plugin.ts` — inline ```lua fenced blocks executed and rendered into markdown previews
+- [x] **B5** `luau-markdown-plugin.ts` — inline ```luau fenced blocks executed and rendered into markdown previews
 
 ### Phase C — Puck widgets
 
@@ -503,19 +503,19 @@ Prism Studio is now a meta-builder: it can produce focused Prism apps (Flux, Lat
 
 ## Unified Builder System (Complete)
 
-Puck/Lua/Canvas/Facet builder system unified and fully working.
+Puck/Luau/Canvas/Facet builder system unified and fully working.
 
 ### Completed
 
-- [x] `lua-block` entity type — component that stores Lua source, renders via Lua UI parser
-- [x] Layout Panel (Puck) — live onChange sync (debounced 300ms), Lua Block component with inline preview
-- [x] Canvas Panel — renders `lua-block` objects inline with parsed Lua UI tree
-- [x] Lua Facet Panel — bound to kernel objects: selecting a lua-block auto-loads its source, edits auto-save (debounced 400ms)
-- [x] Component Palette — wired into sidebar (below ObjectExplorer), includes lua-block type, search, drag-to-add
+- [x] `luau-block` entity type — component that stores Luau source, renders via Luau UI parser
+- [x] Layout Panel (Puck) — live onChange sync (debounced 300ms), Luau Block component with inline preview
+- [x] Canvas Panel — renders `luau-block` objects inline with parsed Luau UI tree
+- [x] Luau Facet Panel — bound to kernel objects: selecting a luau-block auto-loads its source, edits auto-save (debounced 400ms)
+- [x] Component Palette — wired into sidebar (below ObjectExplorer), includes luau-block type, search, drag-to-add
 - [x] Facet Designer Panel — visual FacetDefinition builder with parts, field slots, portal slots, summaries, sort/group, hooks
 - [x] Record Browser — superseded: list/table/card-grid/report are now composable Puck widgets (`components/*-widget-renderer.tsx`), the standalone panel was removed
 - [x] Cross-panel integration — Canvas reflects inspector edits, palette→canvas, delete→undo, graph renders all types
-- [x] Seed data includes lua-block "Status Widget" demo on Home page
+- [x] Seed data includes luau-block "Status Widget" demo on Home page
 
 ## Free-Form Spatial Layout (Complete)
 
@@ -602,10 +602,10 @@ Layer 1 agnostic TypeScript. See `docs/dev/filemaker-gap-analysis.md` for full g
 - [x] **Conditional formatting runtime** — `facet-runtime.ts`: evaluateConditionalFormats, computeFieldStyle with expression parsing
 - [x] **Merge field interpolation** — `facet-runtime.ts`: interpolateMergeFields `{{fieldName}}`, renderTextSlot, dot-notation path resolution
 - [x] **CollectionValueListResolver** — `facet-runtime.ts`: resolves dynamic value lists from CollectionStore data
-- [x] **Visual Scripting** — `script-steps.ts`: 31 step types across 7 categories, emitStepsLua Lua codegen with proper indentation, validateSteps block matching, getStepCategories palette builder
+- [x] **Visual Scripting** — `script-steps.ts`: 31 step types across 7 categories, emitStepsLuau Luau codegen with proper indentation, validateSteps block matching, getStepCategories palette builder
 - [x] **FacetStore** — `facet-store.ts`: persistent registry for FacetDefinitions + VisualScripts + ValueLists with serialize/load
 - [x] **Studio panels** — 4 new lenses registered (Shift+S/V/L/P):
-  - Visual Script Editor (step palette, parameter inputs, live Lua preview, block validation)
+  - Visual Script Editor (step palette, parameter inputs, live Luau preview, block validation)
   - Saved Views (create/delete/pin/search, filter summary, active view highlighting)
   - Value Lists (static inline editor, dynamic source config)
   - Privilege Sets (permission matrix, row-level security, role assignments)
@@ -649,11 +649,11 @@ Layer 1 agnostic TypeScript. See `docs/dev/filemaker-gap-analysis.md` for full g
   - [ ] Double-click-node → field CRUD popover (add/remove/rename/type)
   - [ ] Port-drag between nodes → registerEdge dialog (reuse relationship-builder logic)
   - [ ] Playwright E2E: draw edge + add field round-trip
-- [ ] Lua step-through debugger / DAP (P5)
-  - [ ] `layer1/lua/lua-debugger.ts` — wasmoon `debug.sethook`-based stepper
-  - [ ] Breakpoint gutter in `visual-script-panel.tsx` Lua preview
+- [ ] Luau step-through debugger / DAP (P5)
+  - [ ] `layer1/luau/luau-debugger.ts` — source-instrumentation stepper (`__prism_trace`)
+  - [ ] Breakpoint gutter in `visual-script-panel.tsx` Luau preview
   - [ ] Paused-frame UI: locals table + step/continue/stop controls
-  - [ ] Breakpoint gutter in `editor-panel.tsx` for `lua-block` objects
+  - [ ] Breakpoint gutter in `editor-panel.tsx` for `luau-block` objects
   - [ ] Vitest unit suite + Playwright E2E (breakpoint → pause → inspect)
 
 **Already landed (no action):** Value Lists, Container Fields, Found Sets /
@@ -700,12 +700,12 @@ Visual editing of CRDT state.
 |-------|-------|--------|
 | Vitest (loro-bridge) | 9 | Pass |
 | Vitest (use-crdt-store) | 7 | Pass |
-| Vitest (lua-runtime) | 8 | Pass |
+| Vitest (luau-runtime) | 8 | Pass |
 | Vitest (loro-sync CM) | 6 | Pass |
 | Vitest (puck-loro-bridge) | 7 | Pass |
 | Vitest (focus-depth) | 9 | Pass |
 | Rust (crdt commands) | 3 | Pass |
-| Rust (lua commands) | 6 | Pass |
+| Rust (luau commands) | 6 | Pass |
 | Rust (file watcher) | 3 | Pass |
 | **Phase 1+2 Total** | **58** | **All Pass** |
 
@@ -736,7 +736,7 @@ Ported from legacy Helm codebase with Helm→Prism rename. Foundation for the Ob
 - `command-palette.ts` — KBar already handles this
 - `tree-clipboard.ts` + `cascade.ts` — restored as `layer1/clipboard/` in Phase 17
 - `context-engine.ts` — restored as `layer1/object-model/context-engine.ts` in Phase 6
-- `lua-bridge.ts` — Prism has its own Lua integration
+- `lua-bridge.ts` — Prism has its own Luau integration
 - `presets/` — domain-specific; Lenses define their own
 
 ### Test Summary
@@ -1538,7 +1538,7 @@ Process queue, language runtimes, and local AI integration.
 - [x] **Process Queue** (`layer1/actor/`)
   - [x] `createProcessQueue()` — priority-ordered execution with concurrency control, auto-processing, cancel/prune/dispose
   - [x] `ActorRuntime` interface — pluggable language execution with capability-scoped sandboxing
-  - [x] `createLuaActorRuntime()` — wraps wasmoon via function injection (no hard WASM dependency)
+  - [x] `createLuauActorRuntime()` — wraps luau-web via function injection (no hard WASM dependency)
   - [x] `createSidecarRuntime()` — TypeScript/Python via `SidecarExecutor` interface (Daemon provides Tauri shell)
   - [x] `createTestRuntime()` — synchronous in-memory runtime for testing
   - [x] `CapabilityScope` — zero-trust by default, explicit permission grants per task (network, fs, crdt, spawn, endpoints, duration/memory limits)
@@ -1563,7 +1563,7 @@ Process queue, language runtimes, and local AI integration.
 |-------|-------|--------|
 | ProcessQueue basics | 14 | Pass |
 | Auto-processing | 2 | Pass |
-| LuaActorRuntime | 4 | Pass |
+| LuauActorRuntime | 4 | Pass |
 | SidecarRuntime | 3 | Pass |
 | AiProviderRegistry | 7 | Pass |
 | OllamaProvider | 7 | Pass |
@@ -1586,7 +1586,7 @@ LSP-like intelligence for the expression and scripting layers.
   - [x] Hover: field type/description/enum values/computed expressions, function signatures, literals, keyword operators
   - [x] `inferNodeType()` — AST type inference mapping EntityFieldType → ExprType via FIELD_TYPE_MAP
   - [x] `validateTypes()` — schema-aware type checking (arithmetic on strings, unknown fields, wrong arity)
-  - [x] `generateLuaTypeDef()` — .d.lua generation from ObjectRegistry schemas with @class/@field annotations, enum unions, optional markers, standard GraphObject fields, builtin function stubs
+  - [x] `generateLuauTypeDef()` — .d.luau generation from ObjectRegistry schemas with @class/@field annotations, enum unions, optional markers, standard GraphObject fields, builtin function stubs
   - [x] `SyntaxProvider` interface for custom language providers (pluggable beyond expression)
   - [x] CodeMirror integration ready: TextRange positions compatible with CM offsets (Layer 2 wiring deferred)
 
@@ -1595,7 +1595,7 @@ LSP-like intelligence for the expression and scripting layers.
 - FIELD_TYPE_MAP maps all 11 EntityFieldTypes to ExprType (number/boolean/string)
 - BUILTIN_FUNCTIONS defines 9 functions with param types for completion detail and hover
 - SchemaContext provides the bridge from ObjectRegistry to the syntax engine
-- SyntaxProvider interface allows adding Lua/TypeScript language providers in future phases
+- SyntaxProvider interface allows adding Luau/TypeScript language providers in future phases
 
 ### Test Summary (68 tests)
 | Suite | Tests | Status |
@@ -1605,7 +1605,7 @@ LSP-like intelligence for the expression and scripting layers.
 | Expression hover | 10 | Pass |
 | Type inference | 15 | Pass |
 | SyntaxEngine | 9 | Pass |
-| Lua typedef generation | 7 | Pass |
+| Luau typedef generation | 7 | Pass |
 | FIELD_TYPE_MAP | 4 | Pass |
 | Edge cases | 5 | Pass |
 | **Phase 25 Total** | **68** | **All Pass** |
@@ -1656,7 +1656,7 @@ Real-time sessions, transcription, and A/V transport.
 
 The Sovereign Immune System — sandbox, spam protection, content trust.
 
-- [x] **Lua Sandbox** — `createLuaSandbox()` capability-based API restriction per plugin with glob URL/path filtering, violation recording
+- [x] **Luau Sandbox** — `createLuauSandbox()` capability-based API restriction per plugin with glob URL/path filtering, violation recording
 - [x] **Schema Validation** — `createSchemaValidator()` 5 built-in rules (max-depth, max-string-length, max-array-length, max-total-keys, disallowed-keys for __proto__/constructor/prototype)
 - [x] **Relay Spam Protection** — `createHashcashMinter()`/`createHashcashVerifier()` SHA-256 proof-of-work via Web Crypto with configurable difficulty bits
 - [x] **Web of Trust** — `createPeerTrustGraph()` peer reputation scoring with configurable thresholds, trust/distrust/ban, content hash flagging, event listeners
@@ -1667,7 +1667,7 @@ The Sovereign Immune System — sandbox, spam protection, content trust.
 
 | Suite | Tests | Status |
 |-------|-------|--------|
-| Lua Sandbox | 10 | Pass |
+| Luau Sandbox | 10 | Pass |
 | Schema Validator | 10 | Pass |
 | Hashcash | 8 | Pass |
 | Peer Trust Graph | 10 | Pass |
@@ -2178,7 +2178,7 @@ Wired three sovereignty Layer 1 systems into Studio: Identity (W3C DID managemen
 
 ### Completed
 
-- [x] **Kernel wiring** — createIdentity/signPayload/verifySignature/exportIdentity/importIdentity, VfsManager with MemoryVfsAdapter, PeerTrustGraph, SchemaValidator, LuaSandbox, ShamirSplitter, EscrowManager
+- [x] **Kernel wiring** — createIdentity/signPayload/verifySignature/exportIdentity/importIdentity, VfsManager with MemoryVfsAdapter, PeerTrustGraph, SchemaValidator, LuauSandbox, ShamirSplitter, EscrowManager
 - [x] **React hooks** — `useIdentity` (reactive identity + generate/export/import/sign/verify), `useVfs` (reactive locks + import/export/remove/lock/unlock), `useTrust` (reactive peers/flags + trust/distrust/ban/validate/sandbox/shamir/escrow)
 - [x] **Identity Panel** (`identity-panel.tsx`) — generate DID, display DID/document/public key, sign & verify payloads, export/import JSON
 - [x] **Assets Panel** (`assets-panel.tsx`) — import text files, browse blobs with hash/size/MIME, lock/unlock binary forking, remove files
@@ -2205,11 +2205,11 @@ Wired Layer 1 facet engines (FacetParser, SpellEngine, Sequencer, ProseCodec, Em
 
 ### Completed
 
-- [x] **Kernel wiring** — FacetParser (detect/parse/serialize/infer), SpellChecker (check/suggest with MockSpellCheckBackend + static dictionary), ProseCodec (markdownToNodes/nodesToMarkdown), Sequencer (emitConditionLua/emitScriptLua), Emitters (TS/JS/C#/Lua/JSON/YAML/TOML via SchemaModel), FacetDefinition registry (register/list/get/remove/builder)
-- [x] **React hooks** — `useFacetParser` (detect/parse/serialize/infer), `useSpellCheck` (check/suggest), `useProseCodec` (md↔nodes), `useSequencer` (condition/script→Lua), `useEmitters` (multi-language codegen), `useFacetDefinitions` (reactive definition registry)
+- [x] **Kernel wiring** — FacetParser (detect/parse/serialize/infer), SpellChecker (check/suggest with MockSpellCheckBackend + static dictionary), ProseCodec (markdownToNodes/nodesToMarkdown), Sequencer (emitConditionLuau/emitScriptLuau), Emitters (TS/JS/C#/Luau/JSON/YAML/TOML via SchemaModel), FacetDefinition registry (register/list/get/remove/builder)
+- [x] **React hooks** — `useFacetParser` (detect/parse/serialize/infer), `useSpellCheck` (check/suggest), `useProseCodec` (md↔nodes), `useSequencer` (condition/script→Luau), `useEmitters` (multi-language codegen), `useFacetDefinitions` (reactive definition registry)
 - [x] **Form Facet Panel** (`form-facet-panel.tsx`) — schema-driven form renderer: YAML/JSON source editor, auto-detected field types (text/number/boolean/email/tags/textarea), bidirectional source↔form sync, SpellEngine integration for text fields with inline error display
 - [x] **Table Facet Panel** (`table-facet-panel.tsx`) — data grid: sortable columns (name/type/status/tags/position/updated), text filter + type dropdown filter, inline editing via double-click, keyboard navigation (arrow keys), row selection synced with kernel
-- [x] **Sequencer Panel** (`sequencer-panel.tsx`) — visual automation builder: ConditionBuilder (combinator ALL/ANY, subject kind/operator/value dropdowns, add/remove clauses), ScriptBuilder (action steps with reorder/add/remove), live Lua preview, copy to clipboard
+- [x] **Sequencer Panel** (`sequencer-panel.tsx`) — visual automation builder: ConditionBuilder (combinator ALL/ANY, subject kind/operator/value dropdowns, add/remove clauses), ScriptBuilder (action steps with reorder/add/remove), live Luau preview, copy to clipboard
 - [x] **Lens registration** — 3 new lenses: Form (d), Table (b), Sequencer (q). Total: 18 lenses
 - [x] **Kernel unit tests** — 22 new tests: facet parser (7), spell checker (2), prose codec (2), sequencer (3), emitters (3), facet definitions (4), dispose (1)
 - [x] **Shell test updated** — activity bar icon count 15 → 18
@@ -2360,9 +2360,9 @@ Visual projection + automation builder system. "Facet" = a face of a prism = a v
 ### Architecture
 
 Three tiers:
-1. **Tier 1** (exists): ObjectRegistry, CollectionStore, ExpressionEngine, AutomationEngine, ViewConfig, Lua Runtime
+1. **Tier 1** (exists): ObjectRegistry, CollectionStore, ExpressionEngine, AutomationEngine, ViewConfig, Luau Runtime
 2. **Tier 2** (Layer 1 engines): FacetParser, FacetSchema, SpellEngine, ProseCodec, Sequencer types, Emitters
-3. **Tier 3** (Layer 2 React): FormFacet, TableFacet, ReportFacet, Sequencer UI, LuaFacet, FacetBuilders
+3. **Tier 3** (Layer 2 React): FormFacet, TableFacet, ReportFacet, Sequencer UI, LuauFacet, FacetBuilders
 
 ### Naming Map (Legacy Helm → Prism Facets)
 
@@ -2371,10 +2371,10 @@ Three tiers:
 | Document Surface modes | Facet (FormFacet, ListFacet, TableFacet, ReportFacet) | Visual projections |
 | Wizards (Condition/Script) | Sequencer | Visual automation builder |
 | Form Parser | FacetParser | YAML/JSON ↔ typed field records |
-| Codegen Writers | Emitters (TS/JS/C#/Lua/JSON/YAML/TOML) | Schema → multi-language output |
+| Codegen Writers | Emitters (TS/JS/C#/Luau/JSON/YAML/TOML) | Schema → multi-language output |
 | Spellcheck Engine | SpellEngine | Text quality across all facets |
-| Lua View Renderer | LuaFacet | Custom facets authored in Lua |
-| Shell Extension Builders | FacetBuilders | Lua codegen for standard patterns |
+| Luau View Renderer | LuauFacet | Custom facets authored in Luau |
+| Shell Extension Builders | FacetBuilders | Luau codegen for standard patterns |
 | Markdown Serializer | ProseCodec | MD ↔ structured content |
 
 ### Tier 2: Layer 1 Engines (`@prism/core/facet`)
@@ -2404,18 +2404,18 @@ Three tiers:
   - [x] `nodesToMarkdown(nodes)` → string (round-trip preserving)
   - [x] Inline element support (bold, italic, code, links, wiki-links)
   - [x] Task list support (`- [ ]`, `- [x]`)
-- [x] **Sequencer types** — port legacy wizard data model + Lua emission
+- [x] **Sequencer types** — port legacy wizard data model + Luau emission
   - [x] `SequencerSubject` (variable, field, event, custom — with id, label, type)
   - [x] `SequencerConditionState` (combinator: all|any, clauses with 12 operators)
   - [x] `SequencerScriptState` (steps: set-variable, add-variable, emit-event, call-function, custom)
-  - [x] `emitConditionLua(state)` → Lua expression string
-  - [x] `emitScriptLua(state)` → Lua statement block
+  - [x] `emitConditionLuau(state)` → Luau expression string
+  - [x] `emitScriptLuau(state)` → Luau statement block
 - [x] **Emitters** — port legacy `codegen/writers/` (SchemaModel → multi-language)
   - [x] `SchemaModel` / `SchemaField` / `SchemaInterface` / `SchemaEnum` types
   - [x] `TypeScriptWriter` (interfaces + enums + JSDoc)
   - [x] `JavaScriptWriter` (JSDoc @typedef)
   - [x] `CSharpWriter` (classes + enums with namespace)
-  - [x] `LuaWriter` (table + field definitions)
+  - [x] `LuauWriter` (table + field definitions)
   - [x] `JsonWriter` (pretty-print serializer)
   - [x] `YamlWriter` (zero-dep: scalars, blocks, anchors)
   - [x] `TomlWriter` (zero-dep: tables, array-of-tables)
@@ -2440,23 +2440,23 @@ Three tiers:
 - [x] **Sequencer UI** — visual automation builder
   - [x] ConditionBuilder (dropdowns for subject → operator → value)
   - [x] ScriptBuilder (step list with add/remove/reorder)
-  - [x] Live Lua preview
+  - [x] Live Luau preview
   - [x] Integration with AutomationEngine
-- [x] **LuaFacet** — execute Lua render scripts → React
+- [x] **LuauFacet** — execute Luau render scripts → React
   - [x] `ui` builder table (label, button, section, badge, input, row, column, spacer, divider)
   - [x] `ctx` context object (viewId, instanceKey, isActive)
   - [x] Error states (no VM, execution error, null return)
-  - [x] LuaRuntimeProvider context integration
-- [x] **FacetBuilders** — Lua codegen for common shell patterns
-  - [x] `luaBrowserView()` — generate Lua for a collection browser view
-  - [x] `luaCollectionRule()` — generate Lua for a validation rule
-  - [x] `luaStatsCommand()` — generate Lua for a summary command
-  - [x] `luaMenuItem()` — generate Lua for a menu contribution
-  - [x] `luaCommand()` — generate Lua for a keyboard command
+  - [x] LuauRuntimeProvider context integration
+- [x] **FacetBuilders** — Luau codegen for common shell patterns
+  - [x] `luauBrowserView()` — generate Luau for a collection browser view
+  - [x] `luauCollectionRule()` — generate Luau for a validation rule
+  - [x] `luauStatsCommand()` — generate Luau for a summary command
+  - [x] `luauMenuItem()` — generate Luau for a menu contribution
+  - [x] `luauCommand()` — generate Luau for a keyboard command
 
 ### Integration with Studio
 
-- [x] **Facet lenses** — Form, Table, Report, Sequencer, Lua Facet (20 total lenses, "facet" category)
+- [x] **Facet lenses** — Form, Table, Report, Sequencer, Luau Facet (20 total lenses, "facet" category)
 - [x] **Studio kernel wiring** — FacetParser, SpellEngine, ProseCodec, Sequencer, Emitters, FacetDefinitions all wired
 - [x] **Kernel hooks** — useFacetParser, useSpellCheck, useProseCodec, useSequencer, useEmitters, useFacetDefinitions
 - [x] **Facet Designer lens** — visual layout builder (like FileMaker Layout Mode)

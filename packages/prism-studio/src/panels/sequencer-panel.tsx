@@ -104,7 +104,7 @@ const styles = {
     outline: "none",
     boxSizing: "border-box" as const,
   },
-  luaPreview: {
+  luauPreview: {
     background: "#1a1a2e",
     border: "1px solid #333",
     borderRadius: "0.25rem",
@@ -429,14 +429,14 @@ export function SequencerPanel() {
   });
 
   // Live Luau preview
-  const luaOutput = tab === "condition"
+  const luauOutput = tab === "condition"
     ? (conditionState.clauses.length > 0 ? emitConditionLuau(conditionState) : "-- Add clauses to see Luau output")
     : (scriptState.steps.length > 0 ? emitScriptLuau(scriptState) : "-- Add steps to see Luau output");
 
   const handleCopyLuau = useCallback(() => {
-    void navigator.clipboard?.writeText(luaOutput);
+    void navigator.clipboard?.writeText(luauOutput);
     kernel.notifications.add({ title: "Luau copied to clipboard", kind: "info" });
-  }, [luaOutput, kernel]);
+  }, [luauOutput, kernel]);
 
   return (
     <div style={styles.container} data-testid="sequencer-panel">
@@ -476,12 +476,12 @@ export function SequencerPanel() {
       <div style={styles.card}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div style={styles.sectionTitle}>Luau Output</div>
-          <button style={styles.btn} onClick={handleCopyLuau} data-testid="copy-lua-btn">
+          <button style={styles.btn} onClick={handleCopyLuau} data-testid="copy-luau-btn">
             Copy
           </button>
         </div>
-        <div style={styles.luaPreview} data-testid="lua-preview">
-          {luaOutput}
+        <div style={styles.luauPreview} data-testid="luau-preview">
+          {luauOutput}
         </div>
       </div>
     </div>

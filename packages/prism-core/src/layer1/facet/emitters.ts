@@ -273,10 +273,10 @@ export class CSharpWriter implements Emitter<SchemaModel> {
 }
 
 // =============================================================================
-// Lua Writer
+// Luau Writer
 // =============================================================================
 
-function emitLuaDeclaration(b: SourceBuilder, decl: SchemaDeclaration): void {
+function emitLuauDeclaration(b: SourceBuilder, decl: SchemaDeclaration): void {
   if (decl.description) b.comment(decl.description);
 
   if (decl.kind === 'enum') {
@@ -297,8 +297,8 @@ function emitLuaDeclaration(b: SourceBuilder, decl: SchemaDeclaration): void {
   }
 }
 
-/** Emit a SchemaModel as Lua source. */
-export function emitLua(model: SchemaModel): string {
+/** Emit a SchemaModel as Luau source. */
+export function emitLuau(model: SchemaModel): string {
   const b = new SourceBuilder();
 
   if (model.namespace) {
@@ -309,22 +309,22 @@ export function emitLua(model: SchemaModel): string {
   for (let i = 0; i < model.declarations.length; i++) {
     if (i > 0) b.blank();
     const decl = model.declarations[i];
-    if (decl) emitLuaDeclaration(b, decl);
+    if (decl) emitLuauDeclaration(b, decl);
   }
 
   return b.build() + '\n';
 }
 
-/** Emitter that generates a Lua file from a SchemaModel. */
-export class LuaWriter implements Emitter<SchemaModel> {
-  readonly id = 'lua';
+/** Emitter that generates a Luau file from a SchemaModel. */
+export class LuauWriter implements Emitter<SchemaModel> {
+  readonly id = 'luau';
 
   constructor(private options: { filename?: string } = {}) {}
 
   emit(input: SchemaModel, meta: CodegenMeta): CodegenResult {
-    const filename = this.options.filename ?? `${meta.projectName}.lua`;
+    const filename = this.options.filename ?? `${meta.projectName}.luau`;
     return {
-      files: [{ filename, content: emitLua(input), language: 'lua' }],
+      files: [{ filename, content: emitLuau(input), language: 'luau' }],
       errors: [],
     };
   }

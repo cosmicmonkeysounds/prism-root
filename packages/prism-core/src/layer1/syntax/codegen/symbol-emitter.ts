@@ -334,7 +334,7 @@ export class SymbolCSharpEmitter extends SymbolEmitter {
   }
 }
 
-// -- Lua EmmyDoc emitter ----------------------------------------------------
+// -- Luau EmmyDoc emitter ---------------------------------------------------
 
 /**
  * SymbolEmmyDocEmitter -- emits LuaLS-compatible .d.luau stubs (Luau) from SymbolDef[].

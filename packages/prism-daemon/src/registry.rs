@@ -1,6 +1,6 @@
 //! Command registry — the transport-agnostic IPC surface of the daemon.
 //!
-//! Every capability the daemon exposes (CRDT writes, Lua exec, build steps,
+//! Every capability the daemon exposes (CRDT writes, Luau exec, build steps,
 //! filesystem watchers, …) is registered here as a named JSON-in / JSON-out
 //! handler. Transport adapters (Tauri IPC, mobile FFI, HTTP, stdio CLI, …)
 //! are all thin wrappers over [`CommandRegistry::invoke`], which is how the

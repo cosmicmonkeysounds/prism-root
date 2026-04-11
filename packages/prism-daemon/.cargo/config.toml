@@ -52,17 +52,16 @@
 #   EXIT_RUNTIME from that; passing the flag explicitly is an error).
 #
 # - `-sSUPPORT_LONGJMP=wasm`
-#   Lua's error-handling machinery is built on C++ exceptions in
-#   emscripten builds (lua-src's build.rs compiles Lua as C++ with
-#   `-fexceptions` so `lua_error` unwinds instead of longjmping — see
-#   lua-src/src/lib.rs target="emscripten" branch). `=wasm` picks the
-#   native WebAssembly exceptions lowering, which *must* match the
-#   `-fwasm-exceptions` that rustc unconditionally passes on
+#   Luau is written in C++ and uses native C++ exceptions for its error
+#   handling on emscripten (mlua's vendored Luau builds compile with
+#   `-fexceptions` so `luaL_error` unwinds instead of longjmping). `=wasm`
+#   picks the native WebAssembly exceptions lowering, which *must* match
+#   the `-fwasm-exceptions` that rustc unconditionally passes on
 #   wasm32-unknown-emscripten. Using `=emscripten` here is rejected by
 #   emcc with "SUPPORT_LONGJMP=emscripten is not compatible with
 #   -fwasm-exceptions". We also export `EMCC_CFLAGS=-fwasm-exceptions`
-#   from build-wasm.sh so lua-src's C++ TU's get compiled with the same
-#   EH ABI — otherwise lua gets emscripten-style `invoke_` trampolines
+#   from build-wasm.sh so the Luau C++ TU's get compiled with the same
+#   EH ABI — otherwise Luau gets emscripten-style `invoke_` trampolines
 #   and emcc fails its post-link sanity assert.
 #
 # - `-sERROR_ON_UNDEFINED_SYMBOLS=0`
