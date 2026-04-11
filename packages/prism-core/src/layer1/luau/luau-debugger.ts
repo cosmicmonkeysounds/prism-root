@@ -26,6 +26,7 @@
 
 import { LuauState } from "luau-web";
 import { fromLuauValue } from "./luau-runtime.js";
+import { findStatementLines } from "../syntax/luau/index.js";
 
 /** One recorded point in execution: line + locals snapshot. */
 export interface TraceFrame {
@@ -74,18 +75,26 @@ export interface LuauDebugger {
 }
 
 // ── Source instrumentation ────────────────────────────────────────────────────
-// Inject __prism_trace(n) before each non-empty, non-comment line. Line numbers
-// in trace calls refer to the ORIGINAL source, not the instrumented output.
+// Inject `__prism_trace(n)` before each line that begins a Luau statement,
+// as determined by the full-moon AST (`findStatementLines`). Line numbers in
+// trace calls refer to the ORIGINAL source, not the instrumented output.
+//
+// This replaces the earlier regex line scanner, which naively traced every
+// non-empty, non-comment line and so injected bogus trace calls into the
+// middle of multi-line strings and multi-line statements. The AST gives us
+// the canonical set of statement-start lines — nothing more, nothing less.
 
-function instrumentSource(source: string): string {
+async function instrumentSource(source: string): Promise<string> {
+  const statementLines = new Set(await findStatementLines(source));
   const lines = source.split("\n");
   const out: string[] = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? "";
-    const trimmed = line.trimStart();
-    if (trimmed !== "" && !trimmed.startsWith("--")) {
+    const lineNumber = i + 1;
+    if (statementLines.has(lineNumber)) {
+      const trimmed = line.trimStart();
       const indent = line.slice(0, line.length - trimmed.length);
-      out.push(`${indent}__prism_trace(${i + 1})`);
+      out.push(`${indent}__prism_trace(${lineNumber})`);
     }
     out.push(line);
   }
@@ -126,8 +135,9 @@ end)
 return {ok = __ok, err = __ok and "" or tostring(__err), frames = __prism_frames}
 `;
 
-function buildScript(source: string): string {
-  return WRAPPER_PREFIX + instrumentSource(source) + WRAPPER_SUFFIX;
+async function buildScript(source: string): Promise<string> {
+  const instrumented = await instrumentSource(source);
+  return WRAPPER_PREFIX + instrumented + WRAPPER_SUFFIX;
 }
 
 // ── Implementation ──────────────────────────────────────────────────────────
@@ -169,7 +179,7 @@ export async function createLuauDebugger(options?: {
       const allGlobals = { ...seedGlobals, ...(args ?? {}) };
       try {
         const state = await LuauState.createAsync(allGlobals);
-        const fullScript = buildScript(source);
+        const fullScript = await buildScript(source);
         const fn = state.loadstring(fullScript, "debugger", true);
         const results = await fn();
         // luau-web returns an array of multi-return values; take the first

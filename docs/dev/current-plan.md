@@ -1,5 +1,81 @@
 # Current Plan
 
+## Luau full-moon AST Integration (Complete — 2026-04-10)
+
+Ripped regex-based Luau parsing out of panels + debugger, replaced with a
+lossless AST via Kampfkarren/full-moon compiled to WASM. Plugged into the
+Helm-inherited syntax/codegen system as a `LanguageDefinition` +
+`SyntaxProvider` rather than a standalone module.
+
+### What landed
+
+1. **Rust crate `packages/prism-core/native/luau-parser/`** wraps `full_moon`
+   (v1.2, `luau` feature) via `wasm-bindgen` + `serde-wasm-bindgen`. Exposes
+   four functions: `parse`, `findUiCalls`, `findStatementLines`, `validate`.
+   Serializable `JsSyntaxNode`/`UiCall`/`UiArg`/`Diagnostic` types mirror the
+   shapes Prism's normalizers expect. 8 native Rust tests cover statement line
+   detection (including if/while/for recursion and multi-line strings),
+   `ui.*(...)` extraction with nested children, and parse error reporting.
+2. **WASM build** via `wasm-pack build --target web` — 248KB optimized
+   `prism_luau_parser_bg.wasm` + glue committed under
+   `src/layer1/syntax/luau/pkg/` so Vitest/Vite don't need the Rust toolchain.
+3. **TS wrappers at `packages/prism-core/src/layer1/syntax/luau/`**:
+   - `wasm-loader.ts` — idempotent async init with Node/browser environment
+     detection (Node uses `fs/promises.readFile`, browser uses `fetch`);
+     `ensureLuauParserLoaded` / `getLuauParserSync` / `isLuauParserReady`
+   - `luau-ast.ts` — async + sync helpers (`parseLuau`, `findUiCalls`,
+     `findStatementLines`, `validateLuau`) with defensive normalizers for the
+     untyped wasm-bindgen output
+   - `luau-language.ts` — `createLuauLanguageDefinition()` implements the sync
+     `LanguageDefinition` interface; reports init-not-ready or parser errors
+     into `ProcessorContext.diagnostics` and returns an empty root so the
+     pipeline continues
+   - `luau-provider.ts` — `createLuauSyntaxProvider()` implements the
+     `SyntaxProvider` interface with AST-backed `diagnose()` and a 9-item
+     `ui.*` completion list surfaced after `ui.`
+   - `index.ts` — convenience `initLuauSyntax()` + public re-exports
+4. **Re-exports** from `@prism/core/syntax` covering every public Luau symbol
+   so consumers never import `./luau/...` paths directly.
+5. **26 Vitest tests** in `luau-ast.test.ts` covering loader idempotency,
+   `findUiCalls` (flat / nested children / empty source / parser errors /
+   sync), `findStatementLines` (flat / if-else recursion / multiline string
+   resilience / sync), `validateLuau` (clean + error), `parseLuau`, the
+   `LanguageDefinition` (id/extensions, clean parse, error reporting), and
+   the `SyntaxProvider` (name, diagnose, ui.* completions, hover=null).
+6. **`luau-facet-panel.tsx` rewrite** — deleted ~270 lines of hand-rolled
+   parser (`parseNodeList` / `parseCall` / `parseLeafCall` /
+   `parseSectionCall` / `parseContainerCall` / `parseVoidCall` /
+   `parseString` / `skipWhitespaceAndComments` / `skipToClosingParen`).
+   `parseLuauUi(source)` is now a thin sync adapter: `findUiCallsSync` →
+   `uiCallToNode` → `UINode` tree. Positional args are unpacked onto named
+   `props` based on kind (label/button→text, badge→text+color,
+   input→placeholder+value, section→title, etc). The `UINode` /
+   `ParseResult` / `renderUINode` exports are preserved so `canvas-panel`
+   and `layout-panel` continue to work unchanged.
+7. **Async-init React hook** — the module kicks off `initLuauSyntax()` at
+   load time, and a new `useLuauParserReady()` hook (built on
+   `useSyncExternalStore`) flips from `false` to `true` once the WASM
+   parser is ready. `LuauFacetPanel`, `canvas-panel`'s `LuauBlockRenderer`,
+   and a new `PuckLuauBlockRender` component (extracted from
+   `layout-panel` so the Puck render callback is a real component) all
+   subscribe to it and re-render once the parser is live.
+8. **12 Vitest tests** in `packages/prism-studio/src/panels/luau-facet-panel.test.ts`
+   cover the `parseLuauUi` adapter: empty source, every element kind with
+   its positional-arg → named-prop mapping (label/button/badge/input/
+   section/row/column/spacer/divider), nested children, parser errors,
+   and comments.
+9. **`luau-debugger.ts` instrumentation rewrite** — `instrumentSource` is
+   now async and built on `findStatementLines` from `@prism/core/syntax`.
+   It only injects `__prism_trace(n)` on lines that begin a Luau statement
+   per the full-moon AST, so (a) multi-line string literals no longer
+   receive spurious trace calls inside their continuation lines, and
+   (b) multi-line statements are traced once at their first line instead
+   of on every continuation. `buildScript` cascades async. 3 regression
+   tests in `luau-debugger.test.ts` cover multi-line strings, multi-line
+   function calls, and nested if/then/else statements.
+
+Full suite: **3643 tests** passing (up from 3602).
+
 ## Lua → Luau Migration (Complete — 2026-04-10)
 
 Full codebase migration from Lua 5.4 (wasmoon) to Luau (luau-web / mlua+luau):

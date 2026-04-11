@@ -21,6 +21,10 @@ export default tseslint.config(
       "coverage/",
       "packages/prism-daemon/",
       "packages/prism-studio/src-tauri/",
+      // wasm-pack generated glue + type declarations for the full-moon Luau
+      // parser — not hand-authored, and references browser globals like
+      // `WebAssembly`/`TextDecoder` that aren't in the base lint env.
+      "packages/prism-core/src/layer1/syntax/luau/pkg/",
       "$legacy-inspiration-only/",
       "tmp-*",
     ],

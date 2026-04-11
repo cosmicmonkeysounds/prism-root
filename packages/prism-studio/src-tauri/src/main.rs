@@ -35,6 +35,11 @@ fn main() {
             commands::luau_exec,
             commands::run_build_step,
             commands::daemon_capabilities,
+            // Universal kernel entry point — the one command the
+            // cross-runtime `ipc-bridge` in Studio calls for every
+            // capability. See `commands::daemon_invoke` for why the
+            // legacy shapes above still exist alongside it.
+            commands::daemon_invoke,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Prism Studio");

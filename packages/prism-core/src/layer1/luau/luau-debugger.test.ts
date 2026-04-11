@@ -126,4 +126,51 @@ describe("createLuauDebugger", () => {
     expect(r1.frames.length).toBeGreaterThanOrEqual(1);
     expect(r2.frames.length).toBeGreaterThanOrEqual(1);
   });
+
+  // ── AST-backed instrumentation regressions ────────────────────────────────
+  // The previous regex-based line scanner injected `__prism_trace` into the
+  // middle of multi-line strings and into continuation lines of multi-line
+  // statements. The full-moon-backed `findStatementLines` avoids both.
+
+  it("does not trace continuation lines inside a multi-line string", async () => {
+    dbg = await createLuauDebugger();
+    const source = `local s = [[\nhello\nworld\n]]\nlocal after = 1\n`;
+    const result = await dbg.run(source);
+    expect(result.success).toBe(true);
+    const lines = result.frames.map((f) => f.line);
+    // The `local s = ...` statement starts on line 1; the subsequent lines
+    // 2, 3, 4 are part of the long-string literal and must NOT be traced.
+    expect(lines).toContain(1);
+    expect(lines).not.toContain(2);
+    expect(lines).not.toContain(3);
+    expect(lines).not.toContain(4);
+    // The statement after the long string starts on line 5 and must be traced.
+    expect(lines).toContain(5);
+  });
+
+  it("traces only the first line of a multi-line statement", async () => {
+    dbg = await createLuauDebugger();
+    // The function call spans lines 1–3; only line 1 is a statement start.
+    const source = `print(\n  "hi",\n  "there"\n)\nlocal tail = 1\n`;
+    const result = await dbg.run(source);
+    // print is not defined in the sandbox; we don't care if it errors —
+    // we care that the trace frames only include line 1 and line 5.
+    const lines = result.frames.map((f) => f.line);
+    expect(lines).toContain(1);
+    expect(lines).not.toContain(2);
+    expect(lines).not.toContain(3);
+    expect(lines).not.toContain(4);
+  });
+
+  it("traces statements nested inside if/then/else blocks", async () => {
+    dbg = await createLuauDebugger();
+    const source = `local x = 1\nif x > 0 then\n  local y = 2\nelse\n  local z = 3\nend\nlocal tail = 1\n`;
+    const result = await dbg.run(source);
+    expect(result.success).toBe(true);
+    const lines = result.frames.map((f) => f.line);
+    // Statements inside the if body must be traced.
+    expect(lines).toContain(3);
+    // The tail statement after `end` must also be traced.
+    expect(lines).toContain(7);
+  });
 });

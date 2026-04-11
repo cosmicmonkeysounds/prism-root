@@ -6,7 +6,14 @@
  * Like FileMaker Pro custom functions but for building UI.
  */
 
-import { useState, useCallback, useMemo, useEffect, useRef } from "react";
+import {
+  useState,
+  useCallback,
+  useMemo,
+  useEffect,
+  useRef,
+  useSyncExternalStore,
+} from "react";
 import { useKernel, useSelection, useObject } from "../kernel/index.js";
 
 import { lensId } from "@prism/core/lens";
@@ -16,6 +23,13 @@ import {
   createLuauDebugger,
   type DebugRunResult,
 } from "@prism/core/layer1";
+import {
+  initLuauSyntax,
+  isLuauParserReady,
+  findUiCallsSync,
+  type LuauUiCall,
+} from "@prism/core/syntax";
+
 // ── Types ──────────────────────────────────────────────────────────────────
 
 export interface UINode {
@@ -27,6 +41,43 @@ export interface UINode {
 export interface ParseResult {
   nodes: UINode[];
   error: string | null;
+}
+
+// ── Luau parser readiness ──────────────────────────────────────────────────
+//
+// The Luau parser is backed by a WASM module that requires one-time async
+// init. We kick it off at module load and expose a React hook that flips
+// from `false` to `true` once the module is ready — callers re-render and
+// their memoised `parseLuauUi` results pick up a real AST.
+
+let parserReady = isLuauParserReady();
+const parserReadyListeners = new Set<() => void>();
+
+function notifyParserReady(): void {
+  parserReady = true;
+  for (const cb of parserReadyListeners) cb();
+}
+
+if (!parserReady) {
+  void initLuauSyntax().then(notifyParserReady);
+}
+
+function subscribeParserReady(cb: () => void): () => void {
+  parserReadyListeners.add(cb);
+  return () => parserReadyListeners.delete(cb);
+}
+
+/**
+ * Subscribe to Luau parser readiness. Returns `true` once the WASM module
+ * has finished initializing. Safe to call in SSR / non-browser tests — the
+ * server snapshot is always `false`.
+ */
+export function useLuauParserReady(): boolean {
+  return useSyncExternalStore(
+    subscribeParserReady,
+    () => parserReady,
+    () => false,
+  );
 }
 
 // ── Styles ──────────────────────────────────────────────────────────────────
@@ -196,279 +247,79 @@ const SAMPLE_NAMES = Object.keys(SAMPLE_SCRIPTS);
 // ── Luau UI Parser ─────────────────────────────────────────────────────────
 
 /**
- * Simple parser that finds `ui.xxx(...)` patterns in Luau source and builds
- * a tree of UINode objects. Handles nested calls for container elements.
+ * Extract every `ui.*(...)` call from Luau source and map each one onto the
+ * renderer's `UINode` shape. Backed by the full-moon AST exposed through
+ * `@prism/core/syntax` — the previous hand-rolled regex parser could not
+ * handle multi-line strings, nested expressions, or comments reliably.
+ *
+ * The underlying WASM parser requires one-time async init. Callers that
+ * invoke `parseLuauUi` before init completes get `{ nodes: [], error: null }`
+ * and can subscribe via `useLuauParserReady()` to re-render once it's ready.
+ * Parser errors (syntactic) are surfaced on `error`; empty source is
+ * reported as `{ nodes: [], error: null }` rather than an error.
  */
 export function parseLuauUi(source: string): ParseResult {
-  const trimmed = source.trim();
-  if (trimmed.length === 0) {
+  if (source.trim().length === 0) {
     return { nodes: [], error: null };
   }
-
-  try {
-    const nodes = parseNodeList(trimmed, 0).nodes;
-    return { nodes, error: null };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { nodes: [], error: message };
+  if (!isLuauParserReady()) {
+    // Parser not yet initialized — the owning component should be using
+    // `useLuauParserReady()` so a re-render will pick up the real AST
+    // shortly. Return an empty result without an error so fallback UI
+    // stays silent.
+    return { nodes: [], error: null };
   }
+  const raw = findUiCallsSync(source);
+  return {
+    nodes: raw.calls.map(uiCallToNode),
+    error: raw.error,
+  };
 }
 
-interface ParseOutput {
-  nodes: UINode[];
-  endIndex: number;
-}
+/**
+ * Map a `LuauUiCall` from `@prism/core/syntax` to the renderer's `UINode`.
+ * Positional args are unpacked onto named `props` based on the element kind,
+ * matching the shape the old hand-rolled parser produced.
+ */
+function uiCallToNode(call: LuauUiCall): UINode {
+  const props: Record<string, string> = {};
+  const positional = call.args.filter((a) => a.key === undefined);
 
-function parseNodeList(source: string, startIndex: number): ParseOutput {
-  const nodes: UINode[] = [];
-  let i = startIndex;
-
-  while (i < source.length) {
-    // Skip whitespace, commas, comments
-    i = skipWhitespaceAndComments(source, i);
-    if (i >= source.length) break;
-
-    // Check for closing brace/paren (end of container children)
-    if (source[i] === "}" || source[i] === ")") {
+  switch (call.kind) {
+    case "label":
+    case "button": {
+      const text = positional[0]?.value;
+      if (text !== undefined) props["text"] = text;
       break;
     }
-
-    // Look for `return` keyword — skip it
-    if (source.substring(i, i + 6) === "return") {
-      const afterReturn = source[i + 6];
-      if (afterReturn === " " || afterReturn === "\n" || afterReturn === "\t") {
-        i += 7;
-        i = skipWhitespaceAndComments(source, i);
-        continue;
-      }
+    case "badge": {
+      const text = positional[0]?.value;
+      const color = positional[1]?.value;
+      if (text !== undefined) props["text"] = text;
+      if (color !== undefined) props["color"] = color;
+      break;
     }
-
-    // Look for `ui.xxx(` pattern
-    const callMatch = source.substring(i).match(/^ui\.(\w+)\s*\(/);
-    if (callMatch) {
-      const callName = callMatch[1];
-      if (callName === undefined) {
-        throw new Error(`Unexpected parse state at position ${i}`);
-      }
-      const argsStart = i + callMatch[0].length;
-      const parsed = parseCall(callName, source, argsStart);
-      nodes.push(parsed.node);
-      i = parsed.endIndex;
-      continue;
+    case "input": {
+      const placeholder = positional[0]?.value;
+      const value = positional[1]?.value;
+      if (placeholder !== undefined) props["placeholder"] = placeholder;
+      if (value !== undefined) props["value"] = value;
+      break;
     }
-
-    // Skip unknown characters
-    i++;
-  }
-
-  return { nodes, endIndex: i };
-}
-
-function skipWhitespaceAndComments(source: string, i: number): number {
-  while (i < source.length) {
-    const ch = source[i];
-    if (ch === " " || ch === "\t" || ch === "\n" || ch === "\r" || ch === ",") {
-      i++;
-      continue;
+    case "section": {
+      const title = positional[0]?.value;
+      if (title !== undefined) props["title"] = title;
+      break;
     }
-    // Luau single-line comment
-    if (ch === "-" && source[i + 1] === "-") {
-      const lineEnd = source.indexOf("\n", i);
-      if (lineEnd === -1) {
-        i = source.length;
-      } else {
-        i = lineEnd + 1;
-      }
-      continue;
-    }
-    break;
-  }
-  return i;
-}
-
-interface CallOutput {
-  node: UINode;
-  endIndex: number;
-}
-
-function parseCall(callName: string, source: string, argsStart: number): CallOutput {
-  switch (callName) {
-    case "label":
-    case "button":
-    case "badge":
-    case "input":
-      return parseLeafCall(callName, source, argsStart);
-    case "section":
-      return parseSectionCall(source, argsStart);
-    case "row":
-    case "column":
-      return parseContainerCall(callName, source, argsStart);
-    case "spacer":
-    case "divider":
-      return parseVoidCall(callName, source, argsStart);
     default:
-      throw new Error(`Unknown ui element: ui.${callName}`);
-  }
-}
-
-function parseVoidCall(callName: string, source: string, argsStart: number): CallOutput {
-  // Find closing paren
-  const i = skipWhitespaceAndComments(source, argsStart);
-  if (source[i] === ")") {
-    return { node: { type: callName, props: {}, children: [] }, endIndex: i + 1 };
-  }
-  throw new Error(`Expected closing ) for ui.${callName}`);
-}
-
-function parseLeafCall(callName: string, source: string, argsStart: number): CallOutput {
-  const props: Record<string, string> = {};
-  let i = skipWhitespaceAndComments(source, argsStart);
-
-  // Parse first string argument (text/placeholder)
-  if (source[i] === '"' || source[i] === "'") {
-    const strResult = parseString(source, i);
-    if (callName === "input") {
-      props["placeholder"] = strResult.value;
-    } else {
-      props["text"] = strResult.value;
-    }
-    i = skipWhitespaceAndComments(source, strResult.endIndex);
+      break;
   }
 
-  // Parse optional second argument
-  if (source[i] === ",") {
-    i = skipWhitespaceAndComments(source, i + 1);
-    if (source[i] === '"' || source[i] === "'") {
-      const strResult = parseString(source, i);
-      if (callName === "badge") {
-        props["color"] = strResult.value;
-      } else if (callName === "input") {
-        props["value"] = strResult.value;
-      }
-      i = skipWhitespaceAndComments(source, strResult.endIndex);
-    } else {
-      // Skip non-string arg (e.g. onClick function ref)
-      i = skipToClosingParen(source, i);
-    }
-  }
-
-  // Find closing paren
-  if (source[i] === ")") {
-    return { node: { type: callName, props, children: [] }, endIndex: i + 1 };
-  }
-  throw new Error(`Expected closing ) for ui.${callName}, got "${source[i] ?? "EOF"}" at position ${i}`);
-}
-
-function parseSectionCall(source: string, argsStart: number): CallOutput {
-  const props: Record<string, string> = {};
-  let i = skipWhitespaceAndComments(source, argsStart);
-
-  // Parse title string
-  if (source[i] === '"' || source[i] === "'") {
-    const strResult = parseString(source, i);
-    props["title"] = strResult.value;
-    i = skipWhitespaceAndComments(source, strResult.endIndex);
-  }
-
-  let children: UINode[] = [];
-
-  // Parse children in { ... }
-  if (source[i] === ",") {
-    i = skipWhitespaceAndComments(source, i + 1);
-    if (source[i] === "{") {
-      const childResult = parseNodeList(source, i + 1);
-      children = childResult.nodes;
-      i = skipWhitespaceAndComments(source, childResult.endIndex);
-      if (source[i] === "}") {
-        i++;
-      }
-      i = skipWhitespaceAndComments(source, i);
-    }
-  }
-
-  if (source[i] === ")") {
-    return { node: { type: "section", props, children }, endIndex: i + 1 };
-  }
-  throw new Error(`Expected closing ) for ui.section, got "${source[i] ?? "EOF"}" at position ${i}`);
-}
-
-function parseContainerCall(callName: string, source: string, argsStart: number): CallOutput {
-  let i = skipWhitespaceAndComments(source, argsStart);
-  let children: UINode[] = [];
-
-  if (source[i] === "{") {
-    const childResult = parseNodeList(source, i + 1);
-    children = childResult.nodes;
-    i = skipWhitespaceAndComments(source, childResult.endIndex);
-    if (source[i] === "}") {
-      i++;
-    }
-    i = skipWhitespaceAndComments(source, i);
-  }
-
-  if (source[i] === ")") {
-    return { node: { type: callName, props: {}, children }, endIndex: i + 1 };
-  }
-  throw new Error(`Expected closing ) for ui.${callName}, got "${source[i] ?? "EOF"}" at position ${i}`);
-}
-
-interface StringResult {
-  value: string;
-  endIndex: number;
-}
-
-function parseString(source: string, startIndex: number): StringResult {
-  const quote = source[startIndex];
-  if (quote !== '"' && quote !== "'") {
-    throw new Error(`Expected string at position ${startIndex}`);
-  }
-  let i = startIndex + 1;
-  let value = "";
-  while (i < source.length) {
-    const ch = source[i];
-    if (ch === "\\") {
-      const next = source[i + 1];
-      if (next === quote || next === "\\") {
-        value += next;
-        i += 2;
-        continue;
-      }
-      if (next === "n") {
-        value += "\n";
-        i += 2;
-        continue;
-      }
-      value += next ?? "";
-      i += 2;
-      continue;
-    }
-    if (ch === quote) {
-      return { value, endIndex: i + 1 };
-    }
-    value += ch;
-    i++;
-  }
-  throw new Error(`Unterminated string starting at position ${startIndex}`);
-}
-
-function skipToClosingParen(source: string, startIndex: number): number {
-  let depth = 0;
-  let i = startIndex;
-  while (i < source.length) {
-    const ch = source[i];
-    if (ch === "(") depth++;
-    if (ch === ")") {
-      if (depth === 0) return i;
-      depth--;
-    }
-    if (ch === '"' || ch === "'") {
-      const strResult = parseString(source, i);
-      i = strResult.endIndex;
-      continue;
-    }
-    i++;
-  }
-  return i;
+  return {
+    type: call.kind,
+    props,
+    children: call.children.map(uiCallToNode),
+  };
 }
 
 // ── Badge Colors ────────────────────────────────────────────────────────────
@@ -692,8 +543,15 @@ export default function LuauFacetPanel() {
   const instanceKey = `luau-facet-${viewId}`;
   const isActive = true;
 
-  // Parse UI tree from Luau source
-  const parseResult: ParseResult = useMemo(() => parseLuauUi(source), [source]);
+  // Parse UI tree from Luau source. Depend on parser readiness so the preview
+  // re-renders once the WASM module finishes async init.
+  const parserReadyState = useLuauParserReady();
+  const parseResult: ParseResult = useMemo(
+    () => parseLuauUi(source),
+    // `parserReadyState` is intentionally included so we re-parse once the
+    // WASM loader flips from not-ready to ready.
+    [source, parserReadyState],
+  );
 
   const handleCopy = useCallback(() => {
     void navigator.clipboard?.writeText(source);

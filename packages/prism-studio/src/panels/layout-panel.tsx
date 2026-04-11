@@ -15,7 +15,11 @@ import type { GraphObject, ObjectId } from "@prism/core/object-model";
 import { objectId } from "@prism/core/object-model";
 import type { FacetLayout } from "@prism/core/facet";
 import { useKernel, useSelection } from "../kernel/index.js";
-import { parseLuauUi, renderUINode } from "./luau-facet-panel.js";
+import {
+  parseLuauUi,
+  renderUINode,
+  useLuauParserReady,
+} from "./luau-facet-panel.js";
 import { FacetViewRenderer } from "../components/facet-view-renderer.js";
 import { SpatialCanvasRenderer } from "../components/spatial-canvas-renderer.js";
 import { DataPortalRenderer } from "../components/data-portal-renderer.js";
@@ -386,6 +390,53 @@ function usePageChildren(pageId: ObjectId | null): GraphObject[] {
   return children;
 }
 
+// ── Puck luau-block render ─────────────────────────────────────────────────
+
+/**
+ * Puck component render wrapper for `luau-block`. Lives as a real React
+ * component (not a plain function inside the config object) so it can call
+ * `useLuauParserReady()` — Puck invokes `render` as a component, so hooks
+ * are legal here.
+ */
+function PuckLuauBlockRender({ source, title }: { source: string; title: string }) {
+  // Re-render once the Luau parser finishes async WASM init.
+  useLuauParserReady();
+  const result = parseLuauUi(source);
+  return (
+    <div
+      style={{
+        border: "1px solid #06b6d4",
+        borderRadius: 6,
+        padding: 12,
+        margin: "4px 0",
+        background: "#0a1929",
+      }}
+      data-testid="puck-luau-block"
+    >
+      <div
+        style={{
+          fontSize: 11,
+          fontWeight: 600,
+          color: "#06b6d4",
+          textTransform: "uppercase",
+          letterSpacing: "0.05em",
+          marginBottom: 6,
+          display: "flex",
+          alignItems: "center",
+          gap: 4,
+        }}
+      >
+        {"\uD83C\uDF19"} {title}
+      </div>
+      {result.error ? (
+        <div style={{ color: "#f87171", fontSize: 12 }}>Error: {result.error}</div>
+      ) : (
+        <div>{result.nodes.map((node, i) => renderUINode(node, i))}</div>
+      )}
+    </div>
+  );
+}
+
 // ── Main Panel ─────────────────────────────────────────────────────────────
 
 export function LayoutPanel() {
@@ -415,41 +466,11 @@ export function LayoutPanel() {
             defaultProps: { source: "return ui.label(\"Hello from Luau!\")", title: "Luau Block" },
             render: (props) => {
               const p = props as Record<string, unknown>;
-              const source = (p["source"] as string) ?? "";
-              const title = (p["title"] as string) ?? "Luau Block";
-              const result = parseLuauUi(source);
               return (
-                <div
-                  style={{
-                    border: "1px solid #06b6d4",
-                    borderRadius: 6,
-                    padding: 12,
-                    margin: "4px 0",
-                    background: "#0a1929",
-                  }}
-                  data-testid="puck-luau-block"
-                >
-                  <div
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 600,
-                      color: "#06b6d4",
-                      textTransform: "uppercase",
-                      letterSpacing: "0.05em",
-                      marginBottom: 6,
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 4,
-                    }}
-                  >
-                    {"\uD83C\uDF19"} {title}
-                  </div>
-                  {result.error ? (
-                    <div style={{ color: "#f87171", fontSize: 12 }}>Error: {result.error}</div>
-                  ) : (
-                    <div>{result.nodes.map((node, i) => renderUINode(node, i))}</div>
-                  )}
-                </div>
+                <PuckLuauBlockRender
+                  source={(p["source"] as string) ?? ""}
+                  title={(p["title"] as string) ?? "Luau Block"}
+                />
               );
             },
           };

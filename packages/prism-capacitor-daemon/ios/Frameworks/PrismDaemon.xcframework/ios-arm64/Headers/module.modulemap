@@ -1,0 +1,17 @@
+// Swift module map that exposes the Prism Daemon C ABI to the plugin
+// target under the name `PrismDaemonFFI`. The umbrella header declares
+// the four extern functions; Swift imports them as regular functions
+// via `import PrismDaemonFFI`.
+//
+// This is a plain `module`, not a `framework module`: the xcframework
+// we ship contains a static `libprism_daemon.a` alongside a headers
+// directory, not a `.framework` bundle. Xcode's `-create-xcframework`
+// treats that as a "library" xcframework, and library xcframeworks
+// require non-framework module maps. Using `framework module` here
+// causes the clang module compiler to look for the header in
+// `PrismDaemonFFI.framework/Headers/`, which doesn't exist, and the
+// Swift import fails with "umbrella header not found".
+module PrismDaemonFFI {
+    umbrella header "PrismDaemon.h"
+    export *
+}

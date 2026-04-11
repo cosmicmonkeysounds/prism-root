@@ -41,7 +41,8 @@
 //! | `build`   | —                         | `build.run_step` |
 //! | `watcher` | `notify`                  | `watcher.{watch,poll,stop}` |
 //! | `cli`     | `tokio`                   | (enables the `prism-daemond` binary) |
-//! | `wasm`    | `crdt + luau`             | (enables the C-ABI adapter in [`wasm`]) |
+//! | `mobile`  | `crdt + luau`             | (enables the C-ABI adapter in [`wasm`] for iOS/Android staticlibs) |
+//! | `wasm`    | `crdt + luau`             | (enables the C-ABI adapter in [`wasm`] for emscripten) |
 //!
 //! `default = ["full"]`. Mobile shells override with `mobile` (crdt + luau
 //! only); embedded targets can pick `embedded` (crdt only); browser shells
@@ -59,7 +60,15 @@ pub mod registry;
 #[cfg(feature = "crdt")]
 pub mod doc_manager;
 
-#[cfg(feature = "wasm")]
+// The C ABI adapter (`prism_daemon_{create,destroy,invoke,free_string}`) is
+// the single entry point used by every non-Rust host: the browser via
+// emscripten (`wasm` feature) AND the Capacitor native shells on iOS/Android
+// (`mobile` feature, consuming `libprism_daemon.a` as a staticlib through a
+// hand-written Swift/Kotlin plugin). Desktop (Tauri) speaks Rust directly
+// and doesn't need the C ABI. The module is still named `wasm` for
+// historical reasons — it was introduced for the browser build — but the
+// cfg reflects that both host families use it.
+#[cfg(any(feature = "wasm", feature = "mobile"))]
 pub mod wasm;
 
 // ── Re-exports — the public surface hosts import from. ─────────────────

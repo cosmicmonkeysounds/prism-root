@@ -15,7 +15,16 @@ path = "src/lib.rs"
 # bin target. The `prism_daemon_wasm` bin in `src/bin/` is the single
 # emcc-link trigger and keeps the `#[no_mangle]` C ABI symbols alive
 # through LTO via `black_box` references.
-crate-type = ["rlib"]
+#
+# `staticlib` is the mobile linkage path: iOS (aarch64-apple-ios,
+# aarch64-apple-ios-sim) consumes `libprism_daemon.a` inside an
+# xcframework wrapped by the Swift Capacitor plugin; Android
+# (aarch64/armv7/x86_64-linux-android) links it into per-ABI `.so`
+# shared objects via cargo-ndk for the Kotlin Capacitor plugin. Both
+# call the C ABI in `src/wasm.rs` through `prism_daemon_{create,
+# destroy,invoke,free_string}`. staticlib is a no-op on wasm32 and
+# rlib-only targets, so it doesn't affect desktop or WASM builds.
+crate-type = ["staticlib", "rlib"]
 
 [[bin]]
 name = "prism-daemond"

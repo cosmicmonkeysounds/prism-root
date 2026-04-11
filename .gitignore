@@ -43,3 +43,5 @@ $legacy-inspiration-only
 .claude
 .husky
 test-results
+packages/prism-capacitor-daemon/android/src/main/jniLibs
+packages/prism-capacitor-daemon/android/build

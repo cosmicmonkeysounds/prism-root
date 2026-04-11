@@ -1,7 +1,31 @@
-//! WebAssembly adapter — exposes [`DaemonKernel`] to the browser via a
-//! small, hand-rolled C ABI.
+//! C-ABI adapter — exposes [`DaemonKernel`] to every non-Rust host through
+//! a small, hand-rolled `extern "C"` surface.
 //!
-//! ## Why a C ABI (and not `wasm-bindgen`)?
+//! This module has two consumers that share the same four functions:
+//!
+//! 1. **Browser** — compiled into `wasm32-unknown-emscripten` under the
+//!    `wasm` feature. Emscripten wraps the C symbols automatically via
+//!    `cwrap`/`ccall`, so the JS side just imports the generated
+//!    `prism_daemon_wasm.js` and calls through `Module`.
+//!
+//! 2. **Mobile (iOS + Android)** — compiled as a `staticlib` under the
+//!    `mobile` feature for `aarch64-apple-ios`, `aarch64-apple-ios-sim`,
+//!    and the `*-linux-android` triples. The `prism-capacitor-daemon`
+//!    package's Swift plugin (iOS) and Kotlin plugin (Android) each wrap
+//!    the same four functions and expose them to Studio as a Capacitor
+//!    plugin. Mobile does NOT go through emscripten — it links
+//!    `libprism_daemon.a` directly into the native shell.
+//!
+//! Desktop (Tauri) speaks Rust natively and bypasses this adapter
+//! entirely — `tauri::command` functions hold an `Arc<DaemonKernel>` and
+//! call `kernel.invoke()` without ever crossing the C boundary.
+//!
+//! The module is named `wasm` for historical reasons (the browser build
+//! came first), but every extern function in here is transport-neutral:
+//! the same bytes flow through emscripten's `cwrap` and through Swift's
+//! `UnsafeMutablePointer<CChar>`.
+//!
+//! ## Why a C ABI (and not `wasm-bindgen` / UniFFI)?
 //!
 //! The only WASM triple `mlua` (our Luau runtime) supports is
 //! `wasm32-unknown-emscripten`: emscripten ships a libc, which the vendored

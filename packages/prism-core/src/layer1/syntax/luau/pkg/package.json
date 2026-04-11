@@ -1,0 +1,16 @@
+{
+  "name": "prism-luau-parser",
+  "type": "module",
+  "description": "Lossless Luau parser for Prism — wraps Kampfkarren/full-moon, compiles to WASM via wasm-bindgen, consumed by @prism/core's syntax/luau/ LanguageDefinition.",
+  "version": "0.1.0",
+  "files": [
+    "prism_luau_parser_bg.wasm",
+    "prism_luau_parser.js",
+    "prism_luau_parser.d.ts"
+  ],
+  "main": "prism_luau_parser.js",
+  "types": "prism_luau_parser.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}

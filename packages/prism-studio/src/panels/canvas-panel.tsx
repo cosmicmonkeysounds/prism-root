@@ -19,7 +19,11 @@ import {
   mergeCss,
 } from "../kernel/block-style.js";
 import { resolveObjectRefs, evaluateVisibleWhen } from "../kernel/data-binding.js";
-import { parseLuauUi, renderUINode } from "./luau-facet-panel.js";
+import {
+  parseLuauUi,
+  renderUINode,
+  useLuauParserReady,
+} from "./luau-facet-panel.js";
 import { KanbanWidgetRenderer } from "../components/kanban-widget-renderer.js";
 import { ListWidgetRenderer } from "../components/list-widget-renderer.js";
 import {
@@ -483,6 +487,8 @@ function LuauBlockRenderer({ obj }: { obj: GraphObject }) {
   const data = obj.data as { source?: string; title?: string };
   const source = data.source ?? "";
   const title = data.title ?? obj.name;
+  // Re-render once the Luau parser finishes async WASM init.
+  useLuauParserReady();
   const result = parseLuauUi(source);
 
   return (

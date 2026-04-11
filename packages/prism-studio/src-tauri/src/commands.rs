@@ -90,3 +90,45 @@ pub fn daemon_capabilities(kernel: Kernel<'_>) -> serde_json::Value {
         "commands": kernel.capabilities(),
     })
 }
+
+/// Universal daemon entry point. Takes a registry command name + JSON
+/// payload and returns the envelope shape every non-Rust host speaks:
+///
+/// ```json
+/// { "ok": true,  "result": <...> }
+/// { "ok": false, "error":  "..." }
+/// ```
+///
+/// This is the single command the `daemon` facade in Studio's
+/// `ipc-bridge.ts` calls for every capability — the same call shape
+/// works on desktop (Tauri), mobile (Capacitor plugin → C ABI),
+/// browser (WASM → C ABI), and anywhere else we wrap a kernel.
+///
+/// The older `crdt_write` / `crdt_read` / `crdt_export` / `luau_exec`
+/// commands remain for legacy call sites that still expect their
+/// specific return shapes (e.g. `Vec<u8>` instead of a JSON envelope),
+/// but new code should prefer `daemon_invoke`. The two co-exist
+/// because the Tauri transport can return binary `Vec<u8>` more
+/// efficiently than JSON arrays of numbers for large CRDT snapshots;
+/// the legacy shape is kept as a hot path.
+#[tauri::command]
+pub fn daemon_invoke(
+    kernel: Kernel<'_>,
+    name: String,
+    payload: serde_json::Value,
+) -> serde_json::Value {
+    let response: Result<serde_json::Value, String> = match name.as_str() {
+        "daemon.capabilities" => Ok(serde_json::json!({
+            "commands": kernel.capabilities()
+        })),
+        "daemon.modules" => Ok(serde_json::json!({
+            "modules": kernel.installed_modules()
+        })),
+        other => kernel.invoke(other, payload).map_err(|e| e.to_string()),
+    };
+
+    match response {
+        Ok(result) => serde_json::json!({ "ok": true, "result": result }),
+        Err(error) => serde_json::json!({ "ok": false, "error": error }),
+    }
+}
