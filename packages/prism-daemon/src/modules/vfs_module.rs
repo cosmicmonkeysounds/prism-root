@@ -205,7 +205,9 @@ fn validate_hash(hash: &str) -> Result<(), String> {
 }
 
 fn looks_like_hash(s: &str) -> bool {
-    s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    s.len() == 64
+        && s.bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 
 /// The built-in VFS module. Stateless — the state lives on the shared
@@ -225,9 +227,7 @@ impl DaemonModule for VfsModule {
                 let root = std::env::temp_dir().join("prism-daemon-vfs");
                 // A failure here would only happen if the temp dir is
                 // un-writable, which we can't recover from anyway.
-                Arc::new(
-                    VfsManager::new(root).expect("default vfs root must be writable"),
-                )
+                Arc::new(VfsManager::new(root).expect("default vfs root must be writable"))
             })
             .clone();
         let registry = builder.registry().clone();
@@ -273,9 +273,7 @@ impl DaemonModule for VfsModule {
 
         let m = manager.clone();
         registry.register("vfs.list", move |_payload| {
-            let entries = m
-                .list()
-                .map_err(|e| CommandError::handler("vfs.list", e))?;
+            let entries = m.list().map_err(|e| CommandError::handler("vfs.list", e))?;
             Ok(json!({ "entries": entries }))
         })?;
 

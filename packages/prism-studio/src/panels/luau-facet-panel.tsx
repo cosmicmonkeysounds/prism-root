@@ -22,13 +22,11 @@ import { defineLensBundle, type LensBundle } from "../lenses/bundle.js";
 import {
   createLuauDebugger,
   type DebugRunResult,
-} from "@prism/core/luau";
-import {
   initLuauSyntax,
   isLuauParserReady,
   findUiCallsSync,
   type LuauUiCall,
-} from "@prism/core/syntax";
+} from "@prism/core/luau";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 

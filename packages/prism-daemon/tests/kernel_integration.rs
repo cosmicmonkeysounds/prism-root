@@ -34,28 +34,150 @@ fn with_defaults_installs_every_feature_module() {
     {
         assert!(caps.contains(&"watcher.watch".to_string()));
     }
+    #[cfg(feature = "vfs")]
+    {
+        assert!(caps.contains(&"vfs.put".to_string()));
+        assert!(caps.contains(&"vfs.get".to_string()));
+        assert!(caps.contains(&"vfs.stats".to_string()));
+    }
+    #[cfg(feature = "crypto")]
+    {
+        assert!(caps.contains(&"crypto.keypair".to_string()));
+        assert!(caps.contains(&"crypto.encrypt".to_string()));
+        assert!(caps.contains(&"crypto.decrypt".to_string()));
+    }
 }
 
 #[test]
 fn installed_modules_reports_install_order() {
-    let kernel = DaemonBuilder::new()
-        .with_crdt()
-        .with_luau()
-        .with_build()
-        .with_watcher()
-        .build()
+    // We exercise every built-in shortcut the *current* feature set
+    // exposes, in install order, then assert the kernel reports the
+    // same ordering. Each feature gate lets the test run against mobile
+    // / embedded / wasm / full without having to fork it per target.
+    #[allow(unused_mut)]
+    let mut builder = DaemonBuilder::new();
+    let mut expected: Vec<String> = Vec::new();
+
+    #[cfg(feature = "crdt")]
+    {
+        builder = builder.with_crdt();
+        expected.push("prism.crdt".to_string());
+    }
+    #[cfg(feature = "luau")]
+    {
+        builder = builder.with_luau();
+        expected.push("prism.luau".to_string());
+    }
+    #[cfg(feature = "build")]
+    {
+        builder = builder.with_build();
+        expected.push("prism.build".to_string());
+    }
+    #[cfg(feature = "watcher")]
+    {
+        builder = builder.with_watcher();
+        expected.push("prism.watcher".to_string());
+    }
+    #[cfg(feature = "vfs")]
+    {
+        builder = builder.with_vfs();
+        expected.push("prism.vfs".to_string());
+    }
+    #[cfg(feature = "crypto")]
+    {
+        builder = builder.with_crypto();
+        expected.push("prism.crypto".to_string());
+    }
+
+    let kernel = builder.build().unwrap();
+    assert_eq!(kernel.installed_modules(), expected.as_slice());
+}
+
+// ── VFS end-to-end through kernel.invoke ────────────────────────────────
+
+#[cfg(feature = "vfs")]
+#[test]
+fn vfs_blob_store_roundtrips_through_kernel_invoke() {
+    let kernel = DaemonBuilder::new().with_vfs().build().unwrap();
+
+    let put = kernel
+        .invoke(
+            "vfs.put",
+            json!({ "bytes": b"prism vfs roundtrip".to_vec() }),
+        )
+        .unwrap();
+    let hash = put["hash"].as_str().unwrap().to_string();
+    assert_eq!(hash.len(), 64);
+
+    let has = kernel
+        .invoke("vfs.has", json!({ "hash": hash.clone() }))
+        .unwrap();
+    assert_eq!(has["present"], true);
+    assert_eq!(has["size"], 19);
+
+    let got = kernel
+        .invoke("vfs.get", json!({ "hash": hash.clone() }))
+        .unwrap();
+    let bytes: Vec<u8> = serde_json::from_value(got["bytes"].clone()).unwrap();
+    assert_eq!(bytes, b"prism vfs roundtrip");
+
+    let del = kernel
+        .invoke("vfs.delete", json!({ "hash": hash }))
+        .unwrap();
+    assert_eq!(del["deleted"], true);
+}
+
+// ── Crypto end-to-end through kernel.invoke ─────────────────────────────
+
+#[cfg(feature = "crypto")]
+#[test]
+fn crypto_keypair_ecdh_and_aead_flow_through_kernel() {
+    let kernel = DaemonBuilder::new().with_crypto().build().unwrap();
+
+    let alice = kernel.invoke("crypto.keypair", json!({})).unwrap();
+    let bob = kernel.invoke("crypto.keypair", json!({})).unwrap();
+
+    let shared_ab = kernel
+        .invoke(
+            "crypto.shared_secret",
+            json!({
+                "secret_key": alice["secret_key"],
+                "peer_public_key": bob["public_key"],
+            }),
+        )
+        .unwrap();
+    let shared_ba = kernel
+        .invoke(
+            "crypto.shared_secret",
+            json!({
+                "secret_key": bob["secret_key"],
+                "peer_public_key": alice["public_key"],
+            }),
+        )
+        .unwrap();
+    assert_eq!(shared_ab["shared_secret"], shared_ba["shared_secret"]);
+
+    let ct = kernel
+        .invoke(
+            "crypto.encrypt",
+            json!({
+                "key": shared_ab["shared_secret"],
+                "plaintext": "68656c6c6f20776f726c64", // "hello world"
+            }),
+        )
         .unwrap();
 
-    let modules = kernel.installed_modules();
-    assert_eq!(
-        modules,
-        &[
-            "prism.crdt".to_string(),
-            "prism.luau".to_string(),
-            "prism.build".to_string(),
-            "prism.watcher".to_string(),
-        ]
-    );
+    let pt = kernel
+        .invoke(
+            "crypto.decrypt",
+            json!({
+                "key": shared_ba["shared_secret"],
+                "ciphertext": ct["ciphertext"],
+                "nonce": ct["nonce"],
+            }),
+        )
+        .unwrap();
+    assert_eq!(pt["plaintext"], "68656c6c6f20776f726c64");
 }
 
 #[test]

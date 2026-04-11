@@ -19,6 +19,9 @@ use crate::doc_manager::DocManager;
 #[cfg(feature = "watcher")]
 use crate::modules::watcher_module::WatcherManager;
 
+#[cfg(feature = "vfs")]
+use crate::modules::vfs_module::VfsManager;
+
 /// The fully-assembled daemon runtime.
 ///
 /// Cheaply cloneable — every field is either an `Arc` or lives behind one,
@@ -46,6 +49,12 @@ pub struct DaemonKernel {
     /// rationale as `doc_manager`.
     #[cfg(feature = "watcher")]
     watcher_manager: Option<Arc<WatcherManager>>,
+
+    /// Optional direct handle to the content-addressed blob store.
+    /// Same rationale as `doc_manager` — lets hot paths (drag-and-drop
+    /// of large assets, streaming uploads) avoid a JSON roundtrip.
+    #[cfg(feature = "vfs")]
+    vfs_manager: Option<Arc<VfsManager>>,
 }
 
 impl DaemonKernel {
@@ -55,6 +64,7 @@ impl DaemonKernel {
         initializer_handles: Vec<InitializerHandle>,
         #[cfg(feature = "crdt")] doc_manager: Option<Arc<DocManager>>,
         #[cfg(feature = "watcher")] watcher_manager: Option<Arc<WatcherManager>>,
+        #[cfg(feature = "vfs")] vfs_manager: Option<Arc<VfsManager>>,
     ) -> Self {
         Self {
             registry,
@@ -64,6 +74,8 @@ impl DaemonKernel {
             doc_manager,
             #[cfg(feature = "watcher")]
             watcher_manager,
+            #[cfg(feature = "vfs")]
+            vfs_manager,
         }
     }
 
@@ -103,6 +115,14 @@ impl DaemonKernel {
     #[cfg(feature = "watcher")]
     pub fn watcher_manager(&self) -> Option<Arc<WatcherManager>> {
         self.watcher_manager.clone()
+    }
+
+    /// Direct content-addressed blob store handle. Only present when
+    /// built with the `vfs` feature and after
+    /// [`DaemonBuilder::with_vfs`](crate::builder::DaemonBuilder::with_vfs) ran.
+    #[cfg(feature = "vfs")]
+    pub fn vfs_manager(&self) -> Option<Arc<VfsManager>> {
+        self.vfs_manager.clone()
     }
 
     /// Release every initializer (in reverse order) and drop the registry.

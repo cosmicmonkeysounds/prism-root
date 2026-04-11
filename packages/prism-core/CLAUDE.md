@@ -29,6 +29,8 @@ foundation → language/identity → kernel/network → interaction/domain → b
 - **`loro-bridge.ts`** — shared Loro bridge helper (same-category only, no dedicated export)
 
 ### `language/` — languages, parsers, emitters
+- **`document/`** → `@prism/core/document` — `PrismFile` + `FileBody` (discriminated union over text/graph/binary). The single file/document abstraction introduced by ADR-002 §A1. Phase 1 is additive; Phase 4 wires `DocumentSurface` through it.
+- **`registry/`** → `@prism/core/language-registry` — `LanguageContribution` + `LanguageSurface` + `LanguageCodegen` (ADR-002 §A2). Unifies `LanguageDefinition` + `DocumentContributionDef` into a single per-format record. Generic over renderer/editor-extension types so this stays React/CodeMirror-free. `contributionFromLegacy` / `resolveContribution` bridge the existing `LanguageRegistry` + `DocumentSurfaceRegistry` until Phase 4.
 - **`expression/`** → `@prism/core/expression` — Expression Engine (Scanner, Parser, Evaluator with builtins; `tokenize`, `isDigit`, `isIdentStart`, `isIdentChar`)
 - **`forms/`** → `@prism/core/forms` — FieldSchema, DocumentSchema, FormState, wiki-link parser, markdown parser (block + inline tokens)
 - **`syntax/`** → `@prism/core/syntax` — `createSyntaxEngine` (LSP-like diagnostics/completions/hover), schema-aware type checking via SchemaContext, `inferNodeType`, `generateLuauTypeDef` (.d.luau from ObjectRegistry), `createExpressionProvider` + `SyntaxProvider` interface, `BUILTIN_FUNCTIONS`/`FIELD_TYPE_MAP`

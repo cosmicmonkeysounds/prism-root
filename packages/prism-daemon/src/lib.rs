@@ -40,13 +40,16 @@
 //! | `luau`    | `mlua` (luau + vendored)  | `luau.exec` |
 //! | `build`   | —                         | `build.run_step` |
 //! | `watcher` | `notify`                  | `watcher.{watch,poll,stop}` |
+//! | `vfs`     | `sha2 + hex`              | `vfs.{put,get,has,delete,list,stats}` |
+//! | `crypto`  | `chacha20poly1305 + x25519-dalek + rand_core + hex` | `crypto.{keypair,derive_public,shared_secret,encrypt,decrypt,random_bytes}` |
 //! | `cli`     | `tokio`                   | (enables the `prism-daemond` binary) |
-//! | `mobile`  | `crdt + luau`             | (enables the C-ABI adapter in [`wasm`] for iOS/Android staticlibs) |
-//! | `wasm`    | `crdt + luau`             | (enables the C-ABI adapter in [`wasm`] for emscripten) |
+//! | `mobile`  | `crdt + luau + vfs + crypto` | (enables the C-ABI adapter in [`wasm`] for iOS/Android staticlibs) |
+//! | `wasm`    | `crdt + luau + vfs + crypto` | (enables the C-ABI adapter in [`wasm`] for emscripten) |
 //!
-//! `default = ["full"]`. Mobile shells override with `mobile` (crdt + luau
-//! only); embedded targets can pick `embedded` (crdt only); browser shells
-//! pick `wasm` and cross-compile to `wasm32-unknown-emscripten`.
+//! `default = ["full"]`. Mobile shells override with `mobile` (crdt, luau,
+//! vfs, and crypto — no process spawning, no filesystem watcher). Embedded
+//! targets can pick `embedded` (crdt only). Browser shells pick `wasm` and
+//! cross-compile to `wasm32-unknown-emscripten`.
 
 #![deny(clippy::all)]
 
@@ -81,6 +84,9 @@ pub use registry::{CommandError, CommandHandler, CommandRegistry};
 
 #[cfg(feature = "crdt")]
 pub use doc_manager::DocManager;
+
+#[cfg(feature = "vfs")]
+pub use modules::vfs_module::{VfsEntry, VfsManager, VfsStats};
 
 // ── Daemon-level error surface ─────────────────────────────────────────
 //

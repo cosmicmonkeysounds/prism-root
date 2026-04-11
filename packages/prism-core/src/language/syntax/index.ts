@@ -116,24 +116,3 @@ export type {
   SpellChecker,
 } from "./spell-check-types.js";
 
-// ── Luau (full-moon AST via WASM) ─────────────────────────────────────────
-export type {
-  LuauUiCall,
-  LuauUiArg,
-  LuauUiParseResult,
-} from "./luau/index.js";
-export {
-  initLuauSyntax,
-  ensureLuauParserLoaded,
-  isLuauParserReady,
-  parseLuau,
-  findUiCalls,
-  findStatementLines,
-  validateLuau,
-  parseLuauSync,
-  findUiCallsSync,
-  findStatementLinesSync,
-  validateLuauSync,
-  createLuauLanguageDefinition,
-  createLuauSyntaxProvider,
-} from "./luau/index.js";

@@ -2,7 +2,7 @@
 name = "prism-luau-parser"
 version = "0.1.0"
 edition = "2021"
-description = "Lossless Luau parser for Prism — wraps Kampfkarren/full-moon, compiles to WASM via wasm-bindgen, consumed by @prism/core's syntax/luau/ LanguageDefinition."
+description = "Lossless Luau parser for Prism — wraps Kampfkarren/full-moon, compiles to WASM via wasm-bindgen, consumed by @prism/core's language/luau/ LanguageDefinition."
 
 [lib]
 # `cdylib` is the wasm-bindgen linkage path — produces a `.wasm` the

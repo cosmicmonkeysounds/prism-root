@@ -13,3 +13,9 @@ pub mod build_module;
 
 #[cfg(feature = "watcher")]
 pub mod watcher_module;
+
+#[cfg(feature = "vfs")]
+pub mod vfs_module;
+
+#[cfg(feature = "crypto")]
+pub mod crypto_module;

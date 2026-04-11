@@ -1,5 +1,60 @@
 # Current Plan
 
+## prism-daemon — VFS + Crypto + Cross-Surface E2E (Complete — 2026-04-11)
+
+Made the Rust `prism-daemon` crate implement every SPEC-critical primitive that can run on every target we ship (desktop, mobile, browser, embedded), and wired up end-to-end tests that exercise each surface through its real transport rather than a host simulator.
+
+### What landed
+
+1. **VFS module** (`src/modules/vfs_module.rs`, 13 unit tests) — content-addressed blob store behind `vfs.{put,get,has,delete,list,stats}`. SHA-256 hex keys, atomic `write-temp + rename` writes, lock-free reads. Hosts inject a `VfsManager` rooted at the app data directory via `builder.set_vfs_manager(...)`; the module lazily creates one under the OS temp dir if nothing is plugged in. This is the local implementation of the SPEC's `object_store` adapter.
+2. **Crypto module** (`src/modules/crypto_module.rs`, 14 unit tests) — libsodium-equivalent primitives (X25519 ECDH + XChaCha20-Poly1305 AEAD + CSPRNG) behind `crypto.{keypair,derive_public,shared_secret,encrypt,decrypt,random_bytes}`. Pure-Rust RustCrypto crates (`x25519-dalek`, `chacha20poly1305`, `rand_core`) rather than `libsodium-sys` so iOS/Android/emscripten all compile without a C toolchain dep. Every byte field on the wire is lowercase hex.
+3. **Builder + kernel wiring** — `DaemonBuilder` gains `set_vfs_manager/vfs_manager_slot/with_vfs/with_crypto`; `DaemonKernel` gains a `vfs_manager()` accessor; `with_defaults()` now installs vfs + crypto alongside crdt/luau/build/watcher when their features are active.
+4. **Feature matrix** — `Cargo.toml` adds `vfs = ["dep:sha2", "dep:hex"]` and `crypto = ["dep:chacha20poly1305", "dep:x25519-dalek", "dep:rand_core", "dep:hex"]`. `full` and `wasm` pull them both in; `mobile` pulls them both in (E2EE + blob store are the whole point of mobile sync); `embedded` stays at crdt-only so a future no_std-leaning target remains viable.
+5. **Stdio-binary E2E test** (`tests/stdio_bin.rs`, 2 tests) — spawns `prism-daemond` as a subprocess and drives crdt/luau/vfs/crypto commands through real stdin/stdout JSON. The CLI-transport analogue of the Playwright browser suite.
+6. **Playwright suite extended** (`e2e/wasm.spec.ts`) — seven new tests covering vfs put/get/delete/list/stats and crypto keypair/shared_secret/encrypt/decrypt/AEAD-tamper/random_bytes through the real emscripten C ABI inside Chromium. Total: 19 tests × 2 profiles (dev/prod) = 38 browser runs.
+7. **Kernel integration tests extended** (`tests/kernel_integration.rs`) — `with_defaults_installs_every_feature_module` now covers vfs/crypto command registration; `installed_modules_reports_install_order` rewritten to walk only the shortcuts compiled into the current feature set, so mobile/embedded/wasm runs exercise the real builder path; added `vfs_blob_store_roundtrips_through_kernel_invoke` and `crypto_keypair_ecdh_and_aead_flow_through_kernel` for end-to-end coverage through `kernel.invoke()`.
+8. **Full-matrix runner** (`scripts/test-all.sh`) — orchestrates host cargo tests for all four feature combos, clippy under each combo, `cargo fmt --check`, WASM dev+prod cross-compile, Playwright dev+prod, iOS xcframework build + C ABI symbol check (`_prism_daemon_{create,destroy,invoke,free_string}`), Android per-ABI cdylib build + matching symbol check. `--skip-mobile/--skip-e2e/--skip-wasm` let you trim the run when iterating.
+9. **Docs refreshed** — `packages/prism-daemon/CLAUDE.md` now lists the new modules, the expanded feature matrix, the full test inventory, the matrix runner, and the mobile FFI sanity check procedure.
+
+### Status
+
+- `cargo test` (default) — **60 lib + 9 integration + 2 stdio_bin = 71 tests passing**
+- `cargo test --no-default-features --features mobile` — **50 lib + 9 integration = 59 passing**
+- `cargo test --no-default-features --features embedded` — **11 lib + 7 integration = 18 passing**
+- `cargo test --no-default-features --features wasm --lib` — **50 tests passing**
+- `cargo clippy --all-targets -- -D warnings` — clean across every feature combo
+- `cargo fmt --check` — clean
+- `scripts/build-wasm.sh {dev,prod}` — prod build is 3.4 MB wasm + 67 KB JS glue
+- `scripts/build-ios.sh` — xcframework assembled, device slice nm-verified for the C ABI
+- `scripts/build-android.sh debug` — libprism_daemon.so + libc++_shared.so staged into jniLibs for arm64-v8a / armeabi-v7a / x86_64, all nm-verified
+- Playwright — **19 dev + 19 prod = 38 passing**, exercising every command (crdt/luau/vfs/crypto) through the real emscripten C ABI inside Chromium
+- Mobile scripts each build under `--features mobile` and ship the `prism_daemon_{create,destroy,invoke,free_string}` C ABI symbols.
+
+### Notes / deferred
+
+- Hardware protocol bridges (Art-Net/sACN, VISCA, DMX, OSC, MIDI) and the actor/process queue (Whisper, Python sidecars) from SPEC §2 are still on the roadmap — they need desktop-only system libraries that would break the mobile/embedded/wasm surfaces we just finished certifying. They'll land as feature-gated desktop-only modules (`hardware`, `actors`) when the first consumer needs them.
+- No ESP32 simulator was exercised. `embedded = ["crdt"]` is still the placeholder for that path; `cargo test --features embedded` runs on the host toolchain and validates the minimal kernel compiles without any desktop-only dep leaking in.
+- VFS currently uses `std::fs` under a configurable root. A future S3 / GCS / content-delivery adapter would plug in via `builder.set_vfs_manager(...)` exposing the same command surface.
+
+## ADR 002 Phase 1 — PrismFile + LanguageContribution (Complete — 2026-04-11)
+
+Phase 1 of ADR 002 introduces the two new abstractions (§A1 and §A2) additively, alongside the existing `LanguageRegistry` + `DocumentSurfaceRegistry`. No renames, no moves, no behavior changes to existing callers. Phase 4 collapses the legacy registries and retires the compat bridge.
+
+### What landed
+
+1. **`packages/prism-core/src/language/document/prism-file.ts`** — `PrismFile` + `FileBody` discriminated union (`text` | `graph` | `binary`) plus `createTextFile`/`createGraphFile`/`createBinaryFile` constructors and `isTextBody`/`isGraphBody`/`isBinaryBody` narrowing guards. Imports `LoroText`, `GraphObject`, `BinaryRef`, and `DocumentSchema` — the first type to formally tie all of them together.
+2. **`packages/prism-core/src/language/registry/language-contribution.ts`** — `LanguageContribution<TRenderer, TEditorExtension>` interface covering id/extensions/displayName/mimeType, optional parse/serialize/syntaxProvider/codemirrorExtensions, a `LanguageSurface<TRenderer>` (defaultMode/availableModes/inlineTokens/renderers) and optional `LanguageCodegen`. Generic over renderer + editor extension types so `@prism/core/language` stays React- and CodeMirror-free; Studio specializes later.
+3. **`packages/prism-core/src/language/registry/compat.ts`** — the compatibility bridge. `contributionFromLegacy(language, surface)` adapts any existing `LanguageDefinition` + `DocumentContributionDef` pair (either half may be null) into a `LanguageContribution`. `resolveContribution({ languages, surfaces, filename, documentType, languageId })` resolves both registries from common keys and returns a unified view. Drops diagnostics on parse (Phase 4 reconnects them) and falls back to a code-only surface when the language has no registered `DocumentContributionDef`.
+4. **Subpath exports** — `@prism/core/document` and `@prism/core/language-registry` added to `packages/prism-core/package.json`. Tsconfig paths already cover `src/language/*`, so no tsconfig change was needed.
+5. **Tests** — 20 new tests across `prism-file.test.ts` (10) and `compat.test.ts` (10). Covers: body constructors, narrowing guards, exhaustive switch over `FileBody`, schema + metadata carry-through, round-trip parse/serialize through the bridge, missing-surface fallback, missing-language pass-through, explicit-documentType override, unknown-filename null return, and the bridge throwing when both inputs are null.
+6. **Docs** — `packages/prism-core/CLAUDE.md` + `README.md` list `document/` and `registry/` under the `language/` category with ADR-002 §A1/§A2 cross-references.
+
+### Status
+
+- `pnpm --filter @prism/core typecheck` — green.
+- `pnpm test` — **187 test files, 3663 tests passing** (+20 from 185/3643 pre-Phase-1).
+- No existing code consumes `PrismFile` or `LanguageContribution` yet. Phase 2 (fold Luau into one directory) and Phase 4 (collapse the legacy registries) will pick these up.
+
 ## ADR 002 Structural Reorganization (Complete — 2026-04-11)
 
 Moved `@prism/core` from its old `src/layer1/` + `src/layer2/` binary split into **8 domain categories** under `src/`:

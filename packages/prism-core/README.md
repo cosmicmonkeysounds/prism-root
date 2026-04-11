@@ -25,6 +25,8 @@ Only `bindings/` is allowed to import React / DOM / WebGL; everything above it r
 ### `language/` — languages, parsers, emitters
 | Export | Purpose |
 |--------|---------|
+| `@prism/core/document` | `PrismFile` + `FileBody` (ADR-002 §A1): unified file abstraction over text/graph/binary bodies |
+| `@prism/core/language-registry` | `LanguageContribution` (ADR-002 §A2): per-format record unifying parse/serialize/surface/codegen + compat bridge |
 | `@prism/core/expression` | Scanner, recursive descent parser, evaluator with builtins |
 | `@prism/core/forms` | FieldSchema, DocumentSchema, FormState, wiki-links, markdown |
 | `@prism/core/syntax` | LSP-like diagnostics/completions/hover, `.d.luau` generation |

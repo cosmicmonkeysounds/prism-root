@@ -26,7 +26,7 @@
 
 import { LuauState } from "luau-web";
 import { fromLuauValue } from "./luau-runtime.js";
-import { findStatementLines } from "@prism/core/syntax";
+import { findStatementLines } from "./luau-ast.js";
 
 /** One recorded point in execution: line + locals snapshot. */
 export interface TraceFrame {

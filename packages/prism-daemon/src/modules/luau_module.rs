@@ -21,7 +21,8 @@ impl DaemonModule for LuauModule {
         builder.registry().register("luau.exec", |payload| {
             let args: ExecArgs = serde_json::from_value(payload)
                 .map_err(|e| CommandError::handler("luau.exec", e.to_string()))?;
-            exec(&args.script, args.args.as_ref()).map_err(|e| CommandError::handler("luau.exec", e))
+            exec(&args.script, args.args.as_ref())
+                .map_err(|e| CommandError::handler("luau.exec", e))
         })?;
         Ok(())
     }

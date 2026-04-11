@@ -6,7 +6,7 @@
  */
 
 import { beforeAll, describe, expect, it } from "vitest";
-import { initLuauSyntax } from "@prism/core/syntax";
+import { initLuauSyntax } from "@prism/core/luau";
 import { parseLuauUi } from "./luau-facet-panel.js";
 
 beforeAll(async () => {

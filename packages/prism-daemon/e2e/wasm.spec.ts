@@ -89,7 +89,9 @@ test.describe(`prism-daemon wasm (${PROFILE})`, () => {
         });
     });
 
-    test("daemon.capabilities lists crdt + luau commands", async ({ page }) => {
+    test("daemon.capabilities lists crdt + luau + vfs + crypto commands", async ({
+        page,
+    }) => {
         const response = (await page.evaluate(() => {
             const d = (
                 window as unknown as {
@@ -120,13 +122,30 @@ test.describe(`prism-daemon wasm (${PROFILE})`, () => {
         expect(commands).toEqual(expect.arrayContaining(["crdt.export"]));
         expect(commands).toEqual(expect.arrayContaining(["crdt.import"]));
         expect(commands).toEqual(expect.arrayContaining(["luau.exec"]));
+        expect(commands).toEqual(expect.arrayContaining(["vfs.put"]));
+        expect(commands).toEqual(expect.arrayContaining(["vfs.get"]));
+        expect(commands).toEqual(expect.arrayContaining(["vfs.has"]));
+        expect(commands).toEqual(expect.arrayContaining(["vfs.delete"]));
+        expect(commands).toEqual(expect.arrayContaining(["vfs.list"]));
+        expect(commands).toEqual(expect.arrayContaining(["vfs.stats"]));
+        expect(commands).toEqual(expect.arrayContaining(["crypto.keypair"]));
+        expect(commands).toEqual(
+            expect.arrayContaining(["crypto.shared_secret"]),
+        );
+        expect(commands).toEqual(expect.arrayContaining(["crypto.encrypt"]));
+        expect(commands).toEqual(expect.arrayContaining(["crypto.decrypt"]));
+        expect(commands).toEqual(
+            expect.arrayContaining(["crypto.random_bytes"]),
+        );
         // Commands intentionally excluded from the wasm feature must
         // not show up — their presence would mean the feature gate leaked.
         expect(commands).not.toContain("watcher.watch");
         expect(commands).not.toContain("build.run_step");
     });
 
-    test("daemon.modules reports crdt + luau installed", async ({ page }) => {
+    test("daemon.modules reports crdt + luau + vfs + crypto installed", async ({
+        page,
+    }) => {
         const response = (await page.evaluate(() => {
             const d = (
                 window as unknown as {
@@ -153,7 +172,12 @@ test.describe(`prism-daemon wasm (${PROFILE})`, () => {
         if (!response.ok) return;
         const modules = (response.result as { modules: string[] }).modules;
         expect(modules).toEqual(
-            expect.arrayContaining(["prism.crdt", "prism.luau"]),
+            expect.arrayContaining([
+                "prism.crdt",
+                "prism.luau",
+                "prism.vfs",
+                "prism.crypto",
+            ]),
         );
         expect(modules).not.toContain("prism.watcher");
         expect(modules).not.toContain("prism.build");
@@ -540,5 +564,377 @@ test.describe(`prism-daemon wasm (${PROFILE})`, () => {
         } else {
             throw new Error(`kernel B failed: ${result.b.error}`);
         }
+    });
+
+    // ── VFS ─────────────────────────────────────────────────────────────
+    //
+    // These tests exercise the content-addressed blob store through the
+    // C ABI, inside the browser's emscripten MEMFS. The store writes
+    // real temp files into the virtual filesystem, so a regression in
+    // either the Rust side (sha2 hashing, write-temp+rename) or the
+    // emscripten libc layer (MEMFS rename semantics) will surface here.
+
+    test("vfs.put → vfs.get round-trips a blob through MEMFS", async ({
+        page,
+    }) => {
+        const result = (await page.evaluate(() => {
+            const d = (
+                window as unknown as {
+                    __prismDaemon: {
+                        createKernel: () => number;
+                        destroyKernel: (k: number) => void;
+                        invoke: (
+                            k: number,
+                            name: string,
+                            p?: unknown,
+                        ) => unknown;
+                    };
+                }
+            ).__prismDaemon;
+            const k = d.createKernel();
+            try {
+                const bytes = [0x50, 0x52, 0x49, 0x53, 0x4d]; // "PRISM"
+                const put = d.invoke(k, "vfs.put", { bytes });
+                const hash = (
+                    put as { ok: true; result: { hash: string } }
+                ).result.hash;
+                const has = d.invoke(k, "vfs.has", { hash });
+                const get = d.invoke(k, "vfs.get", { hash });
+                return { put, has, get };
+            } finally {
+                d.destroyKernel(k);
+            }
+        })) as {
+            put: InvokeEnvelope;
+            has: InvokeEnvelope;
+            get: InvokeEnvelope;
+        };
+
+        expect(result.put.ok).toBe(true);
+        if (!result.put.ok) return;
+        const hash = (result.put.result as { hash: string; size: number })
+            .hash;
+        expect(hash).toHaveLength(64);
+        expect(/^[0-9a-f]{64}$/.test(hash)).toBe(true);
+
+        expect(result.has).toEqual({
+            ok: true,
+            result: { present: true, size: 5 },
+        });
+
+        if (result.get.ok) {
+            expect(
+                (result.get.result as { bytes: number[] }).bytes,
+            ).toEqual([0x50, 0x52, 0x49, 0x53, 0x4d]);
+        } else {
+            throw new Error(`vfs.get failed: ${result.get.error}`);
+        }
+    });
+
+    test("vfs.delete removes a blob and vfs.list reflects the store", async ({
+        page,
+    }) => {
+        const result = (await page.evaluate(() => {
+            const d = (
+                window as unknown as {
+                    __prismDaemon: {
+                        createKernel: () => number;
+                        destroyKernel: (k: number) => void;
+                        invoke: (
+                            k: number,
+                            name: string,
+                            p?: unknown,
+                        ) => unknown;
+                    };
+                }
+            ).__prismDaemon;
+            const k = d.createKernel();
+            try {
+                const a = d.invoke(k, "vfs.put", { bytes: [1, 1, 1] }) as {
+                    ok: true;
+                    result: { hash: string };
+                };
+                const b = d.invoke(k, "vfs.put", { bytes: [2, 2, 2, 2] }) as {
+                    ok: true;
+                    result: { hash: string };
+                };
+                const listBefore = d.invoke(k, "vfs.list", {});
+                const del = d.invoke(k, "vfs.delete", {
+                    hash: a.result.hash,
+                });
+                const statsAfter = d.invoke(k, "vfs.stats", {});
+                return { listBefore, del, statsAfter, b: b.result.hash };
+            } finally {
+                d.destroyKernel(k);
+            }
+        })) as {
+            listBefore: InvokeEnvelope;
+            del: InvokeEnvelope;
+            statsAfter: InvokeEnvelope;
+            b: string;
+        };
+
+        // Before delete: two entries in the list.
+        if (!result.listBefore.ok) {
+            throw new Error(`vfs.list failed: ${result.listBefore.error}`);
+        }
+        const listed = (
+            result.listBefore.result as {
+                entries: Array<{ hash: string; size: number }>;
+            }
+        ).entries;
+        expect(listed.length).toBeGreaterThanOrEqual(2);
+
+        // Delete succeeds.
+        expect(result.del).toEqual({
+            ok: true,
+            result: { deleted: true },
+        });
+
+        // Stats now only reflect the remaining blob(s).
+        if (!result.statsAfter.ok) {
+            throw new Error(`vfs.stats failed: ${result.statsAfter.error}`);
+        }
+        const stats = result.statsAfter.result as {
+            entries: number;
+            total_bytes: number;
+        };
+        // Per-kernel MEMFS, but we share a default temp root across
+        // kernels — assert monotonically on the blob we *know* is still
+        // there rather than the exact count.
+        expect(stats.total_bytes).toBeGreaterThanOrEqual(4);
+    });
+
+    test("vfs.get rejects an unknown hash with a structured error", async ({
+        page,
+    }) => {
+        const response = (await page.evaluate(() => {
+            const d = (
+                window as unknown as {
+                    __prismDaemon: {
+                        createKernel: () => number;
+                        destroyKernel: (k: number) => void;
+                        invoke: (
+                            k: number,
+                            name: string,
+                            p?: unknown,
+                        ) => unknown;
+                    };
+                }
+            ).__prismDaemon;
+            const k = d.createKernel();
+            try {
+                return d.invoke(k, "vfs.get", { hash: "f".repeat(64) });
+            } finally {
+                d.destroyKernel(k);
+            }
+        })) as InvokeEnvelope;
+
+        expect(response.ok).toBe(false);
+    });
+
+    // ── Crypto ──────────────────────────────────────────────────────────
+    //
+    // Mesh Trust ECDH + XChaCha20-Poly1305 AEAD running inside Chromium.
+    // The RustCrypto crates pull their entropy from `OsRng` → `getrandom`
+    // → emscripten's libc → `crypto.getRandomValues()` under the hood.
+    // A broken getrandom backend shows up as either a panic during
+    // `crypto.keypair` or as non-roundtripping ciphertext, both of which
+    // these tests would catch.
+
+    test("crypto.keypair produces 32-byte hex keys in the browser", async ({
+        page,
+    }) => {
+        const response = (await page.evaluate(() => {
+            const d = (
+                window as unknown as {
+                    __prismDaemon: {
+                        createKernel: () => number;
+                        destroyKernel: (k: number) => void;
+                        invoke: (
+                            k: number,
+                            name: string,
+                            p?: unknown,
+                        ) => unknown;
+                    };
+                }
+            ).__prismDaemon;
+            const k = d.createKernel();
+            try {
+                return d.invoke(k, "crypto.keypair", {});
+            } finally {
+                d.destroyKernel(k);
+            }
+        })) as InvokeEnvelope;
+
+        expect(response.ok).toBe(true);
+        if (!response.ok) return;
+        const kp = response.result as {
+            secret_key: string;
+            public_key: string;
+        };
+        expect(kp.secret_key).toHaveLength(64);
+        expect(kp.public_key).toHaveLength(64);
+        expect(/^[0-9a-f]{64}$/.test(kp.secret_key)).toBe(true);
+        expect(/^[0-9a-f]{64}$/.test(kp.public_key)).toBe(true);
+    });
+
+    test("crypto shared secret + encrypt/decrypt round-trips a message", async ({
+        page,
+    }) => {
+        const result = (await page.evaluate(() => {
+            const d = (
+                window as unknown as {
+                    __prismDaemon: {
+                        createKernel: () => number;
+                        destroyKernel: (k: number) => void;
+                        invoke: (
+                            k: number,
+                            name: string,
+                            p?: unknown,
+                        ) => unknown;
+                    };
+                }
+            ).__prismDaemon;
+            const k = d.createKernel();
+            try {
+                const alice = d.invoke(k, "crypto.keypair", {}) as {
+                    ok: true;
+                    result: { secret_key: string; public_key: string };
+                };
+                const bob = d.invoke(k, "crypto.keypair", {}) as {
+                    ok: true;
+                    result: { secret_key: string; public_key: string };
+                };
+                const sharedAB = d.invoke(k, "crypto.shared_secret", {
+                    secret_key: alice.result.secret_key,
+                    peer_public_key: bob.result.public_key,
+                }) as { ok: true; result: { shared_secret: string } };
+                const sharedBA = d.invoke(k, "crypto.shared_secret", {
+                    secret_key: bob.result.secret_key,
+                    peer_public_key: alice.result.public_key,
+                }) as { ok: true; result: { shared_secret: string } };
+
+                // "hello wasm" as hex.
+                const plaintext = "68656c6c6f2077617374";
+                const ct = d.invoke(k, "crypto.encrypt", {
+                    key: sharedAB.result.shared_secret,
+                    plaintext,
+                }) as {
+                    ok: true;
+                    result: { ciphertext: string; nonce: string };
+                };
+                const pt = d.invoke(k, "crypto.decrypt", {
+                    key: sharedBA.result.shared_secret,
+                    ciphertext: ct.result.ciphertext,
+                    nonce: ct.result.nonce,
+                }) as {
+                    ok: true;
+                    result: { plaintext: string };
+                };
+
+                return {
+                    sharedEqual:
+                        sharedAB.result.shared_secret ===
+                        sharedBA.result.shared_secret,
+                    plaintext: pt.result.plaintext,
+                    expected: plaintext,
+                    nonceLen: ct.result.nonce.length,
+                };
+            } finally {
+                d.destroyKernel(k);
+            }
+        })) as {
+            sharedEqual: boolean;
+            plaintext: string;
+            expected: string;
+            nonceLen: number;
+        };
+
+        expect(result.sharedEqual).toBe(true);
+        expect(result.plaintext).toBe(result.expected);
+        // 24-byte XChaCha nonce × 2 hex chars = 48 characters.
+        expect(result.nonceLen).toBe(48);
+    });
+
+    test("crypto.decrypt fails on tampered ciphertext (AEAD auth)", async ({
+        page,
+    }) => {
+        const response = (await page.evaluate(() => {
+            const d = (
+                window as unknown as {
+                    __prismDaemon: {
+                        createKernel: () => number;
+                        destroyKernel: (k: number) => void;
+                        invoke: (
+                            k: number,
+                            name: string,
+                            p?: unknown,
+                        ) => unknown;
+                    };
+                }
+            ).__prismDaemon;
+            const k = d.createKernel();
+            try {
+                // A 32-byte symmetric key, deterministic for the test.
+                const key =
+                    "0000000000000000000000000000000000000000000000000000000000000000";
+                const plaintext = "61"; // "a"
+                const ct = d.invoke(k, "crypto.encrypt", {
+                    key,
+                    plaintext,
+                }) as {
+                    ok: true;
+                    result: { ciphertext: string; nonce: string };
+                };
+                const tampered =
+                    "ff" + ct.result.ciphertext.slice(2);
+                return d.invoke(k, "crypto.decrypt", {
+                    key,
+                    ciphertext: tampered,
+                    nonce: ct.result.nonce,
+                });
+            } finally {
+                d.destroyKernel(k);
+            }
+        })) as InvokeEnvelope;
+
+        expect(response.ok).toBe(false);
+    });
+
+    test("crypto.random_bytes returns distinct buffers of the requested length", async ({
+        page,
+    }) => {
+        const result = (await page.evaluate(() => {
+            const d = (
+                window as unknown as {
+                    __prismDaemon: {
+                        createKernel: () => number;
+                        destroyKernel: (k: number) => void;
+                        invoke: (
+                            k: number,
+                            name: string,
+                            p?: unknown,
+                        ) => unknown;
+                    };
+                }
+            ).__prismDaemon;
+            const k = d.createKernel();
+            try {
+                const a = d.invoke(k, "crypto.random_bytes", {
+                    len: 32,
+                }) as { ok: true; result: { bytes: string } };
+                const b = d.invoke(k, "crypto.random_bytes", {
+                    len: 32,
+                }) as { ok: true; result: { bytes: string } };
+                return { a: a.result.bytes, b: b.result.bytes };
+            } finally {
+                d.destroyKernel(k);
+            }
+        })) as { a: string; b: string };
+
+        expect(result.a).toHaveLength(64);
+        expect(result.b).toHaveLength(64);
+        expect(result.a).not.toEqual(result.b);
     });
 });

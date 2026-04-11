@@ -128,6 +128,21 @@ impl DaemonBuilder {
         &mut self.watcher_manager
     }
 
+    /// Set/override the VFS blob store. Hosts should inject a manager
+    /// rooted at the app's data directory on startup — otherwise the
+    /// `vfs` module will lazily create one under the OS temp dir.
+    #[cfg(feature = "vfs")]
+    pub fn set_vfs_manager(&mut self, vm: Arc<VfsManager>) -> &mut Self {
+        self.vfs_manager = Some(vm);
+        self
+    }
+
+    /// Current VFS blob store slot.
+    #[cfg(feature = "vfs")]
+    pub fn vfs_manager_slot(&mut self) -> &mut Option<Arc<VfsManager>> {
+        &mut self.vfs_manager
+    }
+
     // ── Generic extension points ─────────────────────────────────────────
 
     /// Plug in any [`DaemonModule`]. Runs the module's `install` hook
@@ -197,6 +212,21 @@ impl DaemonBuilder {
         self.with_module(crate::modules::watcher_module::WatcherModule)
     }
 
+    /// Install the VFS content-addressed blob store (`vfs.put`,
+    /// `vfs.get`, `vfs.has`, `vfs.delete`, `vfs.list`, `vfs.stats`).
+    #[cfg(feature = "vfs")]
+    pub fn with_vfs(self) -> Self {
+        self.with_module(crate::modules::vfs_module::VfsModule)
+    }
+
+    /// Install the crypto module (X25519 keypairs + XChaCha20-Poly1305
+    /// AEAD): `crypto.keypair`, `crypto.shared_secret`, `crypto.encrypt`,
+    /// `crypto.decrypt`, `crypto.random_bytes`.
+    #[cfg(feature = "crypto")]
+    pub fn with_crypto(self) -> Self {
+        self.with_module(crate::modules::crypto_module::CryptoModule)
+    }
+
     /// Install every built-in capability the current feature set allows.
     /// Equivalent to `createStudioKernel({ lensBundles: createBuiltinLensBundles() })`.
     pub fn with_defaults(mut self) -> Self {
@@ -215,6 +245,14 @@ impl DaemonBuilder {
         #[cfg(feature = "watcher")]
         {
             self = self.with_watcher();
+        }
+        #[cfg(feature = "vfs")]
+        {
+            self = self.with_vfs();
+        }
+        #[cfg(feature = "crypto")]
+        {
+            self = self.with_crypto();
         }
         self
     }
@@ -237,6 +275,8 @@ impl DaemonBuilder {
             doc_manager,
             #[cfg(feature = "watcher")]
             watcher_manager,
+            #[cfg(feature = "vfs")]
+            vfs_manager,
         } = self;
 
         let kernel = DaemonKernel::new(
@@ -247,6 +287,8 @@ impl DaemonBuilder {
             doc_manager,
             #[cfg(feature = "watcher")]
             watcher_manager,
+            #[cfg(feature = "vfs")]
+            vfs_manager,
         );
 
         // Run initializers. They may call kernel.invoke(...) freely.
