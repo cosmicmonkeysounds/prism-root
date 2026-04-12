@@ -2528,6 +2528,7 @@ dependencies = [
  "uniffi",
  "ureq",
  "webrtc",
+ "webrtc-media",
  "whisper-rs",
  "x25519-dalek",
 ]

@@ -59,26 +59,26 @@ paradigm, ported to Rust:
     inbox/outbox mailboxes. First supported actor kind is a Luau script;
     `python` / `llm_sidecar` kinds will land later behind their own
     sub-features. Depends on `luau`.
-  - `whisper_module.rs` → `prism.whisper` → `whisper.{load_model,
-    unload_model,list_models,transcribe_pcm,transcribe_file}` — local-first
-    speech-to-text via `whisper-rs` (whisper.cpp + GGML built from source).
-    PCM input must be mono f32 @ 16 kHz; `transcribe_file` decodes WAV via
-    `hound` and downmixes/converts as needed. Returns `TranscriptSegment {
-    start_ms, end_ms, text }`. Desktop-only — `whisper-rs-sys`'s build
-    script invokes CMake, so the host needs `cmake` on PATH. Excluded from
-    `full`/`mobile`/`wasm`/`embedded`; opt in with
-    `cargo build --features whisper`.
-  - `conferencing_module.rs` → `prism.conferencing` → `conferencing.{
-    create_peer,create_data_channel,create_offer,create_answer,
-    set_local_description,set_remote_description,local_description,
-    add_ice_candidate,send_data,recv_data,peer_state,list_peers,
-    close_peer}` — pure-Rust WebRTC peer connections + data channels via
-    the `webrtc` crate. `ConferencingManager` owns its own multi-threaded
-    tokio runtime and `block_on`s into async webrtc from each sync command
-    handler so the kernel boundary stays sync. Per-peer DataChannel index
-    keyed by label, shared inbox keeps inbound messages drainable through
-    `recv_data`. Desktop-only because the `webrtc` crate links a network
-    stack the mobile/wasm/embedded targets cannot carry.
+  - `whisper_module.rs` → `prism.whisper` → batch: `whisper.{load_model,
+    unload_model,list_models,transcribe_pcm,transcribe_file}` + streaming:
+    `whisper.{create_session,push_audio,poll_segments,close_session}` —
+    local-first STT via `whisper-rs` (whisper.cpp + GGML built from source).
+    PCM input must be mono f32 @ 16 kHz. Streaming sessions accumulate audio
+    via `push_audio`; `poll_segments` transcribes the full buffer each call
+    (whisper.cpp resets state per `full()` — the host diffs results).
+    Desktop-only — needs `cmake` on PATH; excluded from all presets; opt in
+    with `cargo build --features whisper`.
+  - `conferencing_module.rs` → `prism.conferencing` → data channels:
+    `conferencing.{create_peer,create_data_channel,create_offer,
+    create_answer,set_local_description,set_remote_description,
+    local_description,add_ice_candidate,send_data,recv_data,peer_state,
+    list_peers,close_peer}` + audio/video tracks: `conferencing.{add_track,
+    write_sample,recv_track_data,list_tracks,remove_track}` + rooms:
+    `conferencing.{create_room,join_room,leave_room,room_info,list_rooms,
+    broadcast_data}` — pure-Rust WebRTC via the `webrtc` crate. Tracks
+    transport pre-encoded media (Opus/VP8) — the host encodes/decodes, the
+    daemon transports. Rooms group peers for multi-party calls: full-mesh
+    P2P for small groups, Relay SFU for larger ones. Desktop-only.
 - `src/bin/prism_daemond.rs` — standalone stdio JSON daemon binary. Proves
   the kernel runs detached from Tauri. Gated on the `cli` feature.
 - `src/wasm.rs` — C-ABI adapter for the browser. Gated on the `wasm`
@@ -153,10 +153,11 @@ are thin wrappers:
 - **107 unit tests** with all new features on (`--features vfs-s3,vfs-gcs,
   transport-http,transport-grpc,transport-uniffi`): 72 default + 17 s3 +
   5 http + 7 grpc + 6 uniffi.
-- **79 unit tests under `--features conferencing`** — same as default plus
-  7 conferencing tests covering peer creation, data channel setup, the
-  full SDP offer/answer handshake driven through `kernel.invoke()`, and
-  inbound message draining via `recv_data`.
+- **87 unit tests under `--features conferencing`** — same as default plus
+  15 conferencing tests covering peer creation, data channel setup, the
+  full SDP offer/answer handshake driven through `kernel.invoke()`, audio/
+  video track add/list/remove lifecycle, and room create/join/leave/info/
+  list with P2P mesh topology.
 - **50 unit tests under `--features wasm --lib`** — subset that excludes
   notify/process modules, plus the 6 `src/wasm.rs` tests that drive the
   C ABI from the host so the create/invoke/free/destroy ownership dance
@@ -164,10 +165,10 @@ are thin wrappers:
 - **50 unit tests under `--features mobile`** — same subset as wasm but
   without the C ABI layer.
 - **11 unit tests under `--features embedded`** — registry + CRDT only.
-- **`--features whisper`** — 7 whisper tests (command registration,
-  sample-rate validation, unknown-model errors, manager pure-API
-  surface). Compile + run requires `cmake` on PATH; not part of any
-  preset, opt in explicitly.
+- **`--features whisper`** — 11 whisper tests (batch command registration,
+  sample-rate validation, unknown-model errors, streaming session
+  create/push/poll/close lifecycle, manager pure-API surface). Compile +
+  run requires `cmake` on PATH; not part of any preset, opt in explicitly.
 - **9 integration tests** in `tests/kernel_integration.rs` covering
   builder composition, custom modules, initializer ordering, kernel
   clone/share, dispose lifecycle, plus VFS and crypto end-to-end

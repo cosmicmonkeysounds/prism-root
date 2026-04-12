@@ -1,5 +1,7 @@
 //! Whisper module — local-first speech-to-text via whisper.cpp.
 //!
+//! ## Batch commands
+//!
 //! | Command                  | Payload                                                            | Result                                       |
 //! |--------------------------|--------------------------------------------------------------------|----------------------------------------------|
 //! | `whisper.load_model`     | `{ path, name? }`                                                  | `{ id, name }`                               |
@@ -7,6 +9,15 @@
 //! | `whisper.list_models`    | `{}`                                                               | `{ models: [{id, name, path}] }`             |
 //! | `whisper.transcribe_file`| `{ id, path, language?, threads? }`                                | `{ segments: [{start_ms, end_ms, text}] }`   |
 //! | `whisper.transcribe_pcm` | `{ id, samples_f32: [..], sample_rate, language?, threads? }`      | `{ segments: [{start_ms, end_ms, text}] }`   |
+//!
+//! ## Streaming commands
+//!
+//! | Command                  | Payload                                                            | Result                                       |
+//! |--------------------------|--------------------------------------------------------------------|----------------------------------------------|
+//! | `whisper.create_session` | `{ model_id, language?, threads? }`                                | `{ session_id }`                             |
+//! | `whisper.push_audio`     | `{ session_id, samples: [f32] }`                                   | `{}`                                         |
+//! | `whisper.poll_segments`  | `{ session_id }`                                                   | `{ segments, audio_duration_ms }`            |
+//! | `whisper.close_session`  | `{ session_id }`                                                   | `{ segments, audio_duration_ms }`            |
 //!
 //! ## Architecture
 //!
@@ -23,7 +34,21 @@
 //! shared context, so two concurrent transcriptions on the same model
 //! never trample each other.
 //!
-//! Audio input formats:
+//! ### Streaming transcription
+//!
+//! `whisper.create_session` starts a streaming session that accumulates
+//! audio via `push_audio`. `poll_segments` runs whisper on the entire
+//! buffer and returns ALL segments (because whisper.cpp's `full()` resets
+//! state each call — there is no true incremental append). The host diffs
+//! with previous results to detect new/changed segments. This matches
+//! how most real-time STT APIs work: the full transcript is returned and
+//! the caller handles deduplication.
+//!
+//! For the SPEC's "Self-Dictation" pattern the host forks raw PCM to
+//! both `whisper.push_audio` (for local transcription) and the
+//! conferencing track pipeline (encoded to Opus for WebRTC transport).
+//!
+//! ### Audio input formats
 //!
 //! * `whisper.transcribe_file` accepts a WAV path. WAVs are decoded with
 //!   [`hound`], integer samples are converted to f32, and stereo is
@@ -32,9 +57,7 @@
 //!   anything else is rejected up front so the caller knows to resample.
 //! * `whisper.transcribe_pcm` accepts a JSON array of pre-decoded
 //!   `f32` PCM samples plus the source sample rate, again rejecting
-//!   anything that isn't 16 kHz mono. This is the path the conferencing
-//!   module's audio-frame callbacks will use to feed live microphone
-//!   audio into Whisper for self-dictation transcripts.
+//!   anything that isn't 16 kHz mono.
 //!
 //! ## Feature gating
 //!
@@ -61,14 +84,16 @@ use whisper_rs::{
 };
 
 /// The expected sample rate every Whisper model in this module assumes.
-/// Whisper.cpp models are trained on 16 kHz mono PCM — anything else is
-/// rejected at the API boundary so the caller knows to resample upstream.
 pub const WHISPER_SAMPLE_RATE: u32 = 16_000;
 
-/// Manager owning every loaded Whisper context. Cheap to clone via `Arc`.
+// ── Manager ───────────────────────────────────────────────────────────
+
+/// Manager owning every loaded Whisper context and streaming session.
 pub struct WhisperManager {
     next_id: AtomicU64,
     state: Mutex<HashMap<u64, ModelEntry>>,
+    next_session_id: AtomicU64,
+    sessions: Mutex<HashMap<u64, StreamingSession>>,
 }
 
 struct ModelEntry {
@@ -91,6 +116,16 @@ pub struct TranscriptSegment {
     pub text: String,
 }
 
+/// A streaming transcription session that accumulates audio in a buffer.
+/// `poll_segments` runs `full()` on the entire buffer each time — there
+/// is no incremental append in whisper.cpp, so the host diffs results.
+struct StreamingSession {
+    model_id: u64,
+    buffer: Vec<f32>,
+    language: Option<String>,
+    n_threads: Option<i32>,
+}
+
 impl Default for WhisperManager {
     fn default() -> Self {
         Self::new()
@@ -103,12 +138,13 @@ impl WhisperManager {
         Self {
             next_id: AtomicU64::new(1),
             state: Mutex::new(HashMap::new()),
+            next_session_id: AtomicU64::new(1),
+            sessions: Mutex::new(HashMap::new()),
         }
     }
 
-    /// Load a GGML/GGUF model file from disk into a fresh
-    /// [`WhisperContext`]. The path must exist and be a model whisper.cpp
-    /// recognises (typically `ggml-*.bin` or a quantised GGUF variant).
+    // ── Model management ────────────────────────────────────────────
+
     pub fn load_model(&self, path: PathBuf, name: Option<String>) -> Result<u64, String> {
         if !path.exists() {
             return Err(format!("model path does not exist: {}", path.display()));
@@ -139,8 +175,6 @@ impl WhisperManager {
         Ok(id)
     }
 
-    /// Drop a previously loaded model. Idempotent — re-unloading returns
-    /// `false`.
     pub fn unload_model(&self, id: u64) -> Result<bool, String> {
         let mut state = self
             .state
@@ -149,7 +183,6 @@ impl WhisperManager {
         Ok(state.remove(&id).is_some())
     }
 
-    /// Snapshot of every currently loaded model.
     pub fn list_models(&self) -> Vec<LoadedModel> {
         let state = match self.state.lock() {
             Ok(s) => s,
@@ -167,9 +200,6 @@ impl WhisperManager {
         out
     }
 
-    /// Borrow the underlying `WhisperContext` for an id (used by
-    /// transcription helpers — kept private so callers can't accidentally
-    /// outlive the entry by stashing the Arc).
     fn context(&self, id: u64) -> Result<Arc<WhisperContext>, String> {
         let state = self
             .state
@@ -181,10 +211,8 @@ impl WhisperManager {
             .ok_or_else(|| format!("unknown whisper model: {id}"))
     }
 
-    /// Transcribe a 16 kHz mono `f32` PCM buffer with the given model.
-    /// Returns one [`TranscriptSegment`] per Whisper segment, with
-    /// timestamps already converted from centiseconds to milliseconds for
-    /// downstream Loro CRDT consumers.
+    // ── Batch transcription ─────────────────────────────────────────
+
     pub fn transcribe_pcm(
         &self,
         id: u64,
@@ -210,8 +238,6 @@ impl WhisperManager {
         if let Some(n) = threads {
             params.set_n_threads(n);
         }
-        // Whisper.cpp prints to stdout by default; silence it so the
-        // daemon stays quiet under stdio JSON transports.
         params.set_print_special(false);
         params.set_print_progress(false);
         params.set_print_realtime(false);
@@ -227,7 +253,6 @@ impl WhisperManager {
                 .to_str_lossy()
                 .map_err(|e| format!("segment.to_str_lossy: {e}"))?
                 .into_owned();
-            // whisper.cpp returns timestamps in centiseconds (1/100 s).
             out.push(TranscriptSegment {
                 start_ms: segment.start_timestamp() * 10,
                 end_ms: segment.end_timestamp() * 10,
@@ -237,8 +262,6 @@ impl WhisperManager {
         Ok(out)
     }
 
-    /// Transcribe a 16 kHz WAV file. Stereo files are downmixed to mono;
-    /// non-16-kHz files are rejected. Uses [`hound`] for decoding.
     pub fn transcribe_file(
         &self,
         id: u64,
@@ -256,8 +279,6 @@ impl WhisperManager {
             ));
         }
 
-        // Read samples as i16 (whisper.cpp's expected upstream format),
-        // then convert to f32 and downmix if stereo.
         let int_samples: Vec<i16> = reader
             .into_samples::<i16>()
             .collect::<Result<Vec<_>, _>>()
@@ -280,12 +301,114 @@ impl WhisperManager {
 
         self.transcribe_pcm(id, &mono_samples, WHISPER_SAMPLE_RATE, language, threads)
     }
+
+    // ── Streaming transcription ─────────────────────────────────────
+
+    /// Start a streaming transcription session backed by the given model.
+    pub fn create_session(
+        &self,
+        model_id: u64,
+        language: Option<String>,
+        n_threads: Option<i32>,
+    ) -> Result<u64, String> {
+        // Verify the model exists before allocating a session.
+        let _ = self.context(model_id)?;
+        let sid = self.next_session_id.fetch_add(1, Ordering::SeqCst);
+        self.sessions
+            .lock()
+            .map_err(|_| "sessions poisoned".to_string())?
+            .insert(
+                sid,
+                StreamingSession {
+                    model_id,
+                    buffer: Vec::new(),
+                    language,
+                    n_threads,
+                },
+            );
+        Ok(sid)
+    }
+
+    /// Append PCM samples to a streaming session's buffer.
+    pub fn push_audio(&self, session_id: u64, samples: &[f32]) -> Result<(), String> {
+        let mut sessions = self
+            .sessions
+            .lock()
+            .map_err(|_| "sessions poisoned".to_string())?;
+        let session = sessions
+            .get_mut(&session_id)
+            .ok_or_else(|| format!("unknown session: {session_id}"))?;
+        session.buffer.extend_from_slice(samples);
+        Ok(())
+    }
+
+    /// Transcribe the full accumulated buffer and return ALL segments.
+    /// The host diffs with previous results to detect new/changed text.
+    pub fn poll_segments(&self, session_id: u64) -> Result<(Vec<TranscriptSegment>, f64), String> {
+        let (model_id, buffer, language, n_threads) = {
+            let sessions = self
+                .sessions
+                .lock()
+                .map_err(|_| "sessions poisoned".to_string())?;
+            let session = sessions
+                .get(&session_id)
+                .ok_or_else(|| format!("unknown session: {session_id}"))?;
+            (
+                session.model_id,
+                session.buffer.clone(),
+                session.language.clone(),
+                session.n_threads,
+            )
+        };
+        if buffer.is_empty() {
+            return Ok((Vec::new(), 0.0));
+        }
+        let audio_duration_ms = (buffer.len() as f64 / WHISPER_SAMPLE_RATE as f64) * 1000.0;
+        let segments = self.transcribe_pcm(
+            model_id,
+            &buffer,
+            WHISPER_SAMPLE_RATE,
+            language.as_deref(),
+            n_threads,
+        )?;
+        Ok((segments, audio_duration_ms))
+    }
+
+    /// Finalize a streaming session: transcribe the buffer one last time,
+    /// then tear down the session. Returns final segments.
+    pub fn close_session(&self, session_id: u64) -> Result<(Vec<TranscriptSegment>, f64), String> {
+        let (model_id, buffer, language, n_threads) = {
+            let mut sessions = self
+                .sessions
+                .lock()
+                .map_err(|_| "sessions poisoned".to_string())?;
+            let session = sessions
+                .remove(&session_id)
+                .ok_or_else(|| format!("unknown session: {session_id}"))?;
+            (
+                session.model_id,
+                session.buffer,
+                session.language,
+                session.n_threads,
+            )
+        };
+        if buffer.is_empty() {
+            return Ok((Vec::new(), 0.0));
+        }
+        let audio_duration_ms = (buffer.len() as f64 / WHISPER_SAMPLE_RATE as f64) * 1000.0;
+        let segments = self.transcribe_pcm(
+            model_id,
+            &buffer,
+            WHISPER_SAMPLE_RATE,
+            language.as_deref(),
+            n_threads,
+        )?;
+        Ok((segments, audio_duration_ms))
+    }
 }
 
 // ── Module wiring ──────────────────────────────────────────────────────
 
-/// The built-in whisper module. Stateless — the state lives on the shared
-/// [`WhisperManager`] stashed on the builder.
 pub struct WhisperModule;
 
 impl DaemonModule for WhisperModule {
@@ -299,6 +422,8 @@ impl DaemonModule for WhisperModule {
             .get_or_insert_with(|| Arc::new(WhisperManager::new()))
             .clone();
         let registry = builder.registry().clone();
+
+        // ── Batch commands ──────────────────────────────────────────
 
         let m = manager.clone();
         registry.register("whisper.load_model", move |payload| {
@@ -345,7 +470,7 @@ impl DaemonModule for WhisperModule {
             Ok(json!({ "segments": segments }))
         })?;
 
-        let m = manager;
+        let m = manager.clone();
         registry.register("whisper.transcribe_file", move |payload| {
             let args: TranscribeFileArgs = parse(payload, "whisper.transcribe_file")?;
             let segments = m
@@ -359,9 +484,48 @@ impl DaemonModule for WhisperModule {
             Ok(json!({ "segments": segments }))
         })?;
 
+        // ── Streaming commands ──────────────────────────────────────
+
+        let m = manager.clone();
+        registry.register("whisper.create_session", move |payload| {
+            let args: CreateSessionArgs = parse(payload, "whisper.create_session")?;
+            let session_id = m
+                .create_session(args.model_id, args.language, args.threads)
+                .map_err(|e| CommandError::handler("whisper.create_session", e))?;
+            Ok(json!({ "session_id": session_id }))
+        })?;
+
+        let m = manager.clone();
+        registry.register("whisper.push_audio", move |payload| {
+            let args: PushAudioArgs = parse(payload, "whisper.push_audio")?;
+            m.push_audio(args.session_id, &args.samples)
+                .map_err(|e| CommandError::handler("whisper.push_audio", e))?;
+            Ok(json!({}))
+        })?;
+
+        let m = manager.clone();
+        registry.register("whisper.poll_segments", move |payload| {
+            let args: SessionIdArgs = parse(payload, "whisper.poll_segments")?;
+            let (segments, duration_ms) = m
+                .poll_segments(args.session_id)
+                .map_err(|e| CommandError::handler("whisper.poll_segments", e))?;
+            Ok(json!({ "segments": segments, "audio_duration_ms": duration_ms }))
+        })?;
+
+        let m = manager;
+        registry.register("whisper.close_session", move |payload| {
+            let args: SessionIdArgs = parse(payload, "whisper.close_session")?;
+            let (segments, duration_ms) = m
+                .close_session(args.session_id)
+                .map_err(|e| CommandError::handler("whisper.close_session", e))?;
+            Ok(json!({ "segments": segments, "audio_duration_ms": duration_ms }))
+        })?;
+
         Ok(())
     }
 }
+
+// ── Helpers ────────────────────────────────────────────────────────────
 
 fn parse<T: for<'de> Deserialize<'de>>(
     payload: JsonValue,
@@ -370,6 +534,8 @@ fn parse<T: for<'de> Deserialize<'de>>(
     serde_json::from_value::<T>(payload)
         .map_err(|e| CommandError::handler(command.to_string(), e.to_string()))
 }
+
+// ── Arg structs ────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
 struct LoadModelArgs {
@@ -404,6 +570,26 @@ struct IdArgs {
     id: u64,
 }
 
+#[derive(Debug, Deserialize)]
+struct CreateSessionArgs {
+    model_id: u64,
+    #[serde(default)]
+    language: Option<String>,
+    #[serde(default)]
+    threads: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PushAudioArgs {
+    session_id: u64,
+    samples: Vec<f32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SessionIdArgs {
+    session_id: u64,
+}
+
 // ── Tests ──────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -425,6 +611,10 @@ mod tests {
             "whisper.list_models",
             "whisper.transcribe_pcm",
             "whisper.transcribe_file",
+            "whisper.create_session",
+            "whisper.push_audio",
+            "whisper.poll_segments",
+            "whisper.close_session",
         ] {
             assert!(caps.contains(&name.to_string()), "missing {name}");
         }
@@ -439,7 +629,7 @@ mod tests {
     #[test]
     fn unload_unknown_id_returns_false() {
         let mgr = WhisperManager::new();
-        assert_eq!(mgr.unload_model(42).unwrap(), false);
+        assert!(!mgr.unload_model(42).unwrap());
     }
 
     #[test]
@@ -454,9 +644,6 @@ mod tests {
     #[test]
     fn transcribe_pcm_rejects_wrong_sample_rate() {
         let mgr = WhisperManager::new();
-        // Without a loaded model the call would also fail on `unknown
-        // whisper model`, but the sample-rate guard fires first since it
-        // doesn't need the context. We assert on the friendlier error.
         let err = mgr
             .transcribe_pcm(1, &[0.0f32; 16], 44_100, None, None)
             .unwrap_err();
@@ -479,5 +666,38 @@ mod tests {
         *builder.whisper_manager_slot() = Some(injected.clone());
         let kernel = builder.with_whisper().build().unwrap();
         assert!(Arc::ptr_eq(&kernel.whisper_manager().unwrap(), &injected));
+    }
+
+    // ── Streaming session tests ─────────────────────────────────────
+
+    #[test]
+    fn create_session_rejects_unknown_model() {
+        let mgr = WhisperManager::new();
+        let err = mgr.create_session(999, None, None).unwrap_err();
+        assert!(err.contains("unknown whisper model"));
+    }
+
+    #[test]
+    fn push_audio_rejects_unknown_session() {
+        let mgr = WhisperManager::new();
+        let err = mgr.push_audio(999, &[0.0f32; 16]).unwrap_err();
+        assert!(err.contains("unknown session"));
+    }
+
+    #[test]
+    fn close_session_rejects_unknown_session() {
+        let mgr = WhisperManager::new();
+        let err = mgr.close_session(999).unwrap_err();
+        assert!(err.contains("unknown session"));
+    }
+
+    #[test]
+    fn streaming_commands_registered_via_kernel() {
+        let kernel = kernel();
+        // create_session should fail with unknown model, not missing command
+        let result = kernel.invoke("whisper.create_session", json!({ "model_id": 1 }));
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(err_msg.contains("unknown whisper model"));
     }
 }

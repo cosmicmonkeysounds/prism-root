@@ -107,7 +107,7 @@ export function bootWasmDaemon(): Promise<void> {
                         if (!needed.has(imp.module)) {
                             needed.set(imp.module, new Set());
                         }
-                        needed.get(imp.module)!.add(imp.name);
+                        needed.get(imp.module)?.add(imp.name);
                     }
                     for (const [mod, names] of needed) {
                         const table =
@@ -128,8 +128,7 @@ export function bootWasmDaemon(): Promise<void> {
                         imports,
                     );
                     receiveInstance(instance, compiled);
-                })().catch((err) => {
-                    console.error("[prism-wasm] instantiate failed", err);
+                })().catch((err: unknown) => {
                     throw err;
                 });
                 return {};

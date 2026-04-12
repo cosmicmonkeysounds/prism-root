@@ -1,5 +1,8 @@
-//! Conferencing module — WebRTC peer connections + data channels owned by
-//! the daemon, exposed through eleven `conferencing.*` commands.
+//! Conferencing module — WebRTC peer connections, data channels, audio/video
+//! tracks, and room management owned by the daemon, exposed through
+//! `conferencing.*` commands.
+//!
+//! ## Data-channel commands
 //!
 //! | Command                                | Payload                                                        | Result                                  |
 //! |----------------------------------------|----------------------------------------------------------------|-----------------------------------------|
@@ -16,6 +19,27 @@
 //! | `conferencing.peer_state`              | `{ id }`                                                       | `{ signaling, ice, peer }`              |
 //! | `conferencing.list_peers`              | `{}`                                                           | `{ peers: [...] }`                      |
 //! | `conferencing.close_peer`              | `{ id }`                                                       | `{ closed: bool }`                      |
+//!
+//! ## Audio/video track commands
+//!
+//! | Command                                | Payload                                                        | Result                                  |
+//! |----------------------------------------|----------------------------------------------------------------|-----------------------------------------|
+//! | `conferencing.add_track`               | `{ id, kind: "audio"\|"video", track_id?, stream_id? }`       | `{ track_id }`                          |
+//! | `conferencing.write_sample`            | `{ id, track_id, data (hex), duration_ms }`                    | `{}`                                    |
+//! | `conferencing.recv_track_data`         | `{ id, max? }`                                                 | `{ samples: [{track_id, kind, data}] }` |
+//! | `conferencing.list_tracks`             | `{ id }`                                                       | `{ local: [{track_id, kind}] }`         |
+//! | `conferencing.remove_track`            | `{ id, track_id }`                                             | `{ removed: bool }`                     |
+//!
+//! ## Room commands (P2P mesh / Relay SFU)
+//!
+//! | Command                                | Payload                                                        | Result                                  |
+//! |----------------------------------------|----------------------------------------------------------------|-----------------------------------------|
+//! | `conferencing.create_room`             | `{ name? }`                                                    | `{ room_id }`                           |
+//! | `conferencing.join_room`               | `{ room_id, peer_id }`                                         | `{}`                                    |
+//! | `conferencing.leave_room`              | `{ room_id, peer_id }`                                         | `{ removed: bool }`                     |
+//! | `conferencing.room_info`               | `{ room_id }`                                                  | `{ id, name, members: [peer_id] }`      |
+//! | `conferencing.list_rooms`              | `{}`                                                           | `{ rooms: [...] }`                      |
+//! | `conferencing.broadcast_data`          | `{ room_id, label, message?, binary? }`                        | `{ sent_to: N }`                        |
 //!
 //! ## Architecture
 //!
@@ -34,34 +58,33 @@
 //! untouched: a Tauri command, a CLI stdio frame, a UniFFI bridge, all hit
 //! the same blocking entry point and the runtime is invisible to them.
 //!
-//! Each peer connection exposes:
-//!   * a thread-safe `Mailbox` (the same primitive [`actors_module`] uses)
-//!     into which inbound data-channel messages are pushed by the on_message
-//!     callback registered when the data channel opens, and out of which
-//!     `conferencing.recv_data` drains in batches;
-//!   * a `Mutex<HashMap<String, Arc<RTCDataChannel>>>` of every data channel
-//!     keyed by label (both locally created and the ones surfaced by the
-//!     remote via `on_data_channel`), so `conferencing.send_data` can pick
-//!     the channel by name without the caller tracking SCTP stream ids.
+//! **Tracks** transport encoded media frames. The daemon does not
+//! encode/decode — it passes pre-encoded Opus (audio) or VP8 (video) frames
+//! between the host shell and the WebRTC transport. The host captures mic
+//! audio, encodes to Opus, and pushes via `write_sample`; remote Opus frames
+//! arrive via `on_track` and are drained by `recv_track_data`. The host
+//! decodes and plays back. For Whisper self-transcription the host forks raw
+//! PCM to `whisper.push_audio` in parallel with the Opus encode path.
 //!
-//! The module is feature-gated as `conferencing` and is desktop-only — the
-//! `webrtc` crate pulls in tokio plus a network stack that mobile/wasm/embedded
-//! cannot link against. Mobile builds can still join calls by talking to a
-//! desktop daemon over the same `kernel.invoke` interface; the binary just
-//! lives elsewhere.
+//! **Rooms** group peers for multi-party calls. For small groups (2–4) a
+//! full-mesh P2P topology works — each daemon manages its own peer
+//! connections and the room is a logical grouping. For larger groups the
+//! Relay acts as an SFU, but the command surface is identical: the host
+//! joins a room and broadcasts data/media to members.
 
 use crate::builder::DaemonBuilder;
 use crate::module::DaemonModule;
 use crate::registry::CommandError;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use bytes::Bytes;
 use tokio::runtime::Runtime;
-use webrtc::api::media_engine::MediaEngine;
+use webrtc::api::media_engine::{MediaEngine, MIME_TYPE_OPUS, MIME_TYPE_VP8};
 use webrtc::api::APIBuilder;
 use webrtc::data_channel::data_channel_init::RTCDataChannelInit;
 use webrtc::data_channel::data_channel_message::DataChannelMessage;
@@ -73,34 +96,43 @@ use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::peer_connection::sdp::sdp_type::RTCSdpType;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::peer_connection::RTCPeerConnection;
+use webrtc::rtp_transceiver::rtp_codec::{RTCRtpCodecCapability, RTPCodecType};
+use webrtc::rtp_transceiver::rtp_sender::RTCRtpSender;
+use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
+use webrtc::track::track_local::TrackLocal;
+use webrtc::track::track_remote::TrackRemote;
+use webrtc_media::Sample;
 
-/// Manager for every WebRTC peer connection the daemon currently owns.
+// ── Manager ───────────────────────────────────────────────────────────
+
+/// Manager for every WebRTC peer connection and room the daemon owns.
 pub struct ConferencingManager {
     runtime: Arc<Runtime>,
     next_id: AtomicU64,
     peers: Mutex<HashMap<u64, Arc<PeerEntry>>>,
+    next_room_id: AtomicU64,
+    rooms: Mutex<HashMap<u64, RoomEntry>>,
 }
 
 /// All the per-peer state we need to drive the command surface from a sync
-/// caller. The `Arc<RTCPeerConnection>` is the actual webrtc handle; the
-/// other fields hold the inbound message buffer and the data-channel index.
+/// caller.
 struct PeerEntry {
     name: String,
     pc: Arc<RTCPeerConnection>,
     inbox: Arc<DataInbox>,
     channels: Arc<Mutex<HashMap<String, Arc<RTCDataChannel>>>>,
+    local_tracks: Arc<Mutex<HashMap<String, LocalTrackEntry>>>,
+    senders: Arc<Mutex<HashMap<String, Arc<RTCRtpSender>>>>,
+    track_inbox: Arc<TrackInbox>,
 }
 
-/// Inbound mailbox for data-channel messages, drained by
-/// `conferencing.recv_data`. Storing the channel label alongside the bytes
-/// keeps multi-channel calls debuggable from the host.
+/// Inbound mailbox for data-channel messages.
 #[derive(Default)]
 struct DataInbox {
     queue: Mutex<VecDeque<InboundDataMessage>>,
 }
 
-/// One inbound data-channel frame: which labelled channel it arrived on,
-/// whether the wire framing was text or binary, and the raw bytes.
+/// One inbound data-channel frame.
 #[derive(Debug, Clone)]
 pub struct InboundDataMessage {
     pub label: String,
@@ -125,6 +157,59 @@ impl DataInbox {
     }
 }
 
+// ── Track types ───────────────────────────────────────────────────────
+
+/// Inbound media sample from a remote audio or video track, buffered by
+/// the `on_track` reader task and drained by `conferencing.recv_track_data`.
+#[derive(Debug, Clone, Serialize)]
+pub struct InboundTrackSample {
+    pub track_id: String,
+    pub kind: String,
+    pub data: Vec<u8>,
+}
+
+/// Inbox for inbound track media samples, mirroring the data-channel inbox
+/// pattern.
+#[derive(Default)]
+struct TrackInbox {
+    queue: Mutex<VecDeque<InboundTrackSample>>,
+}
+
+impl TrackInbox {
+    fn push(&self, sample: InboundTrackSample) {
+        if let Ok(mut q) = self.queue.lock() {
+            q.push_back(sample);
+        }
+    }
+
+    fn drain(&self, max: usize) -> Vec<InboundTrackSample> {
+        let mut q = match self.queue.lock() {
+            Ok(q) => q,
+            Err(_) => return Vec::new(),
+        };
+        let n = q.len().min(max);
+        q.drain(..n).collect()
+    }
+}
+
+/// Entry tracking a locally-created outbound media track.
+struct LocalTrackEntry {
+    track: Arc<TrackLocalStaticSample>,
+    kind: String,
+}
+
+// ── Room types ────────────────────────────────────────────────────────
+
+/// A room groups peer connections for multi-party calls. Daemons can
+/// manage rooms P2P for small groups (full-mesh) or delegate to the
+/// Relay for larger groups (SFU topology).
+struct RoomEntry {
+    name: String,
+    members: HashSet<u64>,
+}
+
+// ── Manager impl ──────────────────────────────────────────────────────
+
 impl Default for ConferencingManager {
     fn default() -> Self {
         Self::new()
@@ -133,20 +218,20 @@ impl Default for ConferencingManager {
 
 impl ConferencingManager {
     /// Allocate a fresh manager backed by a multi-threaded tokio runtime.
-    /// The runtime lives as long as the manager and is shared across every
-    /// peer it spawns.
     pub fn new() -> Self {
         let runtime = Runtime::new().expect("conferencing: failed to spawn tokio runtime");
         Self {
             runtime: Arc::new(runtime),
             next_id: AtomicU64::new(1),
             peers: Mutex::new(HashMap::new()),
+            next_room_id: AtomicU64::new(1),
+            rooms: Mutex::new(HashMap::new()),
         }
     }
 
-    /// Allocate a new peer connection. The optional `ice_servers` list is
-    /// passed straight through to the underlying [`RTCConfiguration`] —
-    /// supply STUN/TURN URIs as `["stun:stun.l.google.com:19302"]` etc.
+    // ── Peer lifecycle ──────────────────────────────────────────────
+
+    /// Allocate a new peer connection.
     pub fn create_peer(&self, name: String, ice_servers: Vec<String>) -> Result<u64, String> {
         let mut media_engine = MediaEngine::default();
         media_engine
@@ -175,6 +260,11 @@ impl ConferencingManager {
         let inbox = Arc::new(DataInbox::default());
         let channels: Arc<Mutex<HashMap<String, Arc<RTCDataChannel>>>> =
             Arc::new(Mutex::new(HashMap::new()));
+        let local_tracks: Arc<Mutex<HashMap<String, LocalTrackEntry>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let senders: Arc<Mutex<HashMap<String, Arc<RTCRtpSender>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let track_inbox = Arc::new(TrackInbox::default());
 
         // When the remote opens a data channel, surface it through the same
         // inbox + channel index so the host can recv/send by label.
@@ -190,12 +280,43 @@ impl ConferencingManager {
             Box::pin(async {})
         }));
 
+        // When the remote adds an audio or video track, spawn a reader
+        // task that buffers inbound RTP payloads into the track inbox.
+        let track_inbox_for_on_track = track_inbox.clone();
+        pc.on_track(Box::new(
+            move |track: Arc<TrackRemote>, _receiver, _transceiver| {
+                let inbox = track_inbox_for_on_track.clone();
+                Box::pin(async move {
+                    let track_id = track.id();
+                    let kind = match track.kind() {
+                        RTPCodecType::Audio => "audio",
+                        RTPCodecType::Video => "video",
+                        _ => "unknown",
+                    }
+                    .to_string();
+                    // Continuously read RTP payloads and buffer them.
+                    tokio::spawn(async move {
+                        while let Ok((pkt, _)) = track.read_rtp().await {
+                            inbox.push(InboundTrackSample {
+                                track_id: track_id.clone(),
+                                kind: kind.clone(),
+                                data: pkt.payload.to_vec(),
+                            });
+                        }
+                    });
+                })
+            },
+        ));
+
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let entry = Arc::new(PeerEntry {
             name,
             pc,
             inbox,
             channels,
+            local_tracks,
+            senders,
+            track_inbox,
         });
         self.peers
             .lock()
@@ -204,9 +325,9 @@ impl ConferencingManager {
         Ok(id)
     }
 
-    /// Create a new data channel on the local peer. Stored in the channel
-    /// index under `label` so subsequent `send_data` calls can address it
-    /// by name.
+    // ── Data channels ───────────────────────────────────────────────
+
+    /// Create a new data channel on the local peer.
     pub fn create_data_channel(
         &self,
         id: u64,
@@ -234,7 +355,8 @@ impl ConferencingManager {
             .map_err(|e| format!("create_data_channel: {e}"))
     }
 
-    /// Generate an offer SDP for the local peer.
+    // ── SDP / ICE ───────────────────────────────────────────────────
+
     pub fn create_offer(&self, id: u64) -> Result<RTCSessionDescription, String> {
         let entry = self.entry(id)?;
         let pc = entry.pc.clone();
@@ -243,8 +365,6 @@ impl ConferencingManager {
             .map_err(|e| format!("create_offer: {e}"))
     }
 
-    /// Generate an answer SDP for the local peer (the remote offer must
-    /// have been set first).
     pub fn create_answer(&self, id: u64) -> Result<RTCSessionDescription, String> {
         let entry = self.entry(id)?;
         let pc = entry.pc.clone();
@@ -253,7 +373,6 @@ impl ConferencingManager {
             .map_err(|e| format!("create_answer: {e}"))
     }
 
-    /// Apply an SDP as the local description.
     pub fn set_local_description(
         &self,
         id: u64,
@@ -266,7 +385,6 @@ impl ConferencingManager {
             .map_err(|e| format!("set_local_description: {e}"))
     }
 
-    /// Apply an SDP as the remote description.
     pub fn set_remote_description(
         &self,
         id: u64,
@@ -279,7 +397,6 @@ impl ConferencingManager {
             .map_err(|e| format!("set_remote_description: {e}"))
     }
 
-    /// Snapshot of the local description.
     pub fn local_description(&self, id: u64) -> Result<Option<RTCSessionDescription>, String> {
         let entry = self.entry(id)?;
         let pc = entry.pc.clone();
@@ -288,7 +405,6 @@ impl ConferencingManager {
             .block_on(async move { pc.local_description().await }))
     }
 
-    /// Apply a remote ICE candidate.
     pub fn add_ice_candidate(&self, id: u64, candidate: RTCIceCandidateInit) -> Result<(), String> {
         let entry = self.entry(id)?;
         let pc = entry.pc.clone();
@@ -297,9 +413,8 @@ impl ConferencingManager {
             .map_err(|e| format!("add_ice_candidate: {e}"))
     }
 
-    /// Send bytes (or a string) on the named data channel. The channel must
-    /// already exist — either created locally with `create_data_channel` or
-    /// surfaced by the remote via `on_data_channel`.
+    // ── Data send/recv ──────────────────────────────────────────────
+
     pub fn send_data(
         &self,
         id: u64,
@@ -330,13 +445,13 @@ impl ConferencingManager {
             .map_err(|e| format!("send_data: {e}"))
     }
 
-    /// Drain up to `max` queued inbound data-channel messages.
     pub fn recv_data(&self, id: u64, max: usize) -> Result<Vec<InboundDataMessage>, String> {
         let entry = self.entry(id)?;
         Ok(entry.inbox.drain(max))
     }
 
-    /// Snapshot of the peer's signaling/ICE/connection state.
+    // ── Peer state ──────────────────────────────────────────────────
+
     pub fn peer_state(&self, id: u64) -> Result<PeerStateSnapshot, String> {
         let entry = self.entry(id)?;
         Ok(PeerStateSnapshot {
@@ -348,7 +463,6 @@ impl ConferencingManager {
         })
     }
 
-    /// List every peer the manager currently owns, sorted by id.
     pub fn list_peers(&self) -> Vec<PeerStateSnapshot> {
         let map = match self.peers.lock() {
             Ok(g) => g,
@@ -368,7 +482,6 @@ impl ConferencingManager {
         out
     }
 
-    /// Close a peer connection and drop it from the manager. Idempotent.
     pub fn close_peer(&self, id: u64) -> Result<bool, String> {
         let entry = {
             let mut map = self
@@ -385,7 +498,6 @@ impl ConferencingManager {
         Ok(true)
     }
 
-    /// Close every peer. Used by `dispose()` and tests.
     pub fn close_all(&self) {
         let ids: Vec<u64> = self
             .peers
@@ -396,6 +508,251 @@ impl ConferencingManager {
             let _ = self.close_peer(id);
         }
     }
+
+    // ── Audio / video tracks ────────────────────────────────────────
+
+    /// Add a local audio or video track to a peer connection. The track
+    /// appears in the peer's next SDP negotiation (create a new
+    /// offer/answer after adding tracks). Returns the track ID.
+    ///
+    /// The host encodes media (Opus for audio, VP8 for video) and pushes
+    /// encoded frames via `write_sample`. The daemon transports — it does
+    /// not encode or decode.
+    pub fn add_track(
+        &self,
+        id: u64,
+        kind: &str,
+        track_id: Option<String>,
+        stream_id: Option<String>,
+    ) -> Result<String, String> {
+        let entry = self.entry(id)?;
+        let codec = match kind {
+            "audio" => RTCRtpCodecCapability {
+                mime_type: MIME_TYPE_OPUS.to_owned(),
+                clock_rate: 48000,
+                channels: 2,
+                ..Default::default()
+            },
+            "video" => RTCRtpCodecCapability {
+                mime_type: MIME_TYPE_VP8.to_owned(),
+                clock_rate: 90000,
+                ..Default::default()
+            },
+            other => {
+                return Err(format!(
+                    "unknown track kind `{other}` (expected audio/video)"
+                ))
+            }
+        };
+        let tid = track_id
+            .unwrap_or_else(|| format!("{kind}-{}", self.next_id.fetch_add(1, Ordering::SeqCst)));
+        let sid = stream_id.unwrap_or_else(|| "stream-0".to_string());
+        let track = Arc::new(TrackLocalStaticSample::new(codec, tid.clone(), sid));
+        let pc = entry.pc.clone();
+        let sender = self
+            .runtime
+            .block_on(async {
+                pc.add_track(track.clone() as Arc<dyn TrackLocal + Send + Sync>)
+                    .await
+            })
+            .map_err(|e| format!("add_track: {e}"))?;
+        entry
+            .local_tracks
+            .lock()
+            .map_err(|_| "local_tracks poisoned".to_string())?
+            .insert(
+                tid.clone(),
+                LocalTrackEntry {
+                    track,
+                    kind: kind.to_string(),
+                },
+            );
+        entry
+            .senders
+            .lock()
+            .map_err(|_| "senders poisoned".to_string())?
+            .insert(tid.clone(), sender);
+        Ok(tid)
+    }
+
+    /// Write an encoded media sample to a local track. For audio tracks
+    /// this is an Opus frame; for video tracks a VP8 frame. The host
+    /// encodes; the daemon transports.
+    pub fn write_sample(
+        &self,
+        id: u64,
+        track_id: &str,
+        data: Bytes,
+        duration_ms: u64,
+    ) -> Result<(), String> {
+        let entry = self.entry(id)?;
+        let track = entry
+            .local_tracks
+            .lock()
+            .map_err(|_| "local_tracks poisoned".to_string())?
+            .get(track_id)
+            .map(|e| e.track.clone())
+            .ok_or_else(|| format!("unknown local track: {track_id}"))?;
+        let sample = Sample {
+            data,
+            duration: Duration::from_millis(duration_ms),
+            ..Default::default()
+        };
+        self.runtime
+            .block_on(async { track.write_sample(&sample).await })
+            .map_err(|e| format!("write_sample: {e}"))
+    }
+
+    /// Drain up to `max` queued inbound track samples (from remote tracks).
+    pub fn recv_track_data(&self, id: u64, max: usize) -> Result<Vec<InboundTrackSample>, String> {
+        let entry = self.entry(id)?;
+        Ok(entry.track_inbox.drain(max))
+    }
+
+    /// List local tracks for a peer.
+    pub fn list_tracks(&self, id: u64) -> Result<JsonValue, String> {
+        let entry = self.entry(id)?;
+        let local: Vec<JsonValue> = entry
+            .local_tracks
+            .lock()
+            .map_err(|_| "local_tracks poisoned".to_string())?
+            .iter()
+            .map(|(tid, e)| json!({ "track_id": tid, "kind": e.kind }))
+            .collect();
+        Ok(json!({ "local": local }))
+    }
+
+    /// Remove a local track from the peer connection.
+    pub fn remove_track(&self, id: u64, track_id: &str) -> Result<bool, String> {
+        let entry = self.entry(id)?;
+        let sender = entry
+            .senders
+            .lock()
+            .map_err(|_| "senders poisoned".to_string())?
+            .remove(track_id);
+        entry
+            .local_tracks
+            .lock()
+            .map_err(|_| "local_tracks poisoned".to_string())?
+            .remove(track_id);
+        if let Some(sender) = sender {
+            self.runtime
+                .block_on(async { sender.stop().await })
+                .map_err(|e| format!("remove_track: {e}"))?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    // ── Room management ─────────────────────────────────────────────
+
+    /// Create a room for multi-party calls.
+    pub fn create_room(&self, name: String) -> Result<u64, String> {
+        let room_id = self.next_room_id.fetch_add(1, Ordering::SeqCst);
+        self.rooms
+            .lock()
+            .map_err(|_| "rooms map poisoned".to_string())?
+            .insert(
+                room_id,
+                RoomEntry {
+                    name,
+                    members: HashSet::new(),
+                },
+            );
+        Ok(room_id)
+    }
+
+    /// Add a peer to a room.
+    pub fn join_room(&self, room_id: u64, peer_id: u64) -> Result<(), String> {
+        // Verify peer exists.
+        let _ = self.entry(peer_id)?;
+        let mut rooms = self
+            .rooms
+            .lock()
+            .map_err(|_| "rooms map poisoned".to_string())?;
+        let room = rooms
+            .get_mut(&room_id)
+            .ok_or_else(|| format!("unknown room: {room_id}"))?;
+        room.members.insert(peer_id);
+        Ok(())
+    }
+
+    /// Remove a peer from a room.
+    pub fn leave_room(&self, room_id: u64, peer_id: u64) -> Result<bool, String> {
+        let mut rooms = self
+            .rooms
+            .lock()
+            .map_err(|_| "rooms map poisoned".to_string())?;
+        let room = rooms
+            .get_mut(&room_id)
+            .ok_or_else(|| format!("unknown room: {room_id}"))?;
+        Ok(room.members.remove(&peer_id))
+    }
+
+    /// Snapshot of a room.
+    pub fn room_info(&self, room_id: u64) -> Result<JsonValue, String> {
+        let rooms = self
+            .rooms
+            .lock()
+            .map_err(|_| "rooms map poisoned".to_string())?;
+        let room = rooms
+            .get(&room_id)
+            .ok_or_else(|| format!("unknown room: {room_id}"))?;
+        let mut members: Vec<u64> = room.members.iter().copied().collect();
+        members.sort();
+        Ok(json!({ "id": room_id, "name": room.name, "members": members }))
+    }
+
+    /// List all rooms.
+    pub fn list_rooms(&self) -> Vec<JsonValue> {
+        let rooms = match self.rooms.lock() {
+            Ok(r) => r,
+            Err(_) => return Vec::new(),
+        };
+        let mut out: Vec<(u64, JsonValue)> = rooms
+            .iter()
+            .map(|(id, r)| {
+                let mut members: Vec<u64> = r.members.iter().copied().collect();
+                members.sort();
+                (*id, json!({ "id": id, "name": r.name, "members": members }))
+            })
+            .collect();
+        out.sort_by_key(|(id, _)| *id);
+        out.into_iter().map(|(_, v)| v).collect()
+    }
+
+    /// Send a data-channel message to every peer in a room.
+    pub fn broadcast_data(
+        &self,
+        room_id: u64,
+        label: &str,
+        payload: Bytes,
+        is_string: bool,
+    ) -> Result<usize, String> {
+        let members: Vec<u64> = {
+            let rooms = self
+                .rooms
+                .lock()
+                .map_err(|_| "rooms map poisoned".to_string())?;
+            let room = rooms
+                .get(&room_id)
+                .ok_or_else(|| format!("unknown room: {room_id}"))?;
+            room.members.iter().copied().collect()
+        };
+        let mut sent = 0;
+        for peer_id in members {
+            if self
+                .send_data(peer_id, label, payload.clone(), is_string)
+                .is_ok()
+            {
+                sent += 1;
+            }
+        }
+        Ok(sent)
+    }
+
+    // ── Internal ────────────────────────────────────────────────────
 
     fn entry(&self, id: u64) -> Result<Arc<PeerEntry>, String> {
         let map = self
@@ -449,8 +806,6 @@ pub struct PeerStateSnapshot {
 
 // ── Module wiring ──────────────────────────────────────────────────────
 
-/// The built-in conferencing module. Stateless — the state lives on the
-/// shared [`ConferencingManager`] stashed on the builder.
 pub struct ConferencingModule;
 
 impl DaemonModule for ConferencingModule {
@@ -464,6 +819,8 @@ impl DaemonModule for ConferencingModule {
             .get_or_insert_with(|| Arc::new(ConferencingManager::new()))
             .clone();
         let registry = builder.registry().clone();
+
+        // ── Data-channel commands ───────────────────────────────────
 
         let m = manager.clone();
         registry.register("conferencing.create_peer", move |payload| {
@@ -616,7 +973,7 @@ impl DaemonModule for ConferencingModule {
             Ok(json!({ "peers": m.list_peers() }))
         })?;
 
-        let m = manager;
+        let m = manager.clone();
         registry.register("conferencing.close_peer", move |payload| {
             let args: IdArgs = parse(payload, "conferencing.close_peer")?;
             let closed = m
@@ -625,9 +982,143 @@ impl DaemonModule for ConferencingModule {
             Ok(json!({ "closed": closed }))
         })?;
 
+        // ── Track commands ──────────────────────────────────────────
+
+        let m = manager.clone();
+        registry.register("conferencing.add_track", move |payload| {
+            let args: AddTrackArgs = parse(payload, "conferencing.add_track")?;
+            let track_id = m
+                .add_track(args.id, &args.kind, args.track_id, args.stream_id)
+                .map_err(|e| CommandError::handler("conferencing.add_track", e))?;
+            Ok(json!({ "track_id": track_id }))
+        })?;
+
+        let m = manager.clone();
+        registry.register("conferencing.write_sample", move |payload| {
+            let args: WriteSampleArgs = parse(payload, "conferencing.write_sample")?;
+            let data = hex::decode(&args.data).map_err(|e| {
+                CommandError::handler(
+                    "conferencing.write_sample",
+                    format!("data must be hex: {e}"),
+                )
+            })?;
+            m.write_sample(args.id, &args.track_id, Bytes::from(data), args.duration_ms)
+                .map_err(|e| CommandError::handler("conferencing.write_sample", e))?;
+            Ok(json!({}))
+        })?;
+
+        let m = manager.clone();
+        registry.register("conferencing.recv_track_data", move |payload| {
+            let args: RecvTrackDataArgs = parse(payload, "conferencing.recv_track_data")?;
+            let max = args.max.unwrap_or(64);
+            let samples = m
+                .recv_track_data(args.id, max)
+                .map_err(|e| CommandError::handler("conferencing.recv_track_data", e))?;
+            let json_samples: Vec<JsonValue> = samples
+                .into_iter()
+                .map(|s| {
+                    json!({
+                        "track_id": s.track_id,
+                        "kind": s.kind,
+                        "data": hex::encode(&s.data),
+                    })
+                })
+                .collect();
+            Ok(json!({ "samples": json_samples }))
+        })?;
+
+        let m = manager.clone();
+        registry.register("conferencing.list_tracks", move |payload| {
+            let args: IdArgs = parse(payload, "conferencing.list_tracks")?;
+            let tracks = m
+                .list_tracks(args.id)
+                .map_err(|e| CommandError::handler("conferencing.list_tracks", e))?;
+            Ok(tracks)
+        })?;
+
+        let m = manager.clone();
+        registry.register("conferencing.remove_track", move |payload| {
+            let args: RemoveTrackArgs = parse(payload, "conferencing.remove_track")?;
+            let removed = m
+                .remove_track(args.id, &args.track_id)
+                .map_err(|e| CommandError::handler("conferencing.remove_track", e))?;
+            Ok(json!({ "removed": removed }))
+        })?;
+
+        // ── Room commands ───────────────────────────────────────────
+
+        let m = manager.clone();
+        registry.register("conferencing.create_room", move |payload| {
+            let args: CreateRoomArgs = parse(payload, "conferencing.create_room")?;
+            let room_id = m
+                .create_room(args.name.unwrap_or_else(|| "room".to_string()))
+                .map_err(|e| CommandError::handler("conferencing.create_room", e))?;
+            Ok(json!({ "room_id": room_id }))
+        })?;
+
+        let m = manager.clone();
+        registry.register("conferencing.join_room", move |payload| {
+            let args: JoinRoomArgs = parse(payload, "conferencing.join_room")?;
+            m.join_room(args.room_id, args.peer_id)
+                .map_err(|e| CommandError::handler("conferencing.join_room", e))?;
+            Ok(json!({}))
+        })?;
+
+        let m = manager.clone();
+        registry.register("conferencing.leave_room", move |payload| {
+            let args: LeaveRoomArgs = parse(payload, "conferencing.leave_room")?;
+            let removed = m
+                .leave_room(args.room_id, args.peer_id)
+                .map_err(|e| CommandError::handler("conferencing.leave_room", e))?;
+            Ok(json!({ "removed": removed }))
+        })?;
+
+        let m = manager.clone();
+        registry.register("conferencing.room_info", move |payload| {
+            let args: RoomIdArgs = parse(payload, "conferencing.room_info")?;
+            let info = m
+                .room_info(args.room_id)
+                .map_err(|e| CommandError::handler("conferencing.room_info", e))?;
+            Ok(info)
+        })?;
+
+        let m = manager.clone();
+        registry.register("conferencing.list_rooms", move |_payload| {
+            Ok(json!({ "rooms": m.list_rooms() }))
+        })?;
+
+        let m = manager;
+        registry.register("conferencing.broadcast_data", move |payload| {
+            let args: BroadcastDataArgs = parse(payload, "conferencing.broadcast_data")?;
+            let (bytes, is_string) = match (args.message, args.binary) {
+                (Some(text), None) => (Bytes::from(text.into_bytes()), true),
+                (None, Some(hex_bytes)) => {
+                    let raw = hex::decode(&hex_bytes).map_err(|e| {
+                        CommandError::handler(
+                            "conferencing.broadcast_data",
+                            format!("binary must be hex: {e}"),
+                        )
+                    })?;
+                    (Bytes::from(raw), false)
+                }
+                _ => {
+                    return Err(CommandError::handler(
+                        "conferencing.broadcast_data",
+                        "exactly one of `message` (text) or `binary` (hex bytes) is required",
+                    ))
+                }
+            };
+            let sent = m
+                .broadcast_data(args.room_id, &args.label, bytes, is_string)
+                .map_err(|e| CommandError::handler("conferencing.broadcast_data", e))?;
+            Ok(json!({ "sent_to": sent }))
+        })?;
+
         Ok(())
     }
 }
+
+// ── Helpers ────────────────────────────────────────────────────────────
 
 fn parse<T: for<'de> Deserialize<'de>>(
     payload: JsonValue,
@@ -667,6 +1158,8 @@ fn sdp_type_label(t: RTCSdpType) -> &'static str {
         RTCSdpType::Unspecified => "unspecified",
     }
 }
+
+// ── Arg structs ────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
 struct CreatePeerArgs {
@@ -726,6 +1219,70 @@ struct IdArgs {
     id: u64,
 }
 
+#[derive(Debug, Deserialize)]
+struct AddTrackArgs {
+    id: u64,
+    kind: String,
+    #[serde(default)]
+    track_id: Option<String>,
+    #[serde(default)]
+    stream_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WriteSampleArgs {
+    id: u64,
+    track_id: String,
+    data: String,
+    duration_ms: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct RecvTrackDataArgs {
+    id: u64,
+    #[serde(default)]
+    max: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RemoveTrackArgs {
+    id: u64,
+    track_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateRoomArgs {
+    #[serde(default)]
+    name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct JoinRoomArgs {
+    room_id: u64,
+    peer_id: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct LeaveRoomArgs {
+    room_id: u64,
+    peer_id: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct RoomIdArgs {
+    room_id: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct BroadcastDataArgs {
+    room_id: u64,
+    label: String,
+    #[serde(default)]
+    message: Option<String>,
+    #[serde(default)]
+    binary: Option<String>,
+}
+
 // ── Tests ──────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -756,6 +1313,19 @@ mod tests {
             "conferencing.peer_state",
             "conferencing.list_peers",
             "conferencing.close_peer",
+            // Tracks
+            "conferencing.add_track",
+            "conferencing.write_sample",
+            "conferencing.recv_track_data",
+            "conferencing.list_tracks",
+            "conferencing.remove_track",
+            // Rooms
+            "conferencing.create_room",
+            "conferencing.join_room",
+            "conferencing.leave_room",
+            "conferencing.room_info",
+            "conferencing.list_rooms",
+            "conferencing.broadcast_data",
         ] {
             assert!(caps.contains(&name.to_string()), "missing {name}");
         }
@@ -784,10 +1354,6 @@ mod tests {
 
     #[test]
     fn offer_answer_handshake_via_kernel_invoke() {
-        // Two peers in the same daemon: caller drives the offer, callee
-        // drives the answer. We don't wait for ICE connectivity (loopback
-        // ICE in-process is flaky), but we do verify the SDP exchange
-        // pushes both peers through the right signaling states.
         let kernel = kernel();
 
         let caller = kernel
@@ -801,8 +1367,6 @@ mod tests {
             .as_u64()
             .unwrap();
 
-        // Caller has to open at least one data channel before generating
-        // a meaningful offer (otherwise SCTP isn't negotiated).
         kernel
             .invoke(
                 "conferencing.create_data_channel",
@@ -850,7 +1414,6 @@ mod tests {
             )
             .unwrap();
 
-        // Both peers should now have local descriptions exposed.
         let caller_local = kernel
             .invoke("conferencing.local_description", json!({ "id": caller }))
             .unwrap();
@@ -860,13 +1423,11 @@ mod tests {
             .unwrap();
         assert_eq!(callee_local["type"], "answer");
 
-        // recv_data on a quiet inbox is empty.
         let drained = kernel
             .invoke("conferencing.recv_data", json!({ "id": caller }))
             .unwrap();
         assert_eq!(drained["messages"].as_array().unwrap().len(), 0);
 
-        // Close both peers; close_peer is idempotent.
         kernel
             .invoke("conferencing.close_peer", json!({ "id": caller }))
             .unwrap();
@@ -878,8 +1439,6 @@ mod tests {
             .unwrap();
         assert_eq!(again["closed"], false);
 
-        // Quick beat to let any in-flight tokio tasks finish before the
-        // runtime is dropped — keeps the test output clean of stray logs.
         std::thread::sleep(Duration::from_millis(20));
     }
 
@@ -915,5 +1474,180 @@ mod tests {
             &kernel.conferencing_manager().unwrap(),
             &injected
         ));
+    }
+
+    // ── Track tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn add_track_returns_track_id_and_lists_it() {
+        let mgr = ConferencingManager::new();
+        let peer = mgr.create_peer("alice".into(), Vec::new()).unwrap();
+        let tid = mgr
+            .add_track(peer, "audio", Some("mic-1".into()), None)
+            .unwrap();
+        assert_eq!(tid, "mic-1");
+        let tracks = mgr.list_tracks(peer).unwrap();
+        let local = tracks["local"].as_array().unwrap();
+        assert_eq!(local.len(), 1);
+        assert_eq!(local[0]["track_id"], "mic-1");
+        assert_eq!(local[0]["kind"], "audio");
+        mgr.close_all();
+    }
+
+    #[test]
+    fn add_track_rejects_unknown_kind() {
+        let mgr = ConferencingManager::new();
+        let peer = mgr.create_peer("alice".into(), Vec::new()).unwrap();
+        let err = mgr.add_track(peer, "hologram", None, None).unwrap_err();
+        assert!(err.contains("unknown track kind"));
+        mgr.close_all();
+    }
+
+    #[test]
+    fn remove_track_returns_false_for_missing() {
+        let mgr = ConferencingManager::new();
+        let peer = mgr.create_peer("alice".into(), Vec::new()).unwrap();
+        assert!(!mgr.remove_track(peer, "nonexistent").unwrap());
+        mgr.close_all();
+    }
+
+    #[test]
+    fn add_track_via_kernel_invoke() {
+        let kernel = kernel();
+        let peer = kernel
+            .invoke("conferencing.create_peer", json!({ "name": "bob" }))
+            .unwrap()["id"]
+            .as_u64()
+            .unwrap();
+        let result = kernel
+            .invoke(
+                "conferencing.add_track",
+                json!({ "id": peer, "kind": "video", "track_id": "cam-0" }),
+            )
+            .unwrap();
+        assert_eq!(result["track_id"], "cam-0");
+
+        let tracks = kernel
+            .invoke("conferencing.list_tracks", json!({ "id": peer }))
+            .unwrap();
+        assert_eq!(tracks["local"].as_array().unwrap().len(), 1);
+
+        let removed = kernel
+            .invoke(
+                "conferencing.remove_track",
+                json!({ "id": peer, "track_id": "cam-0" }),
+            )
+            .unwrap();
+        assert!(removed["removed"].as_bool().unwrap());
+
+        kernel
+            .invoke("conferencing.close_peer", json!({ "id": peer }))
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    // ── Room tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn room_lifecycle_via_manager() {
+        let mgr = ConferencingManager::new();
+        let a = mgr.create_peer("alice".into(), Vec::new()).unwrap();
+        let b = mgr.create_peer("bob".into(), Vec::new()).unwrap();
+
+        let room = mgr.create_room("standup".into()).unwrap();
+        mgr.join_room(room, a).unwrap();
+        mgr.join_room(room, b).unwrap();
+
+        let info = mgr.room_info(room).unwrap();
+        assert_eq!(info["name"], "standup");
+        let members = info["members"].as_array().unwrap();
+        assert_eq!(members.len(), 2);
+
+        mgr.leave_room(room, a).unwrap();
+        let info2 = mgr.room_info(room).unwrap();
+        assert_eq!(info2["members"].as_array().unwrap().len(), 1);
+
+        let rooms = mgr.list_rooms();
+        assert_eq!(rooms.len(), 1);
+
+        mgr.close_all();
+    }
+
+    #[test]
+    fn room_lifecycle_via_kernel_invoke() {
+        let kernel = kernel();
+        let a = kernel
+            .invoke("conferencing.create_peer", json!({ "name": "alice" }))
+            .unwrap()["id"]
+            .as_u64()
+            .unwrap();
+        let b = kernel
+            .invoke("conferencing.create_peer", json!({ "name": "bob" }))
+            .unwrap()["id"]
+            .as_u64()
+            .unwrap();
+
+        let room_id = kernel
+            .invoke("conferencing.create_room", json!({ "name": "demo" }))
+            .unwrap()["room_id"]
+            .as_u64()
+            .unwrap();
+
+        kernel
+            .invoke(
+                "conferencing.join_room",
+                json!({ "room_id": room_id, "peer_id": a }),
+            )
+            .unwrap();
+        kernel
+            .invoke(
+                "conferencing.join_room",
+                json!({ "room_id": room_id, "peer_id": b }),
+            )
+            .unwrap();
+
+        let info = kernel
+            .invoke("conferencing.room_info", json!({ "room_id": room_id }))
+            .unwrap();
+        assert_eq!(info["members"].as_array().unwrap().len(), 2);
+
+        let rooms = kernel.invoke("conferencing.list_rooms", json!({})).unwrap();
+        assert_eq!(rooms["rooms"].as_array().unwrap().len(), 1);
+
+        kernel
+            .invoke(
+                "conferencing.leave_room",
+                json!({ "room_id": room_id, "peer_id": a }),
+            )
+            .unwrap();
+        let info2 = kernel
+            .invoke("conferencing.room_info", json!({ "room_id": room_id }))
+            .unwrap();
+        assert_eq!(info2["members"].as_array().unwrap().len(), 1);
+
+        kernel
+            .invoke("conferencing.close_peer", json!({ "id": a }))
+            .unwrap();
+        kernel
+            .invoke("conferencing.close_peer", json!({ "id": b }))
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    #[test]
+    fn join_room_rejects_unknown_peer() {
+        let mgr = ConferencingManager::new();
+        let room = mgr.create_room("test".into()).unwrap();
+        let err = mgr.join_room(room, 999).unwrap_err();
+        assert!(err.contains("unknown peer"));
+    }
+
+    #[test]
+    fn join_room_rejects_unknown_room() {
+        let mgr = ConferencingManager::new();
+        let peer = mgr.create_peer("alice".into(), Vec::new()).unwrap();
+        let err = mgr.join_room(999, peer).unwrap_err();
+        assert!(err.contains("unknown room"));
+        mgr.close_all();
     }
 }

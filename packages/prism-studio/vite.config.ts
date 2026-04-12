@@ -40,7 +40,7 @@ function prismDaemonWasm(): Plugin {
       // correct MIME types without needing a public/ copy on disk.
       server.middlewares.use("/daemon", (req, res, next) => {
         if (!req.url) return next();
-        const name = req.url.split("?")[0]!.replace(/^\//, "");
+        const name = (req.url.split("?")[0] ?? "").replace(/^\//, "");
         if (!files.includes(name)) return next();
         const full = resolve(dir, name);
         if (!existsSync(full)) return next();

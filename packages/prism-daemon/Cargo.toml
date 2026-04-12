@@ -101,7 +101,7 @@ whisper = ["dep:whisper-rs", "dep:hound"]
 # the manager spawns to bridge async webrtc into the sync `kernel.invoke`
 # boundary. Desktop-only because `webrtc` pulls a network stack none of
 # the mobile/wasm/embedded targets can link against.
-conferencing = ["dep:webrtc", "dep:tokio", "dep:bytes", "dep:hex"]
+conferencing = ["dep:webrtc", "dep:webrtc-media", "dep:tokio", "dep:bytes", "dep:hex"]
 cli = ["dep:tokio"]
 
 # ── Remote VFS backends ────────────────────────────────────────────────
@@ -184,6 +184,7 @@ uniffi = { version = "0.28", optional = true }
 whisper-rs = { version = "0.16", optional = true }
 hound = { version = "3.5", optional = true }
 webrtc = { version = "0.12", optional = true }
+webrtc-media = { version = "0.9", optional = true }
 bytes = { version = "1", optional = true }
 
 [dev-dependencies]

@@ -25,6 +25,9 @@ export default tseslint.config(
       // parser — not hand-authored, and references browser globals like
       // `WebAssembly`/`TextDecoder` that aren't in the base lint env.
       "packages/prism-core/src/language/luau/pkg/",
+      // Capacitor native build artifacts — generated JS bundles, not source.
+      "packages/prism-studio/ios/",
+      "packages/prism-studio/android/",
       "$legacy-inspiration-only/",
       "tmp-*",
     ],
