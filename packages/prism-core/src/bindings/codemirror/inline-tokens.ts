@@ -13,7 +13,7 @@
  * @example
  * ```ts
  * import { createTokenMarkExtension, inlineTokenTheme } from '@prism/core/codemirror';
- * import { WIKILINK_TOKEN } from '@prism/core/syntax';
+ * import { WIKILINK_TOKEN } from '@prism/core/language-registry';
  *
  * const extensions = [
  *   ...createTokenMarkExtension([WIKILINK_TOKEN]),
@@ -31,7 +31,7 @@ import {
 import { RangeSetBuilder } from "@codemirror/state";
 import type { DecorationSet, ViewUpdate } from "@codemirror/view";
 import type { Extension } from "@codemirror/state";
-import type { InlineTokenDef } from "@prism/core/syntax";
+import type { InlineTokenDef } from "@prism/core/language-registry";
 
 // ── Chip color palette ────────────────────────────────────────────────────────
 

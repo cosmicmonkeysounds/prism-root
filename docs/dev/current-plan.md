@@ -1,5 +1,66 @@
 # Current Plan
 
+## ADR 002 Phases 2–4 — Luau fold, Studio→Core extraction, Registry collapse (Complete — 2026-04-12)
+
+Completed the remaining three phases of ADR-002, bringing the unified language/document model to its final shape and extracting shared kernel infrastructure from Studio into Core so future apps (Flux, Lattice, Musica) can reuse it.
+
+### Phase 2 — Fold Luau into `language/luau/`
+
+Merged the two disjoint Luau directories (`syntax/luau/` for parsing and standalone `luau/` for runtime+debugger) into a single `language/luau/` home. `createLuauContribution()` is now the canonical entry point, replacing the old `createLuauLanguageDefinition()` + ad-hoc `DocumentSurfaceRegistry` pair.
+
+### Phase 3 — Extract Studio kernel modules to Core
+
+Moved 5 pure support modules from `packages/prism-studio/src/kernel/` to their final `@prism/core/*` homes via `git mv`:
+
+- `design-tokens.ts` → `@prism/core/design-tokens` (DesignTokenRegistry, tokensToCss, DEFAULT_TOKENS)
+- `block-style.ts` → `@prism/core/page-builder` (BlockStyleData, STYLE_FIELD_DEFS, computeBlockStyle — de-React-ified: `CssStyle = Record<string, string | number>` replaces React `CSSProperties`)
+- `page-export.ts` → `@prism/core/page-builder` (exportPageToJson, exportPageToHtml, renderNodeHtml)
+- `relay-manager.ts` → `@prism/core/relay-manager` (createRelayManager, RelayEntry)
+- `builder-manager.ts` → `@prism/core/builder` (merged into existing builder/, circular `@prism/core/builder` self-import fixed with relative imports)
+
+Created `@prism/core/initializer` — generic `KernelInitializer<TKernel>` post-boot hook pattern. Studio's `StudioInitializer` is now a thin alias (`KernelInitializer<StudioKernel>`).
+
+All Studio imports updated to consume from `@prism/core/*`. Studio kernel directory now contains only wiring + entity definitions.
+
+### Phase 4 — Unify codegen + collapse registries
+
+Unified `LanguageRegistry` replaces the old split between `LanguageDefinition` + `DocumentSurfaceRegistry`. `LanguageContribution` is the single registration type. Compat bridge (`compat.ts`) retired. Markdown contribution (`createMarkdownContribution()`) created so there is exactly one markdown tokenizer.
+
+### Status
+
+- `pnpm -r typecheck` — all 5 workspace packages clean
+- `pnpm test` — **186 files, 3655 tests passing**
+- ADR-002 status updated to **Accepted**
+- `packages/prism-core/CLAUDE.md` and `packages/prism-studio/CLAUDE.md` updated to reflect final locations
+- No `layer1`/`layer2` references remain in source code (only in historical ADR/plan docs)
+
+## prism-daemon — Whisper + Conferencing modules (Complete — 2026-04-11)
+
+Landed two new desktop-only daemon modules that bring SPEC §2's "local physics engine" closer to feature-complete: on-device speech-to-text via whisper.cpp and real WebRTC peer connections + data channels via the pure-Rust `webrtc` crate. Both follow the existing module pattern (DaemonModule trait, manager-on-builder, kernel handle, feature-gated) and are strictly opt-in so they don't bloat the mobile/wasm/embedded surfaces or block the default `cargo test` matrix on `cmake`.
+
+### What landed
+
+1. **Conferencing module** (`src/modules/conferencing_module.rs`, 7 unit tests) — pure-Rust WebRTC behind `conferencing.{create_peer,create_data_channel,create_offer,create_answer,set_local_description,set_remote_description,local_description,add_ice_candidate,send_data,recv_data,peer_state,list_peers,close_peer}`. `ConferencingManager` owns its own multi-threaded tokio `Runtime` and `block_on`s into async webrtc from each sync command handler so the kernel boundary stays sync. `PeerEntry` carries an `Arc<RTCPeerConnection>`, a shared `DataInbox` (`Mutex<VecDeque>` with drain semantics, mirrored from the actors mailbox pattern), and a per-peer DataChannel index keyed by label. `wire_inbox()` attaches the `on_message` callback for locally-created channels; an `on_data_channel` callback wires remote-created channels into the same inbox/index so both ends look identical to callers. `send_data` accepts either UTF-8 text or hex-encoded bytes; `recv_data` drains everything queued.
+2. **Whisper module** (`src/modules/whisper_module.rs`, 7 unit tests) — local-first STT behind `whisper.{load_model,unload_model,list_models,transcribe_pcm,transcribe_file}`. Uses `whisper-rs` 0.16 (vendored whisper.cpp + GGML, built from source via CMake). PCM input must be mono f32 @ 16 kHz; the module rejects mismatched sample rates upfront with a clear error rather than silently resampling. `transcribe_file` decodes WAV via `hound`, converts integer samples to f32, and downmixes stereo to mono via `whisper-rs`'s convenience helpers. Returns `Vec<TranscriptSegment { start_ms, end_ms, text }>` (whisper-rs reports timestamps in centiseconds — multiplied by 10 at the boundary so callers see milliseconds everywhere else in the daemon).
+3. **Builder + kernel wiring** — `DaemonBuilder` gains `set_actors_manager/actors_manager_slot/with_actors`, `set_whisper_manager/whisper_manager_slot/with_whisper`, `set_conferencing_manager/conferencing_manager_slot/with_conferencing`. `DaemonKernel` gains optional `actors_manager()`, `whisper_manager()`, and `conferencing_manager()` accessors so hot paths (streaming PCM into a transcription state, pumping bytes through a data channel) can skip the JSON roundtrip. `DaemonKernel::new` is now `#[allow(clippy::too_many_arguments)]` — the manager handle list grows every time a feature lands, and bundling them into a struct would just push the parameter list one layer deeper.
+4. **Feature matrix** — `Cargo.toml` adds `actors = ["luau"]` (now part of `full` and `mobile`), `whisper = ["dep:whisper-rs", "dep:hound"]` (strictly opt-in, desktop only), and `conferencing = ["dep:webrtc", "dep:tokio", "dep:bytes", "dep:hex"]` (strictly opt-in, desktop only). Whisper + conferencing are deliberately excluded from every preset so the default `cargo test` matrix doesn't require a CMake toolchain or pull a network stack the mobile/wasm/embedded targets can't link against.
+5. **Tests + clippy** — `cargo test --lib` (default) is **72 passing** (60 baseline + 12 actors). `cargo test --features conferencing` is **79 lib + 9 integration + 2 stdio = 90 passing**, including a full WebRTC SDP offer/answer roundtrip executed through `kernel.invoke()` (two peers in-process, exchanging signaling JSON via the same `kernel.invoke` boundary an external transport would). `cargo clippy --features conferencing --all-targets -- -D warnings` is clean. `cargo fmt` applied to the new files.
+6. **Docs refreshed** — `packages/prism-daemon/CLAUDE.md` now lists the actors / whisper / conferencing modules under the module catalogue, expands the feature-flag table with whisper + conferencing rows, and updates the test inventory with the new lib + integration counts.
+
+### Status
+
+- `cargo test --lib` (default features) — **72 lib tests passing**
+- `cargo test --features conferencing` — **79 lib + 9 integration + 2 stdio = 90 tests passing** (includes the WebRTC offer/answer handshake roundtrip)
+- `cargo clippy --features conferencing --all-targets -- -D warnings` — clean
+- `cargo fmt` — clean across the new files (workspace-wide `--check` blocked by an unrelated missing `src/transport/uniffi_bridge.rs` referenced from a transport stub)
+- `cargo check --features whisper` — **not yet verified locally**: `whisper-rs-sys`'s build script invokes CMake to compile whisper.cpp + GGML, and `cmake` is not currently on the host PATH. The module's Rust surface was statically verified against `whisper-rs` 0.16's API (`WhisperContext::new_with_params`, `ctx.create_state`, `state.full`, `state.as_iter`, `segment.{start_timestamp,end_timestamp,to_str_lossy}`, `convert_integer_to_float_audio`, `convert_stereo_to_mono_audio`, `params.set_n_threads`); first machine with `cmake` on PATH should run `cargo test --features whisper` to confirm the build script is happy.
+
+### Notes / deferred
+
+- Whisper and conferencing intentionally stay outside `full` so the default test matrix (which CI runs on machines that may not carry CMake or a working network stack) keeps running unmodified. Hosts that want them opt in explicitly with `cargo build --features whisper,conferencing`.
+- The conferencing handshake test verifies SDP offer/answer through the kernel and asserts both peers reach the expected signaling state, but does **not** wait for ICE connectivity — loopback ICE between two in-process `RTCPeerConnection`s on the same machine is flaky enough that gating CI on it would create false reds. Real ICE/DTLS connectivity is exercised by the eventual cross-surface E2E test (browser ↔ daemon over a real network) which lands with the Studio integration.
+- Future actor kinds (`python`, `llm_sidecar`) and future whisper streaming endpoints (`whisper.transcribe_stream` for chunked PCM) will plug into the same modules behind sub-features when the first consumer needs them.
+
 ## prism-daemon — VFS + Crypto + Cross-Surface E2E (Complete — 2026-04-11)
 
 Made the Rust `prism-daemon` crate implement every SPEC-critical primitive that can run on every target we ship (desktop, mobile, browser, embedded), and wired up end-to-end tests that exercise each surface through its real transport rather than a host simulator.
@@ -38,7 +99,7 @@ Made the Rust `prism-daemon` crate implement every SPEC-critical primitive that 
 
 ## ADR 002 Phase 1 — PrismFile + LanguageContribution (Complete — 2026-04-11)
 
-Phase 1 of ADR 002 introduces the two new abstractions (§A1 and §A2) additively, alongside the existing `LanguageRegistry` + `DocumentSurfaceRegistry`. No renames, no moves, no behavior changes to existing callers. Phase 4 collapses the legacy registries and retires the compat bridge.
+Phase 1 of ADR 002 introduced the two new abstractions (§A1 and §A2). Phase 4 (see entry above) collapsed the legacy registries and retired the compat bridge.
 
 ### What landed
 
@@ -53,7 +114,7 @@ Phase 1 of ADR 002 introduces the two new abstractions (§A1 and §A2) additivel
 
 - `pnpm --filter @prism/core typecheck` — green.
 - `pnpm test` — **187 test files, 3663 tests passing** (+20 from 185/3643 pre-Phase-1).
-- No existing code consumes `PrismFile` or `LanguageContribution` yet. Phase 2 (fold Luau into one directory) and Phase 4 (collapse the legacy registries) will pick these up.
+- `PrismFile` and `LanguageContribution` are now consumed by Phase 2 (Luau fold) and Phase 4 (registry collapse) — see ADR 002 Phases 2–4 entry above.
 
 ## ADR 002 Structural Reorganization (Complete — 2026-04-11)
 
@@ -85,7 +146,7 @@ foundation → language/identity → kernel/network → interaction/domain → b
 
 - `pnpm typecheck` — green across all 6 packages.
 - `pnpm test` — **185 test files, 3643 tests passing**.
-- Next: Phase 1 of ADR 002 — introduce `PrismFile` + `LanguageContribution` + compat bridge on top of the reorganized structure.
+- All four ADR-002 phases (1–4) are now complete on top of this structure.
 
 ### Note on historical phase entries below
 

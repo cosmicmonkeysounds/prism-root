@@ -8,7 +8,7 @@
 
 import { ObjectRegistry } from "@prism/core/object-model";
 import type { EntityDef, EdgeTypeDef, CategoryRule } from "@prism/core/object-model";
-import { STYLE_FIELD_DEFS } from "./block-style.js";
+import { STYLE_FIELD_DEFS } from "@prism/core/page-builder";
 
 // ── Category Rules ──────────────────────────────────────────────────────────
 

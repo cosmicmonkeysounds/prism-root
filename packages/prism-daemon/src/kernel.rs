@@ -22,6 +22,15 @@ use crate::modules::watcher_module::WatcherManager;
 #[cfg(feature = "vfs")]
 use crate::modules::vfs_module::VfsManager;
 
+#[cfg(feature = "actors")]
+use crate::modules::actors_module::ActorsManager;
+
+#[cfg(feature = "whisper")]
+use crate::modules::whisper_module::WhisperManager;
+
+#[cfg(feature = "conferencing")]
+use crate::modules::conferencing_module::ConferencingManager;
+
 /// The fully-assembled daemon runtime.
 ///
 /// Cheaply cloneable — every field is either an `Arc` or lives behind one,
@@ -55,9 +64,32 @@ pub struct DaemonKernel {
     /// of large assets, streaming uploads) avoid a JSON roundtrip.
     #[cfg(feature = "vfs")]
     vfs_manager: Option<Arc<VfsManager>>,
+
+    /// Optional direct handle to the actors pool. Hosts that want to
+    /// drive actor lifecycles without JSON (e.g. streaming audio frames
+    /// to a Whisper sidecar) can reach in through this handle.
+    #[cfg(feature = "actors")]
+    actors_manager: Option<Arc<ActorsManager>>,
+
+    /// Optional direct handle to the whisper.cpp model pool. Lets hot
+    /// audio paths skip the JSON sample-array roundtrip when feeding
+    /// PCM frames into a transcription state.
+    #[cfg(feature = "whisper")]
+    whisper_manager: Option<Arc<WhisperManager>>,
+
+    /// Optional direct handle to the WebRTC conferencing manager. Lets
+    /// hot media paths reach the underlying peer connection / data
+    /// channels without funneling every byte through `kernel.invoke`.
+    #[cfg(feature = "conferencing")]
+    conferencing_manager: Option<Arc<ConferencingManager>>,
 }
 
 impl DaemonKernel {
+    // Each manager handle is its own optional argument so transport
+    // adapters can decide which capabilities to install. The list grows
+    // every time a new feature lands; bundling them into a struct would
+    // just push the same parameter list one layer deeper.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         registry: Arc<CommandRegistry>,
         module_ids: Vec<String>,
@@ -65,6 +97,9 @@ impl DaemonKernel {
         #[cfg(feature = "crdt")] doc_manager: Option<Arc<DocManager>>,
         #[cfg(feature = "watcher")] watcher_manager: Option<Arc<WatcherManager>>,
         #[cfg(feature = "vfs")] vfs_manager: Option<Arc<VfsManager>>,
+        #[cfg(feature = "actors")] actors_manager: Option<Arc<ActorsManager>>,
+        #[cfg(feature = "whisper")] whisper_manager: Option<Arc<WhisperManager>>,
+        #[cfg(feature = "conferencing")] conferencing_manager: Option<Arc<ConferencingManager>>,
     ) -> Self {
         Self {
             registry,
@@ -76,6 +111,12 @@ impl DaemonKernel {
             watcher_manager,
             #[cfg(feature = "vfs")]
             vfs_manager,
+            #[cfg(feature = "actors")]
+            actors_manager,
+            #[cfg(feature = "whisper")]
+            whisper_manager,
+            #[cfg(feature = "conferencing")]
+            conferencing_manager,
         }
     }
 
@@ -123,6 +164,30 @@ impl DaemonKernel {
     #[cfg(feature = "vfs")]
     pub fn vfs_manager(&self) -> Option<Arc<VfsManager>> {
         self.vfs_manager.clone()
+    }
+
+    /// Direct actors pool handle. Only present when built with the
+    /// `actors` feature and after
+    /// [`DaemonBuilder::with_actors`](crate::builder::DaemonBuilder::with_actors) ran.
+    #[cfg(feature = "actors")]
+    pub fn actors_manager(&self) -> Option<Arc<ActorsManager>> {
+        self.actors_manager.clone()
+    }
+
+    /// Direct whisper.cpp model pool handle. Only present when built
+    /// with the `whisper` feature and after
+    /// [`DaemonBuilder::with_whisper`](crate::builder::DaemonBuilder::with_whisper) ran.
+    #[cfg(feature = "whisper")]
+    pub fn whisper_manager(&self) -> Option<Arc<WhisperManager>> {
+        self.whisper_manager.clone()
+    }
+
+    /// Direct conferencing/WebRTC manager handle. Only present when
+    /// built with the `conferencing` feature and after
+    /// [`DaemonBuilder::with_conferencing`](crate::builder::DaemonBuilder::with_conferencing) ran.
+    #[cfg(feature = "conferencing")]
+    pub fn conferencing_manager(&self) -> Option<Arc<ConferencingManager>> {
+        self.conferencing_manager.clone()
     }
 
     /// Release every initializer (in reverse order) and drop the registry.

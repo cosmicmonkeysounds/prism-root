@@ -5,8 +5,8 @@
  * Each writer implements the Emitter<T> interface from the codegen pipeline.
  */
 
-import type { Emitter, CodegenMeta, CodegenResult } from '@prism/core/syntax';
-import { SourceBuilder } from '@prism/core/syntax';
+import type { Emitter, CodegenMeta, CodegenResult } from '@prism/core/codegen';
+import { SourceBuilder } from '@prism/core/codegen';
 
 // -- Schema types (self-contained, matching Helm's writers/schema.ts) ---------
 
@@ -107,6 +107,7 @@ export function emitTypeScript(model: SchemaModel): string {
 /** Emitter that generates a TypeScript file from a SchemaModel. */
 export class TypeScriptWriter implements Emitter<SchemaModel> {
   readonly id = 'typescript';
+  readonly inputKind = 'schema' as const;
 
   constructor(private options: { filename?: string } = {}) {}
 
@@ -166,6 +167,7 @@ export function emitJavaScript(model: SchemaModel): string {
 /** Emitter that generates a JavaScript file from a SchemaModel. */
 export class JavaScriptWriter implements Emitter<SchemaModel> {
   readonly id = 'javascript';
+  readonly inputKind = 'schema' as const;
 
   constructor(private options: { filename?: string } = {}) {}
 
@@ -260,6 +262,7 @@ export function emitCSharp(model: SchemaModel): string {
 /** Emitter that generates a C# file from a SchemaModel. */
 export class CSharpWriter implements Emitter<SchemaModel> {
   readonly id = 'csharp';
+  readonly inputKind = 'schema' as const;
 
   constructor(private options: { filename?: string } = {}) {}
 
@@ -318,6 +321,7 @@ export function emitLuau(model: SchemaModel): string {
 /** Emitter that generates a Luau file from a SchemaModel. */
 export class LuauWriter implements Emitter<SchemaModel> {
   readonly id = 'luau';
+  readonly inputKind = 'schema' as const;
 
   constructor(private options: { filename?: string } = {}) {}
 
@@ -347,6 +351,7 @@ export function serializeJson(value: unknown, indent = 2): string {
 /** Emitter that serializes a JS value to a .json file. */
 export class JsonWriter implements Emitter<unknown> {
   readonly id = 'json';
+  readonly inputKind = 'data' as const;
 
   constructor(private options: JsonWriterOptions = {}) {}
 
@@ -449,6 +454,7 @@ export function serializeYaml(value: unknown): string {
 /** Emitter that serializes a JS value to a .yaml file. */
 export class YamlWriter implements Emitter<unknown> {
   readonly id = 'yaml';
+  readonly inputKind = 'data' as const;
 
   constructor(private options: YamlWriterOptions = {}) {}
 
@@ -550,6 +556,7 @@ export function serializeToml(input: Record<string, unknown>): string {
 /** Emitter that serializes a plain JS object to a .toml file. */
 export class TomlWriter implements Emitter<Record<string, unknown>> {
   readonly id = 'toml';
+  readonly inputKind = 'data' as const;
 
   constructor(private options: TomlWriterOptions = {}) {}
 

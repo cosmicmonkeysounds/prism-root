@@ -26,7 +26,7 @@ import {
   exportPageToJson,
   renderNodeHtml,
   toExportedNode,
-} from "../kernel/page-export.js";
+} from "@prism/core/page-builder";
 
 // ── Shared styles ───────────────────────────────────────────────────────────
 

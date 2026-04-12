@@ -39,3 +39,17 @@ export {
 
 export { createBuildPlan, serializeBuildPlan } from "./build-plan.js";
 export type { CreateBuildPlanOptions } from "./build-plan.js";
+
+// ── BuilderManager (side-effectful runner) ───────────────────────────────
+export type {
+  BuildExecutionContext,
+  BuildExecutor,
+  BuilderManagerOptions,
+  BuilderManager,
+  TauriExecutorOptions,
+} from "./builder-manager.js";
+export {
+  createBuilderManager,
+  createDryRunExecutor,
+  createTauriExecutor,
+} from "./builder-manager.js";

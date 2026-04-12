@@ -76,12 +76,24 @@ async function makeTauriInvoker(): Promise<RawInvoker> {
 }
 
 async function makeCapacitorInvoker(): Promise<RawInvoker> {
-    // Imported lazily: on non-Capacitor hosts the plugin package isn't
-    // even resolved, so the Tauri/WASM bundles stay lean.
-    // `@prism/capacitor-daemon` exposes `invokeDaemon(name, payload)`
-    // which already returns a parsed envelope.
-    const { invokeDaemon } = await import("@prism/capacitor-daemon");
-    return (name, payload) => invokeDaemon(name, payload);
+    // Lazily register the native Capacitor plugin and wire it up.
+    // The plugin is part of @prism/daemon (mobile/ios, mobile/android)
+    // rather than a separate package — the bridge lives here because
+    // this is the only consumer.
+    const { registerPlugin } = await import("@capacitor/core");
+    const PrismDaemon = registerPlugin<{
+        invoke(options: {
+            name: string;
+            payloadJson: string;
+        }): Promise<{ responseJson: string }>;
+    }>("PrismDaemon");
+    return async (name, payload) => {
+        const { responseJson } = await PrismDaemon.invoke({
+            name,
+            payloadJson: JSON.stringify(payload ?? null),
+        });
+        return JSON.parse(responseJson) as DaemonEnvelope<unknown>;
+    };
 }
 
 type WasmBridge = {

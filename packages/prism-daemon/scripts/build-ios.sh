@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Cross-compile prism-daemon for iOS (device + simulator) and assemble
-# a PrismDaemon.xcframework that the Capacitor plugin in
-# packages/prism-capacitor-daemon consumes as a binary target.
+# a PrismDaemon.xcframework staged into mobile/ios/Frameworks/.
 #
 # The xcframework bundles two slices:
 #
@@ -22,7 +21,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DAEMON_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-PLUGIN_DIR="$(cd "$DAEMON_DIR/../prism-capacitor-daemon" && pwd)"
+PLUGIN_DIR="$DAEMON_DIR/mobile"
 
 FEATURE_FLAGS=(--no-default-features --features mobile)
 CARGO_FLAGS=(build --release "${FEATURE_FLAGS[@]}")

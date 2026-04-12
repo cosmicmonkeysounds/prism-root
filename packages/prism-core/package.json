@@ -15,7 +15,9 @@
 
     "./document": "./src/language/document/index.ts",
     "./language-registry": "./src/language/registry/index.ts",
+    "./codegen": "./src/language/codegen/index.ts",
     "./luau": "./src/language/luau/index.ts",
+    "./markdown": "./src/language/markdown/index.ts",
     "./expression": "./src/language/expression/index.ts",
     "./forms": "./src/language/forms/index.ts",
     "./facet": "./src/language/facet/index.ts",
@@ -30,6 +32,7 @@
     "./plugin": "./src/kernel/plugin/index.ts",
     "./plugin-bundles": "./src/kernel/plugin-bundles/index.ts",
     "./builder": "./src/kernel/builder/index.ts",
+    "./initializer": "./src/kernel/initializer/index.ts",
 
     "./atom": "./src/interaction/atom/index.ts",
     "./layout": "./src/interaction/layout/index.ts",
@@ -39,6 +42,8 @@
     "./notification": "./src/interaction/notification/index.ts",
     "./search": "./src/interaction/search/index.ts",
     "./view": "./src/interaction/view/index.ts",
+    "./design-tokens": "./src/interaction/design-tokens/index.ts",
+    "./page-builder": "./src/interaction/page-builder/index.ts",
 
     "./identity": "./src/identity/did/index.ts",
     "./encryption": "./src/identity/encryption/index.ts",
@@ -46,6 +51,7 @@
     "./manifest": "./src/identity/manifest/index.ts",
 
     "./relay": "./src/network/relay/index.ts",
+    "./relay-manager": "./src/network/relay-manager/index.ts",
     "./presence": "./src/network/presence/index.ts",
     "./session": "./src/network/session/index.ts",
     "./discovery": "./src/network/discovery/index.ts",

@@ -46,7 +46,7 @@ export {
 
 export { createPageBuilderRegistry } from "./entities.js";
 
-export { createRelayManager } from "./relay-manager.js";
+export { createRelayManager } from "@prism/core/relay-manager";
 export type {
   RelayManager,
   RelayEntry,
@@ -56,13 +56,13 @@ export type {
   DeployedPortal,
   RelayHttpClient,
   RelayManagerOptions,
-} from "./relay-manager.js";
+} from "@prism/core/relay-manager";
 
 export {
   createBuilderManager,
   createDryRunExecutor,
   createTauriExecutor,
-} from "./builder-manager.js";
+} from "@prism/core/builder";
 export type {
   BuilderManager,
   BuilderManagerOptions,
@@ -75,4 +75,4 @@ export type {
   BuildRun,
   BuiltInProfileId,
   ArtifactDescriptor,
-} from "./builder-manager.js";
+} from "@prism/core/builder";

@@ -45,3 +45,4 @@ $legacy-inspiration-only
 test-results
 packages/prism-capacitor-daemon/android/src/main/jniLibs
 packages/prism-capacitor-daemon/android/build
+packages/prism-daemon/mobile/android/build

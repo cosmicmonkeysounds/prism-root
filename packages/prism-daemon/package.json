@@ -2,8 +2,16 @@
   "name": "@prism/daemon",
   "version": "0.1.0",
   "private": true,
-  "description": "pnpm wrapper around the Rust prism-daemon crate — owns the wasm build pipeline + browser E2E suite. The Rust source of truth lives in src/ and Cargo.toml; this package.json only exists so pnpm/turbo can drive `cargo` and Playwright on the same build the Studio app consumes.",
+  "description": "pnpm wrapper around the Rust prism-daemon crate — owns the wasm build pipeline, browser E2E suite, and the Capacitor mobile bridge (mobile/ios, mobile/android). The Rust source of truth lives in src/ and Cargo.toml; this package.json exists so pnpm/turbo can drive `cargo` and Playwright on the same build the Studio app consumes.",
   "type": "module",
+  "capacitor": {
+    "ios": {
+      "src": "mobile/ios"
+    },
+    "android": {
+      "src": "mobile/android"
+    }
+  },
   "scripts": {
     "setup:wasm": "bash scripts/setup-wasm.sh",
     "build:wasm:dev": "bash scripts/build-wasm.sh dev",

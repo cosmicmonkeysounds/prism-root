@@ -17,7 +17,7 @@ import {
   computeBlockStyle,
   extractBlockStyle,
   mergeCss,
-} from "../kernel/block-style.js";
+} from "@prism/core/page-builder";
 import { resolveObjectRefs, evaluateVisibleWhen } from "../kernel/data-binding.js";
 import {
   parseLuauUi,

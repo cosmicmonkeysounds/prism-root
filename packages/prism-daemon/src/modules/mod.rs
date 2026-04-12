@@ -19,3 +19,12 @@ pub mod vfs_module;
 
 #[cfg(feature = "crypto")]
 pub mod crypto_module;
+
+#[cfg(feature = "actors")]
+pub mod actors_module;
+
+#[cfg(feature = "whisper")]
+pub mod whisper_module;
+
+#[cfg(feature = "conferencing")]
+pub mod conferencing_module;

@@ -1,6 +1,6 @@
 # ADR-002: Unified language/document model and core/studio restructuring
 
-**Status**: Proposed
+**Status**: Accepted (implemented 2026-04-11)
 **Date**: 2026-04-11
 
 ## Context

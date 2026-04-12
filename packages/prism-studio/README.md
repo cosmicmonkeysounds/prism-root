@@ -91,7 +91,7 @@ AppProfile + BuildTarget
   → structured { stdout?, stderr? } back to the kernel
 ```
 
-- **`src/kernel/builder-manager.ts`** — profile registry (6 built-ins: `studio`, `flux`, `lattice`, `cadence`, `grip`, `relay`), active-profile pinning, plan composition via `@prism/core/builder`, step-by-step execution through an injectable `BuildExecutor`, run history.
+- **`@prism/core/builder`** — profile registry (6 built-ins: `studio`, `flux`, `lattice`, `cadence`, `grip`, `relay`), active-profile pinning, plan composition, step-by-step execution through an injectable `BuildExecutor`, run history. Studio consumes `createBuilderManager()` directly; no Studio-side wrapper.
 - **`BuildExecutor` modes** — `tauri` (real daemon IPC) and `dry-run` (browser/tests; `emit-file` steps succeed with contents buffered into `stdout`, `run-command`/`invoke-ipc` are skipped).
 - **Build targets** — `web` (Vite SPA), `tauri` (desktop binary via `pnpm tauri build`), `capacitor-ios` / `capacitor-android` (mobile via `cap sync` + `cap build`), `relay-node` / `relay-docker` (relay deployments).
 - **Capacitor scaffolding** — `capacitor.config.ts` is checked in; the generated `ios/` and `android/` directories are not. Run `pnpm cap add ios|android` once per checkout to create them.

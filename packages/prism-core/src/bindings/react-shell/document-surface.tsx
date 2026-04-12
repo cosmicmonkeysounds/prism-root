@@ -30,10 +30,9 @@ import type { Extension } from "@codemirror/state";
 import type {
   SurfaceMode,
   InlineTokenDef,
-  DocumentContributionDef,
-  DocumentSurfaceRegistry,
-  DocumentSurfaceEntry,
-} from "@prism/core/syntax";
+  LanguageContribution,
+  LanguageRegistry,
+} from "@prism/core/language-registry";
 import type { SpellChecker } from "@prism/core/syntax";
 import type { FormSchema } from "@prism/core/forms";
 import { useCodemirror } from "@prism/core/codemirror";
@@ -249,8 +248,8 @@ export interface DocumentSurfaceProps {
   formSchema?: FormSchema;
   /** SpellChecker instance for spell checking in code/preview modes. */
   spellChecker?: SpellChecker;
-  /** Document surface registry to resolve contributions from. */
-  registry?: DocumentSurfaceRegistry;
+  /** Language registry to resolve contributions from. */
+  registry?: LanguageRegistry<unknown, Extension>;
   /** Custom surface renderers keyed by mode. */
   modeRenderers?: Partial<Record<SurfaceMode, React.ComponentType<CustomSurfaceProps>>>;
   /** Full custom renderer — replaces the default surface entirely. */
@@ -276,15 +275,20 @@ export function DocumentSurface({
   modeRenderers,
   customRenderer: CustomRenderer,
 }: DocumentSurfaceProps) {
-  // Resolve document type
-  const entry: DocumentSurfaceEntry | undefined = useMemo(() => {
+  // Resolve contribution from the unified language registry
+  const contribution:
+    | LanguageContribution<unknown, Extension>
+    | undefined = useMemo(() => {
     if (!registry) return undefined;
-    return registry.resolve(filePath, documentType);
+    const options: { id?: string; filename?: string } = {};
+    if (documentType) options.id = documentType;
+    if (filePath) options.filename = filePath;
+    return registry.resolve(options);
   }, [registry, filePath, documentType]);
 
-  const contribution: DocumentContributionDef | undefined = entry?.contribution;
-  const availableModes = contribution?.availableModes ?? (["code"] as SurfaceMode[]);
-  const defaultMode = contribution?.defaultMode ?? "code";
+  const availableModes =
+    contribution?.surface.availableModes ?? (["code"] as SurfaceMode[]);
+  const defaultMode = contribution?.surface.defaultMode ?? "code";
 
   // Mode state
   const [internalMode, setInternalMode] = useState<SurfaceMode>(forcedMode ?? defaultMode);
@@ -292,8 +296,8 @@ export function DocumentSurface({
 
   // Collect all inline tokens (contribution + extra)
   const allTokens = useMemo((): InlineTokenDef[] => {
-    return [...(contribution?.inlineTokens ?? []), ...extraTokens];
-  }, [contribution?.inlineTokens, extraTokens]);
+    return [...(contribution?.surface.inlineTokens ?? []), ...extraTokens];
+  }, [contribution?.surface.inlineTokens, extraTokens]);
 
   // Build CodeMirror extensions for code/preview modes
   const cmExtensions = useMemo((): Extension[] => {
@@ -355,6 +359,7 @@ export function DocumentSurface({
           onModeChange={handleModeChange}
         />
       )}
+
 
       <div style={{ flex: 1, minHeight: 0 }}>
         {/* Full custom renderer — override for this document type */}

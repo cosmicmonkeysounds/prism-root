@@ -49,63 +49,6 @@ export {
   toScreamingSnakeIdent,
 } from "./case-utils.js";
 
-// ── Codegen Pipeline ──────────────────────────────────────────────────────
-export type {
-  EmittedFile,
-  CodegenMeta,
-  CodegenResult,
-  Emitter,
-} from "./codegen/index.js";
-export { SourceBuilder } from "./codegen/index.js";
-export { CodegenPipeline } from "./codegen/index.js";
-export type { SymbolKind, SymbolParam, SymbolDef } from "./codegen/index.js";
-export { constantNamespace, fnSymbol } from "./codegen/index.js";
-export type { NameTransform } from "./codegen/index.js";
-export {
-  SymbolEmitter,
-  SymbolTypeScriptEmitter,
-  SymbolCSharpEmitter,
-  SymbolEmmyDocEmitter,
-  SymbolGDScriptEmitter,
-  tsNameTransform,
-  csNameTransform,
-} from "./codegen/index.js";
-export { TextEmitter } from "./codegen/index.js";
-
-// ── Language Registry ─────────────────────────────────────────────────────
-export type {
-  ProcessorDiagnostic,
-  ProcessorContext,
-  SyntaxPlugin,
-  LanguageDefinition,
-  PipelineResult,
-  ParseOptions,
-} from "./language-registry.js";
-export { LanguageRegistry, Processor } from "./language-registry.js";
-
-// ── Document Surface Types ───────────────────────────────────────────────
-export type {
-  SurfaceMode,
-  InlineTokenDef,
-  DocumentContributionDef,
-  DocumentSurfaceEntry,
-} from "./document-types.js";
-export {
-  DocumentSurfaceRegistry,
-  createDocumentSurfaceRegistry,
-  InlineTokenBuilder,
-  inlineToken,
-  DocumentSurfaceBuilder,
-  documentSurfaceBuilder,
-  MARKDOWN_CONTRIBUTION,
-  YAML_CONTRIBUTION,
-  JSON_CONTRIBUTION,
-  PLAINTEXT_CONTRIBUTION,
-  HTML_CONTRIBUTION,
-  CSV_CONTRIBUTION,
-  SVG_CONTRIBUTION,
-  WIKILINK_TOKEN,
-} from "./document-types.js";
 
 // ── Spell Check Types ─────────────────────────────────────────────────────
 export type {

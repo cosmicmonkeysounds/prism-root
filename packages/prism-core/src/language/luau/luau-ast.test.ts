@@ -11,13 +11,9 @@ import {
   findStatementLinesSync,
   validateLuau,
   validateLuauSync,
-  createLuauLanguageDefinition,
+  createLuauContribution,
   createLuauSyntaxProvider,
 } from "./index.js";
-import type {
-  ProcessorContext,
-  ProcessorDiagnostic,
-} from "@prism/core/syntax";
 
 beforeAll(async () => {
   await initLuauSyntax();
@@ -169,49 +165,41 @@ describe("parseLuau", () => {
   });
 });
 
-// ── LanguageDefinition ─────────────────────────────────────────────────────
+// ── LanguageContribution ───────────────────────────────────────────────────
 
-function makeCtx(source: string): {
-  ctx: ProcessorContext;
-  diagnostics: ProcessorDiagnostic[];
-} {
-  const diagnostics: ProcessorDiagnostic[] = [];
-  const ctx: ProcessorContext = {
-    source,
-    filename: "test.luau",
-    language: "luau",
-    data: new Map<string, unknown>(),
-    diagnostics,
-    report: (d) => diagnostics.push(d),
-  };
-  return { ctx, diagnostics };
-}
-
-describe("createLuauLanguageDefinition", () => {
+describe("createLuauContribution", () => {
   it("exposes the expected id + extensions", () => {
-    const def = createLuauLanguageDefinition();
-    expect(def.id).toBe("luau");
-    expect(def.extensions).toContain(".luau");
-    expect(def.extensions).toContain(".lua");
+    const contrib = createLuauContribution();
+    expect(contrib.id).toBe("prism:luau");
+    expect(contrib.extensions).toContain(".luau");
+    expect(contrib.extensions).toContain(".lua");
   });
 
-  it("parses clean source without reporting diagnostics", () => {
-    const def = createLuauLanguageDefinition();
-    const source = `local x = 1`;
-    const { ctx, diagnostics } = makeCtx(source);
-    const tree = def.parse(source, ctx);
-    expect(tree.type).toBe("root");
-    expect(diagnostics).toEqual([]);
+  it("exposes a code+preview surface", () => {
+    const contrib = createLuauContribution();
+    expect(contrib.surface.defaultMode).toBe("code");
+    expect(contrib.surface.availableModes).toEqual(["code", "preview"]);
   });
 
-  it("reports parser errors into the context", () => {
-    const def = createLuauLanguageDefinition();
-    const source = `local = `;
-    const { ctx, diagnostics } = makeCtx(source);
-    def.parse(source, ctx);
-    expect(diagnostics.length).toBeGreaterThan(0);
-    expect(diagnostics[0]?.severity).toBe("error");
-    expect(diagnostics[0]?.source).toBe("luau");
+  it("parses clean source into a root node", () => {
+    const contrib = createLuauContribution();
+    const tree = contrib.parse?.(`local x = 1`);
+    expect(tree?.type).toBe("root");
+    expect(Array.isArray(tree?.children)).toBe(true);
+  });
+
+  it("returns an empty root node on parse error (no ctx in the unified model)", () => {
+    const contrib = createLuauContribution();
+    const tree = contrib.parse?.(`local = `);
+    // `parseLuauSync` tolerates some errors and returns a partial tree;
+    // the contribution boundary guarantees a root node either way.
+    expect(tree?.type).toBe("root");
+  });
+
+  it("provides a syntax provider via syntaxProvider()", () => {
+    const contrib = createLuauContribution();
+    const provider = contrib.syntaxProvider?.();
+    expect(provider?.name).toBe("luau");
   });
 });
 

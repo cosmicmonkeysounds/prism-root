@@ -1,6 +1,7 @@
 /**
  * Luau — one directory for parsing, runtime, debugging, and language
- * integration. Folded per ADR-002 §A4 / Phase 2.
+ * integration. Folded per ADR-002 §A4 / Phase 2 and unified with the
+ * surface registry in Phase 4.
  *
  * Usage:
  *
@@ -8,7 +9,7 @@
  * import {
  *   initLuauSyntax,
  *   findUiCalls,
- *   createLuauLanguageDefinition,
+ *   createLuauContribution,
  *   createLuauEngine,
  *   createLuauDebugger,
  * } from "@prism/core/luau";
@@ -19,8 +20,8 @@
  * // From panels / debugger (async):
  * const result = await findUiCalls(source);
  *
- * // From the language registry (sync, post-init):
- * registry.register(createLuauLanguageDefinition());
+ * // From the unified language registry (sync, post-init):
+ * registry.register(createLuauContribution());
  * ```
  */
 
@@ -52,11 +53,11 @@ export {
   validateLuauSync,
 } from "./luau-ast.js";
 
-// ── LanguageDefinition + SyntaxProvider ──────────────────────────────────────
+// ── LanguageContribution + SyntaxProvider ────────────────────────────────────
 export {
-  createLuauLanguageDefinition,
+  createLuauContribution,
   getLuauParserModule,
-} from "./luau-language.js";
+} from "./contribution.js";
 export { createLuauSyntaxProvider } from "./luau-provider.js";
 
 // ── Convenience initializer ──────────────────────────────────────────────────
@@ -65,8 +66,8 @@ import { ensureLuauParserLoaded } from "./wasm-loader.js";
 
 /**
  * Initialise the Luau parser. Call once at kernel startup before registering
- * `createLuauLanguageDefinition()` on a `LanguageRegistry` or invoking any
- * of the sync helpers (`parseLuauSync`, `findUiCallsSync`, etc).
+ * `createLuauContribution()` on a `LanguageRegistry` or invoking any of the
+ * sync helpers (`parseLuauSync`, `findUiCallsSync`, etc).
  *
  * Idempotent — subsequent calls return the same cached promise.
  */

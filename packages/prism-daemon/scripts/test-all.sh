@@ -120,7 +120,7 @@ if [ "$SKIP_MOBILE" = "0" ]; then
     if [ "$(uname -s)" = "Darwin" ]; then
         hr "ios xcframework (release)"
         "$SCRIPT_DIR/build-ios.sh"
-        XCF="$DAEMON_DIR/../prism-capacitor-daemon/ios/Frameworks/PrismDaemon.xcframework"
+        XCF="$DAEMON_DIR/mobile/ios/Frameworks/PrismDaemon.xcframework"
         IOS_LIB="$XCF/ios-arm64/libprism_daemon.a"
         [ -f "$IOS_LIB" ] || err "missing iOS device slice: $IOS_LIB"
         for sym in _prism_daemon_create _prism_daemon_destroy _prism_daemon_invoke _prism_daemon_free_string; do
@@ -135,7 +135,7 @@ if [ "$SKIP_MOBILE" = "0" ]; then
     # ── 7. Android cross-compile + symbol check ────────────────────────
     hr "android cdylibs (debug)"
     "$SCRIPT_DIR/build-android.sh" debug
-    JNI_DIR="$DAEMON_DIR/../prism-capacitor-daemon/android/src/main/jniLibs"
+    JNI_DIR="$DAEMON_DIR/mobile/android/src/main/jniLibs"
     for abi in arm64-v8a armeabi-v7a x86_64; do
         SO="$JNI_DIR/$abi/libprism_daemon.so"
         [ -f "$SO" ] || err "missing Android slice: $SO"

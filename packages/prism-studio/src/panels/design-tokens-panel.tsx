@@ -15,7 +15,7 @@ import { defineLensBundle, type LensBundle } from "../lenses/bundle.js";
 import {
   tokensToCss,
   type DesignTokenBundle,
-} from "../kernel/design-tokens.js";
+} from "@prism/core/design-tokens";
 
 const panelStyle: CSSProperties = {
   height: "100%",

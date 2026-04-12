@@ -24,11 +24,13 @@ paradigm, ported to Rust:
 - `src/initializer.rs` — `DaemonInitializer` trait + `InitializerHandle` for
   post-boot side effects. Torn down in reverse order on `dispose()`.
 - `src/builder.rs` — `DaemonBuilder`: fluent `with_crdt/with_luau/with_build/
-  with_watcher/with_vfs/with_crypto/with_module/with_initializer/with_defaults/
-  build`. Equivalent of `createStudioKernel({ lensBundles, initializers })`.
+  with_watcher/with_vfs/with_crypto/with_actors/with_whisper/with_conferencing/
+  with_module/with_initializer/with_defaults/build`. Equivalent of
+  `createStudioKernel({ lensBundles, initializers })`.
 - `src/kernel.rs` — `DaemonKernel`: the assembled runtime. Cheaply cloneable
   (Arc interior). Exposes `invoke`, `capabilities`, `installed_modules`,
-  `doc_manager`, `watcher_manager`, `vfs_manager`, `dispose`.
+  `doc_manager`, `watcher_manager`, `vfs_manager`, `actors_manager`,
+  `whisper_manager`, `conferencing_manager`, `dispose`.
 - `src/doc_manager.rs` — Loro-backed CRDT service. Injectable via
   `builder.set_doc_manager(...)` so hosts can preload docs from disk.
 - `src/modules/` — built-in modules, each behind a feature flag:
@@ -37,16 +39,46 @@ paradigm, ported to Rust:
   - `build_module.rs` → `prism.build` → `build.run_step` (+ `BuildStep`,
     `BuildStepOutput`, `run_build_step` kept as free fn for hot paths)
   - `watcher_module.rs` → `prism.watcher` → `watcher.{watch,poll,stop}`
-  - `vfs_module.rs` → `prism.vfs` → `vfs.{put,get,has,delete,list,stats}` —
-    content-addressed blob store (SHA-256 keys, atomic write-temp+rename).
-    Hosts inject a `VfsManager` rooted at the app data dir via
-    `builder.set_vfs_manager(...)`; the module lazily creates one under
-    the OS temp dir if no host plugged one in.
+  - `vfs_module.rs` + `vfs_module/s3.rs` → `prism.vfs` →
+    `vfs.{put,get,has,delete,list,stats}` — content-addressed blob store
+    (SHA-256 keys, atomic write-temp+rename) layered over a pluggable
+    `VfsBackend` trait. The default `LocalVfsBackend` writes to disk;
+    `InMemoryVfsBackend` is a test fixture; `S3VfsBackend` (feature
+    `vfs-s3`) and `GcsVfsBackend` (feature `vfs-gcs`) talk to S3 / GCS via
+    a hand-rolled SigV4 signer over a blocking `ureq` HTTP transport (no
+    tokio runtime in the kernel hot path). Hosts inject a `VfsManager`
+    via `builder.set_vfs_manager(...)`; the module lazily creates a
+    local-fs one if no host plugged one in.
   - `crypto_module.rs` → `prism.crypto` → `crypto.{keypair,derive_public,
     shared_secret,encrypt,decrypt,random_bytes}` — X25519 ECDH +
     XChaCha20-Poly1305 AEAD + CSPRNG. Pure-Rust RustCrypto (no libsodium-sys)
     so iOS/Android/emscripten all compile without a C toolchain dep. Every
     byte field on the wire is lowercase hex.
+  - `actors_module.rs` → `prism.actors` → `actors.{spawn,send,recv,status,
+    list,stop}` — sandboxed Luau actor pool, thread-per-actor with
+    inbox/outbox mailboxes. First supported actor kind is a Luau script;
+    `python` / `llm_sidecar` kinds will land later behind their own
+    sub-features. Depends on `luau`.
+  - `whisper_module.rs` → `prism.whisper` → `whisper.{load_model,
+    unload_model,list_models,transcribe_pcm,transcribe_file}` — local-first
+    speech-to-text via `whisper-rs` (whisper.cpp + GGML built from source).
+    PCM input must be mono f32 @ 16 kHz; `transcribe_file` decodes WAV via
+    `hound` and downmixes/converts as needed. Returns `TranscriptSegment {
+    start_ms, end_ms, text }`. Desktop-only — `whisper-rs-sys`'s build
+    script invokes CMake, so the host needs `cmake` on PATH. Excluded from
+    `full`/`mobile`/`wasm`/`embedded`; opt in with
+    `cargo build --features whisper`.
+  - `conferencing_module.rs` → `prism.conferencing` → `conferencing.{
+    create_peer,create_data_channel,create_offer,create_answer,
+    set_local_description,set_remote_description,local_description,
+    add_ice_candidate,send_data,recv_data,peer_state,list_peers,
+    close_peer}` — pure-Rust WebRTC peer connections + data channels via
+    the `webrtc` crate. `ConferencingManager` owns its own multi-threaded
+    tokio runtime and `block_on`s into async webrtc from each sync command
+    handler so the kernel boundary stays sync. Per-peer DataChannel index
+    keyed by label, shared inbox keeps inbound messages drainable through
+    `recv_data`. Desktop-only because the `webrtc` crate links a network
+    stack the mobile/wasm/embedded targets cannot carry.
 - `src/bin/prism_daemond.rs` — standalone stdio JSON daemon binary. Proves
   the kernel runs detached from Tauri. Gated on the `cli` feature.
 - `src/wasm.rs` — C-ABI adapter for the browser. Gated on the `wasm`
@@ -57,16 +89,26 @@ paradigm, ported to Rust:
   `wasm32-unknown-unknown` glue. One real Luau everywhere.
 
 ## Feature Flags
-| Feature    | Pulls in                                    | Why                                            |
-|------------|---------------------------------------------|------------------------------------------------|
-| `full`     | everything (default)                        | Desktop/server                                 |
-| `mobile`   | crdt + luau + vfs + crypto                  | iOS bans process spawning; no notify; still needs E2EE + blob store |
-| `embedded` | crdt                                        | Minimum viable kernel (ESP32-class)            |
-| `wasm`     | crdt + luau + vfs + crypto + C-ABI          | Browser (emscripten); no notify, no spawn      |
+| Feature        | Pulls in                                    | Why                                            |
+|----------------|---------------------------------------------|------------------------------------------------|
+| `full`         | crdt + luau + build + watcher + vfs + crypto + actors + cli (default) | Desktop/server                                 |
+| `mobile`       | crdt + luau + vfs + crypto + actors         | iOS bans process spawning; no notify; still needs E2EE + blob store + on-device sidecars |
+| `embedded`     | crdt                                        | Minimum viable kernel (ESP32-class)            |
+| `wasm`         | crdt + luau + vfs + crypto + C-ABI          | Browser (emscripten); no notify, no spawn      |
+| `whisper`        | strictly opt-in                             | whisper.cpp via `whisper-rs` — needs `cmake` on PATH; desktop only |
+| `conferencing`   | strictly opt-in                             | `webrtc` crate + tokio bridge; desktop only    |
+| `vfs-s3`         | vfs + ureq                                  | S3-compatible blob store backend (SigV4)       |
+| `vfs-gcs`        | vfs + ureq                                  | GCS blob store via S3-interop endpoint         |
+| `transport-http` | axum + tokio + tower                        | HTTP adapter: `POST /invoke/:command`          |
+| `transport-grpc` | tonic + prost + tokio                       | gRPC adapter: hand-rolled `DaemonService/Invoke` |
+| `transport-uniffi` | uniffi                                    | Typed Swift/Kotlin bindings                    |
 
 Mobile/embedded/wasm builds don't contain the code they can't run.
 Individual capabilities: `crdt`, `luau`, `build`, `watcher`, `vfs`,
-`crypto`, `cli`.
+`crypto`, `actors`, `cli`. Strictly opt-in (not in any preset):
+`whisper` (needs `cmake` on PATH for the whisper.cpp build), `conferencing`
+(pulls the `webrtc` crate's network stack — desktop only), `vfs-s3`,
+`vfs-gcs`, `transport-http`, `transport-grpc`, `transport-uniffi`.
 
 ## Transport-Agnostic
 `kernel.invoke(name, payload)` is the single entry point. Transport adapters
@@ -82,8 +124,19 @@ are thin wrappers:
   Cross-compile to `wasm32-unknown-emscripten`; emscripten produces
   `prism_daemon.wasm` + a `prism_daemon.js` loader; JS calls
   `Module.ccall('prism_daemon_invoke', ...)`.
-- **Mobile / HTTP / gRPC**: follow the same pattern — build the kernel, wrap
-  `invoke()` in whatever the platform expects.
+- **HTTP (axum)**: `src/transport/http_axum.rs` — `POST /invoke/:command`,
+  `GET /capabilities`, `GET /healthz`. Feature `transport-http`. Sync
+  kernel.invoke is run on the blocking pool via `spawn_blocking`.
+- **gRPC (tonic)**: `src/transport/grpc_tonic.rs` — hand-rolled tonic 0.12
+  server (no `tonic-build`, no `protoc`). Single unary RPC
+  `prism.daemon.DaemonService/Invoke` carrying JSON-as-bytes. Feature
+  `transport-grpc`.
+- **UniFFI**: `src/transport/uniffi_bridge.rs` — typed Swift/Kotlin
+  bindings via `uniffi` proc macros. Feature `transport-uniffi`.
+  `PrismDaemonHandle` object with `.invoke(command, payloadJson)`,
+  `.capabilities()`, `.installedModules()`, `.dispose()`.
+- **Mobile C-ABI**: Capacitor staticlib, same as browser — build the
+  kernel, wrap `invoke()` in whatever the platform expects.
 
 ## Adding a New Capability
 1. Create `src/modules/my_module.rs` with a struct impl'ing `DaemonModule`.
@@ -94,9 +147,16 @@ are thin wrappers:
    `kernel.invoke()` roundtrip.
 
 ## Tests
-- **60 unit tests** across registry + modules (default feature set): 7
-  registry, 4 crdt, 4 luau, 11 build, 5 watcher, 13 vfs, 14 crypto,
-  plus doc-manager internals.
+- **72 unit tests** across registry + modules (default feature set): 7
+  registry, 4 crdt, 4 luau, 11 build, 5 watcher, 13 vfs, 14 crypto, 10
+  actors, plus doc-manager internals.
+- **107 unit tests** with all new features on (`--features vfs-s3,vfs-gcs,
+  transport-http,transport-grpc,transport-uniffi`): 72 default + 17 s3 +
+  5 http + 7 grpc + 6 uniffi.
+- **79 unit tests under `--features conferencing`** — same as default plus
+  7 conferencing tests covering peer creation, data channel setup, the
+  full SDP offer/answer handshake driven through `kernel.invoke()`, and
+  inbound message draining via `recv_data`.
 - **50 unit tests under `--features wasm --lib`** — subset that excludes
   notify/process modules, plus the 6 `src/wasm.rs` tests that drive the
   C ABI from the host so the create/invoke/free/destroy ownership dance
@@ -104,6 +164,10 @@ are thin wrappers:
 - **50 unit tests under `--features mobile`** — same subset as wasm but
   without the C ABI layer.
 - **11 unit tests under `--features embedded`** — registry + CRDT only.
+- **`--features whisper`** — 7 whisper tests (command registration,
+  sample-rate validation, unknown-model errors, manager pure-API
+  surface). Compile + run requires `cmake` on PATH; not part of any
+  preset, opt in explicitly.
 - **9 integration tests** in `tests/kernel_integration.rs` covering
   builder composition, custom modules, initializer ordering, kernel
   clone/share, dispose lifecycle, plus VFS and crypto end-to-end
@@ -128,9 +192,9 @@ build + C ABI symbol check. Skips compose: `--skip-mobile`, `--skip-e2e`,
 
 ### Mobile FFI sanity check
 `scripts/build-ios.sh` produces an xcframework at
-`packages/prism-capacitor-daemon/ios/Frameworks/PrismDaemon.xcframework`
+`packages/prism-daemon/mobile/ios/Frameworks/PrismDaemon.xcframework`
 with device + simulator slices; `scripts/build-android.sh` produces
 per-ABI `libprism_daemon.so` files under
-`packages/prism-capacitor-daemon/android/src/main/jniLibs/<abi>/`. Both
+`packages/prism-daemon/mobile/android/src/main/jniLibs/<abi>/`. Both
 scripts are symbol-checked (`_prism_daemon_{create,destroy,invoke,
 free_string}`) by the runner.

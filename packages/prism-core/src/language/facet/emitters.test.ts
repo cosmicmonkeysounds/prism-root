@@ -20,7 +20,7 @@ import type {
   SchemaInterface,
   SchemaEnum,
 } from './emitters.js';
-import type { CodegenMeta } from '@prism/core/syntax';
+import type { CodegenMeta } from '@prism/core/codegen';
 
 // ---------------------------------------------------------------------------
 // Fixtures

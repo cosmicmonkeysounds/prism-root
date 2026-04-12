@@ -8,11 +8,10 @@
  * completions, hover), the editor surface (mode + inline tokens +
  * renderers), and any optional codegen emitters.
  *
- * Phase 1 of the ADR introduces this type additively alongside the
- * existing registries. Phase 4 collapses the old registries into a
- * single `LanguageRegistry.register(contribution)` and retires the
- * compatibility bridge in `./compat.ts`. Until then, existing callers
- * keep using `LanguageDefinition` + `DocumentContributionDef` unchanged.
+ * Every built-in language (`luau`, `markdown`, `yaml`, `json`, `html`,
+ * `csv`, `svg`, `plaintext`) and every plugin-contributed format is
+ * registered on the same `LanguageRegistry` via this record. See
+ * `./language-registry.ts`.
  *
  * ## Generic type parameters
  *
@@ -28,13 +27,9 @@
  *                        elsewhere).
  */
 
-import type { Emitter } from "@prism/core/syntax";
-import type {
-  RootNode,
-  SyntaxProvider,
-  SurfaceMode,
-  InlineTokenDef,
-} from "@prism/core/syntax";
+import type { Emitter } from "@prism/core/codegen";
+import type { RootNode, SyntaxProvider } from "@prism/core/syntax";
+import type { SurfaceMode, InlineTokenDef } from "./surface-types.js";
 
 // ── Surface ─────────────────────────────────────────────────────────────────
 

@@ -60,6 +60,19 @@ pub mod module;
 pub mod modules;
 pub mod registry;
 
+#[cfg(any(
+    feature = "transport-http",
+    feature = "transport-grpc",
+    feature = "transport-uniffi"
+))]
+pub mod transport;
+
+// UniFFI requires its `UniFfiTag` marker to be visible from the crate
+// root, so the scaffolding macro lives here even though every other
+// piece of the bridge is in `transport::uniffi_bridge`.
+#[cfg(feature = "transport-uniffi")]
+uniffi::setup_scaffolding!();
+
 #[cfg(feature = "crdt")]
 pub mod doc_manager;
 
@@ -87,6 +100,9 @@ pub use doc_manager::DocManager;
 
 #[cfg(feature = "vfs")]
 pub use modules::vfs_module::{VfsEntry, VfsManager, VfsStats};
+
+#[cfg(feature = "actors")]
+pub use modules::actors_module::{ActorKind, ActorMessage, ActorStatus, ActorsManager};
 
 // ── Daemon-level error surface ─────────────────────────────────────────
 //

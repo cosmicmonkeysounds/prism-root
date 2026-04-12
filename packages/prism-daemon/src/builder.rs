@@ -33,6 +33,15 @@ use crate::modules::watcher_module::WatcherManager;
 #[cfg(feature = "vfs")]
 use crate::modules::vfs_module::VfsManager;
 
+#[cfg(feature = "actors")]
+use crate::modules::actors_module::ActorsManager;
+
+#[cfg(feature = "whisper")]
+use crate::modules::whisper_module::WhisperManager;
+
+#[cfg(feature = "conferencing")]
+use crate::modules::conferencing_module::ConferencingManager;
+
 /// Assembles a [`DaemonKernel`] by plugging modules + initializers into a
 /// shared [`CommandRegistry`].
 pub struct DaemonBuilder {
@@ -64,6 +73,26 @@ pub struct DaemonBuilder {
     /// dir that the module defaults to.
     #[cfg(feature = "vfs")]
     pub(crate) vfs_manager: Option<Arc<VfsManager>>,
+
+    /// Optional shared actors pool. Hosts rarely need to inject their
+    /// own — it only matters if multiple transport adapters must share
+    /// the exact same pool (e.g. HTTP + Tauri pointed at the same
+    /// kernel).
+    #[cfg(feature = "actors")]
+    pub(crate) actors_manager: Option<Arc<ActorsManager>>,
+
+    /// Optional shared whisper.cpp model pool. Hosts may pre-load a
+    /// flagship model from the asset directory before any module
+    /// installs so the first transcription doesn't pay the model load
+    /// cost on the request thread.
+    #[cfg(feature = "whisper")]
+    pub(crate) whisper_manager: Option<Arc<WhisperManager>>,
+
+    /// Optional shared conferencing/WebRTC manager. Same rationale as
+    /// `actors_manager` — only matters when multiple transport adapters
+    /// must drive the same pool of peer connections.
+    #[cfg(feature = "conferencing")]
+    pub(crate) conferencing_manager: Option<Arc<ConferencingManager>>,
 }
 
 impl Default for DaemonBuilder {
@@ -88,6 +117,12 @@ impl DaemonBuilder {
             watcher_manager: None,
             #[cfg(feature = "vfs")]
             vfs_manager: None,
+            #[cfg(feature = "actors")]
+            actors_manager: None,
+            #[cfg(feature = "whisper")]
+            whisper_manager: None,
+            #[cfg(feature = "conferencing")]
+            conferencing_manager: None,
         }
     }
 
@@ -141,6 +176,45 @@ impl DaemonBuilder {
     #[cfg(feature = "vfs")]
     pub fn vfs_manager_slot(&mut self) -> &mut Option<Arc<VfsManager>> {
         &mut self.vfs_manager
+    }
+
+    /// Set/override the shared actors pool.
+    #[cfg(feature = "actors")]
+    pub fn set_actors_manager(&mut self, am: Arc<ActorsManager>) -> &mut Self {
+        self.actors_manager = Some(am);
+        self
+    }
+
+    /// Current actors pool slot.
+    #[cfg(feature = "actors")]
+    pub fn actors_manager_slot(&mut self) -> &mut Option<Arc<ActorsManager>> {
+        &mut self.actors_manager
+    }
+
+    /// Set/override the shared whisper.cpp model pool.
+    #[cfg(feature = "whisper")]
+    pub fn set_whisper_manager(&mut self, wm: Arc<WhisperManager>) -> &mut Self {
+        self.whisper_manager = Some(wm);
+        self
+    }
+
+    /// Current whisper.cpp model pool slot.
+    #[cfg(feature = "whisper")]
+    pub fn whisper_manager_slot(&mut self) -> &mut Option<Arc<WhisperManager>> {
+        &mut self.whisper_manager
+    }
+
+    /// Set/override the shared WebRTC conferencing manager.
+    #[cfg(feature = "conferencing")]
+    pub fn set_conferencing_manager(&mut self, cm: Arc<ConferencingManager>) -> &mut Self {
+        self.conferencing_manager = Some(cm);
+        self
+    }
+
+    /// Current WebRTC conferencing manager slot.
+    #[cfg(feature = "conferencing")]
+    pub fn conferencing_manager_slot(&mut self) -> &mut Option<Arc<ConferencingManager>> {
+        &mut self.conferencing_manager
     }
 
     // ── Generic extension points ─────────────────────────────────────────
@@ -227,6 +301,37 @@ impl DaemonBuilder {
         self.with_module(crate::modules::crypto_module::CryptoModule)
     }
 
+    /// Install the actors module (sandboxed Luau actor pool):
+    /// `actors.spawn`, `actors.send`, `actors.recv`, `actors.status`,
+    /// `actors.list`, `actors.stop`.
+    #[cfg(feature = "actors")]
+    pub fn with_actors(self) -> Self {
+        self.with_module(crate::modules::actors_module::ActorsModule)
+    }
+
+    /// Install the whisper.cpp STT module: `whisper.load_model`,
+    /// `whisper.unload_model`, `whisper.list_models`,
+    /// `whisper.transcribe_pcm`, `whisper.transcribe_file`. Desktop-only —
+    /// the underlying `whisper-rs` build script needs CMake on PATH.
+    #[cfg(feature = "whisper")]
+    pub fn with_whisper(self) -> Self {
+        self.with_module(crate::modules::whisper_module::WhisperModule)
+    }
+
+    /// Install the WebRTC conferencing module:
+    /// `conferencing.create_peer`, `conferencing.create_data_channel`,
+    /// `conferencing.create_offer`, `conferencing.create_answer`,
+    /// `conferencing.set_local_description`,
+    /// `conferencing.set_remote_description`,
+    /// `conferencing.local_description`,
+    /// `conferencing.add_ice_candidate`, `conferencing.send_data`,
+    /// `conferencing.recv_data`, `conferencing.peer_state`,
+    /// `conferencing.list_peers`, `conferencing.close_peer`. Desktop-only.
+    #[cfg(feature = "conferencing")]
+    pub fn with_conferencing(self) -> Self {
+        self.with_module(crate::modules::conferencing_module::ConferencingModule)
+    }
+
     /// Install every built-in capability the current feature set allows.
     /// Equivalent to `createStudioKernel({ lensBundles: createBuiltinLensBundles() })`.
     pub fn with_defaults(mut self) -> Self {
@@ -254,6 +359,10 @@ impl DaemonBuilder {
         {
             self = self.with_crypto();
         }
+        #[cfg(feature = "actors")]
+        {
+            self = self.with_actors();
+        }
         self
     }
 
@@ -277,6 +386,12 @@ impl DaemonBuilder {
             watcher_manager,
             #[cfg(feature = "vfs")]
             vfs_manager,
+            #[cfg(feature = "actors")]
+            actors_manager,
+            #[cfg(feature = "whisper")]
+            whisper_manager,
+            #[cfg(feature = "conferencing")]
+            conferencing_manager,
         } = self;
 
         let kernel = DaemonKernel::new(
@@ -289,6 +404,12 @@ impl DaemonBuilder {
             watcher_manager,
             #[cfg(feature = "vfs")]
             vfs_manager,
+            #[cfg(feature = "actors")]
+            actors_manager,
+            #[cfg(feature = "whisper")]
+            whisper_manager,
+            #[cfg(feature = "conferencing")]
+            conferencing_manager,
         );
 
         // Run initializers. They may call kernel.invoke(...) freely.

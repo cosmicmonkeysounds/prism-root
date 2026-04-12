@@ -51,21 +51,6 @@ importers:
         specifier: ^2.1.0
         version: 2.1.9(@types/node@22.19.17)(jsdom@29.0.1)
 
-  packages/prism-capacitor-daemon:
-    devDependencies:
-      '@capacitor/android':
-        specifier: ^7.0.0
-        version: 7.6.1(@capacitor/core@7.6.1)
-      '@capacitor/core':
-        specifier: ^7.0.0
-        version: 7.6.1
-      '@capacitor/ios':
-        specifier: ^7.0.0
-        version: 7.6.1(@capacitor/core@7.6.1)
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
   packages/prism-core:
     dependencies:
       '@codemirror/autocomplete':
@@ -214,9 +199,6 @@ importers:
       '@measured/puck':
         specifier: ^0.19.0
         version: 0.19.3(@types/react@19.2.14)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(use-sync-external-store@1.6.0(react@19.2.4))
-      '@prism/capacitor-daemon':
-        specifier: workspace:*
-        version: link:../prism-capacitor-daemon
       '@prism/core':
         specifier: workspace:*
         version: link:../prism-core

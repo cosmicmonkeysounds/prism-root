@@ -45,8 +45,8 @@ import { createLiveView } from "@prism/core/view";
 import type { LiveView, LiveViewOptions } from "@prism/core/view";
 import type { ObjectTemplate, TemplateNode, InstantiateResult } from "@prism/core/template";
 import { createPageBuilderRegistry } from "./entities.js";
-import { createDesignTokenRegistry, DEFAULT_TOKENS } from "./design-tokens.js";
-import type { DesignTokenRegistry } from "./design-tokens.js";
+import { createDesignTokenRegistry, DEFAULT_TOKENS } from "@prism/core/design-tokens";
+import type { DesignTokenRegistry } from "@prism/core/design-tokens";
 import { createBuiltinBundles, installPluginBundles } from "@prism/core/plugin-bundles";
 import type { ComponentType } from "react";
 import type { StoreApi } from "zustand";
@@ -61,10 +61,10 @@ import type {
   LensBundle,
   ShellStore,
 } from "@prism/core/lens";
-import { createRelayManager } from "./relay-manager.js";
-import type { RelayManager } from "./relay-manager.js";
-import { createBuilderManager } from "./builder-manager.js";
-import type { BuilderManager } from "./builder-manager.js";
+import { createRelayManager } from "@prism/core/relay-manager";
+import type { RelayManager } from "@prism/core/relay-manager";
+import { createBuilderManager } from "@prism/core/builder";
+import type { BuilderManager } from "@prism/core/builder";
 import { installInitializers } from "./initializer.js";
 import type { StudioInitializer } from "./initializer.js";
 import { ConfigRegistry, ConfigModel } from "@prism/core/config";

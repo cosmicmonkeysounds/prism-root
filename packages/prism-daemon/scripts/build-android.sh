@@ -5,7 +5,7 @@
 #
 # ## What this produces
 #
-#   packages/prism-capacitor-daemon/android/src/main/jniLibs/
+#   packages/prism-daemon/mobile/android/src/main/jniLibs/
 #     arm64-v8a/libprism_daemon.so    (physical arm64 devices)
 #     armeabi-v7a/libprism_daemon.so  (older 32-bit arm devices)
 #     x86_64/libprism_daemon.so       (Android Emulator on Intel / AVD)
@@ -42,7 +42,7 @@ esac
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DAEMON_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-PLUGIN_JNI="$(cd "$DAEMON_DIR/../prism-capacitor-daemon/android/src/main" && pwd)/jniLibs"
+PLUGIN_JNI="$DAEMON_DIR/mobile/android/src/main/jniLibs"
 
 log() { printf '\033[1;34m[build-android]\033[0m %s\n' "$*" >&2; }
 err() { printf '\033[1;31m[build-android]\033[0m %s\n' "$*" >&2; exit 1; }

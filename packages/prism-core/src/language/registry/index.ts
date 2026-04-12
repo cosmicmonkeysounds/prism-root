@@ -5,6 +5,10 @@ export type {
   LanguageCodegen,
 } from "./language-contribution.js";
 
-// ── Compat bridge (retired in Phase 4 per ADR-002) ──────────────────────────
-export type { ContributionResolveOptions } from "./compat.js";
-export { contributionFromLegacy, resolveContribution } from "./compat.js";
+// ── Surface types (shared by contributions + renderers) ────────────────────
+export type { SurfaceMode, InlineTokenDef } from "./surface-types.js";
+export { InlineTokenBuilder, inlineToken, WIKILINK_TOKEN } from "./surface-types.js";
+
+// ── Language Registry (replaces the legacy LanguageRegistry + DocumentSurfaceRegistry pair) ──
+export type { ResolveOptions } from "./language-registry.js";
+export { LanguageRegistry } from "./language-registry.js";

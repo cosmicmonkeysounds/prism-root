@@ -114,7 +114,7 @@ export async function validateLuau(source: string): Promise<Diagnostic[]> {
   return normalizeDiagnostics(raw, source);
 }
 
-// ── Sync accessors (post-init LanguageDefinition / SyntaxProvider) ──────────
+// ── Sync accessors (post-init LanguageContribution / SyntaxProvider) ──────────
 
 /** Sync variant of `parseLuau`. Requires `ensureLuauParserLoaded()` first. */
 export function parseLuauSync(source: string): RootNode {
