@@ -16,6 +16,13 @@
  */
 
 import { FieldLabel, type Field } from "@measured/puck";
+import {
+  FONT_OPTIONS,
+  findFontOption,
+  googleFontsHref,
+  type FontCategory,
+  type FontOption,
+} from "@prism/core/page-builder";
 import type { CSSProperties, ReactElement, ReactNode } from "react";
 
 // ── Shared look ─────────────────────────────────────────────────────────────
@@ -341,6 +348,118 @@ export function classNameField(opts: { label?: string; placeholder?: string } = 
           />
           <div style={{ ...mutedLabel, marginTop: 4 }}>
             Any Tailwind utility classes. Applied to the component root.
+          </div>
+        </div>,
+      );
+    },
+  };
+}
+
+// ── Font picker with live Google Fonts preview ─────────────────────────────
+
+/**
+ * Injects a Google Fonts `<link>` into `document.head` once per href. Safe to
+ * call repeatedly — tracked by the module-level `loadedFontHrefs` set — and a
+ * no-op when there is no `document` (vitest env) or when the font is not
+ * Google-hosted. Each option is loaded individually so the picker can render
+ * every dropdown row in its own face without a monster URL.
+ */
+const loadedFontHrefs = new Set<string>();
+function ensureGoogleFontLoaded(value: string): void {
+  if (typeof document === "undefined") return;
+  const opt = findFontOption(value);
+  if (!opt?.google) return;
+  const href = googleFontsHref([value]);
+  if (!href || loadedFontHrefs.has(href)) return;
+  const link = document.createElement("link");
+  link.rel = "stylesheet";
+  link.href = href;
+  link.setAttribute("data-prism-font", opt.label);
+  document.head.appendChild(link);
+  loadedFontHrefs.add(href);
+}
+
+const CATEGORY_LABELS: Record<FontCategory, string> = {
+  sans: "Sans-serif",
+  serif: "Serif",
+  mono: "Monospace",
+  display: "Display",
+};
+
+const CATEGORY_ORDER: readonly FontCategory[] = ["sans", "serif", "display", "mono"];
+
+function groupFontsByCategory(
+  opts: ReadonlyArray<FontOption>,
+): ReadonlyArray<{ category: FontCategory; options: FontOption[] }> {
+  const buckets = new Map<FontCategory, FontOption[]>();
+  for (const o of opts) {
+    const list = buckets.get(o.category) ?? [];
+    list.push(o);
+    buckets.set(o.category, list);
+  }
+  return CATEGORY_ORDER.filter((c) => buckets.has(c)).map((category) => ({
+    category,
+    options: buckets.get(category) ?? [],
+  }));
+}
+
+/**
+ * Native `<select>` grouped by font category. Each `<option>` is rendered in
+ * its own `font-family`, so the dropdown *is* the preview. Google-hosted
+ * faces are eagerly fetched on first render so the previews have something
+ * to render against.
+ */
+export function fontPickerField(opts: { label?: string; offline?: boolean } = {}): Field<string> {
+  const available = opts.offline ? FONT_OPTIONS.filter((o) => !o.google) : FONT_OPTIONS;
+  if (!opts.offline) {
+    for (const o of available) if (o.google) ensureGoogleFontLoaded(o.value);
+  }
+  const groups = groupFontsByCategory(available);
+  return {
+    type: "custom",
+    ...(opts.label !== undefined ? { label: opts.label } : {}),
+    render: ({ value, onChange, readOnly }): ReactElement => {
+      const current = typeof value === "string" ? value : "";
+      const resolved = findFontOption(current);
+      const previewFamily = resolved?.value ?? current ?? "inherit";
+      return withLabel(
+        opts.label,
+        readOnly,
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <select
+            value={resolved?.value ?? ""}
+            disabled={readOnly}
+            onChange={(e) => onChange(e.target.value)}
+            style={{ ...baseInput, fontFamily: previewFamily }}
+            aria-label={opts.label ?? "Font family"}
+          >
+            <option value="" style={{ fontFamily: "system-ui, sans-serif" }}>
+              — Default —
+            </option>
+            {groups.map((g) => (
+              <optgroup key={g.category} label={CATEGORY_LABELS[g.category]}>
+                {g.options.map((o) => (
+                  <option key={o.value} value={o.value} style={{ fontFamily: o.value }}>
+                    {o.label}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+          <div
+            style={{
+              padding: "8px 10px",
+              border: "1px dashed #cbd5e1",
+              borderRadius: 4,
+              background: "#f8fafc",
+              fontFamily: previewFamily,
+              fontSize: 16,
+              color: "#0f172a",
+              minHeight: 28,
+            }}
+            aria-hidden
+          >
+            The quick brown fox jumps over the lazy dog.
           </div>
         </div>,
       );

@@ -16,6 +16,7 @@
 
 import type { GraphObject, ObjectId } from "@prism/core/object-model";
 import { computeBlockStyle, extractBlockStyle, type BlockStyleData } from "./block-style.js";
+import { collectFontFamilies, googleFontsHref } from "./fonts.js";
 
 // ── JSON export ─────────────────────────────────────────────────────────────
 
@@ -236,12 +237,17 @@ export function exportPageToHtml(
   const d = (page.data ?? {}) as Record<string, unknown>;
   const title = escapeHtml(options.title ?? (d["title"] as string) ?? page.name ?? "Untitled");
   const css = options.inlineCss ?? DEFAULT_HTML_STYLES;
+  const fontFamilies = collectFontFamilies(node);
+  const fontHref = googleFontsHref(fontFamilies);
+  const fontLink = fontHref
+    ? `\n<link rel="preconnect" href="https://fonts.googleapis.com"/>\n<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>\n<link rel="stylesheet" href="${escapeAttr(fontHref)}"/>`
+    : "";
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>${title}</title>
+<title>${title}</title>${fontLink}
 <style>${css}</style>
 </head>
 <body>

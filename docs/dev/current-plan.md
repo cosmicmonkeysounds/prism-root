@@ -1,5 +1,167 @@
 # Current Plan
 
+## Universal Admin Kit — Puck-native admin panels for every runtime (Complete — 2026-04-13)
+
+Daemon, Relay, and Studio each had their own ad-hoc "admin" views. Unified them behind a single Puck-native package (`@prism/admin-kit`) so one editable dashboard can reflect any Prism runtime — in-process kernel, or remote HTTP relay — through a normalised `AdminSnapshot`.
+
+### What landed
+
+1. **New package `@prism/admin-kit`** — Puck widget library + data source abstraction.
+   - `types.ts`: `AdminDataSource` interface, `AdminSnapshot`/`HealthStatus`/`Metric`/`Service`/`ActivityItem`/`HealthLevel`, `emptySnapshot()` initial value.
+   - `admin-helpers.ts`: pure `formatUptime`/`formatBytes`/`formatMetricValue`/`formatRelativeTime`/`rollupHealth` + `HEALTH_COLORS` palette.
+   - `admin-context.tsx`: `AdminProvider` — wires a data source to a reactive snapshot via subscribe-path (if supported) or `setInterval` fallback. Exposes `useAdminContext()` + `useAdminSnapshot()`.
+   - `widgets/`: `SourceHeader`, `HealthBadge`, `MetricCard`, `MetricChart` (Recharts line/bar), `ServiceList`, `ActivityTail`, `UptimeCard` — each consumes `useAdminSnapshot()` and renders framework-free dark-theme CSS.
+   - `puck-config.tsx`: `createAdminPuckConfig()` registers every widget with `fields`/`defaultProps`/`render`, categorised into `summary`/`metrics`/`lists`. Mirrors layout-panel's `as unknown as Fields[string]` casting pattern.
+   - `default-layout.ts`: `createDefaultAdminLayout()` seeds a drag-ready dashboard (header + health + uptime + 5 metric cards + trend chart + service list + activity tail).
+   - Package exports: `.`, `./widgets`, `./data-sources`, `./puck`.
+
+2. **Two canonical data sources.**
+   - **`createKernelDataSource(kernel, opts)`** — projects a StudioKernel-shaped target (`store`/`notifications`/`relay`/`presence`/`bus`/optional `listFiles`) into an `AdminSnapshot`. Uses a structural `KernelAdminTarget` interface to avoid a studio→admin-kit cycle. `subscribe()` lazily attaches `PrismBus` listeners (`ObjectCreated`/`Updated`/`Deleted`/`EdgeCreated`/`EdgeDeleted`) + `NotificationStore.subscribe` + `RelayManager.subscribe`, pushing fresh snapshots; detaches on last listener leave. Ring-buffer activity feed (default 50), seeded from `NotificationStore.getAll()`.
+   - **`createRelayDataSource({url, fetch?, now?})`** — HTTP client for a running `@prism/relay` server. Parallel fetches `/api/health` + `/api/modules` + `/metrics`. Unreachable → `error` health + diagnostic detail; reachable → module list mapped to services, numeric metrics rolled up. Prometheus samples back-fill uptime/peers/connections when the JSON health endpoint omits them. Injectable `fetch` / `now` for tests.
+
+3. **Prometheus parser on top of `@prism/core/syntax`'s Scanner.**
+   - Per user directive: "any parsing should be done via Prism Syntax / Codegen". Rewrote `data-sources/prometheus-parse.ts` to use `Scanner`/`ScanError`/`isDigit`/`isIdentChar`/`isIdentStart`.
+   - Custom `isPromNameStart`/`isPromNameChar` predicates allow `:` in metric names. `scanSample` handles unlabelled + labelled samples, `scanLabels` state-machine handles `{k="v",...}` with quoted values, `scanNumberLiteral` special-cases Prometheus `+Inf`/`-Inf`/`NaN` tokens then delegates to `Scanner.scanNumber`. Line-level error recovery: a malformed line swallows its `ScanError` and continues at the next newline.
+   - `findSample(samples, name, filter?)` — helper for name + optional label filtering.
+
+4. **Studio integration — `adminLensBundle`.**
+   - New `panels/admin-panel.tsx`: `AdminPanel` component with a source picker dropdown (Kernel + each configured relay), `<AdminProvider>` wrapping `<Puck config={createAdminPuckConfig()} data={…} onChange={setData} />`. Data source is memoized per source id; cleanup via `dispose?.()` in effect cleanup; auto-reverts to Kernel when the selected relay disappears.
+   - Lens registered as `ADMIN_LENS_ID` with `Shift+A` keybinding, wired into `createBuiltinLensBundles()`.
+   - `@prism/admin-kit` added to `prism-studio/package.json` dependencies; tsconfig path alias + root `tsconfig.base.json` path alias + Vite regex aliases added for both `@prism/admin-kit` and `@prism/admin-kit/*`.
+
+### Test coverage
+
+- `packages/prism-admin-kit/src/admin-helpers.test.ts` (21 tests) — every formatter + `rollupHealth` + `HEALTH_COLORS`.
+- `packages/prism-admin-kit/src/data-sources/prometheus-parse.test.ts` (12 tests) — empty input, comments, unlabelled + labelled samples, colon metric names, signed/fractional values, `Inf`/`NaN`, malformed-line recovery, `findSample` name + label filtering.
+- `packages/prism-admin-kit/src/data-sources/relay-data-source.test.ts` (6 tests) — default + custom id/label, full snapshot composition, unreachable fallback, Prometheus back-fill, thrown-fetch graceful handling.
+- `packages/prism-admin-kit/src/data-sources/kernel-data-source.test.ts` (8 tests) — projection, service health inference, unread notification warn, bus-event activity capture, subscription cleanup, injected clock.
+- `packages/prism-admin-kit/src/puck-config.test.ts` (6 tests) — component registration, category grouping, defaultProps/render presence, default-layout shape + unique ids, only references registered components.
+- `packages/prism-studio/src/panels/admin-panel.test.ts` (5 tests) — lens manifest shape, bundle install into LensRegistry, real StudioKernel projection, streaming snapshots on mutation.
+
+### Status
+
+- `pnpm typecheck` — clean across all 7 packages (added admin-kit alongside existing 6)
+- `pnpm test` — **195 files / 3766 tests passing** (was 3708; +58 new)
+- `pnpm build` — Studio production bundle succeeds (includes admin-kit via Vite aliases)
+
+### Files touched
+
+- **New:**
+  - `packages/prism-admin-kit/package.json`, `tsconfig.json`
+  - `packages/prism-admin-kit/src/index.ts`, `types.ts`, `admin-helpers.ts`, `admin-helpers.test.ts`, `admin-context.tsx`, `puck-config.tsx`, `puck-config.test.ts`, `default-layout.ts`
+  - `packages/prism-admin-kit/src/widgets/{index.ts,styles.ts,source-header.tsx,health-badge.tsx,uptime-card.tsx,metric-card.tsx,metric-chart.tsx,service-list.tsx,activity-tail.tsx}`
+  - `packages/prism-admin-kit/src/data-sources/{index.ts,kernel-data-source.ts,kernel-data-source.test.ts,relay-data-source.ts,relay-data-source.test.ts,prometheus-parse.ts,prometheus-parse.test.ts}`
+  - `packages/prism-studio/src/panels/admin-panel.tsx`, `admin-panel.test.ts`
+- **Modified:**
+  - `packages/prism-studio/package.json` — add `@prism/admin-kit: workspace:*`
+  - `packages/prism-studio/tsconfig.json`, `vite.config.ts` — path + Vite aliases
+  - `packages/prism-studio/src/lenses/index.tsx` — register `adminLensBundle`
+  - `tsconfig.base.json` — workspace-wide `@prism/admin-kit` path alias
+
+## Puck builder — fonts, universal styling, page-native slots (Complete — 2026-04-13)
+
+Three gaps closed on the Layout Panel: font family was a free-form string, most widgets couldn't access the style-field spread (align/color/size/font), and sidebar/header/footer layout required dropping a `PageShell` block explicitly. Pages are now layout-aware as a first-class concept — no implicit wrapper.
+
+### What landed
+
+1. **Font picker with Google Fonts preview** — `@prism/core/page-builder` now re-exports a new `fonts.ts` module (`FONT_OPTIONS`, `findFontOption`, `isGoogleFontValue`, `googleFontsHref`, `collectFontFamilies`) covering 3 system stacks + 15 Google families with declared weights.
+   - `components/puck-custom-fields.tsx` adds `fontPickerField({ label? })`: a native grouped `<select>` where each `<option>` renders in its own font face, plus a dashed preview swatch below. At construction time it injects `<link rel="stylesheet">` tags into `document.head` for every Google family (idempotent via a module-level `loadedFontHrefs` set, guarded by `typeof document`).
+   - `layout-panel.tsx` `entityToPuckComponent()` routes any field with `id === "fontFamily"` to `fontPickerField`, so every text-bearing entity inherits the picker automatically.
+   - HTML export (`@prism/core/page-builder → page-export.ts`) walks the exported node tree with `collectFontFamilies()` and emits `<link rel="preconnect">` + `<link rel="stylesheet">` for every Google family used, wired in the `<head>` next to `<title>`.
+
+2. **Universal style fields on every Puck widget** — `layout-panel.tsx` adds `attachStyleFieldsInPlace(components)`, a single post-processing pass that merges `STYLE_FIELD_DEFS` into every component config that doesn't already expose `fontFamily` (i.e. every hand-rolled widget — kanban/list/table/chart/map/stat/badge/alert/progress/markdown/iframe/code/video/audio/tabs/popover/slide/form inputs/layout primitives).
+   - Each wrapped render funnel the original output through a `<div style={computeBlockStyle(extractBlockStyle(props))} className={props.className}>`. No-op when no style props are set (falls back to a fragment).
+   - Idempotent because entity-def-flow components (heading, text-block, shells, card, etc.) already include `fontFamily` via their `...STYLE_FIELD_DEFS` spread and are skipped.
+   - Cached style-field schema in `STYLE_PUCK_FIELDS_CACHE` so the Puck field construction doesn't rebuild per-component.
+
+3. **Page-native slots — no implicit PageShell** — the `page` entity now owns `layout`/`sidebarWidth`/`stickyHeader` directly and projects its `__slot`-tagged children into Puck's `root.props` via `PAGE_SLOTS = ["header", "sidebar", "footer"]`.
+   - `panels/layout-panel-data.ts`: `SHELL_SLOTS["page"] = PAGE_SLOTS`; `kernelToPuckData()` now copies non-`__slot` keys from `page.data` into `root.props` and fills each `PAGE_SLOTS` key with `buildPuckContent(pageId, slot, ...)`. `splitRootProps()` is the reverse partition used by `syncPuckToKernel`.
+   - `panels/layout-panel.tsx`: the Puck `root` config is built from `entityToPuckComponent(pageDef)` fields + `{type: "slot"}` fields for each `PAGE_SLOTS` entry. The root render reads `layout` off `root.props` and wraps the main flow in `PageShellRenderer` for `sidebar-left`/`sidebar-right`/`stacked`, falls through to the original flow container for `flow` (default).
+   - `kernel/entities.ts`: `pageDef.layout` enum is now `flow|stacked|sidebar-left|sidebar-right` (was `single|sidebar|full`), default `"flow"`; added `sidebarWidth` (int, default 240) and `stickyHeader` (bool, default true).
+   - `syncPuckToKernel` rewrites root handling: splits `rootProps` via `splitRootProps`, updates the page entity's `data` with the scalar keys (preserving any existing `__slot` tag), then diffs each slot's content array against existing `__slot`-tagged children. Added `kernel.store.getObject` to the `KernelSync` type.
+   - `@prism/puck-playground/playground-seed.ts`: `buildShellPage()` drops header/sidebar/footer children directly on the page with `__slot` tags (no `PageShell` wrapper); `pageRoot()` accepts an `extraData` bag for `{layout, sidebarWidth, stickyHeader}`.
+
+### Test coverage
+
+- `packages/prism-core/src/interaction/page-builder/fonts.test.ts` (new, 15 tests) — `FONT_OPTIONS` structure, `findFontOption` (exact stack / leading family / unknown / empty), `isGoogleFontValue`, `googleFontsHref` (empty / single / multi-dedup / `+` encoding for "Playfair Display"), `collectFontFamilies` (nested walk + dedup, ignores empty).
+- `packages/prism-studio/src/panels/layout-panel.test.ts` — added a `kernelToPuckData — page-level slot projection` describe block and a `splitRootProps` describe block covering scalar/slot partition, default empty arrays for missing slots, non-array coercion, and undefined input handling.
+
+### Status
+
+- `pnpm typecheck` — clean across all 6 packages
+- `pnpm test` — **189 files / 3708 tests passing** (was 3688)
+- No explicit `PageShell` block is needed to get a sidebar; the palette still offers `PageShell` for nested shells (site-header, hero, etc.)
+
+### Files touched
+- **New:** `packages/prism-core/src/interaction/page-builder/fonts.ts`, `fonts.test.ts`
+- **Modified:** `packages/prism-core/src/interaction/page-builder/index.ts`, `page-export.ts`; `packages/prism-studio/src/components/puck-custom-fields.tsx`; `packages/prism-studio/src/kernel/entities.ts`; `packages/prism-studio/src/panels/layout-panel.tsx`, `layout-panel-data.ts`, `layout-panel.test.ts`; `packages/prism-puck-playground/src/playground-seed.ts`
+
+## Puck builder — functional design pass (Complete — 2026-04-13)
+
+Functional design pass on the Layout Panel (`@prism/studio` → `panels/layout-panel.tsx`) to make the Puck visual builder productive end-to-end instead of just "technically wired up". Four concrete gaps closed: facets couldn't be created from inside the builder, media had no upload path, component palette was one flat list, and there was no at-a-glance context about which page you were editing.
+
+### What landed
+
+1. **VFS media URL scheme + resolver** — new `components/vfs-media-url.ts` bridges the pre-existing `vfs://<hash>` convention (written by `assets-panel.tsx` but never read) to DOM-consumable blob URLs.
+   - Exports `VFS_SCHEME`, `isVfsMediaUrl`, `parseVfsHash`, `buildVfsMediaUrl`, `isBrowserMediaUrl`, `resolveVfsMediaUrl`, `useResolvedMediaUrl`.
+   - Module-scoped `blobUrlCache: Map<hash, blobUrl>` — content-addressed hashes are immutable so the cache entry is safe forever. `__resetVfsMediaCache` exported for tests.
+   - `useResolvedMediaUrl` hook initializes synchronously for http/https/data/blob (no flash), only awaits for `vfs://`.
+   - Test file `vfs-media-url.test.ts` exercises the pure helpers + the async resolver against a real `createVfsManager` (stat cache hit on 2nd call verified).
+
+2. **`mediaUploadField` — VFS-integrated Puck custom field** — new `components/vfs-media-field.tsx`.
+   - Factory `mediaUploadField(kernel, { label?, accept? })` returns a Puck `Field<string>` that closes over the kernel. Render delegates to `<MediaUploadFieldInner>` where hooks are legal (Puck invokes render as a React component).
+   - Three input modes: **upload** (drag-drop or file picker → `kernel.importFile` → `vfs://<hash>`), **pick from vault** (filtered by MIME prefix via `kernel.listFiles` — same BinaryRef index the Assets panel uses), **paste URL** (http/https fallback for external assets).
+   - Success/failure feedback via `kernel.notifications.add()` — same toast queue every Studio action uses.
+   - `accept: "image" | "video" | "audio" | ""` drives both the filter and the native `<input accept="image/*">` attribute.
+   - Preview box resolves `vfs://` hashes via `useResolvedMediaUrl`, shows filename/MIME/size from `BinaryRef` for vault files.
+
+3. **`facetPickerField` — inline facet creator Puck custom field** — new `components/facet-picker-field.tsx`.
+   - Dropdown of `kernel.listFacetDefinitions()` + **New…** button that reveals an inline form capturing name / objectType / layout.
+   - Object-type suggestions come from `kernel.registry.allDefs()` filtered to non-workspace/non-section — authors can't target types that don't exist.
+   - Creates via `createFacetDefinition(id, objectType, layout)` from `@prism/core/facet`; collisions resolved by `uniqueFacetId`; success emits a notification.
+   - Pure helpers `facetIdFromName(name, objectType)` and `uniqueFacetId(base, existing)` split into `components/facet-picker-helpers.ts` so vitest can exercise them in the node env without loading Puck.
+
+4. **Media renderers accept `vfs://` URLs** — `components/media-renderers.tsx` (`VideoWidgetRenderer`, `AudioWidgetRenderer`).
+   - `isSafeMediaUrl` allow-list extended: accepts `http://`, `https://`, and `vfs://<hash>`.
+   - Both renderers call `useResolvedMediaUrl(src, kernel.vfs)` and emit loading / missing placeholder states.
+   - Poster images on the video widget also resolve through the same pipeline.
+   - `media-renderers.test.ts` now covers the vfs case.
+
+5. **Image block** — `PuckImageBlockRender` React component added to `layout-panel.tsx`. Uses `useResolvedMediaUrl` so `vfs://` hashes produce real `<img>` tags with width/height/alt/caption. The image entity bypasses the generic Puck component factory (`continue` after building its ComponentConfig) so it can opt into the dedicated renderer + `mediaUploadField` for `src`.
+
+6. **Component categories** — layout panel now passes `config.categories` to Puck instead of dumping every entity into one sidebar list.
+   - `COMPONENT_CATEGORY_MAP`, `CATEGORY_TITLES`, `buildPuckCategories()`, and `PuckCategoryBucket` moved into `panels/layout-panel-data.ts` so they're importable from vitest without loading the full UI graph (leaflet, recharts, Puck runtime).
+   - Eight buckets: Layout, Content, Media, Data Views, Forms, Navigation, Display, Dynamic; plus Puck's built-in `other` catch-all for unmapped types. Layout + Content are `defaultExpanded`.
+   - Insertion order is driven by `CATEGORY_TITLES`, so sidebar ordering is stable regardless of `Object.keys(components)` order upstream. Empty non-`other` buckets are pruned via a rebuild (not `delete`, to satisfy `no-dynamic-delete` lint).
+   - New video/audio/image/card/hero blocks wire in `mediaUploadField` via a `mediaFieldOverrides` map (card.imageUrl, hero.backgroundImage) on the generic path.
+
+7. **Facet picker wired into facet-view + spatial-canvas blocks** — `facetId` fields on those blocks use `facetPickerField(kernel, { label: "Facet" })` so an author can create the bound FacetDefinition without leaving the layout builder.
+
+8. **Header strip above the Puck canvas** — wraps `<Puck>` in a flex column with a top row that shows the current page title (falls back to `page.name`), slug, and a published/draft badge. Test IDs: `layout-panel`, `layout-panel-header`, `layout-panel-page-title`, `layout-panel-status-badge`.
+
+### Test coverage
+
+`packages/prism-studio/src/panels/layout-panel.test.ts` (14 tests total):
+- **Existing shell projection tests** — unchanged (2 tests covering `kernelToPuckData` + Puck `walkTree` round-trip).
+- **`buildPuckCategories` (5 tests)** — drops empty non-other buckets, sends unknown types to `other`, marks layout+content as `defaultExpanded`, preserves canonical insertion order, and verifies **every** `component`/`section` entity registered by `createStudioKernel()` lands in an expected bucket (nothing silently goes missing).
+- **`pascalToKebab` / `kebabToPascal`** — round-trip for every key in `COMPONENT_CATEGORY_MAP`.
+- **`facetIdFromName` (3 tests)** — slugifies human names, collapses runs of non-alphanumerics, falls back to `<objectType>-facet` on empty input.
+- **`uniqueFacetId` (3 tests)** — returns base id when no collision, suffixes `-2` on first collision, walks past contiguous collisions.
+
+`packages/prism-studio/src/components/vfs-media-url.test.ts` — new file, covers the URL-scheme helpers and the async resolver (including the content-addressed cache hit).
+
+`packages/prism-studio/src/components/media-renderers.test.ts` — extended with a `vfs://` case on `isSafeMediaUrl`.
+
+### Status
+
+- `pnpm typecheck` — clean across all 6 packages
+- `pnpm test` — 188 files / 3688 tests passing (was 3006 tests at the start of the pass)
+- `pnpm lint` — clean
+
+### Files touched
+- **New:** `packages/prism-studio/src/components/vfs-media-url.ts`, `vfs-media-url.test.ts`, `vfs-media-field.tsx`, `facet-picker-field.tsx`, `facet-picker-helpers.ts`
+- **Modified:** `packages/prism-studio/src/panels/layout-panel.tsx`, `layout-panel-data.ts`, `layout-panel.test.ts`; `components/media-renderers.tsx`, `media-renderers.test.ts`
+
 ## Puck builders — real chart/map renderers + standalone playground harness (Complete — 2026-04-12)
 
 Replaced the placeholder chart and map widget renderers in `@prism/studio` with real `recharts` + `react-leaflet` implementations and stood up a new `@prism/puck-playground` package — a single-file Vite SPA that boots a real `StudioKernel` with seeded demo data so the layout panel and every data-aware Puck widget can be exercised in isolation, away from the full Studio shell.

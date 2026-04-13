@@ -21,7 +21,9 @@
       "@prism/core/*": ["./packages/prism-core/src/*"],
       "@prism/daemon/*": ["./packages/prism-daemon/src/*"],
       "@prism/relay/*": ["./packages/prism-relay/src/*"],
-      "@prism/shared/*": ["./packages/shared/src/*"]
+      "@prism/shared/*": ["./packages/shared/src/*"],
+      "@prism/admin-kit": ["./packages/prism-admin-kit/src/index.ts"],
+      "@prism/admin-kit/*": ["./packages/prism-admin-kit/src/*"]
     }
   },
   "exclude": ["node_modules", "dist"]

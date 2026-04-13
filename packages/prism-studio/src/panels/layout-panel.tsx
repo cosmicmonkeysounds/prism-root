@@ -13,6 +13,28 @@ import { useState, useEffect, useCallback, useMemo, useRef, type ReactNode } fro
 import { Puck, type Config, type Data, type ComponentConfig, type Fields } from "@measured/puck";
 import type { GraphObject, ObjectId } from "@prism/core/object-model";
 import { objectId } from "@prism/core/object-model";
+import {
+  getShellSlots,
+  isShellType,
+  kebabToPascal,
+  pascalToKebab,
+  kernelToPuckData,
+  buildPuckCategories,
+  splitRootProps,
+  PAGE_SLOTS,
+} from "./layout-panel-data.js";
+
+export {
+  SHELL_SLOTS,
+  PAGE_SLOTS,
+  getShellSlots,
+  isShellType,
+  kernelToPuckData,
+  splitRootProps,
+  COMPONENT_CATEGORY_MAP,
+  CATEGORY_TITLES,
+  buildPuckCategories,
+} from "./layout-panel-data.js";
 import type { FacetLayout } from "@prism/core/facet";
 import { useKernel, useSelection } from "../kernel/index.js";
 import {
@@ -77,6 +99,7 @@ import {
 import {
   computeBlockStyle,
   extractBlockStyle,
+  STYLE_FIELD_DEFS,
   type BlockStyleData,
 } from "@prism/core/page-builder";
 import { renderMarkdown } from "../components/content-renderers.js";
@@ -87,6 +110,7 @@ import {
   urlField,
   classNameField,
   customCssField,
+  fontPickerField,
 } from "../components/puck-custom-fields.js";
 import {
   PageShellRenderer,
@@ -96,6 +120,10 @@ import {
   NavBarRenderer,
   HeroRenderer,
 } from "../components/layout-shell-renderers.js";
+import { mediaUploadField } from "../components/vfs-media-field.js";
+import { facetPickerField } from "../components/facet-picker-field.js";
+import { useResolvedMediaUrl } from "../components/vfs-media-url.js";
+import type { StudioKernel } from "../kernel/studio-kernel.js";
 
 // ── Styles ──────────────────────────────────────────────────────────────────
 
@@ -150,6 +178,12 @@ function entityToPuckComponent(def: {
     // Raw CSS escape hatch — parallel to className but for inline CSS.
     if (f.id === "customCss") {
       puckFields[f.id] = customCssField(lbl);
+      if (f.default !== undefined) defaultProps[f.id] = f.default;
+      continue;
+    }
+    // Font family gets the curated Google Fonts picker with live previews.
+    if (f.id === "fontFamily") {
+      puckFields[f.id] = fontPickerField(lbl);
       if (f.default !== undefined) defaultProps[f.id] = f.default;
       continue;
     }
@@ -371,99 +405,97 @@ function isBlockStyleFieldId(id: string): boolean {
   return BLOCK_STYLE_FIELD_IDS.has(id);
 }
 
-// ── Shell slot metadata ────────────────────────────────────────────────────
+// ── Universal style field injection ────────────────────────────────────────
 
 /**
- * Slot field names for every layout-shell entity type.
- *
- * Shells expose their regions via Puck slot fields instead of stacking
- * children vertically. Each kernel child of a shell carries `data.__slot`
- * naming which slot it belongs to; on projection the children are grouped
- * back into per-slot Puck content arrays.
+ * Lazily built once — the Puck field map + default props generated from
+ * `STYLE_FIELD_DEFS`. Every hand-rolled widget that doesn't already declare
+ * its own style fields gets these merged in by `attachStyleFieldsInPlace`
+ * so authors can align/color/size text in every component, not just
+ * heading/text-block.
  */
-const SHELL_SLOTS: Readonly<Record<string, readonly string[]>> = {
-  "page-shell": ["header", "sidebar", "main", "footer"],
-  "site-header": ["nav"],
-  "site-footer": ["col1", "col2", "col3"],
-  "side-bar": ["content"],
-  "nav-bar": ["links"],
-  "hero": ["content"],
-};
+let STYLE_PUCK_FIELDS_CACHE:
+  | { fields: Fields; defaults: Record<string, unknown> }
+  | undefined;
 
-function getShellSlots(kernelType: string): readonly string[] {
-  return SHELL_SLOTS[kernelType] ?? [];
+function buildStylePuckFields(): {
+  fields: Fields;
+  defaults: Record<string, unknown>;
+} {
+  if (STYLE_PUCK_FIELDS_CACHE) return STYLE_PUCK_FIELDS_CACHE;
+  const synthetic = entityToPuckComponent({
+    type: "__style__",
+    label: "__style__",
+    fields: STYLE_FIELD_DEFS.map((f) => {
+      const o: {
+        id: string;
+        type: string;
+        label?: string;
+        default?: unknown;
+        enumOptions?: ReadonlyArray<{ value: string; label: string }>;
+      } = { id: f.id, type: f.type };
+      if (f.label !== undefined) o.label = f.label;
+      if ((f as { default?: unknown }).default !== undefined) {
+        o.default = (f as { default?: unknown }).default;
+      }
+      if ((f as { enumOptions?: ReadonlyArray<{ value: string; label: string }> }).enumOptions) {
+        o.enumOptions = (f as { enumOptions: ReadonlyArray<{ value: string; label: string }> }).enumOptions;
+      }
+      return o;
+    }),
+  });
+  STYLE_PUCK_FIELDS_CACHE = {
+    fields: (synthetic.fields ?? {}) as Fields,
+    defaults: (synthetic.defaultProps ?? {}) as Record<string, unknown>,
+  };
+  return STYLE_PUCK_FIELDS_CACHE;
 }
-
-function isShellType(kernelType: string): boolean {
-  return kernelType in SHELL_SLOTS;
-}
-
-// ── Kernel → Puck Data projection ──────────────────────────────────────────
 
 /**
- * Project the subtree under `pageId` into Puck `Data`.
- *
- * - Top-level sections are flattened (their children promoted to page level)
- *   to preserve the legacy section-as-invisible-group behaviour.
- * - Shells (page-shell, site-header, etc.) emit per-slot nested content
- *   arrays so Puck's slot drop zones get populated recursively.
- * - Every other kernel object becomes a flat Puck component item.
+ * Post-process the Puck config so every component picks up the universal
+ * style fields (font/color/align/padding/…) and its render is wrapped in a
+ * styled div. Components that already declare a `fontFamily` field (either
+ * directly or because they flowed through `entityToPuckComponent` from a
+ * `STYLE_FIELD_DEFS`-spreading def) are left alone — they're already styled
+ * by the generic renderer.
  */
-function kernelToPuckData(
-  pageId: ObjectId,
-  allObjects: GraphObject[],
-): Data {
-  const content = buildPuckContent(pageId, null, allObjects, /*topLevel*/ true);
-  return { content, root: { props: {} } };
-}
-
-function buildPuckContent(
-  parentId: ObjectId,
-  slotName: string | null,
-  allObjs: GraphObject[],
-  topLevel: boolean,
-): Data["content"] {
-  const children = allObjs
-    .filter((o) => o.parentId === parentId && !o.deletedAt)
-    .filter((o) => {
-      const tag = (o.data as Record<string, unknown> | undefined)?.["__slot"];
-      return slotName === null ? typeof tag !== "string" : tag === slotName;
-    })
-    .sort((a, b) => a.position - b.position);
-
-  const out: Data["content"] = [];
-  for (const child of children) {
-    if (topLevel && child.type === "section") {
-      // Legacy: flatten section grandchildren into the page-level content
-      // so old pages without shells keep round-tripping cleanly.
-      const grand = allObjs
-        .filter((o) => o.parentId === child.id && !o.deletedAt)
-        .sort((a, b) => a.position - b.position);
-      for (const sc of grand) out.push(toPuckItem(sc, allObjs));
-      continue;
-    }
-    out.push(toPuckItem(child, allObjs));
+function attachStyleFieldsInPlace(
+  components: Record<string, ComponentConfig>,
+): void {
+  const { fields: styleFields, defaults: styleDefaults } = buildStylePuckFields();
+  for (const [name, cfg] of Object.entries(components)) {
+    const existingFields = (cfg.fields ?? {}) as Record<string, unknown>;
+    if ("fontFamily" in existingFields) continue;
+    const originalRender = cfg.render;
+    const mergedFields = { ...existingFields, ...styleFields } as Fields;
+    const mergedDefaults = {
+      ...(cfg.defaultProps ?? {}),
+      ...styleDefaults,
+    };
+    components[name] = {
+      ...cfg,
+      fields: mergedFields,
+      defaultProps: mergedDefaults,
+      render: ((props: unknown) => {
+        const p = props as Record<string, unknown>;
+        const style = computeBlockStyle(extractBlockStyle(p) as BlockStyleData);
+        const cls =
+          typeof p["className"] === "string" && p["className"] !== ""
+            ? (p["className"] as string)
+            : undefined;
+        const inner = originalRender
+          ? (originalRender as (x: unknown) => ReactNode)(props)
+          : null;
+        const hasStyle = Object.keys(style).length > 0;
+        if (!hasStyle && !cls) return <>{inner}</>;
+        return (
+          <div style={style} {...(cls ? { className: cls } : {})}>
+            {inner}
+          </div>
+        );
+      }) as ComponentConfig["render"],
+    };
   }
-  return out;
-}
-
-function toPuckItem(
-  obj: GraphObject,
-  allObjs: GraphObject[],
-): Data["content"][number] {
-  const raw = (obj.data ?? {}) as Record<string, unknown>;
-  const props: Record<string, unknown> = { id: obj.id };
-  for (const [k, v] of Object.entries(raw)) {
-    if (k === "__slot") continue;
-    props[k] = v;
-  }
-  for (const slot of getShellSlots(obj.type)) {
-    props[slot] = buildPuckContent(obj.id, slot, allObjs, false);
-  }
-  return {
-    type: kebabToPascal(obj.type),
-    props,
-  } as Data["content"][number];
 }
 
 // ── Puck Data → Kernel diff ────────────────────────────────────────────────
@@ -472,6 +504,7 @@ type KernelSync = {
   store: {
     listObjects(opts: { parentId: ObjectId }): GraphObject[];
     allObjects(): GraphObject[];
+    getObject(id: ObjectId): GraphObject | undefined;
   };
   createObject(
     obj: Omit<GraphObject, "id" | "createdAt" | "updatedAt">,
@@ -485,8 +518,11 @@ type KernelSync = {
  *
  * Walks Puck content recursively: slots become nested kernel children
  * tagged with `data.__slot`, and any existing kernel object under the page
- * that isn't referenced by the new tree is deleted. This is the critical
- * sync path — Puck edits → kernel mutations.
+ * that isn't referenced by the new tree is deleted. `newData.root.props`
+ * is split into scalar page fields (written to `page.data`) and per-slot
+ * child arrays (written as slotted page children) so the page entity can
+ * own its sidebar/header/footer regions directly — no PageShell wrapper
+ * required. This is the critical sync path — Puck edits → kernel mutations.
  */
 function syncPuckToKernel(
   newData: Data,
@@ -497,7 +533,24 @@ function syncPuckToKernel(
   const existingById = new Map(allObjs.map((o) => [o.id, o]));
   const seen = new Set<string>();
 
+  // 1. Main content (non-slotted page children)
   syncContentArray(newData.content, pageId, null, existingById, seen, kernel);
+
+  // 2. Root props → page.data (scalars) + page slot children (arrays)
+  const rootProps = (newData.root?.props ?? {}) as Record<string, unknown>;
+  const { pageData, slots } = splitRootProps(rootProps);
+  const page = kernel.store.getObject(pageId);
+  if (page) {
+    const prevData = (page.data ?? {}) as Record<string, unknown>;
+    const slot = prevData["__slot"];
+    const mergedData: Record<string, unknown> = { ...pageData };
+    if (typeof slot === "string") mergedData["__slot"] = slot;
+    kernel.updateObject(pageId, { data: mergedData });
+  }
+  for (const slotName of PAGE_SLOTS) {
+    const items = slots[slotName] ?? [];
+    syncContentArray(items, pageId, slotName, existingById, seen, kernel);
+  }
 
   // Delete any descendants of this page that the new tree didn't mention.
   for (const obj of collectDescendants(pageId, allObjs)) {
@@ -596,19 +649,6 @@ function collectDescendants(
     }
   }
   return out;
-}
-
-// ── Helpers ────────────────────────────────────────────────────────────────
-
-function kebabToPascal(s: string): string {
-  return s
-    .split("-")
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join("");
-}
-
-function pascalToKebab(s: string): string {
-  return s.replace(/([a-z])([A-Z])/g, "$1-$2").toLowerCase();
 }
 
 // ── Hook: resolve selected page ────────────────────────────────────────────
@@ -710,6 +750,99 @@ function PuckLuauBlockRender({ source, title }: { source: string; title: string 
 
 // ── Main Panel ─────────────────────────────────────────────────────────────
 
+/**
+ * Dedicated image block renderer with VFS resolution. Runs as a React
+ * component so it can call the `useResolvedMediaUrl` hook; Puck invokes
+ * render functions as components so hooks are legal.
+ */
+function PuckImageBlockRender({
+  src,
+  alt,
+  caption,
+  width,
+  height,
+  kernel,
+}: {
+  src: string;
+  alt: string;
+  caption: string;
+  width: number | undefined;
+  height: number | undefined;
+  kernel: StudioKernel;
+}) {
+  const { url, loading } = useResolvedMediaUrl(src || null, kernel.vfs);
+
+  if (!src) {
+    return (
+      <div
+        data-testid="puck-image-empty"
+        style={{
+          border: "1px dashed #94a3b8",
+          borderRadius: 6,
+          padding: 18,
+          margin: "4px 0",
+          background: "#f8fafc",
+          color: "#64748b",
+          textAlign: "center",
+          fontSize: 12,
+        }}
+      >
+        Upload an image or paste a URL.
+      </div>
+    );
+  }
+
+  if (loading && !url) {
+    return (
+      <div data-testid="puck-image-loading" style={{ padding: 12, color: "#94a3b8", fontSize: 12 }}>
+        Loading image…
+      </div>
+    );
+  }
+
+  if (!url) {
+    return (
+      <div
+        data-testid="puck-image-missing"
+        style={{
+          border: "1px dashed #ef4444",
+          borderRadius: 6,
+          padding: 12,
+          color: "#b91c1c",
+          fontSize: 12,
+        }}
+      >
+        Image source could not be resolved.
+      </div>
+    );
+  }
+
+  return (
+    <figure data-testid="puck-image" style={{ margin: "0 0 8px 0" }}>
+      <img
+        src={url}
+        alt={alt || "Image"}
+        {...(width ? { width } : {})}
+        {...(height ? { height } : {})}
+        style={{ maxWidth: "100%", display: "block", borderRadius: 6 }}
+      />
+      {caption ? (
+        <figcaption
+          style={{
+            marginTop: 6,
+            fontSize: 12,
+            color: "#64748b",
+            fontStyle: "italic",
+            textAlign: "center",
+          }}
+        >
+          {caption}
+        </figcaption>
+      ) : null}
+    </figure>
+  );
+}
+
 export function LayoutPanel() {
   const kernel = useKernel();
   const { selectedId } = useSelection();
@@ -752,7 +885,7 @@ export function LayoutPanel() {
         if (def.type === "facet-view") {
           components[kebabToPascal(def.type)] = {
             fields: {
-              facetId: { type: "text" } as unknown as Fields[string],
+              facetId: facetPickerField(kernel, { label: "Facet" }) as unknown as Fields[string],
               viewMode: {
                 type: "select",
                 options: [
@@ -796,7 +929,7 @@ export function LayoutPanel() {
         if (def.type === "spatial-canvas") {
           components[kebabToPascal(def.type)] = {
             fields: {
-              facetId: { type: "text" } as unknown as Fields[string],
+              facetId: facetPickerField(kernel, { label: "Facet" }) as unknown as Fields[string],
               canvasWidth: { type: "number" } as unknown as Fields[string],
               canvasHeight: { type: "number" } as unknown as Fields[string],
               gridSize: { type: "number" } as unknown as Fields[string],
@@ -1934,8 +2067,8 @@ export function LayoutPanel() {
         if (def.type === "video-widget") {
           components[kebabToPascal(def.type)] = {
             fields: {
-              src: { type: "text" } as unknown as Fields[string],
-              poster: { type: "text" } as unknown as Fields[string],
+              src: mediaUploadField(kernel, { label: "Video", accept: "video" }) as unknown as Fields[string],
+              poster: mediaUploadField(kernel, { label: "Poster image", accept: "image" }) as unknown as Fields[string],
               caption: { type: "text" } as unknown as Fields[string],
               width: { type: "number" } as unknown as Fields[string],
               height: { type: "number" } as unknown as Fields[string],
@@ -2069,7 +2202,7 @@ export function LayoutPanel() {
         if (def.type === "audio-widget") {
           components[kebabToPascal(def.type)] = {
             fields: {
-              src: { type: "text" } as unknown as Fields[string],
+              src: mediaUploadField(kernel, { label: "Audio", accept: "audio" }) as unknown as Fields[string],
               caption: { type: "text" } as unknown as Fields[string],
               controls: {
                 type: "radio",
@@ -2125,13 +2258,67 @@ export function LayoutPanel() {
           continue;
         }
 
+        // Dedicated image renderer — resolves vfs:// through the VFS and
+        // draws an actual <img>. Upload goes through kernel.vfs (content-
+        // addressed), with a vault picker for files uploaded elsewhere.
+        if (def.type === "image") {
+          components[kebabToPascal(def.type)] = {
+            fields: {
+              src: mediaUploadField(kernel, { label: "Source", accept: "image" }) as unknown as Fields[string],
+              alt: { type: "text" } as unknown as Fields[string],
+              caption: { type: "text" } as unknown as Fields[string],
+              width: { type: "number" } as unknown as Fields[string],
+              height: { type: "number" } as unknown as Fields[string],
+            },
+            defaultProps: { src: "", alt: "", caption: "", width: 0, height: 0 },
+            render: (props) => {
+              const p = props as Record<string, unknown>;
+              const width = typeof p["width"] === "number" && p["width"] > 0 ? (p["width"] as number) : undefined;
+              const height = typeof p["height"] === "number" && p["height"] > 0 ? (p["height"] as number) : undefined;
+              return (
+                <PuckImageBlockRender
+                  src={(p["src"] as string) ?? ""}
+                  alt={(p["alt"] as string) ?? ""}
+                  caption={(p["caption"] as string) ?? ""}
+                  width={width}
+                  height={height}
+                  kernel={kernel}
+                />
+              );
+            },
+          };
+          continue;
+        }
+
         const iconStr = typeof def.icon === "string" ? def.icon : "";
-        components[kebabToPascal(def.type)] = entityToPuckComponent({
+        const generic = entityToPuckComponent({
           type: def.type,
           label: def.label,
           icon: iconStr,
           fields: def.fields ?? [],
         });
+
+        // Swap plain URL fields for the VFS-aware media upload on entities
+        // whose generic mapping is otherwise fine. Keeps the card/hero
+        // property panels consistent with the dedicated image block.
+        const mediaFieldOverrides: Record<string, { field: string; accept: "image" | "video" | "audio"; label: string }[]> = {
+          card: [{ field: "imageUrl", accept: "image", label: "Image" }],
+          hero: [{ field: "backgroundImage", accept: "image", label: "Background image" }],
+        };
+        const overrides = mediaFieldOverrides[def.type];
+        if (overrides && generic.fields) {
+          const nextFields = { ...(generic.fields as Record<string, unknown>) };
+          for (const o of overrides) {
+            if (o.field in nextFields) {
+              nextFields[o.field] = mediaUploadField(kernel, {
+                label: o.label,
+                accept: o.accept,
+              });
+            }
+          }
+          generic.fields = nextFields as Fields;
+        }
+        components[kebabToPascal(def.type)] = generic;
       }
     }
 
@@ -2149,16 +2336,89 @@ export function LayoutPanel() {
       };
     }
 
-    // Puck canvas root: make it a positioned container so children with
-    // `position: absolute` float relative to the whole page, enabling
-    // HotGlue-style freeform layouts alongside the default stacked flow.
-    const rootRender = ({ children }: { children: ReactNode }) => (
-      <div style={{ position: "relative", minHeight: "100%" }}>{children}</div>
-    );
+    // Universal text-styling pass: merge STYLE_FIELD_DEFS-derived fields into
+    // every component that doesn't already expose them, and wrap its render
+    // in a styled div. This is what makes font/align/color/size work on
+    // every text-bearing widget — not just heading/text-block.
+    attachStyleFieldsInPlace(components);
+
+    // Root config: page-level fields (title/layout/sidebarWidth/…) + the
+    // header/sidebar/footer slot fields. Puck renders this as its document
+    // root — authors get native page layout without dropping a PageShell.
+    const pageDefForRoot = kernel.registry.get("page");
+    const rootFields: Record<string, unknown> = {};
+    const rootDefaults: Record<string, unknown> = {};
+    if (pageDefForRoot) {
+      const base = entityToPuckComponent({
+        type: "page",
+        label: "Page",
+        fields: pageDefForRoot.fields ?? [],
+      });
+      Object.assign(rootFields, (base.fields ?? {}) as Record<string, unknown>);
+      Object.assign(rootDefaults, (base.defaultProps ?? {}) as Record<string, unknown>);
+    }
+    for (const slot of PAGE_SLOTS) {
+      rootFields[slot] = { type: "slot" };
+      rootDefaults[slot] = [];
+    }
+
+    // Puck canvas root: layout-aware, so a page with `layout: "sidebar-left"`
+    // wraps its flat content in the appropriate CSS-grid zones via
+    // `PageShellRenderer`, and each of the header/sidebar/footer slots lives
+    // directly on the page entity. `flow` mode (the default) keeps the old
+    // free-scrolling single-column behaviour and just positions the root as
+    // a container so absolute-positioned children still work.
+    type SlotFn = (props?: Record<string, unknown>) => ReactNode;
+    const rootRender = (props: {
+      children: ReactNode;
+      puck?: unknown;
+      [key: string]: unknown;
+    }) => {
+      const layout = (props["layout"] as string) ?? "flow";
+      const sidebarWidth = (props["sidebarWidth"] as number) ?? 240;
+      const stickyHeader =
+        props["stickyHeader"] !== false && props["stickyHeader"] !== "false";
+      const HeaderSlot = props["header"] as SlotFn | undefined;
+      const SidebarSlot = props["sidebar"] as SlotFn | undefined;
+      const FooterSlot = props["footer"] as SlotFn | undefined;
+      const mainContent = (
+        <div style={{ position: "relative", minHeight: "100%" }}>
+          {props.children}
+        </div>
+      );
+      if (layout === "flow") return mainContent;
+      const shellLayout: "sidebar-left" | "sidebar-right" | "stacked" =
+        layout === "sidebar-left"
+          ? "sidebar-left"
+          : layout === "sidebar-right"
+            ? "sidebar-right"
+            : "stacked";
+      const header = typeof HeaderSlot === "function" ? <HeaderSlot /> : null;
+      const sidebar = typeof SidebarSlot === "function" ? <SidebarSlot /> : null;
+      const footer = typeof FooterSlot === "function" ? <FooterSlot /> : null;
+      return (
+        <PageShellRenderer
+          layout={shellLayout}
+          sidebarWidth={sidebarWidth}
+          stickyHeader={stickyHeader}
+          header={header}
+          sidebar={sidebar}
+          main={mainContent}
+          footer={footer}
+        />
+      );
+    };
+
+    const categories = buildPuckCategories(Object.keys(components));
 
     const config = {
       components,
-      root: { render: rootRender },
+      categories,
+      root: {
+        fields: rootFields as Fields,
+        defaultProps: rootDefaults,
+        render: rootRender,
+      },
     } as unknown as Config;
     return config;
   }, [kernel, selectedId]);
@@ -2210,24 +2470,92 @@ export function LayoutPanel() {
   if (!page) {
     return (
       <div style={emptyStyle} data-testid="layout-panel">
-        <div style={{ textAlign: "center" }}>
+        <div style={{ textAlign: "center", maxWidth: 340 }}>
           <div style={{ fontSize: "2em", marginBottom: 8, opacity: 0.5 }}>
             {"\uD83D\uDD28"}
           </div>
-          <div>Select a page to edit its layout</div>
+          <div style={{ marginBottom: 6 }}>Select a page to edit its layout</div>
+          <div style={{ fontSize: 12, opacity: 0.6 }}>
+            The Layout Builder composes pages from registered components —
+            drag from the sidebar, drop into sections, edit properties on
+            the right. Create a page in the Object Explorer (left) to begin.
+          </div>
         </div>
       </div>
     );
   }
 
+  const pageData = page.data as Record<string, unknown> | undefined;
+  const pageTitle =
+    typeof pageData?.["title"] === "string" && pageData["title"] !== ""
+      ? (pageData["title"] as string)
+      : page.name;
+  const published = pageData?.["published"] === true;
+  const slug =
+    typeof pageData?.["slug"] === "string" ? (pageData["slug"] as string) : "";
+
   return (
-    <div style={{ height: "100%" }} data-testid="layout-panel">
-      <Puck
-        config={puckConfig}
-        data={puckData}
-        onChange={handleChange}
-        onPublish={handlePublish}
-      />
+    <div
+      style={{ height: "100%", display: "flex", flexDirection: "column" }}
+      data-testid="layout-panel"
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          padding: "8px 14px",
+          borderBottom: "1px solid #1e293b",
+          background: "#0f172a",
+          color: "#e2e8f0",
+          fontFamily: "system-ui, -apple-system, sans-serif",
+          flex: "0 0 auto",
+        }}
+        data-testid="layout-panel-header"
+      >
+        <div style={{ display: "flex", flexDirection: "column", minWidth: 0, flex: 1 }}>
+          <div
+            style={{
+              fontSize: 13,
+              fontWeight: 600,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+            data-testid="layout-panel-page-title"
+          >
+            {pageTitle}
+          </div>
+          {slug ? (
+            <div style={{ fontSize: 11, color: "#94a3b8", fontFamily: "ui-monospace, Menlo, Consolas, monospace" }}>
+              {slug}
+            </div>
+          ) : null}
+        </div>
+        <span
+          data-testid="layout-panel-status-badge"
+          style={{
+            fontSize: 11,
+            fontWeight: 600,
+            padding: "3px 10px",
+            borderRadius: 999,
+            background: published ? "#14532d" : "#3f3f46",
+            color: published ? "#a7f3d0" : "#d4d4d8",
+            textTransform: "uppercase",
+            letterSpacing: "0.05em",
+          }}
+        >
+          {published ? "Published" : "Draft"}
+        </span>
+      </div>
+      <div style={{ flex: 1, minHeight: 0 }}>
+        <Puck
+          config={puckConfig}
+          data={puckData}
+          onChange={handleChange}
+          onPublish={handlePublish}
+        />
+      </div>
     </div>
   );
 }

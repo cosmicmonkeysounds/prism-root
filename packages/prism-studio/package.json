@@ -14,6 +14,7 @@
   "dependencies": {
     "@capacitor/core": "^7.0.0",
     "@measured/puck": "^0.20.2",
+    "@prism/admin-kit": "workspace:*",
     "@prism/core": "workspace:*",
     "@prism/shared": "workspace:*",
     "@scena/react-guides": "^0.28.2",

@@ -46,3 +46,12 @@ export {
   escapeAttr,
   cssToInline,
 } from "./page-export.js";
+
+export type { FontCategory, FontOption } from "./fonts.js";
+export {
+  FONT_OPTIONS,
+  findFontOption,
+  isGoogleFontValue,
+  googleFontsHref,
+  collectFontFamilies,
+} from "./fonts.js";

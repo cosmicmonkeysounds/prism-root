@@ -1,18 +1,21 @@
 /**
  * Media renderers — video and audio player widgets for the page builder.
  *
- * Both widgets accept a URL (or a VFS binary ref, resolved upstream) and
- * expose the native HTMLMediaElement controls. Sources can be restricted
- * to http/https so authors can't embed javascript: or data: URLs.
+ * Sources may be http(s) URLs or `vfs://<hash>` references stored in the
+ * kernel's VFS (see `vfs-media-url.ts`). The allow-list rejects other
+ * schemes so authors can't embed `javascript:` or arbitrary `data:` URLs.
  */
 
 import type { CSSProperties } from "react";
+import { useKernel } from "../kernel/index.js";
+import { isVfsMediaUrl, useResolvedMediaUrl } from "./vfs-media-url.js";
 
-/** Allow-list for media URLs. http(s) only. Blank returns false. */
+/** Allow-list for media URLs. http(s) or vfs://. Blank returns false. */
 export function isSafeMediaUrl(input: string | undefined | null): boolean {
   if (!input || typeof input !== "string") return false;
   const trimmed = input.trim();
   if (trimmed === "") return false;
+  if (isVfsMediaUrl(trimmed)) return true;
   try {
     const url = new URL(trimmed, "https://placeholder.local");
     return url.protocol === "http:" || url.protocol === "https:";
@@ -80,10 +83,30 @@ export function VideoWidgetRenderer(props: VideoWidgetProps) {
     muted = false,
   } = props;
 
+  const kernel = useKernel();
+  const { url: resolvedSrc, loading } = useResolvedMediaUrl(src ?? null, kernel.vfs);
+  const { url: resolvedPoster } = useResolvedMediaUrl(poster ?? null, kernel.vfs);
+
   if (!isSafeMediaUrl(src)) {
     return (
       <div data-testid="video-widget-empty" style={placeholderStyle}>
-        Set a video URL (http/https) to preview.
+        Set a video URL (http/https) or choose a vault file to preview.
+      </div>
+    );
+  }
+
+  if (loading && !resolvedSrc) {
+    return (
+      <div data-testid="video-widget-loading" style={placeholderStyle}>
+        Loading video…
+      </div>
+    );
+  }
+
+  if (!resolvedSrc) {
+    return (
+      <div data-testid="video-widget-missing" style={placeholderStyle}>
+        Video source could not be resolved.
       </div>
     );
   }
@@ -116,12 +139,12 @@ export function VideoWidgetRenderer(props: VideoWidgetProps) {
   };
   if (w !== undefined) videoProps.width = w;
   if (h !== undefined) videoProps.height = h;
-  if (poster !== undefined && isSafeMediaUrl(poster)) videoProps.poster = poster;
+  if (resolvedPoster) videoProps.poster = resolvedPoster;
 
   return (
     <figure data-testid="video-widget" style={figureStyle}>
       <video {...videoProps}>
-        <source src={src as string} />
+        <source src={resolvedSrc} />
         Your browser does not support the video element.
       </video>
       {caption && (
@@ -154,10 +177,29 @@ export function AudioWidgetRenderer(props: AudioWidgetProps) {
     muted = false,
   } = props;
 
+  const kernel = useKernel();
+  const { url: resolvedSrc, loading } = useResolvedMediaUrl(src ?? null, kernel.vfs);
+
   if (!isSafeMediaUrl(src)) {
     return (
       <div data-testid="audio-widget-empty" style={placeholderStyle}>
-        Set an audio URL (http/https) to preview.
+        Set an audio URL (http/https) or choose a vault file to preview.
+      </div>
+    );
+  }
+
+  if (loading && !resolvedSrc) {
+    return (
+      <div data-testid="audio-widget-loading" style={placeholderStyle}>
+        Loading audio…
+      </div>
+    );
+  }
+
+  if (!resolvedSrc) {
+    return (
+      <div data-testid="audio-widget-missing" style={placeholderStyle}>
+        Audio source could not be resolved.
       </div>
     );
   }
@@ -171,7 +213,7 @@ export function AudioWidgetRenderer(props: AudioWidgetProps) {
         loop={loop}
         muted={muted || autoplay}
       >
-        <source src={src as string} />
+        <source src={resolvedSrc} />
         Your browser does not support the audio element.
       </audio>
       {caption && (

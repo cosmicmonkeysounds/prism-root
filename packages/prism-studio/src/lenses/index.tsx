@@ -56,6 +56,7 @@ import { siteNavLensBundle } from "../panels/site-nav-panel.js";
 import { entityBuilderLensBundle } from "../panels/entity-builder-panel.js";
 import { relationshipBuilderLensBundle } from "../panels/relationship-builder-panel.js";
 import { schemaDesignerLensBundle } from "../panels/schema-designer-panel.js";
+import { adminLensBundle } from "../panels/admin-panel.js";
 
 // Re-export the default-tab lens id for App-level bootstrap. All other
 // lens ids live next to their panel component.
@@ -108,5 +109,6 @@ export function createBuiltinLensBundles(): LensBundle[] {
     entityBuilderLensBundle,
     relationshipBuilderLensBundle,
     schemaDesignerLensBundle,
+    adminLensBundle,
   ];
 }

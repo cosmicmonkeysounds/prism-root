@@ -11,6 +11,11 @@ describe("isSafeMediaUrl", () => {
     expect(isSafeMediaUrl("http://example.com/audio.mp3")).toBe(true);
   });
 
+  it("accepts vfs:// URLs pointing at VFS-stored binaries", () => {
+    expect(isSafeMediaUrl("vfs://abc123")).toBe(true);
+    expect(isSafeMediaUrl("  vfs://abc123  ")).toBe(true);
+  });
+
   it("rejects unsafe schemes", () => {
     expect(isSafeMediaUrl("javascript:alert(1)")).toBe(false);
     expect(isSafeMediaUrl("data:video/mp4;base64,AAA")).toBe(false);

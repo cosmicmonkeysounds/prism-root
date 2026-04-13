@@ -51,6 +51,34 @@ importers:
         specifier: ^2.1.0
         version: 2.1.9(@types/node@22.19.17)(jsdom@29.0.1)(lightningcss@1.32.0)
 
+  packages/prism-admin-kit:
+    dependencies:
+      '@measured/puck':
+        specifier: ^0.20.2
+        version: 0.20.2(@types/react@19.2.14)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(use-sync-external-store@1.6.0(react@19.2.4))
+      '@prism/core':
+        specifier: workspace:*
+        version: link:../prism-core
+      react:
+        specifier: ^19.0.0
+        version: 19.2.4
+      recharts:
+        specifier: ^2.15.0
+        version: 2.15.4(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      zustand:
+        specifier: ^5.0.0
+        version: 5.0.12(@types/react@19.2.14)(react@19.2.4)(use-sync-external-store@1.6.0(react@19.2.4))
+    devDependencies:
+      '@types/react':
+        specifier: ^19.0.0
+        version: 19.2.14
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@22.19.17)(jsdom@29.0.1)(lightningcss@1.32.0)
+
   packages/prism-core:
     dependencies:
       '@codemirror/autocomplete':
@@ -266,6 +294,9 @@ importers:
       '@measured/puck':
         specifier: ^0.20.2
         version: 0.20.2(@types/react@19.2.14)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(use-sync-external-store@1.6.0(react@19.2.4))
+      '@prism/admin-kit':
+        specifier: workspace:*
+        version: link:../prism-admin-kit
       '@prism/core':
         specifier: workspace:*
         version: link:../prism-core

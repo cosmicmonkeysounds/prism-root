@@ -164,14 +164,20 @@ function seedEvents(kernel: StudioKernel): void {
 
 // ── Page builders ──────────────────────────────────────────────────────────
 
-function pageRoot(kernel: StudioKernel, name: string, position: number, slug: string): GraphObject {
+function pageRoot(
+  kernel: StudioKernel,
+  name: string,
+  position: number,
+  slug: string,
+  extraData: Record<string, unknown> = {},
+): GraphObject {
   return make(
     kernel,
     "page",
     name,
     null,
     position,
-    { title: name, slug, layout: "single", published: false },
+    { title: name, slug, layout: "flow", published: false, ...extraData },
   );
 }
 
@@ -483,6 +489,61 @@ function buildDisplayPage(kernel: StudioKernel, page: GraphObject): void {
   });
 }
 
+function buildShellPage(kernel: StudioKernel, page: GraphObject): void {
+  // Header slot (lives directly on the page, no PageShell wrapper)
+  make(kernel, "heading", "Brand", page.id, 0, {
+    __slot: "header",
+    text: "Acme",
+    level: "h1",
+    align: "left",
+  });
+  make(kernel, "button", "Sign in", page.id, 1, {
+    __slot: "header",
+    label: "Sign in",
+    variant: "primary",
+    href: "#",
+  });
+  // Sidebar slot
+  make(kernel, "heading", "Nav title", page.id, 2, {
+    __slot: "sidebar",
+    text: "Sections",
+    level: "h4",
+    align: "left",
+  });
+  make(kernel, "text-block", "Nav links", page.id, 3, {
+    __slot: "sidebar",
+    content: "- [Home](#)\n- [Docs](#)\n- [Pricing](#)\n- [About](#)",
+    format: "markdown",
+  });
+  // Main area — no slot tag, lives in the top-level flow
+  make(kernel, "heading", "Main title", page.id, 4, {
+    text: "Welcome to the shell demo",
+    level: "h1",
+    align: "left",
+  });
+  make(kernel, "text-block", "Main body", page.id, 5, {
+    content:
+      "This page uses a page-level **sidebar-left** layout — header/sidebar/footer slots live directly on the page entity, no `PageShell` widget required. Drop blocks into any region below to test nested drag-drop.",
+    format: "markdown",
+  });
+  make(kernel, "stat-widget", "Task count", page.id, 6, {
+    collectionType: "demo-task",
+    label: "Open tasks",
+    aggregation: "count",
+    valueField: "",
+    prefix: "",
+    suffix: "",
+    decimals: 0,
+    thousands: "true",
+  });
+  // Footer slot
+  make(kernel, "text-block", "Copyright", page.id, 7, {
+    __slot: "footer",
+    content: "© 2026 Acme — Built with Prism Puck Playground.",
+    format: "markdown",
+  });
+}
+
 function buildLayoutPage(kernel: StudioKernel, page: GraphObject): void {
   const section = make(
     kernel,
@@ -554,8 +615,15 @@ export const playgroundSeedInitializer: StudioInitializer = {
     const layout = pageRoot(kernel, "7. Layout Primitives", 106, "/layout");
     buildLayoutPage(kernel, layout);
 
+    const shellPage = pageRoot(kernel, "8. Shell Layout", 107, "/shell", {
+      layout: "sidebar-left",
+      sidebarWidth: 240,
+      stickyHeader: true,
+    });
+    buildShellPage(kernel, shellPage);
+
     kernel.undo.clear();
-    kernel.select(welcome.id);
+    kernel.select(shellPage.id);
 
     return () => {};
   },

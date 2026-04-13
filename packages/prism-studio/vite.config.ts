@@ -94,6 +94,14 @@ export default defineConfig({
     alias: [
       ...buildCoreAliases(),
       { find: "@prism/shared", replacement: resolve(__dirname, "../shared/src") },
+      {
+        find: /^@prism\/admin-kit$/,
+        replacement: resolve(__dirname, "../prism-admin-kit/src/index.ts"),
+      },
+      {
+        find: /^@prism\/admin-kit\/(.*)$/,
+        replacement: resolve(__dirname, "../prism-admin-kit/src") + "/$1",
+      },
       // Use bundled elkjs (no web-worker dependency) for browser
       { find: "elkjs", replacement: "elkjs/lib/elk.bundled.js" },
     ],
