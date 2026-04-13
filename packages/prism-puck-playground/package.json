@@ -1,0 +1,34 @@
+{
+  "name": "@prism/puck-playground",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --port 4180",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@measured/puck": "^0.19.0",
+    "@prism/core": "workspace:*",
+    "@prism/studio": "workspace:*",
+    "leaflet": "^1.9.4",
+    "loro-crdt": "^1.8.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-leaflet": "^5.0.0",
+    "recharts": "^2.15.0"
+  },
+  "devDependencies": {
+    "@types/leaflet": "^1.9.12",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "typescript": "^5.7.0",
+    "vite": "^6.0.0",
+    "vite-plugin-singlefile": "^2.3.2",
+    "vite-plugin-top-level-await": "^1.6.0",
+    "vite-plugin-wasm": "^3.6.0"
+  }
+}

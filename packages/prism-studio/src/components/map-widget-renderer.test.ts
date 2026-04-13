@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { GraphObject, ObjectId } from "@prism/core/object-model";
-import { extractMarkers, computeBounds } from "./map-widget-renderer.js";
+import { extractMarkers, computeBounds } from "./map-data.js";
 
 function obj(id: string, data: Record<string, unknown>): GraphObject {
   return {

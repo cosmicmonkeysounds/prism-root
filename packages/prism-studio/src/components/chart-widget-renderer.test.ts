@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { GraphObject, ObjectId } from "@prism/core/object-model";
-import { aggregateObjects } from "./chart-widget-renderer.js";
+import { aggregateObjects } from "./chart-data.js";
 
 function obj(id: string, data: Record<string, unknown>): GraphObject {
   return {

@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "outDir": "dist",
+    "paths": {
+      "@prism/core/*": ["../prism-core/src/*"],
+      "@prism/studio/*": ["../prism-studio/src/*"],
+      "@prism/shared/*": ["../shared/src/*"]
+    }
+  },
+  "include": ["src", "vite.config.ts"]
+}

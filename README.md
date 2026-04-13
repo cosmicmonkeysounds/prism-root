@@ -70,7 +70,8 @@ prism/
 │   ├── prism-core/       # 8 domain categories (foundation → … → bindings)
 │   ├── prism-daemon/     # Rust: Loro CRDT, mlua Luau, VFS, hardware
 │   ├── prism-relay/      # Modular relay server: Hono HTTP + WebSocket, CLI
-│   └── prism-studio/     # Vite SPA + Tauri 2.0 shell (Universal Host)
+│   ├── prism-studio/     # Vite SPA + Tauri 2.0 shell (Universal Host)
+│   └── prism-puck-playground/  # Standalone single-file harness for the Puck builder
 ├── docs/
 │   ├── adr/              # Architecture Decision Records
 │   └── dev/              # Current plan, studio checklist

@@ -1,5 +1,43 @@
 # Current Plan
 
+## Puck builders — real chart/map renderers + standalone playground harness (Complete — 2026-04-12)
+
+Replaced the placeholder chart and map widget renderers in `@prism/studio` with real `recharts` + `react-leaflet` implementations and stood up a new `@prism/puck-playground` package — a single-file Vite SPA that boots a real `StudioKernel` with seeded demo data so the layout panel and every data-aware Puck widget can be exercised in isolation, away from the full Studio shell.
+
+### What landed
+
+1. **`@prism/studio` widget renderers — real implementations**
+   - **`components/chart-widget-renderer.tsx`** rewritten to use **recharts ^2.15.0** (`<ResponsiveContainer>` wrapping `BarChart`/`LineChart`/`PieChart`/`AreaChart`). Dark theme: `#0f172a` background, `#a855f7` accent, `#94a3b8` axes. Pie uses `<Cell>` per slice with `CHART_PALETTE`; bar/line/area share `CartesianGrid`/`XAxis`/`YAxis`/`Tooltip`.
+   - **`components/map-widget-renderer.tsx`** rewritten to use **react-leaflet ^5.0.0 + leaflet ^1.9.4** with `MapContainer`/`TileLayer` (OSM)/`Marker`/`Popup`. Patches Leaflet's default icon URLs by importing `leaflet/dist/images/marker-icon{,-2x,-shadow}.png`. A custom inline `FitBounds` component uses `useMap()` to refit on bounds change. Click handlers use a conditional spread (`{...(onSelectObject ? { eventHandlers: ... } : {})}`) so `exactOptionalPropertyTypes` doesn't reject `undefined` for `LeafletEventHandlerFnMap`.
+2. **Pure-logic split for vitest compatibility** — both renderers had to keep working under vitest's node env where recharts/leaflet can't evaluate. New sibling files isolate the pure helpers:
+   - **`components/chart-data.ts`** — `aggregateObjects`, `CHART_PALETTE`, types `ChartType`/`ChartAggregation`/`ChartDataPoint`. The renderer re-exports it for back-compat.
+   - **`components/map-data.ts`** — `extractMarkers`, `computeBounds`, types `MapMarker`/`MapBounds`.
+   - Test files updated to import from `./chart-data.js` and `./map-data.js` instead of the renderers. Neither renderer imports `leaflet/dist/leaflet.css` — host apps do that from their own `main.tsx` so vitest stays DOM-free.
+3. **`src/vite-env.d.ts` (new)** — `*.png`/`*.svg`/`*.css` ambient module declarations so the leaflet PNG imports type-check under TS strict.
+4. **`@prism/studio` deps** — added `leaflet ^1.9.4`, `react-leaflet ^5.0.0`, `recharts ^2.15.0`, devDep `@types/leaflet ^1.9.12`. `main.tsx` gains `import "leaflet/dist/leaflet.css"`.
+5. **New package: `@prism/puck-playground`** — standalone Vite SPA that bundles to a single self-contained `dist/index.html` (~10 MB, ~3 MB gzipped) via [`vite-plugin-singlefile`](https://github.com/richardtallent/vite-plugin-singlefile). Contents:
+   - **`vite.config.ts`** — reuses `buildCoreAliases()` (one alias per `@prism/core/*` subpath, sorted longest-first) plus a regex alias `@prism/studio/*` → `../prism-studio/src/$1`. Mirrored in `tsconfig.json` `paths`. The playground always sees latest studio source — no build step, no `exports` field, no publish.
+   - **`src/playground-seed.ts`** (562 lines) — a custom `StudioInitializer` that seeds five sample collections (15 `demo-task`, 8 `demo-contact`, 16 `demo-sale`, 7 `demo-place` with real lat/lng for Anthropic HQ / Berlin / Tokyo / etc., 8 `demo-event` with dates relative to today) and seven demo pages, each calling a `build*Page()` function that pre-populates the page with curated Puck blocks: Welcome (hero + stats), Data Widgets (kanban/list/table/card-grid), Charts & Reports (bar/line/pie/area + report widget), Map & Calendar, Forms (text/email/textarea/select/number/date/checkbox), Display & Content (alert/badge/progress-bar/markdown/code-block), Layout Primitives (columns/divider/spacer/tab-container). Guarded by `kernel.store.objectCount() > 0` so it's idempotent. Ends with `kernel.undo.clear()` and `kernel.select(welcome.id)`.
+   - **`src/playground-app.tsx`** — `createStudioKernel({ lensBundles: [layoutLensBundle], initializers: [playgroundSeedInitializer] })`, `KernelProvider` wrapping `LayoutPanel`, left sidebar listing every `page` object with active-page tracking via `parentId` walk, header with **Reset workspace** button that disposes the kernel and re-mounts via `key` swap.
+   - **`src/main.tsx`** — React root mount, imports `leaflet/dist/leaflet.css` for the host app.
+   - Plugins: `react()`, `wasm()`, `topLevelAwait()`, `viteSingleFile()` (the last two are mandatory because the kernel pulls in `loro-crdt`).
+   - `cssCodeSplit: false`, `assetsInlineLimit: 100_000_000` so the build is truly single-file.
+   - Dev server on `:4179` (strictPort).
+6. **Docs** — `packages/prism-puck-playground/README.md` and `packages/prism-puck-playground/CLAUDE.md` cover the harness's purpose, build commands, source-aliasing trick, demo workspace contents, and reset behaviour. `packages/prism-studio/CLAUDE.md` updated to reflect the recharts/leaflet swap and the chart-data/map-data pure-logic split.
+
+### Status
+
+- `pnpm --filter @prism/puck-playground typecheck` — clean
+- `pnpm --filter @prism/puck-playground build` — `dist/index.html` 10,349,992 bytes (3.0 MB gzipped), built in ~7.5 s
+- `pnpm --filter @prism/puck-playground dev` — boots on `http://localhost:4179` in ~150 ms, serves transformed modules cleanly
+- `pnpm --filter @prism/studio vitest run --exclude 'e2e/**'` — **327 / 327 unit tests passing** (the 31 collection failures in the unfiltered run are pre-existing Playwright-file collisions unrelated to this work)
+
+### Notes
+
+- The playground deliberately installs only `layoutLensBundle`, not `createBuiltinLensBundles()`. Adding another lens to repro something is a one-line import (`import { canvasLensBundle } from "@prism/studio/panels/canvas-panel.js"`).
+- The demo pages can be edited inside the playground freely — those edits live in the kernel's in-memory `CollectionStore` only and disappear on **Reset workspace**, which is the entire point of the harness.
+- Future work: a `pnpm --filter @prism/puck-playground preview-static` script that opens `dist/index.html` directly via `file://` to verify the single-file output works without a server. Right now this is a manual step.
+
 ## ADR 002 Phases 2–4 — Luau fold, Studio→Core extraction, Registry collapse (Complete — 2026-04-12)
 
 Completed the remaining three phases of ADR-002, bringing the unified language/document model to its final shape and extracting shared kernel infrastructure from Studio into Core so future apps (Flux, Lattice, Musica) can reuse it.

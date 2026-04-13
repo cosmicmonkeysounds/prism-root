@@ -60,6 +60,10 @@ The Studio kernel wires all `@prism/core` subsystems together. All support modul
 - `table-widget-renderer.tsx` — sortable columnar table widget driven by a `columns` spec (`"id:Label, id:Label"`); exports `parseTableColumns`, `readCellValue`, `sortObjects`, `TableSortDir`
 - `card-grid-widget-renderer.tsx` — responsive CSS-grid card view; exports `clampColumnWidth`
 - `report-widget-renderer.tsx` — grouped/aggregated report widget (count/sum/avg/min/max); exports `buildReportGroups`, `computeAggregate`, `formatAggregate`
+- `chart-widget-renderer.tsx` — **recharts**-backed bar / line / pie / area charts inside a `<ResponsiveContainer>`. Pure aggregation/palette logic lives in the sibling `chart-data.ts` (`aggregateObjects`, `CHART_PALETTE`, types `ChartType`/`ChartAggregation`/`ChartDataPoint`) so vitest can import it without evaluating recharts in the node env. The renderer re-exports `chart-data.ts` for back-compat.
+- `chart-data.ts` — pure helpers extracted from the chart renderer for test use; no React imports.
+- `map-widget-renderer.tsx` — **react-leaflet** map widget (`MapContainer`/`TileLayer`/`Marker`/`Popup`) over OpenStreetMap tiles. Patches Leaflet's default icon URLs by importing the PNGs from `leaflet/dist/images/*` (declared in `src/vite-env.d.ts`). Custom inline `FitBounds` component uses `useMap()` to fit-to-markers when bounds change. Click handlers use a conditional spread (`{...(onSelectObject ? { eventHandlers: ... } : {})}`) so `exactOptionalPropertyTypes` doesn't reject `undefined` for `LeafletEventHandlerFnMap`. **Does not import `leaflet/dist/leaflet.css`** — host apps (studio, puck-playground) import it from their own `main.tsx` so vitest stays DOM-free.
+- `map-data.ts` — pure marker/bounds helpers (`extractMarkers`, `computeBounds`, types `MapMarker`/`MapBounds`) split from the renderer for the same vitest reason as `chart-data.ts`.
 - `peer-cursors-overlay.tsx` — Tier 8E collaboration: `PeerCursorsBar` (rendered at the top of `canvas-panel`) + `PeerSelectionBadge` + pure `groupPeerSelections()` helper. All state driven by `usePresence()` off `@prism/core/presence`.
 
 ## Panels (`src/panels/`)

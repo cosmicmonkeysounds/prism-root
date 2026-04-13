@@ -1,13 +1,47 @@
 /**
- * MapWidgetRenderer — geographic scatter of objects with lat/lng fields.
+ * MapWidgetRenderer — geographic scatter of objects with lat/lng fields,
+ * powered by react-leaflet + OpenStreetMap tiles.
  *
- * Simple SVG-based projection (no map tiles). Auto-fits bounds to markers
- * and projects lat/lng onto the viewBox. For a full tile-layer map, swap
- * this component body for react-leaflet once the dependency is accepted.
+ * Pure marker / bounds helpers live in `./map-data.ts` (re-exported here
+ * so existing imports keep working). Leaflet's CSS must be loaded by the
+ * host application (Studio's `main.tsx`, the playground entry, etc.) —
+ * we do NOT import it from this module so that vitest's node env can
+ * still parse this file without a CSS loader.
  */
 
-import { useMemo } from "react";
+import { useMemo, useEffect, useRef } from "react";
+import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
+import L from "leaflet";
 import type { GraphObject } from "@prism/core/object-model";
+import {
+  extractMarkers,
+  computeBounds,
+  type MapMarker,
+  type MapBounds,
+} from "./map-data.js";
+
+export { extractMarkers, computeBounds, type MapMarker, type MapBounds };
+
+// Leaflet ships marker icons as relative URLs that break under bundlers.
+// Resolve them via Vite's `?url` handling so the playground / Studio bundle
+// picks up the assets from `node_modules/leaflet/dist/images/`.
+//
+// We patch L.Icon.Default's `_getIconUrl` to point at the bundled URLs.
+import iconRetinaUrl from "leaflet/dist/images/marker-icon-2x.png";
+import iconUrl from "leaflet/dist/images/marker-icon.png";
+import shadowUrl from "leaflet/dist/images/marker-shadow.png";
+
+let iconsPatched = false;
+function patchLeafletIcons() {
+  if (iconsPatched) return;
+  iconsPatched = true;
+  delete (L.Icon.Default.prototype as { _getIconUrl?: unknown })._getIconUrl;
+  L.Icon.Default.mergeOptions({
+    iconRetinaUrl: iconRetinaUrl as unknown as string,
+    iconUrl: iconUrl as unknown as string,
+    shadowUrl: shadowUrl as unknown as string,
+  });
+}
 
 export interface MapWidgetProps {
   objects: GraphObject[];
@@ -20,65 +54,31 @@ export interface MapWidgetProps {
   onSelectObject?: (id: string) => void;
 }
 
-export interface MapMarker {
-  id: string;
-  lat: number;
-  lng: number;
-  title: string;
-}
-
-/** Extract valid lat/lng markers from a set of objects. */
-export function extractMarkers(
-  objects: GraphObject[],
-  latField: string,
-  lngField: string,
-  titleField: string,
-): MapMarker[] {
-  const out: MapMarker[] = [];
-  for (const obj of objects) {
-    const data = obj.data as Record<string, unknown>;
-    const lat = Number(data[latField]);
-    const lng = Number(data[lngField]);
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
-    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) continue;
-    out.push({
-      id: obj.id,
-      lat,
-      lng,
-      title: String(data[titleField] ?? obj.id),
-    });
-  }
-  return out;
-}
-
-/** Compute auto-bounds with at least a small pad around the marker set. */
-export function computeBounds(markers: MapMarker[]): {
-  minLat: number;
-  maxLat: number;
-  minLng: number;
-  maxLng: number;
-} {
-  if (markers.length === 0) return { minLat: -90, maxLat: 90, minLng: -180, maxLng: 180 };
-  let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
-  for (const m of markers) {
-    if (m.lat < minLat) minLat = m.lat;
-    if (m.lat > maxLat) maxLat = m.lat;
-    if (m.lng < minLng) minLng = m.lng;
-    if (m.lng > maxLng) maxLng = m.lng;
-  }
-  // Pad bounds slightly so a single marker still has context.
-  const padLat = Math.max((maxLat - minLat) * 0.1, 0.5);
-  const padLng = Math.max((maxLng - minLng) * 0.1, 0.5);
-  return {
-    minLat: minLat - padLat,
-    maxLat: maxLat + padLat,
-    minLng: minLng - padLng,
-    maxLng: maxLng + padLng,
-  };
+function FitBounds({ bounds }: { bounds: MapBounds }) {
+  const map = useMap();
+  useEffect(() => {
+    const corners: L.LatLngBoundsLiteral = [
+      [bounds.minLat, bounds.minLng],
+      [bounds.maxLat, bounds.maxLng],
+    ];
+    map.fitBounds(corners, { padding: [24, 24], animate: false });
+  }, [map, bounds.minLat, bounds.maxLat, bounds.minLng, bounds.maxLng]);
+  return null;
 }
 
 export function MapWidgetRenderer(props: MapWidgetProps) {
-  const { objects, latField, lngField, titleField, width = 480, height = 280, onSelectObject } = props;
+  const {
+    objects,
+    latField,
+    lngField,
+    titleField,
+    initialZoom = 4,
+    height = 320,
+    onSelectObject,
+  } = props;
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  patchLeafletIcons();
 
   const markers = useMemo(
     () => extractMarkers(objects, latField, lngField, titleField),
@@ -87,13 +87,16 @@ export function MapWidgetRenderer(props: MapWidgetProps) {
 
   const bounds = useMemo(() => computeBounds(markers), [markers]);
 
-  const projectX = (lng: number): number =>
-    ((lng - bounds.minLng) / (bounds.maxLng - bounds.minLng || 1)) * width;
-  const projectY = (lat: number): number =>
-    height - ((lat - bounds.minLat) / (bounds.maxLat - bounds.minLat || 1)) * height;
+  const center: L.LatLngExpression = markers.length
+    ? [
+        (bounds.minLat + bounds.maxLat) / 2,
+        (bounds.minLng + bounds.maxLng) / 2,
+      ]
+    : [20, 0];
 
   return (
     <div
+      ref={containerRef}
       data-testid="map-widget"
       style={{
         border: "1px solid #059669",
@@ -103,38 +106,71 @@ export function MapWidgetRenderer(props: MapWidgetProps) {
         color: "#e2e8f0",
       }}
     >
-      <div style={{ fontSize: 11, fontWeight: 600, color: "#059669", textTransform: "uppercase", marginBottom: 6 }}>
+      <div
+        style={{
+          fontSize: 11,
+          fontWeight: 600,
+          color: "#059669",
+          textTransform: "uppercase",
+          marginBottom: 6,
+        }}
+      >
         Map — {markers.length} marker{markers.length === 1 ? "" : "s"}
       </div>
       {markers.length === 0 ? (
-        <div style={{ padding: 24, color: "#94a3b8", fontSize: 12, textAlign: "center" }}>
+        <div
+          style={{
+            padding: 24,
+            color: "#94a3b8",
+            fontSize: 12,
+            textAlign: "center",
+          }}
+        >
           No objects with valid {latField}/{lngField} fields.
         </div>
       ) : (
-        <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} data-testid="map-svg">
-          <rect x={0} y={0} width={width} height={height} fill="#1e293b" />
-          {/* Crosshair graticule for context */}
-          <line x1={0} y1={height / 2} x2={width} y2={height / 2} stroke="#334155" strokeDasharray="2 4" />
-          <line x1={width / 2} y1={0} x2={width / 2} y2={height} stroke="#334155" strokeDasharray="2 4" />
-          {markers.map((m) => (
-            <g
-              key={m.id}
-              data-testid={`map-marker-${m.id}`}
-              onClick={() => onSelectObject?.(m.id)}
-              style={{ cursor: onSelectObject ? "pointer" : "default" }}
-            >
-              <circle cx={projectX(m.lng)} cy={projectY(m.lat)} r={6} fill="#059669" stroke="#e2e8f0" strokeWidth={1} />
-              <text
-                x={projectX(m.lng) + 8}
-                y={projectY(m.lat) + 4}
-                fontSize="10"
-                fill="#e2e8f0"
+        <div
+          style={{
+            width: "100%",
+            height,
+            borderRadius: 4,
+            overflow: "hidden",
+          }}
+        >
+          <MapContainer
+            center={center}
+            zoom={initialZoom}
+            scrollWheelZoom
+            style={{ width: "100%", height: "100%" }}
+          >
+            <TileLayer
+              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            />
+            <FitBounds bounds={bounds} />
+            {markers.map((m) => (
+              <Marker
+                key={m.id}
+                position={[m.lat, m.lng]}
+                {...(onSelectObject
+                  ? { eventHandlers: { click: () => onSelectObject(m.id) } }
+                  : {})}
               >
-                {m.title.length > 18 ? `${m.title.slice(0, 17)}…` : m.title}
-              </text>
-            </g>
-          ))}
-        </svg>
+                <Popup>
+                  <div
+                    data-testid={`map-marker-${m.id}`}
+                    style={{ fontSize: 12, fontWeight: 600 }}
+                  >
+                    {m.title}
+                  </div>
+                  <div style={{ fontSize: 10, color: "#64748b" }}>
+                    {m.lat.toFixed(4)}, {m.lng.toFixed(4)}
+                  </div>
+                </Popup>
+              </Marker>
+            ))}
+          </MapContainer>
+        </div>
       )}
     </div>
   );
