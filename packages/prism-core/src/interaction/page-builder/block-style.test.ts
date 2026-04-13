@@ -8,6 +8,7 @@ import {
   extractBlockStyle,
   mergeCss,
   resolveShadow,
+  parseCssDeclarations,
   STYLE_FIELD_DEFS,
   BREAKPOINTS,
   mediaRule,
@@ -185,6 +186,71 @@ describe("responsive overrides", () => {
 
   it("mediaRule returns empty string for empty CSS", () => {
     expect(mediaRule("mobile", ".x", {})).toBe("");
+  });
+});
+
+describe("parseCssDeclarations", () => {
+  it("parses a simple declaration string", () => {
+    expect(parseCssDeclarations("color: red; padding: 4px 8px;")).toEqual({
+      color: "red",
+      padding: "4px 8px",
+    });
+  });
+
+  it("converts kebab-case keys to camelCase", () => {
+    expect(parseCssDeclarations("background-color: #fff; font-weight: 700")).toEqual({
+      backgroundColor: "#fff",
+      fontWeight: 700,
+    });
+  });
+
+  it("coerces plain numeric values to numbers", () => {
+    expect(parseCssDeclarations("z-index: 5; opacity: 0.5")).toEqual({
+      zIndex: 5,
+      opacity: 0.5,
+    });
+  });
+
+  it("keeps values with units as strings", () => {
+    const out = parseCssDeclarations("width: 320px; height: 50%");
+    expect(out.width).toBe("320px");
+    expect(out.height).toBe("50%");
+  });
+
+  it("skips malformed declarations", () => {
+    expect(parseCssDeclarations("color; : red; valid: yes")).toEqual({ valid: "yes" });
+  });
+});
+
+describe("positioning and customCss", () => {
+  it("maps position + top/left/right/bottom + zIndex", () => {
+    const css = computeBlockStyle({
+      position: "absolute",
+      top: 20,
+      left: 40,
+      right: 10,
+      bottom: 5,
+      zIndex: 3,
+    });
+    expect(css.position).toBe("absolute");
+    expect(css.top).toBe(20);
+    expect(css.left).toBe(40);
+    expect(css.right).toBe(10);
+    expect(css.bottom).toBe(5);
+    expect(css.zIndex).toBe(3);
+  });
+
+  it("customCss is merged last and wins over other fields", () => {
+    const css = computeBlockStyle({
+      background: "#fff",
+      customCss: "background: #000; font-weight: 900",
+    });
+    expect(css.background).toBe("#000");
+    expect(css.fontWeight).toBe(900);
+  });
+
+  it("ignores empty position/customCss values", () => {
+    expect(computeBlockStyle({ position: "", customCss: "" })).toEqual({});
   });
 });
 

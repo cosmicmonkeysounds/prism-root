@@ -1,5 +1,6 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import "./tailwind.css";
 import "@measured/puck/puck.css";
 import "leaflet/dist/leaflet.css";
 import { PlaygroundApp } from "./playground-app.js";

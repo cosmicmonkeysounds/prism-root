@@ -1,0 +1,14 @@
+/*
+ * Tailwind v4 entry for @prism/puck-playground.
+ *
+ * The playground mounts @prism/studio components via source alias, so we
+ * also point Tailwind at the studio source tree — that way any utility
+ * class authored over there resolves in the playground bundle. Preflight
+ * is skipped (same reasoning as studio).
+ */
+
+@import "tailwindcss/theme" layer(theme);
+@import "tailwindcss/utilities" layer(utilities);
+
+@source "./**/*.{ts,tsx}";
+@source "../../prism-studio/src/**/*.{ts,tsx}";

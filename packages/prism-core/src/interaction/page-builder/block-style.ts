@@ -49,6 +49,17 @@ export interface BlockStyleData {
   gap?: number | undefined;
   alignItems?: string | undefined;
   justifyContent?: string | undefined;
+  // Positioning — lets authors place a block absolutely on the page canvas
+  // (HotGlue-style freeform layout) in addition to the default stacked flow.
+  position?: "static" | "relative" | "absolute" | "fixed" | "sticky" | string | undefined;
+  top?: number | string | undefined;
+  left?: number | string | undefined;
+  right?: number | string | undefined;
+  bottom?: number | string | undefined;
+  zIndex?: number | undefined;
+  // Raw CSS declarations. Parsed by `parseCssDeclarations` and merged on top
+  // of every other computed property, so this is the final per-block override.
+  customCss?: string | undefined;
 }
 
 // ── Shadow presets ──────────────────────────────────────────────────────────
@@ -130,7 +141,45 @@ export function computeBlockStyle(data: BlockStyleData | undefined | null): CssS
   if (data.alignItems) css.alignItems = data.alignItems;
   if (data.justifyContent) css.justifyContent = data.justifyContent;
 
+  // Positioning
+  if (data.position) css.position = data.position;
+  for (const k of ["top", "left", "right", "bottom"] as const) {
+    const v = data[k];
+    if (v === undefined || v === "") continue;
+    const n = typeof v === "number" ? v : Number(v);
+    css[k] = Number.isFinite(n) ? (n as number) : (v as string);
+  }
+  const zi = num(data.zIndex);
+  if (zi !== undefined) css.zIndex = zi;
+
+  // Raw CSS last — wins over everything above so it's a real escape hatch.
+  if (data.customCss) {
+    const parsed = parseCssDeclarations(data.customCss);
+    for (const [k, v] of Object.entries(parsed)) css[k] = v;
+  }
+
   return css;
+}
+
+/**
+ * Parse a string of semicolon-separated CSS declarations (`color: red;
+ * padding: 4px 8px;`) into a `CssStyle` bag. Keys are converted from
+ * kebab-case to camelCase so React's `style` prop accepts them directly.
+ * Plain numeric values (no unit) become numbers — everything else stays a
+ * string. Invalid lines are silently skipped.
+ */
+export function parseCssDeclarations(src: string): CssStyle {
+  const out: CssStyle = {};
+  for (const decl of src.split(";")) {
+    const idx = decl.indexOf(":");
+    if (idx < 0) continue;
+    const rawKey = decl.slice(0, idx).trim();
+    const rawVal = decl.slice(idx + 1).trim();
+    if (!rawKey || !rawVal) continue;
+    const key = rawKey.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
+    out[key] = /^-?\d+(?:\.\d+)?$/.test(rawVal) ? Number(rawVal) : rawVal;
+  }
+  return out;
 }
 
 /** Merge two CSS style bags. Right-hand side wins. */
@@ -150,6 +199,16 @@ export function mergeCss(
  * array to expose per-block styling knobs in the inspector.
  */
 export const STYLE_FIELD_DEFS: ReadonlyArray<BlockFieldDef> = [
+  {
+    id: "className",
+    type: "string",
+    label: "Tailwind Classes",
+    ui: {
+      group: "Tailwind",
+      placeholder: "e.g. bg-blue-500 text-white rounded-lg p-6 shadow-lg",
+      multiline: true,
+    },
+  },
   { id: "background", type: "color", label: "Background", ui: { group: "Style" } },
   { id: "textColor", type: "color", label: "Text Color", ui: { group: "Style" } },
   { id: "paddingX", type: "int", label: "Padding X (px)", ui: { group: "Style" } },
@@ -189,6 +248,35 @@ export const STYLE_FIELD_DEFS: ReadonlyArray<BlockFieldDef> = [
       { value: "justify", label: "Justify" },
     ],
     ui: { group: "Typography" },
+  },
+  {
+    id: "position",
+    type: "enum",
+    label: "Position",
+    default: "",
+    enumOptions: [
+      { value: "", label: "Default (flow)" },
+      { value: "relative", label: "Relative" },
+      { value: "absolute", label: "Absolute (freeform)" },
+      { value: "fixed", label: "Fixed" },
+      { value: "sticky", label: "Sticky" },
+    ],
+    ui: { group: "Position" },
+  },
+  { id: "top", type: "int", label: "Top (px)", ui: { group: "Position" } },
+  { id: "left", type: "int", label: "Left (px)", ui: { group: "Position" } },
+  { id: "right", type: "int", label: "Right (px)", ui: { group: "Position" } },
+  { id: "bottom", type: "int", label: "Bottom (px)", ui: { group: "Position" } },
+  { id: "zIndex", type: "int", label: "Z Index", ui: { group: "Position" } },
+  {
+    id: "customCss",
+    type: "string",
+    label: "Custom CSS",
+    ui: {
+      group: "Style",
+      placeholder: "color: red;\npadding: 12px 16px;",
+      multiline: true,
+    },
   },
   { id: "visibleWhen", type: "string", label: "Visible When (expression)", ui: { group: "Behavior", placeholder: "e.g. 1 == 1" } },
   { id: "hiddenMobile", type: "bool", label: "Hide on Mobile", default: false, ui: { group: "Responsive" } },
@@ -307,6 +395,13 @@ export function extractBlockStyle(data: unknown): BlockStyleData {
     "gap",
     "alignItems",
     "justifyContent",
+    "position",
+    "top",
+    "left",
+    "right",
+    "bottom",
+    "zIndex",
+    "customCss",
   ];
   for (const k of keys) {
     if (d[k as string] !== undefined && d[k as string] !== "") {

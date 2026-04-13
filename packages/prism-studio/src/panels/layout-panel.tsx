@@ -9,7 +9,7 @@
  * The kernel CollectionStore (Loro CRDT) remains the source of truth.
  */
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from "react";
 import { Puck, type Config, type Data, type ComponentConfig, type Fields } from "@measured/puck";
 import type { GraphObject, ObjectId } from "@prism/core/object-model";
 import { objectId } from "@prism/core/object-model";
@@ -74,6 +74,28 @@ import {
   VideoWidgetRenderer,
   AudioWidgetRenderer,
 } from "../components/media-renderers.js";
+import {
+  computeBlockStyle,
+  extractBlockStyle,
+  type BlockStyleData,
+} from "@prism/core/page-builder";
+import { renderMarkdown } from "../components/content-renderers.js";
+import {
+  colorField,
+  alignField,
+  sliderField,
+  urlField,
+  classNameField,
+  customCssField,
+} from "../components/puck-custom-fields.js";
+import {
+  PageShellRenderer,
+  SiteHeaderRenderer,
+  SiteFooterRenderer,
+  SideBarRenderer,
+  NavBarRenderer,
+  HeroRenderer,
+} from "../components/layout-shell-renderers.js";
 
 // ── Styles ──────────────────────────────────────────────────────────────────
 
@@ -93,6 +115,10 @@ const emptyStyle = {
  * Build a Puck component config entry from an EntityDef.
  * Each entity field becomes a Puck field; we map our field types to Puck's.
  */
+const ALIGN_FIELD_IDS = new Set(["align", "textAlign", "mobileTextAlign"]);
+const SPACING_FIELD_PATTERN =
+  /^(paddingX|paddingY|marginX|marginY|mobilePaddingX|mobilePaddingY|borderWidth|borderRadius|fontSize|mobileFontSize|letterSpacing|gap)$/;
+
 function entityToPuckComponent(def: {
   type: string;
   label: string;
@@ -109,22 +135,45 @@ function entityToPuckComponent(def: {
 }): ComponentConfig {
   const puckFields: Record<string, unknown> = {};
   const defaultProps: Record<string, unknown> = {};
+  const withLabel = (label: string | undefined) =>
+    label !== undefined ? { label } : {};
 
   for (const f of def.fields) {
+    const lbl = withLabel(f.label);
+    // The universal Tailwind className field gets a specialized monospace
+    // textarea regardless of its declared type.
+    if (f.id === "className") {
+      puckFields[f.id] = classNameField(lbl);
+      if (f.default !== undefined) defaultProps[f.id] = f.default;
+      continue;
+    }
+    // Raw CSS escape hatch — parallel to className but for inline CSS.
+    if (f.id === "customCss") {
+      puckFields[f.id] = customCssField(lbl);
+      if (f.default !== undefined) defaultProps[f.id] = f.default;
+      continue;
+    }
     switch (f.type) {
       case "string":
+        puckFields[f.id] = { type: "text", ...lbl };
+        if (f.default !== undefined) defaultProps[f.id] = f.default;
+        break;
       case "url":
+        puckFields[f.id] = urlField(lbl);
+        if (f.default !== undefined) defaultProps[f.id] = f.default;
+        break;
       case "color":
-        puckFields[f.id] = { type: "text" };
+        puckFields[f.id] = colorField(lbl);
         if (f.default !== undefined) defaultProps[f.id] = f.default;
         break;
       case "text":
-        puckFields[f.id] = { type: "textarea" };
+        puckFields[f.id] = { type: "textarea", ...lbl };
         if (f.default !== undefined) defaultProps[f.id] = f.default;
         break;
       case "bool":
         puckFields[f.id] = {
           type: "radio",
+          ...lbl,
           options: [
             { label: "Yes", value: "true" },
             { label: "No", value: "false" },
@@ -134,25 +183,42 @@ function entityToPuckComponent(def: {
         break;
       case "int":
       case "float":
-        puckFields[f.id] = { type: "number" };
+        if (f.type === "int" && SPACING_FIELD_PATTERN.test(f.id)) {
+          const max = /fontSize/i.test(f.id)
+            ? 96
+            : /radius|letterSpacing|borderWidth/i.test(f.id)
+              ? 64
+              : 128;
+          puckFields[f.id] = sliderField({ ...lbl, min: 0, max, step: 1, unit: "px" });
+        } else {
+          puckFields[f.id] = { type: "number", ...lbl };
+        }
         if (f.default !== undefined) defaultProps[f.id] = f.default;
         break;
       case "enum":
         if (f.enumOptions && f.enumOptions.length > 0) {
-          puckFields[f.id] = {
-            type: "select",
-            options: f.enumOptions.map((o) => ({
-              label: o.label,
-              value: o.value,
-            })),
-          };
+          if (ALIGN_FIELD_IDS.has(f.id)) {
+            puckFields[f.id] = alignField({
+              ...lbl,
+              options: f.enumOptions.map((o) => ({ value: o.value, label: o.label })),
+            });
+          } else {
+            puckFields[f.id] = {
+              type: "select",
+              ...lbl,
+              options: f.enumOptions.map((o) => ({
+                label: o.label,
+                value: o.value,
+              })),
+            };
+          }
           defaultProps[f.id] = f.default ?? f.enumOptions[0]?.value;
         } else {
-          puckFields[f.id] = { type: "text" };
+          puckFields[f.id] = { type: "text", ...lbl };
         }
         break;
       default:
-        puckFields[f.id] = { type: "text" };
+        puckFields[f.id] = { type: "text", ...lbl };
         if (f.default !== undefined) defaultProps[f.id] = f.default;
     }
   }
@@ -162,34 +228,96 @@ function entityToPuckComponent(def: {
     defaultProps,
     render: (props) => {
       const p = props as Record<string, unknown>;
-      // Generic renderer — shows component label + field values
+      const style = computeBlockStyle(extractBlockStyle(p) as BlockStyleData);
+      const className =
+        typeof p["className"] === "string" ? (p["className"] as string) : undefined;
+      // heading's own `align` field overrides textAlign when set
+      const alignOverride =
+        typeof p["align"] === "string" && p["align"] !== ""
+          ? (p["align"] as string)
+          : undefined;
+      if (alignOverride) style.textAlign = alignOverride;
+
+      if (def.type === "heading") {
+        const level = String(p["level"] ?? "h2") as "h1" | "h2" | "h3" | "h4";
+        const text = (p["text"] as string) ?? "";
+        const Tag = level;
+        return (
+          <Tag style={style} {...(className ? { className } : {})}>
+            {text || "Heading"}
+          </Tag>
+        );
+      }
+
+      if (def.type === "text-block") {
+        const content = (p["content"] as string) ?? "";
+        const format = (p["format"] as string) ?? "markdown";
+        if (format === "markdown") {
+          return (
+            <div
+              style={style}
+              {...(className ? { className } : {})}
+              dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }}
+            />
+          );
+        }
+        return (
+          <div
+            style={{ whiteSpace: "pre-wrap", ...style }}
+            {...(className ? { className } : {})}
+          >
+            {content}
+          </div>
+        );
+      }
+
+      // Generic fallback — apply style + className to the wrapper so any
+      // component benefits from the universal Tailwind field. We still
+      // show an icon/label chip and a compact preview of the first few
+      // non-style fields so authors can tell what's what on the canvas.
+      const previewFields = def.fields
+        .filter((f) => !isBlockStyleFieldId(f.id))
+        .slice(0, 3);
+      const wrapperClass = className ?? "";
+      const hasWrapperClass = wrapperClass.trim().length > 0;
       return (
         <div
-          style={{
-            border: "1px solid #e0e0e0",
-            borderRadius: 6,
-            padding: 12,
-            margin: "4px 0",
-            background: "#fafafa",
-          }}
+          {...(hasWrapperClass ? { className: wrapperClass } : {})}
+          style={
+            hasWrapperClass
+              ? style
+              : {
+                  border: "1px dashed #cbd5e1",
+                  borderRadius: 6,
+                  padding: 12,
+                  margin: "4px 0",
+                  background: "#fafafa",
+                  ...style,
+                }
+          }
         >
-          <div
-            style={{
-              fontSize: 11,
-              fontWeight: 600,
-              color: "#888",
-              textTransform: "uppercase",
-              letterSpacing: "0.05em",
-              marginBottom: 6,
-            }}
-          >
-            {def.icon ?? ""} {def.label}
-          </div>
-          {def.fields.slice(0, 3).map((f) => {
+          {!hasWrapperClass ? (
+            <div
+              style={{
+                fontSize: 11,
+                fontWeight: 600,
+                color: "#64748b",
+                textTransform: "uppercase",
+                letterSpacing: "0.05em",
+                marginBottom: 6,
+              }}
+            >
+              {def.icon ?? ""} {def.label}
+            </div>
+          ) : null}
+          {previewFields.map((f) => {
             const val = p[f.id];
             if (val === undefined || val === null || val === "") return null;
             return (
-              <div key={f.id} style={{ fontSize: 13, color: "#333", marginBottom: 2 }}>
+              <div key={f.id} style={{ fontSize: 13, marginBottom: 2 }}>
+                <span style={{ color: "#94a3b8", marginRight: 6 }}>
+                  {f.label ?? f.id}:
+                </span>
                 {String(val)}
               </div>
             );
@@ -200,112 +328,229 @@ function entityToPuckComponent(def: {
   };
 }
 
+const BLOCK_STYLE_FIELD_IDS = new Set<string>([
+  "className",
+  "customCss",
+  "background",
+  "textColor",
+  "paddingX",
+  "paddingY",
+  "marginX",
+  "marginY",
+  "borderWidth",
+  "borderColor",
+  "borderRadius",
+  "shadow",
+  "fontFamily",
+  "fontSize",
+  "fontWeight",
+  "lineHeight",
+  "letterSpacing",
+  "textAlign",
+  "display",
+  "flexDirection",
+  "gap",
+  "alignItems",
+  "justifyContent",
+  "position",
+  "top",
+  "left",
+  "right",
+  "bottom",
+  "zIndex",
+  "visibleWhen",
+  "hiddenMobile",
+  "hiddenTablet",
+  "mobilePaddingX",
+  "mobilePaddingY",
+  "mobileFontSize",
+  "mobileTextAlign",
+]);
+
+function isBlockStyleFieldId(id: string): boolean {
+  return BLOCK_STYLE_FIELD_IDS.has(id);
+}
+
+// ── Shell slot metadata ────────────────────────────────────────────────────
+
+/**
+ * Slot field names for every layout-shell entity type.
+ *
+ * Shells expose their regions via Puck slot fields instead of stacking
+ * children vertically. Each kernel child of a shell carries `data.__slot`
+ * naming which slot it belongs to; on projection the children are grouped
+ * back into per-slot Puck content arrays.
+ */
+const SHELL_SLOTS: Readonly<Record<string, readonly string[]>> = {
+  "page-shell": ["header", "sidebar", "main", "footer"],
+  "site-header": ["nav"],
+  "site-footer": ["col1", "col2", "col3"],
+  "side-bar": ["content"],
+  "nav-bar": ["links"],
+  "hero": ["content"],
+};
+
+function getShellSlots(kernelType: string): readonly string[] {
+  return SHELL_SLOTS[kernelType] ?? [];
+}
+
+function isShellType(kernelType: string): boolean {
+  return kernelType in SHELL_SLOTS;
+}
+
 // ── Kernel → Puck Data projection ──────────────────────────────────────────
 
 /**
- * Project kernel objects (children of a page, recursively) into Puck Data.
- * Sections become Puck zones; components become content items.
+ * Project the subtree under `pageId` into Puck `Data`.
+ *
+ * - Top-level sections are flattened (their children promoted to page level)
+ *   to preserve the legacy section-as-invisible-group behaviour.
+ * - Shells (page-shell, site-header, etc.) emit per-slot nested content
+ *   arrays so Puck's slot drop zones get populated recursively.
+ * - Every other kernel object becomes a flat Puck component item.
  */
 function kernelToPuckData(
-  pageChildren: GraphObject[],
+  pageId: ObjectId,
   allObjects: GraphObject[],
 ): Data {
-  const content: Data["content"] = [];
+  const content = buildPuckContent(pageId, null, allObjects, /*topLevel*/ true);
+  return { content, root: { props: {} } };
+}
 
-  for (const child of pageChildren) {
-    // Map each kernel object to a Puck content item
-    // The "type" field in Puck corresponds to the Puck component key
-    // We use PascalCase as Puck convention
-    const puckType = kebabToPascal(child.type);
-    const props: Record<string, unknown> = { ...(child.data as Record<string, unknown>) };
+function buildPuckContent(
+  parentId: ObjectId,
+  slotName: string | null,
+  allObjs: GraphObject[],
+  topLevel: boolean,
+): Data["content"] {
+  const children = allObjs
+    .filter((o) => o.parentId === parentId && !o.deletedAt)
+    .filter((o) => {
+      const tag = (o.data as Record<string, unknown> | undefined)?.["__slot"];
+      return slotName === null ? typeof tag !== "string" : tag === slotName;
+    })
+    .sort((a, b) => a.position - b.position);
 
-    // If it's a section, include its children as nested content
-    if (child.type === "section") {
-      const sectionChildren = allObjects
+  const out: Data["content"] = [];
+  for (const child of children) {
+    if (topLevel && child.type === "section") {
+      // Legacy: flatten section grandchildren into the page-level content
+      // so old pages without shells keep round-tripping cleanly.
+      const grand = allObjs
         .filter((o) => o.parentId === child.id && !o.deletedAt)
         .sort((a, b) => a.position - b.position);
-
-      for (const sc of sectionChildren) {
-        content.push({
-          type: kebabToPascal(sc.type),
-          props: {
-            id: sc.id,
-            ...(sc.data as Record<string, unknown>),
-          },
-        });
-      }
-    } else {
-      content.push({
-        type: puckType,
-        props: {
-          id: child.id,
-          ...props,
-        },
-      });
+      for (const sc of grand) out.push(toPuckItem(sc, allObjs));
+      continue;
     }
+    out.push(toPuckItem(child, allObjs));
   }
+  return out;
+}
 
+function toPuckItem(
+  obj: GraphObject,
+  allObjs: GraphObject[],
+): Data["content"][number] {
+  const raw = (obj.data ?? {}) as Record<string, unknown>;
+  const props: Record<string, unknown> = { id: obj.id };
+  for (const [k, v] of Object.entries(raw)) {
+    if (k === "__slot") continue;
+    props[k] = v;
+  }
+  for (const slot of getShellSlots(obj.type)) {
+    props[slot] = buildPuckContent(obj.id, slot, allObjs, false);
+  }
   return {
-    content,
-    root: { props: {} },
-  };
+    type: kebabToPascal(obj.type),
+    props,
+  } as Data["content"][number];
 }
 
 // ── Puck Data → Kernel diff ────────────────────────────────────────────────
 
+type KernelSync = {
+  store: {
+    listObjects(opts: { parentId: ObjectId }): GraphObject[];
+    allObjects(): GraphObject[];
+  };
+  createObject(
+    obj: Omit<GraphObject, "id" | "createdAt" | "updatedAt">,
+  ): GraphObject;
+  updateObject(id: ObjectId, patch: Partial<GraphObject>): GraphObject | undefined;
+  deleteObject(id: ObjectId): boolean;
+};
+
 /**
  * Diff Puck data against the current kernel state and apply CRUD ops.
- * This is the critical sync path: Puck edits → kernel mutations.
+ *
+ * Walks Puck content recursively: slots become nested kernel children
+ * tagged with `data.__slot`, and any existing kernel object under the page
+ * that isn't referenced by the new tree is deleted. This is the critical
+ * sync path — Puck edits → kernel mutations.
  */
 function syncPuckToKernel(
   newData: Data,
   pageId: ObjectId,
-  kernel: {
-    store: { listObjects(opts: { parentId: ObjectId }): GraphObject[]; allObjects(): GraphObject[] };
-    createObject(obj: Omit<GraphObject, "id" | "createdAt" | "updatedAt">): GraphObject;
-    updateObject(id: ObjectId, patch: Partial<GraphObject>): GraphObject | undefined;
-    deleteObject(id: ObjectId): boolean;
-  },
+  kernel: KernelSync,
 ) {
-  // Get all existing children (flat — sections + their children)
   const allObjs = kernel.store.allObjects().filter((o) => !o.deletedAt);
-  const existingByPage = allObjs.filter((o) => {
-    if (o.parentId === pageId) return true;
-    // Also include grandchildren (components inside sections)
-    const parent = allObjs.find((p) => p.id === o.parentId);
-    return parent?.parentId === pageId;
-  });
+  const existingById = new Map(allObjs.map((o) => [o.id, o]));
+  const seen = new Set<string>();
 
-  const existingById = new Map(existingByPage.map((o) => [o.id, o]));
-  const puckIds = new Set<string>();
+  syncContentArray(newData.content, pageId, null, existingById, seen, kernel);
 
-  // Process each Puck content item
-  for (let i = 0; i < newData.content.length; i++) {
-    const item = newData.content[i];
+  // Delete any descendants of this page that the new tree didn't mention.
+  for (const obj of collectDescendants(pageId, allObjs)) {
+    if (!seen.has(obj.id)) kernel.deleteObject(objectId(obj.id));
+  }
+}
+
+function syncContentArray(
+  items: Data["content"],
+  parentId: ObjectId,
+  slotName: string | null,
+  existingById: Map<string, GraphObject>,
+  seen: Set<string>,
+  kernel: KernelSync,
+) {
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
     if (!item) continue;
-    const props = (item.props ?? {}) as Record<string, unknown>;
-    const id = props.id as string | undefined;
+    const rawProps = (item.props ?? {}) as Record<string, unknown>;
+    const id = typeof rawProps["id"] === "string" ? (rawProps["id"] as string) : undefined;
     const kernelType = pascalToKebab(item.type);
+    const slotNames = getShellSlots(kernelType);
 
-    // Strip our tracking props before storing as data
-    const data = { ...props };
-    delete data.id;
+    const dataProps: Record<string, unknown> = {};
+    const slotData: Record<string, Data["content"]> = {};
+    for (const [k, v] of Object.entries(rawProps)) {
+      if (k === "id") continue;
+      if (slotNames.includes(k)) {
+        slotData[k] = Array.isArray(v) ? (v as Data["content"]) : [];
+        continue;
+      }
+      dataProps[k] = v;
+    }
+    if (slotName) dataProps["__slot"] = slotName;
 
+    let objId: ObjectId;
     const oid = id ? objectId(id) : null;
     if (oid && existingById.has(oid)) {
-      // Update existing object
       kernel.updateObject(oid, {
         position: i,
-        data,
+        parentId,
+        data: dataProps,
       });
-      puckIds.add(id as string);
-      existingById.delete(oid);
+      objId = oid;
     } else {
-      // Create new object from Puck
       const newObj = kernel.createObject({
         type: kernelType,
-        name: (data.text as string) ?? (data.title as string) ?? (data.label as string) ?? `New ${kernelType}`,
-        parentId: pageId,
+        name:
+          (dataProps["text"] as string) ??
+          (dataProps["title"] as string) ??
+          (dataProps["label"] as string) ??
+          `New ${kernelType}`,
+        parentId,
         position: i,
         status: "draft",
         tags: [],
@@ -315,16 +560,42 @@ function syncPuckToKernel(
         color: null,
         image: null,
         pinned: false,
-        data,
+        data: dataProps,
       });
-      puckIds.add(newObj.id);
+      objId = newObj.id;
+      existingById.set(objId, newObj);
+    }
+    seen.add(objId);
+
+    for (const slot of slotNames) {
+      const children = slotData[slot] ?? [];
+      syncContentArray(children, objId, slot, existingById, seen, kernel);
     }
   }
+}
 
-  // Delete objects removed from Puck
-  for (const [id] of existingById) {
-    kernel.deleteObject(objectId(id));
+function collectDescendants(
+  rootId: ObjectId,
+  allObjs: GraphObject[],
+): GraphObject[] {
+  const byParent = new Map<string, GraphObject[]>();
+  for (const o of allObjs) {
+    const arr = byParent.get(o.parentId ?? "") ?? [];
+    arr.push(o);
+    byParent.set(o.parentId ?? "", arr);
   }
+  const out: GraphObject[] = [];
+  const stack: string[] = [rootId];
+  while (stack.length > 0) {
+    const parent = stack.pop();
+    if (parent === undefined) break;
+    const kids = byParent.get(parent) ?? [];
+    for (const k of kids) {
+      out.push(k);
+      stack.push(k.id);
+    }
+  }
+  return out;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -1728,6 +1999,73 @@ export function LayoutPanel() {
           continue;
         }
 
+        // Layout shells — build fields via the generic mapper (so they get
+        // the standard Tailwind className + specialized inputs) and then
+        // augment with Puck `slot` fields for each region so authors can
+        // drag real components into header/sidebar/main/... zones.
+        if (isShellType(def.type)) {
+          const base = entityToPuckComponent({
+            type: def.type,
+            label: def.label,
+            icon: typeof def.icon === "string" ? def.icon : "",
+            fields: def.fields ?? [],
+          });
+          const slotNames = getShellSlots(def.type);
+          const extraFields: Record<string, Fields[string]> = {};
+          const extraDefaults: Record<string, unknown> = {};
+          for (const slot of slotNames) {
+            extraFields[slot] = { type: "slot" } as unknown as Fields[string];
+            extraDefaults[slot] = [];
+          }
+          type SlotFn = (props?: Record<string, unknown>) => ReactNode;
+          const layoutRender = (props: unknown) => {
+            const p = props as Record<string, unknown>;
+            const className =
+              typeof p["className"] === "string" && p["className"] !== ""
+                ? (p["className"] as string)
+                : undefined;
+            const slotNodes: Record<string, ReactNode> = {};
+            for (const slot of slotNames) {
+              const Slot = p[slot] as SlotFn | undefined;
+              slotNodes[slot] =
+                typeof Slot === "function" ? <Slot /> : null;
+            }
+            const passthrough: Record<string, unknown> = {
+              ...p,
+              ...(className ? { className } : {}),
+              ...slotNodes,
+            };
+            switch (def.type) {
+              case "page-shell":
+                return <PageShellRenderer {...(passthrough as object)} />;
+              case "site-header":
+                return <SiteHeaderRenderer {...(passthrough as object)} />;
+              case "site-footer":
+                return <SiteFooterRenderer {...(passthrough as object)} />;
+              case "side-bar":
+                return <SideBarRenderer {...(passthrough as object)} />;
+              case "nav-bar":
+                return <NavBarRenderer {...(passthrough as object)} />;
+              case "hero":
+              default:
+                return <HeroRenderer {...(passthrough as object)} />;
+            }
+          };
+          components[kebabToPascal(def.type)] = {
+            ...base,
+            fields: {
+              ...(base.fields ?? {}),
+              ...extraFields,
+            } as Fields,
+            defaultProps: {
+              ...(base.defaultProps ?? {}),
+              ...extraDefaults,
+            },
+            render: layoutRender,
+          };
+          continue;
+        }
+
         if (def.type === "audio-widget") {
           components[kebabToPascal(def.type)] = {
             fields: {
@@ -1811,7 +2149,18 @@ export function LayoutPanel() {
       };
     }
 
-    return { components };
+    // Puck canvas root: make it a positioned container so children with
+    // `position: absolute` float relative to the whole page, enabling
+    // HotGlue-style freeform layouts alongside the default stacked flow.
+    const rootRender = ({ children }: { children: ReactNode }) => (
+      <div style={{ position: "relative", minHeight: "100%" }}>{children}</div>
+    );
+
+    const config = {
+      components,
+      root: { render: rootRender },
+    } as unknown as Config;
+    return config;
   }, [kernel, selectedId]);
 
   // Project kernel objects → Puck data
@@ -1821,7 +2170,10 @@ export function LayoutPanel() {
   );
 
   const puckData = useMemo<Data>(
-    () => (page ? kernelToPuckData(pageChildren, allObjects) : { content: [], root: { props: {} } }),
+    () =>
+      page
+        ? kernelToPuckData(page.id, allObjects)
+        : { content: [], root: { props: {} } },
     [page, pageChildren, allObjects],
   );
 

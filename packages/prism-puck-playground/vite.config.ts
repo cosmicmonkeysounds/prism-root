@@ -3,6 +3,7 @@ import react from "@vitejs/plugin-react";
 import wasm from "vite-plugin-wasm";
 import topLevelAwait from "vite-plugin-top-level-await";
 import { viteSingleFile } from "vite-plugin-singlefile";
+import tailwindcss from "@tailwindcss/vite";
 import { resolve } from "path";
 import { readFileSync } from "fs";
 
@@ -23,7 +24,7 @@ function buildCoreAliases(): Array<{ find: string; replacement: string }> {
 }
 
 export default defineConfig({
-  plugins: [react(), wasm(), topLevelAwait(), viteSingleFile()],
+  plugins: [react(), tailwindcss(), wasm(), topLevelAwait(), viteSingleFile()],
   resolve: {
     alias: [
       ...buildCoreAliases(),

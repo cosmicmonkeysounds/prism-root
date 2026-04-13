@@ -97,6 +97,64 @@ describe("createPuckLoroBridge", () => {
     expect(typeof raw).toBe("string");
   });
 
+  it("should round-trip slot-shaped data (Puck 0.20 slots)", () => {
+    const bridge = createPuckLoroBridge();
+    // Puck 0.20 stores slot content as nested ComponentData[] on props.
+    const nested: Data = {
+      content: [
+        {
+          type: "PageShell",
+          props: {
+            id: "shell-1",
+            layout: "sidebar-left",
+            sidebarWidth: 240,
+            header: [
+              { type: "SiteHeader", props: { id: "h-1", brand: "Acme" } },
+            ],
+            sidebar: [
+              { type: "Heading", props: { id: "sb-h", text: "Menu", level: "h3" } },
+              { type: "NavBar", props: { id: "sb-n", align: "start", links: [] } },
+            ],
+            main: [
+              {
+                type: "Hero",
+                props: {
+                  id: "hero-1",
+                  align: "center",
+                  minHeight: 300,
+                  content: [
+                    { type: "Heading", props: { id: "h2", text: "Welcome", level: "h1" } },
+                  ],
+                },
+              },
+            ],
+            footer: [],
+          },
+        },
+      ],
+      root: { props: {} },
+    };
+    bridge.setData(nested);
+    const out = bridge.getData();
+    const shell = out.content[0];
+    expect(shell?.type).toBe("PageShell");
+    const shellProps = shell?.props as Record<string, unknown>;
+    expect(shellProps["sidebarWidth"]).toBe(240);
+    expect(Array.isArray(shellProps["header"])).toBe(true);
+    expect((shellProps["header"] as unknown[]).length).toBe(1);
+    const main = shellProps["main"] as Array<{
+      type: string;
+      props: { content?: unknown };
+    }>;
+    expect(main[0]?.type).toBe("Hero");
+    const heroContent = main[0]?.props.content as unknown[] | undefined;
+    expect(Array.isArray(heroContent)).toBe(true);
+    expect((heroContent ?? [])[0]).toMatchObject({
+      type: "Heading",
+      props: { text: "Welcome" },
+    });
+  });
+
   it("should merge Puck state from two peers via CRDT", () => {
     const doc1 = new LoroDoc();
     doc1.setPeerId(1n);

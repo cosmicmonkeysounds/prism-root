@@ -737,6 +737,132 @@ const spacerDef: EntityDef<string> = {
   ],
 };
 
+// ── Wix-style layout primitives ────────────────────────────────────────────
+
+const pageShellDef: EntityDef<string> = {
+  type: "page-shell",
+  category: "component",
+  label: "Page Shell",
+  pluralLabel: "Page Shells",
+  icon: "\u25A6",
+  color: "#0ea5e9",
+  fields: [
+    {
+      id: "layout",
+      type: "enum",
+      label: "Layout",
+      default: "sidebar-left",
+      enumOptions: [
+        { value: "sidebar-left", label: "Sidebar Left" },
+        { value: "sidebar-right", label: "Sidebar Right" },
+        { value: "stacked", label: "Stacked (no sidebar)" },
+      ],
+    },
+    { id: "sidebarWidth", type: "int", label: "Sidebar Width (px)", default: 240 },
+    { id: "stickyHeader", type: "bool", label: "Sticky Header", default: true },
+    ...STYLE_FIELD_DEFS,
+  ],
+};
+
+const siteHeaderDef: EntityDef<string> = {
+  type: "site-header",
+  category: "component",
+  label: "Site Header",
+  pluralLabel: "Site Headers",
+  icon: "\u2630",
+  color: "#0ea5e9",
+  fields: [
+    { id: "brand", type: "string", label: "Brand", default: "Your Brand" },
+    { id: "tagline", type: "string", label: "Tagline" },
+    { id: "sticky", type: "bool", label: "Sticky", default: false },
+    ...STYLE_FIELD_DEFS,
+  ],
+};
+
+const siteFooterDef: EntityDef<string> = {
+  type: "site-footer",
+  category: "component",
+  label: "Site Footer",
+  pluralLabel: "Site Footers",
+  icon: "\u2500",
+  color: "#0ea5e9",
+  fields: [
+    { id: "copyright", type: "string", label: "Copyright", default: "© Your Brand" },
+    ...STYLE_FIELD_DEFS,
+  ],
+};
+
+const sideBarDef: EntityDef<string> = {
+  type: "side-bar",
+  category: "component",
+  label: "Sidebar",
+  pluralLabel: "Sidebars",
+  icon: "\u2590",
+  color: "#0ea5e9",
+  fields: [
+    { id: "width", type: "int", label: "Width (px)", default: 260 },
+    {
+      id: "position",
+      type: "enum",
+      label: "Position",
+      default: "left",
+      enumOptions: [
+        { value: "left", label: "Left" },
+        { value: "right", label: "Right" },
+      ],
+    },
+    ...STYLE_FIELD_DEFS,
+  ],
+};
+
+const navBarDef: EntityDef<string> = {
+  type: "nav-bar",
+  category: "component",
+  label: "Nav Bar",
+  pluralLabel: "Nav Bars",
+  icon: "\u2630",
+  color: "#0ea5e9",
+  fields: [
+    {
+      id: "align",
+      type: "enum",
+      label: "Alignment",
+      default: "start",
+      enumOptions: [
+        { value: "start", label: "Start" },
+        { value: "center", label: "Center" },
+        { value: "end", label: "End" },
+      ],
+    },
+    ...STYLE_FIELD_DEFS,
+  ],
+};
+
+const heroDef: EntityDef<string> = {
+  type: "hero",
+  category: "component",
+  label: "Hero",
+  pluralLabel: "Heroes",
+  icon: "\u2605",
+  color: "#0ea5e9",
+  fields: [
+    {
+      id: "align",
+      type: "enum",
+      label: "Alignment",
+      default: "center",
+      enumOptions: [
+        { value: "left", label: "Left" },
+        { value: "center", label: "Center" },
+        { value: "right", label: "Right" },
+      ],
+    },
+    { id: "minHeight", type: "int", label: "Min Height (px)", default: 360 },
+    { id: "backgroundImage", type: "url", label: "Background Image" },
+    ...STYLE_FIELD_DEFS,
+  ],
+};
+
 // ── Data Display Widgets ───────────────────────────────────────────────────
 
 const statWidgetDef: EntityDef<string> = {
@@ -1084,6 +1210,12 @@ export function createPageBuilderRegistry(): ObjectRegistry<string> {
   registry.register(columnsDef);
   registry.register(dividerDef);
   registry.register(spacerDef);
+  registry.register(pageShellDef);
+  registry.register(siteHeaderDef);
+  registry.register(siteFooterDef);
+  registry.register(sideBarDef);
+  registry.register(navBarDef);
+  registry.register(heroDef);
   registry.register(statWidgetDef);
   registry.register(badgeDef);
   registry.register(alertDef);

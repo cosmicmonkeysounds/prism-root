@@ -1,4 +1,5 @@
 import { useMemo, useState, useEffect } from "react";
+import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import {
   createStudioKernel,
   KernelProvider,
@@ -49,17 +50,34 @@ function Shell({ onReset }: { onReset: () => void }) {
       }}
     >
       <Header onReset={onReset} />
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "240px 1fr",
-          minHeight: 0,
-        }}
-      >
-        <PageSidebar />
-        <div style={{ minHeight: 0, minWidth: 0, overflow: "hidden" }}>
-          <LayoutPanel />
-        </div>
+      <div style={{ minHeight: 0, minWidth: 0 }}>
+        <PanelGroup
+          direction="horizontal"
+          autoSaveId="playground-shell-split"
+        >
+          <Panel defaultSize={18} minSize={10} maxSize={40}>
+            <PageSidebar />
+          </Panel>
+          <PanelResizeHandle
+            style={{
+              width: 4,
+              background: "#1e293b",
+              cursor: "col-resize",
+            }}
+          />
+          <Panel minSize={30}>
+            <div
+              style={{
+                height: "100%",
+                minHeight: 0,
+                minWidth: 0,
+                overflow: "hidden",
+              }}
+            >
+              <LayoutPanel />
+            </div>
+          </Panel>
+        </PanelGroup>
       </div>
     </div>
   );
@@ -130,7 +148,7 @@ function PageSidebar() {
   return (
     <aside
       style={{
-        borderRight: "1px solid #1e293b",
+        height: "100%",
         background: "#0f172a",
         padding: "12px 0",
         overflowY: "auto",

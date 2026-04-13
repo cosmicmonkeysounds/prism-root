@@ -35,10 +35,15 @@ const EMPTY_PUCK_DATA: Data = {
  * Create a bridge between Puck and a Loro document.
  *
  * Stores the Puck layout data as a JSON string in the Loro root map.
- * This is a pragmatic approach: Puck's data structure is a nested JSON
- * tree that maps cleanly to a single Loro map entry. Fine-grained CRDT
- * merging of individual Puck components can be added later by decomposing
- * the data into per-component Loro map entries.
+ * This handles Puck 0.20 slot-shaped data transparently because slot
+ * content is just nested `ComponentData[]` arrays inside the JSON tree —
+ * the bridge doesn't inspect the shape, it only round-trips it.
+ *
+ * Trade-off: at the Loro layer the whole document is a single string entry,
+ * so merges between peers are last-write-wins for the document as a whole
+ * rather than per-component. Studio's `layout-panel` avoids that limit by
+ * projecting into kernel objects directly (every block is its own Loro
+ * map), and reserves this bridge for standalone / test contexts.
  */
 export function createPuckLoroBridge(
   doc?: LoroDoc,
