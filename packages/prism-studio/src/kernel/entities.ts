@@ -29,6 +29,10 @@ const categoryRules: CategoryRule[] = [
   // "route" / "behavior" live under an `app` and never contain children.
   { category: "route", canParent: [], canBeRoot: false },
   { category: "behavior", canParent: [], canBeRoot: false },
+  // "facet" = a reusable FacetDefinition (form/list/table/report/card
+  // projection of an entity type). Lives at the workspace root alongside
+  // pages; referenced by facet-view and spatial-canvas components.
+  { category: "facet", canParent: [], canBeRoot: true },
 ];
 
 // ── Entity Definitions ──────────────────────────────────────────────────────
@@ -1959,6 +1963,43 @@ const behaviorDef: EntityDef<string, LensPuckConfig> = {
   ],
 };
 
+const facetDefDef: EntityDef<string, LensPuckConfig> = {
+  type: "facet-def",
+  category: "facet",
+  label: "Facet Definition",
+  pluralLabel: "Facet Definitions",
+  icon: "\uD83D\uDDC2\uFE0F",
+  color: "#0ea5e9",
+  fields: [
+    { id: "name", type: "string", label: "Name", required: true },
+    {
+      id: "objectType",
+      type: "string",
+      label: "Object Type",
+      ui: { placeholder: "task" },
+    },
+    {
+      id: "layout",
+      type: "enum",
+      label: "Layout Mode",
+      default: "form",
+      enumOptions: [
+        { value: "form", label: "Form" },
+        { value: "list", label: "List" },
+        { value: "table", label: "Table" },
+        { value: "report", label: "Report" },
+        { value: "card", label: "Card" },
+      ],
+    },
+    {
+      id: "description",
+      type: "text",
+      label: "Description",
+      ui: { multiline: true },
+    },
+  ],
+};
+
 // ── Edge Type Definitions ───────────────────────────────────────────────────
 
 const referencesEdge: EdgeTypeDef = {
@@ -2038,6 +2079,7 @@ export function createPageBuilderRegistry(): ObjectRegistry<string, LensPuckConf
   registry.register(appDef);
   registry.register(routeDef);
   registry.register(behaviorDef);
+  registry.register(facetDefDef);
 
   // ── Dynamic records ────────────────────────────────────────────────────
   registry.register(taskDef);

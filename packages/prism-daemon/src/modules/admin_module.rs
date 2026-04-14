@@ -4,9 +4,15 @@
 //! This gives every transport adapter (HTTP, stdio, Tauri, WASM) a single
 //! command that returns everything a dashboard needs: health, uptime,
 //! metrics, services, and activity.
+//!
+//! `daemon.admin` is registered at [`Permission::User`] — it's strictly
+//! read-only introspection and has to be reachable from published
+//! end-user builds (Flux / Lattice / Musica) so their dashboards can
+//! render a health badge without switching to a dev-tier kernel.
 
 use crate::builder::DaemonBuilder;
 use crate::module::DaemonModule;
+use crate::permission::Permission;
 use crate::registry::CommandError;
 use serde_json::{json, Value as JsonValue};
 use std::sync::Arc;
@@ -43,51 +49,55 @@ impl DaemonModule for AdminModule {
         let admin_state = state.clone();
         let mods = module_ids.clone();
 
-        registry.register("daemon.admin", move |_payload: JsonValue| {
-            let uptime = admin_state.started_at.elapsed();
-            let uptime_seconds = uptime.as_secs();
+        registry.register_with_permission(
+            "daemon.admin",
+            Permission::User,
+            move |_payload: JsonValue| {
+                let uptime = admin_state.started_at.elapsed();
+                let uptime_seconds = uptime.as_secs();
 
-            // Derive the list of services from modules
-            let services: Vec<JsonValue> = mods
-                .iter()
-                .map(|id| {
-                    json!({
-                        "id": id,
-                        "name": id,
-                        "health": "ok",
-                        "status": "loaded"
+                // Derive the list of services from modules
+                let services: Vec<JsonValue> = mods
+                    .iter()
+                    .map(|id| {
+                        json!({
+                            "id": id,
+                            "name": id,
+                            "health": "ok",
+                            "status": "loaded"
+                        })
                     })
-                })
-                .collect();
+                    .collect();
 
-            // Count registered commands
-            let commands = registry_inner.list();
-            let command_count = commands.len();
+                // Count registered commands
+                let commands = registry_inner.list();
+                let command_count = commands.len();
 
-            // Group commands by module prefix for metric display
-            let mut module_set = std::collections::HashSet::new();
-            for cmd in &commands {
-                if let Some(dot) = cmd.find('.') {
-                    module_set.insert(cmd[..dot].to_string());
+                // Group commands by module prefix for metric display
+                let mut module_set = std::collections::HashSet::new();
+                for cmd in &commands {
+                    if let Some(dot) = cmd.find('.') {
+                        module_set.insert(cmd[..dot].to_string());
+                    }
                 }
-            }
 
-            Ok(json!({
-                "health": {
-                    "level": "ok",
-                    "label": "Healthy",
-                    "detail": format!("{} modules, {} commands", mods.len(), command_count)
-                },
-                "uptimeSeconds": uptime_seconds,
-                "metrics": [
-                    { "id": "modules", "label": "Modules", "value": mods.len() },
-                    { "id": "commands", "label": "Commands", "value": command_count },
-                    { "id": "namespaces", "label": "Namespaces", "value": module_set.len() },
-                ],
-                "services": services,
-                "activity": []
-            }))
-        })?;
+                Ok(json!({
+                    "health": {
+                        "level": "ok",
+                        "label": "Healthy",
+                        "detail": format!("{} modules, {} commands", mods.len(), command_count)
+                    },
+                    "uptimeSeconds": uptime_seconds,
+                    "metrics": [
+                        { "id": "modules", "label": "Modules", "value": mods.len() },
+                        { "id": "commands", "label": "Commands", "value": command_count },
+                        { "id": "namespaces", "label": "Namespaces", "value": module_set.len() },
+                    ],
+                    "services": services,
+                    "activity": []
+                }))
+            },
+        )?;
 
         Ok(())
     }

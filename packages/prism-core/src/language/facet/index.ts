@@ -156,13 +156,14 @@ export {
   getStepCategories,
 } from "./script-steps.js";
 
-// ── Facet Store (persistent FacetDefinition + Script + ValueList registry) ──
-export type {
-  FacetStoreListener,
-  FacetStoreSnapshot,
-  FacetStore,
-} from "./facet-store.js";
-export { createFacetStore } from "./facet-store.js";
+// ── Facet ↔ GraphObject adapter (unified registry bridge) ───────────────
+export type { FacetObjectLike } from "./facet-object-adapter.js";
+export {
+  FACET_DEF_TYPE,
+  facetDefFromObject,
+  objectPatchFromFacetDef,
+  isFacetDefObject,
+} from "./facet-object-adapter.js";
 
 // ── Sequencer (visual condition/script builder → Luau) ────────────────────
 export type {

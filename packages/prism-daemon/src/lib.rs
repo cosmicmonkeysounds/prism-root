@@ -58,6 +58,7 @@ pub mod initializer;
 pub mod kernel;
 pub mod module;
 pub mod modules;
+pub mod permission;
 pub mod registry;
 
 #[cfg(any(
@@ -93,6 +94,7 @@ pub use builder::DaemonBuilder;
 pub use initializer::{DaemonInitializer, InitializerHandle};
 pub use kernel::DaemonKernel;
 pub use module::DaemonModule;
+pub use permission::{ParsePermissionError, Permission};
 pub use registry::{CommandError, CommandHandler, CommandRegistry};
 
 #[cfg(feature = "crdt")]

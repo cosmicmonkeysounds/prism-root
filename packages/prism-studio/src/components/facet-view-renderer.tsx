@@ -1,13 +1,28 @@
 /**
- * FacetViewRenderer — renders a FacetDefinition in the specified view mode.
+ * FacetViewRenderer — projects a FacetDefinition + data through the
+ * same Puck form-input primitives used elsewhere in the builder.
  *
- * Embeddable Puck component that projects kernel objects through a
- * FacetDefinition as form/list/table/report/card views.
+ * Form mode composes `TextInputRenderer` / `TextareaInputRenderer` /
+ * `NumberInputRenderer` / `CheckboxInputRenderer` / `DateInputRenderer`
+ * for visual consistency with standalone form-input Puck widgets —
+ * facets become thin data-bound wrappers around the same primitives,
+ * not a parallel rendering stack.
+ *
+ * The list/table/report/card modes render with lightweight shared
+ * markup for multi-record browsing; those modes aren't forms and don't
+ * pass through to input primitives.
  */
 
 import { useMemo, useState } from "react";
 import type { FacetDefinition, FacetLayout, FacetSlot } from "@prism/core/facet";
 import type { GraphObject } from "@prism/core/object-model";
+import {
+  TextInputRenderer,
+  TextareaInputRenderer,
+  NumberInputRenderer,
+  CheckboxInputRenderer,
+  DateInputRenderer,
+} from "./form-input-renderers.js";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -18,15 +33,18 @@ export interface FacetViewProps {
   maxRows?: number;
 }
 
+type FieldSlot = Extract<FacetSlot, { kind: "field" }>;
+type InputKind = "text" | "textarea" | "number" | "checkbox" | "date";
+
 // ── Styles ──────────────────────────────────────────────────────────────────
 
 const styles = {
   container: {
-    border: "1px solid #333",
+    border: "1px solid #e2e8f0",
     borderRadius: 6,
-    background: "#1e1e1e",
+    background: "#f8fafc",
     padding: 12,
-    color: "#ccc",
+    color: "#0f172a",
     fontSize: 12,
     minHeight: 80,
   },
@@ -42,27 +60,12 @@ const styles = {
     gap: 4,
   },
   empty: {
-    color: "#666",
+    color: "#94a3b8",
     fontStyle: "italic" as const,
-  },
-  formField: {
-    marginBottom: 6,
-    display: "flex",
-    gap: 8,
-  },
-  formLabel: {
-    width: 100,
-    flexShrink: 0,
-    color: "#888",
-    fontSize: 11,
-  },
-  formValue: {
-    color: "#e5e5e5",
-    fontSize: 12,
   },
   tableRow: {
     display: "flex",
-    borderBottom: "1px solid #2a2a2a",
+    borderBottom: "1px solid #e2e8f0",
     padding: "4px 0",
   },
   tableCell: {
@@ -74,7 +77,7 @@ const styles = {
   },
   tableHeader: {
     fontWeight: 600 as const,
-    color: "#888",
+    color: "#64748b",
     fontSize: 10,
     textTransform: "uppercase" as const,
   },
@@ -84,27 +87,27 @@ const styles = {
     gap: 8,
   },
   card: {
-    border: "1px solid #333",
+    border: "1px solid #e2e8f0",
     borderRadius: 4,
     padding: 8,
-    background: "#252526",
+    background: "#ffffff",
   },
   cardTitle: {
     fontWeight: 600 as const,
-    color: "#e5e5e5",
+    color: "#0f172a",
     marginBottom: 4,
     fontSize: 12,
   },
 } as const;
 
-// ── Field extraction ────────────────────────────────────────────────────────
+// ── Field helpers ───────────────────────────────────────────────────────────
 
 /**
  * Walk every slot in the facet (including nested tab/popover/slide containers)
  * and yield the child field slots in the order they appear.
  */
-function flattenFieldSlots(slots: FacetSlot[]): Array<Extract<FacetSlot, { kind: "field" }>> {
-  const out: Array<Extract<FacetSlot, { kind: "field" }>> = [];
+export function flattenFieldSlots(slots: FacetSlot[]): FieldSlot[] {
+  const out: FieldSlot[] = [];
   for (const s of [...slots].sort((a, b) => a.slot.order - b.slot.order)) {
     if (s.kind === "field") {
       out.push(s);
@@ -119,13 +122,71 @@ function flattenFieldSlots(slots: FacetSlot[]): Array<Extract<FacetSlot, { kind:
   return out;
 }
 
-function getFieldPaths(def: FacetDefinition): string[] {
+export function getFieldPaths(def: FacetDefinition): string[] {
   return flattenFieldSlots(def.slots)
     .map((s) => s.slot.fieldPath)
     .filter(Boolean);
 }
 
+export function readFieldValue(obj: GraphObject, path: string): unknown {
+  const parts = path.split(".");
+  let current: unknown = obj.data as Record<string, unknown>;
+  for (const part of parts) {
+    if (current === null || current === undefined) return undefined;
+    current = (current as Record<string, unknown>)[part];
+  }
+  return current;
+}
+
+function formatFieldValue(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "boolean") return value ? "yes" : "no";
+  return String(value);
+}
+
+/**
+ * Infer which input primitive to use for a given runtime value. Falls
+ * back to `text` when the value is absent so an empty record still
+ * produces a full form shell. Multi-line strings route to textarea;
+ * ISO-ish date strings route to date.
+ */
+export function inferInputKind(value: unknown): InputKind {
+  if (typeof value === "boolean") return "checkbox";
+  if (typeof value === "number") return "number";
+  if (typeof value === "string") {
+    if (value.includes("\n")) return "textarea";
+    if (/^\d{4}-\d{2}-\d{2}/.test(value)) return "date";
+  }
+  return "text";
+}
+
 // ── Container slot renderers (tab / popover / slide) ────────────────────────
+
+function FieldSlotRenderer({ slot, obj }: { slot: FieldSlot; obj: GraphObject | undefined }) {
+  const value = obj ? readFieldValue(obj, slot.slot.fieldPath) : undefined;
+  const label = slot.slot.label ?? slot.slot.fieldPath;
+  const kind = inferInputKind(value);
+  const stringValue = formatFieldValue(value);
+
+  if (kind === "checkbox") {
+    return <CheckboxInputRenderer label={label} defaultChecked={value === true} />;
+  }
+  if (kind === "number") {
+    return (
+      <NumberInputRenderer
+        label={label}
+        defaultValue={typeof value === "number" ? value : undefined}
+      />
+    );
+  }
+  if (kind === "textarea") {
+    return <TextareaInputRenderer label={label} defaultValue={stringValue} />;
+  }
+  if (kind === "date") {
+    return <DateInputRenderer label={label} defaultValue={stringValue} />;
+  }
+  return <TextInputRenderer label={label} defaultValue={stringValue} />;
+}
 
 function TabSlotRenderer({
   slot,
@@ -139,18 +200,18 @@ function TabSlotRenderer({
   const current = tabs[active];
 
   return (
-    <div style={{ border: "1px solid #333", borderRadius: 4, marginBottom: 8 }}>
-      <div style={{ display: "flex", borderBottom: "1px solid #333" }}>
+    <div style={{ border: "1px solid #e2e8f0", borderRadius: 4, marginBottom: 8 }}>
+      <div style={{ display: "flex", borderBottom: "1px solid #e2e8f0" }}>
         {tabs.map((t, i) => (
           <button
             key={t.id}
             onClick={() => setActive(i)}
             style={{
               padding: "6px 12px",
-              background: i === active ? "#2a2a2a" : "transparent",
-              color: i === active ? "#e5e5e5" : "#888",
+              background: i === active ? "#e2e8f0" : "transparent",
+              color: i === active ? "#0f172a" : "#64748b",
               border: "none",
-              borderRight: "1px solid #333",
+              borderRight: "1px solid #e2e8f0",
               cursor: "pointer",
               fontSize: 11,
             }}
@@ -160,16 +221,11 @@ function TabSlotRenderer({
         ))}
       </div>
       <div style={{ padding: 8 }}>
-        {current && obj ? (
-          flattenFieldSlots(current.slots).map((fs) => (
-            <div key={fs.slot.fieldPath} style={styles.formField}>
-              <span style={styles.formLabel}>{fs.slot.label ?? fs.slot.fieldPath}</span>
-              <span style={styles.formValue}>{getFieldValue(obj, fs.slot.fieldPath) || "\u2014"}</span>
-            </div>
-          ))
-        ) : (
-          <div style={styles.empty}>No content</div>
-        )}
+        {current
+          ? flattenFieldSlots(current.slots).map((fs) => (
+              <FieldSlotRenderer key={fs.slot.fieldPath} slot={fs} obj={obj} />
+            ))
+          : null}
       </div>
     </div>
   );
@@ -189,9 +245,9 @@ function PopoverSlotRenderer({
         onClick={() => setOpen((v) => !v)}
         style={{
           padding: "6px 12px",
-          background: "#2a2a2a",
-          color: "#e5e5e5",
-          border: "1px solid #444",
+          background: "#e2e8f0",
+          color: "#0f172a",
+          border: "1px solid #cbd5e1",
           borderRadius: 4,
           cursor: "pointer",
           fontSize: 11,
@@ -206,19 +262,16 @@ function PopoverSlotRenderer({
             top: "100%",
             left: 0,
             marginTop: 4,
-            background: "#1e1e1e",
-            border: "1px solid #444",
+            background: "#ffffff",
+            border: "1px solid #cbd5e1",
             borderRadius: 4,
             padding: 8,
             minWidth: 200,
             zIndex: 10,
           }}
         >
-          {obj && flattenFieldSlots(slot.slot.contentSlots).map((fs) => (
-            <div key={fs.slot.fieldPath} style={styles.formField}>
-              <span style={styles.formLabel}>{fs.slot.label ?? fs.slot.fieldPath}</span>
-              <span style={styles.formValue}>{getFieldValue(obj, fs.slot.fieldPath) || "\u2014"}</span>
-            </div>
+          {flattenFieldSlots(slot.slot.contentSlots).map((fs) => (
+            <FieldSlotRenderer key={fs.slot.fieldPath} slot={fs} obj={obj} />
           ))}
         </div>
       )}
@@ -235,15 +288,15 @@ function SlideSlotRenderer({
 }) {
   const [open, setOpen] = useState(!slot.slot.collapsed);
   return (
-    <div style={{ border: "1px solid #333", borderRadius: 4, marginBottom: 8 }}>
+    <div style={{ border: "1px solid #e2e8f0", borderRadius: 4, marginBottom: 8 }}>
       <button
         onClick={() => setOpen((v) => !v)}
         style={{
           width: "100%",
           textAlign: "left",
           padding: "6px 10px",
-          background: "#2a2a2a",
-          color: "#e5e5e5",
+          background: "#e2e8f0",
+          color: "#0f172a",
           border: "none",
           cursor: "pointer",
           fontSize: 11,
@@ -253,11 +306,8 @@ function SlideSlotRenderer({
       </button>
       {open && (
         <div style={{ padding: 8 }}>
-          {obj && flattenFieldSlots(slot.slot.contentSlots).map((fs) => (
-            <div key={fs.slot.fieldPath} style={styles.formField}>
-              <span style={styles.formLabel}>{fs.slot.label ?? fs.slot.fieldPath}</span>
-              <span style={styles.formValue}>{getFieldValue(obj, fs.slot.fieldPath) || "\u2014"}</span>
-            </div>
+          {flattenFieldSlots(slot.slot.contentSlots).map((fs) => (
+            <FieldSlotRenderer key={fs.slot.fieldPath} slot={fs} obj={obj} />
           ))}
         </div>
       )}
@@ -265,36 +315,25 @@ function SlideSlotRenderer({
   );
 }
 
-function getFieldValue(obj: GraphObject, path: string): string {
-  const data = obj.data as Record<string, unknown>;
-  const parts = path.split(".");
-  let current: unknown = data;
-  for (const part of parts) {
-    if (current === null || current === undefined) return "";
-    current = (current as Record<string, unknown>)[part];
-  }
-  if (current === null || current === undefined) return "";
-  return String(current);
-}
-
 // ── View renderers ──────────────────────────────────────────────────────────
 
-function FormView({ objects, definition }: { objects: GraphObject[]; definition: FacetDefinition }) {
+function FormView({
+  objects,
+  definition,
+}: {
+  objects: GraphObject[];
+  definition: FacetDefinition;
+}) {
   const obj = objects[0];
-  if (!obj) return <div style={styles.empty}>No record selected</div>;
-  // Render top-level slots in order. Container slots (tab/popover/slide)
-  // render as interactive containers; field slots render inline.
   const ordered = [...definition.slots].sort((a, b) => a.slot.order - b.slot.order);
+  if (ordered.length === 0) {
+    return <div style={styles.empty}>No slots defined</div>;
+  }
   return (
     <div>
       {ordered.map((s, i) => {
         if (s.kind === "field") {
-          return (
-            <div key={`f-${i}`} style={styles.formField}>
-              <span style={styles.formLabel}>{s.slot.label ?? s.slot.fieldPath}</span>
-              <span style={styles.formValue}>{getFieldValue(obj, s.slot.fieldPath) || "\u2014"}</span>
-            </div>
-          );
+          return <FieldSlotRenderer key={`f-${i}`} slot={s} obj={obj} />;
         }
         if (s.kind === "tab") return <TabSlotRenderer key={`t-${i}`} slot={s} obj={obj} />;
         if (s.kind === "popover") return <PopoverSlotRenderer key={`p-${i}`} slot={s} obj={obj} />;
@@ -305,20 +344,32 @@ function FormView({ objects, definition }: { objects: GraphObject[]; definition:
   );
 }
 
-function TableView({ objects, fields, maxRows }: { objects: GraphObject[]; fields: string[]; maxRows: number }) {
+function TableView({
+  objects,
+  fields,
+  maxRows,
+}: {
+  objects: GraphObject[];
+  fields: string[];
+  maxRows: number;
+}) {
   const rows = objects.slice(0, maxRows);
   return (
     <div>
-      <div style={{ ...styles.tableRow, borderBottom: "1px solid #444" }}>
+      <div style={{ ...styles.tableRow, borderBottom: "1px solid #cbd5e1" }}>
         {fields.map((f) => (
-          <div key={f} style={{ ...styles.tableCell, ...styles.tableHeader }}>{f}</div>
+          <div key={f} style={{ ...styles.tableCell, ...styles.tableHeader }}>
+            {f}
+          </div>
         ))}
       </div>
       {rows.length === 0 && <div style={styles.empty}>No records</div>}
       {rows.map((obj) => (
         <div key={obj.id} style={styles.tableRow}>
           {fields.map((f) => (
-            <div key={f} style={styles.tableCell}>{getFieldValue(obj, f)}</div>
+            <div key={f} style={styles.tableCell}>
+              {formatFieldValue(readFieldValue(obj, f))}
+            </div>
           ))}
         </div>
       ))}
@@ -326,19 +377,29 @@ function TableView({ objects, fields, maxRows }: { objects: GraphObject[]; field
   );
 }
 
-function ListView({ objects, fields, maxRows }: { objects: GraphObject[]; fields: string[]; maxRows: number }) {
+function ListView({
+  objects,
+  fields,
+  maxRows,
+}: {
+  objects: GraphObject[];
+  fields: string[];
+  maxRows: number;
+}) {
   const rows = objects.slice(0, maxRows);
   const primary = fields[0] ?? "name";
   return (
     <div>
       {rows.length === 0 && <div style={styles.empty}>No records</div>}
       {rows.map((obj) => (
-        <div key={obj.id} style={{ padding: "4px 0", borderBottom: "1px solid #2a2a2a" }}>
-          <div style={{ color: "#e5e5e5", fontWeight: 500 }}>
-            {getFieldValue(obj, primary) || obj.name}
+        <div key={obj.id} style={{ padding: "4px 0", borderBottom: "1px solid #e2e8f0" }}>
+          <div style={{ color: "#0f172a", fontWeight: 500 }}>
+            {formatFieldValue(readFieldValue(obj, primary)) || obj.name}
           </div>
           {fields.slice(1, 3).map((f) => (
-            <div key={f} style={{ color: "#888", fontSize: 11 }}>{getFieldValue(obj, f)}</div>
+            <div key={f} style={{ color: "#64748b", fontSize: 11 }}>
+              {formatFieldValue(readFieldValue(obj, f))}
+            </div>
           ))}
         </div>
       ))}
@@ -346,7 +407,15 @@ function ListView({ objects, fields, maxRows }: { objects: GraphObject[]; fields
   );
 }
 
-function CardView({ objects, fields, maxRows }: { objects: GraphObject[]; fields: string[]; maxRows: number }) {
+function CardView({
+  objects,
+  fields,
+  maxRows,
+}: {
+  objects: GraphObject[];
+  fields: string[];
+  maxRows: number;
+}) {
   const rows = objects.slice(0, maxRows);
   const primary = fields[0] ?? "name";
   return (
@@ -355,10 +424,12 @@ function CardView({ objects, fields, maxRows }: { objects: GraphObject[]; fields
       {rows.map((obj) => (
         <div key={obj.id} style={styles.card}>
           <div style={styles.cardTitle}>
-            {getFieldValue(obj, primary) || obj.name}
+            {formatFieldValue(readFieldValue(obj, primary)) || obj.name}
           </div>
           {fields.slice(1, 4).map((f) => (
-            <div key={f} style={{ color: "#888", fontSize: 11 }}>{getFieldValue(obj, f)}</div>
+            <div key={f} style={{ color: "#64748b", fontSize: 11 }}>
+              {formatFieldValue(readFieldValue(obj, f))}
+            </div>
           ))}
         </div>
       ))}
@@ -366,7 +437,12 @@ function CardView({ objects, fields, maxRows }: { objects: GraphObject[]; fields
   );
 }
 
-function ReportView({ objects, fields, definition, maxRows }: {
+function ReportView({
+  objects,
+  fields,
+  definition,
+  maxRows,
+}: {
   objects: GraphObject[];
   fields: string[];
   definition: FacetDefinition;
@@ -379,7 +455,7 @@ function ReportView({ objects, fields, definition, maxRows }: {
     if (!groupField) return [{ key: "All", items: rows }];
     const map = new Map<string, GraphObject[]>();
     for (const obj of rows) {
-      const key = getFieldValue(obj, groupField) || "(blank)";
+      const key = formatFieldValue(readFieldValue(obj, groupField)) || "(blank)";
       const list = map.get(key) ?? [];
       list.push(obj);
       map.set(key, list);
@@ -391,13 +467,23 @@ function ReportView({ objects, fields, definition, maxRows }: {
     <div>
       {groups.map((group) => (
         <div key={group.key} style={{ marginBottom: 8 }}>
-          <div style={{ fontWeight: 600, color: "#e5e5e5", borderBottom: "1px solid #444", paddingBottom: 2, marginBottom: 4 }}>
+          <div
+            style={{
+              fontWeight: 600,
+              color: "#0f172a",
+              borderBottom: "1px solid #cbd5e1",
+              paddingBottom: 2,
+              marginBottom: 4,
+            }}
+          >
             {group.key} ({group.items.length})
           </div>
           {group.items.map((obj) => (
             <div key={obj.id} style={styles.tableRow}>
               {fields.map((f) => (
-                <div key={f} style={styles.tableCell}>{getFieldValue(obj, f)}</div>
+                <div key={f} style={styles.tableCell}>
+                  {formatFieldValue(readFieldValue(obj, f))}
+                </div>
               ))}
             </div>
           ))}
@@ -435,7 +521,9 @@ export function FacetViewRenderer({
       {mode === "form" && <FormView objects={objects} definition={definition} />}
       {mode === "list" && <ListView objects={objects} fields={fields} maxRows={maxRows} />}
       {mode === "table" && <TableView objects={objects} fields={fields} maxRows={maxRows} />}
-      {mode === "report" && <ReportView objects={objects} fields={fields} definition={definition} maxRows={maxRows} />}
+      {mode === "report" && (
+        <ReportView objects={objects} fields={fields} definition={definition} maxRows={maxRows} />
+      )}
       {mode === "card" && <CardView objects={objects} fields={fields} maxRows={maxRows} />}
     </div>
   );

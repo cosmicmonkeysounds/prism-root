@@ -101,10 +101,9 @@ async fn invoke(
 async fn admin_html(State(state): State<HttpState>) -> Response {
     let kernel = state.kernel.clone();
 
-    let result = tokio::task::spawn_blocking(move || {
-        kernel.invoke("daemon.admin", serde_json::json!({}))
-    })
-    .await;
+    let result =
+        tokio::task::spawn_blocking(move || kernel.invoke("daemon.admin", serde_json::json!({})))
+            .await;
 
     // Build a minimal seed JSON for the HTML page
     let seed_json = match result {
@@ -138,10 +137,9 @@ async fn admin_html(State(state): State<HttpState>) -> Response {
 async fn admin_snapshot(State(state): State<HttpState>) -> Response {
     let kernel = state.kernel.clone();
 
-    let result = tokio::task::spawn_blocking(move || {
-        kernel.invoke("daemon.admin", serde_json::json!({}))
-    })
-    .await;
+    let result =
+        tokio::task::spawn_blocking(move || kernel.invoke("daemon.admin", serde_json::json!({})))
+            .await;
 
     match result {
         Ok(Ok(admin_data)) => {
@@ -173,7 +171,11 @@ async fn admin_snapshot(State(state): State<HttpState>) -> Response {
 /// Uses string concatenation instead of format!() to avoid issues with
 /// `#` in CSS hex colors conflicting with raw string delimiters.
 fn admin_html_template(seed_json: &str) -> String {
-    let seed = if seed_json.is_empty() { "null" } else { seed_json };
+    let seed = if seed_json.is_empty() {
+        "null"
+    } else {
+        seed_json
+    };
     let mut html = String::with_capacity(8192);
     html.push_str(include_str!("admin_template_head.html"));
     html.push_str(seed);

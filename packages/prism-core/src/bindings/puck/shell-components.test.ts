@@ -82,6 +82,7 @@ describe("createDefaultStudioShellTree", () => {
       "ComponentPalette",
     ]);
     expect(topBar.map((c) => c.type)).toEqual([
+      "ShellModeMenu",
       "TabBar",
       "PresenceIndicator",
       "UndoStatusBar",

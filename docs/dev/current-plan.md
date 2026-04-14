@@ -1,5 +1,187 @@
 # Current Plan
 
+## Shell Mode + Permission system (Complete — 2026-04-14)
+
+Studio now carries two orthogonal axes that decide which panels, shell
+trees, and daemon commands a given instance can reach: **`shellMode`**
+(`use` / `build` / `admin`) and **`permission`** (`user` / `dev`). The
+same SPA ships inside a published end-user build, a focused authoring
+app, and the full IDE — the difference is which `(shellMode, permission)`
+context the kernel boots into.
+
+See `docs/dev/panel-modes.md` for the user-facing guide. This entry
+records the implementation.
+
+### 1. Core types — `@prism/core/lens/shell-mode.ts`
+
+- `ShellMode = "use" | "build" | "admin"` — stable UI order
+  (`SHELL_MODES`).
+- `Permission = "user" | "dev"` — ascending privilege order
+  (`PERMISSIONS`), with `PERMISSION_RANK` + `permissionAtLeast` for
+  comparisons.
+- `ShellModeConstraints = { availableInModes?; minPermission? }` — what
+  a `LensBundle` opts into.
+- `BootConfig` / `ResolvedBootConfig` — the wire format the launcher /
+  query params / build defaults feed into the kernel, plus
+  `DEFAULT_BOOT_CONFIG` (`admin` + `dev`, the unchanged legacy default).
+- Pure helpers: `isShellMode`, `isPermission`, `permissionAtLeast`,
+  `lensBundleMatchesShellContext`, `filterLensBundlesByShellMode`,
+  `withShellModes` (attach constraints non-destructively),
+  `resolveBootConfig` (fills every unset field).
+- Defaults surfaced as constants: `DEFAULT_AVAILABLE_IN_MODES =
+  ["build", "admin"]` (a bundle with no `availableInModes` is hidden in
+  `use`) and `DEFAULT_MIN_PERMISSION = "user"`.
+
+The 25 tests in `shell-mode.test.ts` pin every default, rank, and
+merge-order rule so a future tweak to one field can't silently shift
+visibility across the whole app.
+
+### 2. Boot resolver — `prism-studio/src/boot/load-boot-config.ts`
+
+Studio picks up its `BootConfig` from one of four sources, in
+precedence order:
+
+1. **Query params** (`?mode=…&permission=…&profile=…`) — trusted only
+   for *narrowing*; a hand-crafted `?permission=dev` on a build whose
+   build-time ceiling is `user` gets clamped back to `user`.
+2. **`VITE_PRISM_BOOT_CONFIG` env var** — the Node launcher writes a
+   JSON blob here at spawn time.
+3. **Build-time default** (`VITE_PRISM_BOOT_DEFAULT`) — mobile /
+   Capacitor builds bake `permission: "user"` in so the published app
+   can't escalate through the URL bar.
+4. **`DEFAULT_BOOT_CONFIG`** — full IDE at dev permission, matching the
+   unchanged legacy behaviour.
+
+The resolver takes an optional `overrides` bag so tests can drive the
+merge + clamp logic without touching `window` or `import.meta.env`.
+12 unit tests in `load-boot-config.test.ts` cover every precedence,
+ceiling, and fill-in path.
+
+### 3. Kernel wiring — `createStudioKernel`
+
+`StudioKernel` grew four new members:
+
+- `shellMode` / `permission` — the runtime context.
+- `setShellMode(mode)` — swaps in-place, notifies `onShellModeChange`
+  listeners *and* `onShellTreeChange` (each mode has its own Puck shell
+  tree in `shellTreesByMode`).
+- `getVisibleLensIds()` / `isLensVisible(id)` — the palette + activity
+  bar read these to decide what to render.
+- Three per-mode shell trees: `USE_SHELL_TREE`, `BUILD_SHELL_TREE`,
+  `ADMIN_SHELL_TREE` (from `@prism/core/puck`). `setShellMode` just
+  points the `shellTree` getter at a different slot.
+
+Permission is frozen at construction — the field is read-only, no
+setter. Escalating requires restarting Studio with a different launcher
+subcommand or URL, which the daemon's permission gate also enforces.
+
+13 new kernel integration tests in `studio-kernel-shell.test.ts` pin
+`setShellMode` / `getVisibleLensIds` / `isLensVisible` / listener
+notification / shell-tree swap / no-op-when-same-mode.
+
+### 4. Daemon permission gate — `CommandRegistry` + `DaemonKernel`
+
+The daemon's `CommandRegistry` now tracks a minimum `Permission` for
+every registered command, in a parallel `HashMap` so the historic
+`register(name, handler)` signature stays source-compatible:
+
+- `register(name, handler)` — still defaults to `Permission::Dev`.
+- `register_with_permission(name, min, handler)` — explicit tier.
+- `register_user(name, handler)` — shorthand for the User tier.
+- `invoke(name, payload)` — unchanged, **no permission check**, used by
+  trusted in-process embedders and tests.
+- `invoke_with_permission(name, payload, caller)` — gated entry point
+  for transport adapters. Returns `PermissionDenied { command, required,
+  caller }` when the caller tier is too low.
+- `permission_of(name)` — lookup, defaults to `Dev` when the command
+  was registered via the legacy path.
+
+`DaemonKernel::new` now takes a `permission`; `DaemonBuilder` grew a
+`with_permission(Permission)` setter. `admin_module` is the first
+caller that opts its command into the User tier (`daemon.admin` is
+safe for published end-user builds because it only returns a
+normalised health snapshot). Every other built-in stays at Dev.
+
+The `prism-daemond` binary parses `--permission=user|dev` (both
+`--permission=value` and `--permission value` forms), defaults to
+`dev`, and stamps the chosen tier onto the banner. 6 bin tests cover
+happy paths + dangling-flag / unknown-value rejection; 8 new unit
+tests on `CommandRegistry` cover the full permission matrix; 3 new
+kernel integration tests drive it end-to-end through `kernel.invoke`.
+
+### 5. Node launcher — `prism-studio/bin/prism-studio.mjs`
+
+A dependency-free `.mjs` bin that `npx prism-studio` can run without
+any build step. Five subcommands:
+
+| Command             | Shell Mode | Permission | Notes                     |
+|---------------------|------------|------------|---------------------------|
+| `prism-studio run`  | `use`      | `user`     | published end-user app    |
+| `prism-studio build`| `build`    | `dev`      | focused authoring palette |
+| `prism-studio admin`| `admin`    | `dev`      | full IDE                  |
+| `prism-studio dev`  | —          | —          | no boot override (legacy) |
+| `prism-studio bundle`| —         | —          | production `vite build`   |
+
+Plus `--profile=<id>` / `--profile <id>` on any of the first three,
+which folds into the boot config so focused-app profiles (flux /
+lattice / …) pin the lens set. The launcher resolves `vite/bin/vite.js`
+via `createRequire` against its own package root, stringifies the boot
+config into `VITE_PRISM_BOOT_CONFIG`, and spawns vite with
+`stdio: "inherit"`.
+
+Pure helpers — `buildBootConfigForSubcommand`, `extractProfileFlag`,
+`stripProfileFlag`, `buildChildEnv`, `viteArgsForSubcommand` — live in
+the same file so the testable surface doesn't need a second file. 21
+tests in `src/bin/prism-studio-launcher.test.ts` cover every helper
+(the test file lives under `src/` because the root vitest glob is
+`packages/*/src/**/*.test.{ts,tsx}`).
+
+### 6. Test scoreboard
+
+- **3713 studio + core tests pass** (up from 3006 at the start of the
+  feature). 25 shell-mode pure-helper, 12 boot resolver, 13 kernel
+  integration, 21 launcher.
+- **109 daemon tests pass** (89 unit including the 8 new registry
+  tests, 12 integration including 3 shell-mode gates, 6 bin parser
+  tests, 2 stdio).
+- `pnpm --filter @prism/studio typecheck` clean.
+- `cargo fmt --check` + `cargo clippy` clean for the daemon crate.
+
+### 7. Files touched / added
+
+New:
+
+- `packages/prism-core/src/interaction/lens/shell-mode.ts`
+- `packages/prism-core/src/interaction/lens/shell-mode.test.ts`
+- `packages/prism-studio/src/boot/load-boot-config.ts`
+- `packages/prism-studio/src/boot/load-boot-config.test.ts`
+- `packages/prism-studio/bin/prism-studio.mjs`
+- `packages/prism-studio/src/bin/prism-studio-launcher.test.ts`
+- `packages/prism-daemon/src/permission.rs`
+- `docs/dev/panel-modes.md`
+
+Modified:
+
+- `packages/prism-core/src/interaction/lens/{index,lens-install}.ts`
+  — exports + `ShellModeConstraints` fields on `LensBundle` +
+  `withShellModes` / `filterLensBundlesByShellMode` helpers.
+- `packages/prism-studio/src/kernel/studio-kernel.ts` — `shellMode` /
+  `permission` fields, per-mode shell-tree map, `setShellMode` /
+  `getVisibleLensIds` / `isLensVisible` / `onShellModeChange`.
+- `packages/prism-studio/src/kernel/studio-kernel-shell.test.ts` —
+  13 new shell-mode kernel integration tests.
+- `packages/prism-studio/package.json` — `bin.prism-studio` entry.
+- `packages/prism-daemon/src/{lib,registry,kernel,builder}.rs` —
+  permission-aware registry + kernel + builder.
+- `packages/prism-daemon/src/modules/admin_module.rs` — `daemon.admin`
+  opts into `Permission::User`.
+- `packages/prism-daemon/src/bin/prism_daemond.rs` — `--permission`
+  flag + 6 parser tests.
+- `packages/prism-daemon/tests/kernel_integration.rs` — 3 shell-mode
+  gates covering user tier / dev tier / per-call override.
+
+---
+
 ## Lens auto-registration + `useRegistration` hook refactor (Complete — 2026-04-14)
 
 Two repetitive patterns in Studio got flattened into registration primitives

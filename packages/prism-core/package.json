@@ -12,6 +12,7 @@
     "./clipboard": "./src/foundation/clipboard/index.ts",
     "./template": "./src/foundation/template/index.ts",
     "./undo": "./src/foundation/undo/index.ts",
+    "./date": "./src/foundation/date/index.ts",
 
     "./document": "./src/language/document/index.ts",
     "./language-registry": "./src/language/registry/index.ts",

@@ -24,6 +24,7 @@ import { ComponentPalette } from "./component-palette.js";
 import { InspectorPanel } from "./inspector-panel.js";
 import { UndoStatusBar } from "./undo-status-bar.js";
 import { PresenceIndicator } from "./presence-indicator.js";
+import { ShellModeMenu } from "./shell-mode-menu.js";
 
 /**
  * Canonical list of Studio chrome widgets. Each bundle:
@@ -76,6 +77,12 @@ export function createBuiltinShellWidgetBundles(): ShellWidgetBundle[] {
       name: "Presence",
       component: PresenceIndicator,
       puck: { label: "Presence", category: "Shell" },
+    }),
+    defineShellWidgetBundle({
+      id: "shell-mode-menu",
+      name: "Shell Mode Menu",
+      component: ShellModeMenu,
+      puck: { label: "Shell Mode Menu", category: "Shell" },
     }),
   ];
 }

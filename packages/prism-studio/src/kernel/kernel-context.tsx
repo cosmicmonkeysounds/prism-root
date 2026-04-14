@@ -8,6 +8,7 @@
 import { createContext, useContext, useSyncExternalStore, useCallback, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { StudioKernel } from "./studio-kernel.js";
+import type { Permission, ShellMode } from "@prism/core/lens";
 import type { GraphObject, ObjectId } from "@prism/core/object-model";
 import type { Notification, NotificationKind } from "@prism/core/notification";
 import type { RelayEntry } from "@prism/core/relay-manager";
@@ -23,7 +24,7 @@ import type { RosterEntry } from "@prism/core/discovery";
 import type { PrismIdentity, ExportedIdentity } from "@prism/core/identity";
 import type { BinaryRef, BinaryLock } from "@prism/core/vfs";
 import type { PeerReputation, SchemaValidationResult, ContentHash, SandboxPolicy, LuauSandbox, ShamirShare, ShamirConfig, EscrowDeposit } from "@prism/core/trust";
-import type { SourceFormat, FacetDefinition, FacetLayout, ProseNode, SchemaModel, SequencerConditionState, SequencerScriptState, FacetStore, ValueListRegistry, ValueList } from "@prism/core/facet";
+import type { SourceFormat, FacetDefinition, FacetLayout, ProseNode, SchemaModel, SequencerConditionState, SequencerScriptState, ValueListRegistry, ValueList } from "@prism/core/facet";
 import type { FieldSchema } from "@prism/core/forms";
 import type { SavedView, SavedViewRegistry } from "@prism/core/view";
 import type { PrivilegeSet, PrivilegeEnforcer, RoleAssignment } from "@prism/core/manifest";
@@ -746,12 +747,6 @@ export function useFacetDefinitions(): {
   };
 }
 
-/** Reactive FacetStore access (persistent facets/scripts/value-lists). */
-export function useFacetStore(): FacetStore {
-  const kernel = useKernel();
-  return kernel.facetStore;
-}
-
 /** Reactive saved views state. */
 export function useSavedViews(): {
   views: SavedView[];
@@ -832,4 +827,32 @@ export function usePrivilegeSets(): {
     assignRole: kernel.assignRole,
     removeRole: kernel.removeRoleAssignment,
   };
+}
+
+/**
+ * Reactive shell mode + permission state.
+ *
+ * Returns the current `shellMode` (mutable via Cmd+Shift+E / File menu)
+ * and `permission` (frozen at boot — see `load-boot-config.ts`) plus a
+ * `setMode` setter that bounces through `kernel.setShellMode` so every
+ * subscriber re-renders. Components reading this hook re-render when
+ * the active mode changes; permission is stable across the lifetime of
+ * the kernel and never triggers a re-render.
+ */
+export function useShellMode(): {
+  mode: ShellMode;
+  permission: Permission;
+  setMode: (mode: ShellMode) => void;
+} {
+  const kernel = useKernel();
+  const mode = useSyncExternalStore(
+    (cb) => kernel.onShellModeChange(cb),
+    () => kernel.shellMode,
+    () => kernel.shellMode,
+  );
+  const setMode = useCallback(
+    (next: ShellMode) => kernel.setShellMode(next),
+    [kernel],
+  );
+  return { mode, permission: kernel.permission, setMode };
 }

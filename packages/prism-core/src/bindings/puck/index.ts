@@ -41,7 +41,12 @@ export {
   LensOutletRenderer,
   LensZone,
   createDefaultStudioShellTree,
+  createUseShellTree,
+  createBuildShellTree,
   DEFAULT_STUDIO_SHELL_TREE,
+  USE_SHELL_TREE,
+  BUILD_SHELL_TREE,
+  ADMIN_SHELL_TREE,
 } from "./shell-components.js";
 export type {
   ShellProps,

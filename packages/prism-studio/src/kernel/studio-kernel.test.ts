@@ -1701,15 +1701,6 @@ describe("StudioKernel", () => {
     });
   });
 
-  // ── FacetStore ──────────────────────────────────────────────────────────
-
-  describe("facetStore", () => {
-    it("exposes a FacetStore instance", () => {
-      expect(kernel.facetStore).toBeDefined();
-      expect(typeof kernel.facetStore.putFacet).toBe("function");
-    });
-  });
-
   // ── Saved Views ────────────────────────────────────────────────────────
 
   describe("savedViews", () => {

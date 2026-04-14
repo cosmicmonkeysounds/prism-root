@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "prism-studio": "./bin/prism-studio.mjs"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",

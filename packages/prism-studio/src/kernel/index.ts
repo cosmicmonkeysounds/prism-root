@@ -42,6 +42,7 @@ export {
   useEmitters,
   useFacetDefinitions,
   useBuilder,
+  useShellMode,
 } from "./kernel-context.js";
 
 export { createPageBuilderRegistry } from "./entities.js";

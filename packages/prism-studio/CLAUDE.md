@@ -116,6 +116,19 @@ Adding a new lens:
 
 Core keybindings: Editor (e), Graph (g), Layout (l), Canvas (v), CRDT (c), Relay (r), Settings (,), Automation (a), Analysis (n), Plugins (p), Shortcuts (k), Vaults (w), Identity (i), Assets (f), Trust (t), Form (d), Table (b), Sequencer (q), Report (o), Luau Facet (u), Facet Designer (x), Spatial Canvas (Shift+X), Visual Script (Shift+S), Saved Views (Shift+V), Value Lists (Shift+L), Privilege Sets (Shift+P), Admin (Shift+A), App Builder (Shift+B), Import (Shift+Y), Publish (Shift+U), Design Tokens (Shift+T), Form Builder (Shift+G), Site Navigation (Shift+N), Entity Builder (Shift+E), Relationships (Shift+R)
 
+## Shell Mode & Permission
+Studio boots into a `(shellMode, permission)` context picked at launch:
+- **`shellMode`** — `use` / `build` / `admin`. Each owns its own Puck shell tree (`USE_SHELL_TREE` / `BUILD_SHELL_TREE` / `ADMIN_SHELL_TREE` in `@prism/core/puck`) and its own visible lens set. Mutable at runtime via `kernel.setShellMode(mode)` or `Cmd+Shift+E`. Switching notifies both `onShellModeChange` and `onShellTreeChange`.
+- **`permission`** — `user` / `dev`. Frozen at boot (no setter). Gates both which lenses are reachable (`minPermission`) and which daemon commands the IPC bridge can invoke.
+
+Each `LensBundle` declares optional `availableInModes` + `minPermission` via `withShellModes(bundle, { ... })`. Defaults: `availableInModes = ["build", "admin"]` and `minPermission = "user"` — a bundle with no constraints is hidden in `use` but reachable by any tier in `build`/`admin`. `kernel.getVisibleLensIds()` / `kernel.isLensVisible(id)` filter by the current context; `filterLensBundlesByShellMode(bundles, ctx)` is the pure helper if you need to drive the filter outside the kernel.
+
+`loadBootConfig` in `src/boot/load-boot-config.ts` resolves the runtime `BootConfig` from four sources in precedence order: query params → `VITE_PRISM_BOOT_CONFIG` env var → build-time `VITE_PRISM_BOOT_DEFAULT` ceiling → `DEFAULT_BOOT_CONFIG`. A URL that tries to escalate permission past the ceiling is clamped with a console warning.
+
+The `prism-studio` Node bin (`bin/prism-studio.mjs`) translates subcommands to boot configs: `run` → `use`/`user`, `build` → `build`/`dev`, `admin` → `admin`/`dev`, `dev` / `bundle` → no override. `--profile=<id>` folds into the boot config so focused-app profiles (flux / lattice / musica / …) pin the lens set. Pure helpers (`buildBootConfigForSubcommand`, `extractProfileFlag`, `stripProfileFlag`, `buildChildEnv`, `viteArgsForSubcommand`) are exported for vitest — the test file lives at `src/bin/prism-studio-launcher.test.ts` because the root vitest glob is `packages/*/src/**/*.test.{ts,tsx}`.
+
+See `docs/dev/panel-modes.md` for the full user-facing guide.
+
 ## Data Flow
 ```
 User action → kernel.createObject/updateObject/deleteObject

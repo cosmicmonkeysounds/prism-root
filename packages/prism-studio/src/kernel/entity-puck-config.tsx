@@ -37,6 +37,8 @@ import {
 } from "../panels/layout-panel-data.js";
 import type { ObjectId } from "@prism/core/object-model";
 import { FacetViewRenderer } from "../components/facet-view-renderer.js";
+import { BehaviorBoundary } from "../components/behavior-boundary.js";
+import { behaviorField } from "../components/behavior-field.js";
 import { SpatialCanvasRenderer } from "../components/spatial-canvas-renderer.js";
 import { DataPortalRenderer } from "../components/data-portal-renderer.js";
 import { KanbanWidgetRenderer } from "../components/kanban-widget-renderer.js";
@@ -915,35 +917,46 @@ function buildShellComponent(def: EntityDef<string, unknown>): ComponentConfig {
   };
 }
 
-/** Real interactive button preview. */
-function buildButtonComponent(def: EntityDef<string, unknown>): ComponentConfig {
+/** Real interactive button preview wired to the kernel behavior dispatcher. */
+function buildButtonComponent(
+  kernel: StudioKernel,
+  def: EntityDef<string, unknown>,
+): ComponentConfig {
   const cfg = entityToPuckComponent({
     type: def.type,
     label: def.label ?? def.type,
     icon: typeof def.icon === "string" ? def.icon : "",
     fields: def.fields ?? [],
   });
+  if (cfg.fields) {
+    const nextFields = { ...(cfg.fields as Record<string, unknown>) };
+    nextFields["behaviors"] = behaviorField(kernel, { label: "Behaviors" });
+    cfg.fields = nextFields as Fields;
+  }
   cfg.render = (props) => {
     const p = props as Record<string, unknown>;
+    const objectId = (p["id"] as string | undefined) ?? "";
     return (
-      <ButtonRenderer
-        label={(p["label"] as string) || "Button"}
-        href={(p["href"] as string) || undefined}
-        variant={(p["variant"] as ButtonVariant) || "primary"}
-        size={(p["size"] as ButtonSize) || "md"}
-        icon={(p["icon"] as string) || undefined}
-        iconPosition={(p["iconPosition"] as ButtonIconPosition) || "left"}
-        fullWidth={asBool(p["fullWidth"])}
-        disabled={asBool(p["disabled"])}
-        loading={asBool(p["loading"])}
-        rounded={(p["rounded"] as ButtonRounded) || "md"}
-        shadow={(p["shadow"] as ButtonShadow) || "none"}
-        hoverEffect={(p["hoverEffect"] as ButtonHoverEffect) || "none"}
-        target={(p["target"] as ButtonTarget) || "_self"}
-        rel={(p["rel"] as string) || undefined}
-        buttonType={(p["buttonType"] as ButtonHtmlType) || "button"}
-        ariaLabel={(p["ariaLabel"] as string) || undefined}
-      />
+      <BehaviorBoundary objectId={objectId as ObjectId} kernel={kernel}>
+        <ButtonRenderer
+          label={(p["label"] as string) || "Button"}
+          href={(p["href"] as string) || undefined}
+          variant={(p["variant"] as ButtonVariant) || "primary"}
+          size={(p["size"] as ButtonSize) || "md"}
+          icon={(p["icon"] as string) || undefined}
+          iconPosition={(p["iconPosition"] as ButtonIconPosition) || "left"}
+          fullWidth={asBool(p["fullWidth"])}
+          disabled={asBool(p["disabled"])}
+          loading={asBool(p["loading"])}
+          rounded={(p["rounded"] as ButtonRounded) || "md"}
+          shadow={(p["shadow"] as ButtonShadow) || "none"}
+          hoverEffect={(p["hoverEffect"] as ButtonHoverEffect) || "none"}
+          target={(p["target"] as ButtonTarget) || "_self"}
+          rel={(p["rel"] as string) || undefined}
+          buttonType={(p["buttonType"] as ButtonHtmlType) || "button"}
+          ariaLabel={(p["ariaLabel"] as string) || undefined}
+        />
+      </BehaviorBoundary>
     );
   };
   return cfg;
@@ -966,30 +979,34 @@ function buildCardComponent(
       label: "Image",
       accept: "image",
     });
+    nextFields["behaviors"] = behaviorField(kernel, { label: "Behaviors" });
     cfg.fields = nextFields as Fields;
   }
   cfg.render = (props) => {
     const p = props as Record<string, unknown>;
+    const objectId = (p["id"] as string | undefined) ?? "";
     const opacity =
       typeof p["overlayOpacity"] === "number"
         ? (p["overlayOpacity"] as number)
         : undefined;
     return (
-      <CardRenderer
-        title={(p["title"] as string) || undefined}
-        body={(p["body"] as string) || undefined}
-        imageUrl={(p["imageUrl"] as string) || undefined}
-        linkUrl={(p["linkUrl"] as string) || undefined}
-        variant={(p["variant"] as CardVariant) || "elevated"}
-        layout={(p["layout"] as CardLayout) || "vertical"}
-        hoverEffect={(p["hoverEffect"] as CardHoverEffect) || "lift"}
-        mediaFit={(p["mediaFit"] as CardMediaFit) || "cover"}
-        mediaAspectRatio={(p["mediaAspectRatio"] as string) || undefined}
-        eyebrow={(p["eyebrow"] as string) || undefined}
-        ctaLabel={(p["ctaLabel"] as string) || undefined}
-        ctaVariant={(p["ctaVariant"] as ButtonVariant) || "primary"}
-        overlayOpacity={opacity}
-      />
+      <BehaviorBoundary objectId={objectId as ObjectId} kernel={kernel}>
+        <CardRenderer
+          title={(p["title"] as string) || undefined}
+          body={(p["body"] as string) || undefined}
+          imageUrl={(p["imageUrl"] as string) || undefined}
+          linkUrl={(p["linkUrl"] as string) || undefined}
+          variant={(p["variant"] as CardVariant) || "elevated"}
+          layout={(p["layout"] as CardLayout) || "vertical"}
+          hoverEffect={(p["hoverEffect"] as CardHoverEffect) || "lift"}
+          mediaFit={(p["mediaFit"] as CardMediaFit) || "cover"}
+          mediaAspectRatio={(p["mediaAspectRatio"] as string) || undefined}
+          eyebrow={(p["eyebrow"] as string) || undefined}
+          ctaLabel={(p["ctaLabel"] as string) || undefined}
+          ctaVariant={(p["ctaVariant"] as ButtonVariant) || "primary"}
+          overlayOpacity={opacity}
+        />
+      </BehaviorBoundary>
     );
   };
   return cfg;
@@ -2631,7 +2648,7 @@ export function buildEntityPuckComponents(
 
     // 4. Button — generic field mapping + real `<button>` render.
     if (def.type === "button") {
-      components[name] = buildButtonComponent(def);
+      components[name] = buildButtonComponent(kernel, def);
       continue;
     }
 

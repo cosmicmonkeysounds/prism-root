@@ -44,10 +44,20 @@ TS error blocks the playground typecheck.
   studio does this in its own `main.tsx`; the playground re-imports because
   the map widget renderer deliberately does *not* import the CSS so it stays
   vitest-safe).
-- `src/playground-app.tsx` — kernel construction, `KernelProvider`,
-  page-list sidebar, reset button. Uses the lifecycle pattern
-  `useEffect(() => () => kernel.dispose(), [kernel])` and a `key` swap to
-  re-mount the provider tree on reset.
+- `src/playground-app.tsx` — kernel construction + `<StudioShell>` mount. No
+  hand-rolled chrome: the playground mounts the same `StudioShell` Studio
+  uses, with `createBuiltinLensBundles()` (full Studio panel set) and
+  `createBuiltinShellWidgetBundles()` so the default `DEFAULT_STUDIO_SHELL_TREE`
+  resolves every widget it references (`ActivityBar`, `TabBar`,
+  `ObjectExplorer`, `ComponentPalette`, `InspectorPanel`, `PresenceIndicator`,
+  `UndoStatusBar`). Opens the Layout tab **synchronously inside
+  `createKernel()`** — not in a post-mount `useEffect` — so the first render
+  never flashes the `LensOutlet` "No tab open" empty state. Uses the
+  lifecycle pattern `useEffect(() => () => kernel.dispose(), [kernel])` and
+  a `key` swap on `<KernelProvider>` to re-mount the provider tree on reset.
+  The only playground-specific chrome is a fixed-position `ResetButton`
+  overlay — everything else (tab switching, tree navigation, inspector,
+  undo/redo, presence) comes from Studio's shell widgets.
 - `src/playground-seed.ts` — `playgroundSeedInitializer: StudioInitializer`.
   Seeds 5 demo collections (15 tasks, 8 contacts, 16 sales, 7 places, 8
   events) and 7 demo pages, then calls `kernel.undo.clear()` and selects the
@@ -62,20 +72,16 @@ TS error blocks the playground typecheck.
 
 ## Lens setup
 
-The playground installs only `layoutLensBundle` (from
-`@prism/studio/panels/layout-panel.tsx`) — not `createBuiltinLensBundles()`.
-That keeps the dependency footprint to just what the layout panel needs and
-avoids dragging in 22 unrelated panels' worth of imports.
-
-If you need another lens to repro something, import its bundle directly:
-
-```ts
-import { canvasLensBundle } from "@prism/studio/panels/canvas-panel.js";
-createStudioKernel({
-  lensBundles: [layoutLensBundle, canvasLensBundle],
-  initializers: [playgroundSeedInitializer],
-});
-```
+The playground installs `createBuiltinLensBundles()` — the full Studio
+panel set — so the ActivityBar/TabBar populate with every authoring lens
+and users can mock up full apps / pages exactly like Studio (layout,
+canvas, editor, graph, admin, app-builder, etc.). The Vite alias
+`@prism/studio/*` → `../prism-studio/src/$1` means adding a new panel in
+Studio automatically flows through to the playground on next rebuild —
+no re-export needed. The shell-mode system (`use` / `build` / `admin`) is
+still wired in: the `ShellModeMenu` in the top bar (or `Cmd+Shift+E`)
+cycles modes, and the ActivityBar/TabBar filter themselves down
+accordingly. Default boot mode is `admin` / `dev`, same as Studio.
 
 ## Reset behaviour
 

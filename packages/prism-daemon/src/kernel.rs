@@ -9,6 +9,7 @@
 //! directly.
 
 use crate::initializer::InitializerHandle;
+use crate::permission::Permission;
 use crate::registry::{CommandError, CommandRegistry};
 use serde_json::Value as JsonValue;
 use std::sync::{Arc, Mutex};
@@ -39,6 +40,13 @@ use crate::modules::conferencing_module::ConferencingManager;
 #[derive(Clone)]
 pub struct DaemonKernel {
     registry: Arc<CommandRegistry>,
+
+    /// Permission tier stamped onto the kernel at boot. Every call to
+    /// [`DaemonKernel::invoke`] is checked against the registered command's
+    /// minimum via [`CommandRegistry::invoke_with_permission`]. Flipped
+    /// via [`crate::builder::DaemonBuilder::with_permission`]; defaults to
+    /// [`Permission::Dev`] so embedded and test callers keep full access.
+    permission: Permission,
 
     /// IDs of every module installed at boot, in install order. Exposed
     /// for debugging and for `daemon.capabilities`-style introspection.
@@ -92,6 +100,7 @@ impl DaemonKernel {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         registry: Arc<CommandRegistry>,
+        permission: Permission,
         module_ids: Vec<String>,
         initializer_handles: Vec<InitializerHandle>,
         #[cfg(feature = "crdt")] doc_manager: Option<Arc<DocManager>>,
@@ -103,6 +112,7 @@ impl DaemonKernel {
     ) -> Self {
         Self {
             registry,
+            permission,
             module_ids: Arc::new(module_ids),
             initializer_handles: Arc::new(Mutex::new(initializer_handles)),
             #[cfg(feature = "crdt")]
@@ -121,10 +131,33 @@ impl DaemonKernel {
     }
 
     /// The single transport-agnostic entry point: run a command by name.
+    /// Every call is gated by the kernel's boot-time [`Permission`]; a
+    /// `user`-tier kernel can only reach commands registered with
+    /// [`Permission::User`], a `dev`-tier kernel reaches everything.
     /// Transport adapters (Tauri `#[command]`, HTTP handlers, FFI bridges)
     /// all funnel through this method.
     pub fn invoke(&self, name: &str, payload: JsonValue) -> Result<JsonValue, CommandError> {
-        self.registry.invoke(name, payload)
+        self.registry
+            .invoke_with_permission(name, payload, self.permission)
+    }
+
+    /// Run a command while overriding the caller tier. Lets transport
+    /// adapters that authenticate each request independently (e.g. an
+    /// HTTP server issuing different tokens to dashboard users vs.
+    /// developer tools) present a different caller than the kernel's
+    /// stamped default.
+    pub fn invoke_with_permission(
+        &self,
+        name: &str,
+        payload: JsonValue,
+        caller: Permission,
+    ) -> Result<JsonValue, CommandError> {
+        self.registry.invoke_with_permission(name, payload, caller)
+    }
+
+    /// The permission tier this kernel was built with.
+    pub fn permission(&self) -> Permission {
+        self.permission
     }
 
     /// The underlying command registry. Modules can hand this around when

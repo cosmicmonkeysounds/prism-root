@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Action } from "kbar";
+import type { ShellMode } from "@prism/core/lens";
 import { LensProvider } from "@prism/core/shell";
 import { PrismKBarProvider } from "@prism/core/kbar";
 import { StudioShell } from "./components/studio-shell.js";
@@ -14,6 +15,7 @@ import {
 } from "./lenses/index.js";
 import { createBuiltinShellWidgetBundles } from "./components/chrome-bundles.js";
 import { NotificationToast } from "./components/notification-toast.js";
+import { loadBootConfig } from "./boot/load-boot-config.js";
 
 // ── Kernel (singleton for app lifetime) ─────────────────────────────────────
 // The kernel is fully self-wiring: it installs the built-in lens bundles
@@ -22,11 +24,21 @@ import { NotificationToast } from "./components/notification-toast.js";
 // seed templates + demo workspace). App.tsx just constructs it and pulls
 // state off the resulting instance — no seeding helpers, no parallel
 // lens-registry wiring at this layer.
+//
+// BootConfig resolves the initial shell mode + permission from (in
+// precedence order) query params → VITE_PRISM_BOOT_CONFIG env var →
+// VITE_PRISM_BOOT_DEFAULT build-time define → DEFAULT_BOOT_CONFIG. The
+// pre-mode-system default is `admin`/`dev`, so `pnpm dev` with no env
+// is unchanged.
+
+const bootConfig = loadBootConfig();
 
 const kernel = createStudioKernel({
   lensBundles: createBuiltinLensBundles(),
   shellWidgetBundles: createBuiltinShellWidgetBundles(),
   initializers: createBuiltinInitializers(),
+  shellMode: bootConfig.shellMode,
+  permission: bootConfig.permission,
 });
 
 // ── App ─────────────────────────────────────────────────────────────────────
@@ -96,6 +108,17 @@ export function App() {
       const isEditable = tag === "INPUT" || tag === "TEXTAREA" || (e.target as HTMLElement)?.isContentEditable;
 
       const mod = e.metaKey || e.ctrlKey;
+      // Cmd+Shift+E — cycle shell mode (use → build → admin → use).
+      // Fires regardless of `isEditable` because the cycle is a chrome-
+      // level affordance, not a character input; any open text field
+      // stays focused after the swap.
+      if (mod && e.shiftKey && (e.key === "e" || e.key === "E")) {
+        e.preventDefault();
+        const order: ShellMode[] = ["use", "build", "admin"];
+        const next = order[(order.indexOf(kernel.shellMode) + 1) % order.length];
+        if (next) kernel.setShellMode(next);
+        return;
+      }
       if (mod && e.key === "z" && !e.shiftKey) {
         e.preventDefault();
         if (kernel.undo.canUndo) kernel.undo.undo();

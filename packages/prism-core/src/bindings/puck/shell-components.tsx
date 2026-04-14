@@ -420,6 +420,7 @@ export function createDefaultStudioShellTree(opts?: {
     presenceIndicator?: string;
     undoStatusBar?: string;
     inspectorPanel?: string;
+    shellModeMenu?: string;
   };
 }): Data {
   const ids = {
@@ -430,6 +431,7 @@ export function createDefaultStudioShellTree(opts?: {
     presenceIndicator: opts?.widgetIds?.presenceIndicator ?? "PresenceIndicator",
     undoStatusBar: opts?.widgetIds?.undoStatusBar ?? "UndoStatusBar",
     inspectorPanel: opts?.widgetIds?.inspectorPanel ?? "InspectorPanel",
+    shellModeMenu: opts?.widgetIds?.shellModeMenu ?? "ShellModeMenu",
   };
   let uid = 0;
   const next = (prefix: string): string => `${prefix}-${++uid}`;
@@ -449,6 +451,7 @@ export function createDefaultStudioShellTree(opts?: {
           { type: ids.componentPalette, props: { id: next("component-palette") } },
         ],
         topBar: [
+          { type: ids.shellModeMenu, props: { id: next("shell-mode-menu") } },
           { type: ids.tabBar, props: { id: next("tab-bar") } },
           { type: ids.presenceIndicator, props: { id: next("presence") } },
           { type: ids.undoStatusBar, props: { id: next("undo-status") } },
@@ -466,3 +469,122 @@ export function createDefaultStudioShellTree(opts?: {
 
 /** Eagerly-constructed default tree; convenient for tests and seeds. */
 export const DEFAULT_STUDIO_SHELL_TREE: Data = createDefaultStudioShellTree();
+
+// ── Per-mode shell trees ───────────────────────────────────────────────────
+//
+// A Studio instance has three runtime shell modes (see
+// `@prism/core/lens`'s `ShellMode`). Each mode needs its own Puck tree so
+// the shell layout can morph in-place without dropping user work:
+//
+//   - `use`   — tab bar over a single `LensOutlet`, nothing else. An end
+//               user looking at a published Flux/Lattice build should
+//               see no palette, no activity bar, no inspector.
+//   - `build` — tab bar + left ComponentPalette + right InspectorPanel +
+//               a narrow activity bar. The end-user authoring experience.
+//   - `admin` — the current full IDE tree (`DEFAULT_STUDIO_SHELL_TREE`),
+//               intended for developers. ObjectExplorer reappears,
+//               activity bar is wide, every panel is reachable.
+//
+// Callers pick the right tree at boot based on `ResolvedBootConfig`, and
+// the Studio kernel swaps the active tree in-place when the user toggles
+// mode via Cmd+Shift+E.
+
+/**
+ * Build a shell tree for `use` mode: the published-app runtime. Only a
+ * top bar (tab switcher + status) and the main lens outlet — no
+ * sidebars, no activity bar, no inspector. An end-user booting into
+ * `use` mode sees only the rendered app, not the authoring chrome.
+ */
+export function createUseShellTree(opts?: {
+  widgetIds?: { tabBar?: string };
+}): Data {
+  const tabBar = opts?.widgetIds?.tabBar ?? "TabBar";
+  let uid = 0;
+  const next = (prefix: string): string => `${prefix}-${++uid}`;
+  return {
+    root: {
+      props: {
+        activityBarWidth: 0,
+        topBarHeight: DEFAULT_SIZES.topBarHeight,
+        leftBarWidth: 0,
+        rightBarWidth: 0,
+        bottomBarHeight: 0,
+        activityBar: [],
+        leftBar: [],
+        topBar: [
+          { type: tabBar, props: { id: next("tab-bar") } },
+        ],
+        main: [{ type: "LensOutlet", props: { id: next("lens-outlet") } }],
+        rightBar: [],
+        bottomBar: [],
+      },
+    },
+    content: [],
+  } as unknown as Data;
+}
+
+/**
+ * Build a shell tree for `build` mode: authoring without the full IDE.
+ * Narrow activity bar, tab bar, ComponentPalette on the left,
+ * InspectorPanel on the right. No ObjectExplorer (that's admin-only)
+ * so end-users can rearrange widgets without confronting the kernel
+ * object tree.
+ */
+export function createBuildShellTree(opts?: {
+  widgetIds?: {
+    activityBar?: string;
+    componentPalette?: string;
+    tabBar?: string;
+    inspectorPanel?: string;
+    presenceIndicator?: string;
+    undoStatusBar?: string;
+    shellModeMenu?: string;
+  };
+}): Data {
+  const ids = {
+    activityBar: opts?.widgetIds?.activityBar ?? "ActivityBar",
+    componentPalette: opts?.widgetIds?.componentPalette ?? "ComponentPalette",
+    tabBar: opts?.widgetIds?.tabBar ?? "TabBar",
+    inspectorPanel: opts?.widgetIds?.inspectorPanel ?? "InspectorPanel",
+    presenceIndicator: opts?.widgetIds?.presenceIndicator ?? "PresenceIndicator",
+    undoStatusBar: opts?.widgetIds?.undoStatusBar ?? "UndoStatusBar",
+    shellModeMenu: opts?.widgetIds?.shellModeMenu ?? "ShellModeMenu",
+  };
+  let uid = 0;
+  const next = (prefix: string): string => `${prefix}-${++uid}`;
+  return {
+    root: {
+      props: {
+        activityBarWidth: DEFAULT_SIZES.activityBarWidth,
+        topBarHeight: DEFAULT_SIZES.topBarHeight,
+        leftBarWidth: DEFAULT_SIZES.leftBarWidth,
+        rightBarWidth: DEFAULT_SIZES.rightBarWidth,
+        bottomBarHeight: 0,
+        activityBar: [
+          { type: ids.activityBar, props: { id: next("activity-bar") } },
+        ],
+        leftBar: [
+          { type: ids.componentPalette, props: { id: next("component-palette") } },
+        ],
+        topBar: [
+          { type: ids.shellModeMenu, props: { id: next("shell-mode-menu") } },
+          { type: ids.tabBar, props: { id: next("tab-bar") } },
+          { type: ids.presenceIndicator, props: { id: next("presence") } },
+          { type: ids.undoStatusBar, props: { id: next("undo-status") } },
+        ],
+        main: [{ type: "LensOutlet", props: { id: next("lens-outlet") } }],
+        rightBar: [
+          { type: ids.inspectorPanel, props: { id: next("inspector") } },
+        ],
+        bottomBar: [],
+      },
+    },
+    content: [],
+  } as unknown as Data;
+}
+
+/** Eagerly-constructed per-mode trees; convenient for tests and seeds. */
+export const USE_SHELL_TREE: Data = createUseShellTree();
+export const BUILD_SHELL_TREE: Data = createBuildShellTree();
+/** Alias for the full IDE tree — `admin` mode reuses the legacy default. */
+export const ADMIN_SHELL_TREE: Data = DEFAULT_STUDIO_SHELL_TREE;

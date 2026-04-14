@@ -21,6 +21,7 @@
 use crate::initializer::{BoxedInitializer, DaemonInitializer, InitializerHandle};
 use crate::kernel::DaemonKernel;
 use crate::module::{BoxedModule, DaemonModule};
+use crate::permission::Permission;
 use crate::registry::{CommandError, CommandRegistry};
 use std::sync::Arc;
 
@@ -57,6 +58,14 @@ pub struct DaemonBuilder {
 
     /// Queued initializers, run in order immediately after build.
     pub(crate) initializers: Vec<BoxedInitializer>,
+
+    /// Caller tier stamped onto the kernel at boot. Every `kernel.invoke`
+    /// is checked against the registered command's minimum. Defaults to
+    /// [`Permission::Dev`] so embedded and test callers keep full access;
+    /// published `user`-tier binaries must opt in explicitly via
+    /// [`DaemonBuilder::with_permission`] or the stdio binary's
+    /// `--permission=user` flag.
+    pub(crate) permission: Permission,
 
     /// Optional CRDT service. Modules that need it should insert via
     /// [`DaemonBuilder::set_doc_manager`] or re-use an existing one.
@@ -111,6 +120,7 @@ impl DaemonBuilder {
             modules: Vec::new(),
             module_ids: Vec::new(),
             initializers: Vec::new(),
+            permission: Permission::default(),
             #[cfg(feature = "crdt")]
             doc_manager: None,
             #[cfg(feature = "watcher")]
@@ -240,6 +250,17 @@ impl DaemonBuilder {
     /// Queue a post-boot initializer.
     pub fn with_initializer<I: DaemonInitializer + 'static>(mut self, init: I) -> Self {
         self.initializers.push(Box::new(init));
+        self
+    }
+
+    /// Stamp the kernel with a caller tier. Published `user`-tier shells
+    /// (Flux / Lattice / Musica builds hitting an end user) should flip
+    /// this to [`Permission::User`]; developer tooling stays on the
+    /// default [`Permission::Dev`]. The check runs on every
+    /// `kernel.invoke`; a user-tier kernel can only reach commands that
+    /// opted in via [`CommandRegistry::register_user`] / `register_with_permission`.
+    pub fn with_permission(mut self, permission: Permission) -> Self {
+        self.permission = permission;
         self
     }
 
@@ -389,6 +410,7 @@ impl DaemonBuilder {
             modules: _modules,
             module_ids,
             initializers,
+            permission,
             #[cfg(feature = "crdt")]
             doc_manager,
             #[cfg(feature = "watcher")]
@@ -405,6 +427,7 @@ impl DaemonBuilder {
 
         let kernel = DaemonKernel::new(
             registry,
+            permission,
             module_ids,
             Vec::new(),
             #[cfg(feature = "crdt")]

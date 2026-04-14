@@ -4,6 +4,7 @@
 
 use prism_daemon::{
     CommandError, DaemonBuilder, DaemonInitializer, DaemonKernel, DaemonModule, InitializerHandle,
+    Permission,
 };
 use serde_json::{json, Value as JsonValue};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -357,4 +358,91 @@ fn empty_kernel_has_no_capabilities() {
     // Invoking anything yields NotFound.
     let err = kernel.invoke("crdt.read", json!({})).unwrap_err();
     assert!(matches!(err, CommandError::NotFound(_)));
+}
+
+// ── Permission tier enforcement ────────────────────────────────────────
+//
+// A `user`-tier kernel can still reach `daemon.admin` (read-only
+// introspection) but is denied every `Permission::Dev` command like
+// `crdt.write`. A `dev`-tier kernel reaches both, mirroring the fact
+// that dev builds have the full palette. Missing commands keep yielding
+// `NotFound`, not `PermissionDenied`, so callers can distinguish between
+// "that command doesn't exist" and "I can't reach it from this tier".
+
+#[test]
+fn user_kernel_reaches_user_commands_and_denies_dev_commands() {
+    let kernel = DaemonBuilder::new()
+        .with_permission(Permission::User)
+        .with_defaults()
+        .build()
+        .unwrap();
+
+    assert_eq!(kernel.permission(), Permission::User);
+
+    // daemon.admin is opted into Permission::User and must succeed.
+    let snapshot = kernel.invoke("daemon.admin", json!({})).unwrap();
+    assert_eq!(snapshot["health"]["level"], "ok");
+
+    #[cfg(feature = "crdt")]
+    {
+        let err = kernel
+            .invoke(
+                "crdt.write",
+                json!({ "docId": "x", "key": "k", "value": "v" }),
+            )
+            .unwrap_err();
+        match err {
+            CommandError::PermissionDenied {
+                command,
+                required,
+                caller,
+            } => {
+                assert_eq!(command, "crdt.write");
+                assert_eq!(required, "dev");
+                assert_eq!(caller, "user");
+            }
+            other => panic!("wrong variant: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn dev_kernel_is_the_default_and_reaches_everything() {
+    let kernel = DaemonBuilder::new().with_defaults().build().unwrap();
+    assert_eq!(kernel.permission(), Permission::Dev);
+
+    kernel.invoke("daemon.admin", json!({})).unwrap();
+
+    #[cfg(feature = "crdt")]
+    {
+        kernel
+            .invoke(
+                "crdt.write",
+                json!({ "docId": "perm", "key": "k", "value": "v" }),
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn invoke_with_permission_override_gates_individual_calls() {
+    // Kernel runs as Dev, but the transport adapter presents a User
+    // caller for this one request — the registry must still gate it.
+    let kernel = DaemonBuilder::new().with_defaults().build().unwrap();
+
+    kernel
+        .invoke_with_permission("daemon.admin", json!({}), Permission::User)
+        .unwrap();
+
+    #[cfg(feature = "crdt")]
+    {
+        let err = kernel
+            .invoke_with_permission(
+                "crdt.write",
+                json!({ "docId": "x", "key": "k", "value": "v" }),
+                Permission::User,
+            )
+            .unwrap_err();
+        assert!(matches!(err, CommandError::PermissionDenied { .. }));
+    }
 }

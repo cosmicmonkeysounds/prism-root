@@ -104,4 +104,34 @@ describe("buildLensBundleList", () => {
       "graph-extra",
     ]);
   });
+
+  it("attaches PANEL_MODES shell-mode constraints to known bundles", () => {
+    // `canvas` is explicitly listed in panel-modes.ts as visible in every
+    // mode at user permission — pin it so a rename/removal surfaces here.
+    const modules = {
+      "../panels/canvas-panel.tsx": { canvasLensBundle: fakeBundle("canvas") },
+      "../panels/graph-panel.tsx": { graphLensBundle: fakeBundle("graph") },
+      "../panels/unknown-panel.tsx": {
+        unknownLensBundle: fakeBundle("not-in-table"),
+      },
+    };
+    const bundles = buildLensBundleList(modules);
+    const byId = Object.fromEntries(bundles.map((b) => [b.id, b]));
+
+    expect(byId["canvas"]?.availableInModes).toEqual([
+      "use",
+      "build",
+      "admin",
+    ]);
+    expect(byId["canvas"]?.minPermission).toBe("user");
+
+    // `graph` is admin-only / dev in panel-modes.ts.
+    expect(byId["graph"]?.availableInModes).toEqual(["admin"]);
+    expect(byId["graph"]?.minPermission).toBe("dev");
+
+    // Bundles absent from the table pass through unchanged so the
+    // library defaults (["build","admin"], "user") apply.
+    expect(byId["not-in-table"]?.availableInModes).toBeUndefined();
+    expect(byId["not-in-table"]?.minPermission).toBeUndefined();
+  });
 });

@@ -42,6 +42,29 @@ export type {
 export {
   installLensBundles,
   defineLensBundle,
+  withShellModes,
+  filterLensBundlesByShellMode,
   installShellWidgetBundles,
   defineShellWidgetBundle,
 } from "./lens-install.js";
+
+export type {
+  ShellMode,
+  Permission,
+  ShellModeConstraints,
+  BootConfig,
+  ResolvedBootConfig,
+} from "./shell-mode.js";
+export {
+  SHELL_MODES,
+  PERMISSIONS,
+  PERMISSION_RANK,
+  DEFAULT_AVAILABLE_IN_MODES,
+  DEFAULT_MIN_PERMISSION,
+  DEFAULT_BOOT_CONFIG,
+  permissionAtLeast,
+  resolveBootConfig,
+  isShellMode,
+  isPermission,
+  lensBundleMatchesShellContext,
+} from "./shell-mode.js";

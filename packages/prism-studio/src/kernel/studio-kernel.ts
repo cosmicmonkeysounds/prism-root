@@ -46,6 +46,8 @@ import type { LiveView, LiveViewOptions } from "@prism/core/view";
 import type { ObjectTemplate, TemplateNode, InstantiateResult } from "@prism/core/template";
 import { createPageBuilderRegistry } from "./entities.js";
 import { buildEntityPuckComponents } from "./entity-puck-config.js";
+import { createBehaviorDispatcher } from "./behavior-dispatcher.js";
+import type { BehaviorDispatcher } from "./behavior-dispatcher.js";
 import { createDesignTokenRegistry, DEFAULT_TOKENS } from "@prism/core/design-tokens";
 import type { DesignTokenRegistry } from "@prism/core/design-tokens";
 import { createBuiltinBundles, installPluginBundles } from "@prism/core/plugin-bundles";
@@ -57,11 +59,14 @@ import {
   createViewportCache,
   installLensBundles,
   installShellWidgetBundles,
+  lensBundleMatchesShellContext,
 } from "@prism/core/lens";
 import type {
   LensRegistry,
   LensId,
   LensBundle,
+  Permission,
+  ShellMode,
   ShellStore,
   ShellWidgetBundle,
   ViewportCache,
@@ -74,7 +79,9 @@ import {
   SHELL_PUCK_CONFIG,
   LENS_OUTLET_PUCK_CONFIG,
   puckConfigToComponentConfig,
-  DEFAULT_STUDIO_SHELL_TREE,
+  ADMIN_SHELL_TREE,
+  BUILD_SHELL_TREE,
+  USE_SHELL_TREE,
   type LensPuckConfig,
   type PuckComponentRegistry,
 } from "@prism/core/puck";
@@ -153,7 +160,10 @@ import {
   YamlWriter,
   TomlWriter,
   facetDefinitionBuilder,
-  createFacetStore,
+  facetDefFromObject,
+  objectPatchFromFacetDef,
+  isFacetDefObject,
+  FACET_DEF_TYPE,
   createValueListRegistry,
 } from "@prism/core/facet";
 import type {
@@ -165,7 +175,6 @@ import type {
   SequencerConditionState,
   SequencerScriptState,
   SpellChecker,
-  FacetStore,
   ValueListRegistry,
 } from "@prism/core/facet";
 import {
@@ -500,10 +509,14 @@ export interface StudioKernel {
   /** Subscribe to facet definition changes. */
   onFacetChange(listener: () => void): () => void;
 
-  // ── FacetStore (persistent facets/scripts/value-lists) ──────────────────
+  // ── Behaviors ───────────────────────────────────────────────────────────
 
-  /** The persistent FacetStore instance. */
-  readonly facetStore: FacetStore;
+  /**
+   * The Luau behavior dispatcher. Call `fire(objectId, trigger)` to
+   * run every enabled behavior bound to a target object. Works in both
+   * edit-mode preview and published runtime — same code path.
+   */
+  readonly behaviors: BehaviorDispatcher;
 
   // ── Saved Views ─────────────────────────────────────────────────────────
 
@@ -662,17 +675,43 @@ export interface StudioKernel {
   readonly puckComponents: PuckComponentRegistry<StudioKernel>;
 
   /**
-   * Current Puck `Data` tree describing the app shell. Initially set to
-   * `DEFAULT_STUDIO_SHELL_TREE`; the shell-builder lens replaces this
-   * with a user-authored tree at runtime.
+   * Current Puck `Data` tree describing the app shell. Reads return the
+   * tree for `shellMode`; writes land on that mode's slot in
+   * `shellTreesByMode`. Switching modes via `setShellMode()` swaps which
+   * tree this getter returns and fires `onShellTreeChange` listeners.
    */
   shellTree: PuckData;
 
-  /** Update the shell tree and notify subscribers. */
+  /** Update the shell tree for the current mode and notify subscribers. */
   setShellTree(tree: PuckData): void;
 
   /** Subscribe to shell-tree mutations (shell builder live reload). */
   onShellTreeChange(listener: () => void): () => void;
+
+  // ── Shell Mode / Permission ──────────────────────────────────────────────
+
+  /** The current shell mode (`use` / `build` / `admin`). */
+  readonly shellMode: ShellMode;
+
+  /** The permission level the kernel was booted with. Never changes. */
+  readonly permission: Permission;
+
+  /** Swap the active shell mode in-place. Notifies `onShellModeChange`. */
+  setShellMode(mode: ShellMode): void;
+
+  /**
+   * Return the lens bundles currently visible in the activity bar /
+   * palette for `(shellMode, permission)`. Derived from the installed
+   * lens list via the `availableInModes` / `minPermission` constraints.
+   * The returned array is fresh on each call — callers can `.map()` it.
+   */
+  getVisibleLensIds(): LensId[];
+
+  /** Test whether a specific lens id is visible in the current context. */
+  isLensVisible(id: LensId): boolean;
+
+  /** Subscribe to mode/permission changes. */
+  onShellModeChange(listener: () => void): () => void;
 
   /** Dispose all subscriptions. */
   dispose(): void;
@@ -713,12 +752,35 @@ export interface StudioKernelOptions {
   readonly appProfile?: AppProfile;
 
   /**
-   * Optional Puck `Data` to seed the shell tree with. Defaults to
-   * `DEFAULT_STUDIO_SHELL_TREE` from `@prism/core/puck`, which reproduces
-   * the legacy hand-coded shell. App profiles can substitute their own
-   * tree to ship a focused, chrome-less experience.
+   * Optional Puck `Data` to seed the shell tree with. When the kernel
+   * runs in a specific `shellMode`, this is used as an override for
+   * *that* mode's slot only — the other two modes keep their defaults.
+   * Profiles that want fully custom shells should use
+   * `shellTreesByMode` instead.
    */
   readonly shellTree?: PuckData;
+
+  /**
+   * Optional per-mode shell tree overrides. Any omitted mode falls back
+   * to the built-in default from `@prism/core/puck`
+   * (`USE_SHELL_TREE` / `BUILD_SHELL_TREE` / `ADMIN_SHELL_TREE`).
+   */
+  readonly shellTreesByMode?: Partial<Record<ShellMode, PuckData>>;
+
+  /**
+   * Initial shell mode. Defaults to `"admin"` so plain `pnpm dev` lands
+   * in the full IDE, matching pre-mode-system behaviour.
+   */
+  readonly shellMode?: ShellMode;
+
+  /**
+   * Permission level this kernel instance runs at. Controls which lens
+   * bundles appear in the activity bar / palette and is stamped onto
+   * daemon IPC envelopes for the daemon to enforce. Defaults to
+   * `"dev"` — matching pre-mode-system behaviour. An end-user build
+   * should set `"user"` via its boot config.
+   */
+  readonly permission?: Permission;
 
   /**
    * Studio initializers that run AFTER the kernel has been fully
@@ -876,10 +938,38 @@ export function createStudioKernel(options: StudioKernelOptions = {}): StudioKer
     puckComponents as unknown as PuckComponentRegistry<unknown>,
   );
 
-  let currentShellTree: PuckData = options.shellTree ?? DEFAULT_STUDIO_SHELL_TREE;
+  // ── Shell Mode / Permission ────────────────────────────────────────────
+  // A live kernel carries its runtime `shellMode` and `permission`. Mode
+  // is mutable (Cmd+Shift+E toggle); permission is frozen at boot so the
+  // daemon can trust the value it was spawned with. Each mode owns its
+  // own Puck shell tree in `shellTreesByMode` — switching modes swaps
+  // which tree the `shellTree` getter returns, and in-place edits via
+  // `setShellTree` land on the *current* mode's slot.
+  //
+  // If a caller passes `options.shellTree` without specifying
+  // `shellTreesByMode`, we treat it as an override for the current
+  // mode's slot only — matching how the legacy factory behaved when it
+  // accepted a single `shellTree`.
+
+  const currentPermission: Permission = options.permission ?? "dev";
+  let currentMode: ShellMode = options.shellMode ?? "admin";
+
+  const shellTreesByMode: Record<ShellMode, PuckData> = {
+    use: options.shellTreesByMode?.use ?? USE_SHELL_TREE,
+    build: options.shellTreesByMode?.build ?? BUILD_SHELL_TREE,
+    admin: options.shellTreesByMode?.admin ?? ADMIN_SHELL_TREE,
+  };
+  if (options.shellTree && !options.shellTreesByMode) {
+    shellTreesByMode[currentMode] = options.shellTree;
+  }
+
   const shellTreeListeners = new Set<() => void>();
+  const shellModeListeners = new Set<() => void>();
   const notifyShellTreeListeners = (): void => {
     for (const fn of shellTreeListeners) fn();
+  };
+  const notifyShellModeListeners = (): void => {
+    for (const fn of shellModeListeners) fn();
   };
 
   // ── Input System ───────────────────────────────────────────────────────────
@@ -938,15 +1028,26 @@ export function createStudioKernel(options: StudioKernelOptions = {}): StudioKer
   });
 
   // ── Facet System ────────────────────────────────────────────────────────
-  const facetDefinitions = new Map<string, FacetDefinition>();
+  //
+  // FacetDefinitions live as first-class GraphObjects of type "facet-def"
+  // in the main CollectionStore — one source of truth, one persistence
+  // path, no parallel Map. Listeners fire off `store.onChange` filtered
+  // to facet-def mutations so existing `onFacetChange(listener)` callers
+  // keep working.
   const facetListeners = new Set<() => void>();
 
   function notifyFacetListeners() {
     for (const fn of facetListeners) fn();
   }
 
-  // ── FacetStore (persistent facets/scripts/value-lists) ──────────────────
-  const facetStore = createFacetStore();
+  /** Look up the raw GraphObject for a facet id by scanning the store. */
+  function findFacetObject(facetId: string): GraphObject | undefined {
+    return store
+      .allObjects()
+      .find((o) => isFacetDefObject(o) && !o.deletedAt && (
+        ((o.data["definition"] as { id?: string } | undefined)?.id ?? o.id) === facetId
+      ));
+  }
 
   // ── Saved Views ────────────────────────────────────────────────────────
   const savedViewRegistry = createSavedViewRegistry();
@@ -1127,6 +1228,36 @@ export function createStudioKernel(options: StudioKernelOptions = {}): StudioKer
       type: "object:deleted",
       object: { id: p.id } as Record<string, unknown>,
     });
+  });
+
+  // Facet listeners: any create/update/delete of a facet-def object fans
+  // out to `onFacetChange` subscribers. This keeps the Puck layout-panel,
+  // facet designer, and facet-picker field all in sync regardless of
+  // which path mutated the facet.
+  const disconnectFacetCreated = bus.on(PrismEvents.ObjectCreated, (payload: unknown) => {
+    const p = payload as { object: { type: string } };
+    if (p.object.type === FACET_DEF_TYPE) notifyFacetListeners();
+  });
+  const disconnectFacetUpdated = bus.on(PrismEvents.ObjectUpdated, (payload: unknown) => {
+    const p = payload as { object: { type: string } };
+    if (p.object.type === FACET_DEF_TYPE) notifyFacetListeners();
+  });
+  const disconnectFacetDeleted = bus.on(PrismEvents.ObjectDeleted, () => {
+    // We don't know the type after delete, but listeners are idempotent
+    // and only re-read the store. Notifying on every delete is cheap.
+    notifyFacetListeners();
+  });
+
+  // ── Behavior Dispatcher ────────────────────────────────────────────────
+  // Lives at the factory level so it can be wired into the kernel object
+  // literal below. It needs `store`, `notifications`, and the CRUD helpers
+  // — pass them explicitly rather than the whole kernel to keep types
+  // non-circular.
+  const behaviorDispatcher = createBehaviorDispatcher({
+    store,
+    notifications,
+    select: (id) => select(id),
+    updateObject: (id, patch) => updateObject(id, patch),
   });
 
   automationEngine.start();
@@ -1903,12 +2034,16 @@ export function createStudioKernel(options: StudioKernelOptions = {}): StudioKer
     uninstallInitializers();
     uninstallShellWidgetBundles();
     shellTreeListeners.clear();
+    shellModeListeners.clear();
     uninstallLensBundles();
     uninstallBundles();
     automationEngine.stop();
     disconnectAutomationCreated();
     disconnectAutomationUpdated();
     disconnectAutomationDeleted();
+    disconnectFacetCreated();
+    disconnectFacetUpdated();
+    disconnectFacetDeleted();
     automationListeners.clear();
     pluginListeners.clear();
     vaultListeners.clear();
@@ -2003,18 +2138,53 @@ export function createStudioKernel(options: StudioKernelOptions = {}): StudioKer
     // ── Puck-driven Shell ────────────────────────────────────────────────
     shellWidgets,
     puckComponents,
-    get shellTree() { return currentShellTree; },
+    get shellTree() { return shellTreesByMode[currentMode]; },
     set shellTree(tree: PuckData) {
-      currentShellTree = tree;
+      shellTreesByMode[currentMode] = tree;
       notifyShellTreeListeners();
     },
     setShellTree(tree: PuckData) {
-      currentShellTree = tree;
+      shellTreesByMode[currentMode] = tree;
       notifyShellTreeListeners();
     },
     onShellTreeChange(listener: () => void) {
       shellTreeListeners.add(listener);
       return () => shellTreeListeners.delete(listener);
+    },
+
+    // ── Shell Mode / Permission ──────────────────────────────────────────
+    get shellMode() { return currentMode; },
+    get permission() { return currentPermission; },
+    setShellMode(mode: ShellMode) {
+      if (mode === currentMode) return;
+      currentMode = mode;
+      notifyShellModeListeners();
+      // Switching modes always swaps the active tree too, so any
+      // subscriber listening via `useSyncExternalStore` on the shell
+      // tree will re-render with the new layout.
+      notifyShellTreeListeners();
+    },
+    getVisibleLensIds(): LensId[] {
+      const ctx = { mode: currentMode, permission: currentPermission };
+      const out: LensId[] = [];
+      for (const bundle of filteredLensBundles) {
+        if (lensBundleMatchesShellContext(bundle, ctx)) {
+          out.push(bundle.id as LensId);
+        }
+      }
+      return out;
+    },
+    isLensVisible(id: LensId): boolean {
+      const bundle = filteredLensBundles.find((b) => b.id === id);
+      if (!bundle) return false;
+      return lensBundleMatchesShellContext(bundle, {
+        mode: currentMode,
+        permission: currentPermission,
+      });
+    },
+    onShellModeChange(listener: () => void) {
+      shellModeListeners.add(listener);
+      return () => shellModeListeners.delete(listener);
     },
 
     // ── Plugin System ──────────────────────────────────────────────────────
@@ -2154,24 +2324,44 @@ export function createStudioKernel(options: StudioKernelOptions = {}): StudioKer
     buildFacetDefinition(id: string, entityType: string, layout: FacetLayout) {
       return facetDefinitionBuilder(id, entityType, layout);
     },
-    listFacetDefinitions() { return [...facetDefinitions.values()]; },
-    registerFacetDefinition(definition: FacetDefinition) {
-      facetDefinitions.set(definition.id, definition);
-      notifyFacetListeners();
+    listFacetDefinitions(): FacetDefinition[] {
+      return store
+        .allObjects()
+        .filter((o) => isFacetDefObject(o) && !o.deletedAt)
+        .map((o) => facetDefFromObject(o));
     },
-    getFacetDefinition(id: string) { return facetDefinitions.get(id); },
-    removeFacetDefinition(id: string) {
-      const result = facetDefinitions.delete(id);
-      if (result) notifyFacetListeners();
-      return result;
+    registerFacetDefinition(definition: FacetDefinition) {
+      const existing = findFacetObject(definition.id);
+      const patch = objectPatchFromFacetDef(definition);
+      if (existing) {
+        updateObject(existing.id, patch);
+      } else {
+        createObject({
+          type: FACET_DEF_TYPE,
+          name: patch.name,
+          parentId: null,
+          position: 0,
+          data: patch.data,
+        });
+      }
+    },
+    getFacetDefinition(id: string): FacetDefinition | undefined {
+      const obj = findFacetObject(id);
+      return obj ? facetDefFromObject(obj) : undefined;
+    },
+    removeFacetDefinition(id: string): boolean {
+      const existing = findFacetObject(id);
+      if (!existing) return false;
+      deleteObject(existing.id);
+      return true;
     },
     onFacetChange(listener: () => void) {
       facetListeners.add(listener);
       return () => facetListeners.delete(listener);
     },
 
-    // ── FacetStore ──────────────────────────────────────────────────────────
-    facetStore,
+    // ── Behaviors ──────────────────────────────────────────────────────────
+    behaviors: behaviorDispatcher,
 
     // ── Saved Views ─────────────────────────────────────────────────────────
     savedViews: savedViewRegistry,

@@ -27,6 +27,12 @@
 
 import type { LensId, LensManifest } from "./lens-types.js";
 import type { LensRegistry } from "./lens-registry.js";
+import type {
+  Permission,
+  ShellMode,
+  ShellModeConstraints,
+} from "./shell-mode.js";
+import { lensBundleMatchesShellContext } from "./shell-mode.js";
 
 /**
  * Context passed to a LensBundle's install() call.
@@ -71,6 +77,21 @@ export interface LensBundle<TComponent = unknown, TPuckConfig = unknown> {
    */
   readonly puck?: TPuckConfig;
   /**
+   * Which shell modes this bundle should appear in. Defaults to
+   * `["build", "admin"]` — i.e. the lens is an authoring tool that
+   * shouldn't clutter the `use` mode runtime. Panels that should also
+   * show up for end-users in `use` mode (e.g. the main page view) must
+   * opt-in explicitly. See `@prism/core/lens` `ShellMode`.
+   */
+  readonly availableInModes?: readonly ShellMode[];
+  /**
+   * Minimum permission required for this bundle to appear in the
+   * activity bar / component palette at all. Defaults to `"user"`.
+   * Panels that wrap privileged daemon surfaces (plugin registry,
+   * trust graph, expression evaluator, …) must set `"dev"`.
+   */
+  readonly minPermission?: Permission;
+  /**
    * Install this lens bundle: register the manifest into the lens
    * registry and the component into the component map. Returns an
    * uninstall function that removes both.
@@ -101,6 +122,10 @@ export function installLensBundles<TComponent>(
  * pair. Handles install/uninstall wiring so panel files can stay terse.
  * An optional `puck` config marks the lens as Puck-authorable — it is
  * passed through opaquely so the adapter layer can read it.
+ *
+ * Mode/permission constraints are declared via `withShellModes()` —
+ * `defineLensBundle` stays a three-arg positional helper to keep 44
+ * existing panel call sites untouched.
  */
 export function defineLensBundle<TComponent, TPuckConfig = unknown>(
   manifest: LensManifest,
@@ -122,6 +147,48 @@ export function defineLensBundle<TComponent, TPuckConfig = unknown>(
       };
     },
   };
+}
+
+/**
+ * Attach `availableInModes` / `minPermission` constraints to a lens
+ * bundle. Panels call this immediately after `defineLensBundle` so the
+ * constraint declaration lives next to the export:
+ *
+ * ```ts
+ * export const editorLensBundle = withShellModes(
+ *   defineLensBundle(editorManifest, EditorPanel, editorPuck),
+ *   { availableInModes: ["build", "admin"], minPermission: "user" },
+ * );
+ * ```
+ *
+ * Returns a new frozen bundle; the original is untouched. Undefined
+ * fields in `constraints` fall back to the bundle's existing values.
+ */
+export function withShellModes<TComponent, TPuckConfig>(
+  bundle: LensBundle<TComponent, TPuckConfig>,
+  constraints: ShellModeConstraints,
+): LensBundle<TComponent, TPuckConfig> {
+  const { availableInModes, minPermission } = constraints;
+  return {
+    ...bundle,
+    ...(availableInModes !== undefined ? { availableInModes } : {}),
+    ...(minPermission !== undefined ? { minPermission } : {}),
+  };
+}
+
+/**
+ * Pure filter: keep only bundles whose `availableInModes` /
+ * `minPermission` admit the given runtime context. Used by the kernel
+ * to derive the currently-visible lens list and by the Puck component
+ * palette to scope its drag-source list.
+ */
+export function filterLensBundlesByShellMode<
+  T extends ShellModeConstraints & { readonly id: string },
+>(
+  bundles: ReadonlyArray<T>,
+  context: { mode: ShellMode; permission: Permission },
+): T[] {
+  return bundles.filter((b) => lensBundleMatchesShellContext(b, context));
 }
 
 // ── ShellWidgetBundle ──────────────────────────────────────────────────────

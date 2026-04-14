@@ -23,7 +23,7 @@ import {
   defineShellWidgetBundle,
   type LensBundle,
 } from "../lenses/bundle.js";
-import { lensId, type LensManifest } from "@prism/core/lens";
+import { lensId, withShellModes, type LensManifest } from "@prism/core/lens";
 import { DEFAULT_STUDIO_SHELL_TREE } from "@prism/core/puck";
 import type { AppProfile } from "@prism/core/builder";
 
@@ -176,6 +176,187 @@ describe("createStudioKernel — shell wiring", () => {
 
     unsub();
     kernel.setShellTree(DEFAULT_STUDIO_SHELL_TREE);
+    expect(fires).toBe(1);
+    kernel.dispose();
+  });
+});
+
+// ── Shell mode / permission runtime wiring ─────────────────────────────
+
+describe("createStudioKernel — shell mode & permission", () => {
+  function lensManifest(id: string): LensManifest {
+    return manifest(id, id);
+  }
+  // Four test bundles exercising every (mode, permission) combination.
+  const testBundles = (): LensBundle[] => [
+    withShellModes(defineLensBundle(lensManifest("canvas"), Dummy("Canvas")), {
+      availableInModes: ["use", "build", "admin"],
+      minPermission: "user",
+    }),
+    // Default bundle (editor): build+admin, user tier.
+    defineLensBundle(lensManifest("editor"), Dummy("Editor")),
+    withShellModes(defineLensBundle(lensManifest("graph"), Dummy("Graph")), {
+      availableInModes: ["admin"],
+      minPermission: "dev",
+    }),
+    defineLensBundle(lensManifest("settings"), Dummy("Settings")),
+  ];
+
+  it("defaults to admin/dev when no options are passed", () => {
+    const kernel = createStudioKernel({ lensBundles: testBundles() });
+    expect(kernel.shellMode).toBe("admin");
+    expect(kernel.permission).toBe("dev");
+    kernel.dispose();
+  });
+
+  it("honours options.shellMode and options.permission", () => {
+    const kernel = createStudioKernel({
+      lensBundles: testBundles(),
+      shellMode: "use",
+      permission: "user",
+    });
+    expect(kernel.shellMode).toBe("use");
+    expect(kernel.permission).toBe("user");
+    kernel.dispose();
+  });
+
+  it("getVisibleLensIds filters by (mode, permission) context", () => {
+    const kernel = createStudioKernel({
+      lensBundles: testBundles(),
+      shellMode: "admin",
+      permission: "dev",
+    });
+    expect(kernel.getVisibleLensIds().sort()).toEqual([
+      "canvas",
+      "editor",
+      "graph",
+      "settings",
+    ]);
+    kernel.dispose();
+  });
+
+  it("getVisibleLensIds hides dev-only bundles for user tier", () => {
+    const kernel = createStudioKernel({
+      lensBundles: testBundles(),
+      shellMode: "admin",
+      permission: "user",
+    });
+    expect(kernel.getVisibleLensIds().sort()).toEqual([
+      "canvas",
+      "editor",
+      "settings",
+    ]);
+    kernel.dispose();
+  });
+
+  it("getVisibleLensIds shows only opted-in bundles in use mode", () => {
+    const kernel = createStudioKernel({
+      lensBundles: testBundles(),
+      shellMode: "use",
+      permission: "user",
+    });
+    expect(kernel.getVisibleLensIds()).toEqual(["canvas"]);
+    kernel.dispose();
+  });
+
+  it("isLensVisible matches getVisibleLensIds", () => {
+    const kernel = createStudioKernel({
+      lensBundles: testBundles(),
+      shellMode: "build",
+      permission: "user",
+    });
+    expect(kernel.isLensVisible("canvas" as never)).toBe(true);
+    expect(kernel.isLensVisible("editor" as never)).toBe(true);
+    expect(kernel.isLensVisible("graph" as never)).toBe(false);
+    expect(kernel.isLensVisible("settings" as never)).toBe(true);
+    kernel.dispose();
+  });
+
+  it("setShellMode updates mode and visible lens list", () => {
+    const kernel = createStudioKernel({
+      lensBundles: testBundles(),
+      shellMode: "admin",
+      permission: "user",
+    });
+    expect(kernel.getVisibleLensIds().sort()).toEqual([
+      "canvas",
+      "editor",
+      "settings",
+    ]);
+    kernel.setShellMode("use");
+    expect(kernel.shellMode).toBe("use");
+    expect(kernel.getVisibleLensIds()).toEqual(["canvas"]);
+    kernel.dispose();
+  });
+
+  it("setShellMode notifies onShellModeChange listeners", () => {
+    const kernel = createStudioKernel({
+      lensBundles: testBundles(),
+      shellMode: "admin",
+      permission: "dev",
+    });
+    let fires = 0;
+    const unsub = kernel.onShellModeChange(() => {
+      fires++;
+    });
+    kernel.setShellMode("build");
+    expect(fires).toBe(1);
+    kernel.setShellMode("use");
+    expect(fires).toBe(2);
+    unsub();
+    kernel.setShellMode("admin");
+    expect(fires).toBe(2);
+    kernel.dispose();
+  });
+
+  it("setShellMode to the current mode is a no-op", () => {
+    const kernel = createStudioKernel({
+      lensBundles: testBundles(),
+      shellMode: "admin",
+      permission: "dev",
+    });
+    let fires = 0;
+    kernel.onShellModeChange(() => {
+      fires++;
+    });
+    kernel.setShellMode("admin");
+    expect(fires).toBe(0);
+    kernel.dispose();
+  });
+
+  it("setShellMode swaps the active shell tree slot", () => {
+    const useTree = { root: { props: { headerHeight: 0 } }, content: [] };
+    const buildTree = { root: { props: { headerHeight: 1 } }, content: [] };
+    const adminTree = { root: { props: { headerHeight: 2 } }, content: [] };
+    const kernel = createStudioKernel({
+      lensBundles: testBundles(),
+      shellMode: "admin",
+      permission: "dev",
+      shellTreesByMode: {
+        use: useTree as never,
+        build: buildTree as never,
+        admin: adminTree as never,
+      },
+    });
+    expect(kernel.shellTree).toBe(adminTree);
+    kernel.setShellMode("build");
+    expect(kernel.shellTree).toBe(buildTree);
+    kernel.setShellMode("use");
+    expect(kernel.shellTree).toBe(useTree);
+    kernel.dispose();
+  });
+
+  it("setShellMode fires onShellTreeChange so Puck re-renders", () => {
+    const kernel = createStudioKernel({
+      lensBundles: testBundles(),
+      shellMode: "admin",
+      permission: "dev",
+    });
+    let fires = 0;
+    kernel.onShellTreeChange(() => {
+      fires++;
+    });
+    kernel.setShellMode("build");
     expect(fires).toBe(1);
     kernel.dispose();
   });
