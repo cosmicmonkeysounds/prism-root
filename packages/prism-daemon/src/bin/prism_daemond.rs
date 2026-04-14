@@ -28,6 +28,17 @@
 //! | `daemon.capabilities` | List every registered command name         |
 //! | `daemon.modules`    | List every installed module ID               |
 //!
+//! ### IPC mode
+//!
+//! Passing `--ipc-socket <display-name>` switches the binary from the
+//! stdio loop to the local-IPC transport defined in
+//! [`prism_daemon::transport::ipc_local`]. Frames are length-prefixed
+//! `postcard` encodings of [`prism_daemon::IpcRequest`] /
+//! [`prism_daemon::IpcResponse`]. This is the mode the Tauri 2
+//! no-webview Studio shell uses to talk to the daemon sidecar per
+//! §4.5 of the Clay migration plan. Only available when the binary
+//! is compiled with the `transport-ipc` feature.
+//!
 //! ### Permission tier
 //!
 //! The binary accepts `--permission=user` or `--permission=dev` to stamp
@@ -48,29 +59,63 @@ use serde_json::{json, Value as JsonValue};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-/// Parse `--permission=user|dev` out of a raw argv list. Returns the
-/// default tier ([`Permission::Dev`]) when the flag is absent so host
-/// scripts that never cared about tiers keep running unchanged. Also
-/// accepts the two-token form `--permission user` for ergonomics.
-fn parse_permission<I>(args: I) -> Result<Permission, String>
+/// Parsed CLI for `prism-daemond`. Tiny on purpose — we hand-roll the
+/// argv walk instead of pulling `clap` so the binary stays small and
+/// the parser stays grep-able.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct CliArgs {
+    permission: Permission,
+    /// When `Some`, run the IPC transport against this display name
+    /// instead of the stdio loop.
+    ipc_socket: Option<String>,
+}
+
+/// Parse `prism-daemond`'s argv:
+///
+/// * `--permission=user|dev` / `--permission user|dev` — stamp the
+///   kernel with a caller tier. Defaults to [`Permission::Dev`].
+/// * `--ipc-socket=<name>` / `--ipc-socket <name>` — run the IPC
+///   transport instead of the stdio loop. Only meaningful when the
+///   binary was built with the `transport-ipc` feature.
+fn parse_args<I>(args: I) -> Result<CliArgs, String>
 where
     I: IntoIterator<Item = String>,
 {
+    let mut out = CliArgs::default();
     let mut iter = args.into_iter();
     // Skip argv[0] (the executable name).
     iter.next();
     while let Some(arg) = iter.next() {
         if let Some(rest) = arg.strip_prefix("--permission=") {
-            return Permission::parse(rest).map_err(|e| e.to_string());
+            out.permission = Permission::parse(rest).map_err(|e| e.to_string())?;
+            continue;
         }
         if arg == "--permission" {
             let value = iter
                 .next()
                 .ok_or_else(|| "--permission requires a value (user|dev)".to_string())?;
-            return Permission::parse(&value).map_err(|e| e.to_string());
+            out.permission = Permission::parse(&value).map_err(|e| e.to_string())?;
+            continue;
+        }
+        if let Some(rest) = arg.strip_prefix("--ipc-socket=") {
+            if rest.is_empty() {
+                return Err("--ipc-socket requires a non-empty name".to_string());
+            }
+            out.ipc_socket = Some(rest.to_string());
+            continue;
+        }
+        if arg == "--ipc-socket" {
+            let value = iter
+                .next()
+                .ok_or_else(|| "--ipc-socket requires a value".to_string())?;
+            if value.is_empty() {
+                return Err("--ipc-socket requires a non-empty name".to_string());
+            }
+            out.ipc_socket = Some(value);
+            continue;
         }
     }
-    Ok(Permission::default())
+    Ok(out)
 }
 
 #[derive(Debug, Deserialize)]
@@ -134,8 +179,8 @@ impl From<CommandError> for HandleError {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> std::io::Result<()> {
-    let permission = match parse_permission(std::env::args()) {
-        Ok(p) => p,
+    let cli = match parse_args(std::env::args()) {
+        Ok(c) => c,
         Err(e) => {
             eprintln!("prism-daemond: {e}");
             std::process::exit(2);
@@ -144,11 +189,39 @@ async fn main() -> std::io::Result<()> {
 
     let kernel = Arc::new(
         DaemonBuilder::new()
-            .with_permission(permission)
+            .with_permission(cli.permission)
             .with_defaults()
             .build()
             .expect("failed to build DaemonKernel"),
     );
+
+    // IPC mode: hand off to the local-socket transport and never
+    // touch stdio. The server is synchronous and blocks the current
+    // thread until the listener stops, which is exactly what we want
+    // — there's no other work to do in this flavor-current-thread
+    // runtime, so parking it on a blocking call is free.
+    #[cfg(feature = "transport-ipc")]
+    if let Some(display) = cli.ipc_socket.as_ref() {
+        match prism_daemon::serve_blocking(kernel.clone(), display) {
+            Ok(()) => {
+                kernel.dispose();
+                return Ok(());
+            }
+            Err(e) => {
+                eprintln!("prism-daemond: ipc transport failed: {e}");
+                kernel.dispose();
+                std::process::exit(1);
+            }
+        }
+    }
+
+    #[cfg(not(feature = "transport-ipc"))]
+    if cli.ipc_socket.is_some() {
+        eprintln!(
+            "prism-daemond: --ipc-socket requires the `transport-ipc` feature at build time"
+        );
+        std::process::exit(2);
+    }
 
     let mut stdin = BufReader::new(tokio::io::stdin()).lines();
     let mut stdout = tokio::io::stdout();
@@ -208,17 +281,17 @@ mod tests {
 
     #[test]
     fn parse_permission_defaults_to_dev() {
-        assert_eq!(parse_permission(argv(&[])).unwrap(), Permission::Dev);
+        assert_eq!(parse_args(argv(&[])).unwrap().permission, Permission::Dev);
     }
 
     #[test]
     fn parse_permission_accepts_equals_form() {
         assert_eq!(
-            parse_permission(argv(&["--permission=user"])).unwrap(),
+            parse_args(argv(&["--permission=user"])).unwrap().permission,
             Permission::User
         );
         assert_eq!(
-            parse_permission(argv(&["--permission=dev"])).unwrap(),
+            parse_args(argv(&["--permission=dev"])).unwrap().permission,
             Permission::Dev
         );
     }
@@ -226,28 +299,70 @@ mod tests {
     #[test]
     fn parse_permission_accepts_space_form() {
         assert_eq!(
-            parse_permission(argv(&["--permission", "user"])).unwrap(),
+            parse_args(argv(&["--permission", "user"]))
+                .unwrap()
+                .permission,
             Permission::User
         );
     }
 
     #[test]
     fn parse_permission_rejects_unknown_value() {
-        let err = parse_permission(argv(&["--permission=root"])).unwrap_err();
+        let err = parse_args(argv(&["--permission=root"])).unwrap_err();
         assert!(err.contains("root"));
     }
 
     #[test]
     fn parse_permission_rejects_dangling_flag() {
-        let err = parse_permission(argv(&["--permission"])).unwrap_err();
+        let err = parse_args(argv(&["--permission"])).unwrap_err();
         assert!(err.contains("requires a value"));
     }
 
     #[test]
     fn parse_permission_ignores_unrelated_args() {
         assert_eq!(
-            parse_permission(argv(&["--something", "else", "--permission=user"])).unwrap(),
+            parse_args(argv(&["--something", "else", "--permission=user"]))
+                .unwrap()
+                .permission,
             Permission::User
         );
+    }
+
+    #[test]
+    fn parse_ipc_socket_equals_form() {
+        let cli = parse_args(argv(&["--ipc-socket=prism.sock"])).unwrap();
+        assert_eq!(cli.ipc_socket.as_deref(), Some("prism.sock"));
+    }
+
+    #[test]
+    fn parse_ipc_socket_space_form() {
+        let cli = parse_args(argv(&["--ipc-socket", "prism.sock"])).unwrap();
+        assert_eq!(cli.ipc_socket.as_deref(), Some("prism.sock"));
+    }
+
+    #[test]
+    fn parse_ipc_socket_defaults_to_none() {
+        assert!(parse_args(argv(&[])).unwrap().ipc_socket.is_none());
+    }
+
+    #[test]
+    fn parse_ipc_socket_rejects_empty_value() {
+        let err = parse_args(argv(&["--ipc-socket="])).unwrap_err();
+        assert!(err.contains("non-empty"));
+        let err = parse_args(argv(&["--ipc-socket", ""])).unwrap_err();
+        assert!(err.contains("non-empty"));
+    }
+
+    #[test]
+    fn parse_ipc_socket_rejects_dangling_flag() {
+        let err = parse_args(argv(&["--ipc-socket"])).unwrap_err();
+        assert!(err.contains("requires a value"));
+    }
+
+    #[test]
+    fn parse_args_combines_permission_and_ipc_socket() {
+        let cli = parse_args(argv(&["--permission=user", "--ipc-socket=prism.sock"])).unwrap();
+        assert_eq!(cli.permission, Permission::User);
+        assert_eq!(cli.ipc_socket.as_deref(), Some("prism.sock"));
     }
 }

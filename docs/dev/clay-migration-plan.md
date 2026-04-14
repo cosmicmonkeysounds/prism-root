@@ -5,7 +5,13 @@
 > builder, and every Lens can run cross-platform from a single
 > codebase — while still shipping a first-class web target via WASM.
 
-**Status:** proposal / pre-spike. Nothing started.
+**Status:** Phase 0–2 in flight on branch `rust` (2026-04-14). Rust
+workspace scaffolded; `prism-daemon` and `prism-cli` shipping;
+`prism-core`, `prism-builder`, `prism-shell` under active port;
+`prism-studio/src-tauri` is the canonical Tauri shell. Per-package
+`CLAUDE.md` files carry live status. The narrative in §0 / §2 below
+was written before the rewrite landed — read it as historical
+framing, not current state.
 **Owner:** TBD
 **Created:** 2026-04-14
 **Last updated:** 2026-04-14
@@ -37,7 +43,8 @@
 
 ## 2. Scope inventory (what has to move)
 
-Counts pulled from the current tree:
+Counts pulled from the pre-Clay tree (see git log for migration
+progress — the Rust crates below now exist):
 
 | Surface | Files | Notes |
 |---|---|---|
@@ -48,7 +55,7 @@ Counts pulled from the current tree:
 | Puck (page builder) | `@measured/puck@0.20.2` | **No replacement** — must build a Clay-native equivalent. See §8. |
 | `prism-admin-kit` | React UI | Rebuild on Clay. |
 | `prism-puck-playground` | React harness | Becomes the Clay-builder playground or is deleted. |
-| `prism-relay` | Next.js | **Out of scope.** Stays React on the server. |
+| `prism-relay` | Hono JSX SSR | **Out of scope.** We'll have to re-write this (Sovereign Portal system), but not today. |
 | `prism-core` | TS, mostly logic | Logic survives; the host language change determines whether it ports to Rust or stays as a TS sibling reachable via JS interop. See §3. |
 
 ## 3. Host language: Rust (decided)
@@ -281,7 +288,7 @@ Confidence column: **Very high** = drop-in or trivial.
 | *new:* `tao` (Rust crate) | new in `prism-shell` | Tauri's windowing layer. Used directly instead of going through `wry`. Cross-platform window + event loop on mac/win/linux/iOS/Android | High |
 | *new:* `wgpu` (Rust crate) | new in `prism-shell` | GPU-accelerated rendering of Clay's draw commands on every platform (Metal / Vulkan / D3D12 / WebGPU / WebGL2 fallback) | High |
 | *new:* `interprocess` (Rust crate) | new in `prism-shell` | Cross-platform local IPC (unix sockets / named pipes) for the desktop shell ↔ daemon sidecar channel | Very high |
-| `@hono/node-server`, `@hono/node-ws`, `hono` | relay | `axum` (Tokio-team Rust web framework, idiomatic) — *if* Relay ever migrates. Out of scope today | n/a — Relay stays Next.js |
+| `@hono/node-server`, `@hono/node-ws`, `hono` | relay | `axum` (Tokio-team Rust web framework, idiomatic) — *if* Relay ever migrates. Out of scope today | n/a — Relay stays Hono JSX SSR (pending its own rewrite) |
 | `vitest` | core, admin-kit | `cargo test` + `insta` (snapshots) + `proptest` (property tests) | Very high |
 | `@playwright/test` | studio, relay | **Keep.** E2E still runs against a real browser even when the client is WASM. No reason to swap | Very high |
 | `vite`, `@vitejs/plugin-react`, `vite-plugin-wasm`, `vite-plugin-top-level-await`, `vite-plugin-singlefile` | studio, playground | [`trunk`](https://trunkrs.dev) for Rust+WASM bundling and dev server. Vite can stay as the outer dev server during the migration if it helps | High |
@@ -470,7 +477,7 @@ disproves the no-webview path and we drop to Option C:
 #### Server-side (out of scope; listed for completeness)
 
 - **`axum`** — Rust web framework (Tokio team). What we'd reach
-  for if Relay ever migrates off Hono / Next.js. Not in scope.
+  for if Relay ever migrates off Hono JSX SSR. Not in scope.
 
 ## 7. Hot reloading strategy
 
@@ -882,9 +889,9 @@ Each is small enough to fit in 1–3 days. Run them all in Phase 0.
       Canvas2D/WebGL one? Trade-off: HTML renderer = familiar
       a11y, easy text selection; Canvas = pixel-identical to
       native, no DOM overhead.
-- [ ] Do we keep `prism-relay` as React/Next.js indefinitely, or
+- [ ] Do we keep `prism-relay` as Hono JSX SSR indefinitely, or
       eventually serve a server-rendered Clay snapshot? (For now:
-      keep as-is.)
+      rewrite Hono JSX SSR in place as the Sovereign Portal system.)
 - [ ] What's the accessibility story? React + DOM gives us
       ARIA / screen readers for free. A canvas-based Clay
       renderer does not. The HTML renderer mitigates this.
@@ -955,10 +962,47 @@ Each is small enough to fit in 1–3 days. Run them all in Phase 0.
   shell). The React Studio, `@prism/core` TS, `@prism/shared`,
   `@prism/admin-kit`, `@prism/puck-playground`, Capacitor iOS
   and Android scaffolds, Vite, Tailwind, and Puck are **all
-  deleted from the tree**. `prism-relay` (Next.js) is the only
+  deleted from the tree**. `prism-relay` (Hono JSX SSR) is the only
   TypeScript package left. Clay binding intentionally **not
   pinned** — the community `clay-ui-rs/clay` repo does not
   currently have a stable branch to track against, so
   `prism-shell` carries a `clay` cargo feature that stays off
   until Phase 0 spike #1 resolves which binding (or fork) to
   use. Everything else is ready for spikes #2–#7 to plug in.
+- **2026-04-14** — **Phase 0 spike #1 resolved — Clay binding
+  pinned to `clay-layout` 0.4 on crates.io.** `clay-ui-rs/clay`
+  published a stable 0.4.0 with a working wgpu example, so
+  `prism-shell` flipped its `clay` cargo feature on by default,
+  vendored the example's `GraphicsContext` + `UiRenderer` + WGSL
+  shader into `src/render/`, and ported `panels::identity` to
+  real `Declaration` builders instead of the count-of-commands
+  stub. The vendored renderer is windowing-library-agnostic
+  (`raw-window-handle 0.6` behind `SharedWindow`), so the same
+  stack drives both the Studio shell (tao via Tauri) and the dev
+  bin (tao via bare `EventLoop`). `render_app` now returns live
+  Clay commands; a unit test in `panels::identity` asserts it
+  emits ≥2 rectangles plus ≥1 text command. Text measurement
+  uses glyphon via `Rc<RefCell<UiRenderer>>` as Clay's
+  measure-text user data; a stub measurer
+  (`install_stub_text_measurer`) is still exposed for headless
+  tests. `cargo test --workspace` and `cargo clippy
+  --workspace --all-targets -- -D warnings` both green.
+- **2026-04-14** — **Phase 0 spike #5 resolved — Option B
+  confirmed viable.** `tauri::window::WindowBuilder` (gated
+  behind the `unstable` cargo feature) creates a pure
+  `tao::Window` with no webview attached — the explicit
+  "no-webview" path Option B was betting on. `tauri::Window<Wry>`
+  implements `raw_window_handle::HasWindowHandle +
+  HasDisplayHandle`, so Studio wraps it in `SharedWindow`, builds
+  the same `GraphicsContext` + `UiRenderer` + `Clay` triple the
+  dev bin uses, installs a glyphon-backed measure-text callback,
+  and drives frames off `RunEvent::MainEventsCleared` and
+  window-resize events. `wry` stays in the dependency graph
+  because `tauri-runtime-wry` is how Tauri reaches `tao` (it's
+  the only `Runtime` impl shipping with Tauri 2 today), but the
+  webview code path is never executed. Fallback to Option C
+  (`winit` + `cargo-packager` + standalone shell crates) is
+  therefore dropped. Studio and the `prism-shell` dev bin share
+  one render path end-to-end; the remaining Phase 0 work is
+  wiring `prism_shell::input` into the tao-event stream
+  (tracking task for Phase 0 spike #6).

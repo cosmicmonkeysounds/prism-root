@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 # Hook: PostToolUse (Write|Edit|MultiEdit)
-# Immediate feedback after every file edit: tests, docs, mocks, e2e, deps, ADRs.
+# Immediate feedback after every file edit.
 
 TOOL_INPUT="$1"
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 
-# Extract file path from tool input (macOS grep -E, no -P)
 FILE_PATH=$(echo "$TOOL_INPUT" \
   | grep -oE '"file_path"[[:space:]]*:[[:space:]]*"[^"]+"' \
   | head -1 \
@@ -16,67 +15,47 @@ if [ -z "$FILE_PATH" ]; then
   exit 0
 fi
 
-# ── SPEC.md → ADR reminder ────────────────────────────────────────────────────
-if [[ "$FILE_PATH" == */SPEC.md ]]; then
-  echo "REMINDER: SPEC.md changed — does this decision need a new or updated ADR in docs/adr/?"
-  exit 0
-fi
-
-# ── package.json / Cargo.toml → lockfile reminder ─────────────────────────────
 BASENAME=$(basename "$FILE_PATH")
-if [[ "$BASENAME" == "package.json" ]]; then
-  echo "REMINDER: package.json changed — run 'pnpm install' to update pnpm-lock.yaml."
+
+# ── Clay migration plan → cross-reference reminder ──────────────────────────
+if [[ "$FILE_PATH" == */clay-migration-plan.md ]]; then
+  echo "REMINDER: clay-migration-plan.md changed — update CLAUDE.md if the plan's phasing or decisions moved."
   exit 0
 fi
+
+# ── Cargo.toml → lockfile + workspace reminder ───────────────────────────────
 if [[ "$BASENAME" == "Cargo.toml" ]]; then
-  echo "REMINDER: Cargo.toml changed — run 'cargo fetch' in packages/prism-daemon to update Cargo.lock."
+  echo "REMINDER: Cargo.toml changed — run 'cargo fetch' to update Cargo.lock, and confirm the workspace root at /Cargo.toml still resolves."
   exit 0
 fi
 
-# ── TypeScript source files ───────────────────────────────────────────────────
-if [[ "$FILE_PATH" == *.ts || "$FILE_PATH" == *.tsx ]] && \
-   [[ "$FILE_PATH" != *.test.* ]] && \
-   [[ "$FILE_PATH" != *.config.* ]] && \
-   [[ "$FILE_PATH" != *.d.ts ]] && \
-   [[ "$FILE_PATH" == */src/* ]]; then
+# ── Relay package.json → pnpm install reminder ───────────────────────────────
+if [[ "$FILE_PATH" == */prism-relay/package.json ]]; then
+  echo "REMINDER: relay package.json changed — run 'pnpm install --filter @prism/relay' to refresh pnpm-lock.yaml."
+  exit 0
+fi
 
+# ── Rust source ──────────────────────────────────────────────────────────────
+if [[ "$FILE_PATH" == *.rs ]] && [[ "$FILE_PATH" != *target/* ]]; then
+  PKG_DIR=$(echo "$FILE_PATH" | grep -oE "^.+/packages/[^/]+" || true)
+  if [ -n "$PKG_DIR" ]; then
+    CRATE=$(basename "$PKG_DIR")
+    echo "REMINDER: Rust source changed in $CRATE — run 'cargo test -p $CRATE' and 'cargo clippy -p $CRATE -- -D warnings'."
+    [ -f "$PKG_DIR/CLAUDE.md" ] && echo "REMINDER: Update $PKG_DIR/CLAUDE.md if behaviour/API changed."
+    [ -f "$PKG_DIR/README.md" ] && echo "REMINDER: Update $PKG_DIR/README.md if behaviour/API changed."
+  fi
+fi
+
+# ── Relay TS source ──────────────────────────────────────────────────────────
+if [[ "$FILE_PATH" == *prism-relay*.ts || "$FILE_PATH" == *prism-relay*.tsx ]] && \
+   [[ "$FILE_PATH" != *.test.* ]] && \
+   [[ "$FILE_PATH" != *.d.ts ]]; then
   EXT="${FILE_PATH##*.}"
   BASE="${FILE_PATH%.*}"
   TEST_PATH="${BASE}.test.${EXT}"
-
   if [ -f "$TEST_PATH" ]; then
     echo "REMINDER: Update existing tests at: $TEST_PATH"
   else
     echo "REMINDER: Add tests at: $TEST_PATH"
-  fi
-
-  # Walk up to package root reminding about README.md and CLAUDE.md
-  PKG_DIR=$(echo "$FILE_PATH" | grep -oE "^.+/packages/[^/]+" || true)
-  DIR="$(dirname "$FILE_PATH")"
-  while [[ "$DIR" != "/" ]]; do
-    [ -f "$DIR/README.md" ] && echo "REMINDER: Update $DIR/README.md if behaviour/API changed."
-    [ -f "$DIR/CLAUDE.md" ] && echo "REMINDER: Update $DIR/CLAUDE.md if behaviour/API changed."
-    [[ "$DIR" == "$PKG_DIR" ]] && break
-    DIR="$(dirname "$DIR")"
-  done
-
-  if [ -f "$REPO_ROOT/docs/dev/current-plan.md" ]; then
-    echo "REMINDER: Update docs/dev/current-plan.md to reflect progress."
-  fi
-
-  # Playwright coverage check for UI components
-  if [[ "$FILE_PATH" == *.tsx ]]; then
-    COMPONENT=$(basename "$FILE_PATH" .tsx)
-    E2E_HIT=$(find "$REPO_ROOT/e2e" -name "*.spec.*" -exec grep -l "$COMPONENT" {} \; 2>/dev/null || true)
-    if [ -z "$E2E_HIT" ]; then
-      echo "REMINDER: No Playwright spec references '$COMPONENT'. Add e2e coverage in e2e/tests/."
-    fi
-  fi
-fi
-
-# ── Test files: mock audit ────────────────────────────────────────────────────
-if [[ "$FILE_PATH" == *.test.ts || "$FILE_PATH" == *.test.tsx ]] && [ -f "$FILE_PATH" ]; then
-  if grep -qE "^[[:space:]]*(vi|jest)\.mock\(" "$FILE_PATH" 2>/dev/null; then
-    echo "WARNING: $FILE_PATH uses module-level mocks. Prefer real implementations or in-memory fakes. Only mock at the boundary (e.g. Tauri IPC, native APIs)."
   fi
 fi

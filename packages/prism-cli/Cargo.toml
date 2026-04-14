@@ -1,0 +1,21 @@
+[package]
+name = "prism-cli"
+version = "0.1.0"
+edition = "2021"
+description = "Prism Framework CLI — unified entry point for testing, building, and running every Prism package. Wraps cargo, trunk, tauri, and pnpm/turbo behind a single `prism` binary with a process supervisor for `prism dev all`."
+
+[lib]
+name = "prism_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "prism"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { version = "4", features = ["derive"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "io-util", "process", "signal", "time"] }
+
+[dev-dependencies]
+tempfile = "3"

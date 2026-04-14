@@ -9,12 +9,32 @@ use crate::AppState;
 
 #[derive(Debug, Clone, Copy)]
 pub enum InputEvent {
-    PointerMove { x: f32, y: f32 },
-    PointerDown { x: f32, y: f32, button: PointerButton },
-    PointerUp { x: f32, y: f32, button: PointerButton },
-    Wheel { dx: f32, dy: f32 },
-    Key { code: u32, pressed: bool },
-    Resize { width: u32, height: u32 },
+    PointerMove {
+        x: f32,
+        y: f32,
+    },
+    PointerDown {
+        x: f32,
+        y: f32,
+        button: PointerButton,
+    },
+    PointerUp {
+        x: f32,
+        y: f32,
+        button: PointerButton,
+    },
+    Wheel {
+        dx: f32,
+        dy: f32,
+    },
+    Key {
+        code: u32,
+        pressed: bool,
+    },
+    Resize {
+        width: u32,
+        height: u32,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]

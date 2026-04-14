@@ -34,10 +34,7 @@ pub struct ShellModeContext {
 
 impl ShellModeContext {
     pub fn can_see(&self, lens: &LensVisibility) -> bool {
-        lens.available_in_modes
-            .iter()
-            .any(|m| *m == self.shell_mode)
-            && self.permission >= lens.min_permission
+        lens.available_in_modes.contains(&self.shell_mode) && self.permission >= lens.min_permission
     }
 }
 

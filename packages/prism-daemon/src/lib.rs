@@ -64,7 +64,8 @@ pub mod registry;
 #[cfg(any(
     feature = "transport-http",
     feature = "transport-grpc",
-    feature = "transport-uniffi"
+    feature = "transport-uniffi",
+    feature = "transport-ipc"
 ))]
 pub mod transport;
 
@@ -99,6 +100,12 @@ pub use registry::{CommandError, CommandHandler, CommandRegistry};
 
 #[cfg(feature = "crdt")]
 pub use doc_manager::DocManager;
+
+#[cfg(feature = "transport-ipc")]
+pub use transport::ipc_local::{
+    bind_listener, connect_client, read_frame, serve_blocking, write_frame, IpcRequest,
+    IpcResponse, ServeError, MAX_FRAME_BYTES,
+};
 
 #[cfg(feature = "vfs")]
 pub use modules::vfs_module::{VfsEntry, VfsManager, VfsStats};

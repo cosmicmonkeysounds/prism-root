@@ -123,6 +123,16 @@ vfs-gcs = ["vfs", "dep:ureq"]
 transport-http = ["dep:axum", "dep:tokio", "dep:tower"]
 transport-grpc = ["dep:tonic", "dep:prost", "dep:tokio"]
 transport-uniffi = ["dep:uniffi"]
+# Local IPC transport — length-prefixed `postcard` frames over
+# `interprocess::local_socket` (unix domain sockets / Windows named
+# pipes). The wire format the Tauri 2 no-webview shell (`prism-studio`)
+# uses to talk to the daemon sidecar per §4.5 of the Clay migration
+# plan. Resolved by Phase 0 spike #6 (2026-04-14). Sync-only — the
+# server runs on a bare `std::thread::spawn` pool without touching
+# tokio, so mobile builds that want to embed the daemon and route
+# local calls through the same wire can opt in without pulling an
+# async runtime.
+transport-ipc = ["dep:interprocess", "dep:postcard"]
 
 [dependencies]
 # CRDT source of truth — pure Rust, works on every target.
@@ -176,6 +186,11 @@ tower = { version = "0.5", optional = true, default-features = false }
 tonic = { version = "0.12", optional = true, default-features = false, features = ["codegen", "prost", "transport"] }
 prost = { version = "0.13", optional = true }
 uniffi = { version = "0.28", optional = true }
+
+# Local IPC transport — unix sockets / named pipes behind one trait,
+# wire frames via postcard. Gated by `transport-ipc`.
+interprocess = { workspace = true, optional = true }
+postcard = { workspace = true, optional = true }
 
 # ── Whisper / conferencing deps ────────────────────────────────────────
 # Both behind opt-in features (`whisper`, `conferencing`) — desktop-only

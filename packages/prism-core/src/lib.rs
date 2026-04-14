@@ -14,13 +14,21 @@
 //!   Pure data + pure functions, straightforward port.
 //! - [`boot_config`]  — the four-source resolver that used to live in
 //!   `src/boot/load-boot-config.ts`. Uses `shell_mode`.
+//! - [`foundation`]   — pure data primitives: batch, clipboard, date,
+//!   object_model, template, undo, vfs.
+//! - [`identity`]     — DID identities and vault encryption: `did`
+//!   (Ed25519 sign/verify, multi-sig, import/export) and `encryption`
+//!   (AES-GCM-256 vault key manager with HKDF-derived keys).
+//! - [`language`]     — syntax scanner / expression parser + evaluator.
 //!
-//! Everything else from the legacy tree (foundation, identity,
-//! language, kernel, interaction, network, domain) is TODO and will
-//! land in Phase 2.
+//! `identity::manifest`, `identity::trust`, `kernel`, `interaction`,
+//! `network`, and `domain` remain TODO.
 
 pub mod boot_config;
 pub mod design_tokens;
+pub mod foundation;
+pub mod identity;
+pub mod language;
 pub mod shell_mode;
 
 pub use boot_config::{BootConfig, DEFAULT_BOOT_CONFIG};

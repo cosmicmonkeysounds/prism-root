@@ -22,13 +22,15 @@ path = "src/bin/native.rs"
 required-features = ["native"]
 
 [features]
-default = ["native"]
-native = ["dep:wgpu", "dep:winit", "dep:tao", "dep:pollster", "dep:prism-daemon"]
+# `native` pulls in the on-desktop stack (wgpu / tao / winit) and
+# the daemon. `clay` is additive: it flips `panels::identity` and
+# `render` from the count-of-commands stub to the real Clay path.
+# Spike #1 (2026-04-14) resolved the binding to `clay-layout` on
+# crates.io, so `clay` now ships on by default alongside `native`.
+default = ["native", "clay"]
+native = ["dep:wgpu", "dep:winit", "dep:tao", "dep:pollster", "dep:prism-daemon", "dep:glyphon", "dep:bytemuck", "dep:raw-window-handle"]
 web = ["dep:wasm-bindgen", "dep:web-sys", "dep:js-sys", "dep:console_error_panic_hook"]
-# Off until Phase 0 spike #1 picks a Clay binding. See the root
-# Cargo.toml comment — the community `clay-ui-rs/clay` repo does
-# not have a stable branch to pin against yet.
-clay = []
+clay = ["dep:clay-layout"]
 
 [dependencies]
 # Shared Prism foundations.
@@ -39,15 +41,21 @@ prism-builder = { path = "../prism-builder" }
 # small.
 prism-daemon = { path = "../prism-daemon", optional = true, default-features = false, features = ["crdt", "luau", "vfs", "crypto"] }
 
-# Core UI — cosmic-text shaping (Clay layout binding lands via the
-# `clay` feature in Phase 0 spike #1).
+# Core UI — clay-layout is the layout DSL (feature = "clay");
+# cosmic-text is kept as a future text shaping option. glyphon is
+# the runtime text rasterizer that backs the wgpu render pass and
+# comes in behind the `native` feature.
+clay-layout = { workspace = true, optional = true }
 cosmic-text = { workspace = true }
+glyphon = { workspace = true, optional = true }
+bytemuck = { workspace = true, optional = true }
 
 # Native rendering stack (feature = "native").
 wgpu = { workspace = true, optional = true }
 tao = { workspace = true, optional = true }
 winit = { workspace = true, optional = true }
 pollster = { version = "0.4", optional = true }
+raw-window-handle = { version = "0.6", optional = true }
 
 # WASM glue (feature = "web").
 wasm-bindgen = { workspace = true, optional = true }

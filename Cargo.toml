@@ -6,6 +6,7 @@ members = [
     "packages/prism-builder",
     "packages/prism-shell",
     "packages/prism-studio/src-tauri",
+    "packages/prism-cli",
 ]
 
 # Keep `[workspace.package]` light: crates opt in to the common license /
@@ -21,18 +22,29 @@ serde_json = "1"
 thiserror = "2"
 anyhow = "1"
 postcard = { version = "1", features = ["alloc"] }
+# Local IPC transport for the daemon sidecar channel (§4.5 Option B).
+# Unix domain sockets on Linux/macOS, named pipes on Windows — both
+# hidden behind one trait. Length-prefixed `postcard` frames ride on
+# top.
+interprocess = "2"
 loro = "1.4"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util"] }
 
-# Clay binding — aspirational. The community `clay-ui-rs/clay` repo
-# is referenced by the migration plan but has not settled on a
-# crates.io release or a stable git branch yet. Phase 0 spike #1
-# resolves which binding we actually use; until then prism-shell
-# builds behind a `clay` feature gate that nothing pulls in.
-# clay-layout = { git = "https://github.com/clay-ui-rs/clay", branch = "<pending>" }
+# Clay binding — resolved by Phase 0 spike #1 (2026-04-14):
+# `clay-layout` 0.4.0 is live on crates.io, ships with a working
+# winit+wgpu example, and matches the migration plan's §4.5 render
+# target. `prism-shell`'s `clay` feature pulls it in. The native
+# bin / Studio shell enable that feature by default; the WASM
+# build will share the same layout code with a different render
+# backend in Phase 1.
+clay-layout = { version = "0.4", default-features = false, features = ["std"] }
+glyphon = "0.8"
+bytemuck = { version = "1.23", features = ["derive"] }
 
 # Rendering stack — wgpu for every native target per §4.5 Option B.
-wgpu = "22"
+# Bumped to 24 to match glyphon 0.8's pinned wgpu requirement; the
+# clay-layout wgpu example itself was authored against wgpu 24.
+wgpu = "24"
 tao = "0.30"
 tauri = { version = "2", default-features = false }
 tauri-build = "2"
@@ -47,6 +59,18 @@ tiny-skia = "0.11"
 slotmap = "1"
 indexmap = { version = "2", features = ["serde"] }
 imbl = "3"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
+regex = "1"
+sha2 = "0.10"
+hex = "0.4"
+base64 = "0.22"
+rand = "0.8"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+x25519-dalek = { version = "2", features = ["getrandom", "static_secrets"] }
+hkdf = "0.12"
+aes-gcm = "0.10"
+chacha20poly1305 = "0.10"
 
 # WASM glue (only pulled in by prism-shell's wasm target).
 wasm-bindgen = "0.2"

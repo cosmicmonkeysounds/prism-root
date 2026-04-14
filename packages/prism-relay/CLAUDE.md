@@ -1,11 +1,19 @@
 # @prism/relay
 
-Runtime server for Prism Relay — wraps `@prism/core/relay` primitives in HTTP + WebSocket.
+Runtime server for Prism Relay — wraps `@prism/core/relay` primitives in HTTP + WebSocket on top of **Hono JSX SSR**.
+
+> **Status:** pending rewrite. The surface documented below describes the
+> current shipping relay, which is the last significant TypeScript package
+> left in the monorepo. A Rust rewrite (Sovereign Portal system) is planned;
+> until then, keep edits here minimal.
 
 ## Build & Test
 - `pnpm dev` — start with tsx watch (dev mode)
 - `pnpm typecheck`
-- `npx vitest run` — unit tests (37+ test files)
+- ⚠ Unit tests: `.test.ts` files (37+) exist under `src/`, but `vitest`
+  is **not wired** in this package's `devDependencies` and `prism test
+  --ts` has been temporarily removed from the unified CLI. Unit tests
+  will be re-wired with the rewrite.
 - `pnpm test:e2e` — Playwright E2E tests (6 spec files: relay, production-readiness, deployment, docker, modular-auth, admin)
 - `pnpm test:docker` — Docker E2E tests (builds image, runs containers, tests API/WS/federation)
 
