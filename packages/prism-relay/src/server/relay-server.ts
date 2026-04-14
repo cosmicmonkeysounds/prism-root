@@ -39,6 +39,7 @@ import {
   createVaultHostRoutes,
   createDirectoryRoutes,
   createMetricsRoutes,
+  createAdminRoutes,
 } from "../routes/index.js";
 import { createMetricsRegistry, metricsMiddleware } from "../middleware/metrics.js";
 import type { MetricsRegistry } from "../middleware/metrics.js";
@@ -194,6 +195,12 @@ export function createRelayServer(options: RelayServerOptions): RelayServer {
 
   // ── SEO routes (sitemap.xml, robots.txt) ────────────────────────────
   app.route("", createSeoRoutes(relay, publicUrl));
+
+  // ── Admin dashboard (HTML + JSON snapshot) ─────────────────────────
+  app.route("/admin", createAdminRoutes({
+    relay,
+    startedAt: serverStartedAt,
+  }));
 
   // ── Portal view (HTML rendering) ────────────────────────────────────
   const wsBaseUrl = publicUrl

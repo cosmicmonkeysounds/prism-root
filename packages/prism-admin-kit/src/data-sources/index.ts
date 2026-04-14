@@ -4,5 +4,8 @@ export type { KernelAdminTarget, KernelDataSourceOptions } from "./kernel-data-s
 export { createRelayDataSource } from "./relay-data-source.js";
 export type { RelayDataSourceOptions } from "./relay-data-source.js";
 
+export { createDaemonDataSource } from "./daemon-data-source.js";
+export type { DaemonDataSourceOptions } from "./daemon-data-source.js";
+
 export { parsePrometheus, findSample } from "./prometheus-parse.js";
 export type { PromSample } from "./prometheus-parse.js";

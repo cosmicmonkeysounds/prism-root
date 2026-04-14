@@ -31,6 +31,8 @@ export { createLogsRoutes, createLogBuffer } from "./logs-routes.js";
 export type { LogBuffer, LogEntry } from "./logs-routes.js";
 export { createMetricsRoutes } from "./metrics-routes.js";
 export type { MetricsRoutesOptions } from "./metrics-routes.js";
+export { createAdminRoutes } from "./admin-routes.js";
+export type { AdminRoutesOptions } from "./admin-routes.js";
 export {
   createEmailRoutes,
   createMemoryEmailTransport,

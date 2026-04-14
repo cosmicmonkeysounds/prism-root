@@ -7,7 +7,9 @@
     "jsxImportSource": "hono/jsx",
     "paths": {
       "@prism/core/*": ["../prism-core/src/*"],
-      "@prism/shared/*": ["../shared/src/*"]
+      "@prism/shared/*": ["../shared/src/*"],
+      "@prism/admin-kit": ["../prism-admin-kit/src/index.ts"],
+      "@prism/admin-kit/*": ["../prism-admin-kit/src/*"]
     }
   },
   "include": ["src"],

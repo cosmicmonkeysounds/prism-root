@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Prism Daemon Admin</title>
+<style>
+*,*::before,*::after{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:#1e1e1e;color:#e5e5e5}
+.admin-shell{display:flex;flex-direction:column;min-height:100vh}
+.admin-header{display:flex;align-items:center;gap:12px;padding:10px 16px;background:#0f172a;border-bottom:1px solid #1e293b;flex:0 0 auto}
+.admin-header h1{font-size:14px;font-weight:600;margin:0;color:#e2e8f0}
+.admin-header .runtime{font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:.08em}
+.admin-header .refresh-info{margin-left:auto;font-size:11px;color:#64748b}
+.admin-body{padding:16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;flex:1}
+.card{background:#252526;border:1px solid #333;border-radius:8px;padding:14px 16px}
+.card-title{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#888;margin-bottom:8px;font-weight:600}
+.metric-value{font-size:28px;font-weight:600;color:#e5e5e5;line-height:1.1}
+.metric-hint{font-size:12px;color:#888;margin-top:4px}
+.health-badge{display:inline-flex;align-items:center;gap:6px;font-size:11px;padding:4px 10px;border-radius:999px;border:1px solid;font-weight:500}
+.service-row{display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid #333;font-size:13px}
+.service-row:last-child{border-bottom:none}
+.service-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:8px}
+.activity-row{display:flex;gap:8px;padding:4px 0;font-size:12px;border-bottom:1px solid #2a2a2a}
+.activity-row:last-child{border-bottom:none}
+.uptime-value{font-size:20px;font-weight:600;color:#e5e5e5}
+.source-header{grid-column:1/-1;display:flex;align-items:center;gap:12px;padding:4px 0}
+.source-header h2{font-size:16px;font-weight:600;margin:0;color:#e5e5e5}
+.empty{font-size:12px;color:#555;font-style:italic;text-align:center;padding:12px}
+.error-banner{background:#3b1111;border:1px solid #7f1d1d;color:#f87171;padding:10px 16px;font-size:13px;text-align:center}
+.services-card,.activity-card{grid-column:span 2}
+@media(max-width:640px){.services-card,.activity-card{grid-column:span 1}}
+</style>
+</head>
+<body>
+<div class="admin-shell">
+  <div class="admin-header">
+    <h1>Prism Daemon Admin</h1>
+    <span class="runtime">Daemon</span>
+    <span class="refresh-info" id="refresh-info"></span>
+  </div>
+  <div id="error-slot"></div>
+  <div class="admin-body" id="dashboard"></div>
+</div>
+<script>
+(function(){
+  var POLL_MS=5000;
+  var SNAPSHOT_URL="/admin/api/snapshot";
+  var seed=

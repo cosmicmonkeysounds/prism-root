@@ -106,12 +106,14 @@ describe("createPuckLoroBridge", () => {
           type: "PageShell",
           props: {
             id: "shell-1",
-            layout: "sidebar-left",
-            sidebarWidth: 240,
-            header: [
+            topBarHeight: 64,
+            leftBarWidth: 240,
+            rightBarWidth: 200,
+            bottomBarHeight: 32,
+            topBar: [
               { type: "SiteHeader", props: { id: "h-1", brand: "Acme" } },
             ],
-            sidebar: [
+            leftBar: [
               { type: "Heading", props: { id: "sb-h", text: "Menu", level: "h3" } },
               { type: "NavBar", props: { id: "sb-n", align: "start", links: [] } },
             ],
@@ -128,7 +130,8 @@ describe("createPuckLoroBridge", () => {
                 },
               },
             ],
-            footer: [],
+            rightBar: [],
+            bottomBar: [],
           },
         },
       ],
@@ -139,9 +142,9 @@ describe("createPuckLoroBridge", () => {
     const shell = out.content[0];
     expect(shell?.type).toBe("PageShell");
     const shellProps = shell?.props as Record<string, unknown>;
-    expect(shellProps["sidebarWidth"]).toBe(240);
-    expect(Array.isArray(shellProps["header"])).toBe(true);
-    expect((shellProps["header"] as unknown[]).length).toBe(1);
+    expect(shellProps["leftBarWidth"]).toBe(240);
+    expect(Array.isArray(shellProps["topBar"])).toBe(true);
+    expect((shellProps["topBar"] as unknown[]).length).toBe(1);
     const main = shellProps["main"] as Array<{
       type: string;
       props: { content?: unknown };

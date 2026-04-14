@@ -1488,8 +1488,8 @@ export function CanvasPanel() {
   }
 
   const pageData = page.data as { title?: string; layout?: string };
-  const layout = pageData.layout ?? "single";
-  const maxWidth = layout === "full" ? "100%" : layout === "sidebar" ? "960px" : "720px";
+  const layout = pageData.layout ?? "flow";
+  const maxWidth = layout === "shell" ? "100%" : "720px";
 
   return (
     <div

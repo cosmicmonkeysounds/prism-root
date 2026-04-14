@@ -159,7 +159,7 @@ export const demoWorkspaceInitializer: StudioInitializer = {
       color: null,
       image: null,
       pinned: false,
-      data: { title: "Welcome to Prism", slug: "/", layout: "single", published: false },
+      data: { title: "Welcome to Prism", slug: "/", layout: "flow", published: false },
     });
 
     kernel.createObject({
@@ -261,13 +261,315 @@ export const demoWorkspaceInitializer: StudioInitializer = {
       color: null,
       image: null,
       pinned: false,
-      data: { title: "About Us", slug: "/about", layout: "sidebar", published: false },
+      data: { title: "About Us", slug: "/about", layout: "shell", published: false },
     });
 
     // Clear undo history so seed data isn't undoable, and select the home page.
     kernel.undo.clear();
     kernel.select(page.id);
 
+    return () => {};
+  },
+};
+
+/**
+ * Seed a small set of dynamic records (tasks, reminders, contacts, events,
+ * notes, goals, habits, bookmarks, captures) so the dynamic widgets have
+ * something to render on a first-run. Guarded to an empty store so it never
+ * overwrites existing user data.
+ */
+export const dynamicDataInitializer: StudioInitializer = {
+  id: "builtin-dynamic-data",
+  name: "Dynamic Demo Data",
+  install({ kernel }) {
+    const existing = kernel.store
+      .allObjects()
+      .filter((o) => ["task", "reminder", "contact", "event", "note", "goal", "habit", "bookmark", "capture"].includes(o.type));
+    if (existing.length > 0) return () => {};
+
+    const now = Date.now();
+    const isoInDays = (days: number, hour = 9) => {
+      const d = new Date(now);
+      d.setDate(d.getDate() + days);
+      d.setHours(hour, 0, 0, 0);
+      return d.toISOString();
+    };
+
+    const makeRecord = (args: {
+      type: string;
+      name: string;
+      status?: string | null;
+      date?: string | null;
+      tags?: string[];
+      description?: string;
+      pinned?: boolean;
+      color?: string | null;
+      data: Record<string, unknown>;
+    }) => {
+      kernel.createObject({
+        type: args.type,
+        name: args.name,
+        parentId: null,
+        position: 0,
+        status: args.status ?? "todo",
+        tags: args.tags ?? [],
+        date: args.date ?? null,
+        endDate: null,
+        description: args.description ?? "",
+        color: args.color ?? null,
+        image: null,
+        pinned: args.pinned ?? false,
+        data: args.data,
+      });
+    };
+
+    // ── Tasks ────────────────────────────────────────────────────────────
+    makeRecord({
+      type: "task",
+      name: "Review Q2 roadmap draft",
+      status: "todo",
+      date: isoInDays(0, 17),
+      tags: ["planning"],
+      data: { priority: "high", project: "Roadmap", estimateMinutes: 45 },
+    });
+    makeRecord({
+      type: "task",
+      name: "Send launch checklist to team",
+      status: "doing",
+      date: isoInDays(1, 10),
+      tags: ["launch"],
+      data: { priority: "urgent", project: "Launch", estimateMinutes: 20 },
+    });
+    makeRecord({
+      type: "task",
+      name: "Refactor auth middleware",
+      status: "todo",
+      date: isoInDays(-2, 12),
+      tags: ["backend"],
+      data: { priority: "normal", project: "Infra", estimateMinutes: 120 },
+    });
+    makeRecord({
+      type: "task",
+      name: "Expense report for March",
+      status: "done",
+      date: isoInDays(-5, 10),
+      tags: ["ops"],
+      data: { priority: "low", project: "Admin", estimateMinutes: 30 },
+    });
+    makeRecord({
+      type: "task",
+      name: "Weekly review",
+      status: "todo",
+      date: isoInDays(3, 16),
+      tags: ["ritual"],
+      data: { priority: "normal", project: "Self", estimateMinutes: 30 },
+    });
+
+    // ── Reminders ────────────────────────────────────────────────────────
+    makeRecord({
+      type: "reminder",
+      name: "Water the plants",
+      status: "todo",
+      date: isoInDays(0, 18),
+      data: { repeat: "daily", channel: "notification" },
+    });
+    makeRecord({
+      type: "reminder",
+      name: "Call the vet",
+      status: "todo",
+      date: isoInDays(2, 10),
+      data: { repeat: "none", channel: "notification" },
+    });
+    makeRecord({
+      type: "reminder",
+      name: "Pay credit card bill",
+      status: "todo",
+      date: isoInDays(-1, 9),
+      data: { repeat: "monthly", channel: "email" },
+    });
+
+    // ── Contacts ─────────────────────────────────────────────────────────
+    makeRecord({
+      type: "contact",
+      name: "Alex Chen",
+      status: null,
+      pinned: true,
+      tags: ["team"],
+      data: {
+        email: "alex@example.com",
+        phone: "+1-555-0142",
+        org: "Prism Labs",
+        role: "Design Lead",
+        lastContactedAt: isoInDays(-3),
+      },
+    });
+    makeRecord({
+      type: "contact",
+      name: "Priya Rao",
+      status: null,
+      pinned: true,
+      tags: ["team"],
+      data: {
+        email: "priya@example.com",
+        phone: "+1-555-0193",
+        org: "Prism Labs",
+        role: "Eng Manager",
+        lastContactedAt: isoInDays(-1),
+      },
+    });
+    makeRecord({
+      type: "contact",
+      name: "Jordan Baker",
+      status: null,
+      tags: ["client"],
+      data: {
+        email: "jordan@acme.com",
+        org: "Acme Co.",
+        role: "Product Manager",
+        lastContactedAt: isoInDays(-10),
+      },
+    });
+
+    // ── Events ───────────────────────────────────────────────────────────
+    makeRecord({
+      type: "event",
+      name: "Team standup",
+      status: "confirmed",
+      date: isoInDays(0, 10),
+      data: { location: "Zoom", allDay: false, attendance: "confirmed" },
+    });
+    makeRecord({
+      type: "event",
+      name: "Launch review",
+      status: "confirmed",
+      date: isoInDays(2, 14),
+      data: { location: "Room 3B", allDay: false, attendance: "confirmed" },
+    });
+    makeRecord({
+      type: "event",
+      name: "1:1 with Priya",
+      status: "confirmed",
+      date: isoInDays(1, 15),
+      data: { location: "Zoom", allDay: false, attendance: "confirmed" },
+    });
+    makeRecord({
+      type: "event",
+      name: "Design crit",
+      status: "tentative",
+      date: isoInDays(5, 11),
+      data: { location: "Figma", allDay: false, attendance: "tentative" },
+    });
+
+    // ── Notes ────────────────────────────────────────────────────────────
+    makeRecord({
+      type: "note",
+      name: "Architecture sketch",
+      pinned: true,
+      tags: ["ideas", "infra"],
+      data: {
+        body: "Kernel holds the store, lenses project it. Records are CRDT leaves. Widgets query by type and render.",
+        format: "markdown",
+      },
+    });
+    makeRecord({
+      type: "note",
+      name: "Pitch outline",
+      tags: ["marketing"],
+      data: {
+        body: "1. Problem 2. Insight 3. Solution 4. Demo 5. Traction 6. Ask",
+        format: "markdown",
+      },
+    });
+    makeRecord({
+      type: "note",
+      name: "Book recommendations",
+      tags: ["reading"],
+      data: {
+        body: "- Seeing Like a State\n- Designing Data-Intensive Applications\n- The Beginning of Infinity",
+        format: "markdown",
+      },
+    });
+
+    // ── Goals ────────────────────────────────────────────────────────────
+    makeRecord({
+      type: "goal",
+      name: "Ship v1.0",
+      status: "doing",
+      date: isoInDays(30),
+      data: { targetValue: 100, currentValue: 68, unit: "%", cadence: "once" },
+    });
+    makeRecord({
+      type: "goal",
+      name: "Read 24 books",
+      status: "doing",
+      date: isoInDays(260),
+      data: { targetValue: 24, currentValue: 9, unit: "books", cadence: "yearly" },
+    });
+    makeRecord({
+      type: "goal",
+      name: "Run 200km",
+      status: "doing",
+      date: isoInDays(80),
+      data: { targetValue: 200, currentValue: 47, unit: "km", cadence: "quarterly" },
+    });
+
+    // ── Habits ───────────────────────────────────────────────────────────
+    makeRecord({
+      type: "habit",
+      name: "Morning pages",
+      status: "doing",
+      data: { frequency: "daily", streak: 12, longestStreak: 42, targetPerWeek: 7 },
+    });
+    makeRecord({
+      type: "habit",
+      name: "Workout",
+      status: "doing",
+      data: { frequency: "weekdays", streak: 4, longestStreak: 18, targetPerWeek: 5 },
+    });
+    makeRecord({
+      type: "habit",
+      name: "Read 20 pages",
+      status: "doing",
+      data: { frequency: "daily", streak: 3, longestStreak: 30, targetPerWeek: 7 },
+    });
+
+    // ── Bookmarks ────────────────────────────────────────────────────────
+    makeRecord({
+      type: "bookmark",
+      name: "Loro CRDT docs",
+      data: { url: "https://loro.dev", folder: "Reference", excerpt: "CRDT framework used in Prism" },
+    });
+    makeRecord({
+      type: "bookmark",
+      name: "React docs",
+      data: { url: "https://react.dev", folder: "Reference" },
+    });
+    makeRecord({
+      type: "bookmark",
+      name: "Tauri docs",
+      data: { url: "https://tauri.app", folder: "Reference" },
+    });
+    makeRecord({
+      type: "bookmark",
+      name: "Measured Puck",
+      data: { url: "https://puckeditor.com", folder: "Reference" },
+    });
+
+    // ── Captures ─────────────────────────────────────────────────────────
+    makeRecord({
+      type: "capture",
+      name: "Idea: pinboard lens for related notes",
+      status: "todo",
+      data: { body: "Idea: pinboard lens for related notes", source: "quick" },
+    });
+    makeRecord({
+      type: "capture",
+      name: "Buy birthday gift for M.",
+      status: "todo",
+      data: { body: "Buy birthday gift for M.", source: "quick" },
+    });
+
+    kernel.undo.clear();
     return () => {};
   },
 };
@@ -284,5 +586,6 @@ export function createBuiltinInitializers(): StudioInitializer[] {
     pageTemplatesInitializer,
     sectionTemplatesInitializer,
     demoWorkspaceInitializer,
+    dynamicDataInitializer,
   ];
 }

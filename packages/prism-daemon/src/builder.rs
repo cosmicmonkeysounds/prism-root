@@ -332,6 +332,13 @@ impl DaemonBuilder {
         self.with_module(crate::modules::conferencing_module::ConferencingModule)
     }
 
+    /// Install the admin module (`daemon.admin`). Always available — no
+    /// feature gate. Returns a normalised admin snapshot (health, uptime,
+    /// metrics, services) matching `@prism/admin-kit`'s `AdminSnapshot`.
+    pub fn with_admin(self) -> Self {
+        self.with_module(crate::modules::admin_module::AdminModule)
+    }
+
     /// Install every built-in capability the current feature set allows.
     /// Equivalent to `createStudioKernel({ lensBundles: createBuiltinLensBundles() })`.
     pub fn with_defaults(mut self) -> Self {
@@ -363,6 +370,8 @@ impl DaemonBuilder {
         {
             self = self.with_actors();
         }
+        // Admin is always last so it sees every module that was installed.
+        self = self.with_admin();
         self
     }
 

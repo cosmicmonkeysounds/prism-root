@@ -1,5 +1,132 @@
 # Current Plan
 
+## Puck component registry + RecordList primitive (In progress — 2026-04-13)
+
+ADR-004 introduces a DI seam for Puck builder components so new widgets can flow through a registered `PuckComponentProvider` instead of a hand-wired `if (def.type === …)` block in `layout-panel.tsx`'s 3000-line config `useMemo`. The first consumer is `RecordList` — a parametric list over kernel records driven by `ViewConfig` (filter/sort/limit) plus a lightweight row template — which is intended to eventually subsume the ten dynamic record widgets plus `list-widget` / `table-widget` / `card-grid-widget` / `report-widget`.
+
+### What landed
+
+1. **`@prism/core/bindings/puck/component-registry.ts`** — `PuckComponentProvider<TKernel>` interface + `PuckComponentRegistry<TKernel>` class with `register` / `registerAll` / `unregister` / `has` / `get` / `types` / `buildComponents`. Generic over kernel type so core stays decoupled from studio. Emits PascalCase Puck keys from kebab-case entity types.
+2. **`record-list` entity** in `packages/prism-studio/src/kernel/entities.ts` — `component` category, `childOnly: true`, fields for `recordType`, `titleField`, `subtitleField`, `metaFields`, `filterExpression`, `sortField`, `sortDir`, `limit`, `emptyMessage`.
+3. **`RecordListRenderer`** (`packages/prism-studio/src/components/record-list-renderer.tsx`) — pure renderer taking pre-resolved `GraphObject[]` + `ViewConfig` + `RecordListTemplate`, applying `@prism/core/view`'s existing `applyViewConfig` pipeline, and rendering title/subtitle/meta chips. `readRecordField` helper handles all shell fields + data payload.
+4. **`recordListProvider`** (`packages/prism-studio/src/panels/puck-providers/record-list-provider.tsx`) — parses the compact `filterExpression` grammar (`status eq open; priority in high,urgent`) into `FilterConfig[]`, the `metaFields` string into `TemplateField[]`, and queries the kernel for objects matching the selected `recordType`. Uses the existing 12 `FilterOp` values from `@prism/core/view` — no parallel spec.
+5. **`createStudioPuckRegistry()`** — factory in `panels/puck-providers/index.ts` seeding a fresh registry with built-in providers. `layout-panel.tsx` calls it inside the existing config `useMemo` and merges its `buildComponents()` output over the hand-wired components (registry wins). Additive only — no existing widgets were migrated.
+6. **Tests — 47 new, all passing**: 12 registry tests, 12 renderer tests (resolveTemplateField / applyRecordListView), 23 provider tests (parseFilterExpression, parseMetaFields, buildTemplate, buildViewConfig).
+7. **ADR-004 drafted** — `docs/adr/004-puck-component-registry-and-dynamic-content.md`. Proposed status. Captures the DI seam design, RecordList as the first parametric primitive, reuse of existing `ViewConfig`, and the migration shape for hand-wired widgets (deferred to incremental follow-up PRs).
+
+### Status
+
+- `pnpm --filter @prism/core typecheck` clean
+- Full `pnpm vitest run packages/prism-core packages/prism-studio` — **3553 tests across 162 files passing** (47 new)
+- Pre-existing `@prism/admin-kit/src/data-sources/daemon-data-source.ts` typecheck error is in an untracked in-progress file and unrelated
+
+### Deferred
+
+- Migrating the ~50 existing hand-wired `if (def.type === …)` blocks into providers (one-per-category PRs).
+- `FilterBuilder` visual field for composing filter expressions without typing the string grammar.
+- `Repeater` over array props (non-record content like nav items / pricing tiers).
+- Wiring `createSavedViewRegistry` as a RecordList props source.
+- Collapsing the ten dynamic record widgets into RecordList templates.
+
+## Dynamic record widgets for Puck builder — Tier 1 (Complete — 2026-04-13)
+
+The Puck layout panel offered only generic data widgets (list/table/kanban/card-grid/report) that worked over any record type. Dynamic "apps-flavoured" affordances — tasks, reminders, contacts, events, notes, goals, habits, bookmarks, timer, capture inbox — were missing. Built a full set of ten specialised widgets that all query `kernel.store.allObjects()` for records of a specific `type`, rendering the appropriate UX for each domain. Designed so Tier 2 (external provider streams) can drop in without touching widget code (see ADR-003).
+
+### What landed
+
+1. **New `record` category in `entities.ts`** — `{ category: "record", canParent: [], canBeRoot: true }`. Free-standing data records (tasks, reminders, contacts, events, notes, goals, habits, bookmarks, timer-sessions, captures) live at the workspace root alongside pages and folders.
+2. **Ten record entity defs** — `taskDef`, `reminderDef`, `contactDef`, `eventDef`, `noteDef`, `goalDef`, `habitDef`, `bookmarkDef`, `timerSessionDef`, `captureDef`. Each declares only domain-specific fields; GraphObject top-level fields (name/description/status/date/tags/pinned/color) come from the inspector's Shell section automatically.
+3. **Ten widget entity defs** (`component` category, `childOnly: true`) — `tasksWidgetDef`, `remindersWidgetDef`, `contactsWidgetDef`, `eventsWidgetDef`, `notesWidgetDef`, `goalsWidgetDef`, `habitTrackerWidgetDef`, `bookmarksWidgetDef`, `timerWidgetDef`, `captureInboxWidgetDef`. Each exposes widget-level config (filter, title, maxItems, etc.) but not per-row data — the row data is pulled live from the kernel by the renderer.
+4. **`dynamic-widget-renderers.tsx`** — single file housing all ten React renderers and their pure helpers. Shared `DateChip`, `cardBase`, `headingRow` styles; per-widget filter logic that short-circuits on empty inputs. Tasks widget has inline done-toggle that writes `status` back via `onToggleDone`. Reminders widget uses circular round checkbox. Contacts widget supports cards-or-list display with avatar fallback via `contactInitials()` + mailto:/tel: action chips. Events widget buckets by range (today/week/month/all) and renders relative-date chip + hh:mm time. Notes widget reads `data.body` first, description second, collapses whitespace, truncates with ellipsis. Goals widget shows `currentValue / targetValue + unit` and a progress bar via `goalRatio()`. Habit tracker uses `habitWeeklyRatio()` against `targetPerWeek`, shows streak with fire emoji. Bookmarks widget supports grid-of-favicons or list display, uses `bookmarkHost()` to parse clean hostnames. Timer widget is a local `useState` focus-timer that logs a `timer-session` via `onCreateSession`. Capture inbox widget has an inline text input that creates a `capture` via `onCaptureSubmit`, and a "Done" button per row that marks `processedAt` via `onMarkProcessed`.
+5. **Pure helpers (exported for vitest)** — `parseObjectDate`, `formatRelativeDate`, `filterTasks`, `orderTasks`, `priorityColor`, `filterReminders`, `filterContacts`, `contactInitials`, `filterEvents`, `formatEventTime`, `filterNotes`, `notePreview`, `filterGoals`, `goalRatio`, `formatDuration`, `filterBookmarks`, `bookmarkHost`, `habitWeeklyRatio`, `filterCaptures`. All deterministic — `nowMs()` is injected as a parameter with `Date.now()` as default so tests can freeze time.
+6. **`layout-panel.tsx` wiring** — ten new `if (def.type === "…-widget")` branches right after the `map-widget` case. Each branch (a) declares typed fields via the same `as unknown as Fields[string]` cast pattern the other widgets use, (b) filters kernel objects by the right record type, (c) forwards `selectedId` + `onSelectObject` + (for interactive widgets) `onToggleDone` / `onCreateSession` / `onCaptureSubmit` / `onMarkProcessed` callbacks that call `kernel.updateObject` / `kernel.createObject`. Capture inbox's mark-processed handler reads the existing `data` object and spreads it before writing to preserve other fields.
+7. **`dynamicDataInitializer`** (`builtin-initializers.ts`) — guarded on empty store for those record types, seeds ~25 sample records (5 tasks with mixed priorities + due dates, 3 reminders, 3 contacts (2 pinned), 4 events spread across the week, 3 notes (1 pinned, all tagged), 3 goals with progress, 3 habits with streaks, 4 bookmarks, 2 captures) so first-run users see the widgets populated. Added to the `createBuiltinInitializers()` list after `demoWorkspaceInitializer`.
+8. **Tests** — `dynamic-widget-renderers.test.ts` covers 59 assertions across 19 describe blocks, all pure-helper coverage: date parsing (valid/invalid/empty), relative labelling (overdue/today/tomorrow/in-Nd/far-future), task filtering (all/open/done/today/overdue + project cross-filter), task ordering (date asc with nulls last, priority tie-break), reminder filtering, contact filtering + initials, event range windowing (today/week/month/all), note filtering + preview truncation/whitespace collapse, goal ratio clamping, duration formatting (seconds/minutes/h:m), bookmark folder filtering + hostname extraction, habit weekly ratio, capture processed/pending partitioning.
+9. **ADR-003** — `docs/adr/003-dynamic-data-providers.md` scopes Tier 2 (external streams). Defines a `ProviderDefinition` contract in `@prism/core/providers`, provider records tagged with `data.source: { providerId, accountId, externalId, syncedAt }`, a daemon-owned sync worker materialising into the same Loro collection, credentials via existing VFS+vault+daemon stack, and `provider-binding` entity for wiring a collection to a provider. Widgets stay dumb — they query by type and never see provenance. Priority order: Google Calendar → Gmail → filesystem inbox → RSS → Weather → iCal → GitHub → Linear. Write-back, push notifications, and Apple Calendar/Reminders/Contacts are explicit non-goals for Phase 1.
+
+### Status
+
+- `pnpm typecheck` clean across the monorepo
+- `pnpm test` — **198 files / 3869 tests passing** (59 new tests)
+- `dynamicDataInitializer` guarded on empty store so re-running won't duplicate records
+
+### Files touched
+
+- `packages/prism-studio/src/kernel/entities.ts` — new `record` category rule, 20 new entity defs (10 records + 10 widgets), all wired into `createPageBuilderRegistry()`
+- `packages/prism-studio/src/components/dynamic-widget-renderers.tsx` (new)
+- `packages/prism-studio/src/components/dynamic-widget-renderers.test.ts` (new)
+- `packages/prism-studio/src/panels/layout-panel.tsx` — 10 new widget branches + imports
+- `packages/prism-studio/src/kernel/builtin-initializers.ts` — new `dynamicDataInitializer`
+- `docs/adr/003-dynamic-data-providers.md` (new)
+- `docs/adr/README.md` — ADR-003 index entry
+- `packages/prism-studio/CLAUDE.md` — documents the new renderer file
+
+---
+
+## Real Button & Card renderers for Puck builder (Complete — 2026-04-13)
+
+The Puck layout panel was rendering `button` and `card` blocks as generic dashed-border preview chips (the `entityToPuckComponent` fallback at `layout-panel.tsx:312`), so authors couldn't tell what a button would actually look like on their page. Promoted both to real interactive previews with an extended field vocabulary aimed at developers.
+
+### What landed
+
+1. **`button-renderer.tsx`** — real `<button>` / `<a>` preview. Variants: primary/secondary/outline/ghost/danger/success/gradient. Sizes: xs/sm/md/lg/xl. Leading or trailing icon (any glyph/emoji). Full-width, disabled, loading (with spinner via `prism-button-spin` keyframes). Rounded preset (none→full), shadow preset, hover effect (lift/glow/scale). Link target + auto-filled `noopener noreferrer` on `_blank`. Button `type` (button/submit/reset), aria label. Pure helpers `resolveVariant`/`resolveSize`/`resolveRadius`/`resolveShadow`/`resolveTransform`/`buildButtonStyles`/`resolveRel` exported for test.
+2. **`card-renderer.tsx`** — real card preview. Variants: elevated/outlined/filled/ghost. Layouts: vertical, horizontal (40% media basis), overlay (gradient wash over full-bleed media). Eyebrow, title, body, optional CTA that reuses `ButtonRenderer`. Media fit (cover/contain), aspect ratio, clamped overlay opacity, hover effect (lift/glow). Pure helpers `resolveCardVariant`/`resolveCardLayout`/`clampOverlayOpacity`/`buildCardStyles` exported.
+3. **`entities.ts`** — `buttonDef` extended with icon/iconPosition/fullWidth/disabled/loading/rounded/shadow/hoverEffect/target/rel/buttonType/ariaLabel plus three new variants and two new sizes. `cardDef` extended with eyebrow/mediaFit/mediaAspectRatio/variant/layout/hoverEffect/overlayOpacity/ctaLabel/ctaVariant. Fields are grouped via `ui.group` so the inspector stays organised.
+4. **`layout-panel.tsx`** — new `def.type === "button"` and `def.type === "card"` branches right after the `image` case. Each reuses `entityToPuckComponent` for automatic field generation, then replaces the `render` with the real renderer. Card's `imageUrl` field is swapped for the VFS-aware `mediaUploadField`. The generic `mediaFieldOverrides` map loses its old `card` entry (dedicated branch owns it now).
+5. **Tests** — `button-renderer.test.ts` (23 assertions across 7 helper groups — variant palettes, size scaling, radius map, shadow layering, hover transform, disabled override, rel defaulting) and `card-renderer.test.ts` (17 assertions — variant defaults, layout direction, overlay opacity clamping, hover transform, elevated base shadow).
+
+### Status
+
+- `pnpm typecheck` clean across the monorepo
+- `pnpm exec vitest run --exclude 'e2e/**'` in prism-studio — **31 files / 405 tests passing** (40 new tests)
+- Pre-existing playwright-vs-vitest config collision leaves e2e specs failing under vitest; unrelated to this change
+
+### Files touched
+
+- `packages/prism-studio/src/components/button-renderer.tsx` (new)
+- `packages/prism-studio/src/components/button-renderer.test.ts` (new)
+- `packages/prism-studio/src/components/card-renderer.tsx` (new)
+- `packages/prism-studio/src/components/card-renderer.test.ts` (new)
+- `packages/prism-studio/src/kernel/entities.ts`
+- `packages/prism-studio/src/panels/layout-panel.tsx`
+
+---
+
+## Resizable 4-bar PageShell (Complete — 2026-04-13)
+
+Layout panel's page shell was rigid: one of three hard-coded grids (`sidebar-left`/`sidebar-right`/`stacked`), single `sidebarWidth` int field, no drag handles. Replaced with a 3×3 grid of four independently-resizable bars wrapping a central main canvas.
+
+### What landed
+
+1. **`PageShellRenderer` rewrite** (`packages/prism-studio/src/components/layout-shell-renderers.tsx`) — 3×3 CSS Grid driven by `topBarHeight` / `leftBarWidth` / `rightBarWidth` / `bottomBarHeight`. Each populated bar renders a `<ResizeHandle>` on its inner edge (`col-resize` / `row-resize` cursor, `pointerdown`→`pointermove`→`pointerup` with `pointercancel` fallback). Drag updates local state live for smooth feedback; `onCommit(key, value)` fires once on pointerup for kernel persistence. Empty bars collapse to 0 via `hasContent(node)`. Pure `computeShellGrid()` helper exported for test.
+2. **`SideBarRenderer` resizable** — standalone `SideBar` widget reuses the same `useResizeHandle` hook and now supports four positions (`left`/`right`/`top`/`bottom`) with per-position handle placement and cursor.
+3. **Slot rename** (`packages/prism-studio/src/panels/layout-panel-data.ts`) — `PAGE_SLOTS = ["topBar", "leftBar", "rightBar", "bottomBar"]`; `SHELL_SLOTS["page-shell"] = ["topBar", "leftBar", "main", "rightBar", "bottomBar"]`. Per CLAUDE.md "rename, move, break, fix" — no back-compat for `header`/`sidebar`/`footer` slot names.
+4. **Entity defs** (`packages/prism-studio/src/kernel/entities.ts`) — `pageDef` and `pageShellDef` replaced old `layout`/`sidebarWidth`/`stickyHeader` fields with `topBarHeight`/`leftBarWidth`/`rightBarWidth`/`bottomBarHeight`/`stickyTopBar`. Page `layout` enum simplified to `flow` | `shell`.
+5. **`rootRender` wiring** (`layout-panel.tsx`) — in `shell` mode, passes the four slot functions + dimension props into `PageShellRenderer` and supplies an `onCommit` closure that calls `kernel.updateObject(pageId, { data: { ...currentData, [key]: value } })` on pointerup. `flow` mode unchanged (free-scrolling single column).
+6. **Seeds** — `playground-seed.ts` shell page now seeds `topBar`/`leftBar`/`rightBar`/`bottomBar` content with non-zero dimensions so every bar renders on first load. `builtin-initializers.ts` About page switched from `layout: "sidebar"` to `layout: "shell"`.
+7. **Test updates**
+   - `layout-panel.test.ts` — `seedShellPage` + `kernelToPuckData` projection test + `walkTree` round-trip + `splitRootProps` + new `computeShellGrid` suite (4 cases: full grid, absent bars collapsing, clamp negative/huge, fractional rounding).
+   - `loro-puck-bridge.test.ts` — slot-shaped round-trip data updated to the new PageShell shape.
+
+### Status
+
+- `pnpm typecheck` clean across `@prism/core`, `@prism/studio`, `@prism/puck-playground`
+- `pnpm lint` clean
+- `pnpm test` — **196 files / 3793 tests passing**
+
+### Files touched
+
+- `packages/prism-studio/src/components/layout-shell-renderers.tsx`
+- `packages/prism-studio/src/panels/layout-panel-data.ts`
+- `packages/prism-studio/src/panels/layout-panel.tsx`
+- `packages/prism-studio/src/panels/layout-panel.test.ts`
+- `packages/prism-studio/src/kernel/entities.ts`
+- `packages/prism-studio/src/kernel/builtin-initializers.ts`
+- `packages/prism-puck-playground/src/playground-seed.ts`
+- `packages/prism-core/src/bindings/puck/loro-puck-bridge.test.ts`
+
+---
+
 ## Universal Admin Kit — Puck-native admin panels for every runtime (Complete — 2026-04-13)
 
 Daemon, Relay, and Studio each had their own ad-hoc "admin" views. Unified them behind a single Puck-native package (`@prism/admin-kit`) so one editable dashboard can reflect any Prism runtime — in-process kernel, or remote HTTP relay — through a normalised `AdminSnapshot`.

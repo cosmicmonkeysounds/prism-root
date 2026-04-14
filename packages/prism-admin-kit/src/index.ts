@@ -30,6 +30,7 @@ export type { AdminProviderProps } from "./admin-context.js";
 export {
   createKernelDataSource,
   createRelayDataSource,
+  createDaemonDataSource,
   parsePrometheus,
   findSample,
 } from "./data-sources/index.js";
@@ -37,6 +38,7 @@ export type {
   KernelAdminTarget,
   KernelDataSourceOptions,
   RelayDataSourceOptions,
+  DaemonDataSourceOptions,
   PromSample,
 } from "./data-sources/index.js";
 

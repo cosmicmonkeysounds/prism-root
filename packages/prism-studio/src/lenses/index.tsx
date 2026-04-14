@@ -53,6 +53,8 @@ import { publishLensBundle } from "../panels/publish-panel.js";
 import { designTokensLensBundle } from "../panels/design-tokens-panel.js";
 import { formBuilderLensBundle } from "../panels/form-builder-panel.js";
 import { siteNavLensBundle } from "../panels/site-nav-panel.js";
+import { sitemapLensBundle } from "../panels/sitemap-panel.js";
+import { behaviorLensBundle } from "../panels/behavior-panel.js";
 import { entityBuilderLensBundle } from "../panels/entity-builder-panel.js";
 import { relationshipBuilderLensBundle } from "../panels/relationship-builder-panel.js";
 import { schemaDesignerLensBundle } from "../panels/schema-designer-panel.js";
@@ -106,6 +108,8 @@ export function createBuiltinLensBundles(): LensBundle[] {
     designTokensLensBundle,
     formBuilderLensBundle,
     siteNavLensBundle,
+    sitemapLensBundle,
+    behaviorLensBundle,
     entityBuilderLensBundle,
     relationshipBuilderLensBundle,
     schemaDesignerLensBundle,

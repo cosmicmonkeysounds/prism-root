@@ -30,6 +30,33 @@ function mkPage(
   } as unknown as GraphObject;
 }
 
+function mkRoute(
+  id: string,
+  name: string,
+  position: number,
+  data: Record<string, unknown> = {},
+): GraphObject {
+  return {
+    id: id as unknown as ObjectId,
+    type: "route",
+    name,
+    parentId: null,
+    position,
+    status: null,
+    tags: [],
+    date: null,
+    endDate: null,
+    description: null,
+    color: null,
+    image: null,
+    pinned: false,
+    data,
+    deletedAt: null,
+    createdAt: "2024-01-01T00:00:00Z",
+    updatedAt: "2024-01-01T00:00:00Z",
+  } as unknown as GraphObject;
+}
+
 describe("buildSiteNav", () => {
   it("skips non-page objects", () => {
     const items = buildSiteNav([
@@ -71,5 +98,49 @@ describe("buildSiteNav", () => {
     ]);
     expect(items[0]).toMatchObject({ slug: "home", isHome: true, hidden: false });
     expect(items[1]).toMatchObject({ slug: "hidden", isHome: false, hidden: true });
+  });
+
+  it("uses routes when any route objects are present", () => {
+    // Routes + pages in the same set; routes take over.
+    const items = buildSiteNav([
+      mkPage("p1", "ignored", 0, { title: "Ignored" }),
+      mkRoute("r1", "root", 0, { path: "/", label: "Home", showInNav: true, isHome: true }),
+      mkRoute("r2", "docs", 1, { path: "/docs", label: "Docs", showInNav: true }),
+    ]);
+    expect(items.map((i) => i.id)).toEqual(["r1", "r2"]);
+    expect(items[0]).toMatchObject({ label: "Home", slug: "/", isHome: true });
+  });
+
+  it("computes depth from parentRouteId chains", () => {
+    const items = buildSiteNav([
+      mkRoute("root", "root", 0, { path: "/", label: "Home" }),
+      mkRoute("docs", "docs", 1, { path: "/docs", label: "Docs", parentRouteId: "root" }),
+      mkRoute("guide", "guide", 2, {
+        path: "/docs/guide",
+        label: "Guide",
+        parentRouteId: "docs",
+      }),
+    ]);
+    expect(items.find((i) => i.id === "root")?.depth).toBe(0);
+    expect(items.find((i) => i.id === "docs")?.depth).toBe(1);
+    expect(items.find((i) => i.id === "guide")?.depth).toBe(2);
+  });
+
+  it("hides routes with showInNav=false", () => {
+    const items = buildSiteNav([
+      mkRoute("r1", "home", 0, { path: "/", label: "Home", showInNav: true }),
+      mkRoute("r2", "admin", 1, { path: "/admin", label: "Admin", showInNav: false }),
+    ]);
+    expect(items.find((i) => i.id === "r1")?.hidden).toBe(false);
+    expect(items.find((i) => i.id === "r2")?.hidden).toBe(true);
+  });
+
+  it("guards against parentRouteId cycles without infinite looping", () => {
+    const items = buildSiteNav([
+      mkRoute("a", "a", 0, { path: "/a", label: "A", parentRouteId: "b" }),
+      mkRoute("b", "b", 1, { path: "/b", label: "B", parentRouteId: "a" }),
+    ]);
+    // Both routes still produce nav items (no infinite loop) and get some depth.
+    expect(items.map((i) => i.id).sort()).toEqual(["a", "b"]);
   });
 });

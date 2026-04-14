@@ -133,6 +133,21 @@ React UI  →  Zustand Store  →  Loro Bridge  →  LoroDoc (browser)
 
 **`bindings/`** — React / DOM / WebGL adapters: `@prism/core/codemirror`, `@prism/core/puck`, `@prism/core/kbar`, `@prism/core/graph` (xyflow), `@prism/core/shell`, `@prism/core/viewport3d`, `@prism/core/audio`
 
+## Admin Dashboards
+
+Every Prism runtime ships a live admin dashboard powered by `@prism/admin-kit`:
+
+| Runtime | Access | Technology |
+|---------|--------|------------|
+| **Studio** | Admin lens (Shift+A) | React + Puck widgets via `<AdminProvider>` |
+| **Relay** | `GET /admin` on the running relay | Self-contained HTML page, auto-refreshes via `/admin/api/snapshot` |
+| **Daemon** | `GET /admin` on the HTTP transport | Self-contained HTML page, auto-refreshes via `/admin/api/snapshot` |
+
+All dashboards share the same `AdminSnapshot` data model (health, uptime, metrics, services, activity). The admin-kit provides:
+- **React widgets** — `HealthBadge`, `MetricCard`, `MetricChart`, `ServiceList`, `ActivityTail`, `UptimeCard`, `SourceHeader`
+- **HTML renderer** — `renderAdminHtml()` generates a standalone page for server embedding
+- **Data sources** — `createKernelDataSource()`, `createRelayDataSource()`, `createDaemonDataSource()`
+
 ## Build Phases
 
 | Phase | Name | Systems | Status |

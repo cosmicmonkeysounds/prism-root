@@ -7,7 +7,8 @@
     ".": "./src/index.ts",
     "./widgets": "./src/widgets/index.ts",
     "./data-sources": "./src/data-sources/index.ts",
-    "./puck": "./src/puck-config.tsx"
+    "./puck": "./src/puck-config.tsx",
+    "./html": "./src/html/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -23,6 +24,7 @@
   },
   "devDependencies": {
     "@types/react": "^19.0.0",
+    "hono": "4.12.11",
     "typescript": "^5.7.0",
     "vitest": "^2.1.0"
   },

@@ -28,3 +28,5 @@ pub mod whisper_module;
 
 #[cfg(feature = "conferencing")]
 pub mod conferencing_module;
+
+pub mod admin_module;

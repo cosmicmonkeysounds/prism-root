@@ -19,17 +19,27 @@ import type { GraphObject, ObjectId } from "@prism/core/object-model";
  * naming which slot it belongs to; on projection the children are grouped
  * back into per-slot Puck content arrays.
  *
- * The `page` entry is special: pages don't live inside Puck's `content`
- * array the way shells do, so their slot children get projected into
- * `root.props` via `kernelToPuckData` and rendered by a custom Puck root
- * component. This is what makes sidebar/header/footer regions a first-class
- * page concept — authors don't need to drop a `PageShell` widget first.
+ * Pages and page-shells use a 4-bar model (`topBar`, `leftBar`, `rightBar`,
+ * `bottomBar`) that wraps a central `main` canvas. Each bar is independently
+ * resizable — see `PageShellRenderer`. Bars with no children collapse to 0.
+ *
+ * The `page` entry is special: pages don't live inside Puck's `content` array
+ * the way shells do, so their slot children get projected into `root.props`
+ * via `kernelToPuckData` and rendered by a custom Puck root component. That
+ * makes the four bars first-class page regions — authors don't need to drop
+ * a `PageShell` widget first.
  */
-export const PAGE_SLOTS: readonly string[] = ["header", "sidebar", "footer"];
+export const PAGE_SLOTS: readonly string[] = [
+  "topBar",
+  "leftBar",
+  "rightBar",
+  "bottomBar",
+];
 
 export const SHELL_SLOTS: Readonly<Record<string, readonly string[]>> = {
   page: PAGE_SLOTS,
-  "page-shell": ["header", "sidebar", "main", "footer"],
+  "page-shell": ["topBar", "leftBar", "main", "rightBar", "bottomBar"],
+  "app-shell": ["topBar", "leftBar", "main", "rightBar", "bottomBar"],
   "site-header": ["nav"],
   "site-footer": ["col1", "col2", "col3"],
   "side-bar": ["content"],
@@ -68,6 +78,7 @@ export function pascalToKebab(s: string): string {
 export const COMPONENT_CATEGORY_MAP: Record<string, string> = {
   // Layout primitives & shells
   "page-shell": "layout",
+  "app-shell": "layout",
   "site-header": "layout",
   "site-footer": "layout",
   "side-bar": "layout",
@@ -207,12 +218,13 @@ export function buildPuckCategories(
  * - Shells (page-shell, site-header, etc.) nested inside `content` still
  *   emit per-slot child arrays so Puck's slot drop zones populate
  *   recursively.
- * - The page entity itself exposes header/sidebar/footer slots via
- *   `root.props` — those are any kernel children of the page that carry
- *   a `data.__slot` tag matching `PAGE_SLOTS`. The layout + sidebarWidth +
- *   stickyHeader props live on `page.data` and are also surfaced on
- *   `root.props` so the Puck root render can decide whether to wrap the
- *   flat content in a sidebar grid.
+ * - The page entity itself exposes its four bar slots (topBar / leftBar /
+ *   rightBar / bottomBar) via `root.props` — those are any kernel children
+ *   of the page that carry a `data.__slot` tag matching `PAGE_SLOTS`. The
+ *   `layout` (flow | shell) plus the bar dimensions (topBarHeight /
+ *   leftBarWidth / rightBarWidth / bottomBarHeight) live on `page.data` and
+ *   are also surfaced on `root.props` so the Puck root render can decide
+ *   whether to wrap the flat content in the 3×3 PageShell grid.
  */
 export function kernelToPuckData(
   pageId: ObjectId,

@@ -17,6 +17,17 @@ const categoryRules: CategoryRule[] = [
   { category: "page", canParent: ["section", "component"], canBeRoot: true },
   { category: "section", canParent: ["component"], canBeRoot: false },
   { category: "component", canParent: [], canBeRoot: false },
+  // "record" = free-standing data records (tasks, reminders, contacts, events…)
+  // that dynamic widgets query via kernel.store.allObjects(). Records have no
+  // children; they live at the workspace root alongside folders and pages.
+  { category: "record", canParent: [], canBeRoot: true },
+  // "app" = a buildable Prism App (Flux, Cadence, …). Contains an app-shell
+  // (outer chrome), routes (URL → page mapping), pages (the actual content),
+  // and behaviors (Luau scripts attached to components or routes).
+  { category: "app", canParent: ["component", "route", "page", "behavior"], canBeRoot: true },
+  // "route" / "behavior" live under an `app` and never contain children.
+  { category: "route", canParent: [], canBeRoot: false },
+  { category: "behavior", canParent: [], canBeRoot: false },
 ];
 
 // ── Entity Definitions ──────────────────────────────────────────────────────
@@ -49,14 +60,15 @@ const pageDef: EntityDef<string> = {
       default: "flow",
       enumOptions: [
         { value: "flow", label: "Flow (stacked content)" },
-        { value: "stacked", label: "Header + Main + Footer" },
-        { value: "sidebar-left", label: "Sidebar Left" },
-        { value: "sidebar-right", label: "Sidebar Right" },
+        { value: "shell", label: "Shell (resizable bars)" },
       ],
       ui: { group: "Layout" },
     },
-    { id: "sidebarWidth", type: "int", label: "Sidebar Width (px)", default: 240, ui: { group: "Layout" } },
-    { id: "stickyHeader", type: "bool", label: "Sticky Header", default: true, ui: { group: "Layout" } },
+    { id: "topBarHeight", type: "int", label: "Top Bar Height (px)", default: 0, ui: { group: "Layout" } },
+    { id: "leftBarWidth", type: "int", label: "Left Bar Width (px)", default: 0, ui: { group: "Layout" } },
+    { id: "rightBarWidth", type: "int", label: "Right Bar Width (px)", default: 0, ui: { group: "Layout" } },
+    { id: "bottomBarHeight", type: "int", label: "Bottom Bar Height (px)", default: 0, ui: { group: "Layout" } },
+    { id: "stickyTopBar", type: "bool", label: "Sticky Top Bar", default: true, ui: { group: "Layout" } },
     { id: "published", type: "bool", label: "Published", default: false },
     { id: "publishedAt", type: "datetime", label: "Published At" },
     { id: "metaDescription", type: "text", label: "Meta Description", ui: { multiline: true, group: "SEO" } },
@@ -171,12 +183,57 @@ const buttonDef: EntityDef<string> = {
       { value: "secondary", label: "Secondary" },
       { value: "outline", label: "Outline" },
       { value: "ghost", label: "Ghost" },
+      { value: "danger", label: "Danger" },
+      { value: "success", label: "Success" },
+      { value: "gradient", label: "Gradient" },
     ]},
     { id: "size", type: "enum", label: "Size", default: "md", enumOptions: [
+      { value: "xs", label: "Extra Small" },
       { value: "sm", label: "Small" },
       { value: "md", label: "Medium" },
       { value: "lg", label: "Large" },
+      { value: "xl", label: "Extra Large" },
     ]},
+    { id: "icon", type: "string", label: "Icon", ui: { placeholder: "→ or ✓ or emoji", group: "Content" } },
+    { id: "iconPosition", type: "enum", label: "Icon Position", default: "left", enumOptions: [
+      { value: "left", label: "Left" },
+      { value: "right", label: "Right" },
+    ], ui: { group: "Content" }},
+    { id: "fullWidth", type: "bool", label: "Full Width", default: false, ui: { group: "Layout" } },
+    { id: "disabled", type: "bool", label: "Disabled", default: false, ui: { group: "State" } },
+    { id: "loading", type: "bool", label: "Loading", default: false, ui: { group: "State" } },
+    { id: "rounded", type: "enum", label: "Rounded", default: "md", enumOptions: [
+      { value: "none", label: "Square" },
+      { value: "sm", label: "Small" },
+      { value: "md", label: "Medium" },
+      { value: "lg", label: "Large" },
+      { value: "full", label: "Pill" },
+    ], ui: { group: "Appearance" }},
+    { id: "shadow", type: "enum", label: "Shadow", default: "none", enumOptions: [
+      { value: "none", label: "None" },
+      { value: "sm", label: "Small" },
+      { value: "md", label: "Medium" },
+      { value: "lg", label: "Large" },
+    ], ui: { group: "Appearance" }},
+    { id: "hoverEffect", type: "enum", label: "Hover Effect", default: "none", enumOptions: [
+      { value: "none", label: "None" },
+      { value: "lift", label: "Lift" },
+      { value: "glow", label: "Glow" },
+      { value: "scale", label: "Scale" },
+    ], ui: { group: "Appearance" }},
+    { id: "target", type: "enum", label: "Link Target", default: "_self", enumOptions: [
+      { value: "_self", label: "Same tab" },
+      { value: "_blank", label: "New tab" },
+      { value: "_parent", label: "Parent frame" },
+      { value: "_top", label: "Top frame" },
+    ], ui: { group: "Link" }},
+    { id: "rel", type: "string", label: "Link rel", ui: { placeholder: "noopener noreferrer", group: "Link" } },
+    { id: "buttonType", type: "enum", label: "Button Type", default: "button", enumOptions: [
+      { value: "button", label: "Button" },
+      { value: "submit", label: "Submit" },
+      { value: "reset", label: "Reset" },
+    ], ui: { group: "Advanced" }},
+    { id: "ariaLabel", type: "string", label: "Aria Label", ui: { group: "Advanced" } },
     ...STYLE_FIELD_DEFS,
   ],
 };
@@ -190,10 +247,41 @@ const cardDef: EntityDef<string> = {
   color: "#8b5cf6",
   childOnly: true,
   fields: [
-    { id: "title", type: "string", label: "Title" },
-    { id: "body", type: "text", label: "Body", ui: { multiline: true } },
-    { id: "imageUrl", type: "url", label: "Image URL" },
-    { id: "linkUrl", type: "url", label: "Link URL" },
+    { id: "eyebrow", type: "string", label: "Eyebrow", ui: { placeholder: "NEW · FEATURE · ...", group: "Content" } },
+    { id: "title", type: "string", label: "Title", ui: { group: "Content" } },
+    { id: "body", type: "text", label: "Body", ui: { multiline: true, group: "Content" } },
+    { id: "imageUrl", type: "url", label: "Image URL", ui: { group: "Media" } },
+    { id: "mediaFit", type: "enum", label: "Media Fit", default: "cover", enumOptions: [
+      { value: "cover", label: "Cover" },
+      { value: "contain", label: "Contain" },
+    ], ui: { group: "Media" }},
+    { id: "mediaAspectRatio", type: "string", label: "Media Aspect Ratio", ui: { placeholder: "16 / 9", group: "Media" } },
+    { id: "variant", type: "enum", label: "Variant", default: "elevated", enumOptions: [
+      { value: "elevated", label: "Elevated" },
+      { value: "outlined", label: "Outlined" },
+      { value: "filled", label: "Filled" },
+      { value: "ghost", label: "Ghost" },
+    ], ui: { group: "Appearance" }},
+    { id: "layout", type: "enum", label: "Layout", default: "vertical", enumOptions: [
+      { value: "vertical", label: "Vertical" },
+      { value: "horizontal", label: "Horizontal" },
+      { value: "overlay", label: "Overlay" },
+    ], ui: { group: "Appearance" }},
+    { id: "hoverEffect", type: "enum", label: "Hover Effect", default: "lift", enumOptions: [
+      { value: "none", label: "None" },
+      { value: "lift", label: "Lift" },
+      { value: "glow", label: "Glow" },
+    ], ui: { group: "Appearance" }},
+    { id: "overlayOpacity", type: "float", label: "Overlay Opacity", default: 0.55, ui: { group: "Appearance" } },
+    { id: "linkUrl", type: "url", label: "Link URL", ui: { group: "CTA" } },
+    { id: "ctaLabel", type: "string", label: "CTA Label", ui: { group: "CTA" } },
+    { id: "ctaVariant", type: "enum", label: "CTA Variant", default: "primary", enumOptions: [
+      { value: "primary", label: "Primary" },
+      { value: "secondary", label: "Secondary" },
+      { value: "outline", label: "Outline" },
+      { value: "ghost", label: "Ghost" },
+      { value: "gradient", label: "Gradient" },
+    ], ui: { group: "CTA" }},
     ...STYLE_FIELD_DEFS,
   ],
 };
@@ -291,6 +379,82 @@ const dataPortalDef: EntityDef<string> = {
 };
 
 // ── Data-Aware Widgets (Puck-draggable visualisations) ─────────────────────
+
+const recordListDef: EntityDef<string> = {
+  type: "record-list",
+  category: "component",
+  label: "Record List",
+  pluralLabel: "Record Lists",
+  icon: "\uD83D\uDCDC",
+  color: "#14b8a6",
+  childOnly: true,
+  description:
+    "Parametric list over kernel records. One widget replaces tasks/events/notes/etc via a filter/sort spec and a row template.",
+  fields: [
+    {
+      id: "recordType",
+      type: "string",
+      label: "Record Type",
+      required: true,
+      ui: { placeholder: "task | event | note | *" },
+    },
+    {
+      id: "titleField",
+      type: "string",
+      label: "Title Field",
+      default: "name",
+    },
+    {
+      id: "subtitleField",
+      type: "string",
+      label: "Subtitle Field",
+      default: "description",
+    },
+    {
+      id: "metaFields",
+      type: "text",
+      label: "Meta Fields",
+      default: "status:badge, date:date",
+      ui: {
+        multiline: true,
+        placeholder:
+          "field:kind, field:kind  (kind: text | date | badge | status | tags)",
+      },
+    },
+    {
+      id: "filterExpression",
+      type: "text",
+      label: "Filter Expression",
+      ui: {
+        multiline: true,
+        placeholder: "status eq open; priority in high,urgent",
+      },
+    },
+    {
+      id: "sortField",
+      type: "string",
+      label: "Sort Field",
+      default: "updatedAt",
+    },
+    {
+      id: "sortDir",
+      type: "enum",
+      label: "Sort Direction",
+      default: "desc",
+      enumOptions: [
+        { value: "asc", label: "Ascending" },
+        { value: "desc", label: "Descending" },
+      ],
+    },
+    { id: "limit", type: "int", label: "Limit", default: 50 },
+    {
+      id: "emptyMessage",
+      type: "string",
+      label: "Empty Message",
+      default: "No records to display.",
+    },
+  ],
+};
 
 const kanbanWidgetDef: EntityDef<string> = {
   type: "kanban-widget",
@@ -751,19 +915,11 @@ const pageShellDef: EntityDef<string> = {
   icon: "\u25A6",
   color: "#0ea5e9",
   fields: [
-    {
-      id: "layout",
-      type: "enum",
-      label: "Layout",
-      default: "sidebar-left",
-      enumOptions: [
-        { value: "sidebar-left", label: "Sidebar Left" },
-        { value: "sidebar-right", label: "Sidebar Right" },
-        { value: "stacked", label: "Stacked (no sidebar)" },
-      ],
-    },
-    { id: "sidebarWidth", type: "int", label: "Sidebar Width (px)", default: 240 },
-    { id: "stickyHeader", type: "bool", label: "Sticky Header", default: true },
+    { id: "topBarHeight", type: "int", label: "Top Bar Height (px)", default: 0 },
+    { id: "leftBarWidth", type: "int", label: "Left Bar Width (px)", default: 0 },
+    { id: "rightBarWidth", type: "int", label: "Right Bar Width (px)", default: 0 },
+    { id: "bottomBarHeight", type: "int", label: "Bottom Bar Height (px)", default: 0 },
+    { id: "stickyTopBar", type: "bool", label: "Sticky Top Bar", default: true },
     ...STYLE_FIELD_DEFS,
   ],
 };
@@ -799,12 +955,12 @@ const siteFooterDef: EntityDef<string> = {
 const sideBarDef: EntityDef<string> = {
   type: "side-bar",
   category: "component",
-  label: "Sidebar",
-  pluralLabel: "Sidebars",
+  label: "Bar",
+  pluralLabel: "Bars",
   icon: "\u2590",
   color: "#0ea5e9",
   fields: [
-    { id: "width", type: "int", label: "Width (px)", default: 260 },
+    { id: "width", type: "int", label: "Size (px)", default: 260 },
     {
       id: "position",
       type: "enum",
@@ -813,6 +969,8 @@ const sideBarDef: EntityDef<string> = {
       enumOptions: [
         { value: "left", label: "Left" },
         { value: "right", label: "Right" },
+        { value: "top", label: "Top" },
+        { value: "bottom", label: "Bottom" },
       ],
     },
     ...STYLE_FIELD_DEFS,
@@ -1159,6 +1317,647 @@ const breadcrumbsDef: EntityDef<string> = {
   ],
 };
 
+// ── Dynamic Data Records ───────────────────────────────────────────────────
+//
+// Free-standing records that live at the workspace root. `name`, `description`,
+// `status`, `date`, `endDate`, `tags`, `pinned`, `color` come from the
+// GraphObject shell (editable in the inspector's shell section). Only
+// domain-specific props are declared here and stored in `data`.
+
+const taskDef: EntityDef<string> = {
+  type: "task",
+  category: "record",
+  label: "Task",
+  pluralLabel: "Tasks",
+  icon: "\u2611",
+  color: "#8b5cf6",
+  fields: [
+    {
+      id: "priority",
+      type: "enum",
+      label: "Priority",
+      default: "normal",
+      enumOptions: [
+        { value: "low", label: "Low" },
+        { value: "normal", label: "Normal" },
+        { value: "high", label: "High" },
+        { value: "urgent", label: "Urgent" },
+      ],
+    },
+    { id: "project", type: "string", label: "Project / List" },
+    { id: "estimateMinutes", type: "int", label: "Estimate (minutes)" },
+    { id: "notes", type: "text", label: "Notes", ui: { multiline: true } },
+  ],
+};
+
+const reminderDef: EntityDef<string> = {
+  type: "reminder",
+  category: "record",
+  label: "Reminder",
+  pluralLabel: "Reminders",
+  icon: "\u23F0",
+  color: "#f59e0b",
+  fields: [
+    {
+      id: "repeat",
+      type: "enum",
+      label: "Repeat",
+      default: "none",
+      enumOptions: [
+        { value: "none", label: "None" },
+        { value: "daily", label: "Daily" },
+        { value: "weekly", label: "Weekly" },
+        { value: "monthly", label: "Monthly" },
+        { value: "yearly", label: "Yearly" },
+      ],
+    },
+    {
+      id: "channel",
+      type: "enum",
+      label: "Channel",
+      default: "notification",
+      enumOptions: [
+        { value: "notification", label: "In-app notification" },
+        { value: "email", label: "Email" },
+        { value: "push", label: "Push" },
+      ],
+    },
+    { id: "notes", type: "text", label: "Notes", ui: { multiline: true } },
+  ],
+};
+
+const contactDef: EntityDef<string> = {
+  type: "contact",
+  category: "record",
+  label: "Contact",
+  pluralLabel: "Contacts",
+  icon: "\u{1F464}",
+  color: "#0ea5e9",
+  fields: [
+    { id: "email", type: "string", label: "Email", ui: { placeholder: "jane@example.com" } },
+    { id: "phone", type: "string", label: "Phone" },
+    { id: "org", type: "string", label: "Organisation" },
+    { id: "role", type: "string", label: "Role / Title" },
+    { id: "avatarUrl", type: "url", label: "Avatar URL", ui: { group: "Appearance" } },
+    { id: "website", type: "url", label: "Website", ui: { group: "Links" } },
+    { id: "twitter", type: "string", label: "Twitter / X handle", ui: { group: "Links" } },
+    { id: "lastContactedAt", type: "datetime", label: "Last Contacted", ui: { group: "History" } },
+    { id: "notes", type: "text", label: "Notes", ui: { multiline: true, group: "History" } },
+  ],
+};
+
+const eventDef: EntityDef<string> = {
+  type: "event",
+  category: "record",
+  label: "Event",
+  pluralLabel: "Events",
+  icon: "\u{1F4C5}",
+  color: "#22c55e",
+  fields: [
+    { id: "location", type: "string", label: "Location", ui: { placeholder: "123 Main St, or room ID" } },
+    { id: "videoUrl", type: "url", label: "Video / Call URL" },
+    { id: "allDay", type: "bool", label: "All Day", default: false },
+    {
+      id: "attendance",
+      type: "enum",
+      label: "Attendance",
+      default: "confirmed",
+      enumOptions: [
+        { value: "confirmed", label: "Confirmed" },
+        { value: "tentative", label: "Tentative" },
+        { value: "declined", label: "Declined" },
+      ],
+    },
+    { id: "agenda", type: "text", label: "Agenda", ui: { multiline: true } },
+  ],
+};
+
+const noteDef: EntityDef<string> = {
+  type: "note",
+  category: "record",
+  label: "Note",
+  pluralLabel: "Notes",
+  icon: "\u{1F4DD}",
+  color: "#facc15",
+  fields: [
+    { id: "body", type: "text", label: "Body", required: true, ui: { multiline: true } },
+    {
+      id: "format",
+      type: "enum",
+      label: "Format",
+      default: "markdown",
+      enumOptions: [
+        { value: "plain", label: "Plain Text" },
+        { value: "markdown", label: "Markdown" },
+      ],
+    },
+  ],
+};
+
+const goalDef: EntityDef<string> = {
+  type: "goal",
+  category: "record",
+  label: "Goal",
+  pluralLabel: "Goals",
+  icon: "\u{1F3AF}",
+  color: "#ec4899",
+  fields: [
+    { id: "targetValue", type: "float", label: "Target Value", default: 100 },
+    { id: "currentValue", type: "float", label: "Current Value", default: 0 },
+    { id: "unit", type: "string", label: "Unit", ui: { placeholder: "kg, hours, $, reps…" } },
+    {
+      id: "cadence",
+      type: "enum",
+      label: "Cadence",
+      default: "once",
+      enumOptions: [
+        { value: "once", label: "One-off" },
+        { value: "daily", label: "Daily" },
+        { value: "weekly", label: "Weekly" },
+        { value: "monthly", label: "Monthly" },
+        { value: "quarterly", label: "Quarterly" },
+        { value: "yearly", label: "Yearly" },
+      ],
+    },
+  ],
+};
+
+const habitDef: EntityDef<string> = {
+  type: "habit",
+  category: "record",
+  label: "Habit",
+  pluralLabel: "Habits",
+  icon: "\u{1F501}",
+  color: "#14b8a6",
+  fields: [
+    {
+      id: "frequency",
+      type: "enum",
+      label: "Frequency",
+      default: "daily",
+      enumOptions: [
+        { value: "daily", label: "Daily" },
+        { value: "weekdays", label: "Weekdays" },
+        { value: "weekly", label: "Weekly" },
+        { value: "custom", label: "Custom" },
+      ],
+    },
+    { id: "streak", type: "int", label: "Current Streak", default: 0 },
+    { id: "longestStreak", type: "int", label: "Longest Streak", default: 0 },
+    { id: "lastCompletedAt", type: "datetime", label: "Last Completed" },
+    { id: "targetPerWeek", type: "int", label: "Target Per Week", default: 7 },
+  ],
+};
+
+const bookmarkDef: EntityDef<string> = {
+  type: "bookmark",
+  category: "record",
+  label: "Bookmark",
+  pluralLabel: "Bookmarks",
+  icon: "\u{1F516}",
+  color: "#6366f1",
+  fields: [
+    { id: "url", type: "url", label: "URL", required: true },
+    { id: "faviconUrl", type: "url", label: "Favicon URL" },
+    { id: "folder", type: "string", label: "Folder" },
+    { id: "excerpt", type: "text", label: "Excerpt", ui: { multiline: true } },
+  ],
+};
+
+const timerSessionDef: EntityDef<string> = {
+  type: "timer-session",
+  category: "record",
+  label: "Timer Session",
+  pluralLabel: "Timer Sessions",
+  icon: "\u23F1",
+  color: "#ef4444",
+  fields: [
+    { id: "durationMs", type: "int", label: "Duration (ms)", default: 0 },
+    { id: "taskId", type: "string", label: "Linked Task ID" },
+    {
+      id: "kind",
+      type: "enum",
+      label: "Kind",
+      default: "work",
+      enumOptions: [
+        { value: "work", label: "Work" },
+        { value: "break", label: "Break" },
+        { value: "focus", label: "Focus" },
+        { value: "meeting", label: "Meeting" },
+      ],
+    },
+    { id: "notes", type: "text", label: "Notes", ui: { multiline: true } },
+  ],
+};
+
+const captureDef: EntityDef<string> = {
+  type: "capture",
+  category: "record",
+  label: "Capture",
+  pluralLabel: "Captures",
+  icon: "\u{1F4E5}",
+  color: "#64748b",
+  fields: [
+    { id: "body", type: "text", label: "Body", required: true, ui: { multiline: true } },
+    {
+      id: "source",
+      type: "enum",
+      label: "Source",
+      default: "quick",
+      enumOptions: [
+        { value: "quick", label: "Quick entry" },
+        { value: "email", label: "Email" },
+        { value: "share", label: "Share" },
+        { value: "voice", label: "Voice" },
+        { value: "clipboard", label: "Clipboard" },
+      ],
+    },
+    { id: "processedAt", type: "datetime", label: "Processed At" },
+  ],
+};
+
+// ── Dynamic Record Widgets ─────────────────────────────────────────────────
+//
+// Each widget is a Puck-draggable view over one record type. They share the
+// "pull objects from kernel.store.allObjects()" pattern used by list/table/
+// kanban widgets, but each renders a specialised affordance for its record
+// type (checkbox rows for tasks, relative-date chips for reminders, contact
+// cards, event timeline, etc.).
+
+const tasksWidgetDef: EntityDef<string> = {
+  type: "tasks-widget",
+  category: "component",
+  label: "Tasks Widget",
+  pluralLabel: "Tasks Widgets",
+  icon: "\u2611",
+  color: "#8b5cf6",
+  childOnly: true,
+  fields: [
+    { id: "title", type: "string", label: "Heading", default: "Tasks" },
+    {
+      id: "filter",
+      type: "enum",
+      label: "Filter",
+      default: "open",
+      enumOptions: [
+        { value: "all", label: "All tasks" },
+        { value: "open", label: "Open only (todo + doing)" },
+        { value: "today", label: "Due today" },
+        { value: "overdue", label: "Overdue" },
+        { value: "done", label: "Completed" },
+      ],
+    },
+    { id: "project", type: "string", label: "Project filter", ui: { placeholder: "blank = all projects" } },
+    { id: "maxItems", type: "int", label: "Max items", default: 10 },
+    { id: "showPriority", type: "bool", label: "Show priority", default: true },
+    { id: "showDueDate", type: "bool", label: "Show due date", default: true },
+  ],
+};
+
+const remindersWidgetDef: EntityDef<string> = {
+  type: "reminders-widget",
+  category: "component",
+  label: "Reminders Widget",
+  pluralLabel: "Reminders Widgets",
+  icon: "\u23F0",
+  color: "#f59e0b",
+  childOnly: true,
+  fields: [
+    { id: "title", type: "string", label: "Heading", default: "Reminders" },
+    {
+      id: "filter",
+      type: "enum",
+      label: "Filter",
+      default: "upcoming",
+      enumOptions: [
+        { value: "all", label: "All reminders" },
+        { value: "upcoming", label: "Upcoming (open)" },
+        { value: "overdue", label: "Overdue" },
+        { value: "today", label: "Due today" },
+        { value: "done", label: "Completed" },
+      ],
+    },
+    { id: "maxItems", type: "int", label: "Max items", default: 8 },
+  ],
+};
+
+const contactsWidgetDef: EntityDef<string> = {
+  type: "contacts-widget",
+  category: "component",
+  label: "Contacts Widget",
+  pluralLabel: "Contacts Widgets",
+  icon: "\u{1F464}",
+  color: "#0ea5e9",
+  childOnly: true,
+  fields: [
+    { id: "title", type: "string", label: "Heading", default: "Contacts" },
+    {
+      id: "filter",
+      type: "enum",
+      label: "Filter",
+      default: "favorites",
+      enumOptions: [
+        { value: "all", label: "All contacts" },
+        { value: "favorites", label: "Favorites only (pinned)" },
+        { value: "recent", label: "Recently contacted" },
+      ],
+    },
+    {
+      id: "display",
+      type: "enum",
+      label: "Display",
+      default: "cards",
+      enumOptions: [
+        { value: "cards", label: "Cards (grid)" },
+        { value: "list", label: "Compact list" },
+      ],
+    },
+    { id: "maxItems", type: "int", label: "Max items", default: 12 },
+    { id: "showOrg", type: "bool", label: "Show organisation", default: true },
+    { id: "showActions", type: "bool", label: "Show email / call actions", default: true },
+  ],
+};
+
+const eventsWidgetDef: EntityDef<string> = {
+  type: "events-widget",
+  category: "component",
+  label: "Events Widget",
+  pluralLabel: "Events Widgets",
+  icon: "\u{1F4C5}",
+  color: "#22c55e",
+  childOnly: true,
+  fields: [
+    { id: "title", type: "string", label: "Heading", default: "Upcoming events" },
+    {
+      id: "range",
+      type: "enum",
+      label: "Range",
+      default: "week",
+      enumOptions: [
+        { value: "today", label: "Today" },
+        { value: "week", label: "Next 7 days" },
+        { value: "month", label: "Next 30 days" },
+        { value: "all", label: "All upcoming" },
+      ],
+    },
+    { id: "maxItems", type: "int", label: "Max items", default: 8 },
+    { id: "showLocation", type: "bool", label: "Show location", default: true },
+  ],
+};
+
+const notesWidgetDef: EntityDef<string> = {
+  type: "notes-widget",
+  category: "component",
+  label: "Notes Widget",
+  pluralLabel: "Notes Widgets",
+  icon: "\u{1F4DD}",
+  color: "#facc15",
+  childOnly: true,
+  fields: [
+    { id: "title", type: "string", label: "Heading", default: "Notes" },
+    {
+      id: "filter",
+      type: "enum",
+      label: "Filter",
+      default: "pinned",
+      enumOptions: [
+        { value: "all", label: "All notes" },
+        { value: "pinned", label: "Pinned only" },
+        { value: "recent", label: "Recently edited" },
+      ],
+    },
+    { id: "tag", type: "string", label: "Tag filter", ui: { placeholder: "blank = all" } },
+    { id: "maxItems", type: "int", label: "Max items", default: 8 },
+    { id: "previewLength", type: "int", label: "Preview chars", default: 120 },
+  ],
+};
+
+const goalsWidgetDef: EntityDef<string> = {
+  type: "goals-widget",
+  category: "component",
+  label: "Goals Widget",
+  pluralLabel: "Goals Widgets",
+  icon: "\u{1F3AF}",
+  color: "#ec4899",
+  childOnly: true,
+  fields: [
+    { id: "title", type: "string", label: "Heading", default: "Goals" },
+    {
+      id: "filter",
+      type: "enum",
+      label: "Filter",
+      default: "active",
+      enumOptions: [
+        { value: "all", label: "All goals" },
+        { value: "active", label: "Active only" },
+        { value: "completed", label: "Completed" },
+      ],
+    },
+    { id: "maxItems", type: "int", label: "Max items", default: 6 },
+  ],
+};
+
+const habitTrackerWidgetDef: EntityDef<string> = {
+  type: "habit-tracker-widget",
+  category: "component",
+  label: "Habit Tracker Widget",
+  pluralLabel: "Habit Tracker Widgets",
+  icon: "\u{1F501}",
+  color: "#14b8a6",
+  childOnly: true,
+  fields: [
+    { id: "title", type: "string", label: "Heading", default: "Habits" },
+    { id: "maxItems", type: "int", label: "Max items", default: 8 },
+    { id: "showStreak", type: "bool", label: "Show streak", default: true },
+  ],
+};
+
+const bookmarksWidgetDef: EntityDef<string> = {
+  type: "bookmarks-widget",
+  category: "component",
+  label: "Bookmarks Widget",
+  pluralLabel: "Bookmarks Widgets",
+  icon: "\u{1F516}",
+  color: "#6366f1",
+  childOnly: true,
+  fields: [
+    { id: "title", type: "string", label: "Heading", default: "Bookmarks" },
+    { id: "folder", type: "string", label: "Folder filter", ui: { placeholder: "blank = all" } },
+    { id: "maxItems", type: "int", label: "Max items", default: 12 },
+    {
+      id: "display",
+      type: "enum",
+      label: "Display",
+      default: "grid",
+      enumOptions: [
+        { value: "grid", label: "Favicon grid" },
+        { value: "list", label: "List" },
+      ],
+    },
+  ],
+};
+
+const timerWidgetDef: EntityDef<string> = {
+  type: "timer-widget",
+  category: "component",
+  label: "Timer Widget",
+  pluralLabel: "Timer Widgets",
+  icon: "\u23F1",
+  color: "#ef4444",
+  childOnly: true,
+  fields: [
+    { id: "title", type: "string", label: "Heading", default: "Focus timer" },
+    { id: "defaultMinutes", type: "int", label: "Default duration (minutes)", default: 25 },
+    { id: "maxRecent", type: "int", label: "Recent sessions to show", default: 5 },
+  ],
+};
+
+const captureInboxWidgetDef: EntityDef<string> = {
+  type: "capture-inbox-widget",
+  category: "component",
+  label: "Capture Inbox Widget",
+  pluralLabel: "Capture Inboxes",
+  icon: "\u{1F4E5}",
+  color: "#64748b",
+  childOnly: true,
+  fields: [
+    { id: "title", type: "string", label: "Heading", default: "Inbox" },
+    { id: "maxItems", type: "int", label: "Max items", default: 10 },
+    { id: "showProcessed", type: "bool", label: "Show processed", default: false },
+  ],
+};
+
+// ── App Builder entities ───────────────────────────────────────────────────
+//
+// The "app" category represents one buildable Prism App (Flux, Cadence, …).
+// An app contains:
+//   • one `app-shell` component (the outer chrome wrapping every route),
+//   • zero or more `route` entries mapping URL paths → pages,
+//   • the `page` objects those routes point at,
+//   • and `behavior` entries — Luau scripts attached to components / routes.
+//
+// App Shells are in the `component` category (same as page-shell) so they
+// can live as children of an app via the category rule. Routes and
+// behaviors live in their own categories so containment rules can
+// enforce "routes only under apps", "behaviors only under apps".
+
+const appDef: EntityDef<string> = {
+  type: "app",
+  category: "app",
+  label: "App",
+  pluralLabel: "Apps",
+  icon: "\u25A2",
+  color: "#a855f7",
+  fields: [
+    { id: "name", type: "string", label: "Name", required: true },
+    {
+      id: "profileId",
+      type: "enum",
+      label: "Profile",
+      default: "studio",
+      enumOptions: [
+        { value: "studio", label: "Studio" },
+        { value: "flux", label: "Flux" },
+        { value: "lattice", label: "Lattice" },
+        { value: "cadence", label: "Cadence" },
+        { value: "grip", label: "Grip" },
+      ],
+    },
+    { id: "description", type: "text", label: "Description", ui: { multiline: true } },
+    { id: "themePrimary", type: "color", label: "Primary Theme Color" },
+    {
+      id: "homeRouteId",
+      type: "object_ref",
+      label: "Home Route",
+      refTypes: ["route"],
+    },
+  ],
+};
+
+const appShellDef: EntityDef<string> = {
+  type: "app-shell",
+  category: "component",
+  label: "App Shell",
+  pluralLabel: "App Shells",
+  icon: "\u25A3",
+  color: "#a855f7",
+  fields: [
+    { id: "brand", type: "string", label: "Brand", default: "Your App" },
+    { id: "brandIcon", type: "string", label: "Brand Icon" },
+    { id: "topBarHeight", type: "int", label: "Top Bar Height (px)", default: 48 },
+    { id: "leftBarWidth", type: "int", label: "Left Bar Width (px)", default: 0 },
+    { id: "rightBarWidth", type: "int", label: "Right Bar Width (px)", default: 0 },
+    { id: "bottomBarHeight", type: "int", label: "Bottom Bar Height (px)", default: 0 },
+    { id: "stickyTopBar", type: "bool", label: "Sticky Top Bar", default: true },
+    {
+      id: "showsActiveRoute",
+      type: "bool",
+      label: "Highlight Active Route",
+      default: true,
+    },
+    ...STYLE_FIELD_DEFS,
+  ],
+};
+
+const routeDef: EntityDef<string> = {
+  type: "route",
+  category: "route",
+  label: "Route",
+  pluralLabel: "Routes",
+  icon: "\u21AA",
+  color: "#22d3ee",
+  childOnly: true,
+  fields: [
+    { id: "path", type: "string", label: "URL Path", required: true, ui: { placeholder: "/tasks" } },
+    { id: "label", type: "string", label: "Label", required: true },
+    { id: "pageId", type: "object_ref", label: "Target Page", refTypes: ["page"] },
+    { id: "showInNav", type: "bool", label: "Show in Nav", default: true },
+    {
+      id: "parentRouteId",
+      type: "object_ref",
+      label: "Parent Route",
+      refTypes: ["route"],
+    },
+  ],
+};
+
+const behaviorDef: EntityDef<string> = {
+  type: "behavior",
+  category: "behavior",
+  label: "Behavior",
+  pluralLabel: "Behaviors",
+  icon: "\u26A1",
+  color: "#facc15",
+  childOnly: true,
+  fields: [
+    {
+      id: "targetObjectId",
+      type: "object_ref",
+      label: "Target",
+    },
+    {
+      id: "trigger",
+      type: "enum",
+      label: "Trigger",
+      default: "onClick",
+      enumOptions: [
+        { value: "onClick", label: "On Click" },
+        { value: "onMount", label: "On Mount" },
+        { value: "onChange", label: "On Change" },
+        { value: "onRouteEnter", label: "On Route Enter" },
+        { value: "onRouteLeave", label: "On Route Leave" },
+      ],
+    },
+    {
+      id: "source",
+      type: "text",
+      label: "Luau Source",
+      ui: { multiline: true, placeholder: "ui.navigate(\"/about\")" },
+    },
+    { id: "enabled", type: "bool", label: "Enabled", default: true },
+  ],
+};
+
 // ── Edge Type Definitions ───────────────────────────────────────────────────
 
 const referencesEdge: EdgeTypeDef = {
@@ -1194,6 +1993,7 @@ export function createPageBuilderRegistry(): ObjectRegistry<string> {
   registry.register(facetViewDef);
   registry.register(spatialCanvasDef);
   registry.register(dataPortalDef);
+  registry.register(recordListDef);
   registry.register(kanbanWidgetDef);
   registry.register(listWidgetDef);
   registry.register(tableWidgetDef);
@@ -1215,6 +2015,7 @@ export function createPageBuilderRegistry(): ObjectRegistry<string> {
   registry.register(dividerDef);
   registry.register(spacerDef);
   registry.register(pageShellDef);
+  registry.register(appShellDef);
   registry.register(siteHeaderDef);
   registry.register(siteFooterDef);
   registry.register(sideBarDef);
@@ -1231,6 +2032,35 @@ export function createPageBuilderRegistry(): ObjectRegistry<string> {
   registry.register(audioWidgetDef);
   registry.register(siteNavDef);
   registry.register(breadcrumbsDef);
+
+  // ── App builder ────────────────────────────────────────────────────────
+  registry.register(appDef);
+  registry.register(routeDef);
+  registry.register(behaviorDef);
+
+  // ── Dynamic records ────────────────────────────────────────────────────
+  registry.register(taskDef);
+  registry.register(reminderDef);
+  registry.register(contactDef);
+  registry.register(eventDef);
+  registry.register(noteDef);
+  registry.register(goalDef);
+  registry.register(habitDef);
+  registry.register(bookmarkDef);
+  registry.register(timerSessionDef);
+  registry.register(captureDef);
+
+  // ── Dynamic widgets (bound to records above) ──────────────────────────
+  registry.register(tasksWidgetDef);
+  registry.register(remindersWidgetDef);
+  registry.register(contactsWidgetDef);
+  registry.register(eventsWidgetDef);
+  registry.register(notesWidgetDef);
+  registry.register(goalsWidgetDef);
+  registry.register(habitTrackerWidgetDef);
+  registry.register(bookmarksWidgetDef);
+  registry.register(timerWidgetDef);
+  registry.register(captureInboxWidgetDef);
 
   registry.registerEdge(referencesEdge);
   registry.registerEdge(linksToEdge);

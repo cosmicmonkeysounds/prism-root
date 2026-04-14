@@ -55,6 +55,65 @@ export interface AppThemeConfig {
   displayName?: string;
 }
 
+// ── Starter App template ──────────────────────────────────────────────────
+
+/**
+ * One child inside an `app-shell` or `page-shell` slot in a starter-app
+ * template. Matches the shape the kernel expects when a Puck builder user
+ * drops a component into a shell slot: a `type` pointing at a registered
+ * entity, a `slot` naming the parent region, and an opaque `data` bag of
+ * field values.
+ */
+export interface StarterShellChild {
+  type: string;
+  slot: string;
+  name?: string;
+  data?: Record<string, unknown>;
+}
+
+/** Route included in the starter app. `path` drives URL routing. */
+export interface StarterRouteTemplate {
+  path: string;
+  label: string;
+  /**
+   * Which built-in page template to seed the route's page from.
+   * `blank` creates an empty page; `landing` / `blog` seed a hero + body.
+   */
+  pageTemplate: "blank" | "landing" | "blog";
+  /** When true the route is the home route. Exactly one should be true. */
+  isHome?: boolean;
+  /** Show the route in the auto-generated nav? Defaults to true. */
+  showInNav?: boolean;
+}
+
+/**
+ * A per-profile starter-app recipe. Each Prism App (Flux, Lattice, …) ships
+ * its own App Shell + default Page Shell + starter routes so users can
+ * materialise a full app with one click instead of hand-assembling the
+ * chrome every time.
+ *
+ * This is data-only — no React components, no kernel coupling — so it can
+ * live in `@prism/core/builder` and be consumed from anywhere.
+ */
+export interface StarterAppTemplate {
+  /** Human-readable label. Shown in the "Start new app" picker. */
+  label: string;
+  /** One-line description for the picker UI. */
+  description?: string;
+  /** Data bag + children for the `app-shell` that wraps every route. */
+  appShell: {
+    data: Record<string, unknown>;
+    children?: StarterShellChild[];
+  };
+  /** Data bag + children for the default `page-shell` each route wraps in. */
+  defaultPageShell: {
+    data: Record<string, unknown>;
+    children?: StarterShellChild[];
+  };
+  /** Starter routes — must include at least one with `isHome: true`. */
+  routes: StarterRouteTemplate[];
+}
+
 /**
  * An App Profile is a JSON-serializable document that pins a slice of
  * Studio to a focused app. Loading a profile restricts the visible
@@ -95,6 +154,12 @@ export interface AppProfile {
    * the Relay builder pattern from @prism/core/relay.
    */
   relayModules?: string[];
+  /**
+   * Optional starter-app template used by the Puck builder / playground to
+   * materialise a ready-to-edit app for this profile (App Shell + Page
+   * Shell + starter routes). Pure data; see `StarterAppTemplate`.
+   */
+  starterApp?: StarterAppTemplate;
 }
 
 // ── Artifacts ─────────────────────────────────────────────────────────────

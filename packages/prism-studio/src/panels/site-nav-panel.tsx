@@ -28,9 +28,55 @@ export interface SiteNavItem {
   hidden: boolean;
 }
 
-/** Collect every non-deleted page as a flat navigation list. */
-export function buildSiteNav(pages: ReadonlyArray<GraphObject>): SiteNavItem[] {
-  const sorted = pages
+/**
+ * Collect every non-deleted page as a nav list.
+ *
+ * If the caller passes a mixed set of pages + `route` objects, the routes
+ * drive the output: each route becomes a nav item with `depth` computed by
+ * walking `data.parentRouteId` up the chain. Otherwise the flat page-only
+ * fallback (depth=0 for every page) is preserved for older demo
+ * workspaces that haven't been migrated to routes yet.
+ */
+export function buildSiteNav(objects: ReadonlyArray<GraphObject>): SiteNavItem[] {
+  const routes = objects.filter((o) => o.type === "route" && !o.deletedAt);
+  if (routes.length > 0) {
+    const routeById = new Map<string, GraphObject>();
+    for (const r of routes) routeById.set(r.id as unknown as string, r);
+
+    const depthOf = (route: GraphObject): number => {
+      let depth = 0;
+      let cursor: GraphObject | undefined = route;
+      const guard = new Set<string>();
+      while (cursor) {
+        const parentId = (cursor.data as Record<string, unknown>)["parentRouteId"];
+        if (typeof parentId !== "string" || parentId === "") break;
+        if (guard.has(parentId)) break; // cycle guard
+        guard.add(parentId);
+        const next = routeById.get(parentId);
+        if (!next) break;
+        cursor = next;
+        depth += 1;
+      }
+      return depth;
+    };
+
+    return routes
+      .slice()
+      .sort((a, b) => a.position - b.position)
+      .map((r) => {
+        const data = r.data as Record<string, unknown>;
+        return {
+          id: r.id as unknown as string,
+          label: (data["label"] as string) || r.name,
+          slug: (data["path"] as string) || "",
+          depth: depthOf(r),
+          isHome: Boolean(data["isHome"]),
+          hidden: data["showInNav"] === false,
+        };
+      });
+  }
+
+  const sorted = objects
     .filter((p) => p.type === "page" && !p.deletedAt)
     .sort((a, b) => a.position - b.position);
 
@@ -38,11 +84,11 @@ export function buildSiteNav(pages: ReadonlyArray<GraphObject>): SiteNavItem[] {
     const data = p.data as Record<string, unknown>;
     return {
       id: p.id as unknown as string,
-      label: (data.title as string) || p.name,
-      slug: (data.slug as string) || "",
+      label: (data["title"] as string) || p.name,
+      slug: (data["slug"] as string) || "",
       depth: 0,
-      isHome: Boolean(data.isHome),
-      hidden: Boolean(data.hiddenInNav),
+      isHome: Boolean(data["isHome"]),
+      hidden: Boolean(data["hiddenInNav"]),
     };
   });
 }

@@ -20,8 +20,21 @@ export type {
   BuildRun,
   ArtifactDescriptor,
   ArtifactKind,
+  StarterAppTemplate,
+  StarterRouteTemplate,
+  StarterShellChild,
 } from "./types.js";
 export { ALL_BUILD_TARGETS } from "./types.js";
+
+export {
+  materializeStarterApp,
+} from "./starter-app.js";
+export type {
+  StarterCreateObjectFn,
+  StarterCreateObjectInput,
+  StarterCreatedObject,
+  MaterializedStarterApp,
+} from "./starter-app.js";
 
 export {
   STUDIO_PROFILE,

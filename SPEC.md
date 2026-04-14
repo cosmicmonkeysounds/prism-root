@@ -610,6 +610,48 @@ Non-mergeable files (`.wav`, `.png`, `.mp4`) are strictly protected from corrupt
 
 ---
 
+## The Admin System (Observability)
+
+Every Prism runtime — Studio, Relay, Daemon — ships a live admin dashboard via the shared `@prism/admin-kit` library. The admin system provides runtime observability without requiring external monitoring tools.
+
+### AdminSnapshot (The Normalised Data Model)
+
+All data sources — kernel, relay, daemon — normalise their state into a single `AdminSnapshot` shape:
+
+- **health** — `HealthStatus` with level (`ok | warn | error | unknown`), label, and optional detail
+- **uptimeSeconds** — process uptime
+- **metrics** — array of `Metric` (id, label, numeric/string value, optional unit/hint/delta)
+- **services** — array of `Service` (id, name, health level, optional status text)
+- **activity** — array of `ActivityItem` (timestamp, kind, message, level)
+
+### Data Sources
+
+| Source | Transport | What it reads |
+|--------|-----------|---------------|
+| `createKernelDataSource(kernel)` | In-process | CollectionStore, PrismBus, RelayManager, PresenceManager, VFS, NotificationStore |
+| `createRelayDataSource({ url })` | HTTP | `/api/health`, `/api/modules`, `/metrics` (Prometheus) |
+| `createDaemonDataSource({ url })` | HTTP | `POST /invoke/daemon.admin` with fallback to `/healthz` + `/capabilities` |
+
+### Runtime Dashboards
+
+**Studio** — The Admin lens (Shift+A) renders the dashboard using Puck drag-and-drop widgets (`HealthBadge`, `MetricCard`, `MetricChart`, `ServiceList`, `ActivityTail`, `UptimeCard`, `SourceHeader`). Users can switch between kernel and relay data sources via a dropdown. Widgets read live data through `useAdminSnapshot()`.
+
+**Relay** — `GET /admin` serves a self-contained HTML page that auto-refreshes from `GET /admin/api/snapshot`. No React, no Puck — just inline CSS + JS matching the same visual design. Mounted outside `/api/*` so no CSRF header is required.
+
+**Daemon** — The `daemon.admin` command (always available, no feature gate) returns the admin snapshot JSON. The HTTP transport (axum, feature `transport-http`) serves the same self-contained HTML at `GET /admin` with live polling from `GET /admin/api/snapshot`.
+
+### HTML Renderer
+
+`@prism/admin-kit/html` exports `renderAdminHtml(options)` which generates a complete HTML page with:
+- Embedded CSS matching the admin-kit palette
+- Inline JS that polls a configurable JSON endpoint
+- Optional SSR seed data for instant first paint
+- Configurable poll interval (default 5s)
+
+Used by Relay (Hono) and Daemon (axum) to serve their admin pages.
+
+---
+
 ## The Ecosystem Apps
 
 ### Flux (The Operational Hub)

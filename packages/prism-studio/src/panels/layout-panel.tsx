@@ -60,6 +60,24 @@ import {
 import { CalendarWidgetRenderer } from "../components/calendar-widget-renderer.js";
 import { ChartWidgetRenderer, type ChartType, type ChartAggregation } from "../components/chart-widget-renderer.js";
 import { MapWidgetRenderer } from "../components/map-widget-renderer.js";
+import {
+  TasksWidgetRenderer,
+  RemindersWidgetRenderer,
+  ContactsWidgetRenderer,
+  EventsWidgetRenderer,
+  NotesWidgetRenderer,
+  GoalsWidgetRenderer,
+  HabitTrackerWidgetRenderer,
+  BookmarksWidgetRenderer,
+  TimerWidgetRenderer,
+  CaptureInboxWidgetRenderer,
+  type TaskFilter,
+  type ReminderFilter,
+  type ContactFilter,
+  type EventRange,
+  type NoteFilter,
+  type GoalFilter,
+} from "../components/dynamic-widget-renderers.js";
 import { TabContainerRenderer } from "../components/tab-container-renderer.js";
 import { PopoverWidgetRenderer } from "../components/popover-widget-renderer.js";
 import { SlidePanelRenderer } from "../components/slide-panel-renderer.js";
@@ -89,6 +107,24 @@ import {
   IframeWidgetRenderer,
 } from "../components/content-renderers.js";
 import { CodeBlockRenderer } from "../components/code-block-renderer.js";
+import {
+  ButtonRenderer,
+  type ButtonVariant,
+  type ButtonSize,
+  type ButtonRounded,
+  type ButtonShadow,
+  type ButtonHoverEffect,
+  type ButtonIconPosition,
+  type ButtonTarget,
+  type ButtonType as ButtonHtmlType,
+} from "../components/button-renderer.js";
+import {
+  CardRenderer,
+  type CardVariant,
+  type CardLayout,
+  type CardHoverEffect,
+  type CardMediaFit,
+} from "../components/card-renderer.js";
 import { lensId } from "@prism/core/lens";
 import type { LensManifest } from "@prism/core/lens";
 import { defineLensBundle, type LensBundle } from "../lenses/bundle.js";
@@ -114,6 +150,7 @@ import {
 } from "../components/puck-custom-fields.js";
 import {
   PageShellRenderer,
+  AppShellRenderer,
   SiteHeaderRenderer,
   SiteFooterRenderer,
   SideBarRenderer,
@@ -124,6 +161,7 @@ import { mediaUploadField } from "../components/vfs-media-field.js";
 import { facetPickerField } from "../components/facet-picker-field.js";
 import { useResolvedMediaUrl } from "../components/vfs-media-url.js";
 import type { StudioKernel } from "../kernel/studio-kernel.js";
+import { createStudioPuckRegistry } from "./puck-providers/index.js";
 
 // ── Styles ──────────────────────────────────────────────────────────────────
 
@@ -1407,6 +1445,543 @@ export function LayoutPanel() {
           continue;
         }
 
+        // ── Dynamic record widgets ─────────────────────────────────────
+        if (def.type === "tasks-widget") {
+          components[kebabToPascal(def.type)] = {
+            fields: {
+              title: { type: "text" } as unknown as Fields[string],
+              filter: {
+                type: "select",
+                options: [
+                  { label: "All tasks", value: "all" },
+                  { label: "Open (todo + doing)", value: "open" },
+                  { label: "Due today", value: "today" },
+                  { label: "Overdue", value: "overdue" },
+                  { label: "Completed", value: "done" },
+                ],
+              } as unknown as Fields[string],
+              project: { type: "text" } as unknown as Fields[string],
+              maxItems: { type: "number" } as unknown as Fields[string],
+              showPriority: {
+                type: "radio",
+                options: [
+                  { label: "Show", value: true },
+                  { label: "Hide", value: false },
+                ],
+              } as unknown as Fields[string],
+              showDueDate: {
+                type: "radio",
+                options: [
+                  { label: "Show", value: true },
+                  { label: "Hide", value: false },
+                ],
+              } as unknown as Fields[string],
+            },
+            defaultProps: {
+              title: "Tasks",
+              filter: "open",
+              project: "",
+              maxItems: 10,
+              showPriority: true,
+              showDueDate: true,
+            },
+            render: (props) => {
+              const p = props as Record<string, unknown>;
+              const title = (p["title"] as string) ?? "Tasks";
+              const filter = ((p["filter"] as string) ?? "open") as TaskFilter;
+              const project = (p["project"] as string) ?? "";
+              const maxItems = (p["maxItems"] as number) ?? 10;
+              const showPriority = p["showPriority"] !== false;
+              const showDueDate = p["showDueDate"] !== false;
+              const objects = kernel.store
+                .allObjects()
+                .filter((o) => o.type === "task" && !o.deletedAt);
+              return (
+                <div data-testid="puck-tasks-widget" style={{ margin: "4px 0" }}>
+                  <TasksWidgetRenderer
+                    objects={objects}
+                    title={title}
+                    filter={filter}
+                    project={project}
+                    maxItems={maxItems}
+                    showPriority={showPriority}
+                    showDueDate={showDueDate}
+                    selectedId={selectedId}
+                    onSelectObject={(id) => kernel.select(id as ObjectId)}
+                    onToggleDone={(id, newStatus) => {
+                      kernel.updateObject(id as ObjectId, { status: newStatus });
+                    }}
+                  />
+                </div>
+              );
+            },
+          };
+          continue;
+        }
+
+        if (def.type === "reminders-widget") {
+          components[kebabToPascal(def.type)] = {
+            fields: {
+              title: { type: "text" } as unknown as Fields[string],
+              filter: {
+                type: "select",
+                options: [
+                  { label: "All reminders", value: "all" },
+                  { label: "Upcoming (open)", value: "upcoming" },
+                  { label: "Overdue", value: "overdue" },
+                  { label: "Due today", value: "today" },
+                  { label: "Completed", value: "done" },
+                ],
+              } as unknown as Fields[string],
+              maxItems: { type: "number" } as unknown as Fields[string],
+            },
+            defaultProps: { title: "Reminders", filter: "upcoming", maxItems: 8 },
+            render: (props) => {
+              const p = props as Record<string, unknown>;
+              const title = (p["title"] as string) ?? "Reminders";
+              const filter = ((p["filter"] as string) ?? "upcoming") as ReminderFilter;
+              const maxItems = (p["maxItems"] as number) ?? 8;
+              const objects = kernel.store
+                .allObjects()
+                .filter((o) => o.type === "reminder" && !o.deletedAt);
+              return (
+                <div data-testid="puck-reminders-widget" style={{ margin: "4px 0" }}>
+                  <RemindersWidgetRenderer
+                    objects={objects}
+                    title={title}
+                    filter={filter}
+                    maxItems={maxItems}
+                    selectedId={selectedId}
+                    onSelectObject={(id) => kernel.select(id as ObjectId)}
+                    onToggleDone={(id, newStatus) => {
+                      kernel.updateObject(id as ObjectId, { status: newStatus });
+                    }}
+                  />
+                </div>
+              );
+            },
+          };
+          continue;
+        }
+
+        if (def.type === "contacts-widget") {
+          components[kebabToPascal(def.type)] = {
+            fields: {
+              title: { type: "text" } as unknown as Fields[string],
+              filter: {
+                type: "select",
+                options: [
+                  { label: "All contacts", value: "all" },
+                  { label: "Favorites (pinned)", value: "favorites" },
+                  { label: "Recently contacted", value: "recent" },
+                ],
+              } as unknown as Fields[string],
+              display: {
+                type: "radio",
+                options: [
+                  { label: "Cards", value: "cards" },
+                  { label: "List", value: "list" },
+                ],
+              } as unknown as Fields[string],
+              maxItems: { type: "number" } as unknown as Fields[string],
+              showOrg: {
+                type: "radio",
+                options: [
+                  { label: "Show", value: true },
+                  { label: "Hide", value: false },
+                ],
+              } as unknown as Fields[string],
+              showActions: {
+                type: "radio",
+                options: [
+                  { label: "Show", value: true },
+                  { label: "Hide", value: false },
+                ],
+              } as unknown as Fields[string],
+            },
+            defaultProps: {
+              title: "Contacts",
+              filter: "favorites",
+              display: "cards",
+              maxItems: 12,
+              showOrg: true,
+              showActions: true,
+            },
+            render: (props) => {
+              const p = props as Record<string, unknown>;
+              const title = (p["title"] as string) ?? "Contacts";
+              const filter = ((p["filter"] as string) ?? "favorites") as ContactFilter;
+              const display = ((p["display"] as string) ?? "cards") as "cards" | "list";
+              const maxItems = (p["maxItems"] as number) ?? 12;
+              const showOrg = p["showOrg"] !== false;
+              const showActions = p["showActions"] !== false;
+              const objects = kernel.store
+                .allObjects()
+                .filter((o) => o.type === "contact" && !o.deletedAt);
+              return (
+                <div data-testid="puck-contacts-widget" style={{ margin: "4px 0" }}>
+                  <ContactsWidgetRenderer
+                    objects={objects}
+                    title={title}
+                    filter={filter}
+                    display={display}
+                    maxItems={maxItems}
+                    showOrg={showOrg}
+                    showActions={showActions}
+                    selectedId={selectedId}
+                    onSelectObject={(id) => kernel.select(id as ObjectId)}
+                  />
+                </div>
+              );
+            },
+          };
+          continue;
+        }
+
+        if (def.type === "events-widget") {
+          components[kebabToPascal(def.type)] = {
+            fields: {
+              title: { type: "text" } as unknown as Fields[string],
+              range: {
+                type: "select",
+                options: [
+                  { label: "Today", value: "today" },
+                  { label: "Next 7 days", value: "week" },
+                  { label: "Next 30 days", value: "month" },
+                  { label: "All upcoming", value: "all" },
+                ],
+              } as unknown as Fields[string],
+              maxItems: { type: "number" } as unknown as Fields[string],
+              showLocation: {
+                type: "radio",
+                options: [
+                  { label: "Show", value: true },
+                  { label: "Hide", value: false },
+                ],
+              } as unknown as Fields[string],
+            },
+            defaultProps: {
+              title: "Upcoming events",
+              range: "week",
+              maxItems: 8,
+              showLocation: true,
+            },
+            render: (props) => {
+              const p = props as Record<string, unknown>;
+              const title = (p["title"] as string) ?? "Upcoming events";
+              const range = ((p["range"] as string) ?? "week") as EventRange;
+              const maxItems = (p["maxItems"] as number) ?? 8;
+              const showLocation = p["showLocation"] !== false;
+              const objects = kernel.store
+                .allObjects()
+                .filter((o) => o.type === "event" && !o.deletedAt);
+              return (
+                <div data-testid="puck-events-widget" style={{ margin: "4px 0" }}>
+                  <EventsWidgetRenderer
+                    objects={objects}
+                    title={title}
+                    range={range}
+                    maxItems={maxItems}
+                    showLocation={showLocation}
+                    selectedId={selectedId}
+                    onSelectObject={(id) => kernel.select(id as ObjectId)}
+                  />
+                </div>
+              );
+            },
+          };
+          continue;
+        }
+
+        if (def.type === "notes-widget") {
+          components[kebabToPascal(def.type)] = {
+            fields: {
+              title: { type: "text" } as unknown as Fields[string],
+              filter: {
+                type: "select",
+                options: [
+                  { label: "All notes", value: "all" },
+                  { label: "Pinned only", value: "pinned" },
+                  { label: "Recently edited", value: "recent" },
+                ],
+              } as unknown as Fields[string],
+              tag: { type: "text" } as unknown as Fields[string],
+              maxItems: { type: "number" } as unknown as Fields[string],
+              previewLength: { type: "number" } as unknown as Fields[string],
+            },
+            defaultProps: {
+              title: "Notes",
+              filter: "pinned",
+              tag: "",
+              maxItems: 8,
+              previewLength: 120,
+            },
+            render: (props) => {
+              const p = props as Record<string, unknown>;
+              const title = (p["title"] as string) ?? "Notes";
+              const filter = ((p["filter"] as string) ?? "pinned") as NoteFilter;
+              const tag = (p["tag"] as string) ?? "";
+              const maxItems = (p["maxItems"] as number) ?? 8;
+              const previewLength = (p["previewLength"] as number) ?? 120;
+              const objects = kernel.store
+                .allObjects()
+                .filter((o) => o.type === "note" && !o.deletedAt);
+              return (
+                <div data-testid="puck-notes-widget" style={{ margin: "4px 0" }}>
+                  <NotesWidgetRenderer
+                    objects={objects}
+                    title={title}
+                    filter={filter}
+                    tag={tag}
+                    maxItems={maxItems}
+                    previewLength={previewLength}
+                    selectedId={selectedId}
+                    onSelectObject={(id) => kernel.select(id as ObjectId)}
+                  />
+                </div>
+              );
+            },
+          };
+          continue;
+        }
+
+        if (def.type === "goals-widget") {
+          components[kebabToPascal(def.type)] = {
+            fields: {
+              title: { type: "text" } as unknown as Fields[string],
+              filter: {
+                type: "select",
+                options: [
+                  { label: "All goals", value: "all" },
+                  { label: "Active only", value: "active" },
+                  { label: "Completed", value: "completed" },
+                ],
+              } as unknown as Fields[string],
+              maxItems: { type: "number" } as unknown as Fields[string],
+            },
+            defaultProps: { title: "Goals", filter: "active", maxItems: 6 },
+            render: (props) => {
+              const p = props as Record<string, unknown>;
+              const title = (p["title"] as string) ?? "Goals";
+              const filter = ((p["filter"] as string) ?? "active") as GoalFilter;
+              const maxItems = (p["maxItems"] as number) ?? 6;
+              const objects = kernel.store
+                .allObjects()
+                .filter((o) => o.type === "goal" && !o.deletedAt);
+              return (
+                <div data-testid="puck-goals-widget" style={{ margin: "4px 0" }}>
+                  <GoalsWidgetRenderer
+                    objects={objects}
+                    title={title}
+                    filter={filter}
+                    maxItems={maxItems}
+                    selectedId={selectedId}
+                    onSelectObject={(id) => kernel.select(id as ObjectId)}
+                  />
+                </div>
+              );
+            },
+          };
+          continue;
+        }
+
+        if (def.type === "habit-tracker-widget") {
+          components[kebabToPascal(def.type)] = {
+            fields: {
+              title: { type: "text" } as unknown as Fields[string],
+              maxItems: { type: "number" } as unknown as Fields[string],
+              showStreak: {
+                type: "radio",
+                options: [
+                  { label: "Show", value: true },
+                  { label: "Hide", value: false },
+                ],
+              } as unknown as Fields[string],
+            },
+            defaultProps: { title: "Habits", maxItems: 8, showStreak: true },
+            render: (props) => {
+              const p = props as Record<string, unknown>;
+              const title = (p["title"] as string) ?? "Habits";
+              const maxItems = (p["maxItems"] as number) ?? 8;
+              const showStreak = p["showStreak"] !== false;
+              const objects = kernel.store
+                .allObjects()
+                .filter((o) => o.type === "habit" && !o.deletedAt);
+              return (
+                <div data-testid="puck-habit-tracker-widget" style={{ margin: "4px 0" }}>
+                  <HabitTrackerWidgetRenderer
+                    objects={objects}
+                    title={title}
+                    maxItems={maxItems}
+                    showStreak={showStreak}
+                    selectedId={selectedId}
+                    onSelectObject={(id) => kernel.select(id as ObjectId)}
+                  />
+                </div>
+              );
+            },
+          };
+          continue;
+        }
+
+        if (def.type === "bookmarks-widget") {
+          components[kebabToPascal(def.type)] = {
+            fields: {
+              title: { type: "text" } as unknown as Fields[string],
+              folder: { type: "text" } as unknown as Fields[string],
+              maxItems: { type: "number" } as unknown as Fields[string],
+              display: {
+                type: "radio",
+                options: [
+                  { label: "Grid", value: "grid" },
+                  { label: "List", value: "list" },
+                ],
+              } as unknown as Fields[string],
+            },
+            defaultProps: { title: "Bookmarks", folder: "", maxItems: 12, display: "grid" },
+            render: (props) => {
+              const p = props as Record<string, unknown>;
+              const title = (p["title"] as string) ?? "Bookmarks";
+              const folder = (p["folder"] as string) ?? "";
+              const maxItems = (p["maxItems"] as number) ?? 12;
+              const display = ((p["display"] as string) ?? "grid") as "grid" | "list";
+              const objects = kernel.store
+                .allObjects()
+                .filter((o) => o.type === "bookmark" && !o.deletedAt);
+              return (
+                <div data-testid="puck-bookmarks-widget" style={{ margin: "4px 0" }}>
+                  <BookmarksWidgetRenderer
+                    objects={objects}
+                    title={title}
+                    folder={folder}
+                    maxItems={maxItems}
+                    display={display}
+                    selectedId={selectedId}
+                    onSelectObject={(id) => kernel.select(id as ObjectId)}
+                  />
+                </div>
+              );
+            },
+          };
+          continue;
+        }
+
+        if (def.type === "timer-widget") {
+          components[kebabToPascal(def.type)] = {
+            fields: {
+              title: { type: "text" } as unknown as Fields[string],
+              defaultMinutes: { type: "number" } as unknown as Fields[string],
+              maxRecent: { type: "number" } as unknown as Fields[string],
+            },
+            defaultProps: { title: "Focus timer", defaultMinutes: 25, maxRecent: 5 },
+            render: (props) => {
+              const p = props as Record<string, unknown>;
+              const title = (p["title"] as string) ?? "Focus timer";
+              const defaultMinutes = (p["defaultMinutes"] as number) ?? 25;
+              const maxRecent = (p["maxRecent"] as number) ?? 5;
+              const objects = kernel.store
+                .allObjects()
+                .filter((o) => o.type === "timer-session" && !o.deletedAt);
+              return (
+                <div data-testid="puck-timer-widget" style={{ margin: "4px 0" }}>
+                  <TimerWidgetRenderer
+                    objects={objects}
+                    title={title}
+                    defaultMinutes={defaultMinutes}
+                    maxRecent={maxRecent}
+                    selectedId={selectedId}
+                    onSelectObject={(id) => kernel.select(id as ObjectId)}
+                    onCreateSession={(durationMs) => {
+                      const minutes = Math.round(durationMs / 60_000);
+                      kernel.createObject({
+                        type: "timer-session",
+                        name: `${minutes}m focus`,
+                        parentId: null,
+                        position: 0,
+                        status: "done",
+                        tags: [],
+                        date: new Date().toISOString(),
+                        endDate: null,
+                        description: "",
+                        color: null,
+                        image: null,
+                        pinned: false,
+                        data: { durationMs, kind: "focus" },
+                      });
+                    }}
+                  />
+                </div>
+              );
+            },
+          };
+          continue;
+        }
+
+        if (def.type === "capture-inbox-widget") {
+          components[kebabToPascal(def.type)] = {
+            fields: {
+              title: { type: "text" } as unknown as Fields[string],
+              maxItems: { type: "number" } as unknown as Fields[string],
+              showProcessed: {
+                type: "radio",
+                options: [
+                  { label: "Show", value: true },
+                  { label: "Hide", value: false },
+                ],
+              } as unknown as Fields[string],
+            },
+            defaultProps: { title: "Inbox", maxItems: 10, showProcessed: false },
+            render: (props) => {
+              const p = props as Record<string, unknown>;
+              const title = (p["title"] as string) ?? "Inbox";
+              const maxItems = (p["maxItems"] as number) ?? 10;
+              const showProcessed = p["showProcessed"] === true;
+              const objects = kernel.store
+                .allObjects()
+                .filter((o) => o.type === "capture" && !o.deletedAt);
+              return (
+                <div data-testid="puck-capture-inbox-widget" style={{ margin: "4px 0" }}>
+                  <CaptureInboxWidgetRenderer
+                    objects={objects}
+                    title={title}
+                    maxItems={maxItems}
+                    showProcessed={showProcessed}
+                    selectedId={selectedId}
+                    onSelectObject={(id) => kernel.select(id as ObjectId)}
+                    onCaptureSubmit={(text) => {
+                      kernel.createObject({
+                        type: "capture",
+                        name: text.slice(0, 80),
+                        parentId: null,
+                        position: 0,
+                        status: "todo",
+                        tags: [],
+                        date: null,
+                        endDate: null,
+                        description: "",
+                        color: null,
+                        image: null,
+                        pinned: false,
+                        data: { body: text, source: "quick" },
+                      });
+                    }}
+                    onMarkProcessed={(id) => {
+                      const existing = kernel.store.getObject(id as ObjectId);
+                      if (!existing) return;
+                      const prev = (existing.data ?? {}) as Record<string, unknown>;
+                      kernel.updateObject(id as ObjectId, {
+                        status: "done",
+                        data: { ...prev, processedAt: new Date().toISOString() },
+                      });
+                    }}
+                  />
+                </div>
+              );
+            },
+          };
+          continue;
+        }
+
         if (def.type === "tab-container") {
           components[kebabToPascal(def.type)] = {
             fields: {
@@ -2171,6 +2746,8 @@ export function LayoutPanel() {
             switch (def.type) {
               case "page-shell":
                 return <PageShellRenderer {...(passthrough as object)} />;
+              case "app-shell":
+                return <AppShellRenderer {...(passthrough as object)} />;
               case "site-header":
                 return <SiteHeaderRenderer {...(passthrough as object)} />;
               case "site-footer":
@@ -2290,6 +2867,91 @@ export function LayoutPanel() {
           continue;
         }
 
+        // Real interactive button preview — the entity fields flow through
+        // entityToPuckComponent (so all the variant/size/icon/etc. fields are
+        // wired automatically) and we swap the render for an actual
+        // <button>/<a>. Bool fields are radios serialized as "true"/"false".
+        if (def.type === "button") {
+          const buttonCfg = entityToPuckComponent({
+            type: def.type,
+            label: def.label,
+            icon: typeof def.icon === "string" ? def.icon : "",
+            fields: def.fields ?? [],
+          });
+          buttonCfg.render = (props) => {
+            const p = props as Record<string, unknown>;
+            const toBool = (v: unknown): boolean => v === "true" || v === true;
+            return (
+              <ButtonRenderer
+                label={(p["label"] as string) || "Button"}
+                href={(p["href"] as string) || undefined}
+                variant={((p["variant"] as ButtonVariant) || "primary")}
+                size={((p["size"] as ButtonSize) || "md")}
+                icon={(p["icon"] as string) || undefined}
+                iconPosition={((p["iconPosition"] as ButtonIconPosition) || "left")}
+                fullWidth={toBool(p["fullWidth"])}
+                disabled={toBool(p["disabled"])}
+                loading={toBool(p["loading"])}
+                rounded={((p["rounded"] as ButtonRounded) || "md")}
+                shadow={((p["shadow"] as ButtonShadow) || "none")}
+                hoverEffect={((p["hoverEffect"] as ButtonHoverEffect) || "none")}
+                target={((p["target"] as ButtonTarget) || "_self")}
+                rel={(p["rel"] as string) || undefined}
+                buttonType={((p["buttonType"] as ButtonHtmlType) || "button")}
+                ariaLabel={(p["ariaLabel"] as string) || undefined}
+              />
+            );
+          };
+          components[kebabToPascal(def.type)] = buttonCfg;
+          continue;
+        }
+
+        // Real card preview with variant/layout/hover. Imagery swaps to the
+        // VFS-aware media upload field so authors can paste vault-hosted
+        // assets without running the URL through the plain text input.
+        if (def.type === "card") {
+          const cardCfg = entityToPuckComponent({
+            type: def.type,
+            label: def.label,
+            icon: typeof def.icon === "string" ? def.icon : "",
+            fields: def.fields ?? [],
+          });
+          if (cardCfg.fields) {
+            const nextFields = { ...(cardCfg.fields as Record<string, unknown>) };
+            nextFields["imageUrl"] = mediaUploadField(kernel, {
+              label: "Image",
+              accept: "image",
+            });
+            cardCfg.fields = nextFields as Fields;
+          }
+          cardCfg.render = (props) => {
+            const p = props as Record<string, unknown>;
+            const opacity =
+              typeof p["overlayOpacity"] === "number"
+                ? (p["overlayOpacity"] as number)
+                : undefined;
+            return (
+              <CardRenderer
+                title={(p["title"] as string) || undefined}
+                body={(p["body"] as string) || undefined}
+                imageUrl={(p["imageUrl"] as string) || undefined}
+                linkUrl={(p["linkUrl"] as string) || undefined}
+                variant={((p["variant"] as CardVariant) || "elevated")}
+                layout={((p["layout"] as CardLayout) || "vertical")}
+                hoverEffect={((p["hoverEffect"] as CardHoverEffect) || "lift")}
+                mediaFit={((p["mediaFit"] as CardMediaFit) || "cover")}
+                mediaAspectRatio={(p["mediaAspectRatio"] as string) || undefined}
+                eyebrow={(p["eyebrow"] as string) || undefined}
+                ctaLabel={(p["ctaLabel"] as string) || undefined}
+                ctaVariant={((p["ctaVariant"] as ButtonVariant) || "primary")}
+                overlayOpacity={opacity}
+              />
+            );
+          };
+          components[kebabToPascal(def.type)] = cardCfg;
+          continue;
+        }
+
         const iconStr = typeof def.icon === "string" ? def.icon : "";
         const generic = entityToPuckComponent({
           type: def.type,
@@ -2299,10 +2961,10 @@ export function LayoutPanel() {
         });
 
         // Swap plain URL fields for the VFS-aware media upload on entities
-        // whose generic mapping is otherwise fine. Keeps the card/hero
-        // property panels consistent with the dedicated image block.
+        // whose generic mapping is otherwise fine. Keeps the hero / future
+        // widgets with imagery consistent with the dedicated image block.
+        // (card is handled above in its dedicated branch.)
         const mediaFieldOverrides: Record<string, { field: string; accept: "image" | "video" | "audio"; label: string }[]> = {
-          card: [{ field: "imageUrl", accept: "image", label: "Image" }],
           hero: [{ field: "backgroundImage", accept: "image", label: "Background image" }],
         };
         const overrides = mediaFieldOverrides[def.type];
@@ -2336,15 +2998,26 @@ export function LayoutPanel() {
       };
     }
 
+    // DI seam (ADR-004): let the Puck component registry contribute or
+    // override components before style fields are injected. Anything the
+    // registry returns wins over the hand-wired / generic paths above, so
+    // providers can incrementally replace special-case blocks.
+    const puckRegistry = createStudioPuckRegistry();
+    const registryComponents = puckRegistry.buildComponents({
+      defs: allDefs,
+      kernel,
+    });
+    Object.assign(components, registryComponents);
+
     // Universal text-styling pass: merge STYLE_FIELD_DEFS-derived fields into
     // every component that doesn't already expose them, and wrap its render
     // in a styled div. This is what makes font/align/color/size work on
     // every text-bearing widget — not just heading/text-block.
     attachStyleFieldsInPlace(components);
 
-    // Root config: page-level fields (title/layout/sidebarWidth/…) + the
-    // header/sidebar/footer slot fields. Puck renders this as its document
-    // root — authors get native page layout without dropping a PageShell.
+    // Root config: page-level fields (title/layout/bar dimensions/…) + the
+    // four bar slot fields. Puck renders this as its document root — authors
+    // get a native 4-bar page layout without dropping a PageShell widget.
     const pageDefForRoot = kernel.registry.get("page");
     const rootFields: Record<string, unknown> = {};
     const rootDefaults: Record<string, unknown> = {};
@@ -2362,49 +3035,62 @@ export function LayoutPanel() {
       rootDefaults[slot] = [];
     }
 
-    // Puck canvas root: layout-aware, so a page with `layout: "sidebar-left"`
-    // wraps its flat content in the appropriate CSS-grid zones via
-    // `PageShellRenderer`, and each of the header/sidebar/footer slots lives
-    // directly on the page entity. `flow` mode (the default) keeps the old
-    // free-scrolling single-column behaviour and just positions the root as
-    // a container so absolute-positioned children still work.
+    // Puck canvas root: in `shell` mode the flat Puck content is wrapped in
+    // `PageShellRenderer`'s 3×3 grid with four independently-resizable bars
+    // (top / left / right / bottom). Bar dimensions live on `page.data` and
+    // are committed back through `kernel.updateObject` on pointerup via the
+    // `onCommit` callback. `flow` mode keeps the old free-scrolling single-
+    // column behaviour for pages that want no chrome.
     type SlotFn = (props?: Record<string, unknown>) => ReactNode;
+    const pageIdForRender = selectedId;
     const rootRender = (props: {
       children: ReactNode;
       puck?: unknown;
       [key: string]: unknown;
     }) => {
       const layout = (props["layout"] as string) ?? "flow";
-      const sidebarWidth = (props["sidebarWidth"] as number) ?? 240;
-      const stickyHeader =
-        props["stickyHeader"] !== false && props["stickyHeader"] !== "false";
-      const HeaderSlot = props["header"] as SlotFn | undefined;
-      const SidebarSlot = props["sidebar"] as SlotFn | undefined;
-      const FooterSlot = props["footer"] as SlotFn | undefined;
+      const topBarHeight = Number(props["topBarHeight"] ?? 0);
+      const leftBarWidth = Number(props["leftBarWidth"] ?? 0);
+      const rightBarWidth = Number(props["rightBarWidth"] ?? 0);
+      const bottomBarHeight = Number(props["bottomBarHeight"] ?? 0);
+      const stickyTopBar =
+        props["stickyTopBar"] !== false && props["stickyTopBar"] !== "false";
+      const TopBarSlot = props["topBar"] as SlotFn | undefined;
+      const LeftBarSlot = props["leftBar"] as SlotFn | undefined;
+      const RightBarSlot = props["rightBar"] as SlotFn | undefined;
+      const BottomBarSlot = props["bottomBar"] as SlotFn | undefined;
       const mainContent = (
         <div style={{ position: "relative", minHeight: "100%" }}>
           {props.children}
         </div>
       );
       if (layout === "flow") return mainContent;
-      const shellLayout: "sidebar-left" | "sidebar-right" | "stacked" =
-        layout === "sidebar-left"
-          ? "sidebar-left"
-          : layout === "sidebar-right"
-            ? "sidebar-right"
-            : "stacked";
-      const header = typeof HeaderSlot === "function" ? <HeaderSlot /> : null;
-      const sidebar = typeof SidebarSlot === "function" ? <SidebarSlot /> : null;
-      const footer = typeof FooterSlot === "function" ? <FooterSlot /> : null;
+      const topBar = typeof TopBarSlot === "function" ? <TopBarSlot /> : null;
+      const leftBar = typeof LeftBarSlot === "function" ? <LeftBarSlot /> : null;
+      const rightBar = typeof RightBarSlot === "function" ? <RightBarSlot /> : null;
+      const bottomBar = typeof BottomBarSlot === "function" ? <BottomBarSlot /> : null;
+      const handleCommit = (key: string, value: number) => {
+        if (!pageIdForRender) return;
+        const obj = kernel.store.getObject(pageIdForRender);
+        if (!obj) return;
+        const currentData = (obj.data ?? {}) as Record<string, unknown>;
+        kernel.updateObject(pageIdForRender, {
+          data: { ...currentData, [key]: value },
+        });
+      };
       return (
         <PageShellRenderer
-          layout={shellLayout}
-          sidebarWidth={sidebarWidth}
-          stickyHeader={stickyHeader}
-          header={header}
-          sidebar={sidebar}
+          topBarHeight={topBarHeight}
+          leftBarWidth={leftBarWidth}
+          rightBarWidth={rightBarWidth}
+          bottomBarHeight={bottomBarHeight}
+          stickyTopBar={stickyTopBar}
+          topBar={topBar}
+          leftBar={leftBar}
           main={mainContent}
-          footer={footer}
+          rightBar={rightBar}
+          bottomBar={bottomBar}
+          onCommit={handleCommit}
         />
       );
     };
@@ -2550,6 +3236,7 @@ export function LayoutPanel() {
       </div>
       <div style={{ flex: 1, minHeight: 0 }}>
         <Puck
+          key={page.id}
           config={puckConfig}
           data={puckData}
           onChange={handleChange}

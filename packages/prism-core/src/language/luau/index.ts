@@ -51,6 +51,7 @@ export {
   findUiCallsSync,
   findStatementLinesSync,
   validateLuauSync,
+  findNavigateCalls,
 } from "./luau-ast.js";
 
 // ── LanguageContribution + SyntaxProvider ────────────────────────────────────

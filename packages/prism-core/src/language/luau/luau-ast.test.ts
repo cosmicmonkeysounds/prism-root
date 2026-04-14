@@ -11,9 +11,11 @@ import {
   findStatementLinesSync,
   validateLuau,
   validateLuauSync,
+  findNavigateCalls,
   createLuauContribution,
   createLuauSyntaxProvider,
 } from "./index.js";
+import type { LuauUiCall } from "./luau-ast.js";
 
 beforeAll(async () => {
   await initLuauSyntax();
@@ -239,5 +241,51 @@ describe("createLuauSyntaxProvider", () => {
 
   it("hover returns null", () => {
     expect(provider.hover(`local x = 1`, 0)).toBeNull();
+  });
+});
+
+// ── findNavigateCalls (pure, no WASM) ────────────────────────────────────────
+
+describe("findNavigateCalls", () => {
+  function mkCall(kind: string, target?: string, children: LuauUiCall[] = []): LuauUiCall {
+    return {
+      kind,
+      args: target !== undefined
+        ? [{ value: target, valueKind: "string" }]
+        : [],
+      line: 1,
+      column: 0,
+      children,
+    };
+  }
+
+  it("returns an empty array when there are no navigate calls", () => {
+    expect(findNavigateCalls([mkCall("button", "Click me"), mkCall("label", "Hi")])).toEqual([]);
+  });
+
+  it("extracts the string target of a top-level ui.navigate call", () => {
+    expect(findNavigateCalls([mkCall("navigate", "/about")])).toEqual(["/about"]);
+  });
+
+  it("walks nested children and preserves order", () => {
+    const tree: LuauUiCall[] = [
+      mkCall("section", undefined, [
+        mkCall("navigate", "/a"),
+        mkCall("column", undefined, [mkCall("navigate", "/b")]),
+      ]),
+      mkCall("navigate", "/c"),
+    ];
+    expect(findNavigateCalls(tree)).toEqual(["/a", "/b", "/c"]);
+  });
+
+  it("ignores navigate calls whose argument is not a string literal", () => {
+    const call: LuauUiCall = {
+      kind: "navigate",
+      args: [{ value: "targetVar", valueKind: "identifier" }],
+      line: 1,
+      column: 0,
+      children: [],
+    };
+    expect(findNavigateCalls([call])).toEqual([]);
   });
 });

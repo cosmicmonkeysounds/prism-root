@@ -8,6 +8,7 @@ export default defineConfig({
     "deployment.spec.ts",
     "docker.spec.ts",
     "modular-auth.spec.ts",
+    "admin.spec.ts",
   ],
   timeout: 120_000,
   retries: 0,

@@ -149,6 +149,33 @@ export function validateLuauSync(source: string): Diagnostic[] {
   return normalizeDiagnostics(raw, source);
 }
 
+// ── Pure helpers over LuauUiCall[] ──────────────────────────────────────────
+
+/**
+ * Walk a parsed `LuauUiCall[]` tree and collect the target path argument of
+ * every `ui.navigate("path")` call. Used by the sitemap builder to infer
+ * route-to-route transition edges from behavior scripts without having to
+ * round-trip through the WASM parser again. Pure — safe to call from tests
+ * that never initialised the parser.
+ */
+export function findNavigateCalls(calls: ReadonlyArray<LuauUiCall>): string[] {
+  const out: string[] = [];
+  walkForNavigate(calls, out);
+  return out;
+}
+
+function walkForNavigate(calls: ReadonlyArray<LuauUiCall>, out: string[]): void {
+  for (const call of calls) {
+    if (call.kind === "navigate") {
+      const target = call.args.find((a) => a.valueKind === "string");
+      if (target) out.push(target.value);
+    }
+    if (call.children.length > 0) {
+      walkForNavigate(call.children, out);
+    }
+  }
+}
+
 // ── Normalizers ──────────────────────────────────────────────────────────────
 
 function normalizeRoot(raw: unknown): RootNode {

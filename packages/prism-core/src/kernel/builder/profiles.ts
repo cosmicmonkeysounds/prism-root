@@ -18,6 +18,38 @@ export const STUDIO_PROFILE: AppProfile = {
   theme: {
     displayName: "Prism Studio",
   },
+  starterApp: {
+    label: "Studio",
+    description: "Universal host — all lenses, minimal chrome.",
+    appShell: {
+      data: {
+        brand: "Prism Studio",
+        brandIcon: "\u25A6",
+        topBarHeight: 48,
+        leftBarWidth: 220,
+        rightBarWidth: 0,
+        bottomBarHeight: 0,
+        stickyTopBar: true,
+      },
+      children: [
+        { type: "heading", slot: "topBar", name: "Brand", data: { text: "Prism Studio", level: "h3", align: "left" } },
+        { type: "site-nav", slot: "leftBar", name: "Site nav", data: { orientation: "vertical", source: "pages" } },
+      ],
+    },
+    defaultPageShell: {
+      data: {
+        topBarHeight: 0,
+        leftBarWidth: 0,
+        rightBarWidth: 0,
+        bottomBarHeight: 0,
+        stickyTopBar: false,
+      },
+    },
+    routes: [
+      { path: "/", label: "Home", pageTemplate: "landing", isHome: true, showInNav: true },
+      { path: "/docs", label: "Docs", pageTemplate: "blog", showInNav: true },
+    ],
+  },
 };
 
 export const FLUX_PROFILE: AppProfile = {
@@ -42,6 +74,40 @@ export const FLUX_PROFILE: AppProfile = {
     brandIcon: "flux.svg",
   },
   kbarCommands: ["new-task", "new-invoice", "new-contact", "start-timer"],
+  starterApp: {
+    label: "Flux",
+    description: "Productivity — tasks, contacts, invoices in a record-browser chrome.",
+    appShell: {
+      data: {
+        brand: "Flux",
+        brandIcon: "\u26A1",
+        topBarHeight: 56,
+        leftBarWidth: 280,
+        rightBarWidth: 0,
+        bottomBarHeight: 0,
+        stickyTopBar: true,
+      },
+      children: [
+        { type: "heading", slot: "topBar", name: "Brand", data: { text: "Flux", level: "h2", align: "left" } },
+        { type: "site-nav", slot: "leftBar", name: "Record nav", data: { orientation: "vertical", source: "pages", showIcons: true } },
+      ],
+    },
+    defaultPageShell: {
+      data: {
+        topBarHeight: 0,
+        leftBarWidth: 0,
+        rightBarWidth: 320,
+        bottomBarHeight: 0,
+        stickyTopBar: false,
+      },
+    },
+    routes: [
+      { path: "/", label: "Inbox", pageTemplate: "blank", isHome: true, showInNav: true },
+      { path: "/tasks", label: "Tasks", pageTemplate: "blank", showInNav: true },
+      { path: "/contacts", label: "Contacts", pageTemplate: "blank", showInNav: true },
+      { path: "/invoices", label: "Invoices", pageTemplate: "blank", showInNav: true },
+    ],
+  },
 };
 
 export const LATTICE_PROFILE: AppProfile = {
@@ -65,6 +131,38 @@ export const LATTICE_PROFILE: AppProfile = {
     brandIcon: "lattice.svg",
   },
   kbarCommands: ["new-dialogue", "compile-bank", "open-entity"],
+  starterApp: {
+    label: "Lattice",
+    description: "Game middleware — graph-first editor with minimal chrome.",
+    appShell: {
+      data: {
+        brand: "Lattice",
+        brandIcon: "\u2B22",
+        topBarHeight: 40,
+        leftBarWidth: 0,
+        rightBarWidth: 300,
+        bottomBarHeight: 120,
+        stickyTopBar: true,
+      },
+      children: [
+        { type: "heading", slot: "topBar", name: "Brand", data: { text: "Lattice", level: "h3", align: "left" } },
+      ],
+    },
+    defaultPageShell: {
+      data: {
+        topBarHeight: 0,
+        leftBarWidth: 0,
+        rightBarWidth: 0,
+        bottomBarHeight: 0,
+        stickyTopBar: false,
+      },
+    },
+    routes: [
+      { path: "/", label: "Graph", pageTemplate: "blank", isHome: true, showInNav: true },
+      { path: "/assets", label: "Assets", pageTemplate: "blank", showInNav: true },
+      { path: "/scripts", label: "Scripts", pageTemplate: "blank", showInNav: true },
+    ],
+  },
 };
 
 export const CADENCE_PROFILE: AppProfile = {
@@ -87,6 +185,39 @@ export const CADENCE_PROFILE: AppProfile = {
     brandIcon: "cadence.svg",
   },
   kbarCommands: ["new-lesson", "transcribe-session", "open-course"],
+  starterApp: {
+    label: "Cadence",
+    description: "Music education — lesson canvas with hero landing.",
+    appShell: {
+      data: {
+        brand: "Cadence",
+        brandIcon: "\u266B",
+        topBarHeight: 72,
+        leftBarWidth: 0,
+        rightBarWidth: 0,
+        bottomBarHeight: 0,
+        stickyTopBar: true,
+      },
+      children: [
+        { type: "heading", slot: "topBar", name: "Brand", data: { text: "Cadence", level: "h1", align: "center" } },
+      ],
+    },
+    defaultPageShell: {
+      data: {
+        topBarHeight: 0,
+        leftBarWidth: 0,
+        rightBarWidth: 0,
+        bottomBarHeight: 0,
+        stickyTopBar: false,
+      },
+    },
+    routes: [
+      { path: "/", label: "Welcome", pageTemplate: "landing", isHome: true, showInNav: true },
+      { path: "/lessons", label: "Lessons", pageTemplate: "blank", showInNav: true },
+      { path: "/courses", label: "Courses", pageTemplate: "blank", showInNav: true },
+      { path: "/about", label: "About", pageTemplate: "blog", showInNav: true },
+    ],
+  },
 };
 
 export const GRIP_PROFILE: AppProfile = {
@@ -111,6 +242,38 @@ export const GRIP_PROFILE: AppProfile = {
     brandIcon: "grip.svg",
   },
   kbarCommands: ["new-cue", "open-stage-plot", "arm-transport"],
+  starterApp: {
+    label: "Grip",
+    description: "Live production — cue list driven spatial canvas.",
+    appShell: {
+      data: {
+        brand: "Grip",
+        brandIcon: "\u2726",
+        topBarHeight: 48,
+        leftBarWidth: 320,
+        rightBarWidth: 0,
+        bottomBarHeight: 160,
+        stickyTopBar: true,
+      },
+      children: [
+        { type: "heading", slot: "topBar", name: "Brand", data: { text: "Grip", level: "h2", align: "left" } },
+      ],
+    },
+    defaultPageShell: {
+      data: {
+        topBarHeight: 0,
+        leftBarWidth: 0,
+        rightBarWidth: 0,
+        bottomBarHeight: 0,
+        stickyTopBar: false,
+      },
+    },
+    routes: [
+      { path: "/", label: "Stage", pageTemplate: "blank", isHome: true, showInNav: true },
+      { path: "/cues", label: "Cues", pageTemplate: "blank", showInNav: true },
+      { path: "/assets", label: "Assets", pageTemplate: "blank", showInNav: true },
+    ],
+  },
 };
 
 export const RELAY_PROFILE: AppProfile = {

@@ -25,6 +25,7 @@ import {
   kebabToPascal,
   pascalToKebab,
 } from "./layout-panel-data.js";
+import { computeShellGrid } from "../components/layout-shell-renderers.js";
 import {
   facetIdFromName,
   uniqueFacetId,
@@ -44,21 +45,27 @@ function seedShellPage(kernel: StudioKernel): ObjectId {
     name: "Page Shell",
     parentId: page.id,
     position: 0,
-    data: { layout: "sidebar-left", sidebarWidth: 240, stickyHeader: true },
+    data: {
+      topBarHeight: 64,
+      leftBarWidth: 240,
+      rightBarWidth: 0,
+      bottomBarHeight: 0,
+      stickyTopBar: true,
+    },
   });
   kernel.createObject({
     type: "heading",
     name: "Brand",
     parentId: shell.id,
     position: 0,
-    data: { __slot: "header", text: "Acme", level: "h1", align: "left" },
+    data: { __slot: "topBar", text: "Acme", level: "h1", align: "left" },
   });
   kernel.createObject({
     type: "heading",
     name: "Menu",
     parentId: shell.id,
     position: 0,
-    data: { __slot: "sidebar", text: "Menu", level: "h3", align: "left" },
+    data: { __slot: "leftBar", text: "Menu", level: "h3", align: "left" },
   });
   kernel.createObject({
     type: "text-block",
@@ -83,28 +90,31 @@ describe("kernelToPuckData — shell slot projection", () => {
       expect(shell?.type).toBe("PageShell");
 
       const props = shell?.props as Record<string, unknown>;
-      // All four shell slots must exist as arrays — otherwise Puck's
+      // All five shell slots must exist as arrays — otherwise Puck's
       // `defaultSlots` fallback kicks in and the data layer never sees them.
-      expect(Array.isArray(props["header"])).toBe(true);
-      expect(Array.isArray(props["sidebar"])).toBe(true);
+      expect(Array.isArray(props["topBar"])).toBe(true);
+      expect(Array.isArray(props["leftBar"])).toBe(true);
       expect(Array.isArray(props["main"])).toBe(true);
-      expect(Array.isArray(props["footer"])).toBe(true);
+      expect(Array.isArray(props["rightBar"])).toBe(true);
+      expect(Array.isArray(props["bottomBar"])).toBe(true);
 
-      const header = props["header"] as Array<{ type: string; props: Record<string, unknown> }>;
-      expect(header).toHaveLength(1);
-      expect(header[0]?.type).toBe("Heading");
-      expect(header[0]?.props["text"]).toBe("Acme");
+      const topBar = props["topBar"] as Array<{ type: string; props: Record<string, unknown> }>;
+      expect(topBar).toHaveLength(1);
+      expect(topBar[0]?.type).toBe("Heading");
+      expect(topBar[0]?.props["text"]).toBe("Acme");
 
-      const sidebar = props["sidebar"] as Array<{ type: string; props: Record<string, unknown> }>;
-      expect(sidebar).toHaveLength(1);
-      expect(sidebar[0]?.type).toBe("Heading");
+      const leftBar = props["leftBar"] as Array<{ type: string; props: Record<string, unknown> }>;
+      expect(leftBar).toHaveLength(1);
+      expect(leftBar[0]?.type).toBe("Heading");
 
       const main = props["main"] as Array<{ type: string; props: Record<string, unknown> }>;
       expect(main).toHaveLength(1);
       expect(main[0]?.type).toBe("TextBlock");
 
-      const footer = props["footer"] as unknown[];
-      expect(footer).toEqual([]);
+      const rightBar = props["rightBar"] as unknown[];
+      expect(rightBar).toEqual([]);
+      const bottomBar = props["bottomBar"] as unknown[];
+      expect(bottomBar).toEqual([]);
     } finally {
       kernel.dispose();
     }
@@ -118,29 +128,35 @@ describe("kernelToPuckData — shell slot projection", () => {
       const data = kernelToPuckData(pageId, allObjects);
 
       // Minimal stand-in config for the assertion: declare PageShell with
-      // four slot fields and Heading / TextBlock as leaf components. This
+      // five slot fields and Heading / TextBlock as leaf components. This
       // isolates the data ↔ config contract from the full puckConfig.
       const slotField = { type: "slot" } as unknown as Fields[string];
       const config: Config = {
         components: {
           PageShell: {
             fields: {
-              layout: { type: "text" } as unknown as Fields[string],
-              sidebarWidth: { type: "number" } as unknown as Fields[string],
-              stickyHeader: { type: "text" } as unknown as Fields[string],
-              header: slotField,
-              sidebar: slotField,
+              topBarHeight: { type: "number" } as unknown as Fields[string],
+              leftBarWidth: { type: "number" } as unknown as Fields[string],
+              rightBarWidth: { type: "number" } as unknown as Fields[string],
+              bottomBarHeight: { type: "number" } as unknown as Fields[string],
+              stickyTopBar: { type: "text" } as unknown as Fields[string],
+              topBar: slotField,
+              leftBar: slotField,
               main: slotField,
-              footer: slotField,
+              rightBar: slotField,
+              bottomBar: slotField,
             },
             defaultProps: {
-              layout: "sidebar-left",
-              sidebarWidth: 240,
-              stickyHeader: "true",
-              header: [],
-              sidebar: [],
+              topBarHeight: 0,
+              leftBarWidth: 0,
+              rightBarWidth: 0,
+              bottomBarHeight: 0,
+              stickyTopBar: "true",
+              topBar: [],
+              leftBar: [],
               main: [],
-              footer: [],
+              rightBar: [],
+              bottomBar: [],
             },
             render: () => null,
           },
@@ -192,21 +208,109 @@ describe("kernelToPuckData — shell slot projection", () => {
   });
 });
 
+describe("kernelToPuckData — app-shell slot projection", () => {
+  it("projects an app-shell's slot children into Puck props the same way page-shell does", () => {
+    const kernel = createStudioKernel();
+    try {
+      // Parent an app-shell under a page (app entities aren't valid as the
+      // page tree root, but SHELL_SLOTS + kernelToPuckData treat app-shell
+      // identically to page-shell — that's the contract we're pinning).
+      const page = kernel.createObject({
+        type: "page",
+        name: "App Host",
+        parentId: null,
+        position: 0,
+        data: { title: "App Host", slug: "/app", published: false },
+      });
+      const appShell = kernel.createObject({
+        type: "app-shell",
+        name: "App Shell",
+        parentId: page.id,
+        position: 0,
+        data: {
+          brand: "Acme",
+          topBarHeight: 56,
+          leftBarWidth: 220,
+          rightBarWidth: 0,
+          bottomBarHeight: 0,
+          stickyTopBar: true,
+        },
+      });
+      kernel.createObject({
+        type: "heading",
+        name: "Brand",
+        parentId: appShell.id,
+        position: 0,
+        data: { __slot: "topBar", text: "Acme", level: "h1" },
+      });
+      kernel.createObject({
+        type: "text-block",
+        name: "Menu",
+        parentId: appShell.id,
+        position: 0,
+        data: { __slot: "leftBar", content: "- Home\n- About" },
+      });
+      kernel.createObject({
+        type: "text-block",
+        name: "Body",
+        parentId: appShell.id,
+        position: 0,
+        data: { __slot: "main", content: "App content" },
+      });
+
+      const all = kernel.store.allObjects().filter((o) => !o.deletedAt);
+      const data = kernelToPuckData(page.id, all);
+
+      expect(data.content).toHaveLength(1);
+      const shell = data.content[0];
+      expect(shell?.type).toBe("AppShell");
+
+      const props = shell?.props as Record<string, unknown>;
+      expect(props["brand"]).toBe("Acme");
+      // All five bar slots projected as arrays.
+      expect(Array.isArray(props["topBar"])).toBe(true);
+      expect(Array.isArray(props["leftBar"])).toBe(true);
+      expect(Array.isArray(props["main"])).toBe(true);
+      expect(Array.isArray(props["rightBar"])).toBe(true);
+      expect(Array.isArray(props["bottomBar"])).toBe(true);
+
+      const topBar = props["topBar"] as Array<{ type: string; props: Record<string, unknown> }>;
+      expect(topBar).toHaveLength(1);
+      expect(topBar[0]?.type).toBe("Heading");
+
+      const leftBar = props["leftBar"] as Array<{ type: string }>;
+      expect(leftBar).toHaveLength(1);
+      expect(leftBar[0]?.type).toBe("TextBlock");
+
+      const main = props["main"] as Array<{ type: string }>;
+      expect(main).toHaveLength(1);
+      expect(main[0]?.type).toBe("TextBlock");
+
+      expect(SHELL_SLOTS["app-shell"]).toEqual(SHELL_SLOTS["page-shell"]);
+    } finally {
+      kernel.dispose();
+    }
+  });
+});
+
 describe("kernelToPuckData — page-level slot projection", () => {
   it("exposes page.data layout props and slot children on root.props", () => {
     const kernel = createStudioKernel();
     try {
       const page = kernel.createObject({
         type: "page",
-        name: "Sidebar page",
+        name: "Shell page",
         parentId: null,
         position: 0,
         data: {
-          title: "Sidebar page",
+          title: "Shell page",
           slug: "/demo",
-          layout: "sidebar-left",
-          sidebarWidth: 260,
-          stickyHeader: true,
+          layout: "shell",
+          topBarHeight: 64,
+          leftBarWidth: 260,
+          rightBarWidth: 200,
+          bottomBarHeight: 32,
+          stickyTopBar: true,
         },
       });
       kernel.createObject({
@@ -214,21 +318,28 @@ describe("kernelToPuckData — page-level slot projection", () => {
         name: "Brand",
         parentId: page.id,
         position: 0,
-        data: { __slot: "header", text: "Acme", level: "h1" },
+        data: { __slot: "topBar", text: "Acme", level: "h1" },
       });
       kernel.createObject({
         type: "text-block",
         name: "Nav",
         parentId: page.id,
         position: 0,
-        data: { __slot: "sidebar", content: "- Home\n- About" },
+        data: { __slot: "leftBar", content: "- Home\n- About" },
+      });
+      kernel.createObject({
+        type: "text-block",
+        name: "Tools",
+        parentId: page.id,
+        position: 0,
+        data: { __slot: "rightBar", content: "Inspector" },
       });
       kernel.createObject({
         type: "text-block",
         name: "Copyright",
         parentId: page.id,
         position: 0,
-        data: { __slot: "footer", content: "© 2026" },
+        data: { __slot: "bottomBar", content: "© 2026" },
       });
       kernel.createObject({
         type: "heading",
@@ -246,19 +357,25 @@ describe("kernelToPuckData — page-level slot projection", () => {
       expect(data.content[0]?.type).toBe("Heading");
 
       const root = data.root?.props as Record<string, unknown>;
-      expect(root["layout"]).toBe("sidebar-left");
-      expect(root["sidebarWidth"]).toBe(260);
-      expect(root["stickyHeader"]).toBe(true);
+      expect(root["layout"]).toBe("shell");
+      expect(root["topBarHeight"]).toBe(64);
+      expect(root["leftBarWidth"]).toBe(260);
+      expect(root["rightBarWidth"]).toBe(200);
+      expect(root["bottomBarHeight"]).toBe(32);
+      expect(root["stickyTopBar"]).toBe(true);
 
-      const header = root["header"] as Array<{ type: string }>;
-      const sidebar = root["sidebar"] as Array<{ type: string }>;
-      const footer = root["footer"] as Array<{ type: string }>;
-      expect(header).toHaveLength(1);
-      expect(header[0]?.type).toBe("Heading");
-      expect(sidebar).toHaveLength(1);
-      expect(sidebar[0]?.type).toBe("TextBlock");
-      expect(footer).toHaveLength(1);
-      expect(footer[0]?.type).toBe("TextBlock");
+      const topBar = root["topBar"] as Array<{ type: string }>;
+      const leftBar = root["leftBar"] as Array<{ type: string }>;
+      const rightBar = root["rightBar"] as Array<{ type: string }>;
+      const bottomBar = root["bottomBar"] as Array<{ type: string }>;
+      expect(topBar).toHaveLength(1);
+      expect(topBar[0]?.type).toBe("Heading");
+      expect(leftBar).toHaveLength(1);
+      expect(leftBar[0]?.type).toBe("TextBlock");
+      expect(rightBar).toHaveLength(1);
+      expect(rightBar[0]?.type).toBe("TextBlock");
+      expect(bottomBar).toHaveLength(1);
+      expect(bottomBar[0]?.type).toBe("TextBlock");
     } finally {
       kernel.dispose();
     }
@@ -269,16 +386,18 @@ describe("splitRootProps", () => {
   it("partitions scalar props from per-slot arrays", () => {
     const { pageData, slots } = splitRootProps({
       title: "Hi",
-      layout: "sidebar-left",
-      sidebarWidth: 240,
-      header: [{ type: "Heading", props: { id: "h1", text: "Brand" } }],
-      sidebar: [],
-      footer: [{ type: "TextBlock", props: { id: "t1", content: "©" } }],
+      layout: "shell",
+      leftBarWidth: 240,
+      topBar: [{ type: "Heading", props: { id: "h1", text: "Brand" } }],
+      leftBar: [],
+      rightBar: [],
+      bottomBar: [{ type: "TextBlock", props: { id: "t1", content: "©" } }],
     });
-    expect(pageData).toEqual({ title: "Hi", layout: "sidebar-left", sidebarWidth: 240 });
-    expect(slots["header"]).toHaveLength(1);
-    expect(slots["sidebar"]).toEqual([]);
-    expect(slots["footer"]).toHaveLength(1);
+    expect(pageData).toEqual({ title: "Hi", layout: "shell", leftBarWidth: 240 });
+    expect(slots["topBar"]).toHaveLength(1);
+    expect(slots["leftBar"]).toEqual([]);
+    expect(slots["rightBar"]).toEqual([]);
+    expect(slots["bottomBar"]).toHaveLength(1);
   });
 
   it("defaults every PAGE_SLOTS key to an empty array when missing", () => {
@@ -289,8 +408,8 @@ describe("splitRootProps", () => {
   });
 
   it("coerces non-array slot values to empty arrays", () => {
-    const { slots } = splitRootProps({ header: "not-an-array" as unknown });
-    expect(slots["header"]).toEqual([]);
+    const { slots } = splitRootProps({ topBar: "not-an-array" as unknown });
+    expect(slots["topBar"]).toEqual([]);
   });
 
   it("handles undefined root props", () => {
@@ -390,6 +509,72 @@ describe("buildPuckCategories", () => {
     } finally {
       kernel.dispose();
     }
+  });
+});
+
+describe("computeShellGrid", () => {
+  const base = {
+    topBarHeight: 64,
+    leftBarWidth: 240,
+    rightBarWidth: 200,
+    bottomBarHeight: 32,
+  };
+
+  it("emits a 3x3 grid with every bar populated", () => {
+    const grid = computeShellGrid({
+      ...base,
+      hasTop: true,
+      hasLeft: true,
+      hasRight: true,
+      hasBottom: true,
+    });
+    expect(grid.gridTemplateColumns).toBe("240px 1fr 200px");
+    expect(grid.gridTemplateRows).toBe("64px 1fr 32px");
+    expect(grid.gridTemplateAreas).toBe(
+      '"top top top" "left main right" "bottom bottom bottom"',
+    );
+  });
+
+  it("collapses absent bars to 0px while keeping main", () => {
+    const grid = computeShellGrid({
+      ...base,
+      hasTop: false,
+      hasLeft: true,
+      hasRight: false,
+      hasBottom: true,
+    });
+    expect(grid.gridTemplateColumns).toBe("240px 1fr 0px");
+    expect(grid.gridTemplateRows).toBe("0px 1fr 32px");
+  });
+
+  it("clamps negative dimensions to 0 and huge ones to the max", () => {
+    const grid = computeShellGrid({
+      topBarHeight: -50,
+      leftBarWidth: 99999,
+      rightBarWidth: 0,
+      bottomBarHeight: 0,
+      hasTop: true,
+      hasLeft: true,
+      hasRight: true,
+      hasBottom: true,
+    });
+    expect(grid.gridTemplateRows).toBe("0px 1fr 0px");
+    expect(grid.gridTemplateColumns).toBe("1200px 1fr 0px");
+  });
+
+  it("rounds fractional values", () => {
+    const grid = computeShellGrid({
+      topBarHeight: 64.7,
+      leftBarWidth: 240.49,
+      rightBarWidth: 0,
+      bottomBarHeight: 0,
+      hasTop: true,
+      hasLeft: true,
+      hasRight: false,
+      hasBottom: false,
+    });
+    expect(grid.gridTemplateRows).toBe("65px 1fr 0px");
+    expect(grid.gridTemplateColumns).toBe("240px 1fr 0px");
   });
 });
 
