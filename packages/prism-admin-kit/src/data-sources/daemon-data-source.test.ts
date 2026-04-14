@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { createDaemonDataSource } from "./daemon-data-source.js";
-import type { AdminSnapshot } from "../types.js";
 
 function createFakeFetch(
   responses: Record<string, { status: number; body: unknown }>,

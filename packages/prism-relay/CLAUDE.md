@@ -6,7 +6,7 @@ Runtime server for Prism Relay — wraps `@prism/core/relay` primitives in HTTP 
 - `pnpm dev` — start with tsx watch (dev mode)
 - `pnpm typecheck`
 - `npx vitest run` — unit tests (37+ test files)
-- `pnpm test:e2e` — Playwright E2E tests (5 spec files: relay, production-readiness, deployment, docker, modular-auth)
+- `pnpm test:e2e` — Playwright E2E tests (6 spec files: relay, production-readiness, deployment, docker, modular-auth, admin)
 - `pnpm test:docker` — Docker E2E tests (builds image, runs containers, tests API/WS/federation)
 
 ## CLI
@@ -200,6 +200,15 @@ WebSocket at `/ws/relay`:
   - `relay_uptime_seconds` — process uptime.
 - Cardinality is bounded: route labels come from Hono's `c.req.routePath` (e.g. `/portals/:id`, not the raw URL), and the registry caps distinct label sets at 5,000 by default.
 - The registry is exposed on the `RelayServer` return value as `.metrics` for tests and custom gauges.
+
+## Admin Dashboard
+- `GET /admin` — self-contained HTML admin dashboard (auto-refreshes every 5s)
+- `GET /admin/api/snapshot` — JSON `AdminSnapshot` for live polling
+- Uses `@prism/admin-kit/html` `renderAdminHtml()` for the HTML page
+- Mounted outside `/api/*` — no CSRF header required, read-only
+- Shows: health status, uptime, module count, online peers, federation peers, collections, portals, memory (RSS + heap), installed modules as services
+- SSR seed data embedded in the HTML for instant first paint
+- Configurable poll interval via `AdminRoutesOptions.pollMs`
 
 ## HTTP API (Core)
 - `GET /api/status` — relay state

@@ -199,10 +199,10 @@ describe("behavior CRUD against the studio kernel", () => {
 
       // Edit the source via mergeBehaviorEdit.
       const existing = kernel.store.getObject(behavior.id);
-      expect(existing).toBeDefined();
+      if (!existing) throw new Error("behavior missing after create");
       kernel.updateObject(
         behavior.id,
-        mergeBehaviorEdit(existing!, { source: "ui.navigate('/about')" }),
+        mergeBehaviorEdit(existing, { source: "ui.navigate('/about')" }),
       );
       rows = listBehaviorsFor(
         btn.id as unknown as string,
@@ -212,7 +212,8 @@ describe("behavior CRUD against the studio kernel", () => {
 
       // Flip enabled off.
       const existing2 = kernel.store.getObject(behavior.id);
-      kernel.updateObject(behavior.id, mergeBehaviorEdit(existing2!, { enabled: false }));
+      if (!existing2) throw new Error("behavior missing before toggle");
+      kernel.updateObject(behavior.id, mergeBehaviorEdit(existing2, { enabled: false }));
       rows = listBehaviorsFor(
         btn.id as unknown as string,
         kernel.store.allObjects(),

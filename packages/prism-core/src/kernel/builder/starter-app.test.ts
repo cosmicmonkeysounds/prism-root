@@ -89,11 +89,12 @@ describe("materializeStarterApp", () => {
     expect(appShells[0]?.parentId).toBe(result.appId);
     expect(result.appShellId).toBe(appShells[0]?.id);
 
+    const starterRoutes = STUDIO_PROFILE.starterApp?.routes ?? [];
     const routes = records.filter((r) => r.type === "route");
-    expect(routes.length).toBe(STUDIO_PROFILE.starterApp!.routes.length);
+    expect(routes.length).toBe(starterRoutes.length);
 
     const pages = records.filter((r) => r.type === "page");
-    expect(pages.length).toBe(STUDIO_PROFILE.starterApp!.routes.length);
+    expect(pages.length).toBe(starterRoutes.length);
 
     const pageShells = records.filter((r) => r.type === "page-shell");
     expect(pageShells.length).toBe(pages.length);

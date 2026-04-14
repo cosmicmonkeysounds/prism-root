@@ -102,6 +102,7 @@ The Studio kernel wires all `@prism/core` subsystems together. All support modul
 - `site-nav-panel.tsx` — Multi-page navigation editor. Every `page` object in the vault with set-home / hide / reorder controls. Exports pure `buildSiteNav()` for the `site-nav` widget + breadcrumbs. Lens (Shift+N)
 - `entity-builder-panel.tsx` — UI for authoring new `EntityDef`s at runtime (type name, category, icon, color, fields). Registers into `kernel.registry`, types immediately appear in the component palette. Lens (Shift+E)
 - `relationship-builder-panel.tsx` — UI for authoring `EdgeTypeDef`s (relation id, label, behavior, color, source/target type restrictions). Uses conditional assignment for `exactOptionalPropertyTypes`. Lens (Shift+R)
+- `admin-panel.tsx` — Admin dashboard using `@prism/admin-kit`: Puck editor with admin widgets (HealthBadge, MetricCard, MetricChart, ServiceList, ActivityTail, UptimeCard, SourceHeader). Source picker switches between kernel and relay data sources. Uses `<AdminProvider>` + `useAdminSnapshot()` for live data. Lens (Shift+A)
 
 ## Lenses
 Every panel self-registers via a `LensBundle` colocated with its component. A panel file (e.g. `panels/editor-panel.tsx`) exports both its React component and a `xxxLensBundle = defineLensBundle(manifest, Component)` created with `defineLensBundle` from `src/lenses/bundle.ts` (Studio's `ComponentType`-specialized re-export of `@prism/core/lens`'s generic `defineLensBundle`). `src/lenses/index.tsx` is a pure aggregator: it imports each bundle and exposes `createBuiltinLensBundles()`. The kernel installs them via `installLensBundles` inside `createStudioKernel`, so manifests + components land in `kernel.lensRegistry` + `kernel.lensComponents` atomically — no parallel registries, no manifest list to sync.
@@ -110,7 +111,7 @@ Adding a new lens:
 1. Create `panels/my-panel.tsx` exporting `MyPanel` and `myLensBundle`.
 2. Add `myLensBundle` to the list in `lenses/index.tsx`.
 
-Core keybindings: Editor (e), Graph (g), Layout (l), Canvas (v), CRDT (c), Relay (r), Settings (,), Automation (a), Analysis (n), Plugins (p), Shortcuts (k), Vaults (w), Identity (i), Assets (f), Trust (t), Form (d), Table (b), Sequencer (q), Report (o), Luau Facet (u), Facet Designer (x), Spatial Canvas (Shift+X), Visual Script (Shift+S), Saved Views (Shift+V), Value Lists (Shift+L), Privilege Sets (Shift+P), App Builder (Shift+B), Import (Shift+Y), Publish (Shift+U), Design Tokens (Shift+T), Form Builder (Shift+G), Site Navigation (Shift+N), Entity Builder (Shift+E), Relationships (Shift+R)
+Core keybindings: Editor (e), Graph (g), Layout (l), Canvas (v), CRDT (c), Relay (r), Settings (,), Automation (a), Analysis (n), Plugins (p), Shortcuts (k), Vaults (w), Identity (i), Assets (f), Trust (t), Form (d), Table (b), Sequencer (q), Report (o), Luau Facet (u), Facet Designer (x), Spatial Canvas (Shift+X), Visual Script (Shift+S), Saved Views (Shift+V), Value Lists (Shift+L), Privilege Sets (Shift+P), Admin (Shift+A), App Builder (Shift+B), Import (Shift+Y), Publish (Shift+U), Design Tokens (Shift+T), Form Builder (Shift+G), Site Navigation (Shift+N), Entity Builder (Shift+E), Relationships (Shift+R)
 
 ## Data Flow
 ```

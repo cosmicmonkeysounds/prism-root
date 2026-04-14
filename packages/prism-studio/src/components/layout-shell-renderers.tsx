@@ -334,7 +334,8 @@ export interface AppShellProps extends PageShellProps {
 }
 
 export function AppShellRenderer(props: AppShellProps): ReactNode {
-  const { brand, brandIcon, showsActiveRoute: _showsActiveRoute, ...shellProps } = props;
+  const { brand, brandIcon, showsActiveRoute, ...shellProps } = props;
+  void showsActiveRoute;
   const topBarContent =
     hasContent(shellProps.topBar) || brand || brandIcon ? (
       <div className="flex h-full w-full items-center gap-3 px-4">

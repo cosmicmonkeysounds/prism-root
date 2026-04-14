@@ -169,13 +169,17 @@ export function buildSitemapGraph(input: BuildSitemapInput): SitemapGraph {
     }
     // Walk up to the nearest app / app-shell; accept anything that ends up
     // under the owning app when appId is pinned, or any app when it isn't.
-    let cursor: GraphObject | undefined = o;
-    while (cursor) {
-      if (cursor.type === "app") {
-        return resolvedAppId ? (cursor.id as unknown as string) === resolvedAppId : true;
+    let current: GraphObject | undefined = o;
+    while (current !== undefined) {
+      const node: GraphObject = current;
+      if (node.type === "app") {
+        return resolvedAppId
+          ? (node.id as unknown as string) === resolvedAppId
+          : true;
       }
-      if (!cursor.parentId) return false;
-      cursor = live.find((p) => p.id === cursor!.parentId);
+      if (!node.parentId) return false;
+      const parentId = node.parentId;
+      current = live.find((p) => p.id === parentId);
     }
     return false;
   });

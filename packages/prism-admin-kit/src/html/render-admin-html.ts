@@ -16,7 +16,6 @@ import {
   formatMetricValue,
   formatRelativeTime,
   HEALTH_COLORS,
-  rollupHealth,
 } from "../admin-helpers.js";
 
 export interface RenderAdminHtmlOptions {

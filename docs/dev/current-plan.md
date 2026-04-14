@@ -1,5 +1,27 @@
 # Current Plan
 
+## Admin Panels for Daemon / Relay / Studio (Complete — 2026-04-13)
+
+All three Prism runtimes now ship live admin dashboards powered by `@prism/admin-kit`.
+
+### What landed
+
+1. **`@prism/admin-kit/html`** — `renderAdminHtml(options)` generates a self-contained HTML page with inline CSS/JS that polls a JSON endpoint and renders the admin dashboard. Used by Relay and Daemon. Exports individual widget renderers (`renderHealthBadge`, `renderMetricCard`, `renderUptimeCard`, `renderServiceList`, `renderActivityTail`).
+2. **`createDaemonDataSource({ url })`** — new data source in admin-kit that talks to the daemon's HTTP transport. Tries `POST /invoke/daemon.admin` first, falls back to `/healthz` + `/capabilities`.
+3. **Relay admin routes** (`/admin`, `/admin/api/snapshot`) — mounted in `relay-server.ts`, outside `/api/*` (no CSRF). SSR seed data for instant first paint. Shows health, uptime, modules, peers, federation, collections, portals, memory.
+4. **Daemon admin module** (`admin_module.rs`) — `daemon.admin` command returning `AdminSnapshot` JSON. No feature gate. Installed last in `with_defaults()` to capture all modules. Builder exposes `.with_admin()`.
+5. **Daemon HTTP admin routes** (`/admin`, `/admin/api/snapshot`) — added to the axum HTTP transport (`transport-http` feature). HTML served via `include_str!` templates.
+6. **Studio admin panel** — already existed (Shift+A lens), documented in Studio CLAUDE.md.
+7. **Unit tests** — 26 HTML renderer tests, 4 daemon data source tests, 5 relay admin route tests, 3 Rust admin module tests, 2 Rust HTTP admin tests = 40 new tests, all passing.
+8. **E2E tests** — `packages/prism-relay/e2e/admin.spec.ts` (4 tests: HTML page, JSON snapshot, browser render, auto-refresh), `packages/prism-studio/e2e/admin.spec.ts` (4 tests: activity bar switch, header/source picker, Puck widgets, tab bar).
+
+### Test status
+
+- Admin-kit: 89 Vitest tests across 9 files
+- Relay admin routes: 5 Vitest tests
+- Daemon: 5 Rust tests (3 admin module + 2 HTTP transport)
+- Clippy clean under `--features transport-http`
+
 ## Puck component registry + RecordList primitive (In progress — 2026-04-13)
 
 ADR-004 introduces a DI seam for Puck builder components so new widgets can flow through a registered `PuckComponentProvider` instead of a hand-wired `if (def.type === …)` block in `layout-panel.tsx`'s 3000-line config `useMemo`. The first consumer is `RecordList` — a parametric list over kernel records driven by `ViewConfig` (filter/sort/limit) plus a lightweight row template — which is intended to eventually subsume the ten dynamic record widgets plus `list-widget` / `table-widget` / `card-grid-widget` / `report-widget`.

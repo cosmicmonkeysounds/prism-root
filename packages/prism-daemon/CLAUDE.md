@@ -79,6 +79,11 @@ paradigm, ported to Rust:
     transport pre-encoded media (Opus/VP8) — the host encodes/decodes, the
     daemon transports. Rooms group peers for multi-party calls: full-mesh
     P2P for small groups, Relay SFU for larger ones. Desktop-only.
+  - `admin_module.rs` → (no feature gate, always available) →
+    `daemon.admin` — returns a normalised admin snapshot matching
+    `@prism/admin-kit`'s `AdminSnapshot` shape (health, uptime,
+    metrics, services, activity). Installed last in `with_defaults()`
+    so it captures every module installed before it.
 - `src/bin/prism_daemond.rs` — standalone stdio JSON daemon binary. Proves
   the kernel runs detached from Tauri. Gated on the `cli` feature.
 - `src/wasm.rs` — C-ABI adapter for the browser. Gated on the `wasm`
@@ -125,8 +130,11 @@ are thin wrappers:
   `prism_daemon.wasm` + a `prism_daemon.js` loader; JS calls
   `Module.ccall('prism_daemon_invoke', ...)`.
 - **HTTP (axum)**: `src/transport/http_axum.rs` — `POST /invoke/:command`,
-  `GET /capabilities`, `GET /healthz`. Feature `transport-http`. Sync
+  `GET /capabilities`, `GET /healthz`, `GET /admin` (HTML dashboard),
+  `GET /admin/api/snapshot` (JSON). Feature `transport-http`. Sync
   kernel.invoke is run on the blocking pool via `spawn_blocking`.
+  Admin HTML is served via `include_str!` from split template files
+  (`admin_template_head.html` + `admin_template_tail.html`).
 - **gRPC (tonic)**: `src/transport/grpc_tonic.rs` — hand-rolled tonic 0.12
   server (no `tonic-build`, no `protoc`). Single unary RPC
   `prism.daemon.DaemonService/Invoke` carrying JSON-as-bytes. Feature

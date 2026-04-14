@@ -20,7 +20,7 @@ import type {
 } from "@prism/core/relay";
 import { RELAY_CAPABILITIES } from "@prism/core/relay";
 import { renderAdminHtml } from "@prism/admin-kit/html";
-import type { AdminSnapshot, HealthLevel, Metric, Service, ActivityItem } from "@prism/admin-kit";
+import type { AdminSnapshot, HealthLevel, Metric, Service } from "@prism/admin-kit/types.js";
 
 export interface AdminRoutesOptions {
   relay: RelayInstance;
