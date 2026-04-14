@@ -11,7 +11,6 @@ Project documentation that doesn't belong in a specific package.
 
 ## Where to Find Things
 
-- **Full specification** → [`SPEC.md`](../SPEC.md) (root)
+- **Active migration plan** → [`dev/clay-migration-plan.md`](dev/clay-migration-plan.md)
+- **Root project guide** → [`CLAUDE.md`](../CLAUDE.md)
 - **Per-package context** → each package's `CLAUDE.md`
-- **Legacy audit** → [`HELM_AUDIT.md`](../HELM_AUDIT.md) (root)
-- **Phase checklists** → [`CHECKLIST.md`](../CHECKLIST.md) (root)

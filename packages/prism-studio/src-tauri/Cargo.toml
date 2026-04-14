@@ -2,15 +2,41 @@
 name = "prism-studio"
 version = "0.1.0"
 edition = "2021"
+description = "Prism Studio — the packaged desktop shell. Tauri 2 app shell (packaging, signing, auto-update, sidecars) with wry DISABLED per Clay migration §4.5. Windowing via tao, rendering via wgpu, UI tree via prism-shell, kernel via prism-daemon as a sidecar over interprocess."
+
+[[bin]]
+name = "prism-studio"
+path = "src/main.rs"
 
 [dependencies]
-tauri = { version = "2", features = [] }
-tauri-build = { version = "2", features = [] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# Tauri 2 — packaging, updater, signing, sidecars. `default-features =
+# false` drops the webview (`wry`) and everything that pulls it in.
+# Studio owns its own window and renderer via `prism-shell`, so the
+# only Tauri pieces we want are the non-webview shell surface.
+tauri = { workspace = true, features = [] }
+tauri-build = { workspace = true }
 
-# The daemon library provides CRDT and Luau capabilities
-prism-daemon = { path = "../../prism-daemon" }
+# Shared types and the UI tree we render.
+prism-shell = { path = "../../prism-shell", default-features = false, features = ["native"] }
+prism-core = { path = "../../prism-core" }
+
+# Daemon is a sidecar process managed by Tauri — Studio does not
+# link it as a library any more. The `prism-daemon` crate is kept
+# on the path so a dev build can spawn the in-tree binary without a
+# packaging step.
+prism-daemon = { path = "../../prism-daemon", default-features = false, features = ["full"] }
+
+# Local IPC transport for the sidecar channel (unix sockets / named
+# pipes behind one trait). Length-prefixed `postcard` frames ride on
+# top, matching the §4.5 decision.
+interprocess = "2"
+postcard = { workspace = true }
+
+# Shared.
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { workspace = true }

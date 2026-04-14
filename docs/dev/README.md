@@ -6,5 +6,4 @@ Living development documents. Unlike ADRs, these are mutable and track current s
 
 | File | Purpose |
 |------|---------|
-| [`current-plan.md`](current-plan.md) | Phase-by-phase implementation log with test summaries. The primary development journal. |
-| [`studio-checklist.md`](studio-checklist.md) | Studio app builder feature checklist (Tiers 0-9). Tracks progress toward SquareSpace/FileMaker Pro parity. |
+| [`clay-migration-plan.md`](clay-migration-plan.md) | The migration off React/TS/Puck onto Clay + Rust. The active plan. |

@@ -3,41 +3,27 @@
   "private": true,
   "type": "module",
   "packageManager": "pnpm@9.15.4",
+  "description": "Prism Framework monorepo. Mid-Clay-migration: the Rust half (packages/prism-daemon, prism-core, prism-builder, prism-shell, prism-studio/src-tauri) is driven by the top-level Cargo.toml workspace. The JS half is now limited to prism-relay (Next.js, out of scope for the migration) and this root, which keeps pnpm + turbo around as the umbrella runner.",
   "scripts": {
-    "dev": "turbo dev",
-    "build": "turbo build",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:e2e": "pnpm -r --filter '@prism/relay' --filter '@prism/studio' run test:e2e",
-    "lint": "eslint .",
-    "typecheck": "turbo typecheck",
-    "format": "prettier --write .",
-    "format:check": "prettier --check .",
-    "prepare": "husky"
+    "dev": "cargo run -p prism-shell",
+    "dev:web": "trunk serve --config packages/prism-shell/Trunk.toml",
+    "dev:studio": "cargo tauri dev",
+    "dev:relay": "pnpm --filter @prism/relay dev",
+    "build": "cargo build --workspace --release && pnpm --filter @prism/relay build",
+    "build:web": "trunk build --release --config packages/prism-shell/Trunk.toml",
+    "test": "cargo test --workspace",
+    "test:e2e": "pnpm --filter @prism/relay run test:e2e",
+    "lint": "cargo clippy --workspace --all-targets -- -D warnings",
+    "format": "cargo fmt --all"
   },
   "devDependencies": {
-    "@eslint/js": "^9.17.0",
-    "@playwright/test": "^1.49.0",
-    "@types/node": "^22.10.0",
-    "@vitest/coverage-v8": "^2.1.0",
-    "eslint": "^9.17.0",
     "husky": "^9.1.0",
-    "jsdom": "^29.0.1",
     "lint-staged": "^15.2.0",
     "prettier": "^3.4.0",
-    "turbo": "^2.3.0",
-    "typescript": "^5.7.0",
-    "typescript-eslint": "^8.18.0",
-    "vite-tsconfig-paths": "^6.1.1",
-    "vitest": "^2.1.0"
+    "turbo": "^2.3.0"
   },
   "lint-staged": {
-    "*.{ts,tsx}": [
-      "eslint --fix",
-      "prettier --write"
-    ],
-    "*.{json,md,yaml,yml}": [
-      "prettier --write"
-    ]
+    "*.rs": ["cargo fmt --"],
+    "*.{json,md,yaml,yml}": ["prettier --write"]
   }
 }

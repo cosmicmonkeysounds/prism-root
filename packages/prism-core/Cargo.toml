@@ -1,0 +1,27 @@
+[package]
+name = "prism-core"
+version = "0.1.0"
+edition = "2021"
+description = "Prism Framework core — shared types, state machines, design tokens, and the CRDT-backed object model. Target of the Phase 2 full port from the legacy TypeScript @prism/core package."
+
+[lib]
+name = "prism_core"
+path = "src/lib.rs"
+
+[features]
+default = []
+# Pulled in by host crates that actually run the CRDT layer. Off for
+# pure-logic consumers (design tokens, shell mode, puck-JSON parsing)
+# so they don't drag loro into their dependency tree.
+crdt = ["dep:loro"]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+indexmap = { workspace = true }
+slotmap = { workspace = true }
+loro = { workspace = true, optional = true }
+
+[dev-dependencies]
+insta = { workspace = true }

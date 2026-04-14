@@ -1,0 +1,74 @@
+[package]
+name = "prism-shell"
+version = "0.1.0"
+edition = "2021"
+description = "Prism Shell — the single-source UI tree for Studio. Clay-layout-based, rendered via wgpu on native and via wasm-bindgen on web. Owns every panel and the page builder surface."
+
+[lib]
+name = "prism_shell"
+path = "src/lib.rs"
+# `rlib` for native hosts (the Tauri shell binary pulls it in) plus
+# `cdylib` for the wasm-bindgen build so `wasm-pack` / `trunk` can
+# produce a `.wasm` consumable from a `<canvas>`-based web shell.
+crate-type = ["rlib", "cdylib"]
+
+# Native dev binary — hot-reload loop runs `cargo run -p prism-shell`
+# against a winit/wgpu window without any Tauri packaging involved.
+# The packaged desktop app is `prism-studio` in `packages/prism-studio/
+# src-tauri`; it embeds this crate as a library.
+[[bin]]
+name = "prism-shell"
+path = "src/bin/native.rs"
+required-features = ["native"]
+
+[features]
+default = ["native"]
+native = ["dep:wgpu", "dep:winit", "dep:tao", "dep:pollster", "dep:prism-daemon"]
+web = ["dep:wasm-bindgen", "dep:web-sys", "dep:js-sys", "dep:console_error_panic_hook"]
+# Off until Phase 0 spike #1 picks a Clay binding. See the root
+# Cargo.toml comment — the community `clay-ui-rs/clay` repo does
+# not have a stable branch to pin against yet.
+clay = []
+
+[dependencies]
+# Shared Prism foundations.
+prism-core = { path = "../prism-core" }
+prism-builder = { path = "../prism-builder" }
+# Daemon is a native-only dep — the browser build talks to a remote
+# relay, not a local daemon. Feature-gated so the WASM target stays
+# small.
+prism-daemon = { path = "../prism-daemon", optional = true, default-features = false, features = ["crdt", "luau", "vfs", "crypto"] }
+
+# Core UI — cosmic-text shaping (Clay layout binding lands via the
+# `clay` feature in Phase 0 spike #1).
+cosmic-text = { workspace = true }
+
+# Native rendering stack (feature = "native").
+wgpu = { workspace = true, optional = true }
+tao = { workspace = true, optional = true }
+winit = { workspace = true, optional = true }
+pollster = { version = "0.4", optional = true }
+
+# WASM glue (feature = "web").
+wasm-bindgen = { workspace = true, optional = true }
+web-sys = { workspace = true, optional = true, features = [
+    "Window",
+    "Document",
+    "Element",
+    "HtmlCanvasElement",
+    "CanvasRenderingContext2d",
+    "CssStyleDeclaration",
+    "MouseEvent",
+    "KeyboardEvent",
+    "WheelEvent",
+] }
+js-sys = { workspace = true, optional = true }
+console_error_panic_hook = { workspace = true, optional = true }
+
+# Shared.
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }

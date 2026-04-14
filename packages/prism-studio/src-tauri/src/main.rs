@@ -1,46 +1,41 @@
-//! Prism Studio — Tauri 2.0 shell.
+//! Prism Studio — Tauri 2 desktop shell (no-webview configuration).
 //!
-//! The Tauri shell is one of several possible hosts of the Prism Daemon
-//! kernel. It constructs the kernel via the same `DaemonBuilder` API a
-//! headless/mobile host would use, then bridges Tauri's `#[command]`
-//! attribute macros onto the kernel's transport-agnostic `invoke` surface.
+//! Per the Clay migration plan §4.5, Studio uses Tauri 2 for packaging,
+//! signing, auto-update, and sidecar lifecycle management — but does
+//! *not* load `wry` / the webview. Windowing goes through `tao`
+//! directly; rendering is handled by `prism-shell` (wgpu → Clay).
+//!
+//! This file is a Phase-0 scaffold: it builds the Tauri shell, spawns
+//! the daemon sidecar, and surfaces the `prism-shell` render loop.
+//! The actual Clay wiring lands behind feature flags once the
+//! `clay-layout` binding is validated in the spike.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod commands;
+mod sidecar;
 
-use prism_daemon::{DaemonBuilder, DaemonKernel};
-use std::sync::Arc;
+use prism_shell::{render_app, AppState};
 
 fn main() {
-    // Compose the kernel with every capability Studio needs on desktop.
-    // Mobile hosts would swap `.with_build()` + `.with_watcher()` out for
-    // their own modules — the wiring is one-line-per-capability either way.
-    let kernel: Arc<DaemonKernel> = Arc::new(
-        DaemonBuilder::new()
-            .with_crdt()
-            .with_luau()
-            .with_build()
-            .with_watcher()
-            .build()
-            .expect("failed to build Prism Daemon kernel"),
-    );
-
     tauri::Builder::default()
-        .manage(kernel)
-        .invoke_handler(tauri::generate_handler![
-            commands::crdt_write,
-            commands::crdt_read,
-            commands::crdt_export,
-            commands::luau_exec,
-            commands::run_build_step,
-            commands::daemon_capabilities,
-            // Universal kernel entry point — the one command the
-            // cross-runtime `ipc-bridge` in Studio calls for every
-            // capability. See `commands::daemon_invoke` for why the
-            // legacy shapes above still exist alongside it.
-            commands::daemon_invoke,
-        ])
+        .setup(|_app| {
+            // Kick off the daemon sidecar. Tauri's sidecar API spawns
+            // a packaged binary alongside the app bundle; during dev
+            // we fall back to the in-tree `cargo run -p prism-daemon`
+            // path via `sidecar::spawn_dev`.
+            sidecar::spawn_dev();
+
+            // Drive one render just to prove the plumbing. The real
+            // event loop attaches tao events to `prism_shell::input`
+            // in Phase 0 spike #5.
+            let state = AppState::default();
+            let count = render_app(&state);
+            eprintln!(
+                "prism-studio shell: initial frame stub emitted {count} draw commands"
+            );
+
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running Prism Studio");
 }

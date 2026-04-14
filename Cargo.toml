@@ -1,0 +1,70 @@
+[workspace]
+resolver = "2"
+members = [
+    "packages/prism-daemon",
+    "packages/prism-core",
+    "packages/prism-builder",
+    "packages/prism-shell",
+    "packages/prism-studio/src-tauri",
+]
+
+# Keep `[workspace.package]` light: crates opt in to the common license /
+# edition via `package.edition.workspace = true` etc. if they want the
+# inheritance. Keeping everything explicit for now so each crate's
+# Cargo.toml stays grep-able during the Clay migration.
+
+[workspace.dependencies]
+# Single versioned source of truth for deps every crate uses. Bumping
+# here propagates to every member via `workspace = true`.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+anyhow = "1"
+postcard = { version = "1", features = ["alloc"] }
+loro = "1.4"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util"] }
+
+# Clay binding — aspirational. The community `clay-ui-rs/clay` repo
+# is referenced by the migration plan but has not settled on a
+# crates.io release or a stable git branch yet. Phase 0 spike #1
+# resolves which binding we actually use; until then prism-shell
+# builds behind a `clay` feature gate that nothing pulls in.
+# clay-layout = { git = "https://github.com/clay-ui-rs/clay", branch = "<pending>" }
+
+# Rendering stack — wgpu for every native target per §4.5 Option B.
+wgpu = "22"
+tao = "0.30"
+tauri = { version = "2", default-features = false }
+tauri-build = "2"
+winit = "0.30"
+
+# Text + graphics primitives used by the renderer.
+cosmic-text = "0.12"
+lyon = "1"
+tiny-skia = "0.11"
+
+# State + data structures.
+slotmap = "1"
+indexmap = { version = "2", features = ["serde"] }
+imbl = "3"
+
+# WASM glue (only pulled in by prism-shell's wasm target).
+wasm-bindgen = "0.2"
+web-sys = "0.3"
+js-sys = "0.3"
+console_error_panic_hook = "0.1"
+
+# Dev-only.
+insta = "1"
+proptest = "1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
+[profile.release-wasm]
+inherits = "release"
+opt-level = "s"
+lto = "fat"

@@ -3,16 +3,12 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**"]
+      "outputs": ["dist/**", ".next/**", "target/release/**"]
     },
     "dev": {
       "cache": false,
       "persistent": true
     },
-    "typecheck": {
-      "dependsOn": ["^build"]
-    },
-    "lint": {},
     "test": {
       "dependsOn": ["^build"]
     }

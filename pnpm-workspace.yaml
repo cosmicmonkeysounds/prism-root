@@ -1,2 +1,8 @@
+# Only the Next.js Relay is JS now. The rest of the monorepo moved
+# to the Cargo workspace at the repo root as part of the Clay
+# migration (see docs/dev/clay-migration-plan.md). prism-studio has
+# a package.json stub so pnpm does not prune the directory, but no
+# install hits that subtree.
 packages:
-  - "packages/*"
+  - "packages/prism-relay"
+  - "packages/prism-studio"

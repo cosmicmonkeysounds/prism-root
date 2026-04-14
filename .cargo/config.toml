@@ -1,0 +1,5 @@
+[alias]
+# Quality-of-life shortcuts for the Rust half of the monorepo.
+shell-web = "run -p prism-shell --target wasm32-unknown-unknown"
+shell-dev = "run -p prism-shell"
+xtest = "test --workspace --exclude prism-studio"
