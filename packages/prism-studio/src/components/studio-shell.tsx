@@ -1,176 +1,60 @@
 /**
- * Studio Shell — custom shell layout that extends the core ShellLayout
- * with real sidebar (object explorer) and inspector panel content.
+ * Studio Shell — Puck-rendered chrome.
  *
- * Replaces the core ShellLayout which renders placeholder text
- * for sidebar/inspector.
+ * The legacy hand-coded shell that imported ActivityBar/ObjectExplorer/
+ * InspectorPanel/... directly has been replaced with a thin wrapper that
+ * projects `kernel.shellTree` through Puck's `<Render>`. Every widget in
+ * the tree resolves against `kernel.puckComponents`, which is seeded by
+ * `createStudioKernel` with:
+ *
+ *   - `Shell` / `LensOutlet` (built-in, from `@prism/core/puck`)
+ *   - every `ShellWidgetBundle.puck` (ActivityBar, TabBar, …) auto-
+ *     registered at boot by `registerShellWidgetBundlesInPuck`
+ *   - every embeddable `LensBundle.puck` — so a lens author can drop
+ *     their own panel straight into the shell with zero shell-side work
+ *
+ * This file is therefore ~20 lines of wiring: the entire shape of the
+ * shell lives in `kernel.shellTree`, which a user (or an App Profile) can
+ * freely rearrange.
  */
 
-import { useLensContext, useShellStore } from "@prism/core/shell";
-import { ActivityBar, TabBar } from "@prism/core/shell";
-import { ObjectExplorer } from "./object-explorer.js";
-import { ComponentPalette } from "./component-palette.js";
-import { InspectorPanel } from "./inspector-panel.js";
-import { UndoStatusBar } from "./undo-status-bar.js";
-import { PresenceIndicator } from "./presence-indicator.js";
+import { useSyncExternalStore, useMemo } from "react";
+import { Render, type Config } from "@measured/puck";
+import {
+  SHELL_PUCK_CONFIG,
+  puckConfigToComponentConfig,
+} from "@prism/core/puck";
+import { useKernel } from "../kernel/index.js";
 
 export function StudioShell() {
-  const { store, components } = useLensContext();
-  const { tabs, activeTabId, panelLayout } = useShellStore();
+  const kernel = useKernel();
 
-  const activeTab = tabs.find((t) => t.id === activeTabId);
-  const ActiveComponent = activeTab
-    ? components.get(activeTab.lensId)
-    : undefined;
+  const shellTree = useSyncExternalStore(
+    (cb) => kernel.onShellTreeChange(cb),
+    () => kernel.shellTree,
+    () => kernel.shellTree,
+  );
+
+  const config = useMemo<Config>(() => {
+    const components = kernel.puckComponents.buildComponents({
+      defs: [],
+      kernel,
+    });
+    // `DEFAULT_STUDIO_SHELL_TREE` stores slot arrays on `root.props`, and
+    // Puck renders the tree root using `config.root`. We bind the built-in
+    // `ShellRenderer` directly as the root here rather than looking up
+    // `components["Shell"]` because the Puck component map is also used
+    // by the layout panel, where the user-facing `app-shell` / `page-shell`
+    // entity defs (page-level content components) reuse similar names.
+    // Using `config.root` keeps the shell's own layout isolated from the
+    // layout-builder palette.
+    const root = puckConfigToComponentConfig(SHELL_PUCK_CONFIG, "Shell");
+    return { components, root } as unknown as Config;
+  }, [kernel]);
 
   return (
-    <div
-      data-testid="lens-shell"
-      style={{
-        display: "flex",
-        height: "100vh",
-        fontFamily: "system-ui",
-        background: "#1e1e1e",
-        color: "#ccc",
-      }}
-    >
-      <ActivityBar />
-
-      {panelLayout.sidebar && (
-        <div
-          data-testid="sidebar"
-          style={{
-            width: `${panelLayout.sidebarWidth}%`,
-            minWidth: 180,
-            maxWidth: 400,
-            background: "#252526",
-            borderRight: "1px solid #333",
-            display: "flex",
-            flexDirection: "column",
-          }}
-        >
-          <div
-            style={{
-              padding: "8px 12px",
-              fontSize: 11,
-              fontWeight: 600,
-              textTransform: "uppercase",
-              color: "#888",
-              borderBottom: "1px solid #333",
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-            }}
-          >
-            <span>Explorer</span>
-            <button
-              data-testid="toggle-sidebar"
-              title="Toggle sidebar"
-              onClick={() => store.getState().toggleSidebar()}
-              style={{
-                background: "none",
-                border: "none",
-                color: "#888",
-                cursor: "pointer",
-                fontSize: 14,
-              }}
-            >
-              {"\u2190"}
-            </button>
-          </div>
-          <ObjectExplorer />
-          <div
-            style={{
-              borderTop: "1px solid #333",
-              maxHeight: "35%",
-              overflow: "auto",
-            }}
-          >
-            <ComponentPalette />
-          </div>
-        </div>
-      )}
-
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
-        <header
-          style={{
-            display: "flex",
-            alignItems: "center",
-            background: "#2d2d2d",
-            borderBottom: "1px solid #333",
-          }}
-        >
-          <TabBar />
-          <div
-            style={{
-              marginLeft: "auto",
-              display: "flex",
-              gap: 4,
-              padding: "0 8px",
-              alignItems: "center",
-            }}
-          >
-            <PresenceIndicator />
-            <UndoStatusBar />
-            {!panelLayout.sidebar && (
-              <button
-                data-testid="toggle-sidebar"
-                title="Toggle sidebar"
-                onClick={() => store.getState().toggleSidebar()}
-                style={{
-                  background: "none",
-                  border: "none",
-                  color: "#888",
-                  cursor: "pointer",
-                  fontSize: 12,
-                }}
-              >
-                {"\u2261"}
-              </button>
-            )}
-            <span style={{ fontSize: 11, color: "#666", lineHeight: "32px" }}>
-              CMD+K
-            </span>
-          </div>
-        </header>
-
-        <div style={{ flex: 1, overflow: "hidden", background: "#1e1e1e" }}>
-          {ActiveComponent && activeTab ? (
-            <ActiveComponent key={activeTab.id} />
-          ) : (
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                height: "100%",
-                color: "#555",
-                fontSize: 14,
-              }}
-            >
-              No tab open. Click a lens in the activity bar.
-            </div>
-          )}
-        </div>
-      </div>
-
-      {panelLayout.inspector && (
-        <div
-          data-testid="inspector"
-          style={{
-            width: `${panelLayout.inspectorWidth}%`,
-            minWidth: 200,
-            maxWidth: 400,
-            background: "#252526",
-            borderLeft: "1px solid #333",
-            display: "flex",
-            flexDirection: "column",
-            overflow: "hidden",
-          }}
-        >
-          <InspectorPanel />
-        </div>
-      )}
+    <div data-testid="studio-shell" style={{ height: "100vh", width: "100%" }}>
+      <Render config={config} data={shellTree} />
     </div>
   );
 }

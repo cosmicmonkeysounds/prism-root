@@ -22,21 +22,30 @@ import {
   ReactFlowProvider,
   Background,
   Controls,
+  MiniMap,
+  Panel as FlowPanel,
   addEdge,
   applyNodeChanges,
   applyEdgeChanges,
+  useOnViewportChange,
+  useReactFlow,
   type Node,
   type Edge,
   type Connection,
   type NodeChange,
   type EdgeChange,
+  type Viewport,
 } from "@xyflow/react";
 import type { EntityDef, EdgeTypeDef } from "@prism/core/object-model";
+import type { LensPuckConfig } from "@prism/core/puck";
 import { lensId } from "@prism/core/lens";
 import type { LensManifest } from "@prism/core/lens";
+import { applyElkLayout } from "@prism/core/graph";
 import { defineLensBundle, type LensBundle } from "../lenses/bundle.js";
-import { useKernel } from "../kernel/index.js";
+import { useKernel, useRegistration } from "../kernel/index.js";
 import "@xyflow/react/dist/style.css";
+
+const VIEWPORT_KEY = "lens:schema-designer";
 
 // ── Style tokens ────────────────────────────────────────────────────────────
 
@@ -195,6 +204,133 @@ function SchemaEntityNode({ data }: { data: { label: string; sub: string } }) {
 
 const nodeTypes = { schemaEntity: SchemaEntityNode };
 
+// ── Viewport bridge (internal) ──────────────────────────────────────────────
+
+function ViewportBridge({
+  onChange,
+}: {
+  onChange: (v: Viewport) => void;
+}) {
+  useOnViewportChange({ onChange });
+  return null;
+}
+
+// ── In-canvas view toolbar ──────────────────────────────────────────────────
+
+function ViewToolbar({
+  positions,
+  setPositions,
+  entityDefs,
+  edgeDefs,
+}: {
+  positions: Map<string, { x: number; y: number }>;
+  setPositions: (
+    updater: (
+      prev: Map<string, { x: number; y: number }>,
+    ) => Map<string, { x: number; y: number }>,
+  ) => void;
+  entityDefs: EntityDef<string>[];
+  edgeDefs: EdgeTypeDef[];
+}) {
+  const flow = useReactFlow();
+
+  const runAutoLayout = useCallback(async () => {
+    const nodes = entityDefs.map((def) => {
+      const pos = positions.get(def.type) ?? { x: 0, y: 0 };
+      return {
+        id: def.type,
+        position: pos,
+        data: {},
+        width: 180,
+        height: 100,
+      };
+    });
+    const edges: { id: string; source: string; target: string }[] = [];
+    for (const def of edgeDefs) {
+      const srcs = def.sourceTypes ?? [];
+      const tgts = def.targetTypes ?? [];
+      for (const src of srcs) {
+        for (const tgt of tgts) {
+          edges.push({
+            id: `${def.relation}:${src}->${tgt}`,
+            source: src,
+            target: tgt,
+          });
+        }
+      }
+    }
+    const laidOut = await applyElkLayout(nodes, edges, { direction: "RIGHT" });
+    setPositions(() => {
+      const next = new Map<string, { x: number; y: number }>();
+      for (const n of laidOut) {
+        next.set(n.id, { x: n.position.x, y: n.position.y });
+      }
+      return next;
+    });
+    window.setTimeout(() => flow.fitView({ duration: 250, padding: 0.1 }), 50);
+  }, [flow, entityDefs, edgeDefs, positions, setPositions]);
+
+  const btn: React.CSSProperties = {
+    background: "#2a2a2a",
+    border: "1px solid #444",
+    borderRadius: 3,
+    padding: "3px 8px",
+    color: "#ccc",
+    cursor: "pointer",
+    fontSize: 11,
+  };
+
+  return (
+    <div
+      data-testid="schema-view-toolbar"
+      style={{
+        display: "flex",
+        gap: 4,
+        padding: 6,
+        background: "rgba(20,20,20,0.85)",
+        border: "1px solid #333",
+        borderRadius: 4,
+        alignItems: "center",
+      }}
+    >
+      <button
+        type="button"
+        style={btn}
+        data-testid="schema-toolbar-fit"
+        title="Fit to view"
+        onClick={() => flow.fitView({ duration: 250, padding: 0.1 })}
+      >
+        Fit
+      </button>
+      <button
+        type="button"
+        style={btn}
+        title="Zoom in"
+        onClick={() => flow.zoomIn({ duration: 200 })}
+      >
+        +
+      </button>
+      <button
+        type="button"
+        style={btn}
+        title="Zoom out"
+        onClick={() => flow.zoomOut({ duration: 200 })}
+      >
+        −
+      </button>
+      <button
+        type="button"
+        style={btn}
+        data-testid="schema-toolbar-relayout"
+        title="Auto-layout with elkjs"
+        onClick={() => void runAutoLayout()}
+      >
+        Re-layout
+      </button>
+    </div>
+  );
+}
+
 // ── Panel ───────────────────────────────────────────────────────────────────
 
 function SchemaDesignerInner() {
@@ -262,6 +398,16 @@ function SchemaDesignerInner() {
     setEdges((eds) => applyEdgeChanges(changes, eds));
   }, []);
 
+  // Shared registration helper for dragged edges. The xyflow-side state
+  // update (`setEdges`) runs in a per-call closure below.
+  const registerConnectionEdge = useRegistration<EdgeTypeDef>({
+    noun: "relationship",
+    name: (def) => def.relation,
+    exists: (def) => !!kernel.registry.getEdgeType(def.relation),
+    register: (def) => kernel.registry.registerEdge(def),
+    onSuccess: () => bumpRegistry(),
+  });
+
   const onConnect = useCallback(
     (conn: Connection) => {
       if (!conn.source || !conn.target) return;
@@ -270,38 +416,40 @@ function SchemaDesignerInner() {
         `${conn.source}_to_${conn.target}`,
       );
       if (!relation) return;
-      if (kernel.registry.getEdgeType(relation)) {
-        kernel.notifications.add({
-          title: `Relation "${relation}" already exists`,
-          kind: "warning",
-        });
-        return;
-      }
       const def: EdgeTypeDef = {
         relation,
         label: relation,
         sourceTypes: [conn.source],
         targetTypes: [conn.target],
       };
-      kernel.registry.registerEdge(def);
-      bumpRegistry();
-      setEdges((eds) => addEdge({ ...conn, id: `${relation}:${conn.source}->${conn.target}`, label: relation }, eds));
-      kernel.notifications.add({ title: `Relation "${relation}" added`, kind: "success" });
+      if (registerConnectionEdge(def)) {
+        setEdges((eds) =>
+          addEdge(
+            {
+              ...conn,
+              id: `${relation}:${conn.source}->${conn.target}`,
+              label: relation,
+            },
+            eds,
+          ),
+        );
+      }
     },
-    [kernel, bumpRegistry],
+    [registerConnectionEdge],
   );
+
+  const registerEntityDef = useRegistration<EntityDef<string, LensPuckConfig>>({
+    noun: "entity type",
+    name: (def) => def.type,
+    exists: (def) => !!kernel.registry.get(def.type),
+    register: (def) => kernel.registry.register(def),
+    onSuccess: () => bumpRegistry(),
+  });
 
   const addEntity = useCallback(() => {
     const type = window.prompt("New entity type name (kebab-case):", "");
     if (!type) return;
-    if (kernel.registry.get(type)) {
-      kernel.notifications.add({
-        title: `Type "${type}" already exists`,
-        kind: "warning",
-      });
-      return;
-    }
-    const def: EntityDef<string> = {
+    const def: EntityDef<string, LensPuckConfig> = {
       type,
       category: "custom",
       label: type,
@@ -310,10 +458,8 @@ function SchemaDesignerInner() {
       color: "#a78bfa",
       fields: [],
     };
-    kernel.registry.register(def);
-    bumpRegistry();
-    kernel.notifications.add({ title: `Entity "${type}" added`, kind: "success" });
-  }, [kernel, bumpRegistry]);
+    registerEntityDef(def);
+  }, [registerEntityDef]);
 
   const deleteSelected = useCallback(() => {
     if (selectedNodeId) {
@@ -358,6 +504,19 @@ function SchemaDesignerInner() {
   const selectedEntity = useMemo(
     () => (selectedNodeId ? entityDefs.find((d) => d.type === selectedNodeId) : null),
     [entityDefs, selectedNodeId],
+  );
+
+  // ── Viewport persistence via kernel.viewportCache ───────────────────────
+  const cache = kernel.viewportCache;
+  const initialViewport = useMemo(
+    () => cache.getState().get(VIEWPORT_KEY),
+    [cache],
+  );
+  const handleViewportChange = useCallback(
+    (v: Viewport) => {
+      cache.getState().set(VIEWPORT_KEY, v);
+    },
+    [cache],
   );
 
   return (
@@ -408,11 +567,31 @@ function SchemaDesignerInner() {
             setSelectedNodeId(null);
             setSelectedEdgeId(null);
           }}
-          fitView
+          {...(initialViewport !== undefined
+            ? { defaultViewport: initialViewport }
+            : { fitView: true })}
           attributionPosition="bottom-left"
+          proOptions={{ hideAttribution: true }}
         >
           <Background color="#333" gap={20} />
           <Controls showInteractive={false} />
+          <MiniMap
+            pannable
+            zoomable
+            nodeStrokeColor="#888"
+            nodeColor="#2a2a2a"
+            maskColor="rgba(0,0,0,0.6)"
+            style={{ background: "#1a1a1a", border: "1px solid #333" }}
+          />
+          <FlowPanel position="top-right">
+            <ViewToolbar
+              positions={positions}
+              setPositions={setPositions}
+              entityDefs={entityDefs}
+              edgeDefs={edgeDefs}
+            />
+          </FlowPanel>
+          <ViewportBridge onChange={handleViewportChange} />
         </ReactFlow>
       </div>
 

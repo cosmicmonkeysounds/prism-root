@@ -304,8 +304,16 @@ export interface EdgeTypeDef {
 /**
  * Describes one entity type to the registry — the blueprint for objects of this type.
  *
- * TIcon is generic so consumers inject their own icon type
- * (LucideIcon, SVGComponent, string, etc.) — the core has no icon dependency.
+ * Two generic slots:
+ *   - `TIcon` — icon type consumers inject (LucideIcon/SVGComponent/string/…).
+ *   - `TPuck` — opaque Puck-authorability config carried through core
+ *               without importing React or `@measured/puck`. Studio
+ *               specialises this to `LensPuckConfig` (see
+ *               `bindings/puck/lens-puck-adapter.ts`) so any entity can
+ *               declare itself as a Puck component alongside its schema,
+ *               and the single `lens-puck-adapter` path registers every
+ *               Puck-renderable thing the same way — entities, lenses,
+ *               and shell widgets all flow through one pipeline.
  *
  * Containment is controlled by:
  *   1. `category` + registry CategoryRules  (coarse-grained, declarative)
@@ -315,7 +323,7 @@ export interface EdgeTypeDef {
  * fields can be contributed by Lens slot registrations without modifying the
  * base EntityDef (see ObjectRegistry.registerSlot).
  */
-export interface EntityDef<TIcon = unknown> {
+export interface EntityDef<TIcon = unknown, TPuck = unknown> {
   /** Unique type identifier — stored in GraphObject.type */
   type: string;
 
@@ -370,6 +378,16 @@ export interface EntityDef<TIcon = unknown> {
    * Types without `api` are not exposed via REST.
    */
   api?: ObjectTypeApiConfig;
+
+  /**
+   * Optional Puck authorability. When present, the `lens-puck-adapter`
+   * auto-registers this entity as a Puck component at kernel-boot time,
+   * so the same `EntityDef` is both the schema *and* the Puck render
+   * contract — no parallel registration pipeline, no hand-written
+   * `components: { ... }` map. Opaque here to keep core React/Puck-free;
+   * Studio specialises `TPuck` to the real Puck field shape.
+   */
+  puck?: TPuck;
 }
 
 // ── API Config ────────────────────────────────────────────────────────────────

@@ -11,7 +11,7 @@ import { createCrdtStore, createGraphStore } from '@prism/core/stores';
 - `createCrdtStore()` — builds a vanilla Zustand store backed by a `LoroBridge` key-value map. Exposes `connect(bridge)`, `set(key, value)`, `get(key)`, and `data`/`connected` state.
 - `createGraphStore(doc)` — builds a store managing a spatial node graph inside a `LoroDoc`. Provides `addNode`, `moveNode`, `updateNodeData`, `removeNode`, `addEdge`, `removeEdge`, `syncFromLoro`.
 - `CrdtStore`, `CrdtStoreState`, `CrdtStoreActions` — types for the key-value store.
-- `GraphStore`, `GraphNode`, `GraphEdge`, `WireType` — types for the node-graph store. `WireType` is `'hard' | 'weak'`.
+- `GraphStore`, `GraphNode`, `GraphEdge`, `WireType` — types for the node-graph store. `WireType` is `'hard' | 'weak' | 'stream'` (stream renders as an animated dashed bezier via `StreamEdgeComponent`).
 
 ## Usage
 

@@ -6,209 +6,230 @@
  * parent-child containment and ObjectEdges.
  *
  * Subscribes to kernel store changes so the graph updates live
- * when objects are created, updated, or deleted.
+ * when objects are created, updated, or deleted. Uses elkjs auto-layout
+ * for initial placement, and persists pan/zoom across tab switches via
+ * `kernel.viewportCache`.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LoroDoc } from "loro-crdt";
 import { createGraphStore } from "@prism/core/stores";
 import type { GraphStore } from "@prism/core/stores";
-import { PrismGraph } from "@prism/core/graph";
+import { PrismGraph, GraphToolbar, applyElkLayout } from "@prism/core/graph";
+import type { Viewport } from "@xyflow/react";
 import type { StoreApi } from "zustand";
-import type { GraphObject } from "@prism/core/object-model";
+import type { ObjectId } from "@prism/core/object-model";
 import { useKernel } from "../kernel/index.js";
 
 import { lensId } from "@prism/core/lens";
 import type { LensManifest } from "@prism/core/lens";
 import { defineLensBundle, type LensBundle } from "../lenses/bundle.js";
-/**
- * Build (or rebuild) graph nodes and edges from the kernel's current state.
- * Returns the set of node IDs for diffing.
- */
-function rebuildGraph(
-  state: GraphStore,
-  objects: GraphObject[],
-  edges: Array<{ id: string; sourceId: string; targetId: string; relation: string }>,
-  registry: { get(type: string): { icon?: unknown } | undefined },
-): Set<string> {
-  const nodeIds = new Set<string>();
-  const liveObjects = objects.filter((o) => !o.deletedAt);
+import { buildGraphFromKernel, reconcileGraph } from "./graph-panel-data.js";
 
-  // Build parent→children map
-  const rootObjects = liveObjects.filter((o) => !o.parentId);
-  const childMap = new Map<string, GraphObject[]>();
-  for (const obj of liveObjects) {
-    if (obj.parentId) {
-      const kids = childMap.get(obj.parentId) ?? [];
-      kids.push(obj);
-      childMap.set(obj.parentId, kids);
-    }
-  }
+export { buildGraphFromKernel, reconcileGraph } from "./graph-panel-data.js";
 
-  // Layout: roots at x=100, children at x=400, grandchildren at x=700
-  let yOffset = 0;
-  for (const root of rootObjects) {
-    const def = registry.get(root.type);
-    const icon = typeof def?.icon === "string" ? def.icon : "";
-    state.addNode({
-      id: root.id,
-      type: "default",
-      x: 100,
-      y: yOffset,
-      width: 240,
-      height: 80,
-      data: { label: `${icon} ${root.name}`, objectType: root.type },
-    });
-    nodeIds.add(root.id);
+const VIEWPORT_KEY = "lens:graph";
 
-    const children = childMap.get(root.id) ?? [];
-    let childY = yOffset;
-    for (const child of children) {
-      const childDef = registry.get(child.type);
-      const childIcon = typeof childDef?.icon === "string" ? childDef.icon : "";
-      state.addNode({
-        id: child.id,
-        type: "default",
-        x: 400,
-        y: childY,
-        width: 220,
-        height: 60,
-        data: { label: `${childIcon} ${child.name}`, objectType: child.type },
-      });
-      nodeIds.add(child.id);
-
-      state.addEdge({
-        id: `e-${root.id}-${child.id}`,
-        source: root.id,
-        target: child.id,
-        wireType: "hard",
-      });
-
-      // Grandchildren
-      const grandchildren = childMap.get(child.id) ?? [];
-      let gcY = childY;
-      for (const gc of grandchildren) {
-        const gcDef = registry.get(gc.type);
-        const gcIcon = typeof gcDef?.icon === "string" ? gcDef.icon : "";
-        state.addNode({
-          id: gc.id,
-          type: "default",
-          x: 700,
-          y: gcY,
-          width: 200,
-          height: 50,
-          data: { label: `${gcIcon} ${gc.name}`, objectType: gc.type },
-        });
-        nodeIds.add(gc.id);
-        state.addEdge({
-          id: `e-${child.id}-${gc.id}`,
-          source: child.id,
-          target: gc.id,
-          wireType: "hard",
-        });
-        gcY += 70;
-      }
-
-      childY = Math.max(childY + 80, gcY);
-    }
-
-    yOffset = Math.max(yOffset + 120, childY + 40);
-  }
-
-  // ObjectEdges as weak refs
-  for (const edge of edges) {
-    state.addEdge({
-      id: edge.id,
-      source: edge.sourceId,
-      target: edge.targetId,
-      wireType: "weak",
-      label: edge.relation,
-    });
-  }
-
-  return nodeIds;
-}
+// ── Component ───────────────────────────────────────────────────────────────
 
 export function GraphPanel() {
   const kernel = useKernel();
   const storeRef = useRef<StoreApi<GraphStore> | null>(null);
-  const docRef = useRef<LoroDoc | null>(null);
-  const nodeIdsRef = useRef<Set<string>>(new Set());
   const [ready, setReady] = useState(false);
-  const [version, setVersion] = useState(0);
+  const [, setTick] = useState(0);
+  const bump = useCallback(() => setTick((t) => t + 1), []);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
-  // Initial build
+  // ── Initial build (one-time, then diffed) ───────────────────────────────
   useEffect(() => {
     const doc = new LoroDoc();
     const graphStore = createGraphStore(doc);
-    docRef.current = doc;
     storeRef.current = graphStore;
 
-    const state = graphStore.getState();
     const objects = kernel.store.allObjects();
     const edges = kernel.store.allEdges();
-    nodeIdsRef.current = rebuildGraph(state, objects, edges, kernel.registry);
+    const desired = buildGraphFromKernel(objects, edges, kernel.registry);
+    reconcileGraph(graphStore.getState(), desired);
 
-    setReady(true);
-  }, [kernel]);
+    // Run elkjs once so the initial graph isn't all stacked at (0,0).
+    void runInitialLayout(graphStore, "DOWN").then(() => {
+      setReady(true);
+      bump();
+    });
+  }, [kernel, bump]);
 
-  // Subscribe to kernel store changes — rebuild graph on mutations
+  // ── Subscribe to kernel mutations and diff into the existing store ──────
   useEffect(() => {
     if (!storeRef.current) return;
 
     const unsub = kernel.store.onChange(() => {
       const graphStore = storeRef.current;
       if (!graphStore) return;
-
-      // Clear existing graph and rebuild
-      const doc = new LoroDoc();
-      const newStore = createGraphStore(doc);
-      docRef.current = doc;
-      storeRef.current = newStore;
-
-      const state = newStore.getState();
       const objects = kernel.store.allObjects();
       const edges = kernel.store.allEdges();
-      nodeIdsRef.current = rebuildGraph(state, objects, edges, kernel.registry);
-
-      setVersion((v) => v + 1);
+      const desired = buildGraphFromKernel(objects, edges, kernel.registry);
+      reconcileGraph(graphStore.getState(), desired);
+      bump();
     });
 
     return unsub;
-  }, [kernel, ready]);
+  }, [kernel, ready, bump]);
 
-  // Force re-render key based on version
-  const renderKey = `graph-${version}`;
+  // ── Viewport persistence via kernel.viewportCache ───────────────────────
+  const cache = kernel.viewportCache;
+  const initialViewport = useMemo(
+    () => cache.getState().get(VIEWPORT_KEY),
+    // Read once on mount — re-reading on every render would defeat the
+    // point of persistence (it would clobber live pan/zoom).
+    [cache],
+  );
+  const handleViewportChange = useCallback(
+    (v: Viewport) => {
+      cache.getState().set(VIEWPORT_KEY, v);
+    },
+    [cache],
+  );
+
+  // ── Selection inspector (bottom strip) ──────────────────────────────────
+  const selectedObject = useMemo(() => {
+    if (!selectedNodeId) return null;
+    return kernel.store.getObject(selectedNodeId as ObjectId) ?? null;
+  }, [kernel, selectedNodeId]);
 
   if (!ready || !storeRef.current) {
     return <div style={{ padding: 16, color: "#888" }}>Loading graph...</div>;
   }
 
+  const store = storeRef.current;
+  const nodeCount = store.getState().nodes.length;
+  const edgeCount = store.getState().edges.length;
+
   return (
-    <div style={{ width: "100%", height: "100%" }} data-testid="graph-panel">
-      <PrismGraph
-        key={renderKey}
-        store={storeRef.current}
-        className="prism-graph-panel"
-      />
+    <div
+      style={{
+        width: "100%",
+        height: "100%",
+        display: "flex",
+        flexDirection: "column",
+      }}
+      data-testid="graph-panel"
+    >
+      <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
+        <PrismGraph
+          store={store}
+          className="prism-graph-panel"
+          minimap
+          background
+          controls
+          {...(initialViewport !== undefined
+            ? { initialViewport }
+            : {})}
+          onViewportChange={handleViewportChange}
+          onNodeClick={(_, node) => setSelectedNodeId(node.id)}
+          onCanvasClick={() => setSelectedNodeId(null)}
+          toolbar={
+            <GraphToolbar
+              title={
+                <span data-testid="graph-stats">
+                  Graph · {nodeCount} node{nodeCount === 1 ? "" : "s"} ·{" "}
+                  {edgeCount} edge{edgeCount === 1 ? "" : "s"}
+                </span>
+              }
+              store={store}
+            />
+          }
+        />
+      </div>
+      {selectedObject ? (
+        <div
+          data-testid="graph-inspector"
+          style={{
+            borderTop: "1px solid #333",
+            background: "#1a1a1a",
+            color: "#ccc",
+            padding: "8px 12px",
+            fontSize: 12,
+            display: "flex",
+            gap: 16,
+            alignItems: "center",
+          }}
+        >
+          <strong style={{ color: "#eee" }}>{selectedObject.name}</strong>
+          <span style={{ color: "#888" }}>{selectedObject.type}</span>
+          <span style={{ color: "#666" }}>id: {selectedObject.id}</span>
+          {selectedObject.parentId ? (
+            <span style={{ color: "#666" }}>
+              parent: {selectedObject.parentId}
+            </span>
+          ) : null}
+          <div style={{ flex: 1 }} />
+          <button
+            type="button"
+            data-testid="graph-inspector-select"
+            style={{
+              background: "#2a2a2a",
+              border: "1px solid #444",
+              borderRadius: 3,
+              padding: "3px 8px",
+              color: "#ccc",
+              cursor: "pointer",
+              fontSize: 11,
+            }}
+            onClick={() => kernel.select(selectedObject.id)}
+          >
+            Select in tree
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
 
+// ── Layout helper ───────────────────────────────────────────────────────────
+
+async function runInitialLayout(
+  store: StoreApi<GraphStore>,
+  direction: "DOWN" | "RIGHT" | "UP" | "LEFT",
+): Promise<void> {
+  const state = store.getState();
+  const elkNodes = state.nodes.map((n) => ({
+    id: n.id,
+    position: { x: n.x, y: n.y },
+    data: {},
+    width: n.width,
+    height: n.height,
+  }));
+  const elkEdges = state.edges.map((e) => ({
+    id: e.id,
+    source: e.source,
+    target: e.target,
+  }));
+  const laidOut = await applyElkLayout(elkNodes, elkEdges, { direction });
+  const moveNode = store.getState().moveNode;
+  for (const n of laidOut) {
+    moveNode(n.id, n.position.x, n.position.y);
+  }
+}
 
 // ── Lens registration ──────────────────────────────────────────────────────
 
 export const GRAPH_LENS_ID = lensId("graph");
 
 export const graphLensManifest: LensManifest = {
-
   id: GRAPH_LENS_ID,
   name: "Graph",
   icon: "\u2B21",
   category: "visual",
   contributes: {
     views: [{ slot: "main" }],
-    commands: [{ id: "switch-graph", name: "Switch to Graph", shortcut: ["g"], section: "Navigation" }],
+    commands: [
+      {
+        id: "switch-graph",
+        name: "Switch to Graph",
+        shortcut: ["g"],
+        section: "Navigation",
+      },
+    ],
   },
 };
 

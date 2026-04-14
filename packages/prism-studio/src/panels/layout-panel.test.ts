@@ -25,7 +25,6 @@ import {
   kebabToPascal,
   pascalToKebab,
 } from "./layout-panel-data.js";
-import { computeShellGrid } from "../components/layout-shell-renderers.js";
 import {
   facetIdFromName,
   uniqueFacetId,
@@ -509,72 +508,6 @@ describe("buildPuckCategories", () => {
     } finally {
       kernel.dispose();
     }
-  });
-});
-
-describe("computeShellGrid", () => {
-  const base = {
-    topBarHeight: 64,
-    leftBarWidth: 240,
-    rightBarWidth: 200,
-    bottomBarHeight: 32,
-  };
-
-  it("emits a 3x3 grid with every bar populated", () => {
-    const grid = computeShellGrid({
-      ...base,
-      hasTop: true,
-      hasLeft: true,
-      hasRight: true,
-      hasBottom: true,
-    });
-    expect(grid.gridTemplateColumns).toBe("240px 1fr 200px");
-    expect(grid.gridTemplateRows).toBe("64px 1fr 32px");
-    expect(grid.gridTemplateAreas).toBe(
-      '"top top top" "left main right" "bottom bottom bottom"',
-    );
-  });
-
-  it("collapses absent bars to 0px while keeping main", () => {
-    const grid = computeShellGrid({
-      ...base,
-      hasTop: false,
-      hasLeft: true,
-      hasRight: false,
-      hasBottom: true,
-    });
-    expect(grid.gridTemplateColumns).toBe("240px 1fr 0px");
-    expect(grid.gridTemplateRows).toBe("0px 1fr 32px");
-  });
-
-  it("clamps negative dimensions to 0 and huge ones to the max", () => {
-    const grid = computeShellGrid({
-      topBarHeight: -50,
-      leftBarWidth: 99999,
-      rightBarWidth: 0,
-      bottomBarHeight: 0,
-      hasTop: true,
-      hasLeft: true,
-      hasRight: true,
-      hasBottom: true,
-    });
-    expect(grid.gridTemplateRows).toBe("0px 1fr 0px");
-    expect(grid.gridTemplateColumns).toBe("1200px 1fr 0px");
-  });
-
-  it("rounds fractional values", () => {
-    const grid = computeShellGrid({
-      topBarHeight: 64.7,
-      leftBarWidth: 240.49,
-      rightBarWidth: 0,
-      bottomBarHeight: 0,
-      hasTop: true,
-      hasLeft: true,
-      hasRight: false,
-      hasBottom: false,
-    });
-    expect(grid.gridTemplateRows).toBe("65px 1fr 0px");
-    expect(grid.gridTemplateColumns).toBe("240px 1fr 0px");
   });
 });
 

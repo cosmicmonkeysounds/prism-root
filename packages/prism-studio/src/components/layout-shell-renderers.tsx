@@ -6,9 +6,18 @@
  * nested drop zones. Empty slots render Puck's default empty-zone placeholder;
  * the kernel ↔ Puck sync in `layout-panel.tsx` persists children per-slot via
  * a `data.__slot` tag on the child object.
+ *
+ * The grid math + drag-to-resize primitives live in `@prism/core/puck`
+ * (`ShellGrid`, `useResizeHandle`, `ResizeHandle`) so a user can build their
+ * own custom shell shape without importing the whole `Shell` Puck component.
+ * PageShellRenderer and AppShellRenderer are thin presets over `ShellGrid`
+ * that preserve the two user-visible palette entries: the page-shell with
+ * top/left/right/bottom bars and the app-shell with the same plus a brand
+ * affordance merged into the top bar.
  */
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, type CSSProperties, type ReactNode } from "react";
+import { ShellGrid, useResizeHandle, ResizeHandle } from "@prism/core/puck";
 
 // ── PageShell: four resizable bars wrapping a main canvas ───────────────────
 
@@ -34,138 +43,11 @@ export interface PageShellProps {
   onCommit?: (key: BarDimensionKey, value: number) => void;
 }
 
-const MIN_BAR = 0;
-const MAX_BAR = 1200;
-
 function hasContent(node: ReactNode): boolean {
   if (node === null || node === undefined || node === false || node === true) return false;
   if (typeof node === "string" || typeof node === "number") return String(node).length > 0;
   if (Array.isArray(node)) return node.some(hasContent);
   return true;
-}
-
-function clampBar(value: number): number {
-  if (!Number.isFinite(value)) return 0;
-  if (value < MIN_BAR) return MIN_BAR;
-  if (value > MAX_BAR) return MAX_BAR;
-  return Math.round(value);
-}
-
-/**
- * Pure helper: compute the grid template for a 3×3 shell given the four
- * bar dimensions and which bars are present. Bars with empty content collapse
- * to 0. Exported for vitest.
- */
-export function computeShellGrid(opts: {
-  topBarHeight: number;
-  leftBarWidth: number;
-  rightBarWidth: number;
-  bottomBarHeight: number;
-  hasTop: boolean;
-  hasLeft: boolean;
-  hasRight: boolean;
-  hasBottom: boolean;
-}): { gridTemplateColumns: string; gridTemplateRows: string; gridTemplateAreas: string } {
-  const top = opts.hasTop ? clampBar(opts.topBarHeight) : 0;
-  const left = opts.hasLeft ? clampBar(opts.leftBarWidth) : 0;
-  const right = opts.hasRight ? clampBar(opts.rightBarWidth) : 0;
-  const bottom = opts.hasBottom ? clampBar(opts.bottomBarHeight) : 0;
-  return {
-    gridTemplateColumns: `${left}px 1fr ${right}px`,
-    gridTemplateRows: `${top}px 1fr ${bottom}px`,
-    gridTemplateAreas:
-      '"top top top" "left main right" "bottom bottom bottom"',
-  };
-}
-
-function useResizeHandle(
-  initial: number,
-  axis: "x" | "y",
-  direction: 1 | -1,
-  onCommit: ((value: number) => void) | undefined,
-): {
-  value: number;
-  setValueFromProps: (v: number) => void;
-  onPointerDown: (e: React.PointerEvent) => void;
-  dragging: boolean;
-} {
-  const [value, setValue] = useState<number>(initial);
-  const [dragging, setDragging] = useState(false);
-  const startRef = useRef<{ pointer: number; base: number } | null>(null);
-
-  const setValueFromProps = useCallback((v: number) => {
-    if (!startRef.current) setValue(v);
-  }, []);
-
-  const onPointerDown = useCallback(
-    (e: React.PointerEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
-      startRef.current = {
-        pointer: axis === "x" ? e.clientX : e.clientY,
-        base: value,
-      };
-      setDragging(true);
-    },
-    [axis, value],
-  );
-
-  useEffect(() => {
-    if (!dragging) return;
-    const handleMove = (e: PointerEvent) => {
-      const start = startRef.current;
-      if (!start) return;
-      const pointer = axis === "x" ? e.clientX : e.clientY;
-      const delta = (pointer - start.pointer) * direction;
-      setValue(clampBar(start.base + delta));
-    };
-    const handleUp = () => {
-      const final = startRef.current ? clampBar(value) : value;
-      startRef.current = null;
-      setDragging(false);
-      onCommit?.(final);
-    };
-    window.addEventListener("pointermove", handleMove);
-    window.addEventListener("pointerup", handleUp);
-    window.addEventListener("pointercancel", handleUp);
-    return () => {
-      window.removeEventListener("pointermove", handleMove);
-      window.removeEventListener("pointerup", handleUp);
-      window.removeEventListener("pointercancel", handleUp);
-    };
-  }, [dragging, axis, direction, onCommit, value]);
-
-  return { value, setValueFromProps, onPointerDown, dragging };
-}
-
-interface ResizeHandleProps {
-  orientation: "horizontal" | "vertical";
-  onPointerDown: (e: React.PointerEvent) => void;
-  active: boolean;
-  style?: React.CSSProperties;
-}
-
-function ResizeHandle({ orientation, onPointerDown, active, style }: ResizeHandleProps) {
-  const isHorizontal = orientation === "horizontal";
-  return (
-    <div
-      role="separator"
-      aria-orientation={isHorizontal ? "vertical" : "horizontal"}
-      onPointerDown={onPointerDown}
-      data-testid={`shell-resize-${orientation}`}
-      style={{
-        position: "absolute",
-        background: active ? "#3b82f6" : "transparent",
-        transition: active ? "none" : "background 120ms",
-        touchAction: "none",
-        userSelect: "none",
-        cursor: isHorizontal ? "col-resize" : "row-resize",
-        zIndex: 5,
-        ...style,
-      }}
-    />
-  );
 }
 
 export function PageShellRenderer(props: PageShellProps): ReactNode {
@@ -200,22 +82,88 @@ export function PageShellRenderer(props: PageShellProps): ReactNode {
   const right = useResizeHandle(rightBarWidthProp, "x", -1, commit("rightBarWidth"));
   const bottom = useResizeHandle(bottomBarHeightProp, "y", -1, commit("bottomBarHeight"));
 
-  // Sync local drag state when props change externally (undo/redo etc.)
   useEffect(() => { top.setValueFromProps(topBarHeightProp); }, [topBarHeightProp, top]);
   useEffect(() => { left.setValueFromProps(leftBarWidthProp); }, [leftBarWidthProp, left]);
   useEffect(() => { right.setValueFromProps(rightBarWidthProp); }, [rightBarWidthProp, right]);
   useEffect(() => { bottom.setValueFromProps(bottomBarHeightProp); }, [bottomBarHeightProp, bottom]);
 
-  const grid = computeShellGrid({
-    topBarHeight: top.value,
-    leftBarWidth: left.value,
-    rightBarWidth: right.value,
-    bottomBarHeight: bottom.value,
-    hasTop,
-    hasLeft,
-    hasRight,
-    hasBottom,
-  });
+  const topBarNode = hasTop ? (
+    <header
+      className={
+        sticky
+          ? "relative border-b border-slate-200 bg-white/90 backdrop-blur h-full w-full"
+          : "relative border-b border-slate-200 h-full w-full"
+      }
+      data-slot="topBar"
+    >
+      {topBar}
+      {onCommit ? (
+        <ResizeHandle
+          orientation="vertical"
+          active={top.dragging}
+          onPointerDown={top.onPointerDown}
+          style={{ left: 0, right: 0, bottom: 0, height: 6 }}
+        />
+      ) : null}
+    </header>
+  ) : null;
+
+  const leftBarNode = hasLeft ? (
+    <aside
+      className="relative border-r border-slate-200 bg-slate-50 h-full w-full"
+      data-slot="leftBar"
+    >
+      {leftBar}
+      {onCommit ? (
+        <ResizeHandle
+          orientation="horizontal"
+          active={left.dragging}
+          onPointerDown={left.onPointerDown}
+          style={{ top: 0, bottom: 0, right: 0, width: 6 }}
+        />
+      ) : null}
+    </aside>
+  ) : null;
+
+  const rightBarNode = hasRight ? (
+    <aside
+      className="relative border-l border-slate-200 bg-slate-50 h-full w-full"
+      data-slot="rightBar"
+    >
+      {rightBar}
+      {onCommit ? (
+        <ResizeHandle
+          orientation="horizontal"
+          active={right.dragging}
+          onPointerDown={right.onPointerDown}
+          style={{ top: 0, bottom: 0, left: 0, width: 6 }}
+        />
+      ) : null}
+    </aside>
+  ) : null;
+
+  const bottomBarNode = hasBottom ? (
+    <footer
+      className="relative border-t border-slate-200 bg-slate-50 text-xs text-slate-500 h-full w-full"
+      data-slot="bottomBar"
+    >
+      {bottomBar}
+      {onCommit ? (
+        <ResizeHandle
+          orientation="vertical"
+          active={bottom.dragging}
+          onPointerDown={bottom.onPointerDown}
+          style={{ left: 0, right: 0, top: 0, height: 6 }}
+        />
+      ) : null}
+    </footer>
+  ) : null;
+
+  const mainNode = (
+    <main className="relative h-full w-full" data-slot="main" style={{ overflow: "auto" }}>
+      {main}
+    </main>
+  );
 
   return (
     <div
@@ -228,92 +176,26 @@ export function PageShellRenderer(props: PageShellProps): ReactNode {
         className ??
         "relative overflow-hidden rounded-lg border border-slate-200 bg-white text-slate-900"
       }
-      style={{
-        display: "grid",
-        position: "relative",
-        minHeight: 480,
-        ...grid,
-      }}
     >
-      {hasTop ? (
-        <header
-          className={
-            sticky
-              ? "relative border-b border-slate-200 bg-white/90 backdrop-blur"
-              : "relative border-b border-slate-200"
-          }
-          style={{ gridArea: "top", overflow: "hidden" }}
-          data-slot="topBar"
-        >
-          {topBar}
-          {onCommit ? (
-            <ResizeHandle
-              orientation="vertical"
-              active={top.dragging}
-              onPointerDown={top.onPointerDown}
-              style={{ left: 0, right: 0, bottom: 0, height: 6 }}
-            />
-          ) : null}
-        </header>
-      ) : null}
-      {hasLeft ? (
-        <aside
-          className="relative border-r border-slate-200 bg-slate-50"
-          style={{ gridArea: "left", overflow: "hidden" }}
-          data-slot="leftBar"
-        >
-          {leftBar}
-          {onCommit ? (
-            <ResizeHandle
-              orientation="horizontal"
-              active={left.dragging}
-              onPointerDown={left.onPointerDown}
-              style={{ top: 0, bottom: 0, right: 0, width: 6 }}
-            />
-          ) : null}
-        </aside>
-      ) : null}
-      <main
-        className="relative"
-        style={{ gridArea: "main", overflow: "auto" }}
-        data-slot="main"
-      >
-        {main}
-      </main>
-      {hasRight ? (
-        <aside
-          className="relative border-l border-slate-200 bg-slate-50"
-          style={{ gridArea: "right", overflow: "hidden" }}
-          data-slot="rightBar"
-        >
-          {rightBar}
-          {onCommit ? (
-            <ResizeHandle
-              orientation="horizontal"
-              active={right.dragging}
-              onPointerDown={right.onPointerDown}
-              style={{ top: 0, bottom: 0, left: 0, width: 6 }}
-            />
-          ) : null}
-        </aside>
-      ) : null}
-      {hasBottom ? (
-        <footer
-          className="relative border-t border-slate-200 bg-slate-50 text-xs text-slate-500"
-          style={{ gridArea: "bottom", overflow: "hidden" }}
-          data-slot="bottomBar"
-        >
-          {bottomBar}
-          {onCommit ? (
-            <ResizeHandle
-              orientation="vertical"
-              active={bottom.dragging}
-              onPointerDown={bottom.onPointerDown}
-              style={{ left: 0, right: 0, top: 0, height: 6 }}
-            />
-          ) : null}
-        </footer>
-      ) : null}
+      <ShellGrid
+        fullscreen={false}
+        topBarHeight={top.value}
+        leftBarWidth={left.value}
+        rightBarWidth={right.value}
+        bottomBarHeight={bottom.value}
+        topBar={topBarNode}
+        leftBar={leftBarNode}
+        main={mainNode}
+        rightBar={rightBarNode}
+        bottomBar={bottomBarNode}
+        cellStyles={{
+          top: { position: "relative" },
+          left: { position: "relative" },
+          right: { position: "relative" },
+          bottom: { position: "relative" },
+          main: { position: "relative" },
+        }}
+      />
     </div>
   );
 }
@@ -463,11 +345,11 @@ export function SideBarRenderer(props: SideBarProps): ReactNode {
           ? "border-b"
           : "border-t";
 
-  const sizeStyle: React.CSSProperties = isHorizontalBar
+  const sizeStyle: CSSProperties = isHorizontalBar
     ? { height: handle.value, minHeight: handle.value }
     : { width: handle.value, minWidth: handle.value };
 
-  const handleStyle: React.CSSProperties =
+  const handleStyle: CSSProperties =
     position === "left"
       ? { top: 0, bottom: 0, right: 0, width: 6 }
       : position === "right"
@@ -575,3 +457,4 @@ export function HeroRenderer(props: HeroProps): ReactNode {
     </section>
   );
 }
+

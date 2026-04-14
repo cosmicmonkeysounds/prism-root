@@ -1,0 +1,255 @@
+/*
+ * Prism node-graph theme. Layered on top of `@xyflow/react/dist/style.css`
+ * so xyflow's own positioning/transform/handle math is preserved and only
+ * the visuals change.
+ *
+ * Color tokens use CSS variables with sensible dark-mode fallbacks so the
+ * host app can override them by setting vars on a parent element.
+ */
+
+.react-flow.prism-themed,
+.prism-graph-themed {
+  --prism-node-bg: #20232a;
+  --prism-node-bg-2: #262a33;
+  --prism-node-border: #3a414f;
+  --prism-node-border-strong: #4b5366;
+  --prism-node-fg: #e6e8ee;
+  --prism-node-fg-muted: #9aa3b2;
+  --prism-node-accent: #6ee7ff;
+  --prism-node-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 6px 16px rgba(0, 0, 0, 0.45),
+    0 2px 4px rgba(0, 0, 0, 0.35);
+  --prism-node-shadow-selected: 0 0 0 2px var(--prism-node-accent),
+    0 1px 0 rgba(255, 255, 255, 0.06) inset,
+    0 10px 24px rgba(0, 0, 0, 0.55);
+
+  --prism-edge-hard: #6ee7ff;
+  --prism-edge-weak: #94a3b8;
+  --prism-edge-stream: #f59e0b;
+}
+
+/* ── Node card ─────────────────────────────────────────────────── */
+
+.prism-node {
+  position: relative;
+  min-width: 180px;
+  background: linear-gradient(180deg, var(--prism-node-bg-2) 0%, var(--prism-node-bg) 100%);
+  color: var(--prism-node-fg);
+  border: 1px solid var(--prism-node-border);
+  border-radius: 10px;
+  box-shadow: var(--prism-node-shadow);
+  font-family: -apple-system, BlinkMacSystemFont, "Inter", "SF Pro Text", system-ui, sans-serif;
+  font-size: 12px;
+  line-height: 1.35;
+  overflow: hidden;
+  transition: box-shadow 0.12s ease, border-color 0.12s ease, transform 0.12s ease;
+}
+
+.prism-node:hover {
+  border-color: var(--prism-node-border-strong);
+}
+
+.react-flow__node.selected .prism-node,
+.prism-node.is-selected {
+  border-color: var(--prism-node-accent);
+  box-shadow: var(--prism-node-shadow-selected);
+}
+
+/* Accent stripe along the left edge — the "what kind of node" indicator */
+.prism-node::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--prism-node-accent);
+  opacity: 0.85;
+}
+
+.prism-node-default::before { background: #6ee7ff; }
+.prism-node-codemirror::before { background: #a78bfa; }
+.prism-node-markdown::before { background: #34d399; }
+.prism-node-sitemap::before { background: #f472b6; }
+.prism-node-sitemap.is-home::before { background: #fbbf24; }
+
+/* ── Header / body slots ──────────────────────────────────────── */
+
+.prism-node-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px 6px 14px;
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.01em;
+  color: var(--prism-node-fg);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.prism-node-icon {
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0.9;
+}
+
+.prism-node-label {
+  padding: 10px 12px 10px 14px;
+  font-weight: 500;
+  font-size: 12px;
+  color: var(--prism-node-fg);
+  white-space: pre-line;
+}
+
+.prism-node-content {
+  padding: 8px 12px 10px 14px;
+  font-size: 11px;
+  color: var(--prism-node-fg-muted);
+}
+
+.prism-node-code {
+  margin: 0;
+  padding: 8px 12px 10px 14px;
+  font-family: "JetBrains Mono", "SF Mono", ui-monospace, monospace;
+  font-size: 10.5px;
+  color: #d6deeb;
+  background: rgba(0, 0, 0, 0.25);
+  white-space: pre;
+  overflow: hidden;
+  max-height: 140px;
+}
+
+/* ── Sitemap node body ────────────────────────────────────────── */
+
+.prism-node-sitemap {
+  min-width: 200px;
+}
+
+.prism-node-sitemap .prism-node-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px 10px 14px;
+  font-family: "JetBrains Mono", "SF Mono", ui-monospace, monospace;
+  font-size: 10.5px;
+  color: var(--prism-node-fg-muted);
+}
+
+.prism-node-sitemap .prism-node-path {
+  background: rgba(110, 231, 255, 0.08);
+  color: #9eeaf9;
+  border: 1px solid rgba(110, 231, 255, 0.2);
+  padding: 1px 6px;
+  border-radius: 999px;
+  letter-spacing: 0.02em;
+}
+
+.prism-node-sitemap.is-home .prism-node-path {
+  background: rgba(251, 191, 36, 0.1);
+  color: #fcd34d;
+  border-color: rgba(251, 191, 36, 0.3);
+}
+
+.prism-node-home-glyph {
+  font-size: 11px;
+  color: #fbbf24;
+}
+
+/* ── Handles ──────────────────────────────────────────────────── */
+
+.react-flow__handle {
+  width: 8px;
+  height: 8px;
+  background: #1a1d23;
+  border: 1.5px solid var(--prism-node-border-strong);
+  border-radius: 999px;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.react-flow__handle:hover,
+.react-flow__handle.connecting {
+  background: var(--prism-node-accent);
+  border-color: var(--prism-node-accent);
+}
+
+/* ── Edges ────────────────────────────────────────────────────── */
+
+.react-flow__edge-path {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.react-flow__edge.selected .react-flow__edge-path,
+.react-flow__edge:focus .react-flow__edge-path {
+  stroke: var(--prism-node-accent) !important;
+  filter: drop-shadow(0 0 4px rgba(110, 231, 255, 0.4));
+}
+
+.react-flow__edge-text {
+  fill: var(--prism-node-fg-muted);
+  font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.react-flow__edge-textbg {
+  fill: rgba(20, 22, 28, 0.85);
+  stroke: var(--prism-node-border);
+  stroke-width: 1;
+}
+
+/* ── Background dots ───────────────────────────────────────────── */
+
+.react-flow__background {
+  background-color: #15171c;
+}
+
+.react-flow__background-pattern {
+  color: #2a2e38;
+}
+
+/* ── Controls (zoom buttons) ──────────────────────────────────── */
+
+.react-flow__controls {
+  background: #1a1d23;
+  border: 1px solid var(--prism-node-border);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+}
+
+.react-flow__controls-button {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--prism-node-border);
+  color: var(--prism-node-fg-muted);
+  width: 26px;
+  height: 26px;
+  padding: 5px;
+  transition: background 0.1s ease, color 0.1s ease;
+}
+
+.react-flow__controls-button:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--prism-node-fg);
+}
+
+.react-flow__controls-button:last-child {
+  border-bottom: none;
+}
+
+.react-flow__controls-button svg {
+  fill: currentColor;
+  max-width: 14px;
+  max-height: 14px;
+}
+
+/* ── MiniMap ──────────────────────────────────────────────────── */
+
+.react-flow__minimap {
+  background: #15171c !important;
+  border: 1px solid var(--prism-node-border);
+  border-radius: 6px;
+  overflow: hidden;
+}

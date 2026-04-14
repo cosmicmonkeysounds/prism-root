@@ -1,5 +1,364 @@
 # Current Plan
 
+## Graph lens visual polish + pan/zoom fix + sitemap upgrade (Complete — 2026-04-14)
+
+User reported that *"the Sitemap graph in Prism Puck is ugly as fuck"* and
+*"the panning / zoom doesn't work in the graph view either"*. Two separate
+but related problems in the xyflow binding.
+
+### What landed
+
+1. **Pan/zoom fix — shell slot fill.** Playwright DOM inspection showed the
+   `.react-flow` ancestor chain collapsed to `h:0` because Puck's internal
+   `SlotRender` wraps slot content in a `<div>` with no defaults, sitting
+   between the `data-slot` grid area (h:964) and the graph panel that uses
+   `height: 100%` (resolves to 0). Fix in `@prism/core/puck`
+   `shell-components.tsx`: `resolveSlot(slot, slotProps?)` now forwards a
+   `SLOT_FILL_STYLE = { width/height 100%, flex column, min-w/h 0 }` into
+   the slot fn so the wrapper div inherits proper dimensions. Every
+   `ShellRenderer` slot call passes `{ style: SLOT_FILL_STYLE }`.
+
+2. **Themed xyflow nodes (`prism-graph.css`).** New CSS module colocated
+   with `prism-graph.tsx`. Defines a `.prism-graph-themed` scope with CSS
+   custom properties (node bg gradient, fg, accent, shadows), themes
+   `.react-flow__*` primitives, and styles node cards with a left accent
+   stripe via `::before`. Per-variant stripes: `.prism-node-default`
+   (cyan), `.prism-node-codemirror` (violet), `.prism-node-markdown`
+   (green), `.prism-node-sitemap` (cyan / amber for home). Dark minimap,
+   dotted background (`gap:24, size:1.4`), arrow markers on every edge.
+   `PrismGraph` auto-applies the `prism-graph-themed` class.
+
+3. **`SitemapNode` custom node type.** `custom-nodes.tsx` adds
+   `SitemapNodeComponent` + `SitemapNodeMemo` + `SitemapNodePrism` type
+   and registers `sitemap: SitemapNodeMemo` in `prismNodeTypes`. Renders
+   a header with either a `⌂` home glyph (amber) or `↪` arrow (cyan),
+   title, and a `.prism-node-path` pill showing the URL path. Exported
+   from `@prism/core/graph`.
+
+4. **Sitemap panel uses elk auto-layout.** `sitemap-panel.tsx` dropped
+   the hand-rolled `layoutNodes()` column/row grid. `writeGraph` creates
+   `type: "sitemap"` nodes at `(0, 0)` with `data: { label, path, isHome }`,
+   and `runInitialLayout(store)` runs `applyElkLayout` with direction
+   `DOWN` before flushing the version bump so the first paint already
+   shows nodes in their final positions. Three edge kinds map to the
+   three `WireType`s: hierarchy→hard (solid cyan), navigation→weak
+   (dashed slate), transition→stream (animated amber).
+
+5. **`readNodes` GraphStore bug fix.** The Loro-backed graph store stored
+   `data` via `JSON.stringify` but `readNodes` returned `list.toJSON()`
+   verbatim — so consumers saw `n.data` as a string, not an object, and
+   `{ ...n.data }` spread character-indexed keys instead of node fields.
+   The graph panel never noticed because its default node type used
+   `label: n.id` fallback; the new sitemap node exposed the bug because
+   its label lives on `data`. `readNodes` now parses the JSON string
+   back into a plain object before returning.
+
+6. **Demo workspace seeds a Prism App with routes.**
+   `builtin-initializers.ts` `demoWorkspaceInitializer` now creates a
+   "Demo App" with six routes (Home/Dashboard/Tasks/Task Detail/Settings/
+   About, with `parentRouteId` hierarchy and `homeRouteId` wired via
+   post-create `updateObject`) plus a `behavior` calling
+   `ui.navigate("/dashboard")` from Home so the transition edge flavor
+   is exercised on first boot.
+
+### Verification
+
+- `pnpm typecheck` clean on `@prism/core` and `@prism/studio`.
+- `pnpm test` — 4079 tests pass across 217 files.
+- Playwright screenshots (`/tmp/prism-screenshots/after-*.png`) show:
+  graph lens with 45 themed nodes + 12 edges in a proper elk layout,
+  pannable/zoomable; sitemap lens with 6 labeled route cards + 3 edges,
+  "⌂ Home" highlighted, path pills visible, minimap + controls themed.
+
+## Unified Shell + extracted primitives (Complete — 2026-04-13)
+
+Prism previously carried three different "shell" things: the core `AppShell`
+Puck component (6 slots: activityBar/sidebar/header/main/inspector/footer,
+3×4 grid, no resize), the studio `PageShellRenderer` (4 resizable bars, 3×3
+grid), and a branded `AppShellRenderer` wrapper over PageShell. User feedback:
+*"one Shell please - but also extract the primitives like Grid and
+ResizeHandle out so that users can do their own thing if desired."*
+
+### What landed
+
+1. **`@prism/core/puck/shell-grid.tsx` — extracted grid primitive.** A pure
+   `computeShellGrid()` helper plus a `ShellGrid` React component that lays
+   out a six-region 3×4 shell (activityBar | topBar/leftBar/main/rightBar |
+   bottomBar) with per-cell style overrides, overlay slot, fullscreen toggle,
+   and `clampBar()` shared utility. Bars with no content collapse to 0px.
+
+2. **`@prism/core/puck/use-resize-handle.tsx` — extracted drag primitive.**
+   `useResizeHandle(initial, axis, direction, onCommit)` hook and the
+   `<ResizeHandle>` visual element. The ADR-005 Phase A ref-based fix
+   (axisRef/directionRef/onCommitRef/valueRef) lives here — previously
+   inlined twice in two files, now single source of truth.
+
+3. **`@prism/core/puck/shell-components.tsx` — unified `Shell` Puck
+   component.** Replaces the core `AppShell` component with a single 6-slot
+   `Shell` whose slot names (activityBar, topBar, leftBar, main, rightBar,
+   bottomBar) match PageShell's naming. `SHELL_PUCK_CONFIG` + `SHELL_SLOTS`
+   are the canonical exports; `DEFAULT_STUDIO_SHELL_TREE` now projects
+   ActivityBar → activityBar, TabBar/Presence/UndoStatus → topBar,
+   ObjectExplorer/ComponentPalette → leftBar, LensOutlet → main,
+   InspectorPanel → rightBar. Old `AppShell*` exports removed — `"Never
+   deprecate"`.
+
+4. **Studio migration.** `studio-kernel.ts` registers `"Shell"` (was
+   `"AppShell"`). `studio-shell.tsx` uses `SHELL_PUCK_CONFIG`.
+   `layout-shell-renderers.tsx` keeps `PageShellRenderer` /
+   `AppShellRenderer` as thin wrappers over the core `ShellGrid` +
+   `useResizeHandle` primitives so the user-visible `page-shell` / `app-shell`
+   palette entries still exist and the entity-puck-config switch still
+   resolves. No fixture trees or stored data changed — the two entity type
+   names are the only user-surfaced names, and both are preserved.
+
+5. **Test migration.** New `shell-grid.test.ts` covers the core primitive.
+   `shell-components.test.ts` rewritten for the unified `Shell` naming.
+   `layout-shell-renderers.test.tsx` dropped its `computeShellGrid` block
+   (now tested in core) and keeps the ADR-005 resize-commit regression
+   tests. `studio-kernel-shell.test.ts` updated to assert `"Shell"` in the
+   direct registry.
+
+### Tests
+
+All **4079** monorepo tests pass across **217** files. `pnpm lint`,
+`pnpm typecheck`, and `pnpm build` are all green.
+
+### Takeaway
+
+The primitives are now independently importable: a user who wants a custom
+shell shape pulls `ShellGrid` + `useResizeHandle` + `ResizeHandle` directly
+from `@prism/core/puck` and composes their own React tree. The canonical
+`Shell` Puck component is one specific arrangement of those primitives.
+`page-shell` and `app-shell` entity types still exist as user-visible
+palette presets but share a single grid/resize code path.
+
+## Puck widget builder DSL + unified registration (Complete — 2026-04-14)
+
+The Studio layout builder was built on ~3000 lines of hand-wired Puck widget
+configs inside `layout-panel.tsx` — 43 widgets each repeating the same three
+layers of ceremony (`{ type: "text" } as Fields[string]` declarations, `(p["x"]
+as string) ?? "default"` prop extraction, `<div data-testid="puck-X"
+style={{margin:"4px 0"}}>` wrappers, inline `kernel.store.allObjects().filter`
+queries). The user's directive: *"builder-ize these patterns. no legacy code
+should remain."*
+
+### What landed
+
+1. **`kernel/widget-builder.tsx` — new 264-line DSL.** Exports `f.*` field
+   helpers (`text`, `area`, `num`, `select`, `yesNo`, `showHide`, `stringBool`,
+   `slot`) that return concrete `Fields[string]` so callers write
+   `collectionType: f.text()` instead of seven lines of casts. `asBool`
+   coerces the `"true"` | `true` | `"false"` mishmash from legacy radio
+   serializations. `useKernelSelectedId` reads the currently-selected object
+   id reactively via `useSyncExternalStore` — defined here (not imported from
+   `kernel-context.tsx`) to avoid a `studio-kernel → entity-puck-config →
+   kernel-context → studio-kernel` cycle. `widget()` takes a `WidgetSpec<P>`
+   with `type` / `fields` / `defaults` / `render` / optional `query` + `bare`
+   and returns a full `ComponentConfig` — it closes over the kernel, wraps
+   the body in the standard `puck-X` div, handles the three query strategies
+   (`none`, `by-prop`, `fixed`), and gives the render function a strongly-
+   typed `ctx: { props, kernel, selectedId, objects, select, update, create }`.
+
+2. **`kernel/entity-puck-config.tsx` — full rewrite, 2794 lines.** Every widget
+   now lives in `buildWidgetTable(kernel)` as a declarative `widget()` call —
+   43 entries spanning luau-block, popover, slide-panel, facet-view,
+   spatial-canvas, data-portal, kanban, list, table, card-grid, report,
+   calendar, chart, map, the 10 record-type widgets (tasks → capture-inbox),
+   tab-container, columns, divider, spacer, the 6 form-inputs, stat, badge,
+   alert, progress-bar, markdown, iframe, code-block, video, audio. Each
+   widget shrank from ~40–50 lines to ~15–25 lines. Special-case entities
+   (shells, button, card, image) still flow through `entityToPuckComponent`
+   via small transformation helpers (`buildShellComponent`,
+   `buildButtonComponent`, `buildCardComponent`, `buildImageComponent`,
+   `buildRecordListComponent`). `buildEntityPuckComponents(kernel)` is the
+   single external entry point — `studio-kernel.ts` calls it once at boot
+   and `registerDirect`'s every entry onto `kernel.puckComponents`.
+
+3. **`buildPuckRootConfig(kernel, getPageId)` — extracted.** The Puck
+   document-root config (fields + defaults + render) that used to live inline
+   inside `layout-panel.tsx`'s giant `useMemo<Config>` now lives next to the
+   component builder. The `getPageId` thunk lets callers thread the currently-
+   selected page in reactively so bar-resize commits target the right page.
+
+4. **`panels/layout-panel.tsx` — stripped from 3072 lines to 554 (−2894).**
+   Deleted the orphaned `entityToPuckComponent` / `BLOCK_STYLE_FIELD_IDS` /
+   `buildStylePuckFields` / `attachStyleFieldsInPlace` / `PuckLuauBlockRender`
+   / `PuckImageBlockRender` dead code left over from the old pipeline.
+   Dropped ~35 renderer/type/custom-field imports that are only needed
+   transitively through the registered components. The new `puckConfig`
+   `useMemo` reads from `kernel.puckComponents.directNames()` + `getDirect()`
+   and calls `buildPuckCategories` / `buildPuckRootConfig` — about 15 lines
+   where the old `useMemo<Config>` was ~2200.
+
+5. **Lazy MapWidgetRenderer to keep vitest node-environment happy.**
+   `leaflet` touches `window` at module import time; now that
+   `entity-puck-config` is in `studio-kernel`'s import graph, any test that
+   imports `kernel/index.ts` would explode before my React.lazy wrap.
+   `MapWidgetRenderer` is now a `lazy(() => import(...))` inside a
+   `<Suspense>` — the map library only loads when the widget actually
+   renders in a browser, and node-env tests never hit it.
+
+### Tests
+
+All **4080** monorepo tests pass across **216** files. Studio typechecks
+cleanly; `pnpm build` builds.
+### Takeaway
+
+The builder pays for itself immediately: adding a new widget is a ~15-line
+`widget()` call with typed props and no ceremony. The layout panel is now a
+thin lens over the kernel registry — exactly the self-registering pattern
+the prior session was pushing toward, with no duplication between panel-
+local and kernel-global component maps.
+
+---
+
+## Graph lens UX pass — batteries-included PrismGraph + viewport persistence (Complete — 2026-04-13)
+
+The graph view system in Prism Puck Builder was barebones — just a raw `ReactFlow`
+over the GraphStore with no minimap, no controls, no toolbar, no layout actions,
+and pan/zoom was reset every time the user switched tabs. Fleshed out top-to-bottom.
+
+### What landed
+
+1. **`@prism/core/lens` — new `ViewportCache` primitive.** `createViewportCache()`
+   returns a zustand vanilla store keyed by arbitrary strings (convention: `"lens:<id>"`)
+   that remembers `{ x, y, zoom }` tuples and survives tab switches. Generic enough
+   to serve any scrollable/zoomable surface (graph, sitemap, schema-designer,
+   timeline, spatial canvas, viewport3d). 10 tests cover get/set/clear/clearAll +
+   subscriber notifications + entry isolation.
+
+2. **`@prism/core/graph` — fleshed-out `PrismGraph` + new `GraphToolbar`.**
+   - `PrismGraph` now ships Background (dots/lines/cross), Controls, MiniMap
+     (pannable/zoomable/dark), a `toolbar` slot (any `ReactNode`, positionable in
+     any Panel corner), `initialViewport` + `onViewportChange` for persistence,
+     `onInit`, `onNodeClick`/`onCanvasClick`. Uses a conditional spread for
+     `defaultViewport` vs `fitView` so xyflow doesn't complain about both being
+     set (`exactOptionalPropertyTypes`).
+   - Internal `ViewportBridge` component wires `useOnViewportChange` to the
+     optional callback.
+   - `GraphToolbar` is a ~180-line composite rendered inside a `<Panel>`: Fit /
+     Zoom+ / Zoom- / Auto-Layout buttons using `useReactFlow()` and
+     `applyElkLayout`. Supports a single "Re-layout" button or multi-direction
+     variants; accepts a custom `title` ReactNode.
+
+3. **`kernel.viewportCache` on `StudioKernel`.** `createStudioKernel` instantiates
+   `createViewportCache()` alongside `shellStore` and exposes it on the kernel
+   interface. Any lens can now read/write `kernel.viewportCache.getState()`
+   without reaching into its own persistence.
+
+4. **`panels/graph-panel.tsx` — full rewrite.** Replaced the hand-rolled 3-depth
+   column layout with `buildGraphFromKernel` + `reconcileGraph` + `applyElkLayout`.
+   First mount builds the store once and runs elkjs "DOWN" direction so nodes
+   aren't stacked at (0,0). Subsequent kernel `onChange` events diff into the
+   existing GraphStore via `reconcileGraph`, which deliberately skips position
+   updates on existing nodes — user-dragged positions survive rebuilds. Uses
+   `GraphToolbar` with a stats title (node/edge count) and persists pan/zoom via
+   `kernel.viewportCache` under `VIEWPORT_KEY = "lens:graph"`. Bottom inspector
+   strip shows the selected node with a "Select in tree" button that calls
+   `kernel.select()`.
+
+5. **`panels/graph-panel-data.ts` — pure-helper split.** Extracted
+   `buildGraphFromKernel` and `reconcileGraph` out of `graph-panel.tsx` into a
+   sibling `.ts` file (same pattern as existing `chart-data.ts` / `map-data.ts`).
+   Without this split the test file's import chain drags in leaflet's
+   `map-widget-renderer.tsx` via the kernel, which crashes at `window is not
+   defined` in the node test env.
+
+6. **`panels/sitemap-panel.tsx` + `panels/schema-designer-panel.tsx`.** Both
+   migrated to the new `PrismGraph` feature set — minimap, background,
+   controls, toolbar, and viewport persistence. Sitemap uses `"lens:sitemap"`;
+   schema-designer uses `"lens:schema-designer"` with its own internal
+   `ViewToolbar` (entities aren't GraphStore objects so it re-implements Fit /
+   Zoom / Re-layout locally but shares the viewport-cache primitive + elkjs
+   helper).
+
+### Tests
+
+- `viewport-cache.test.ts` — 10 tests (`@prism/core/lens`).
+- `graph-panel.test.ts` — 10 tests against `graph-panel-data.ts`:
+  `buildGraphFromKernel` (nodes per live object, soft-deleted skip, containment
+  edges, dead parents, ObjectEdges, missing endpoints) +
+  `reconcileGraph` (adds/removes, position preservation, edge churn).
+- `@prism/core/graph` + `@prism/studio` typecheck clean (the 2 pre-existing
+  `layout-panel.tsx` errors are unrelated and predate this work).
+
+## Puck-shell unification — Studio chrome as an editable Puck tree (Complete — 2026-04-13)
+
+The Studio shell is now a Puck `<Render>` tree owned by the kernel. Every piece of Studio chrome — ActivityBar, ObjectExplorer, ComponentPalette, TabBar, InspectorPanel, UndoStatusBar, PresenceIndicator — is a `ShellWidgetBundle` that self-registers into `kernel.puckComponents`. Lens bundles that opt in via `puck: { embeddable: true }` also drop straight into the registry, so a lens author can put their own panel into any shell slot with zero shell-side wiring. `createStudioKernel` accepts an optional `appProfile` to filter lens bundles (Flux/Cadence/Lattice-style focused apps) and an optional `shellTree` override so a profile can rearrange the entire Studio layout as Puck JSON.
+
+### What landed
+
+1. **`@prism/core/lens`** — added `LensPuckConfig`-shaped generic `TPuckConfig` parameter on `LensBundle` and a new sibling `ShellWidgetBundle<TComponent, TPuckConfig>` type for chrome-only widgets (no `LensManifest`). `installShellWidgetBundles({ bundles, componentMap })` mirrors `installLensBundles` but only touches the component map. Core stays React-free — the generic is opaque.
+2. **`@prism/core/bindings/puck/lens-puck-adapter.tsx`** — `registerLensBundlesInPuck(bundles, registry)` + `registerShellWidgetBundlesInPuck(bundles, registry)`. Each bundle's `puck` config is converted to a Puck `ComponentConfig` (uses `createElement` rather than JSX so the render signature aligns with `PuckComponent<DefaultComponentProps>` and satisfies `exactOptionalPropertyTypes`). Lens bundles are only registered when `puck.embeddable === true`; the function returns a per-bundle result record with `{ name, registered, skipReason }` (`"no-puck" | "not-embeddable"`). Shell widgets default to embeddable. PascalCase names come from `kebabToPascal(bundle.id)`.
+3. **`@prism/core/bindings/puck/shell-components.tsx`** — built-in `AppShell` and `LensOutlet` Puck components.
+   - `AppShell` exposes six named slot fields — `activityBar`, `sidebar`, `header`, `main`, `inspector`, `footer` — plus per-bar size props (`activityBarWidth`, `sidebarWidth`, `inspectorWidth`, `headerHeight`, `footerHeight`). Pure `computeAppShellGrid()` helper returns the CSS grid template (3 rows × 4 columns with named areas; hidden regions collapse to `0px`).
+   - `LensOutlet` renders the active lens via `useLensContext` + `useShellStore`, with a configurable `emptyMessage` field.
+   - `LensZone` helper component scopes any subtree to a specific lens id.
+   - `createDefaultStudioShellTree({ widgetIds? })` builds the default AppShell tree (ActivityBar, ObjectExplorer+ComponentPalette, TabBar+PresenceIndicator+UndoStatusBar, LensOutlet, InspectorPanel), with per-widget id overrides so an app profile can substitute e.g. `CustomInspector` into the inspector slot. `DEFAULT_STUDIO_SHELL_TREE` is the pre-built constant.
+4. **`packages/prism-studio/src/components/chrome-bundles.tsx`** — `createBuiltinShellWidgetBundles()` returns seven ShellWidgetBundles wrapping the existing chrome components (activity-bar, tab-bar, object-explorer, component-palette, inspector-panel, undo-status-bar, presence-indicator). Each bundle's `puck.label` is set so the Puck field inspector shows a readable name.
+5. **`packages/prism-studio/src/kernel/studio-kernel.ts`** — `createStudioKernel` grew three options (`shellWidgetBundles`, `appProfile`, `shellTree`) and three instance fields (`shellWidgets`, `puckComponents`, `shellTree` + `setShellTree` + `onShellTreeChange`). At boot the kernel:
+   - Seeds `puckComponents` with `AppShell` and `LensOutlet` via `registerDirect`.
+   - Filters lens bundles through the pure `filterLensBundlesForProfile(bundles, profile)` helper before install — returns every bundle when the profile is missing or has no `lenses` field, otherwise intersects by id in source order.
+   - Installs filtered lens bundles via `installLensBundles` and auto-registers embeddable ones via `registerLensBundlesInPuck`.
+   - Installs shell widget bundles via `installShellWidgetBundles` and auto-registers every one via `registerShellWidgetBundlesInPuck`.
+   - Defaults `shellTree` to `DEFAULT_STUDIO_SHELL_TREE`; `setShellTree` notifies subscribers, `dispose()` clears listeners before unwinding bundles.
+6. **`packages/prism-studio/src/components/studio-shell.tsx`** — rewritten as a ~20-line Puck consumer: `useSyncExternalStore` on `kernel.onShellTreeChange`, `useMemo`s a Puck `Config` from `kernel.puckComponents.buildComponents(...)`, and renders `<Render config={config} data={shellTree} />`. No more hand-coded sidebar/inspector wiring — the entire chrome layout lives in `kernel.shellTree`.
+7. **`packages/prism-studio/src/App.tsx`** — passes `shellWidgetBundles: createBuiltinShellWidgetBundles()` into `createStudioKernel`; no other changes. Every other app in the monorepo that constructs its own kernel picks up the same mechanism for free.
+
+### Status
+
+- **4036 Vitest tests / 211 files passing** (+25 new: 6 lens-puck-adapter, 9 shell-components, 10 studio-kernel-shell).
+- **All 7 packages typecheck clean** (`pnpm typecheck`, 33.7s).
+- New tests cover: embeddable filtering, skip reasons, kebab→pascal naming, label/fields/defaultProps carry-through, shell widget default-on registration, AppShell grid templates + slot fields + defaults, `createDefaultStudioShellTree` shape + widget id overrides, `filterLensBundlesForProfile` across every branch, `createStudioKernel` shell wiring (registry seeding, default tree, shell-widget auto-registration, embeddable lens auto-registration, appProfile filtering, shell-tree subscribers).
+
+### Deferred
+
+- `shell-builder-panel.tsx` — a Glass Flip lens (Shift+H) for live-editing `kernel.shellTree` through the Puck editor. The underlying plumbing is now in place; only the panel UI is missing.
+
+## Puck editor help & UX pass — Phase A + B (Complete — 2026-04-13)
+
+ADR-005 tackles three things: (A) a stuck-cursor resize bug in `PageShellRenderer`, (B) porting the legacy Helm help system to `@prism/core/help`, (C) wiring it into the Puck editor.
+
+### Phase A — resize commit bug (landed)
+
+- `packages/prism-studio/src/components/layout-shell-renderers.tsx` — `useResizeHandle` now keeps `axis` / `direction` / `onCommit` / `value` in refs so the pointer-listener effect only depends on `[dragging]`. Previously a mid-drag re-render (from `setValue` → parent state → new `value` prop) re-ran the effect, detaching the old `pointerup` handler so the commit fired against a listener that had already been removed. Pointer now snaps on release.
+- `layout-shell-renderers.test.tsx` — 5 tests covering `computeShellGrid` + two pointerup/pointercancel commit paths.
+
+### Phase B — `@prism/core/help` (landed)
+
+Seven files under `packages/prism-core/src/bindings/react-shell/help/`, exposed as `@prism/core/help`:
+
+1. `types.ts` — `HelpEntry` (id / title / icon?:ReactNode / summary / docPath? / docAnchor?). Legacy `ComponentType` icon is now a plain ReactNode so callers don't pin an icon library.
+2. `help-registry.ts` — module-local `Map` + `register` / `registerMany` / `get` / `getAll` / `search` / `clear`. Search is case-insensitive AND-word substring across `title + summary`.
+3. `help-context.tsx` — `HelpProvider` + `useHelp()`, app provides `onOpenDoc(path, anchor?)` so the help system isn't tied to any backend.
+4. `help-markdown.tsx` — `HelpMarkdown` renders via `parseMarkdown` + `parseInline` from `@prism/core/forms` — no private tokenizer (satisfies the "parsing goes through Prism Syntax" constraint). Groups consecutive `li`/`task`/`oli` into `<ul>`/`<ol>`, emits `id` + `data-anchor` on headings, handles all six inline token kinds including wiki-links. `slugify` exported for tests.
+5. `help-tooltip.tsx` — portal-rendered popover, 380 ms show delay, 120 ms hide delay, 276 px wide. Module-level singleton `_dismissCallbacks` map ensures only one tooltip is visible at a time. Dismisses on Escape and capture-phase scroll.
+6. `doc-sheet.tsx` — fixed right-side 640 px slide panel with backdrop. Caller passes `fetchDoc(path) => Promise<string>` so Studio can use bundled `?raw` Vite imports (Tauri/Capacitor friendly) and a server app can HTTP fetch. Anchor scroll via `data-anchor`/`id` lookup with `CSS.escape`.
+7. `doc-search.tsx` — search input + result list over `HelpRegistry.search()`, `onPick` callback so an anchoring popover can close after selection.
+
+`index.ts` barrel + `"./help": "./src/bindings/react-shell/help/index.ts"` in `packages/prism-core/package.json` exports.
+
+### Tests
+
+- `help-registry.test.ts` — 15 tests (register/registerMany/get/getAll/search/clear, AND-logic, case-insensitive, readonly array).
+- `help-markdown.test.tsx` — 17 tests (slugify + BlockToken→React rendering for all 11 block kinds + inline tokens, list grouping, checkbox rendering).
+- `layout-shell-renderers.test.tsx` — 5 tests (Phase A).
+- Full repo suite: **4073 tests passing across 214 files**.
+
+### Config
+
+- `vitest.config.ts` — include pattern broadened to `packages/*/src/**/*.test.{ts,tsx}` (and coverage to match) so `.test.tsx` files are actually picked up by root `pnpm test`. Prior .tsx tests had been silently skipped.
+
+### Phase C — Wire help into Puck editor (Complete — 2026-04-13)
+
+- `packages/prism-studio/src/panels/puck-help-entries.ts` — 8 categories, ~50 components (12 flagship summaries + stubs), 6 style-field groups, 4 regions. Side-effect module imported from `layout-panel.tsx` so `HelpRegistry.registerMany(...)` runs at boot.
+- `packages/prism-studio/docs/help/*.md` — 12 flagship markdown docs bundled via Vite `?raw` and fetched through `fetchHelpDoc`.
+- `layout-panel.tsx` — wraps the panel in `<HelpProvider>`; Puck `overrides.componentItem` / `overrides.drawerItem` wrap palette entries in `<HelpTooltip>` using derived helpIds. Toolbar `?` button (`data-testid="layout-panel-help-button"`) toggles an absolutely-positioned `<DocSearch>` popover (`data-testid="layout-panel-help-search"`); selecting a result with `docPath` sets `docState` and renders `<DocSheet>` (Escape closes).
+- `PuckComponentProvider` (ADR-004) extended with optional `helpId?: string`.
+- Collateral shell-boot fix: `studio-shell.tsx` now binds `APP_SHELL_PUCK_CONFIG` as `config.root` via `puckConfigToComponentConfig` (bypassing the `AppShell` PascalCase collision between core's built-in shell and the user-facing `app-shell` entity def). `core/bindings/puck/shell-components.tsx` widened `AppShellProps` slots to `ReactNode | SlotFn` with a `resolveSlot` helper so Puck v0.20 slot callables render correctly.
+- E2E: `packages/prism-studio/e2e/layout.spec.ts` adds `help button toggles the DocSearch popover` smoke test. 3/3 layout.spec tests passing.
+
 ## Admin Panels for Daemon / Relay / Studio (Complete — 2026-04-13)
 
 All three Prism runtimes now ship live admin dashboards powered by `@prism/admin-kit`.

@@ -10,7 +10,7 @@
 
 import { useCallback, useState } from "react";
 import type { EdgeTypeDef, EdgeBehavior } from "@prism/core/object-model";
-import { useKernel } from "../kernel/index.js";
+import { useKernel, useRegistration } from "../kernel/index.js";
 
 import { lensId } from "@prism/core/lens";
 import type { LensManifest } from "@prism/core/lens";
@@ -35,21 +35,25 @@ export function RelationshipBuilderPanel() {
   const [targetTypes, setTargetTypes] = useState("");
   const [description, setDescription] = useState("");
 
+  const registerRelation = useRegistration<EdgeTypeDef>({
+    noun: "relationship",
+    name: (def) => def.label ?? def.relation,
+    validate: (def) =>
+      def.relation.trim() && (def.label ?? "").trim()
+        ? null
+        : "Relation and label required",
+    exists: (def) => !!kernel.registry.getEdgeType(def.relation),
+    register: (def) => kernel.registry.registerEdge(def),
+    onSuccess: () => {
+      setRelation("");
+      setLabel("");
+      setDescription("");
+      setSourceTypes("");
+      setTargetTypes("");
+    },
+  });
+
   const register = useCallback(() => {
-    if (!relation.trim() || !label.trim()) {
-      kernel.notifications.add({
-        title: "Relation and label required",
-        kind: "warning",
-      });
-      return;
-    }
-    if (kernel.registry.getEdgeType(relation.trim())) {
-      kernel.notifications.add({
-        title: `Relation "${relation}" already exists`,
-        kind: "warning",
-      });
-      return;
-    }
     const def: EdgeTypeDef = {
       relation: relation.trim(),
       label: label.trim(),
@@ -65,17 +69,8 @@ export function RelationshipBuilderPanel() {
       : null;
     if (srcList && srcList.length > 0) def.sourceTypes = srcList;
     if (tgtList && tgtList.length > 0) def.targetTypes = tgtList;
-    kernel.registry.registerEdge(def);
-    kernel.notifications.add({
-      title: `Registered edge type "${label}"`,
-      kind: "success",
-    });
-    setRelation("");
-    setLabel("");
-    setDescription("");
-    setSourceTypes("");
-    setTargetTypes("");
-  }, [relation, label, behavior, color, description, sourceTypes, targetTypes, kernel]);
+    registerRelation(def);
+  }, [relation, label, behavior, color, description, sourceTypes, targetTypes, registerRelation]);
 
   const allEdgeDefs = kernel.registry.allEdgeDefs();
 

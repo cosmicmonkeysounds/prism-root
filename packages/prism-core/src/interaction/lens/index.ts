@@ -26,10 +26,22 @@ export type {
 export { createShellStore } from "./shell-store.js";
 
 export type {
+  ViewportState,
+  ViewportCacheState,
+  ViewportCacheActions,
+  ViewportCache,
+} from "./viewport-cache.js";
+export { createViewportCache } from "./viewport-cache.js";
+
+export type {
   LensBundle,
   LensInstallContext,
+  ShellWidgetBundle,
+  ShellWidgetInstallContext,
 } from "./lens-install.js";
 export {
   installLensBundles,
   defineLensBundle,
+  installShellWidgetBundles,
+  defineShellWidgetBundle,
 } from "./lens-install.js";

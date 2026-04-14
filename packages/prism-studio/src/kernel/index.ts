@@ -46,6 +46,9 @@ export {
 
 export { createPageBuilderRegistry } from "./entities.js";
 
+export { useRegistration } from "./use-registration.js";
+export type { UseRegistrationOptions } from "./use-registration.js";
+
 export { createRelayManager } from "@prism/core/relay-manager";
 export type {
   RelayManager,

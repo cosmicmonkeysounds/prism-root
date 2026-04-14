@@ -170,4 +170,64 @@ describe("PuckComponentRegistry", () => {
 
     expect(components).toEqual({});
   });
+
+  it("registerDirect puts a full ComponentConfig under an explicit name", () => {
+    const registry = new PuckComponentRegistry<FakeKernel>();
+    const config: ComponentConfig = {
+      label: "Activity Bar",
+      fields: {},
+      render: () => null,
+    };
+    registry.registerDirect("ActivityBar", config);
+
+    expect(registry.hasDirect("ActivityBar")).toBe(true);
+    expect(registry.getDirect("ActivityBar")).toBe(config);
+    expect(registry.directNames()).toEqual(["ActivityBar"]);
+  });
+
+  it("buildComponents merges direct entries with provider-derived entries", () => {
+    const registry = new PuckComponentRegistry<FakeKernel>();
+    registry.register(makeProvider("record-list", "rl"));
+    registry.registerDirect("ActivityBar", {
+      label: "Activity Bar",
+      fields: {},
+      render: () => null,
+    });
+
+    const components = registry.buildComponents({
+      defs: [makeDef("record-list")],
+      kernel: { id: "k" },
+    });
+
+    expect(Object.keys(components).sort()).toEqual([
+      "ActivityBar",
+      "RecordList",
+    ]);
+  });
+
+  it("direct entries override provider-derived entries on name collision", () => {
+    const registry = new PuckComponentRegistry<FakeKernel>();
+    registry.register(makeProvider("activity-bar", "from-provider"));
+    const overriding: ComponentConfig = {
+      label: "Override",
+      fields: {},
+      render: () => null,
+    };
+    registry.registerDirect("ActivityBar", overriding);
+
+    const components = registry.buildComponents({
+      defs: [makeDef("activity-bar")],
+      kernel: { id: "k" },
+    });
+
+    expect(components["ActivityBar"]).toBe(overriding);
+  });
+
+  it("unregisterDirect removes a direct entry", () => {
+    const registry = new PuckComponentRegistry<FakeKernel>();
+    registry.registerDirect("Foo", { fields: {}, render: () => null });
+    expect(registry.unregisterDirect("Foo")).toBe(true);
+    expect(registry.unregisterDirect("Foo")).toBe(false);
+    expect(registry.hasDirect("Foo")).toBe(false);
+  });
 });

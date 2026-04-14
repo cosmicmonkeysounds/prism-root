@@ -45,6 +45,7 @@ import { createLiveView } from "@prism/core/view";
 import type { LiveView, LiveViewOptions } from "@prism/core/view";
 import type { ObjectTemplate, TemplateNode, InstantiateResult } from "@prism/core/template";
 import { createPageBuilderRegistry } from "./entities.js";
+import { buildEntityPuckComponents } from "./entity-puck-config.js";
 import { createDesignTokenRegistry, DEFAULT_TOKENS } from "@prism/core/design-tokens";
 import type { DesignTokenRegistry } from "@prism/core/design-tokens";
 import { createBuiltinBundles, installPluginBundles } from "@prism/core/plugin-bundles";
@@ -53,14 +54,32 @@ import type { StoreApi } from "zustand";
 import {
   createLensRegistry,
   createShellStore,
+  createViewportCache,
   installLensBundles,
+  installShellWidgetBundles,
 } from "@prism/core/lens";
 import type {
   LensRegistry,
   LensId,
   LensBundle,
   ShellStore,
+  ShellWidgetBundle,
+  ViewportCache,
 } from "@prism/core/lens";
+import {
+  createPuckComponentRegistry,
+  registerLensBundlesInPuck,
+  registerShellWidgetBundlesInPuck,
+  registerEntityDefsInPuck,
+  SHELL_PUCK_CONFIG,
+  LENS_OUTLET_PUCK_CONFIG,
+  puckConfigToComponentConfig,
+  DEFAULT_STUDIO_SHELL_TREE,
+  type LensPuckConfig,
+  type PuckComponentRegistry,
+} from "@prism/core/puck";
+import type { Data as PuckData } from "@measured/puck";
+import type { AppProfile } from "@prism/core/builder";
 import { createRelayManager } from "@prism/core/relay-manager";
 import type { RelayManager } from "@prism/core/relay-manager";
 import { createBuilderManager } from "@prism/core/builder";
@@ -189,7 +208,7 @@ export interface PasteResult {
 // ── Kernel Interface ────────────────────────────────────────────────────────
 
 export interface StudioKernel {
-  readonly registry: ObjectRegistry<string>;
+  readonly registry: ObjectRegistry<string, LensPuckConfig>;
   readonly store: CollectionStore;
   readonly bus: PrismBus;
   readonly atoms: AtomStore;
@@ -617,6 +636,44 @@ export interface StudioKernel {
   /** Shell tab/panel state store (zustand). */
   readonly shellStore: StoreApi<ShellStore>;
 
+  /**
+   * Ephemeral pan/zoom cache for graph / canvas / timeline lenses. Survives
+   * tab switches because it lives on the kernel, not on a React component.
+   * Keys are arbitrary strings — convention is `"<lensId>"` for singleton
+   * lenses or `"<lensId>:<targetId>"` for per-document views.
+   */
+  readonly viewportCache: StoreApi<ViewportCache>;
+
+  // ── Puck-driven Shell ────────────────────────────────────────────────────
+
+  /**
+   * Chrome widget component map (id → React component), populated by
+   * `ShellWidgetBundle.install`. Used by the studio shell renderer to
+   * resolve widgets referenced from the shell Puck tree.
+   */
+  readonly shellWidgets: Map<string, ComponentType>;
+
+  /**
+   * Shared Puck component registry. Holds the built-in `Shell` +
+   * `LensOutlet` direct entries plus every lens/shell-widget bundle that
+   * declared a `puck` config. The layout panel merges its own entity-
+   * driven components in at build time.
+   */
+  readonly puckComponents: PuckComponentRegistry<StudioKernel>;
+
+  /**
+   * Current Puck `Data` tree describing the app shell. Initially set to
+   * `DEFAULT_STUDIO_SHELL_TREE`; the shell-builder lens replaces this
+   * with a user-authored tree at runtime.
+   */
+  shellTree: PuckData;
+
+  /** Update the shell tree and notify subscribers. */
+  setShellTree(tree: PuckData): void;
+
+  /** Subscribe to shell-tree mutations (shell builder live reload). */
+  onShellTreeChange(listener: () => void): () => void;
+
   /** Dispose all subscriptions. */
   dispose(): void;
 }
@@ -626,12 +683,42 @@ export interface StudioKernel {
 export interface StudioKernelOptions {
   /**
    * Lens bundles to install at startup. Each bundle self-registers its
-   * manifest into `lensRegistry` and its component into `lensComponents`.
+   * manifest into `lensRegistry` and its component into `lensComponents`,
+   * and (if it carries a `puck` config) auto-lands as a Puck direct
+   * component so it can be placed in the shell tree.
    *
    * Typically `createBuiltinLensBundles()` from `../lenses/index.js`. Tests
-   * can pass an empty array or a minimal subset.
+   * can pass an empty array or a minimal subset. When `appProfile` is set,
+   * the bundles are filtered to the profile's allowed lens ids.
    */
-  readonly lensBundles?: LensBundle<ComponentType>[];
+  readonly lensBundles?: LensBundle<ComponentType, LensPuckConfig>[];
+
+  /**
+   * Chrome widget bundles that make up the shell (ActivityBar, TabBar,
+   * ObjectExplorer, …). Each bundle installs its component into
+   * `shellWidgets` and auto-registers as a Puck direct component so the
+   * shell tree can reference it by PascalCase name.
+   *
+   * Typically `createBuiltinShellWidgetBundles()` from
+   * `../components/chrome-bundles.js`.
+   */
+  readonly shellWidgetBundles?: ShellWidgetBundle<ComponentType, LensPuckConfig>[];
+
+  /**
+   * Focused-app profile. When present the kernel filters `lensBundles`
+   * down to the set named in `appProfile.lenses` (if provided) so a
+   * build of Flux/Cadence/Grip boots with only that app's panels. A
+   * missing or empty `lenses` field means "include everything".
+   */
+  readonly appProfile?: AppProfile;
+
+  /**
+   * Optional Puck `Data` to seed the shell tree with. Defaults to
+   * `DEFAULT_STUDIO_SHELL_TREE` from `@prism/core/puck`, which reproduces
+   * the legacy hand-coded shell. App profiles can substitute their own
+   * tree to ship a focused, chrome-less experience.
+   */
+  readonly shellTree?: PuckData;
 
   /**
    * Studio initializers that run AFTER the kernel has been fully
@@ -643,6 +730,25 @@ export interface StudioKernelOptions {
    * Tests can pass an empty array or a minimal subset.
    */
   readonly initializers?: StudioInitializer[];
+}
+
+/**
+ * Filter lens bundles by an app profile. Pure helper so tests can
+ * exercise the logic without booting a kernel.
+ *
+ * - Profile with no `lenses` or an empty array → pass all bundles through.
+ * - Profile with `lenses: string[]` → keep only bundles whose id matches.
+ * - No profile at all → pass all bundles through.
+ */
+export function filterLensBundlesForProfile<T extends { readonly id: string }>(
+  bundles: ReadonlyArray<T>,
+  profile: AppProfile | undefined,
+): T[] {
+  if (!profile) return [...bundles];
+  const allowed = profile.lenses;
+  if (!allowed || allowed.length === 0) return [...bundles];
+  const set = new Set(allowed);
+  return bundles.filter((b) => set.has(b.id));
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -715,13 +821,66 @@ export function createStudioKernel(options: StudioKernelOptions = {}): StudioKer
   // list (typically createBuiltinLensBundles from ../lenses/index.js) and
   // each bundle self-registers its manifest + component. No parallel
   // manifest/component lists live at the App level anymore.
+  //
+  // When an `appProfile` is supplied, the kernel filters the lens list
+  // down to the profile's declared ids so a focused-app build (Flux,
+  // Cadence, Grip, …) boots with only its own panels. ShellWidgetBundles
+  // are installed unconditionally — profiles customise chrome by passing
+  // a different `shellTree`, not by filtering widgets.
   const lensRegistry = createLensRegistry();
   const lensComponents = new Map<LensId, ComponentType>();
   const shellStore = createShellStore();
-  const uninstallLensBundles = installLensBundles(options.lensBundles ?? [], {
+  const viewportCache = createViewportCache();
+  const shellWidgets = new Map<string, ComponentType>();
+  const puckComponents = createPuckComponentRegistry<StudioKernel>();
+  // Register the two built-in shell primitives that ship with core. Every
+  // other Puck component lands in this registry via the unified
+  // `registerEntityDefsInPuck` / `registerLensBundlesInPuck` /
+  // `registerShellWidgetBundlesInPuck` pipeline below — no hand-wired
+  // `components: { … }` map lives in any panel anymore.
+  puckComponents.registerDirect(
+    "Shell",
+    puckConfigToComponentConfig(SHELL_PUCK_CONFIG, "Shell"),
+  );
+  puckComponents.registerDirect(
+    "LensOutlet",
+    puckConfigToComponentConfig(LENS_OUTLET_PUCK_CONFIG, "Lens Outlet"),
+  );
+
+  const filteredLensBundles = filterLensBundlesForProfile(
+    options.lensBundles ?? [],
+    options.appProfile,
+  );
+  const uninstallLensBundles = installLensBundles(filteredLensBundles, {
     lensRegistry,
     componentMap: lensComponents,
   });
+  registerLensBundlesInPuck(filteredLensBundles, puckComponents);
+
+  const shellWidgetBundles = options.shellWidgetBundles ?? [];
+  const uninstallShellWidgetBundles = installShellWidgetBundles(
+    shellWidgetBundles,
+    { componentMap: shellWidgets },
+  );
+  registerShellWidgetBundlesInPuck(shellWidgetBundles, puckComponents);
+
+  // Every `EntityDef` registered in the object registry that carries a
+  // `puck` block auto-registers as a Puck component. This is the unified
+  // entry point — entity authors touch `entities/<type>.tsx` only, and
+  // the renderer they attach there is what Puck uses. No parallel
+  // `components: { … }` map, no provider interface, no per-panel wiring.
+  registerEntityDefsInPuck(
+    registry.allDefs() as ReadonlyArray<
+      import("@prism/core/object-model").EntityDef<unknown, LensPuckConfig>
+    >,
+    puckComponents as unknown as PuckComponentRegistry<unknown>,
+  );
+
+  let currentShellTree: PuckData = options.shellTree ?? DEFAULT_STUDIO_SHELL_TREE;
+  const shellTreeListeners = new Set<() => void>();
+  const notifyShellTreeListeners = (): void => {
+    for (const fn of shellTreeListeners) fn();
+  };
 
   // ── Input System ───────────────────────────────────────────────────────────
   const inputRouter = new InputRouter();
@@ -1742,6 +1901,8 @@ export function createStudioKernel(options: StudioKernelOptions = {}): StudioKer
 
   function dispose(): void {
     uninstallInitializers();
+    uninstallShellWidgetBundles();
+    shellTreeListeners.clear();
     uninstallLensBundles();
     uninstallBundles();
     automationEngine.stop();
@@ -1837,6 +1998,24 @@ export function createStudioKernel(options: StudioKernelOptions = {}): StudioKer
     lensRegistry,
     lensComponents,
     shellStore,
+    viewportCache,
+
+    // ── Puck-driven Shell ────────────────────────────────────────────────
+    shellWidgets,
+    puckComponents,
+    get shellTree() { return currentShellTree; },
+    set shellTree(tree: PuckData) {
+      currentShellTree = tree;
+      notifyShellTreeListeners();
+    },
+    setShellTree(tree: PuckData) {
+      currentShellTree = tree;
+      notifyShellTreeListeners();
+    },
+    onShellTreeChange(listener: () => void) {
+      shellTreeListeners.add(listener);
+      return () => shellTreeListeners.delete(listener);
+    },
 
     // ── Plugin System ──────────────────────────────────────────────────────
     plugins: pluginRegistry,
@@ -2040,6 +2219,17 @@ export function createStudioKernel(options: StudioKernelOptions = {}): StudioKer
 
     dispose,
   };
+
+  // Unified entity → Puck pipeline. Studio's legacy hand-wired per-entity
+  // `ComponentConfig` table lives in `entity-puck-config.tsx`; we invoke it
+  // now that `kernel` is fully constructed, because each render closure
+  // closes over the kernel to read `store` / `atoms` reactively at render
+  // time. Every entry lands in the same `puckComponents` map the rest of
+  // the pipeline writes to, so downstream panels read one source of truth.
+  const entityComponents = buildEntityPuckComponents(kernel);
+  for (const [name, config] of Object.entries(entityComponents)) {
+    puckComponents.registerDirect(name, config);
+  }
 
   // Initializers run last, after every kernel method is in place, so they
   // can freely call registerTemplate, createObject, etc.

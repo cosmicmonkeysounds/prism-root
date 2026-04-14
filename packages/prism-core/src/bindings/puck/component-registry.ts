@@ -37,6 +37,14 @@ export interface ProviderContext<TKernel> {
 export interface PuckComponentProvider<TKernel = unknown> {
   /** Entity type this provider handles, in kebab-case (matches `EntityDef.type`). */
   readonly type: string;
+  /**
+   * Optional HelpRegistry entry id for this component — Studio's layout
+   * panel uses it to attach a `HelpTooltip` to the matching palette item
+   * and "View full docs" button (ADR-005). If omitted, `puck.components.<type>`
+   * is assumed so providers never need to duplicate the naming convention
+   * unless they want a custom id.
+   */
+  readonly helpId?: string;
   /** Build the Puck config entry for this entity type. */
   buildConfig(ctx: ProviderContext<TKernel>): ComponentConfig;
 }
@@ -53,9 +61,23 @@ export function kebabToPascal(s: string): string {
  * Holds providers keyed by entity type and builds Puck component maps on
  * demand. Construction is side-effect free — registration happens via
  * `.register()` chaining. Safe to share across panels.
+ *
+ * Two registration paths:
+ *
+ * - `register(provider)` — entity-driven. The provider receives an
+ *   `EntityDef` at build time and emits a Puck `ComponentConfig`. Used
+ *   by content blocks that mirror entity schemas (record-list, etc).
+ * - `registerDirect(name, config)` — component-driven. Caller supplies a
+ *   ready-made Puck `ComponentConfig` under an explicit PascalCase name.
+ *   Used by the lens/shell-widget Puck adapter so any LensBundle with a
+ *   `puck` config auto-lands in the registry with zero entity coupling.
+ *
+ * Both paths merge into the same output at `buildComponents()` time.
+ * Direct entries override entity-derived entries on name collision.
  */
 export class PuckComponentRegistry<TKernel = unknown> {
   private readonly providers = new Map<string, PuckComponentProvider<TKernel>>();
+  private readonly direct = new Map<string, ComponentConfig>();
 
   /** Register a single provider. Later registrations override earlier ones. */
   register(provider: PuckComponentProvider<TKernel>): this {
@@ -71,9 +93,24 @@ export class PuckComponentRegistry<TKernel = unknown> {
     return this;
   }
 
+  /**
+   * Register a ready-made Puck component under a fixed PascalCase name.
+   * Used by the lens/shell-widget adapter — the config is authored by
+   * the bundle itself rather than derived from an `EntityDef`.
+   */
+  registerDirect(name: string, config: ComponentConfig): this {
+    this.direct.set(name, config);
+    return this;
+  }
+
   /** Remove a provider. Mainly used in tests. */
   unregister(type: string): boolean {
     return this.providers.delete(type);
+  }
+
+  /** Remove a direct component. Mainly used in tests. */
+  unregisterDirect(name: string): boolean {
+    return this.direct.delete(name);
   }
 
   has(type: string): boolean {
@@ -84,20 +121,34 @@ export class PuckComponentRegistry<TKernel = unknown> {
     return this.providers.get(type);
   }
 
+  hasDirect(name: string): boolean {
+    return this.direct.has(name);
+  }
+
+  getDirect(name: string): ComponentConfig | undefined {
+    return this.direct.get(name);
+  }
+
   /** Iterate over registered entity types. */
   types(): string[] {
     return Array.from(this.providers.keys());
   }
 
+  /** Iterate over registered direct component names. */
+  directNames(): string[] {
+    return Array.from(this.direct.keys());
+  }
+
   /**
-   * Build a Puck component map from the supplied entity defs. Only defs
-   * that have a registered provider contribute entries — the caller is
-   * expected to merge the result with whatever default-path components it
+   * Build a Puck component map from the supplied entity defs. Merges
+   * entity-derived entries (from registered providers) with direct
+   * entries (registered via `registerDirect`). The caller is expected
+   * to merge the result with whatever default-path components it also
    * builds itself (e.g. from a generic entity→component generator).
    *
    * Keys in the returned record are PascalCase (Puck's component-name
-   * convention); values are the `ComponentConfig` returned by each
-   * provider.
+   * convention); direct entries override entity-derived entries on name
+   * collision so an explicit registration always wins.
    */
   buildComponents(opts: {
     defs: ReadonlyArray<EntityDef>;
@@ -111,6 +162,9 @@ export class PuckComponentRegistry<TKernel = unknown> {
         def,
         kernel: opts.kernel,
       });
+    }
+    for (const [name, config] of this.direct) {
+      out[name] = config;
     }
     return out;
   }

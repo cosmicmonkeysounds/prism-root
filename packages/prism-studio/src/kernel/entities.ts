@@ -8,6 +8,7 @@
 
 import { ObjectRegistry } from "@prism/core/object-model";
 import type { EntityDef, EdgeTypeDef, CategoryRule } from "@prism/core/object-model";
+import type { LensPuckConfig } from "@prism/core/puck";
 import { STYLE_FIELD_DEFS } from "@prism/core/page-builder";
 
 // ── Category Rules ──────────────────────────────────────────────────────────
@@ -32,7 +33,7 @@ const categoryRules: CategoryRule[] = [
 
 // ── Entity Definitions ──────────────────────────────────────────────────────
 
-const folderDef: EntityDef<string> = {
+const folderDef: EntityDef<string, LensPuckConfig> = {
   type: "folder",
   category: "workspace",
   label: "Folder",
@@ -42,7 +43,7 @@ const folderDef: EntityDef<string> = {
   fields: [],
 };
 
-const pageDef: EntityDef<string> = {
+const pageDef: EntityDef<string, LensPuckConfig> = {
   type: "page",
   category: "page",
   label: "Page",
@@ -75,7 +76,7 @@ const pageDef: EntityDef<string> = {
   ],
 };
 
-const sectionDef: EntityDef<string> = {
+const sectionDef: EntityDef<string, LensPuckConfig> = {
   type: "section",
   category: "section",
   label: "Section",
@@ -101,7 +102,7 @@ const sectionDef: EntityDef<string> = {
   ],
 };
 
-const headingDef: EntityDef<string> = {
+const headingDef: EntityDef<string, LensPuckConfig> = {
   type: "heading",
   category: "component",
   label: "Heading",
@@ -132,7 +133,7 @@ const headingDef: EntityDef<string> = {
   ],
 };
 
-const textBlockDef: EntityDef<string> = {
+const textBlockDef: EntityDef<string, LensPuckConfig> = {
   type: "text-block",
   category: "component",
   label: "Text Block",
@@ -150,7 +151,7 @@ const textBlockDef: EntityDef<string> = {
   ],
 };
 
-const imageDef: EntityDef<string> = {
+const imageDef: EntityDef<string, LensPuckConfig> = {
   type: "image",
   category: "component",
   label: "Image",
@@ -167,7 +168,7 @@ const imageDef: EntityDef<string> = {
   ],
 };
 
-const buttonDef: EntityDef<string> = {
+const buttonDef: EntityDef<string, LensPuckConfig> = {
   type: "button",
   category: "component",
   label: "Button",
@@ -238,7 +239,7 @@ const buttonDef: EntityDef<string> = {
   ],
 };
 
-const cardDef: EntityDef<string> = {
+const cardDef: EntityDef<string, LensPuckConfig> = {
   type: "card",
   category: "component",
   label: "Card",
@@ -286,7 +287,7 @@ const cardDef: EntityDef<string> = {
   ],
 };
 
-const luauBlockDef: EntityDef<string> = {
+const luauBlockDef: EntityDef<string, LensPuckConfig> = {
   type: "luau-block",
   category: "component",
   label: "Luau Block",
@@ -302,7 +303,7 @@ const luauBlockDef: EntityDef<string> = {
 
 // ── Data-Aware Components (FileMaker Pro parity) ───────────────────────────
 
-const facetViewDef: EntityDef<string> = {
+const facetViewDef: EntityDef<string, LensPuckConfig> = {
   type: "facet-view",
   category: "component",
   label: "Facet View",
@@ -329,7 +330,7 @@ const facetViewDef: EntityDef<string> = {
   ],
 };
 
-const spatialCanvasDef: EntityDef<string> = {
+const spatialCanvasDef: EntityDef<string, LensPuckConfig> = {
   type: "spatial-canvas",
   category: "component",
   label: "Spatial Canvas",
@@ -351,7 +352,7 @@ const spatialCanvasDef: EntityDef<string> = {
   ],
 };
 
-const dataPortalDef: EntityDef<string> = {
+const dataPortalDef: EntityDef<string, LensPuckConfig> = {
   type: "data-portal",
   category: "component",
   label: "Data Portal",
@@ -380,7 +381,7 @@ const dataPortalDef: EntityDef<string> = {
 
 // ── Data-Aware Widgets (Puck-draggable visualisations) ─────────────────────
 
-const recordListDef: EntityDef<string> = {
+const recordListDef: EntityDef<string, LensPuckConfig> = {
   type: "record-list",
   category: "component",
   label: "Record List",
@@ -456,7 +457,7 @@ const recordListDef: EntityDef<string> = {
   ],
 };
 
-const kanbanWidgetDef: EntityDef<string> = {
+const kanbanWidgetDef: EntityDef<string, LensPuckConfig> = {
   type: "kanban-widget",
   category: "component",
   label: "Kanban Widget",
@@ -473,7 +474,7 @@ const kanbanWidgetDef: EntityDef<string> = {
   ],
 };
 
-const listWidgetDef: EntityDef<string> = {
+const listWidgetDef: EntityDef<string, LensPuckConfig> = {
   type: "list-widget",
   category: "component",
   label: "List Widget",
@@ -490,7 +491,7 @@ const listWidgetDef: EntityDef<string> = {
   ],
 };
 
-const tableWidgetDef: EntityDef<string> = {
+const tableWidgetDef: EntityDef<string, LensPuckConfig> = {
   type: "table-widget",
   category: "component",
   label: "Table Widget",
@@ -521,7 +522,7 @@ const tableWidgetDef: EntityDef<string> = {
   ],
 };
 
-const cardGridWidgetDef: EntityDef<string> = {
+const cardGridWidgetDef: EntityDef<string, LensPuckConfig> = {
   type: "card-grid-widget",
   category: "component",
   label: "Card Grid Widget",
@@ -538,7 +539,7 @@ const cardGridWidgetDef: EntityDef<string> = {
   ],
 };
 
-const reportWidgetDef: EntityDef<string> = {
+const reportWidgetDef: EntityDef<string, LensPuckConfig> = {
   type: "report-widget",
   category: "component",
   label: "Report Widget",
@@ -567,7 +568,7 @@ const reportWidgetDef: EntityDef<string> = {
   ],
 };
 
-const calendarWidgetDef: EntityDef<string> = {
+const calendarWidgetDef: EntityDef<string, LensPuckConfig> = {
   type: "calendar-widget",
   category: "component",
   label: "Calendar Widget",
@@ -593,7 +594,7 @@ const calendarWidgetDef: EntityDef<string> = {
   ],
 };
 
-const chartWidgetDef: EntityDef<string> = {
+const chartWidgetDef: EntityDef<string, LensPuckConfig> = {
   type: "chart-widget",
   category: "component",
   label: "Chart Widget",
@@ -633,7 +634,7 @@ const chartWidgetDef: EntityDef<string> = {
   ],
 };
 
-const mapWidgetDef: EntityDef<string> = {
+const mapWidgetDef: EntityDef<string, LensPuckConfig> = {
   type: "map-widget",
   category: "component",
   label: "Map Widget",
@@ -650,7 +651,7 @@ const mapWidgetDef: EntityDef<string> = {
   ],
 };
 
-const tabContainerDef: EntityDef<string> = {
+const tabContainerDef: EntityDef<string, LensPuckConfig> = {
   type: "tab-container",
   category: "component",
   label: "Tab Container",
@@ -664,7 +665,7 @@ const tabContainerDef: EntityDef<string> = {
   ],
 };
 
-const popoverWidgetDef: EntityDef<string> = {
+const popoverWidgetDef: EntityDef<string, LensPuckConfig> = {
   type: "popover-widget",
   category: "component",
   label: "Popover",
@@ -678,7 +679,7 @@ const popoverWidgetDef: EntityDef<string> = {
   ],
 };
 
-const slidePanelDef: EntityDef<string> = {
+const slidePanelDef: EntityDef<string, LensPuckConfig> = {
   type: "slide-panel",
   category: "component",
   label: "Slide Panel",
@@ -695,7 +696,7 @@ const slidePanelDef: EntityDef<string> = {
 
 // ── Form Input Widgets ─────────────────────────────────────────────────────
 
-const textInputDef: EntityDef<string> = {
+const textInputDef: EntityDef<string, LensPuckConfig> = {
   type: "text-input",
   category: "component",
   label: "Text Input",
@@ -725,7 +726,7 @@ const textInputDef: EntityDef<string> = {
   ],
 };
 
-const textareaInputDef: EntityDef<string> = {
+const textareaInputDef: EntityDef<string, LensPuckConfig> = {
   type: "textarea-input",
   category: "component",
   label: "Textarea",
@@ -743,7 +744,7 @@ const textareaInputDef: EntityDef<string> = {
   ],
 };
 
-const selectInputDef: EntityDef<string> = {
+const selectInputDef: EntityDef<string, LensPuckConfig> = {
   type: "select-input",
   category: "component",
   label: "Select",
@@ -766,7 +767,7 @@ const selectInputDef: EntityDef<string> = {
   ],
 };
 
-const checkboxInputDef: EntityDef<string> = {
+const checkboxInputDef: EntityDef<string, LensPuckConfig> = {
   type: "checkbox-input",
   category: "component",
   label: "Checkbox",
@@ -781,7 +782,7 @@ const checkboxInputDef: EntityDef<string> = {
   ],
 };
 
-const numberInputDef: EntityDef<string> = {
+const numberInputDef: EntityDef<string, LensPuckConfig> = {
   type: "number-input",
   category: "component",
   label: "Number Input",
@@ -800,7 +801,7 @@ const numberInputDef: EntityDef<string> = {
   ],
 };
 
-const dateInputDef: EntityDef<string> = {
+const dateInputDef: EntityDef<string, LensPuckConfig> = {
   type: "date-input",
   category: "component",
   label: "Date Input",
@@ -829,7 +830,7 @@ const dateInputDef: EntityDef<string> = {
 
 // ── Layout Primitives ──────────────────────────────────────────────────────
 
-const columnsDef: EntityDef<string> = {
+const columnsDef: EntityDef<string, LensPuckConfig> = {
   type: "columns",
   category: "component",
   label: "Columns",
@@ -855,7 +856,7 @@ const columnsDef: EntityDef<string> = {
   ],
 };
 
-const dividerDef: EntityDef<string> = {
+const dividerDef: EntityDef<string, LensPuckConfig> = {
   type: "divider",
   category: "component",
   label: "Divider",
@@ -882,7 +883,7 @@ const dividerDef: EntityDef<string> = {
   ],
 };
 
-const spacerDef: EntityDef<string> = {
+const spacerDef: EntityDef<string, LensPuckConfig> = {
   type: "spacer",
   category: "component",
   label: "Spacer",
@@ -907,7 +908,7 @@ const spacerDef: EntityDef<string> = {
 
 // ── Wix-style layout primitives ────────────────────────────────────────────
 
-const pageShellDef: EntityDef<string> = {
+const pageShellDef: EntityDef<string, LensPuckConfig> = {
   type: "page-shell",
   category: "component",
   label: "Page Shell",
@@ -924,7 +925,7 @@ const pageShellDef: EntityDef<string> = {
   ],
 };
 
-const siteHeaderDef: EntityDef<string> = {
+const siteHeaderDef: EntityDef<string, LensPuckConfig> = {
   type: "site-header",
   category: "component",
   label: "Site Header",
@@ -939,7 +940,7 @@ const siteHeaderDef: EntityDef<string> = {
   ],
 };
 
-const siteFooterDef: EntityDef<string> = {
+const siteFooterDef: EntityDef<string, LensPuckConfig> = {
   type: "site-footer",
   category: "component",
   label: "Site Footer",
@@ -952,7 +953,7 @@ const siteFooterDef: EntityDef<string> = {
   ],
 };
 
-const sideBarDef: EntityDef<string> = {
+const sideBarDef: EntityDef<string, LensPuckConfig> = {
   type: "side-bar",
   category: "component",
   label: "Bar",
@@ -977,7 +978,7 @@ const sideBarDef: EntityDef<string> = {
   ],
 };
 
-const navBarDef: EntityDef<string> = {
+const navBarDef: EntityDef<string, LensPuckConfig> = {
   type: "nav-bar",
   category: "component",
   label: "Nav Bar",
@@ -1000,7 +1001,7 @@ const navBarDef: EntityDef<string> = {
   ],
 };
 
-const heroDef: EntityDef<string> = {
+const heroDef: EntityDef<string, LensPuckConfig> = {
   type: "hero",
   category: "component",
   label: "Hero",
@@ -1027,7 +1028,7 @@ const heroDef: EntityDef<string> = {
 
 // ── Data Display Widgets ───────────────────────────────────────────────────
 
-const statWidgetDef: EntityDef<string> = {
+const statWidgetDef: EntityDef<string, LensPuckConfig> = {
   type: "stat-widget",
   category: "component",
   label: "Stat (KPI)",
@@ -1059,7 +1060,7 @@ const statWidgetDef: EntityDef<string> = {
   ],
 };
 
-const badgeDef: EntityDef<string> = {
+const badgeDef: EntityDef<string, LensPuckConfig> = {
   type: "badge",
   category: "component",
   label: "Badge",
@@ -1087,7 +1088,7 @@ const badgeDef: EntityDef<string> = {
   ],
 };
 
-const alertDef: EntityDef<string> = {
+const alertDef: EntityDef<string, LensPuckConfig> = {
   type: "alert",
   category: "component",
   label: "Alert",
@@ -1115,7 +1116,7 @@ const alertDef: EntityDef<string> = {
   ],
 };
 
-const progressBarDef: EntityDef<string> = {
+const progressBarDef: EntityDef<string, LensPuckConfig> = {
   type: "progress-bar",
   category: "component",
   label: "Progress Bar",
@@ -1146,7 +1147,7 @@ const progressBarDef: EntityDef<string> = {
 
 // ── Content Widgets ────────────────────────────────────────────────────────
 
-const markdownWidgetDef: EntityDef<string> = {
+const markdownWidgetDef: EntityDef<string, LensPuckConfig> = {
   type: "markdown-widget",
   category: "component",
   label: "Markdown",
@@ -1166,7 +1167,7 @@ const markdownWidgetDef: EntityDef<string> = {
   ],
 };
 
-const iframeWidgetDef: EntityDef<string> = {
+const iframeWidgetDef: EntityDef<string, LensPuckConfig> = {
   type: "iframe-widget",
   category: "component",
   label: "Embed (iframe)",
@@ -1182,7 +1183,7 @@ const iframeWidgetDef: EntityDef<string> = {
   ],
 };
 
-const codeBlockDef: EntityDef<string> = {
+const codeBlockDef: EntityDef<string, LensPuckConfig> = {
   type: "code-block",
   category: "component",
   label: "Code Block",
@@ -1223,7 +1224,7 @@ const codeBlockDef: EntityDef<string> = {
   ],
 };
 
-const videoWidgetDef: EntityDef<string> = {
+const videoWidgetDef: EntityDef<string, LensPuckConfig> = {
   type: "video-widget",
   category: "component",
   label: "Video",
@@ -1244,7 +1245,7 @@ const videoWidgetDef: EntityDef<string> = {
   ],
 };
 
-const audioWidgetDef: EntityDef<string> = {
+const audioWidgetDef: EntityDef<string, LensPuckConfig> = {
   type: "audio-widget",
   category: "component",
   label: "Audio",
@@ -1264,7 +1265,7 @@ const audioWidgetDef: EntityDef<string> = {
 
 // ── Navigation Widgets ─────────────────────────────────────────────────────
 
-const siteNavDef: EntityDef<string> = {
+const siteNavDef: EntityDef<string, LensPuckConfig> = {
   type: "site-nav",
   category: "component",
   label: "Site Nav",
@@ -1303,7 +1304,7 @@ const siteNavDef: EntityDef<string> = {
   ],
 };
 
-const breadcrumbsDef: EntityDef<string> = {
+const breadcrumbsDef: EntityDef<string, LensPuckConfig> = {
   type: "breadcrumbs",
   category: "component",
   label: "Breadcrumbs",
@@ -1324,7 +1325,7 @@ const breadcrumbsDef: EntityDef<string> = {
 // GraphObject shell (editable in the inspector's shell section). Only
 // domain-specific props are declared here and stored in `data`.
 
-const taskDef: EntityDef<string> = {
+const taskDef: EntityDef<string, LensPuckConfig> = {
   type: "task",
   category: "record",
   label: "Task",
@@ -1350,7 +1351,7 @@ const taskDef: EntityDef<string> = {
   ],
 };
 
-const reminderDef: EntityDef<string> = {
+const reminderDef: EntityDef<string, LensPuckConfig> = {
   type: "reminder",
   category: "record",
   label: "Reminder",
@@ -1386,7 +1387,7 @@ const reminderDef: EntityDef<string> = {
   ],
 };
 
-const contactDef: EntityDef<string> = {
+const contactDef: EntityDef<string, LensPuckConfig> = {
   type: "contact",
   category: "record",
   label: "Contact",
@@ -1406,7 +1407,7 @@ const contactDef: EntityDef<string> = {
   ],
 };
 
-const eventDef: EntityDef<string> = {
+const eventDef: EntityDef<string, LensPuckConfig> = {
   type: "event",
   category: "record",
   label: "Event",
@@ -1432,7 +1433,7 @@ const eventDef: EntityDef<string> = {
   ],
 };
 
-const noteDef: EntityDef<string> = {
+const noteDef: EntityDef<string, LensPuckConfig> = {
   type: "note",
   category: "record",
   label: "Note",
@@ -1454,7 +1455,7 @@ const noteDef: EntityDef<string> = {
   ],
 };
 
-const goalDef: EntityDef<string> = {
+const goalDef: EntityDef<string, LensPuckConfig> = {
   type: "goal",
   category: "record",
   label: "Goal",
@@ -1482,7 +1483,7 @@ const goalDef: EntityDef<string> = {
   ],
 };
 
-const habitDef: EntityDef<string> = {
+const habitDef: EntityDef<string, LensPuckConfig> = {
   type: "habit",
   category: "record",
   label: "Habit",
@@ -1509,7 +1510,7 @@ const habitDef: EntityDef<string> = {
   ],
 };
 
-const bookmarkDef: EntityDef<string> = {
+const bookmarkDef: EntityDef<string, LensPuckConfig> = {
   type: "bookmark",
   category: "record",
   label: "Bookmark",
@@ -1524,7 +1525,7 @@ const bookmarkDef: EntityDef<string> = {
   ],
 };
 
-const timerSessionDef: EntityDef<string> = {
+const timerSessionDef: EntityDef<string, LensPuckConfig> = {
   type: "timer-session",
   category: "record",
   label: "Timer Session",
@@ -1550,7 +1551,7 @@ const timerSessionDef: EntityDef<string> = {
   ],
 };
 
-const captureDef: EntityDef<string> = {
+const captureDef: EntityDef<string, LensPuckConfig> = {
   type: "capture",
   category: "record",
   label: "Capture",
@@ -1584,7 +1585,7 @@ const captureDef: EntityDef<string> = {
 // type (checkbox rows for tasks, relative-date chips for reminders, contact
 // cards, event timeline, etc.).
 
-const tasksWidgetDef: EntityDef<string> = {
+const tasksWidgetDef: EntityDef<string, LensPuckConfig> = {
   type: "tasks-widget",
   category: "component",
   label: "Tasks Widget",
@@ -1614,7 +1615,7 @@ const tasksWidgetDef: EntityDef<string> = {
   ],
 };
 
-const remindersWidgetDef: EntityDef<string> = {
+const remindersWidgetDef: EntityDef<string, LensPuckConfig> = {
   type: "reminders-widget",
   category: "component",
   label: "Reminders Widget",
@@ -1641,7 +1642,7 @@ const remindersWidgetDef: EntityDef<string> = {
   ],
 };
 
-const contactsWidgetDef: EntityDef<string> = {
+const contactsWidgetDef: EntityDef<string, LensPuckConfig> = {
   type: "contacts-widget",
   category: "component",
   label: "Contacts Widget",
@@ -1678,7 +1679,7 @@ const contactsWidgetDef: EntityDef<string> = {
   ],
 };
 
-const eventsWidgetDef: EntityDef<string> = {
+const eventsWidgetDef: EntityDef<string, LensPuckConfig> = {
   type: "events-widget",
   category: "component",
   label: "Events Widget",
@@ -1705,7 +1706,7 @@ const eventsWidgetDef: EntityDef<string> = {
   ],
 };
 
-const notesWidgetDef: EntityDef<string> = {
+const notesWidgetDef: EntityDef<string, LensPuckConfig> = {
   type: "notes-widget",
   category: "component",
   label: "Notes Widget",
@@ -1732,7 +1733,7 @@ const notesWidgetDef: EntityDef<string> = {
   ],
 };
 
-const goalsWidgetDef: EntityDef<string> = {
+const goalsWidgetDef: EntityDef<string, LensPuckConfig> = {
   type: "goals-widget",
   category: "component",
   label: "Goals Widget",
@@ -1757,7 +1758,7 @@ const goalsWidgetDef: EntityDef<string> = {
   ],
 };
 
-const habitTrackerWidgetDef: EntityDef<string> = {
+const habitTrackerWidgetDef: EntityDef<string, LensPuckConfig> = {
   type: "habit-tracker-widget",
   category: "component",
   label: "Habit Tracker Widget",
@@ -1772,7 +1773,7 @@ const habitTrackerWidgetDef: EntityDef<string> = {
   ],
 };
 
-const bookmarksWidgetDef: EntityDef<string> = {
+const bookmarksWidgetDef: EntityDef<string, LensPuckConfig> = {
   type: "bookmarks-widget",
   category: "component",
   label: "Bookmarks Widget",
@@ -1797,7 +1798,7 @@ const bookmarksWidgetDef: EntityDef<string> = {
   ],
 };
 
-const timerWidgetDef: EntityDef<string> = {
+const timerWidgetDef: EntityDef<string, LensPuckConfig> = {
   type: "timer-widget",
   category: "component",
   label: "Timer Widget",
@@ -1812,7 +1813,7 @@ const timerWidgetDef: EntityDef<string> = {
   ],
 };
 
-const captureInboxWidgetDef: EntityDef<string> = {
+const captureInboxWidgetDef: EntityDef<string, LensPuckConfig> = {
   type: "capture-inbox-widget",
   category: "component",
   label: "Capture Inbox Widget",
@@ -1841,7 +1842,7 @@ const captureInboxWidgetDef: EntityDef<string> = {
 // behaviors live in their own categories so containment rules can
 // enforce "routes only under apps", "behaviors only under apps".
 
-const appDef: EntityDef<string> = {
+const appDef: EntityDef<string, LensPuckConfig> = {
   type: "app",
   category: "app",
   label: "App",
@@ -1874,7 +1875,7 @@ const appDef: EntityDef<string> = {
   ],
 };
 
-const appShellDef: EntityDef<string> = {
+const appShellDef: EntityDef<string, LensPuckConfig> = {
   type: "app-shell",
   category: "component",
   label: "App Shell",
@@ -1899,7 +1900,7 @@ const appShellDef: EntityDef<string> = {
   ],
 };
 
-const routeDef: EntityDef<string> = {
+const routeDef: EntityDef<string, LensPuckConfig> = {
   type: "route",
   category: "route",
   label: "Route",
@@ -1921,7 +1922,7 @@ const routeDef: EntityDef<string> = {
   ],
 };
 
-const behaviorDef: EntityDef<string> = {
+const behaviorDef: EntityDef<string, LensPuckConfig> = {
   type: "behavior",
   category: "behavior",
   label: "Behavior",
@@ -1978,8 +1979,8 @@ const linksToEdge: EdgeTypeDef = {
 
 // ── Factory ─────────────────────────────────────────────────────────────────
 
-export function createPageBuilderRegistry(): ObjectRegistry<string> {
-  const registry = new ObjectRegistry<string>(categoryRules);
+export function createPageBuilderRegistry(): ObjectRegistry<string, LensPuckConfig> {
+  const registry = new ObjectRegistry<string, LensPuckConfig>(categoryRules);
 
   registry.register(folderDef);
   registry.register(pageDef);

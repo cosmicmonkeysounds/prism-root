@@ -10,7 +10,7 @@ import { createStore } from "zustand/vanilla";
 import { LoroDoc, LoroMap, LoroList } from "loro-crdt";
 
 /** Wire type for edges in the object graph. */
-export type WireType = "hard" | "weak";
+export type WireType = "hard" | "weak" | "stream";
 
 /** A node in the spatial graph. */
 export type GraphNode = {
@@ -90,7 +90,20 @@ export function createGraphStore(doc: LoroDoc) {
     try {
       const list = getNodesList();
       const json = list.toJSON() as unknown[];
-      return json.map((item) => item as GraphNode);
+      return json.map((item) => {
+        const raw = item as Omit<GraphNode, "data"> & { data: unknown };
+        let data: Record<string, unknown> = {};
+        if (typeof raw.data === "string") {
+          try {
+            data = JSON.parse(raw.data) as Record<string, unknown>;
+          } catch {
+            data = {};
+          }
+        } else if (raw.data && typeof raw.data === "object") {
+          data = raw.data as Record<string, unknown>;
+        }
+        return { ...raw, data };
+      });
     } catch {
       return [];
     }

@@ -3,8 +3,11 @@ import { createLensRegistry } from "./lens-registry.js";
 import {
   defineLensBundle,
   installLensBundles,
+  defineShellWidgetBundle,
+  installShellWidgetBundles,
   type LensBundle,
   type LensInstallContext,
+  type ShellWidgetBundle,
 } from "./lens-install.js";
 import { lensId, type LensManifest } from "./lens-types.js";
 
@@ -49,6 +52,22 @@ describe("defineLensBundle", () => {
     const bundle = defineLensBundle(manifest, { tag: "x" });
     expect(bundle.id).toBe(manifest.id);
     expect(bundle.name).toBe("Bar Lens");
+  });
+
+  it("exposes manifest and component as plain data", () => {
+    const manifest = makeManifest("qux", "Qux");
+    const comp: FakeComponent = { tag: "QuxComp" };
+    const bundle = defineLensBundle(manifest, comp);
+    expect(bundle.manifest).toBe(manifest);
+    expect(bundle.component).toBe(comp);
+    expect(bundle.puck).toBeUndefined();
+  });
+
+  it("carries an opaque puck config when supplied", () => {
+    const manifest = makeManifest("zap", "Zap");
+    const puck = { label: "Zap!", fields: { tone: { type: "text" } } };
+    const bundle = defineLensBundle(manifest, { tag: "Z" }, puck);
+    expect(bundle.puck).toBe(puck);
   });
 });
 
@@ -98,5 +117,46 @@ describe("installLensBundles", () => {
       }),
     };
     expect(() => installLensBundles([failing], makeCtx())).toThrow("boom");
+  });
+});
+
+describe("defineShellWidgetBundle", () => {
+  it("installs and uninstalls a chrome widget into a component map", () => {
+    const widget = defineShellWidgetBundle<FakeComponent, { label: string }>({
+      id: "activity-bar",
+      name: "Activity Bar",
+      component: { tag: "ActivityBar" },
+      puck: { label: "Activity Bar" },
+    });
+
+    const componentMap = new Map<string, FakeComponent>();
+    const uninstall = widget.install({ componentMap });
+    expect(componentMap.get("activity-bar")).toEqual({ tag: "ActivityBar" });
+    expect(widget.puck.label).toBe("Activity Bar");
+
+    uninstall();
+    expect(componentMap.has("activity-bar")).toBe(false);
+  });
+
+  it("installShellWidgetBundles tears down in reverse order", () => {
+    const order: string[] = [];
+    const makeTracking = (id: string): ShellWidgetBundle<FakeComponent> => ({
+      id,
+      name: id,
+      component: { tag: id },
+      puck: {},
+      install() {
+        return () => {
+          order.push(id);
+        };
+      },
+    });
+    const componentMap = new Map<string, FakeComponent>();
+    const uninstall = installShellWidgetBundles(
+      [makeTracking("a"), makeTracking("b"), makeTracking("c")],
+      { componentMap },
+    );
+    uninstall();
+    expect(order).toEqual(["c", "b", "a"]);
   });
 });

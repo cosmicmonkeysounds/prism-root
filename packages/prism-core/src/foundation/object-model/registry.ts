@@ -97,8 +97,8 @@ export interface WeakRefChildNode {
 
 // ── ObjectRegistry ─────────────────────────────────────────────────────────────
 
-export class ObjectRegistry<TIcon = unknown> {
-  private readonly types = new Map<string, EntityDef<TIcon>>();
+export class ObjectRegistry<TIcon = unknown, TPuck = unknown> {
+  private readonly types = new Map<string, EntityDef<TIcon, TPuck>>();
   private readonly rules = new Map<string, CategoryRule>();
   private readonly edgeTypes = new Map<string, EdgeTypeDef>();
   private readonly slots: SlotRegistration[] = [];
@@ -111,12 +111,12 @@ export class ObjectRegistry<TIcon = unknown> {
 
   // ── Entity Type Registration ─────────────────────────────────────────────────
 
-  register(def: EntityDef<TIcon>): this {
+  register(def: EntityDef<TIcon, TPuck>): this {
     this.types.set(def.type, def);
     return this;
   }
 
-  registerAll(defs: EntityDef<TIcon>[]): this {
+  registerAll(defs: EntityDef<TIcon, TPuck>[]): this {
     for (const def of defs) this.register(def);
     return this;
   }
@@ -302,7 +302,7 @@ export class ObjectRegistry<TIcon = unknown> {
 
   // ── Lookup ───────────────────────────────────────────────────────────────────
 
-  get(type: string): EntityDef<TIcon> | undefined {
+  get(type: string): EntityDef<TIcon, TPuck> | undefined {
     return this.types.get(type);
   }
 
@@ -314,7 +314,7 @@ export class ObjectRegistry<TIcon = unknown> {
     return [...this.types.keys()];
   }
 
-  allDefs(): EntityDef<TIcon>[] {
+  allDefs(): EntityDef<TIcon, TPuck>[] {
     return [...this.types.values()];
   }
 

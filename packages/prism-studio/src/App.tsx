@@ -12,6 +12,7 @@ import {
   createBuiltinLensBundles,
   EDITOR_LENS_ID,
 } from "./lenses/index.js";
+import { createBuiltinShellWidgetBundles } from "./components/chrome-bundles.js";
 import { NotificationToast } from "./components/notification-toast.js";
 
 // ── Kernel (singleton for app lifetime) ─────────────────────────────────────
@@ -24,6 +25,7 @@ import { NotificationToast } from "./components/notification-toast.js";
 
 const kernel = createStudioKernel({
   lensBundles: createBuiltinLensBundles(),
+  shellWidgetBundles: createBuiltinShellWidgetBundles(),
   initializers: createBuiltinInitializers(),
 });
 

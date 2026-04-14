@@ -264,6 +264,159 @@ export const demoWorkspaceInitializer: StudioInitializer = {
       data: { title: "About Us", slug: "/about", layout: "shell", published: false },
     });
 
+    // ── Demo App with routes for the Sitemap lens ──────────────────────────
+    // Seeds an `app` object plus six routes (with hierarchy + a behavior that
+    // calls `ui.navigate(...)`) so a fresh-install Sitemap tab isn't empty.
+    const app = kernel.createObject({
+      type: "app",
+      name: "Demo App",
+      parentId: null,
+      position: 2,
+      status: null,
+      tags: [],
+      date: null,
+      endDate: null,
+      description: "A small app to demonstrate the Sitemap lens",
+      color: null,
+      image: null,
+      pinned: false,
+      data: { name: "Demo App", profileId: "studio", themePrimary: "#a855f7" },
+    });
+
+    const home = kernel.createObject({
+      type: "route",
+      name: "Home",
+      parentId: app.id,
+      position: 0,
+      status: null,
+      tags: [],
+      date: null,
+      endDate: null,
+      description: "",
+      color: null,
+      image: null,
+      pinned: false,
+      data: { path: "/", label: "Home", showInNav: true },
+    });
+
+    const dashboard = kernel.createObject({
+      type: "route",
+      name: "Dashboard",
+      parentId: app.id,
+      position: 1,
+      status: null,
+      tags: [],
+      date: null,
+      endDate: null,
+      description: "",
+      color: null,
+      image: null,
+      pinned: false,
+      data: { path: "/dashboard", label: "Dashboard", showInNav: true },
+    });
+
+    const tasks = kernel.createObject({
+      type: "route",
+      name: "Tasks",
+      parentId: app.id,
+      position: 2,
+      status: null,
+      tags: [],
+      date: null,
+      endDate: null,
+      description: "",
+      color: null,
+      image: null,
+      pinned: false,
+      data: {
+        path: "/dashboard/tasks",
+        label: "Tasks",
+        showInNav: true,
+        parentRouteId: dashboard.id,
+      },
+    });
+
+    kernel.createObject({
+      type: "route",
+      name: "Task Detail",
+      parentId: app.id,
+      position: 3,
+      status: null,
+      tags: [],
+      date: null,
+      endDate: null,
+      description: "",
+      color: null,
+      image: null,
+      pinned: false,
+      data: {
+        path: "/dashboard/tasks/:id",
+        label: "Task Detail",
+        showInNav: false,
+        parentRouteId: tasks.id,
+      },
+    });
+
+    kernel.createObject({
+      type: "route",
+      name: "Settings",
+      parentId: app.id,
+      position: 4,
+      status: null,
+      tags: [],
+      date: null,
+      endDate: null,
+      description: "",
+      color: null,
+      image: null,
+      pinned: false,
+      data: { path: "/settings", label: "Settings", showInNav: true },
+    });
+
+    kernel.createObject({
+      type: "route",
+      name: "About",
+      parentId: app.id,
+      position: 5,
+      status: null,
+      tags: [],
+      date: null,
+      endDate: null,
+      description: "",
+      color: null,
+      image: null,
+      pinned: false,
+      data: { path: "/about", label: "About", showInNav: true },
+    });
+
+    // Tag the home route on the app so the sitemap can mark it. Using
+    // updateObject keeps the seed in one place even though createObject
+    // doesn't accept forward references.
+    kernel.updateObject(app.id, { data: { ...app.data, homeRouteId: home.id } });
+
+    // Behavior that navigates from the home route → /dashboard so the
+    // sitemap renders an animated "transition" edge by default.
+    kernel.createObject({
+      type: "behavior",
+      name: "Open Dashboard",
+      parentId: app.id,
+      position: 6,
+      status: null,
+      tags: [],
+      date: null,
+      endDate: null,
+      description: "",
+      color: null,
+      image: null,
+      pinned: false,
+      data: {
+        targetObjectId: home.id,
+        trigger: "onClick",
+        source: 'ui.navigate("/dashboard")',
+        enabled: true,
+      },
+    });
+
     // Clear undo history so seed data isn't undoable, and select the home page.
     kernel.undo.clear();
     kernel.select(page.id);

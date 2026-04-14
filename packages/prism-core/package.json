@@ -62,6 +62,7 @@
     "./graph-analysis": "./src/domain/graph-analysis/index.ts",
 
     "./shell": "./src/bindings/react-shell/index.ts",
+    "./help": "./src/bindings/react-shell/help/index.ts",
     "./codemirror": "./src/bindings/codemirror/index.ts",
     "./puck": "./src/bindings/puck/index.ts",
     "./kbar": "./src/bindings/kbar/index.ts",

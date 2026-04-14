@@ -13,7 +13,8 @@
 
 import { useCallback, useState } from "react";
 import type { EntityDef, EntityFieldDef, EntityFieldType } from "@prism/core/object-model";
-import { useKernel } from "../kernel/index.js";
+import type { LensPuckConfig } from "@prism/core/puck";
+import { useKernel, useRegistration } from "../kernel/index.js";
 
 import { lensId } from "@prism/core/lens";
 import type { LensManifest } from "@prism/core/lens";
@@ -78,25 +79,28 @@ export function EntityBuilderPanel() {
     setFields((prev) => prev.filter((f) => f.id !== id));
   }, []);
 
+  const registerEntity = useRegistration<EntityDef<string, LensPuckConfig>>({
+    noun: "entity type",
+    name: (def) => `${def.label} (${def.type})`,
+    validate: (def) =>
+      def.type.trim() && def.label.trim() ? null : "Type name and label required",
+    exists: (def) => !!kernel.registry.get(def.type),
+    register: (def) => kernel.registry.register(def),
+    onSuccess: () => {
+      setTypeName("");
+      setLabel("");
+      setFields([]);
+    },
+  });
+
   const register = useCallback(() => {
-    if (!typeName.trim() || !label.trim()) {
-      kernel.notifications.add({ title: "Type name and label required", kind: "warning" });
-      return;
-    }
-    if (kernel.registry.get(typeName)) {
-      kernel.notifications.add({
-        title: `Type "${typeName}" already exists`,
-        kind: "warning",
-      });
-      return;
-    }
     const defFields: EntityFieldDef[] = fields.map((f) => ({
       id: f.id,
       type: f.type,
       label: f.label,
       required: f.required,
     }));
-    const def: EntityDef<string> = {
+    const def: EntityDef<string, LensPuckConfig> = {
       type: typeName.trim(),
       category,
       label: label.trim(),
@@ -105,15 +109,8 @@ export function EntityBuilderPanel() {
       color,
       fields: defFields,
     };
-    kernel.registry.register(def);
-    kernel.notifications.add({
-      title: `Registered "${label}" (${typeName})`,
-      kind: "success",
-    });
-    setTypeName("");
-    setLabel("");
-    setFields([]);
-  }, [typeName, label, category, icon, color, fields, kernel]);
+    registerEntity(def);
+  }, [typeName, label, category, icon, color, fields, registerEntity]);
 
   const allDefs = kernel.registry.allDefs();
   const customDefs = allDefs.filter((d) => d.category === "custom");

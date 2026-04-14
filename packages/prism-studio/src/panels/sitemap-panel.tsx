@@ -12,28 +12,28 @@
  * into a local graph store.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LoroDoc } from "loro-crdt";
 import { createGraphStore, type GraphStore } from "@prism/core/stores";
-import { PrismGraph } from "@prism/core/graph";
+import { PrismGraph, GraphToolbar, applyElkLayout } from "@prism/core/graph";
 import { findUiCalls, findNavigateCalls } from "@prism/core/luau";
+import type { Viewport } from "@xyflow/react";
 import type { StoreApi } from "zustand";
 import type { GraphObject } from "@prism/core/object-model";
 import { lensId } from "@prism/core/lens";
 import type { LensManifest } from "@prism/core/lens";
 import { defineLensBundle, type LensBundle } from "../lenses/bundle.js";
 import { useKernel } from "../kernel/index.js";
+
+const VIEWPORT_KEY = "lens:sitemap";
 import {
   buildSitemapGraph,
   type SitemapEdge,
   type SitemapGraph,
-  type SitemapNode,
 } from "./sitemap-data.js";
 
 const NODE_WIDTH = 220;
-const NODE_HEIGHT = 72;
-const COL_GUTTER = 120;
-const ROW_GUTTER = 40;
+const NODE_HEIGHT = 80;
 
 /** Resolve "which app is selected right now?" from the kernel selection. */
 function resolveSelectedAppId(
@@ -57,48 +57,22 @@ function resolveSelectedAppId(
   return firstApp ? (firstApp.id as unknown as string) : undefined;
 }
 
-function layoutNodes(graph: SitemapGraph): Array<{
-  node: SitemapNode;
-  x: number;
-  y: number;
-}> {
-  // Stable by-depth columns, y stacked by order inside each depth bucket.
-  const buckets = new Map<number, SitemapNode[]>();
-  for (const n of graph.nodes) {
-    const bucket = buckets.get(n.depth) ?? [];
-    bucket.push(n);
-    buckets.set(n.depth, bucket);
-  }
-  const laid: Array<{ node: SitemapNode; x: number; y: number }> = [];
-  const depths = Array.from(buckets.keys()).sort((a, b) => a - b);
-  for (const d of depths) {
-    const bucket = buckets.get(d) ?? [];
-    bucket.forEach((node, i) => {
-      laid.push({
-        node,
-        x: 80 + d * (NODE_WIDTH + COL_GUTTER),
-        y: 80 + i * (NODE_HEIGHT + ROW_GUTTER),
-      });
-    });
-  }
-  return laid;
-}
-
-function writeGraph(
-  state: GraphStore,
-  graph: SitemapGraph,
-): void {
-  for (const { node, x, y } of layoutNodes(graph)) {
+function writeGraph(state: GraphStore, graph: SitemapGraph): void {
+  // Initial position is (0, 0) for every node — `applyElkLayout` rewrites
+  // them in `runInitialLayout` after the store is populated. The custom
+  // `sitemap` node renderer (in `@prism/core/graph`) draws path/home glyphs.
+  for (const node of graph.nodes) {
     state.addNode({
       id: node.id as unknown as Parameters<typeof state.addNode>[0]["id"],
-      type: "default",
-      x,
-      y,
+      type: "sitemap",
+      x: 0,
+      y: 0,
       width: NODE_WIDTH,
       height: NODE_HEIGHT,
       data: {
-        label: `${node.isHome ? "\u2302 " : ""}${node.label}\n${node.path}`,
-        objectType: "route",
+        label: node.label,
+        path: node.path,
+        isHome: node.isHome,
       },
     });
   }
@@ -108,13 +82,42 @@ function writeGraph(
 }
 
 function writeEdge(state: GraphStore, edge: SitemapEdge): void {
+  // Three sitemap edge kinds map onto Prism's three wire types so the
+  // graph theme (hard = solid cyan, weak = dashed slate, stream =
+  // animated amber) makes the route relationships visually distinct.
+  const wireType: "hard" | "weak" | "stream" =
+    edge.kind === "hierarchy"
+      ? "hard"
+      : edge.kind === "transition"
+        ? "stream"
+        : "weak";
   state.addEdge({
     id: edge.id as unknown as Parameters<typeof state.addEdge>[0]["id"],
     source: edge.source as unknown as Parameters<typeof state.addEdge>[0]["source"],
     target: edge.target as unknown as Parameters<typeof state.addEdge>[0]["target"],
-    wireType: edge.kind === "hierarchy" ? "hard" : "weak",
+    wireType,
     label: edge.label,
   });
+}
+
+async function runInitialLayout(store: StoreApi<GraphStore>): Promise<void> {
+  const state = store.getState();
+  if (state.nodes.length === 0) return;
+  const elkNodes = state.nodes.map((n) => ({
+    id: n.id,
+    position: { x: n.x, y: n.y },
+    data: {},
+    width: n.width ?? NODE_WIDTH,
+    height: n.height ?? NODE_HEIGHT,
+  }));
+  const elkEdges = state.edges.map((e) => ({
+    id: e.id,
+    source: e.source,
+    target: e.target,
+  }));
+  const laidOut = await applyElkLayout(elkNodes, elkEdges, { direction: "DOWN" });
+  const moveNode = store.getState().moveNode;
+  for (const n of laidOut) moveNode(n.id, n.position.x, n.position.y);
 }
 
 export function SitemapPanel() {
@@ -165,6 +168,9 @@ export function SitemapPanel() {
       const store = createGraphStore(doc);
       storeRef.current = store;
       writeGraph(store.getState(), graph);
+      // Run elk before flushing the version bump so the first paint already
+      // shows nodes in their final positions instead of stacked at (0,0).
+      await runInitialLayout(store);
       setVersion((v) => v + 1);
       setReady(true);
     },
@@ -182,6 +188,19 @@ export function SitemapPanel() {
   // Exposed for debugging / future "counter" display; not rendered.
   void navigateTargets;
 
+  // Viewport persistence — survives tab switches via kernel.viewportCache.
+  const cache = kernel.viewportCache;
+  const initialViewport = useMemo(
+    () => cache.getState().get(VIEWPORT_KEY),
+    [cache],
+  );
+  const handleViewportChange = useCallback(
+    (v: Viewport) => {
+      cache.getState().set(VIEWPORT_KEY, v);
+    },
+    [cache],
+  );
+
   if (!ready || !storeRef.current) {
     return (
       <div
@@ -193,6 +212,10 @@ export function SitemapPanel() {
     );
   }
 
+  const store = storeRef.current;
+  const nodeCount = store.getState().nodes.length;
+  const edgeCount = store.getState().edges.length;
+
   return (
     <div
       data-testid="sitemap-panel"
@@ -200,8 +223,24 @@ export function SitemapPanel() {
     >
       <PrismGraph
         key={`sitemap-${version}`}
-        store={storeRef.current}
+        store={store}
         className="prism-sitemap-panel"
+        minimap
+        background
+        controls
+        {...(initialViewport !== undefined ? { initialViewport } : {})}
+        onViewportChange={handleViewportChange}
+        toolbar={
+          <GraphToolbar
+            title={
+              <span>
+                Sitemap · {nodeCount} route{nodeCount === 1 ? "" : "s"} ·{" "}
+                {edgeCount} link{edgeCount === 1 ? "" : "s"}
+              </span>
+            }
+            store={store}
+          />
+        }
       />
     </div>
   );
