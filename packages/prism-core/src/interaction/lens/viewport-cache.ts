@@ -50,9 +50,9 @@ export function createViewportCache(): StoreApi<ViewportCache> {
     },
 
     clear(key) {
-      const { [key]: _removed, ...rest } = get().viewports;
+      const { [key]: _removed, ...viewports } = get().viewports;
       void _removed;
-      set({ viewports: rest });
+      set({ viewports });
     },
 
     clearAll() {

@@ -680,7 +680,7 @@ function PuckImageBlockRender({
   );
 }
 
-// ── Record-list component (migrated from panels/puck-providers) ────────────
+// ── Record-list component ──────────────────────────────────────────────────
 
 const VALID_OPS: ReadonlySet<FilterOp> = new Set<FilterOp>([
   "eq",

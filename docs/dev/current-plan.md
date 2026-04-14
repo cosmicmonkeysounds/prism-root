@@ -1,5 +1,98 @@
 # Current Plan
 
+## Lens auto-registration + `useRegistration` hook refactor (Complete — 2026-04-14)
+
+Two repetitive patterns in Studio got flattened into registration primitives
+so the same cross-cutting edit stops needing to touch N files.
+
+### 1. Lens registration — `lenses/index.tsx` auto-glob
+
+Before: `packages/prism-studio/src/lenses/index.tsx` carried 44 manual
+imports + a hand-maintained `BUILTIN_BUNDLES` array. Adding a lens meant
+editing two places (the panel file *and* this aggregator), and forgetting
+the second edit silently dropped the lens from the kernel.
+
+After: the aggregator is pure glue. `import.meta.glob<..., { eager: true }>
+("../panels/*-panel.tsx")` sweeps every panel at bundle time; the
+resulting module map is handed to `buildLensBundleList` in
+`src/lenses/collect.ts`, which scans every `*LensBundle` export that
+passes a structural check (`typeof id === "string" && typeof install ===
+"function"`), sorts by file path for deterministic ordering, dedupes by
+id, and returns the canonical list. `createBuiltinLensBundles()` just
+clones that list.
+
+The scanning helpers are split out into `lenses/collect.ts` specifically
+so `lenses/index.test.ts` can import them without triggering the glob.
+If tests imported from `./index.js` the glob would eager-load every panel
+including `canvas-panel.tsx → map-widget-renderer.tsx → leaflet`, which
+touches `window` at import time and blows up the vitest node env. The
+test file (`lenses/index.test.ts`, 7 tests) pins the scanning rules:
+sort-by-path ordering, dedup, malformed-export filtering, key-suffix
+filtering, empty-module tolerance.
+
+Adding a new lens is now a **one-file** edit — create `panels/my-panel.tsx`
+exporting `myLensBundle` and the kernel picks it up automatically.
+
+### 2. Entity CRUD + notify flow — `useRegistration` hook
+
+Before: `entity-builder-panel.tsx`, `relationship-builder-panel.tsx`, and
+`schema-designer-panel.tsx` each re-implemented the same 15-line sequence
+by hand — trim-check form fields with a warning toast, look up the id in
+the registry and bail with another warning toast on conflict, build the
+def and hand it to the registry, emit a success toast, reset form state.
+Per-panel variance was limited to *which* registry accessors to call and
+the toast copy; everything else was copy-paste, so cross-cutting changes
+(e.g. a new notification field) needed three edits.
+
+After: `src/kernel/use-registration.ts` exports:
+
+- `useRegistration<TDef>({ noun, name, validate, exists, register, onSuccess })`
+  — React hook that pulls the kernel from context and returns a stable
+  `(def) => boolean` callback. Returns `false` when validation or the
+  uniqueness check blocked the write so callers can gate follow-up side
+  effects.
+- `buildRegistration(kernel, options)` — pure factory against a minimal
+  `RegistrationKernel` (`{ notifications: { add } }`) surface so tests can
+  drive the full pipeline without mounting React. Studio doesn't ship
+  `@testing-library/react`, so the pure-factory split is what lets the
+  flow get unit-tested at all.
+
+`kernel/index.ts` re-exports `useRegistration` + the
+`UseRegistrationOptions` type. The three builder panels now just declare:
+
+```ts
+const registerEntity = useRegistration<EntityDef<string, LensPuckConfig>>({
+  noun: "entity type",
+  name: (def) => `${def.label} (${def.type})`,
+  validate: (def) => def.type.trim() && def.label.trim()
+    ? null
+    : "Type name and label required",
+  exists: (def) => !!kernel.registry.get(def.type),
+  register: (def) => kernel.registry.register(def),
+  onSuccess: () => { setTypeName(""); setLabel(""); setFields([]); },
+});
+```
+
+`schema-designer-panel.tsx` uses two instances — one for the drag-to-
+connect edge flow (gating `setEdges` on the boolean return value) and one
+for the add-entity prompt (both `onSuccess: () => bumpRegistry()` to
+trigger re-render). The `use-registration.test.ts` file (7 tests) pins
+the full pipeline: success path, exists-check rejection, validate
+rejection, validate-before-exists ordering, noun capitalisation, default
+`"entry"` fallback, `onSuccess` skipped on validation failure.
+
+### Verification
+
+- `pnpm test` inside `packages/prism-studio` — 557 tests pass across 42
+  files, including the two new test files (`lenses/index.test.ts` and
+  `kernel/use-registration.test.ts`).
+- No `// eslint-disable` suppressions — `useRegistration` destructures
+  options and lists each field explicitly in the `useCallback` deps
+  array so `react-hooks/exhaustive-deps` stays satisfied.
+- `lenses/index.test.ts` imports from `./collect.js` (not `./index.js`)
+  so the vitest node env never hits `import.meta.glob` and leaflet's
+  `window`-touching transitive deps.
+
 ## Graph lens visual polish + pan/zoom fix + sitemap upgrade (Complete — 2026-04-14)
 
 User reported that *"the Sitemap graph in Prism Puck is ugly as fuck"* and
@@ -381,7 +474,7 @@ All three Prism runtimes now ship live admin dashboards powered by `@prism/admin
 - Daemon: 5 Rust tests (3 admin module + 2 HTTP transport)
 - Clippy clean under `--features transport-http`
 
-## Puck component registry + RecordList primitive (In progress — 2026-04-13)
+## Puck component registry + RecordList primitive (Landed — 2026-04-13)
 
 ADR-004 introduces a DI seam for Puck builder components so new widgets can flow through a registered `PuckComponentProvider` instead of a hand-wired `if (def.type === …)` block in `layout-panel.tsx`'s 3000-line config `useMemo`. The first consumer is `RecordList` — a parametric list over kernel records driven by `ViewConfig` (filter/sort/limit) plus a lightweight row template — which is intended to eventually subsume the ten dynamic record widgets plus `list-widget` / `table-widget` / `card-grid-widget` / `report-widget`.
 
@@ -389,11 +482,10 @@ ADR-004 introduces a DI seam for Puck builder components so new widgets can flow
 
 1. **`@prism/core/bindings/puck/component-registry.ts`** — `PuckComponentProvider<TKernel>` interface + `PuckComponentRegistry<TKernel>` class with `register` / `registerAll` / `unregister` / `has` / `get` / `types` / `buildComponents`. Generic over kernel type so core stays decoupled from studio. Emits PascalCase Puck keys from kebab-case entity types.
 2. **`record-list` entity** in `packages/prism-studio/src/kernel/entities.ts` — `component` category, `childOnly: true`, fields for `recordType`, `titleField`, `subtitleField`, `metaFields`, `filterExpression`, `sortField`, `sortDir`, `limit`, `emptyMessage`.
-3. **`RecordListRenderer`** (`packages/prism-studio/src/components/record-list-renderer.tsx`) — pure renderer taking pre-resolved `GraphObject[]` + `ViewConfig` + `RecordListTemplate`, applying `@prism/core/view`'s existing `applyViewConfig` pipeline, and rendering title/subtitle/meta chips. `readRecordField` helper handles all shell fields + data payload.
-4. **`recordListProvider`** (`packages/prism-studio/src/panels/puck-providers/record-list-provider.tsx`) — parses the compact `filterExpression` grammar (`status eq open; priority in high,urgent`) into `FilterConfig[]`, the `metaFields` string into `TemplateField[]`, and queries the kernel for objects matching the selected `recordType`. Uses the existing 12 `FilterOp` values from `@prism/core/view` — no parallel spec.
-5. **`createStudioPuckRegistry()`** — factory in `panels/puck-providers/index.ts` seeding a fresh registry with built-in providers. `layout-panel.tsx` calls it inside the existing config `useMemo` and merges its `buildComponents()` output over the hand-wired components (registry wins). Additive only — no existing widgets were migrated.
-6. **Tests — 47 new, all passing**: 12 registry tests, 12 renderer tests (resolveTemplateField / applyRecordListView), 23 provider tests (parseFilterExpression, parseMetaFields, buildTemplate, buildViewConfig).
-7. **ADR-004 drafted** — `docs/adr/004-puck-component-registry-and-dynamic-content.md`. Proposed status. Captures the DI seam design, RecordList as the first parametric primitive, reuse of existing `ViewConfig`, and the migration shape for hand-wired widgets (deferred to incremental follow-up PRs).
+3. **Record-list component** lives inline in `packages/prism-studio/src/kernel/entity-puck-config.tsx` alongside every other entity-driven Puck `ComponentConfig`. It parses the compact `filterExpression` grammar (`status eq open; priority in high,urgent`) into `FilterConfig[]`, the `metaFields` string into `TemplateField[]`, queries `kernel.store.allObjects()` for the selected `recordType`, then runs the results through `@prism/core/view`'s existing `applyViewConfig` pipeline and renders title/subtitle/meta chips. Uses the 12 existing `FilterOp` values — no parallel spec.
+4. **Unified entity → Puck pipeline** — `buildEntityPuckComponents(kernel)` walks every `EntityDef` in the registry and emits a `ComponentConfig` into `kernel.puckComponents` right before initializers run (see `studio-kernel.ts`). The previously standalone `panels/puck-providers/` provider module and its `createStudioPuckRegistry()` factory were superseded by this unified pipeline and removed; `layout-panel.tsx` consumes `kernel.puckComponents` directly.
+5. **Tests** — `packages/prism-core/src/bindings/puck/component-registry.test.ts` covers registry semantics (register/unregister/has/get/types/buildComponents, PascalCase naming, duplicate handling).
+6. **ADR-004** — `docs/adr/004-puck-component-registry-and-dynamic-content.md`. Captures the DI seam design, RecordList as the first parametric primitive, reuse of existing `ViewConfig`, and the migration shape for hand-wired widgets (still deferred to incremental follow-up PRs).
 
 ### Status
 

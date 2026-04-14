@@ -15,10 +15,7 @@
  *
  * which matches `prism-daemon::wasm::prism_daemon_invoke` byte-for-byte
  * on WASM and Capacitor, and is produced by `commands::daemon_invoke`
- * on the Tauri side. The legacy `ipcCrdtWrite` / `ipcCrdtRead` /
- * `ipcCrdtExport` / `ipcLuauExec` helpers below are kept as compatibility
- * shims over the universal `daemon.invoke` — call sites that already use
- * them keep working, and new code should prefer `daemon.invoke` directly.
+ * on the Tauri side.
  *
  * Runtime detection order (first match wins):
  *   1. Tauri   — `window.__TAURI_INTERNALS__` is present
@@ -26,8 +23,6 @@
  *   3. WASM    — `window.__prismDaemon` was set by the harness/bootstrap
  *   4. No-op   — error on every invoke (dev-time SSR / unit tests)
  */
-
-import type { LuauResult } from "@prism/shared/types";
 
 // ── Envelope shape ─────────────────────────────────────────────────────
 
@@ -217,60 +212,3 @@ export const daemon = {
     },
 };
 
-// ── Legacy shims (kept so existing call sites compile) ─────────────────
-//
-// These preserve the exact return types the rest of Studio already
-// expects (Uint8Array for byte-heavy paths, LuauResult for the scripting
-// path). Internally they all go through `daemon.invoke`, so every
-// transport serves them identically.
-
-function unwrapOrThrow<T>(envelope: DaemonEnvelope<T>, context: string): T {
-    if (envelope.ok) return envelope.result;
-    throw new Error(`${context}: ${envelope.error}`);
-}
-
-/** Write a key-value pair to a CRDT document on the daemon. */
-export async function ipcCrdtWrite(
-    docId: string,
-    key: string,
-    value: string,
-): Promise<Uint8Array> {
-    const env = await daemon.invoke<{ bytes: number[] }>("crdt.write", {
-        docId,
-        key,
-        value,
-    });
-    return new Uint8Array(unwrapOrThrow(env, "crdt.write").bytes);
-}
-
-/** Read a value from a CRDT document on the daemon. */
-export async function ipcCrdtRead(
-    docId: string,
-    key: string,
-): Promise<string | null> {
-    const env = await daemon.invoke<{ value: string | null }>("crdt.read", {
-        docId,
-        key,
-    });
-    return unwrapOrThrow(env, "crdt.read").value;
-}
-
-/** Export a CRDT document snapshot from the daemon. */
-export async function ipcCrdtExport(docId: string): Promise<Uint8Array> {
-    const env = await daemon.invoke<{ bytes: number[] }>("crdt.export", {
-        docId,
-    });
-    return new Uint8Array(unwrapOrThrow(env, "crdt.export").bytes);
-}
-
-/** Execute a Luau script on the daemon via mlua. */
-export async function ipcLuauExec(
-    script: string,
-    args?: Record<string, unknown>,
-): Promise<LuauResult> {
-    const env = await daemon.invoke<unknown>("luau.exec", { script, args });
-    if (env.ok) {
-        return { success: true, value: env.result };
-    }
-    return { success: false, value: null, error: env.error };
-}

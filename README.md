@@ -38,8 +38,8 @@ pnpm install                    # Install all dependencies
 
 ```bash
 pnpm dev                        # Start all packages (Turborepo)
-pnpm --filter prism-studio dev  # Studio only — Vite SPA on http://localhost:1420
-pnpm --filter prism-relay dev   # Relay only on http://localhost:3000
+pnpm --filter @prism/studio dev  # Studio only — Vite SPA on http://localhost:1420
+pnpm --filter @prism/relay dev   # Relay only on http://localhost:3000
 ```
 
 ### Testing
@@ -193,8 +193,8 @@ All commands run from the repo root unless noted. Turborepo handles dependency o
 ```bash
 # Dev
 pnpm dev                        # All packages
-pnpm --filter prism-studio dev  # Studio only (:1420)
-pnpm --filter prism-relay dev   # Relay only (:3000)
+pnpm --filter @prism/studio dev  # Studio only (:1420)
+pnpm --filter @prism/relay dev   # Relay only (:3000)
 
 # Quality
 pnpm build        # Production build (dependency order)

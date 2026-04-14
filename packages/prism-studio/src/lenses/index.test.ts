@@ -10,7 +10,7 @@ import type { LensBundle } from "./bundle.js";
 import {
   buildLensBundleList,
   collectLensBundlesFromModule,
-} from "./index.js";
+} from "./collect.js";
 
 function fakeBundle(id: string): LensBundle {
   return {
