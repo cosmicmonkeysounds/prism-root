@@ -1,32 +1,33 @@
 # Prism Framework
 
-Distributed Visual Operating System. Hybrid Cargo (Rust) + pnpm (Hono JSX SSR relay) monorepo, mid-way through the **Clay migration** — see `docs/dev/clay-migration-plan.md`.
+Distributed Visual Operating System. All-Rust Cargo monorepo, mid-way through the **Clay migration** — see `docs/dev/clay-migration-plan.md`.
 
 ## Layout
 - `packages/prism-daemon` — Rust library + `prism-daemond` stdio bin. The local physics engine. Unchanged by the migration.
-- `packages/prism-core` — Rust. Shared foundations: design tokens, shell mode, boot config, (port in progress).
-- `packages/prism-builder` — Rust. The Clay-native Puck replacement (registry, document tree, Puck-JSON reader).
-- `packages/prism-shell` — Rust (`rlib` + `cdylib`). Single source of truth for the UI tree. Native bin under `src/bin/native.rs`, wasm entry under `src/web.rs`.
+- `packages/prism-core` — Rust. Shared foundations: design tokens, shell mode, boot config, kernel store + `Shell` wrapper (port in progress).
+- `packages/prism-builder` — Rust. The Clay-native Puck replacement (registry, document tree, Puck-JSON reader, HTML SSR render path).
+- `packages/prism-shell` — Rust (`rlib` only). Single source of truth for the UI tree. Native bin under `src/bin/native.rs`; emscripten C-ABI adapter under `src/web.rs` (+ an empty-main `src/bin/prism_shell_wasm.rs` for emcc). The browser build uses a hand-written `web/loader.js` + `web/index.html` driving a Canvas2D painter — no wasm-bindgen, no Trunk.
 - `packages/prism-studio/src-tauri` — Rust. Packaged desktop shell built on bare `tao` + `wgpu` + `prism-shell` (§4.5 Option C, resolved 2026-04-15). No Tauri / wry / webview anywhere. Spawns `prism-daemon` as a sibling process over `interprocess`. The `src-tauri/` directory name is a pre-Option-C historical artefact; renaming it is a cleanup followup.
-- `packages/prism-cli` — Rust. The unified `prism` binary — one front door for `test`, `build`, `dev`, `lint`, `fmt` across every Rust crate + the relay. `prism dev all` spawns every dev server behind a tokio process supervisor with colored prefixed logs and Ctrl+C fan-out. See its `CLAUDE.md` for the full subcommand surface.
-- `packages/prism-relay` — Hono JSX SSR. Out of scope for the Clay migration; slated for its own rewrite.
+- `packages/prism-cli` — Rust. The unified `prism` binary — one front door for `test`, `build`, `dev`, `lint`, `fmt` across every Rust crate. `prism dev all` spawns every dev server behind a tokio process supervisor with colored prefixed logs and Ctrl+C fan-out. See its `CLAUDE.md` for the full subcommand surface.
+- `packages/prism-relay` — Rust. Axum-based Sovereign Portal SSR server (`prism-relayd`) that renders `prism_builder::BuilderDocument` trees to semantic HTML via `Component::render_html`. Replaced the Hono TS relay 2026-04-15.
 
 ## Commands
 The preferred front door is the unified `prism` CLI — every subcommand has a
 `--dry-run` flag that prints the expanded argv without executing, so anything in
-this list can be audited with e.g. `prism --dry-run test --all`.
+this list can be audited with e.g. `prism --dry-run test`.
 
-- `cargo run -p prism-cli -- test [--all|--rust|--e2e] [-p <pkg>]` — run Rust unit tests and the relay Playwright e2e suite in one go. (Relay vitest units are unwired until the relay rewrite.)
-- `cargo run -p prism-cli -- build [--target desktop|studio|web|relay|all] [--debug]` — build every deployable.
-- `cargo run -p prism-cli -- dev [shell|studio|web|relay|all]` — run one or many dev servers. `all` goes through the process supervisor.
+- `cargo run -p prism-cli -- test [-p <pkg>]` — `cargo test --workspace` (or scoped to a single crate). Legacy Playwright e2e flags were retired alongside the Hono TS relay on 2026-04-15.
+- `cargo run -p prism-cli -- build [--target desktop|studio|web|relay|all] [--debug]` — build every deployable. `web` routes through `cargo build --target wasm32-unknown-emscripten -p prism-shell --features web` and copies `prism_shell_wasm.{js,wasm}` into `packages/prism-shell/web/`.
+- `cargo run -p prism-cli -- dev [shell|studio|web|relay|all]` — run one or many dev servers. `dev web` does a preflight emscripten build + copy, then serves `packages/prism-shell/web/` via `python3 -m http.server 1420`. `all` goes through the process supervisor.
 - `cargo run -p prism-cli -- lint` — `cargo clippy --workspace --all-targets -- -D warnings`.
 - `cargo run -p prism-cli -- fmt [--check]` — `cargo fmt --all`.
 
 The root `package.json` exposes the same surface via pnpm scripts
 (`pnpm test`, `pnpm dev`, `pnpm build`, `pnpm lint`, `pnpm format`) for users
-who prefer that entry point. Everything still decomposes to raw `cargo` /
-`pnpm` / `trunk` under the hood — `prism` is purely a dispatcher, not a
-new layer of abstraction.
+who prefer that entry point. Everything still decomposes to raw `cargo`
+under the hood — `prism` is purely a dispatcher, not a new layer of
+abstraction. The web target additionally expects `emcc` on PATH: source
+`$HOME/.cache/emsdk/emsdk_env.sh` before invoking.
 
 ## Style
 - Rust 2021 edition, strict clippy.

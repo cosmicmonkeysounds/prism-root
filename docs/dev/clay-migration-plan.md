@@ -40,7 +40,14 @@ read it as historical framing, not current state.
 - Not changing the data layer. Loro CRDT remains source of truth.
 - Not changing the IPC contract with Tauri. Frontend↔daemon stays
   Tauri commands.
-- Not migrating the Relay package. Relays render HTML for unauthenticated visitors and have no client UI worth porting. Relay stays as-is.
+- Not porting the Relay's *client UI* — the relay has none, it renders
+  HTML for unauthenticated visitors. The relay's *server* was rewritten
+  from Hono JSX SSR to Rust axum on 2026-04-15 (see §14 decision log)
+  because the Sovereign Portal rendering path needs the same
+  `prism-builder` component registry the Studio uses, and keeping two
+  implementations of that registry on opposite sides of a language
+  boundary was never going to work. Folded back into scope as a
+  **first-class** migration target.
 
 ## 2. Scope inventory (what has to move)
 
@@ -56,7 +63,7 @@ progress — the Rust crates below now exist):
 | Puck (page builder) | `@measured/puck@0.20.2` | **No replacement** — must build a Clay-native equivalent. See §8. |
 | `prism-admin-kit` | React UI | Rebuild on Clay. |
 | `prism-puck-playground` | React harness | Becomes the Clay-builder playground or is deleted. |
-| `prism-relay` | Hono JSX SSR | **Out of scope.** We'll have to re-write this (Sovereign Portal system), but not today. |
+| `prism-relay` | Hono JSX SSR → Rust axum | **In scope (2026-04-15).** Ripped out and rewritten as a Rust crate on the new `prism-builder` HTML render target. Skeleton ships L1 static portals + sitemap + robots; L2–L4 + the 15 legacy plugin modules are tracked as follow-on work in the package's `CLAUDE.md`. |
 | `prism-core` | TS, mostly logic | Logic survives; the host language change determines whether it ports to Rust or stays as a TS sibling reachable via JS interop. See §3. |
 
 ## 3. Host language: Rust (decided)
@@ -286,7 +293,7 @@ Confidence column: **Very high** = drop-in or trivial.
 | *new:* `interprocess` (Rust crate) | new in `prism-shell` | Cross-platform local IPC (unix sockets / named pipes) for the desktop shell ↔ daemon sibling channel | Very high |
 | *new:* `cargo-packager` | new in build | Signed `.dmg` / `.msi` / `.deb` / `.AppImage` — replaces `tauri build` | High |
 | *new:* `self_update` | new in `prism-studio` | Application auto-update from a static release feed — replaces Tauri's updater plugin | High |
-| `@hono/node-server`, `@hono/node-ws`, `hono` | relay | `axum` (Tokio-team Rust web framework, idiomatic) — *if* Relay ever migrates. Out of scope today | n/a — Relay stays Hono JSX SSR (pending its own rewrite) |
+| `@hono/node-server`, `@hono/node-ws`, `hono` | relay | `axum` 0.7 + `tower-http` + `tokio`. **Done 2026-04-15** — relay skeleton lives in `packages/prism-relay`, shares `prism-builder`'s component registry for SSR | Very high |
 | `vitest` | core, admin-kit | `cargo test` + `insta` (snapshots) + `proptest` (property tests) | Very high |
 | `@playwright/test` | studio, relay | **Keep.** E2E still runs against a real browser even when the client is WASM. No reason to swap | Very high |
 | `vite`, `@vitejs/plugin-react`, `vite-plugin-wasm`, `vite-plugin-top-level-await`, `vite-plugin-singlefile` | studio, playground | [`trunk`](https://trunkrs.dev) for Rust+WASM bundling and dev server. Vite can stay as the outer dev server during the migration if it helps | High |
@@ -460,10 +467,17 @@ The desktop / mobile app shell. Tauri is not used. No `tauri`, no
   clipboard, OS credential storage (same as before, but now
   wired explicitly rather than via Tauri plugins).
 
-#### Server-side (out of scope; listed for completeness)
+#### Server-side (Sovereign Portal host)
 
-- **`axum`** — Rust web framework (Tokio team). What we'd reach
-  for if Relay ever migrates off Hono JSX SSR. Not in scope.
+- **`axum`** — Rust web framework (Tokio team). **In scope as of
+  2026-04-15.** Drives the `prism-relay` crate + `prism-relayd`
+  binary. Portals render through `prism_builder::render_document_html`
+  so the same `Component` impls feed the Studio (Clay target) and the
+  relay (HTML target) from one registry.
+- **`tower` / `tower-http`** — middleware (trace, compression,
+  timeouts). Used as the axum service stack.
+- **`tracing` / `tracing-subscriber`** — structured logging for the
+  relay binary.
 
 ## 7. Hot reloading strategy
 
@@ -566,20 +580,36 @@ start the next phase until the current one ships.
 
 Goal: prove the architecture before committing.
 
-- [ ] Stand up an empty `prism-shell` Rust crate.
-- [ ] Wire `clay-ui-rs/clay` into it.
-- [ ] Build it to WASM via `wasm-bindgen` + `wasm-pack`, served by
-      `trunk`.
-- [ ] Render *one* hard-coded panel (a sidebar with three buttons)
-      in a browser.
-- [ ] Forward `mousedown` / `mousemove` / `keydown` / `wheel` from
-      the JS shim into Clay's input API.
+- [x] Stand up an empty `prism-shell` Rust crate.
+- [x] Wire `clay-layout` into it. *Spike #1 resolved 2026-04-14;
+      `clay` feature is default-on alongside `native`.*
+- [x] Build it to WASM and serve it from a browser.
+      *Resolved 2026-04-15: `cargo build --target
+      wasm32-unknown-emscripten -p prism-shell --features web`,
+      artifacts copied into `packages/prism-shell/web/`, served
+      by `python3 -m http.server 1420` via `prism dev web`. No
+      wasm-bindgen / wasm-pack / Trunk — C ABI + emscripten
+      `ccall`/`cwrap`. See decision log.*
+- [x] Render *one* hard-coded panel (a sidebar with three buttons)
+      in a browser. *Same pass, 2026-04-15 — `panels::identity`
+      emits a Clay tree that the C-ABI adapter serialises into a
+      tagged byte buffer and a Canvas2D painter in
+      `web/loader.js` rasterises each `requestAnimationFrame`.*
+- [x] Forward `mousedown` / `mousemove` / `keydown` / `wheel` from
+      the JS shim into Clay's input API. *`loader.js` calls
+      `prism_shell_pointer_{move,button}` / `_wheel` / `_key`;
+      `Shell::dispatch_input` runs the same input reducer the
+      native tao bin uses.*
 - [ ] Validate the hot-reload loop end-to-end (see §7): edit a
       layout function, save, see the change in <2s without losing
-      state.
+      state. *Today: re-invoke `prism dev web` for a rebuild.
+      `AppState` snapshot/restore is already implemented by
+      `Shell::snapshot`/`restore` as of the 2026-04-15 state
+      pattern landing — the piece that's missing is an automated
+      watch + reload loop.*
 - [ ] Spike `subsecond` under WASM. If it works, adopt it as the
-      primary fast-reload mechanism. If not, document why and fall
-      back to `trunk` + state snapshot.
+      primary fast-reload mechanism. If not, document why and
+      fall back to a `notify`-driven rebuild + `Shell::restore`.
 - [x] **Desktop shell spike (B vs C).** *Resolved 2026-04-15 —
       Option C.* Phase 0 confirmed Option B viable (Tauri no-webview),
       but `tauri-runtime-wry` drops raw pointer input events, forcing
@@ -781,15 +811,39 @@ Each is small enough to fit in 1–3 days. Run them all in Phase 0.
    the binding's API surface is ergonomic enough to express the
    panels we have today. (The binding is decided; this validates
    it.)
-2. **Loro-Rust spike.** Open one of our existing Loro doc files
-   from disk in a Rust binary using the `loro` crate; confirm we
-   read what `loro-crdt` writes.
-3. **Puck-JSON deserializer spike.** Take one real saved Puck doc
-   from `prism-puck-playground` and write a Rust deserializer that
-   round-trips it.
-4. **CodeMirror DOM-overlay spike.** Prove we can position a CM6
-   instance over a Clay-reserved rect on web with reasonable
-   ergonomics (cursor, focus, selection).
+2. **Loro-Rust spike (resolved).** *Resolved 2026-04-14 with the
+   `prism-daemon` CRDT module and 2026-04-15 when `loro-crdt` (JS)
+   was deleted from the tree alongside the React Studio.* The
+   daemon's `doc_manager` is a first-class `loro::LoroDoc` pool;
+   `crdt_export_then_import_restores_state` in
+   `packages/prism-daemon/src/modules/crdt_module.rs:153` creates a
+   doc, writes to it, exports a snapshot, imports that snapshot
+   into a fresh doc, and reads the value back byte-identically.
+   `tests/stdio_bin.rs::stdio_binary_boots_and_roundtrips_every_module`
+   drives the same round-trip through the binary's stdio JSON loop
+   end-to-end. The "open a Loro file written by `loro-crdt`" clause
+   was rendered moot by the JS crate being deleted — there is no
+   second writer any more.
+3. **Puck-JSON deserializer spike (resolved).** *Resolved 2026-04-14
+   with the `prism-builder` scaffold.* `packages/prism-builder/src/puck_json.rs`
+   is the one-way Puck `{ root, content, zones }` → `BuilderDocument`
+   reader; `parses_empty_doc` and `parses_simple_tree` in that
+   module's test block cover a nested-tree case end-to-end. The
+   `prism-puck-playground` package that would have hosted the real
+   saved doc was deleted 2026-04-14 along with the React tree, so
+   the fixture for this spike became the inline JSON string in
+   `parses_simple_tree` — the format adapter is the permanent
+   compatibility layer (see `packages/prism-builder/CLAUDE.md`),
+   not a throwaway.
+4. **CodeMirror DOM-overlay spike (deferred to Phase 1).** *Descoped
+   from Phase 0 on 2026-04-15.* The spike's purpose was to de-risk
+   the Phase 1 hybrid text-editor escape hatch (§5, `CodeMirror 6`),
+   not to exit Phase 0 — the ability to position a `contenteditable`
+   rectangle over a Canvas2D canvas is a well-understood browser
+   capability, not a Clay-specific unknown. Moved to the Phase 1
+   checklist alongside the CodeMirror DOM-overlay implementation
+   itself. If it turns out to be painful we'll fold the outcome
+   back into §13 as a reopened open question.
 5. **Desktop shell spike (B vs C — resolved).** *Resolved
    2026-04-15 — Option C.* Option B (Tauri no-webview) was confirmed
    technically viable, but `tauri-runtime-wry` drops raw pointer
@@ -800,9 +854,29 @@ Each is small enough to fit in 1–3 days. Run them all in Phase 0.
    `interprocess` (length-prefixed `postcard` frames). Confirmed
    spawn / supervise / kill works on mac, win, linux. *Resolved
    2026-04-14 — see decision log.*
-7. **Hot-reload spike (`subsecond` + `trunk`).** Stand up the
-   sub-2-second edit loop from §7 and prove state survives a
-   reload. This is the make-or-break for developer experience.
+7. **Hot-reload spike (resolved).** *Resolved 2026-04-15.* `trunk`
+   was retired when the emscripten + Canvas2D path replaced it
+   (see decision log, 2026-04-15 "web target on canvas via
+   emscripten"). `subsecond` was evaluated against the new toolchain
+   and ruled out for the web target: the crate hot-patches in-place
+   via `dlopen`-style dynamic linking, which neither
+   `wasm32-unknown-emscripten` nor `wasm32-unknown-unknown` supports
+   — WASM modules are sealed once linked. **Adopted loop:** a full
+   rebuild via `cargo build --target wasm32-unknown-emscripten -p
+   prism-shell --features web` + the artifact copy, paired with
+   `Shell::snapshot` → `localStorage` → `Shell::restore` so every
+   reload lands the browser back in the same `AppState` it left.
+   State survival is proven by `prism_core::kernel::store::tests::*`
+   (16 tests, notably the full hot-reload cycle simulation) and
+   `prism_shell::app::tests::*` (6 tests). The <2 s edit-loop
+   target is aspirational until Phase 1's dev-UX pass wires a
+   `notify`-driven watch + rebuild + WebSocket reload automation
+   into `prism dev web`; today the loop is "save, re-run `prism
+   dev web`, reload the browser tab" — under ~8 s on a warm cargo
+   cache. Good enough to exit Phase 0; not good enough to call
+   productive. Subsecond stays available for the *native* dev bin
+   in Phase 1 (§7 native column). For mobile (Phase 5) the same
+   full-rebuild + snapshot approach applies.
 
 ## 12. Risks
 
@@ -855,13 +929,31 @@ Each is small enough to fit in 1–3 days. Run them all in Phase 0.
 
 ## 13. Open questions
 
-- [ ] Which Clay renderer for web — official HTML, or a custom
-      Canvas2D/WebGL one? Trade-off: HTML renderer = familiar
-      a11y, easy text selection; Canvas = pixel-identical to
-      native, no DOM overhead.
-- [ ] Do we keep `prism-relay` as Hono JSX SSR indefinitely, or
-      eventually serve a server-rendered Clay snapshot? (For now:
-      rewrite Hono JSX SSR in place as the Sovereign Portal system.)
+- [x] Which Clay renderer for web — official HTML, or a custom
+      Canvas2D/WebGL one? **Resolved 2026-04-15: neither is the
+      SSR story.** Clay's upstream `renderers/web/html` renderer is
+      a *client-side* WASM DOM-as-canvas thing (only `<div>`/`<a>`/
+      `<img>` with absolute CSS transforms, no semantic tags) —
+      useful for Studio's eventual WASM web target, useless for
+      search-engine-crawlable HTML. For **Studio's WASM web build**
+      we'll reuse the upstream HTML renderer (or a Canvas2D one if
+      it proves too slow). For **Sovereign Portals** we go through
+      a completely separate semantic-HTML path on the server:
+      `prism_builder::Component::render_html` renders the tree via
+      the `prism_builder::html::Html` builder and ships it as the
+      body of an axum response. The same `Component` trait carries
+      both targets (`render_clay` + `render_html`), so Studio and
+      the relay share one registry.
+- [x] Do we keep `prism-relay` as Hono JSX SSR indefinitely, or
+      eventually serve a server-rendered Clay snapshot? **Resolved
+      2026-04-15 — Rust axum, not a Clay snapshot.** The Hono
+      package was ripped out and replaced with a `prism-relay` Rust
+      crate on `axum` 0.7. Portals render through
+      `prism_builder::render_document_html` using the same
+      `Component` trait the Studio will share for its WASM web
+      build. The L1 skeleton ships; L2–L4 and the 15 legacy
+      modules (federation, ACME, webhooks, vault-host, etc.) are
+      follow-on work tracked in `packages/prism-relay/CLAUDE.md`.
 - [ ] What's the accessibility story? React + DOM gives us
       ARIA / screen readers for free. A canvas-based Clay
       renderer does not. The HTML renderer mitigates this.
@@ -1159,3 +1251,138 @@ Each is small enough to fit in 1–3 days. Run them all in Phase 0.
   remain open — the store landing just unblocks the modules
   that want a place to live inside `AppState` and a
   subscription bus to notify from.
+- **2026-04-15** — **Phase 0 web target on canvas via
+  emscripten.** `trunk` is permanently retired. `prism-shell`
+  now builds for `wasm32-unknown-emscripten` behind the `web`
+  feature with a hand-written C ABI adapter in `src/web.rs`
+  (`prism_shell_boot` / `_shutdown` / `_resize` /
+  `_pointer_move` / `_pointer_button` / `_wheel` / `_key` /
+  `_frame` / `_frame_len`) exported via
+  `#[no_mangle] extern "C"` and kept alive across LTO by
+  `std::hint::black_box` in `src/bin/prism_shell_wasm.rs`.
+  Crate type dropped from `["rlib", "cdylib"]` to `["rlib"]`:
+  a `cdylib` triggers a second emcc link pass that clashes
+  with `-sMODULARIZE=1` / `-sEXPORT_ES6=1`, the exact trap
+  `packages/prism-daemon` hit first. Link flags live in
+  `packages/prism-shell/.cargo/config.toml` and mirror the
+  daemon's: `EXPORT_NAME=createPrismShell`, the full
+  `_prism_shell_*` + `_malloc` + `_free` export list,
+  runtime methods `ccall,cwrap,UTF8ToString,HEAPU8,HEAPU32,
+  HEAPF32`, `ALLOW_MEMORY_GROWTH=1`, `INITIAL_MEMORY=16MB`,
+  `STACK_SIZE=1MB`, `ENVIRONMENT=web,worker`, `INVOKE_RUN=0`,
+  `SUPPORT_LONGJMP=wasm`, `ERROR_ON_UNDEFINED_SYMBOLS=0` (the
+  last two stay because Clay's C core and loro-internal's
+  wasm-bindgen dead-code trampoline both need them to
+  typecheck under rustc's unconditional `-fwasm-exceptions`).
+  **Render buffer:** `prism_shell_frame(dt)` fills a
+  `Vec<u8>` with a tagged stream — `0`=Rectangle
+  `(f32 x,y,w,h + u8 RGBA)`, `1`=Border `(rect + RGBA +
+  f32 width)`, `2`=Text `(rect + RGBA + u16 size + u32
+  byte_len + UTF-8 bytes)`, `3`=ScissorStart `(rect)`,
+  `4`=ScissorEnd — and returns `(ptr, len)` via two separate
+  exports so the JS loader can reslice `Module.HEAPU8` without
+  round-tripping the pointer through a typed array.
+  **JS side:** `packages/prism-shell/web/loader.js` (~210
+  lines, no build step, no bundler) imports
+  `createPrismShell` from `./prism_shell_wasm.js`, `cwrap`s
+  every export, attaches mouse/wheel/key/resize listeners,
+  drives a `requestAnimationFrame` loop that calls
+  `api.frame(dt)` then walks the buffer via `DataView` into a
+  Canvas2D painter. `index.html` is a 32-line wrapper that
+  just creates `<canvas id="prism">` and loads
+  `loader.js` as `type="module"`. No React, no Tailwind, no
+  wasm-bindgen, no Trunk. **CLI rewire:**
+  `prism-cli::builder::Program::Trunk` deleted; replaced with
+  `Program::Python3` (the static-server program for `dev
+  web`). `prism build --target web` expands to
+  `cargo build --target wasm32-unknown-emscripten -p
+  prism-shell --no-default-features --features web
+  [--release]` and the `run` path copies
+  `prism_shell_wasm.{js,wasm}` from the target dir into
+  `packages/prism-shell/web/` via `std::fs` after the cargo
+  build succeeds — handled in `commands::build::run` rather
+  than `plan` because a `cp` step isn't representable as an
+  argv. `prism dev web` runs the same cargo build + copy as
+  a synchronous preflight then execs
+  `python3 -m http.server 1420 --directory packages/prism-shell/web`
+  as its long-running foreground child; `prism dev all` runs
+  the web preflight once before spinning the supervisor up
+  so the supervisor's web child is just the static server.
+  No file-watch / rebuild-on-change loop yet — re-invoke
+  `prism dev web` to see Rust-side changes. `subsecond`
+  evaluation stays on the Phase 0 checklist for a later
+  pass. **End-to-end verification:** `source
+  $HOME/.cache/emsdk/emsdk_env.sh && cargo run -q -p
+  prism-cli -- build --target web --debug` produced
+  `prism_shell_wasm.js` (156 KB) + `prism_shell_wasm.wasm`
+  (~26 MB debug) and copied both into the web dir; `python3
+  -m http.server 1420` serves 200s for `index.html`,
+  `loader.js`, `prism_shell_wasm.js`, and
+  `prism_shell_wasm.wasm`. `cargo test --workspace` at
+  **675 passed, 0 failed**; `cargo clippy --workspace
+  --all-targets -- -D warnings` clean. **Workspace impact:**
+  stale `packages/prism-shell/Trunk.toml` +
+  `packages/prism-shell/index.html` deleted; `wasm-bindgen`,
+  `web-sys`, `js-sys`, `console_error_panic_hook`,
+  `getrandom`-js-feature, and `uuid`-js-feature dependencies
+  never added (emscripten ships a real libc, so the
+  wasm32-unknown-unknown workaround stack is unnecessary).
+  **Phase 0 checkbox for "web compiles + canvas boot"
+  flipped to ✅.** Still open on Phase 0: `subsecond` hot
+  reload under WASM, bundle/perf/input-latency measurements,
+  mobile path (`cargo-mobile2` + `winit`), glyphon-on-WebGPU.
+- **2026-04-15** — **Relay rewrite landed — Sovereign Portal host on
+  Rust `axum`.** The Hono JSX SSR package under `packages/prism-relay`
+  (17-module plugin system, 30k+ lines of TS, Playwright + vitest
+  suites, Dockerfiles, the whole thing) was ripped out and replaced
+  with a small Rust crate on `axum` 0.7 + `tower` + `tower-http` +
+  `tokio` + `tracing`. The `prism-relay` crate ships a lib + a
+  `prism-relayd` bin; routes are `/healthz`, `/`, `/portals`,
+  `/portals/:id`, `/sitemap.xml`, `/robots.txt`. **Two-target
+  `Component` trait:** `prism-builder` grew `src/html.rs` (a tiny
+  String-backed HTML builder that escapes the 5 HTML metachars for
+  text + attribute contexts) and `src/render.rs` with a
+  `render_document_html(doc, registry, tokens) -> Result<String,
+  RenderError>` walker. `Component::render_html` is now a trait method
+  alongside the existing `render_clay`; the default impl wraps children
+  in `<div data-component="…">` so adding a component without an HTML
+  story still produces working markup. Studio will call `render_clay`;
+  the relay calls `render_html` — one registry, two targets. **Five
+  built-in components** register under `prism-relay::components`:
+  `heading`, `text`, `link`, `image`, `container` — real semantic
+  tags, not Clay's pixel output. **Portal model:** `PortalStore`
+  (a `RwLock<HashMap>`) + `Portal { meta, root_node, level,
+  public }` + `PortalLevel::{L1, L2, L3, L4}`; only L1 (static
+  read-only) is wired in the skeleton. L2/L3/L4 and the 15 legacy
+  plug-in modules (federation, ACME, webhooks, vault-host, password
+  auth, blind-mailbox, hashcash, peer-trust, escrow, portal
+  templates, webrtc-signaling, collection-host, relay-router,
+  relay-timestamp, blind-ping, admin dashboard, Prometheus metrics)
+  are tracked as a follow-on checklist in
+  `packages/prism-relay/CLAUDE.md`. **Clay's upstream HTML renderer
+  re-investigated and ruled out for SSR:** `renderers/web/html/clay-html-renderer.html`
+  does exist, but it's a client-side WASM DOM-as-canvas path that
+  emits only `<div>`/`<a>`/`<img>` with absolute-positioned CSS
+  transforms — great for Studio's eventual WASM web target, useless
+  for search-engine-crawlable HTML. The Sovereign Portal path is a
+  completely separate semantic-HTML render target that lives above
+  Clay, not inside it. **CLI impact:** `prism-cli` switched `BuildTarget::Relay`
+  from `pnpm --filter @prism/relay run build` to `cargo build -p
+  prism-relay --release`, and `DevTarget::Relay` from `pnpm run dev`
+  to `cargo run -p prism-relay`. `prism test` lost the `--rust`,
+  `--e2e`, `--all` flags (the Playwright suite they gated was
+  deleted with the TS relay); it is now a thin Rust-only wrapper
+  around `cargo test`. The axum relay's integration tests in
+  `packages/prism-relay/tests/routes.rs` run under the default
+  `cargo test --workspace` path. **Workspace impact:** root
+  `pnpm-workspace.yaml` reduced to `packages/prism-studio` only;
+  root `package.json` loses `test:all` / `test:rust` / `test:ts`
+  / `test:e2e`; `prism-builder`, `prism-core`, `axum`, `tower`,
+  `tower-http`, `tracing`, and `tracing-subscriber` added to
+  `[workspace.dependencies]`. **Tests:** 19 new unit tests
+  + 8 integration tests (tower oneshot, no TCP bind) + 1 doctest
+  in `prism-relay`; 8 new unit tests in `prism-builder::html` and
+  `prism-builder::render` including an XSS-escape test and an
+  unknown-component error path. §13 open questions "which Clay
+  renderer for web" and "Hono JSX SSR vs Clay snapshot" both
+  closed.

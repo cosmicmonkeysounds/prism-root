@@ -27,7 +27,7 @@ pub mod test;
 )]
 pub struct Cli {
     /// Print every command the CLI would spawn without running it.
-    /// Useful for auditing what `prism test --all` actually does.
+    /// Useful for auditing what `prism build` actually runs.
     #[arg(long, global = true)]
     pub dry_run: bool,
 
@@ -38,7 +38,7 @@ pub struct Cli {
 /// The top-level verb the user invoked.
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Run Rust unit tests, relay TS units, and relay E2E tests.
+    /// Run `cargo test` across the workspace (or a single package).
     Test(test::TestArgs),
     /// Build one or many targets (desktop / web / relay / all).
     Build(build::BuildArgs),
@@ -69,8 +69,8 @@ pub fn run(cli: &Cli, workspace: &Workspace) -> Result<u8> {
 
 /// Execute a plan of builders sequentially, stopping on the first
 /// non-zero exit code. Every subcommand that is "run a series of
-/// cargo/pnpm commands" funnels through here so dry-run handling
-/// lives in exactly one place.
+/// cargo commands" funnels through here so dry-run handling lives
+/// in exactly one place.
 pub fn execute_plan(plan: &[crate::builder::CommandBuilder], dry_run: bool) -> Result<u8> {
     for cmd in plan {
         if dry_run {

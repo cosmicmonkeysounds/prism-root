@@ -23,6 +23,7 @@ use serde_json::Value as JsonValue;
 
 use crate::foundation::object_model::GraphObject;
 use crate::foundation::vfs::BinaryRef;
+use crate::language::forms::DocumentSchema;
 
 // ── FileBody ───────────────────────────────────────────────────────
 
@@ -73,8 +74,9 @@ impl FileBody {
 /// `schema` is carried alongside the body rather than stuffed inside
 /// it so form-driven files (YAML/JSON with a known schema, Flux
 /// records) can share the same file abstraction as free-form
-/// documents. The TS version used a strongly-typed `DocumentSchema`;
-/// until `language::forms` ports we keep it as an opaque JSON blob.
+/// documents. Now that [`language::forms`](crate::language::forms)
+/// has landed the field is a strongly-typed [`DocumentSchema`] that
+/// round-trips through serde.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PrismFile {
     /// NSID or VFS path. The primary identity of the file.
@@ -86,9 +88,8 @@ pub struct PrismFile {
     pub surface_id: Option<String>,
     /// The actual content, discriminated by variant.
     pub body: FileBody,
-    /// Optional form/field schema for structured editing. Stored as
-    /// `serde_json::Value` until `language::forms` ports.
-    pub schema: Option<JsonValue>,
+    /// Optional form/field schema for structured editing.
+    pub schema: Option<DocumentSchema>,
     /// Free-form metadata bag (owner, tags, custom keys).
     pub metadata: Option<HashMap<String, JsonValue>>,
 }
@@ -120,7 +121,7 @@ pub struct TextFileParams {
     pub text: String,
     pub language_id: Option<String>,
     pub surface_id: Option<String>,
-    pub schema: Option<JsonValue>,
+    pub schema: Option<DocumentSchema>,
     pub metadata: Option<HashMap<String, JsonValue>>,
 }
 
@@ -143,7 +144,7 @@ pub struct GraphFileParams {
     pub object: GraphObject,
     pub language_id: Option<String>,
     pub surface_id: Option<String>,
-    pub schema: Option<JsonValue>,
+    pub schema: Option<DocumentSchema>,
     pub metadata: Option<HashMap<String, JsonValue>>,
 }
 
@@ -268,5 +269,25 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(file.surface_id.as_deref(), Some("preview"));
+    }
+
+    #[test]
+    fn text_file_carries_typed_document_schema() {
+        use crate::language::forms::{DocumentSchema, FieldSchema, FieldType};
+
+        let schema = DocumentSchema {
+            id: "contact".into(),
+            name: "Contact".into(),
+            fields: vec![FieldSchema::new("name", "Name", FieldType::Text)],
+            sections: Vec::new(),
+        };
+        let file = create_text_file(TextFileParams {
+            path: "forms/contact.json".into(),
+            text: String::new(),
+            schema: Some(schema.clone()),
+            ..Default::default()
+        });
+        assert_eq!(file.schema.as_ref().map(|s| s.id.as_str()), Some("contact"));
+        assert_eq!(file.schema, Some(schema));
     }
 }

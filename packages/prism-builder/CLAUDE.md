@@ -11,17 +11,26 @@ user content loadable forever.
 
 ## Public surface
 From `src/lib.rs`:
-- `Component`, `ComponentId`, `RenderContext` — the trait every
-  renderable block implements plus its id + per-frame context.
+- `Component`, `ComponentId`, `RenderContext`, `RenderHtmlContext`,
+  `RenderError` — the trait every renderable block implements plus
+  its id, per-frame Clay context, and SSR HTML context.
 - `BuilderDocument`, `Node`, `NodeId` — the serializable document
   tree written to disk by Studio.
 - `ComponentRegistry`, `RegistryError` — the DI entry point.
+- `Html` + `escape_text` / `escape_attr` — allocation-light HTML
+  builder used by components' `render_html` impls.
+- `render_document_html(doc, registry, tokens)` — walks a document
+  against a registry and returns a ready-to-serve HTML fragment.
+  The Sovereign Portal relay calls this per request.
 
 ## Architecture
-Four modules, all in `src/`:
+Six modules, all in `src/`:
 
 - `component.rs` — the `Component` trait every renderable block
-  implements. Blocks are `Arc<dyn Component>`.
+  implements. Blocks are `Arc<dyn Component>`. Components expose
+  both a Clay render path (Phase 3) and a default `render_html`
+  that emits a `<div data-component="id">` wrapper plus recursive
+  children — override it to produce real markup for the SSR path.
 - `document.rs` — `BuilderDocument` + `Node` + `NodeId`. The
   serializable tree that Studio saves / loads.
 - `registry.rs` — `ComponentRegistry`, backed by an `IndexMap`
@@ -29,6 +38,15 @@ Four modules, all in `src/`:
   Component>)`), look up by id at render time (`get(&str)`). This is
   the **single DI surface** for adding new block types — no side
   registries, no per-component singletons.
+- `html.rs` — `Html` buffer + `escape_text` / `escape_attr`. Thin
+  wrapper around `String` with `open` / `open_attrs` / `close` /
+  `void` / `text` / `raw` / `doctype` helpers. All five HTML
+  special characters are entity-escaped on every `text` /
+  attribute write; callers never touch the raw buffer.
+- `render.rs` — `render_document_html`, the SSR walker. Used by
+  `prism-relay` to turn a `BuilderDocument` into a `text/html`
+  body on each request. The Clay walker lands here in Phase 3
+  alongside the real `ClayLayoutScope` integration.
 - `puck_json.rs` — **permanent** one-way reader for legacy
   Puck `{ type, props, children }` documents. We read Puck JSON
   forever so existing user content boots; new content is always

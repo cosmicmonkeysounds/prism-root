@@ -11,7 +11,8 @@
 //!   followed by a copy step that drops the emitted
 //!   `prism_shell_wasm.{js,wasm}` pair into
 //!   `packages/prism-shell/web/` next to `index.html` / `loader.js`.
-//! - `relay`   — `pnpm --filter @prism/relay build` (TypeScript).
+//! - `relay`   — `cargo build -p prism-relay` (the Rust axum SSR
+//!   server). The Hono TS relay was retired 2026-04-15.
 //! - `all`     — every target above, in the order listed.
 
 use std::fs;
@@ -96,14 +97,14 @@ pub fn plan(args: &BuildArgs, workspace: &Workspace) -> Vec<CommandBuilder> {
                 plan.push(cmd.cwd(workspace.root()));
             }
             BuildTarget::Relay => {
-                let cmd = CommandBuilder::pnpm()
-                    .arg("--filter")
-                    .arg("@prism/relay")
-                    .arg("run")
+                let mut cmd = CommandBuilder::cargo()
                     .arg("build")
-                    .cwd(workspace.root())
+                    .package("prism-relay")
                     .label("relay-build");
-                plan.push(cmd);
+                if !args.debug {
+                    cmd = cmd.release();
+                }
+                plan.push(cmd.cwd(workspace.root()));
             }
             BuildTarget::All => unreachable!("expanded above"),
         }
@@ -240,11 +241,20 @@ mod tests {
     }
 
     #[test]
-    fn relay_uses_pnpm_filter_build() {
+    fn relay_uses_cargo_build_release_by_default() {
         let p = plan(&args(BuildTarget::Relay), &ws());
         assert_eq!(
             p[0].argv().1,
-            vec!["--filter", "@prism/relay", "run", "build"]
+            vec!["build", "--package", "prism-relay", "--release"]
         );
+        assert_eq!(p[0].label_str(), Some("relay-build"));
+    }
+
+    #[test]
+    fn relay_debug_omits_release_flag() {
+        let mut a = args(BuildTarget::Relay);
+        a.debug = true;
+        let p = plan(&a, &ws());
+        assert_eq!(p[0].argv().1, vec!["build", "--package", "prism-relay"]);
     }
 }

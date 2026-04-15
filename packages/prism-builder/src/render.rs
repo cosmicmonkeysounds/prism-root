@@ -224,10 +224,8 @@ mod tests {
         }
 
         let mut reg = ComponentRegistry::new();
-        reg.register(Arc::new(Plain {
-            id: "plain".into(),
-        }))
-        .unwrap();
+        reg.register(Arc::new(Plain { id: "plain".into() }))
+            .unwrap();
         reg.register(Arc::new(Heading {
             id: "heading".into(),
         }))
@@ -249,9 +247,6 @@ mod tests {
         };
         let tokens = DesignTokens::default();
         let html = render_document_html(&doc, &reg, &tokens).unwrap();
-        assert_eq!(
-            html,
-            r#"<div data-component="plain"><h1>Inside</h1></div>"#
-        );
+        assert_eq!(html, r#"<div data-component="plain"><h1>Inside</h1></div>"#);
     }
 }

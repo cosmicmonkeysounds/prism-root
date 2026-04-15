@@ -176,10 +176,7 @@ mod tests {
         h.open_attrs("a", &[("href", "/search?q=foo&bar")]);
         h.text("Go");
         h.close("a");
-        assert_eq!(
-            h.into_string(),
-            r#"<a href="/search?q=foo&amp;bar">Go</a>"#
-        );
+        assert_eq!(h.into_string(), r#"<a href="/search?q=foo&amp;bar">Go</a>"#);
     }
 
     #[test]

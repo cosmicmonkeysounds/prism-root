@@ -206,25 +206,11 @@ are thin wrappers:
   error paths through length-prefixed postcard frames, and confirm
   the child reaps cleanly after a kill. The spawn/supervise/kill
   proof for Phase 0 spike #6 (§4.5 no-webview sidecar wire).
-- **19 Playwright E2E tests** (× 2 profiles = 38 runs) in
-  `e2e/wasm.spec.ts` that compile the daemon to
-  `wasm32-unknown-emscripten`, load it into Chromium, and exercise
-  every command (CRDT, Luau, VFS, crypto) through the real C ABI.
-  Run via `pnpm test:e2e:dev` / `pnpm test:e2e:prod`.
-
-### Full-matrix runner
-`scripts/test-all.sh` orchestrates the whole gauntlet in order — host
-cargo tests for every feature combo, clippy under every combo,
-`cargo fmt --check`, WASM dev+prod cross-compile, Playwright dev+prod,
-iOS xcframework build + C ABI symbol check, Android per-ABI cdylib
-build + C ABI symbol check. Skips compose: `--skip-mobile`, `--skip-e2e`,
-`--skip-wasm`.
-
-### Mobile FFI sanity check
-`scripts/build-ios.sh` produces an xcframework at
-`packages/prism-daemon/mobile/ios/Frameworks/PrismDaemon.xcframework`
-with device + simulator slices; `scripts/build-android.sh` produces
-per-ABI `libprism_daemon.so` files under
-`packages/prism-daemon/mobile/android/src/main/jniLibs/<abi>/`. Both
-scripts are symbol-checked (`_prism_daemon_{create,destroy,invoke,
-free_string}`) by the runner.
+The Playwright-driven browser E2E suite (`e2e/wasm.spec.ts`) and the
+`scripts/test-all.sh` full-matrix runner were retired 2026-04-15
+alongside the Hono TS relay. The C-ABI `src/wasm.rs` tests still
+exercise the create/invoke/free/destroy ownership dance from Rust,
+and `prism test` drives every crate through the unified
+`cargo test --workspace` path. Mobile FFI sanity checks (iOS
+xcframework + per-ABI Android cdylibs) will be re-added as Phase 0
+spike tasks when the `cargo-mobile2` host lands.

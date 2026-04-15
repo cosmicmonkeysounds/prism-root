@@ -1,0 +1,45 @@
+[package]
+name = "prism-relay"
+version = "0.1.0"
+edition = "2021"
+description = "Prism Relay — Sovereign Portal SSR server. Axum-based Rust rewrite of the Hono JSX TypeScript relay. Renders `prism_builder::BuilderDocument` trees to semantic HTML via the `Component::render_html` path so anonymous visitors, search engines, and OpenGraph crawlers see a JS-less, crawler-friendly page. Hosts the Level 1-4 portal surface, sitemap/robots SEO routes, and the WebSocket relay protocol."
+
+[lib]
+name = "prism_relay"
+path = "src/lib.rs"
+
+[[bin]]
+name = "prism-relayd"
+path = "src/bin/prism_relayd.rs"
+
+[dependencies]
+# Sibling crates.
+prism-builder = { path = "../prism-builder" }
+prism-core = { path = "../prism-core" }
+
+# HTTP stack.
+axum = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "io-util", "signal", "net"] }
+tower = { workspace = true }
+tower-http = { workspace = true }
+
+# Observability.
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Error handling + serde.
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# CLI parsing for the `prism-relayd` binary.
+clap = { version = "4", features = ["derive"] }
+
+[dev-dependencies]
+# `tower::ServiceExt::oneshot` lets integration tests drive the router
+# without a real TCP socket.
+tower = { workspace = true, features = ["util"] }
+# `hyper`'s `body_util` helpers + http-body-util give us a clean way
+# to collect response bodies in tests.
+http-body-util = "0.1"

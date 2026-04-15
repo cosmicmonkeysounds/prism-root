@@ -12,8 +12,11 @@
 //! ADR-002 §A1) and per-language contributions (`luau`, …) that
 //! plug into the registry.
 
+pub mod codegen;
 pub mod document;
 pub mod expression;
+pub mod forms;
 pub mod luau;
+pub mod markdown;
 pub mod registry;
 pub mod syntax;

@@ -7,11 +7,9 @@
 //! union so Surfaces, Syntax, Codegen, and Persistence can all agree
 //! on "what a file is".
 //!
-//! `DocumentSchema` in the TS tree lives in a `language/forms`
-//! subtree that has not been ported yet. The schema field is
-//! intentionally modelled here as an opaque `serde_json::Value` so
-//! form-driven files can round-trip the schema blob without blocking
-//! on the forms port.
+//! The `schema` field is typed as
+//! [`crate::language::forms::DocumentSchema`] now that `language::forms`
+//! has landed.
 
 pub mod prism_file;
 

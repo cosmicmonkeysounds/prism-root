@@ -79,12 +79,17 @@ fn test_dry_run_prints_cargo_test_workspace() {
 }
 
 #[test]
-fn test_all_dry_run_prints_both_suites() {
-    let out = run(&["--dry-run", "test", "--all"]);
+fn test_dry_run_is_rust_only() {
+    // The `--e2e` / `--all` flags were retired alongside the Hono
+    // TS relay (2026-04-15). `prism test` is now a thin wrapper
+    // around `cargo test`; integration tests for the Rust relay
+    // live in `packages/prism-relay/tests/routes.rs` and run under
+    // the default `cargo test --workspace` path.
+    let out = run(&["--dry-run", "test"]);
     assert!(out.status.success());
     let s = stdout(&out);
     assert!(s.contains("cargo test --workspace"), "{s}");
-    assert!(s.contains("--filter @prism/relay run test:e2e"), "{s}");
+    assert!(!s.contains("@prism/relay"), "{s}");
     assert!(!s.contains("vitest"), "{s}");
 }
 
@@ -117,9 +122,14 @@ fn build_target_all_dry_run() {
         "{s}"
     );
     assert!(s.contains("--no-default-features --features web"), "{s}");
-    assert!(s.contains("pnpm --filter @prism/relay run build"), "{s}");
-    // trunk is permanently retired for the web target.
+    assert!(
+        s.contains("cargo build --package prism-relay --release"),
+        "{s}"
+    );
+    // trunk is permanently retired for the web target; the Hono TS
+    // relay was retired on 2026-04-15.
     assert!(!s.contains("trunk"), "{s}");
+    assert!(!s.contains("pnpm --filter @prism/relay run build"), "{s}");
 }
 
 #[test]
@@ -127,11 +137,15 @@ fn build_relay_only_dry_run() {
     let out = run(&["--dry-run", "build", "--target", "relay"]);
     assert!(out.status.success());
     let s = stdout(&out);
-    assert!(s.contains("pnpm --filter @prism/relay run build"), "{s}");
+    assert!(
+        s.contains("cargo build --package prism-relay --release"),
+        "{s}"
+    );
     // When the user asks for relay only, desktop/web/studio should NOT appear.
     assert!(!s.contains("cargo build --package prism-shell"), "{s}");
     assert!(!s.contains("wasm32-unknown-emscripten"), "{s}");
     assert!(!s.contains("cargo build --package prism-studio"), "{s}");
+    assert!(!s.contains("pnpm --filter @prism/relay run build"), "{s}");
 }
 
 #[test]
@@ -189,7 +203,10 @@ fn dev_web_dry_run_prints_build_copy_serve() {
         "{s}"
     );
     assert!(s.contains("python3 -m http.server"), "{s}");
-    assert!(s.contains("prism_shell_wasm"), "missing cp pseudo-command in:\n{s}");
+    assert!(
+        s.contains("prism_shell_wasm"),
+        "missing cp pseudo-command in:\n{s}"
+    );
 }
 
 #[test]

@@ -9,7 +9,8 @@
 //!   -p prism-shell --features web`, copy artifacts into
 //!   `packages/prism-shell/web/`, then serve that directory via
 //!   `python3 -m http.server 1420`.
-//! - `relay`  — `pnpm --filter @prism/relay dev` (tsx watch).
+//! - `relay`  — `cargo run -p prism-relay` (Rust axum Sovereign
+//!   Portal SSR server; replaced the Hono TS relay 2026-04-15).
 //! - `all`    — every target above, spawned in parallel behind the
 //!   supervisor.
 
@@ -82,14 +83,10 @@ fn builders_for(target: DevTarget, workspace: &Workspace) -> Vec<CommandBuilder>
             .package("prism-studio")
             .cwd(workspace.root())
             .label("studio")],
-        DevTarget::Web => vec![
-            web_build_builder(workspace),
-            web_serve_builder(workspace),
-        ],
-        DevTarget::Relay => vec![CommandBuilder::pnpm()
-            .arg("--filter")
-            .arg("@prism/relay")
-            .arg("dev")
+        DevTarget::Web => vec![web_build_builder(workspace), web_serve_builder(workspace)],
+        DevTarget::Relay => vec![CommandBuilder::cargo()
+            .arg("run")
+            .package("prism-relay")
             .cwd(workspace.root())
             .label("relay")],
         DevTarget::All => unreachable!("expanded above"),
@@ -290,12 +287,13 @@ mod tests {
     }
 
     #[test]
-    fn relay_uses_pnpm_filter_dev() {
+    fn relay_runs_cargo_run_on_prism_relay() {
         let a = DevArgs {
             target: DevTarget::Relay,
         };
         let p = plan(&a, &ws());
-        assert_eq!(p[0].argv().1, vec!["--filter", "@prism/relay", "dev"]);
+        assert_eq!(p[0].argv().1, vec!["run", "--package", "prism-relay"]);
+        assert_eq!(p[0].label_str(), Some("relay"));
     }
 
     #[test]
@@ -307,9 +305,6 @@ mod tests {
         let p = plan(&a, &ws());
         assert_eq!(p.len(), 5);
         let labels: Vec<_> = p.iter().map(|c| c.label_str().unwrap()).collect();
-        assert_eq!(
-            labels,
-            vec!["shell", "studio", "web-build", "web", "relay"]
-        );
+        assert_eq!(labels, vec!["shell", "studio", "web-build", "web", "relay"]);
     }
 }

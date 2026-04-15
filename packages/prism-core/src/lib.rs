@@ -19,7 +19,13 @@
 //! - [`identity`]     — DID identities and vault encryption: `did`
 //!   (Ed25519 sign/verify, multi-sig, import/export) and `encryption`
 //!   (AES-GCM-256 vault key manager with HKDF-derived keys).
-//! - [`language`]     — syntax scanner / expression parser + evaluator.
+//! - [`language`]     — syntax scanner / expression parser + evaluator,
+//!   the unified `LanguageContribution` registry, the `PrismFile`
+//!   document abstraction, the `forms` subtree (field / document /
+//!   form schema, form state, wiki links, and Prism's in-house
+//!   markdown dialect), the Luau + Markdown contributions, and the
+//!   ADR-002 §A3 `codegen` pipeline (symbol DSL + TS/C#/EmmyDoc/GDScript
+//!   emitters + AST `TextEmitter` trait).
 //! - [`kernel`]       — runtime wiring: the reducer-style `Store<S>`
 //!   that replaces `zustand` (§6.1 / §7 of the Clay migration plan).
 //!

@@ -1,8 +1,8 @@
-# Only the Hono JSX SSR Relay is JS now. The rest of the monorepo
-# moved to the Cargo workspace at the repo root as part of the Clay
-# migration (see docs/dev/clay-migration-plan.md). prism-studio has
-# a package.json stub so pnpm does not prune the directory, but no
-# install hits that subtree.
+# The Clay migration retired the last JS packages. `prism-relay`
+# was rewritten in Rust on 2026-04-15 (axum Sovereign Portal SSR)
+# and moved into the top-level Cargo workspace alongside every
+# other crate. `prism-studio` still carries a `package.json` stub
+# so pnpm keeps its directory visible to editor tooling, but no
+# install step hits that subtree.
 packages:
-  - "packages/prism-relay"
   - "packages/prism-studio"
