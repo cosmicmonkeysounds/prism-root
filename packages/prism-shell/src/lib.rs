@@ -19,7 +19,7 @@ pub mod render;
 #[cfg(feature = "web")]
 pub mod web;
 
-pub use app::AppState;
+pub use app::{AppState, InputAction, Shell};
 
 #[cfg(feature = "clay")]
 pub use app::{install_stub_text_measurer, render_app};

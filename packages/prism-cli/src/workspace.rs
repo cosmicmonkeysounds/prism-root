@@ -62,16 +62,23 @@ impl Workspace {
         self.root.join("packages").join(name)
     }
 
-    /// Path to `packages/prism-shell/Trunk.toml`.
-    pub fn trunk_config(&self) -> PathBuf {
-        self.package("prism-shell").join("Trunk.toml")
+    /// Directory served by `prism dev web` — holds `index.html`,
+    /// `loader.js`, and (after a build) the emscripten-produced
+    /// `prism_shell_wasm.{js,wasm}` pair.
+    pub fn shell_web_dir(&self) -> PathBuf {
+        self.package("prism-shell").join("web")
     }
 
-    /// Path to `packages/prism-studio/src-tauri/tauri.conf.json`.
-    pub fn tauri_config(&self) -> PathBuf {
-        self.package("prism-studio")
-            .join("src-tauri")
-            .join("tauri.conf.json")
+    /// Where cargo drops the emscripten artifacts for a given
+    /// profile. `debug` for `cargo build` without `--release`,
+    /// `release` otherwise. The `.js` / `.wasm` files live directly
+    /// under this directory next to the standard cargo scaffolding.
+    pub fn wasm_artifact_dir(&self, release: bool) -> PathBuf {
+        let profile = if release { "release" } else { "debug" };
+        self.root
+            .join("target")
+            .join("wasm32-unknown-emscripten")
+            .join(profile)
     }
 }
 
@@ -120,12 +127,21 @@ mod tests {
             PathBuf::from("/tmp/fake-root/packages/prism-shell")
         );
         assert_eq!(
-            ws.trunk_config(),
-            PathBuf::from("/tmp/fake-root/packages/prism-shell/Trunk.toml")
+            ws.shell_web_dir(),
+            PathBuf::from("/tmp/fake-root/packages/prism-shell/web")
+        );
+    }
+
+    #[test]
+    fn wasm_artifact_dir_distinguishes_profile() {
+        let ws = Workspace::new("/tmp/fake-root");
+        assert_eq!(
+            ws.wasm_artifact_dir(false),
+            PathBuf::from("/tmp/fake-root/target/wasm32-unknown-emscripten/debug")
         );
         assert_eq!(
-            ws.tauri_config(),
-            PathBuf::from("/tmp/fake-root/packages/prism-studio/src-tauri/tauri.conf.json")
+            ws.wasm_artifact_dir(true),
+            PathBuf::from("/tmp/fake-root/target/wasm32-unknown-emscripten/release")
         );
     }
 }

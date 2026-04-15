@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "packageManager": "pnpm@9.15.4",
-  "description": "Prism Framework monorepo. Mid-Clay-migration: the Rust half (packages/prism-daemon, prism-core, prism-builder, prism-shell, prism-studio/src-tauri, prism-cli) is driven by the top-level Cargo.toml workspace. The JS half is now limited to prism-relay (Hono JSX SSR, pending its own rewrite) and this root, which keeps pnpm + turbo around as the umbrella runner.",
+  "description": "Prism Framework monorepo. Mid-Clay-migration: the Rust half (packages/prism-daemon, prism-core, prism-builder, prism-shell, prism-studio, prism-cli) is driven by the top-level Cargo.toml workspace. The JS half is now limited to prism-relay (Hono JSX SSR, pending its own rewrite) and this root, which keeps pnpm around as the umbrella runner.",
   "scripts": {
     "prism": "cargo run -q -p prism-cli --",
     "dev": "cargo run -q -p prism-cli -- dev shell",

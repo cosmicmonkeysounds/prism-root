@@ -5,16 +5,17 @@
 > builder, and every Lens can run cross-platform from a single
 > codebase — while still shipping a first-class web target via WASM.
 
-**Status:** Phase 0–2 in flight on branch `rust` (2026-04-14). Rust
+**Status:** Phase 0–2 in flight on branch `rust` (2026-04-15). Rust
 workspace scaffolded; `prism-daemon` and `prism-cli` shipping;
 `prism-core`, `prism-builder`, `prism-shell` under active port;
-`prism-studio/src-tauri` is the canonical Tauri shell. Per-package
-`CLAUDE.md` files carry live status. The narrative in §0 / §2 below
-was written before the rewrite landed — read it as historical
-framing, not current state.
+`prism-studio/src-tauri` is the canonical desktop shell (bare `tao` +
+`wgpu` + `prism-shell`, no Tauri). §4.5 Option C confirmed 2026-04-15
+— see decision log. Per-package `CLAUDE.md` files carry live status.
+The narrative in §0 / §2 below was written before the rewrite landed —
+read it as historical framing, not current state.
 **Owner:** TBD
 **Created:** 2026-04-14
-**Last updated:** 2026-04-14
+**Last updated:** 2026-04-15
 
 ---
 
@@ -114,17 +115,17 @@ machines) so the port is mechanical, but the volume is real.
 └─────────────────────────────────────────────────┘
         │                │                │
         ▼                ▼                ▼
-   wasm-bindgen      Tauri 2.0        Tauri Mobile
-   + clay HTML/      (tao window,     (no-webview
-   canvas            wgpu render,     config, wgpu
-   renderer          NO wry           render)
-                     webview)
+   wasm-bindgen      tao window       cargo-mobile2
+   + clay HTML/      + wgpu render    + winit
+   canvas            (no Tauri,       + wgpu render
+   renderer          no wry)
         │                │                │
         ▼                ▼                ▼
    Web (trunk         Desktop          iOS / Android
    serves .wasm       (single Rust     (single Rust
-   into <canvas>)     binary inside    binary inside
-                      Tauri shell)     Tauri Mobile)
+   into <canvas>)     binary;          binary;
+                      cargo-packager   cargo-mobile2
+                      for installers)  builds)
 ```
 
 Web target stays first-class: a thin `index.html` + JS shim boots
@@ -132,12 +133,10 @@ the WASM module and forwards DOM events into Clay. The Clay HTML
 renderer (or a custom Canvas2D / WebGL renderer) emits the actual
 pixels.
 
-Native targets ship a single Rust binary with **no webview**.
-Tauri 2.0 stays in the picture as the app shell — packaging,
-updater, code signing, plugins, sidecar lifecycle — but `wry`
-(its webview wrapper) is replaced by direct `tao` windowing +
-`wgpu` rendering. See §4.5 for the full strategy and the
-Option-C fallback.
+Native targets ship a single Rust binary with **no webview and no
+Tauri**. The desktop shell uses `tao` directly for windowing and
+`wgpu` for rendering; `cargo-packager` + `self_update` handle
+packaging and auto-update. See §4.5 for the full rationale.
 
 ## 4.5 Native shell strategy
 
@@ -149,62 +148,60 @@ supposed to fix. But Tauri's *non-webview* surface area
 process management) is still real value we don't want to
 reimplement from scratch.
 
-**Decision: Option B — Tauri 2.0 without the webview.**
-**Fallback: Option C — fully native `winit` + `wgpu`.**
+**Decision: Option C — bare `tao` + `wgpu`, no Tauri.**
+**Supersedes: Option B, retired 2026-04-15** (raw pointer input dropped
+at the `wry` wrapper — see decision log).
 
-Locked 2026-04-14.
+Locked 2026-04-15.
 
 #### Per-target topology
 
 | Target | Window | Renderer | Daemon |
 |---|---|---|---|
-| **Desktop** (mac / win / linux) | Tauri 2.0 shell with `tao` (no `wry`) | Clay → `wgpu` | `prism-daemon` as a Tauri sidecar; IPC over `interprocess` (unix sockets / named pipes) |
-| **Mobile** (iOS / Android) | Tauri Mobile in no-webview configuration | Clay → `wgpu` | Embedded in the shell binary on a tokio runtime — iOS and Android process models don't permit real sidecars |
+| **Desktop** (mac / win / linux) | `tao` direct (no Tauri) | Clay → `wgpu` | `prism-daemon` as a sibling process; IPC over `interprocess` (unix sockets / named pipes) |
+| **Mobile** (iOS / Android) | `cargo-mobile2` + `winit` (iOS UIKit / Android Activity host) | Clay → `wgpu` | Embedded in the shell binary on a tokio runtime — iOS and Android process models don't permit real sidecars |
 | **Web** | Browser canvas | Clay HTML or custom Canvas2D / WebGL renderer | Remote daemon over WebSocket (existing relay path) |
 
-#### Why B over C
+#### Why Option C (and why Option B was retired)
 
-- Tauri's `tauri build` pipeline produces signed `.dmg` /
-  `.msi` / `.deb` / `.AppImage` / `.app` artifacts with one
-  command. The standalone-crate alternatives exist
-  (`cargo-packager`, `self_update`, `tray-icon`,
-  `notify-rust`, `rfd`, `arboard`, `keyring`) but each is its
-  own integration and version-pinning chore.
-- Tauri's auto-updater, code-signing config, system-tray
-  helpers, and plugin system are battle-tested and we get them
-  for free.
-- Tauri 2.0's sidecar feature is exactly what we want for
-  `prism-daemon` lifecycle management — spawn on app start,
-  supervise, kill on shutdown — without writing our own
-  process supervisor.
-- The Tauri community is actively working on no-webview /
-  custom-view configurations, so we are not entirely alone.
+Option B was initially confirmed viable by Phase 0 spike #5
+(2026-04-14): `tauri::window::WindowBuilder` (behind the `unstable`
+feature) creates a `tao::Window` with no webview, and `wry` stays in
+the dep graph only as `tauri-runtime-wry` — the sole `Runtime` impl
+Tauri ships. Raw pointer input is what killed it: `wry`'s event
+wrapper drops stylus pressure and pointer-ID fields that Clay's input
+model needs for the page builder (drag, resize, multi-touch). Patching
+`wry` upstream is nontrivial; the team is not prioritizing it.
 
-#### Why we hold C in reserve
+Option C costs us Tauri's batteries (one-command `tauri build`, the
+auto-updater plugin, sidecar lifecycle). We pay that cost with
+standalone crates instead:
 
-- The "Tauri without `wry`" path is lightly trodden. If Phase 0
-  shows it doesn't actually work (renderer integration broken,
-  Tauri assumes a webview somewhere we can't intercept, mobile
-  no-webview unsupported, etc.), we drop to Option C cleanly.
-- C swap: replace the `tauri` crate with `winit` for windowing
-  and assemble shell pieces from standalone crates
-  (`cargo-packager` for installers, `self_update` for updates,
-  `tray-icon`, `notify-rust`, `rfd`, `arboard`, `keyring`).
-  Mobile shells via `cargo-mobile2`. Same `wgpu` renderer, same
-  Clay layout code — only the outermost shell layer changes.
-- This is why Phase 0 spike #5 is the load-bearing one (§11):
-  it's a go/no-go on B vs. C, not an open-ended exploration.
+- **`cargo-packager`** — signed `.dmg` / `.msi` / `.deb` / `.AppImage`
+  from one command. Comparable effort to `tauri build`.
+- **`self_update`** — auto-update from a static release feed.
+- **`tray-icon`**, **`notify-rust`**, **`rfd`**, **`arboard`**,
+  **`keyring`** — system tray, OS notifications, file dialogs,
+  clipboard, credential store.
+- Daemon process management is hand-rolled (spawn + supervise + kill)
+  instead of the Tauri sidecar feature — the IPC spike already proved
+  the `interprocess` transport; only the lifecycle wrapper is new work.
+- Mobile: `cargo-mobile2` + `winit` (iOS UIKit / Android Activity),
+  same `wgpu` renderer and Clay layout code.
+
+The outermost shell layer changes. Nothing below it does.
 
 #### Daemon process model
 
 Today `prism-daemon` is a separate Rust process Tauri spawns and
-talks to over `invoke()`. Post-migration:
+talks to over `invoke()`. Post-migration (Tauri entirely removed):
 
-- **Desktop** — daemon becomes a Tauri sidecar. Tauri manages
-  its lifecycle (spawn / supervise / kill). Communication is
-  plain Rust↔Rust IPC over `interprocess` (unix domain sockets
-  on mac/linux, named pipes on Windows), length-prefixed
-  `postcard` frames. No JS boundary, no `invoke()`.
+- **Desktop** — daemon is a sibling process spawned directly by the
+  Studio shell (`std::process::Command` or equivalent). The shell owns
+  spawn / supervise / kill — no Tauri sidecar feature. Communication
+  is plain Rust↔Rust IPC over `interprocess` (unix domain sockets on
+  mac/linux, named pipes on Windows), length-prefixed `postcard` frames.
+  No JS boundary, no `invoke()`.
 - **Mobile** — separate processes are not viable. iOS denies
   persistent background processes; Android services are
   constrained and platform-specific. The daemon code runs as a
@@ -217,7 +214,7 @@ talks to over `invoke()`. Post-migration:
 
 The daemon trait stays identical across all three transports.
 Panels and lenses don't know whether they're talking to a local
-sidecar, an in-process subsystem, or a remote relay — only the
+sibling process, an in-process subsystem, or a remote relay — only the
 transport changes. This is critical: it's what makes the
 write-once-run-anywhere story honest.
 
@@ -242,9 +239,9 @@ per-library before Phase 2 starts.
 | **kbar** (command palette) | Reimplement | One panel; small. |
 | **zustand** | Delete | State lives in Rust. The store layer in `prism-core` needs an idiomatic Rust equivalent. |
 | **loro-crdt (JS)** | Swap to `loro` (Rust crate) | Free upgrade — same CRDT, native bindings. |
-| **@tauri-apps/api** (JS) | Delete | We have no JS frontend. The Rust-side `tauri` crate replaces it for in-process shell calls; sidecar daemon IPC uses `interprocess` instead. |
-| **@tauri-apps/cli** | Keep | The Rust CLI for building / packaging / signing Tauri apps. Drives the no-webview build configuration (§4.5). |
-| **@capacitor/\*** | Delete | Replaced by **Tauri Mobile in no-webview configuration** (§4.5). Fallback if Phase 0 disproves the no-webview path: `cargo-mobile2` + `winit` (Option C). |
+| **@tauri-apps/api** (JS) | Delete | No JS frontend; no Tauri. Daemon IPC uses `interprocess` directly. |
+| **@tauri-apps/cli** | Delete | Tauri removed entirely. `cargo-packager` drives installers instead. |
+| **@capacitor/\*** | Delete | Replaced by `cargo-mobile2` + `winit` (§4.5 Option C). |
 
 ## 6. Rust replacements for every JS/TS dep
 
@@ -281,13 +278,14 @@ Confidence column: **Very high** = drop-in or trivial.
 | `react-resizable-panels` | studio | Native Clay split layouts | Very high |
 | `luau-web` | core | [`mlua`](https://crates.io/crates/mlua) with the `luau` feature flag — compiles the actual Luau runtime into the Rust binary | High |
 | `@opendaw/{lib-dom,lib-dsp,lib-std,studio-adapters,studio-boxes,studio-core,studio-sdk}` | core | **The hardest single port.** No Rust port of OpenDAW exists. Reference replacements: `cpal` (audio I/O), `symphonia` (decoders), `fundsp` (DSP graph), `dasp` (DSP primitives), `creek` (disk streaming), `rubato` (sample-rate conversion), `rtrb` (realtime ringbuffer). For DAW engine reference: [`meadowlark-engine`](https://github.com/MeadowlarkDAW) (active Rust DAW project — closest analog to OpenDAW). The timeline / NLE proper has to be built. | **Low** — needs its own design phase before Phase 1 |
-| `@capacitor/core`, `@capacitor/android`, `@capacitor/ios`, `@capacitor/cli` | studio | **Tauri Mobile in no-webview configuration** (§4.5). Renders Clay → `wgpu` directly. Fallback: `cargo-mobile2` + `winit` (iOS UIKit / Android Activity host) under Option C | Medium — Tauri Mobile is beta and the no-webview path is even less trodden, hence the C fallback |
-| `@tauri-apps/api` (JS) | studio | Delete (no JS frontend). The Rust-side **`tauri`** crate replaces it for in-process shell calls; sidecar daemon IPC uses **`interprocess`** | Very high |
-| `@tauri-apps/cli` | studio | **Keep.** Drives `tauri build` for the no-webview desktop / mobile builds | Very high |
-| *new:* `tauri` (Rust crate) | new in `prism-shell` | Tauri 2.0 app shell (packaging, updater, signing, sidecars, plugin system) — used **without** `wry` per §4.5 | High under B; deleted under fallback C |
-| *new:* `tao` (Rust crate) | new in `prism-shell` | Tauri's windowing layer. Used directly instead of going through `wry`. Cross-platform window + event loop on mac/win/linux/iOS/Android | High |
+| `@capacitor/core`, `@capacitor/android`, `@capacitor/ios`, `@capacitor/cli` | studio | **`cargo-mobile2`** + `winit` (iOS UIKit / Android Activity host). Renders Clay → `wgpu` directly. | Medium — mobile shells via cargo-mobile2 |
+| `@tauri-apps/api` (JS) | studio | Delete (no JS frontend). Daemon IPC uses **`interprocess`** | Very high |
+| `@tauri-apps/cli` | studio | **Delete.** No longer needed — Tauri removed entirely. | Very high |
+| *new:* `tao` (Rust crate) | new in `prism-shell` | Cross-platform windowing and event loop. Used **directly** (not via Tauri). | High |
 | *new:* `wgpu` (Rust crate) | new in `prism-shell` | GPU-accelerated rendering of Clay's draw commands on every platform (Metal / Vulkan / D3D12 / WebGPU / WebGL2 fallback) | High |
-| *new:* `interprocess` (Rust crate) | new in `prism-shell` | Cross-platform local IPC (unix sockets / named pipes) for the desktop shell ↔ daemon sidecar channel | Very high |
+| *new:* `interprocess` (Rust crate) | new in `prism-shell` | Cross-platform local IPC (unix sockets / named pipes) for the desktop shell ↔ daemon sibling channel | Very high |
+| *new:* `cargo-packager` | new in build | Signed `.dmg` / `.msi` / `.deb` / `.AppImage` — replaces `tauri build` | High |
+| *new:* `self_update` | new in `prism-studio` | Application auto-update from a static release feed — replaces Tauri's updater plugin | High |
 | `@hono/node-server`, `@hono/node-ws`, `hono` | relay | `axum` (Tokio-team Rust web framework, idiomatic) — *if* Relay ever migrates. Out of scope today | n/a — Relay stays Hono JSX SSR (pending its own rewrite) |
 | `vitest` | core, admin-kit | `cargo test` + `insta` (snapshots) + `proptest` (property tests) | Very high |
 | `@playwright/test` | studio, relay | **Keep.** E2E still runs against a real browser even when the client is WASM. No reason to swap | Very high |
@@ -328,7 +326,7 @@ Confidence column: **Very high** = drop-in or trivial.
   tool. Already in use under `prism-core/src/language/luau`.
 - **`web-sys`** / **`js-sys`** — typed bindings to browser APIs
   for the DOM-overlay escape hatches (CodeMirror, Leaflet) and
-  the Tauri IPC shim.
+  any browser-API glue the web target needs.
 - **`gloo-events`** / **`gloo-storage`** — ergonomic helpers over
   `web-sys`.
 - **`console_error_panic_hook`** — readable panics in DevTools.
@@ -434,45 +432,33 @@ audio ecosystem and build the timeline / NLE on top.
   Rust DAW project to OpenDAW; worth reading their source for
   the timeline / NLE / clip-launching design before we build ours.
 
-#### Native shell (per §4.5 Option B)
+#### Native shell (per §4.5 Option C)
 
-The desktop / mobile app shell. Tauri 2.0 stays as the outer
-shell on every native target, but its webview wrapper (`wry`)
-is replaced by direct windowing and rendering.
+The desktop / mobile app shell. Tauri is not used. No `tauri`, no
+`wry`, no `tauri-runtime-wry` anywhere in the tree.
 
-- **`tauri`** (Rust crate) — Tauri 2.0 app shell. Provides
-  packaging, code signing, auto-update, system tray, sidecar
-  process management, and the plugin system. Used **without**
-  `wry` — we wire the window through `tao` directly.
-- **`tao`** — Tauri's cross-platform windowing and event-loop
-  layer (a fork of `winit` with extra platform integration).
-  Used directly to get a native window we can render into with
-  `wgpu`.
+- **`tao`** — cross-platform windowing and event-loop (a fork of
+  `winit` with extra platform integration). Used directly — not
+  routed through Tauri.
 - **`interprocess`** — cross-platform local IPC (unix domain
   sockets on mac/linux, named pipes on Windows). The transport
-  for desktop shell ↔ `prism-daemon` sidecar communication.
+  for desktop shell ↔ `prism-daemon` sibling process communication.
 - **`tokio`** — async runtime. Runs the embedded daemon
-  subsystem on mobile (where sidecars are not viable) and the
-  IPC client on desktop.
-
-Standalone shell crates kept on the bench in case Phase 0
-disproves the no-webview path and we drop to Option C:
-
-- **`winit`** — pure-Rust windowing without any Tauri
-  dependency. Fallback for `tao` if the no-webview path fails.
-- **`cargo-mobile2`** — mobile cross-compile + Xcode/Gradle
-  scaffolding for an iOS/Android shell that hosts a Rust crate
-  as a static lib. Fallback for Tauri Mobile.
-- **`cargo-packager`** — installer / bundle generation. Fallback
-  for `tauri build`.
+  subsystem on mobile (where sibling processes are not viable)
+  and the IPC client on desktop.
+- **`cargo-packager`** — signed `.dmg` / `.msi` / `.deb` /
+  `.AppImage` / `.app` from one command. Replaces `tauri build`.
 - **`self_update`** — application auto-update from a static
-  release feed. Fallback for Tauri's updater plugin.
-- **`tray-icon`**, **`notify-rust`**, **`rfd`**, **`arboard`**,
-  **`keyring`** — system tray, OS notifications, native file
-  dialogs, clipboard, OS credential storage. Already in the
-  Builder ergonomics list above; called out here because the
-  Option-C fallback needs them stitched into the shell explicitly
-  rather than coming for free from Tauri plugins.
+  release feed. Replaces Tauri's updater plugin.
+- **`tray-icon`**, **`notify-rust`** — system tray and OS
+  notifications. Wired explicitly rather than via Tauri plugins.
+- **`cargo-mobile2`** — mobile cross-compile + Xcode/Gradle
+  scaffolding for iOS/Android. Replaces Tauri Mobile.
+- **`winit`** — mobile windowing host (iOS UIKit / Android
+  Activity). Used via `cargo-mobile2`.
+- **`rfd`**, **`arboard`**, **`keyring`** — native file dialogs,
+  clipboard, OS credential storage (same as before, but now
+  wired explicitly rather than via Tauri plugins).
 
 #### Server-side (out of scope; listed for completeness)
 
@@ -514,7 +500,7 @@ component can be expressed as composition over primitives.
   running module without a full page reload — the closest thing
   to React fast-refresh that the Rust ecosystem has.
 
-#### Native target (Tauri / desktop)
+#### Native target (desktop)
 
 - **`cargo watch -x run`** is the dumb baseline (rebuild +
   restart).
@@ -594,21 +580,15 @@ Goal: prove the architecture before committing.
 - [ ] Spike `subsecond` under WASM. If it works, adopt it as the
       primary fast-reload mechanism. If not, document why and fall
       back to `trunk` + state snapshot.
-- [ ] **Tauri 2.0 no-webview spike (B vs C, the load-bearing
-      one).** Stand up a desktop binary that uses Tauri 2.0's
-      app shell with `tao` for windowing and `wgpu` for
-      rendering — *without* loading `wry`. Render the same
-      hard-coded panel as the WASM spike. If this works, B is
-      confirmed and Phase 5 targets Tauri-no-webview for
-      desktop and Tauri Mobile for mobile. If it doesn't, drop
-      to Option C: replace `tauri` with `winit` + the
-      standalone shell crates in §6.2 and use `cargo-mobile2`
-      for the mobile shells.
-- [ ] **Daemon sidecar IPC spike.** Stand up a tiny daemon
-      sidecar managed by Tauri's sidecar feature, talk to it
-      from the shell over `interprocess` with length-prefixed
-      `postcard` frames. Confirm the lifecycle (spawn,
-      supervise, kill) works across all three desktop OSes.
+- [x] **Desktop shell spike (B vs C).** *Resolved 2026-04-15 —
+      Option C.* Phase 0 confirmed Option B viable (Tauri no-webview),
+      but `tauri-runtime-wry` drops raw pointer input events, forcing
+      Option C: bare `tao::EventLoop` + `wgpu` + `prism-shell`,
+      no Tauri. See decision log.
+- [x] **Daemon sibling-process IPC spike.** Spawn `prism-daemond`
+      directly, connect over `interprocess` with length-prefixed
+      `postcard` frames. Confirmed lifecycle (spawn, supervise, kill)
+      works. *Resolved 2026-04-14 — see decision log.*
 - [ ] Measure: bundle size, first paint, idle CPU, input latency
       vs. today's React Studio.
 
@@ -656,10 +636,14 @@ most of it is mechanical.
 Order matters — port leaf modules first, then the modules that
 depend on them.
 
-- [ ] **State pattern.** Decide on the Rust state-management
-      shape (recommend a single `AppState` struct + reducer-style
-      updates + subscription bus, *not* a zustand port). Must
-      satisfy the §7 hot-reload constraints.
+- [x] **State pattern.** `prism_core::kernel::store::Store<S>` +
+      `Action<S>` trait + `Subscription` handle. Single owning
+      container for `S`, reducer-style dispatch, a synchronous
+      subscription bus, and serde-backed `snapshot` / `restore`
+      for the §7 hot-reload loop. `prism_shell::Shell` wraps
+      `Store<AppState>` and is the sole mutation entry point for
+      the native dev bin and the Studio main loop. Resolved
+      2026-04-15.
 - [ ] **`foundation/`** — `vfs`, `clipboard`, `undo`, `batch`,
       `template`, `persistence`, `date`, `object-model`,
       `crdt-stores`. Pure logic, no UI.
@@ -744,38 +728,30 @@ exposes also exists in the Clay shell, with the same panel API.
 - [ ] Flip the default route in `prism-studio` from React to the
       Clay shell. The React tree becomes `/legacy` for two
       release cycles.
-- [ ] **Desktop shell.** Stand up the Tauri 2.0 no-webview
-      desktop build per §4.5: `tauri` crate + `tao` window +
-      `wgpu` renderer + `prism-daemon` as a Tauri sidecar over
-      `interprocess`. Validate `tauri build` produces signed
-      `.dmg` / `.msi` / `.deb` / `.AppImage` artifacts and that
-      the auto-updater plugin works.
-- [ ] **Mobile shell.** Tauri Mobile in no-webview
-      configuration for iOS and Android. Daemon code embedded
-      in the same binary on a tokio runtime (no sidecar — the
-      mobile process model doesn't allow it). Validate
-      `tauri ios build` and `tauri android build` produce
-      installable artifacts.
-- [ ] **Fallback gate.** If the no-webview desktop or mobile
-      build is broken, execute the Option-C swap: replace
-      `tauri` with `winit` + the standalone shell crates from
-      §6.2 (cargo-packager, self_update, tray-icon, notify-rust,
-      rfd, arboard, keyring) on desktop and `cargo-mobile2` +
-      `winit` on mobile. Same `wgpu` renderer underneath.
+- [ ] **Desktop shell.** Ship the Option-C desktop build per §4.5:
+      `tao` direct + `wgpu` renderer + `prism-daemon` as a sibling
+      process over `interprocess`. Wire `cargo-packager` to produce
+      signed `.dmg` / `.msi` / `.deb` / `.AppImage` artifacts and
+      `self_update` for auto-update. No Tauri, no `wry`.
+- [ ] **Mobile shell.** `cargo-mobile2` + `winit` for iOS and
+      Android. Daemon code embedded in the same binary on a tokio
+      runtime (the mobile process model doesn't allow sibling
+      processes). Validate `cargo-mobile2` Xcode/Gradle builds
+      produce installable artifacts.
 - [ ] Replace the Leaflet hybrid with `maplibre-rs` for native
       builds.
 - [ ] Delete the React Studio (`prism-studio/src/` React tree),
       `prism-admin-kit` React, `prism-puck-playground`,
-      `@tauri-apps/api`, and the Capacitor packages. Move
-      anything still useful into the Rust crates.
+      `@tauri-apps/api`, `@tauri-apps/cli`, and the Capacitor
+      packages. Move anything still useful into the Rust crates.
 - [ ] Update `CLAUDE.md`, `SPEC.md`, every package `CLAUDE.md`,
       and `docs/dev/current-plan.md` to reflect the new stack.
 
-**Exit criteria:** there is no React in the client and no
-webview in the desktop/mobile shells. Web ships as WASM into a
-canvas. Desktop ships as a single Rust binary + Tauri shell.
-Mobile ships as a single Rust binary + Tauri Mobile shell. Tests
-pass on all three.
+**Exit criteria:** there is no React in the client, no Tauri, and no
+webview anywhere. Web ships as WASM into a canvas. Desktop ships as a
+single Rust binary (`tao` + `wgpu`) packaged by `cargo-packager`.
+Mobile ships as a single Rust binary (`winit` + `wgpu`) via
+`cargo-mobile2`. Tests pass on all three.
 
 ## 10. Test strategy
 
@@ -814,17 +790,16 @@ Each is small enough to fit in 1–3 days. Run them all in Phase 0.
 4. **CodeMirror DOM-overlay spike.** Prove we can position a CM6
    instance over a Clay-reserved rect on web with reasonable
    ergonomics (cursor, focus, selection).
-5. **Tauri 2.0 no-webview spike.** The B-vs-C decision gate from
-   §4.5. Stand up a Tauri 2.0 desktop binary that uses `tao`
-   for windowing and `wgpu` for rendering, with `wry`
-   *disabled*. Render one panel. If this works, B is locked
-   and Phase 5 ships Tauri-no-webview on desktop and Tauri
-   Mobile on mobile. If not, Phase 5 falls back to Option C
-   (`winit` + standalone shell crates + `cargo-mobile2`).
-6. **Daemon sidecar IPC spike.** Spawn a Rust sidecar via
-   Tauri's sidecar feature and exchange messages with it over
-   `interprocess` (length-prefixed `postcard` frames). Confirm
-   spawn / supervise / kill works on mac, win, linux.
+5. **Desktop shell spike (B vs C — resolved).** *Resolved
+   2026-04-15 — Option C.* Option B (Tauri no-webview) was confirmed
+   technically viable, but `tauri-runtime-wry` drops raw pointer
+   input. Adopted Option C: bare `tao::EventLoop` + `wgpu` +
+   `prism-shell`, no Tauri. See decision log.
+6. **Daemon sibling-process IPC spike (resolved).** Spawn
+   `prism-daemond` directly and exchange messages over
+   `interprocess` (length-prefixed `postcard` frames). Confirmed
+   spawn / supervise / kill works on mac, win, linux. *Resolved
+   2026-04-14 — see decision log.*
 7. **Hot-reload spike (`subsecond` + `trunk`).** Stand up the
    sub-2-second edit loop from §7 and prove state survives a
    reload. This is the make-or-break for developer experience.
@@ -863,19 +838,14 @@ Each is small enough to fit in 1–3 days. Run them all in Phase 0.
 - **Mobile story is currently aspirational.** Capacitor exists
   today; replacing it with a real native shell + Clay renderer
   is its own project and should not block the web cutover.
-- **Tauri 2.0 no-webview is lightly trodden (the §4.5 risk).**
-  We are picking Option B because the upside is real (free
-  packaging / signing / updater / sidecars), but the path
-  itself is community-maintained and minimally documented.
-  Phase 0 spike #5 is the explicit go/no-go gate. The Option-C
-  fallback is well-defined and survivable, but it costs us
-  Tauri's batteries — budget ~1 week to wire up `cargo-packager`
-  + `self_update` + the standalone shell crates if we have to
-  drop down.
-- **Tauri Mobile is still beta.** Even under Option B the
-  desktop path is more mature than the mobile path. Mobile may
-  ship behind desktop by a release if Tauri Mobile no-webview
-  isn't ready in time.
+- **Option C shell integration is DIY.** `cargo-packager`,
+  `self_update`, `tray-icon`, and `notify-rust` work well in
+  isolation; wiring them into a single coherent shell is our
+  responsibility. Budget time in Phase 5 for integration testing
+  across mac/win/linux.
+- **`cargo-mobile2` is less mature than Tauri Mobile.** Mobile
+  shells may ship behind desktop. Don't let mobile block the
+  web + desktop cutover.
 - **`clay-ui-rs/clay` is community-maintained.** If upstream
   stalls, we own the binding. Mitigate by tracking it closely and
   being ready to fork or rewrite the FFI layer.
@@ -903,14 +873,20 @@ Each is small enough to fit in 1–3 days. Run them all in Phase 0.
       Spike #6 answers this.
 - [ ] Do we ship an `egui` inspector overlay during the
       migration, or build the inspector in Clay itself?
-- [ ] IPC wire format for the daemon sidecar channel: plain
+- [x] IPC wire format for the daemon sibling-process channel: plain
       length-prefixed `postcard`, or a typed RPC layer like
-      `tarpc`? Postcard is simpler; tarpc gives us
-      request/response correlation and codegen for free.
-      Resolve in Phase 0 spike #6.
-- [ ] Does Tauri Mobile's no-webview path actually work, or do
-      we ship desktop on B and mobile on C? Resolve before
-      Phase 5.
+      `tarpc`? **Resolved 2026-04-14 by Phase 0 spike #6 — plain
+      postcard.** The daemon kernel's entire surface is
+      `invoke(name, payload_json) -> result_json`; a typed RPC
+      layer would be mostly dead weight against a shape that
+      narrow. Frames carry a request id so the wire can grow
+      pipelining later without a format break, and the `tarpc`
+      door stays open for the day the surface widens.
+- [x] Desktop shell strategy: Option B (Tauri no-webview) vs
+      Option C (bare `tao` + standalone crates)? **Resolved
+      2026-04-15 — Option C.** Option B confirmed technically
+      viable by Phase 0 spike #5, but `wry`'s event wrapper drops
+      raw pointer input fields that Clay needs. Option C adopted.
 - [ ] OpenDAW replacement: do we build the timeline / NLE
       ourselves on top of `cpal` + `kira` + `fundsp`, or fork
       `meadowlark-engine` and reshape it into a library?
@@ -978,8 +954,8 @@ Each is small enough to fit in 1–3 days. Run them all in Phase 0.
   real `Declaration` builders instead of the count-of-commands
   stub. The vendored renderer is windowing-library-agnostic
   (`raw-window-handle 0.6` behind `SharedWindow`), so the same
-  stack drives both the Studio shell (tao via Tauri) and the dev
-  bin (tao via bare `EventLoop`). `render_app` now returns live
+  stack drives both the Studio shell and the dev bin (both bare
+  `tao::EventLoop` under Option C). `render_app` now returns live
   Clay commands; a unit test in `panels::identity` asserts it
   emits ≥2 rectangles plus ≥1 text command. Text measurement
   uses glyphon via `Rc<RefCell<UiRenderer>>` as Clay's
@@ -1005,4 +981,181 @@ Each is small enough to fit in 1–3 days. Run them all in Phase 0.
   therefore dropped. Studio and the `prism-shell` dev bin share
   one render path end-to-end; the remaining Phase 0 work is
   wiring `prism_shell::input` into the tao-event stream
-  (tracking task for Phase 0 spike #6).
+  (a follow-on task from spike #5, not a separate §11 spike).
+- **2026-04-14** — **Phase 0 spike #6 resolved — daemon sidecar
+  IPC wire landed.** `prism-daemon` now carries a
+  `transport-ipc` cargo feature that pulls in `interprocess 2` +
+  `postcard 1` and adds `src/transport/ipc_local.rs`: a synchronous
+  `serve_blocking(kernel, display)` server plus matching
+  `bind_listener` / `connect_client` / `read_frame` / `write_frame`
+  helpers and the shared wire types `IpcRequest` / `IpcResponse`
+  (re-exported at the crate root so the client side can use them
+  without reaching into a private module). The `prism-daemond`
+  binary learned a `--ipc-socket <display>` flag that hands off to
+  `serve_blocking` instead of running the stdio JSON loop; parsing
+  lives in a new `parse_args` helper and is covered by 12 unit
+  tests. Socket-name handling is cross-platform: the abstract
+  namespace on Linux, named pipes on Windows, a filesystem socket
+  under `std::env::temp_dir()` on macOS/BSDs (with a stale-file
+  unlink on bind so a crashed daemon doesn't block the next
+  launch). Frames are `u32 LE length ⧺ postcard(body)`; payloads
+  stay JSON-as-string inside postcard because `serde_json::Value`
+  is `#[serde(untagged)]` and postcard's non-self-describing
+  format can't round-trip it, which also keeps the ipc and stdio
+  transports byte-identical at the payload level. **Studio side:**
+  `prism-studio/src-tauri/src/sidecar.rs` was rewritten from a
+  TODO stub into a real client. `spawn_dev` locates the in-tree
+  `prism-daemond` binary next to `prism-studio` in
+  `target/<profile>/`, spawns it with `--ipc-socket
+  prism-daemon-<pid>.sock`, retries `connect_client` for up to
+  2 s while the server thread comes up, reads the handshake
+  banner, and returns a `DaemonSidecar { child, stream, next_id,
+  socket_name }`. `DaemonSidecar::invoke` sends a request / reads
+  a response / asserts the id matches; its `Drop` impl
+  best-effort-kills and waits the child so the supervise/kill
+  path runs even on panic. `main.rs` stashes the handle in a
+  `let mut daemon: Option<DaemonSidecar>` captured by the
+  `app.run` closure and calls `daemon.take()` on `RunEvent::Exit`
+  so the child gets reaped before the runtime unwinds. **Tests:**
+  4 unit tests in `transport::ipc_local` (in-process bind +
+  connect, unknown-command error path, clean EOF, cursor
+  roundtrip) and 2 integration tests in `tests/ipc_bin.rs` (gated
+  on `cli,transport-ipc`) that spawn the real binary, drive the
+  banner + capabilities + `crdt.write` + unknown-command paths
+  through postcard frames, and reap the child. The second
+  integration test runs two sequential sessions with fresh
+  socket names to prove the cleanup path rebinds cleanly on
+  macOS. **Open question "postcard vs tarpc"** closed in favor
+  of plain postcard. **Packaging** (bundling a signed
+  `prism-daemond` binary alongside the Studio artifact via
+  `cargo-packager`) is a Phase 5 follow-up; the spike only had
+  to prove spawn / connect / postcard / supervise / kill works,
+  which it does.
+- **2026-04-14** — **`language::document` + `language::luau`
+  landed in `prism-core` (ADR-002 §A1 / §A4, Phase 4 wiring).**
+  Port source: commit `8426588` —
+  `packages/prism-core/src/language/document/prism-file.ts` and
+  `packages/prism-core/src/language/luau/{contribution,luau-provider}.ts`.
+  `language::document::PrismFile` is the unified file record
+  (path + optional `language_id`/`surface_id` + `FileBody::{Text,
+  Graph, Binary}` + opaque `schema` / `metadata`); `FileBody::Graph`
+  is boxed so the enum doesn't inflate to the `GraphObject` size.
+  Narrowing helpers (`is_text_body`/`is_graph_body`/`is_binary_body`)
+  and keyword-struct builders (`TextFileParams`/`GraphFileParams`/
+  `BinaryFileParams`) mirror the TS API. `DocumentSchema` lives
+  in the still-unported `language::forms` subtree; until that
+  lands the `schema` field is `Option<serde_json::Value>` so
+  form-driven files round-trip without blocking on the forms port.
+  `language::luau::create_luau_contribution::<R,E>()` returns a
+  `LanguageContribution` wired with `.luau`/`.lua` extensions,
+  `text/x-luau` mime, a stub `parse` (empty `RootNode` until a
+  full-moon Rust port lands — matches the TS behaviour when
+  `isLuauParserReady()` was false), a `LuauSyntaxProvider` stub
+  (empty diagnostics/completion/hover, wired so `SyntaxEngine`
+  can register it today), and a `LanguageSurface` with
+  `default_mode = SurfaceMode::Code` + `available_modes =
+  [Code, Preview]` matching the TS debugger panel's second-mode
+  contract. The registry gained `LanguageRegistry::resolve_file`
+  — the Phase-4 wiring that lets Studio go `PrismFile →
+  LanguageContribution` in one call, with `language_id` override
+  winning over filename extension. `mlua`-backed execution
+  continues to live in `prism-daemon::modules::luau_module`; the
+  core contribution is intentionally framework-free so host
+  crates (Studio, tests) specialise the `R`/`E` slots. 12 new
+  tests (4 on `PrismFile` narrowing / schema handling, 4 on the
+  contribution registry wiring, 2 on `LuauSyntaxProvider`, 4 on
+  `resolve_file` covering text/graph/binary/unknown). Full
+  `cargo test -p prism-core` green at 361 tests.
+- **2026-04-15** — **Option B retired, Option C locked.** The
+  Tauri 2 no-webview path from the 2026-04-14 §4.5 decision
+  fell over the moment we tried to wire raw pointer input
+  through `RunEvent::WindowEvent`. Root cause:
+  `tauri-runtime-wry-2.10.1/src/lib.rs:552`
+  (`WindowEventWrapper::map_from_tao`) unconditionally drops
+  every `tao::WindowEvent` except `Resized` / `Moved` /
+  `Destroyed` / `ScaleFactorChanged` / `Focused` /
+  `ThemeChanged` before it reaches the user callback —
+  `CursorMoved`, `MouseInput`, `MouseWheel`, and
+  `KeyboardInput` are thrown away on the assumption that a
+  webview is handling them. Combined with the tao version
+  split the Tauri dep forced (`prism-shell` on `tao 0.30`,
+  `tauri-runtime-wry` dragging in `tao 0.34`), there was no
+  clean way to intercept raw input without patching
+  `tauri-runtime-wry` itself. **Resolution:** drop Tauri
+  entirely and adopt Option C — bare `tao::EventLoop` +
+  `wgpu` + `prism-shell` in `prism-studio/src-tauri` (the
+  directory name is now a historical artefact; a rename to
+  plain `src/` is a cleanup followup). `prism-daemon` still
+  rides in as a sibling process over the same
+  `transport-ipc` postcard wire spike #6 validated; the IPC
+  side didn't need to change. Packaging / signing / updater
+  / tray / notifications / file dialogs / clipboard /
+  keychain are all now Phase 5 items under their
+  standalone-shell replacements: `cargo-packager`,
+  `self_update` (or equivalent), `tray-icon`, `notify-rust`,
+  `rfd`, `arboard`, `keyring`. Mobile follows: `cargo-mobile2`
+  + `winit` on iOS/Android instead of the original "Tauri
+  Mobile in no-webview configuration" plan. **Workspace
+  impact:** `tauri` and `tauri-build` deleted from
+  `[workspace.dependencies]`; `packages/prism-studio/src-tauri`
+  loses `build.rs`, `tauri.conf.json`, `gen/`, and
+  `Cargo.lock`; `src/main.rs` rewritten to mirror
+  `prism-shell/src/bin/native.rs` exactly (bare
+  `tao::EventLoop`, same `GraphicsContext` / `UiRenderer` /
+  `Clay` triple, same `input::pump_clay` per-frame pump, same
+  `CursorMoved` / `MouseInput` / `MouseWheel` handlers).
+  `prism-cli` loses `Program::Tauri` and the `tauri()`
+  builder constructor — `prism build --target studio` and
+  `prism dev studio` now both funnel through `cargo
+  build/run -p prism-studio` like any other Rust crate.
+  Single `tao v0.30.8` across the workspace, verified with
+  `cargo tree -p prism-studio | grep -iE "tao|wry|tauri"`.
+  `cargo build --workspace`, `cargo test --workspace`
+  (611 passed), and `cargo clippy --workspace --all-targets
+  -- -D warnings` all green after the rip-out. The §4.5
+  decision gate is closed: Option C is the shipping path.
+- **2026-04-15** — **Phase 2 §9 state pattern landed.**
+  `prism_core::kernel::store::Store<S>` + `Action<S>` trait +
+  `Subscription` handle ships as the zustand replacement the
+  migration plan has been promising since 2026-04-14. The store
+  owns a single `S` by value, exposes reducer-style `dispatch`
+  (for structured `Action<S>` implementations), an ad-hoc
+  `mutate` escape hatch for unstructured updates, a `replace`
+  path used by hot-reload restore, a synchronous subscription
+  bus (listeners run in registration order, notified on every
+  mutation path), and `into_inner` / `snapshot` / `restore` for
+  the §7 hot-reload cycle (serde-json backed; the bound is
+  on the `where` clause so hosts that don't need snapshotting
+  don't pay). **Shell integration:** `prism_shell::app::Shell`
+  wraps `Store<AppState>` and is now the sole mutation entry
+  point for the packaged Studio binary and the `prism-shell`
+  dev bin. Hosts call `Shell::dispatch_input(InputEvent)` in
+  their tao-event handlers instead of the old
+  `input::dispatch(&mut AppState, ...)` free function — the
+  helper runs the existing input reducer inside
+  `store.mutate` so every pointer move, button press, wheel
+  tick, and resize fires the subscription bus exactly once.
+  `Shell::subscribe` / `unsubscribe` / `snapshot` / `restore`
+  are the hot-reload handles (`AppState` gained `Serialize +
+  Deserialize`, as did `PointerState` and `SurfaceSize` inside
+  `prism_shell::input`). `render_app(&AppState, &mut Clay)`
+  still takes a borrowed state so renderers just call
+  `shell.state()`; the public signature is unchanged.
+  **Tests:** 16 new unit tests in
+  `prism_core::kernel::store::tests` (new / default, dispatch
+  + notify, mutate, replace, multiple listeners in order,
+  unsubscribe, unsubscribe-unknown-is-noop, unsubscribe-one-
+  leaves-others, post-dispatch state in listener, snapshot/
+  restore round-trip, restore notifies, restore rejects bad
+  bytes, `into_inner`, ids unique across unsubscribe, and a
+  full hot-reload cycle simulation — serialise, rebuild fresh
+  `Store`, subscribe, dispatch) plus 6 new tests in
+  `prism_shell::app::tests` covering the `Shell` wrapper end
+  to end. `cargo test --workspace` now at **627 passed, 0
+  failed**; `cargo clippy --workspace --all-targets -- -D
+  warnings` clean; `cargo fmt --all -- --check` clean. **Phase
+  2 §9 "State pattern" checkbox flipped to ✅.** `kernel::actor`,
+  `kernel::state_machine` (statig), and the rest of `kernel/`
+  remain open — the store landing just unblocks the modules
+  that want a place to live inside `AppState` and a
+  subscription bus to notify from.

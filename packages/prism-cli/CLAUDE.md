@@ -2,8 +2,7 @@
 
 Unified Rust CLI for the Prism Framework workspace. Produces a
 single `prism` binary that replaces the ad-hoc mix of `cargo`,
-`pnpm`, `trunk`, and `cargo tauri` commands the workspace used to
-require.
+`pnpm`, and `trunk` commands the workspace used to require.
 
 ## Build & Test
 - `cargo build -p prism-cli` — build the binary (`target/debug/prism`).
@@ -27,7 +26,9 @@ expanded argv without executing anything.
 ### `prism build [--target desktop|studio|web|relay|all] [--debug]`
 - Defaults to `--target all` + release builds.
 - `desktop` → `cargo build -p prism-shell`.
-- `studio` → `cargo tauri build --config packages/prism-studio/src-tauri/tauri.conf.json`.
+- `studio` → `cargo build -p prism-studio`. Phase 5 will wrap this
+  in `cargo-packager` for installer bundles; today it's a plain
+  cargo build.
 - `web` → `trunk build --config packages/prism-shell/Trunk.toml`.
 - `relay` → `pnpm --filter @prism/relay run build`.
 
@@ -50,7 +51,7 @@ The crate is split into a library + a thin binary so tests and
 sibling crates can reach into it without going through `std::process`.
 
 - `builder::CommandBuilder` — fluent argv builder with
-  `cargo()` / `pnpm()` / `trunk()` / `tauri()` constructors,
+  `cargo()` / `pnpm()` / `trunk()` constructors,
   `package()` / `workspace()` / `release()` / `arg()` / `args()`
   / `cwd()` / `env()` / `label()` combinators, and
   `argv()` / `display()` / `build()` / `build_tokio()` outputs.

@@ -2,7 +2,7 @@
 name = "prism-cli"
 version = "0.1.0"
 edition = "2021"
-description = "Prism Framework CLI — unified entry point for testing, building, and running every Prism package. Wraps cargo, trunk, tauri, and pnpm/turbo behind a single `prism` binary with a process supervisor for `prism dev all`."
+description = "Prism Framework CLI — unified entry point for testing, building, and running every Prism package. Wraps cargo, trunk, and pnpm behind a single `prism` binary with a process supervisor for `prism dev all`."
 
 [lib]
 name = "prism_cli"

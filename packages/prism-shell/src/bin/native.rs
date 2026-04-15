@@ -13,11 +13,12 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use clay_layout::{math::Dimensions, text::TextConfig};
+use prism_shell::input::{self, InputEvent, PointerButton};
 use prism_shell::render::{GraphicsContext, SharedWindow, UiRenderer};
-use prism_shell::{render_app, AppState, Clay};
+use prism_shell::{render_app, Clay, Shell};
 use tao::{
     dpi::LogicalSize,
-    event::{Event, WindowEvent},
+    event::{ElementState, Event, MouseButton, MouseScrollDelta, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     window::{Window, WindowBuilder},
 };
@@ -63,9 +64,18 @@ fn main() {
         },
     );
 
-    let state = AppState::default();
+    let mut shell = Shell::new();
+    shell.dispatch_input(InputEvent::Resize {
+        width: size.0,
+        height: size.1,
+    });
     let start = Instant::now();
     let mut last_frame = start;
+
+    // Scratch physical cursor position. tao delivers positions in
+    // physical pixels via `PhysicalPosition<f64>`, which is the same
+    // coordinate space Clay wants — no scaling required.
+    let mut cursor_physical = (0.0_f32, 0.0_f32);
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
@@ -80,6 +90,10 @@ fn main() {
                     ctx.resize(size);
                     ui_renderer.borrow_mut().resize(size);
                     clay.set_layout_dimensions((size.0 as f32, size.1 as f32).into());
+                    shell.dispatch_input(InputEvent::Resize {
+                        width: size.0,
+                        height: size.1,
+                    });
                     window.request_redraw();
                 }
                 WindowEvent::ScaleFactorChanged {
@@ -90,6 +104,58 @@ fn main() {
                     let size = (new_inner_size.width.max(1), new_inner_size.height.max(1));
                     ctx.resize(size);
                     clay.set_layout_dimensions((size.0 as f32, size.1 as f32).into());
+                    shell.dispatch_input(InputEvent::Resize {
+                        width: size.0,
+                        height: size.1,
+                    });
+                    window.request_redraw();
+                }
+                WindowEvent::CursorMoved { position, .. } => {
+                    cursor_physical = (position.x as f32, position.y as f32);
+                    shell.dispatch_input(InputEvent::PointerMove {
+                        x: cursor_physical.0,
+                        y: cursor_physical.1,
+                    });
+                    window.request_redraw();
+                }
+                WindowEvent::MouseInput {
+                    state: btn_state,
+                    button,
+                    ..
+                } => {
+                    let pb = match button {
+                        MouseButton::Left => Some(PointerButton::Primary),
+                        MouseButton::Right => Some(PointerButton::Secondary),
+                        MouseButton::Middle => Some(PointerButton::Middle),
+                        _ => None,
+                    };
+                    if let Some(btn) = pb {
+                        let event = match btn_state {
+                            ElementState::Pressed => InputEvent::PointerDown {
+                                x: cursor_physical.0,
+                                y: cursor_physical.1,
+                                button: btn,
+                            },
+                            _ => InputEvent::PointerUp {
+                                x: cursor_physical.0,
+                                y: cursor_physical.1,
+                                button: btn,
+                            },
+                        };
+                        shell.dispatch_input(event);
+                        window.request_redraw();
+                    }
+                }
+                WindowEvent::MouseWheel { delta, .. } => {
+                    let (dx, dy) = match delta {
+                        // Pre-scale line deltas against a nominal line
+                        // height so wheel scrolling matches trackpad
+                        // pixel deltas without mountain-building math.
+                        MouseScrollDelta::LineDelta(x, y) => (x * 18.0, y * 18.0),
+                        MouseScrollDelta::PixelDelta(p) => (p.x as f32, p.y as f32),
+                        _ => (0.0, 0.0),
+                    };
+                    shell.dispatch_input(InputEvent::Wheel { dx, dy });
                     window.request_redraw();
                 }
                 _ => {}
@@ -99,13 +165,21 @@ fn main() {
             }
             Event::RedrawRequested(_) => {
                 let now = Instant::now();
-                let _dt = now.duration_since(last_frame).as_secs_f32();
+                let dt = now.duration_since(last_frame).as_secs_f32();
                 last_frame = now;
+
+                // Pump pointer state through Clay. The store owns
+                // AppState, so we pull a mutable borrow via the
+                // `mutate` escape hatch — pump_clay still drains
+                // accumulated scroll deltas in place.
+                shell.store_mut().mutate(|state| {
+                    input::pump_clay(state, &clay, dt);
+                });
 
                 // `render_app` borrows `clay` for the lifetime of the
                 // returned command vec, so `ui.render_clay` must run
                 // before Clay's next frame begins.
-                let commands = render_app(&state, &mut clay);
+                let commands = render_app(shell.state(), &mut clay);
 
                 let ui = ui_renderer.clone();
                 if let Err(err) = ctx.render(|pass, device, queue, config| {

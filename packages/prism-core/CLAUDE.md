@@ -22,6 +22,10 @@ From `src/lib.rs`:
 - `DesignTokens` — color / spacing / typography constants. Leaf module.
 - `Permission`, `ShellMode`, `ShellModeContext` — the runtime context
   Studio uses to decide which lenses and panels are reachable.
+- `Store<S>`, `Action<S>`, `Subscription` — the zustand replacement
+  from `kernel::store`. A single owning container for `S` with
+  reducer-style dispatch, a synchronous subscription bus, and
+  `snapshot` / `restore` via serde for §7 hot-reload.
 
 ## Module status
 Tracked in the per-module `//!` docstrings; canonical list:
@@ -41,9 +45,13 @@ Tracked in the per-module `//!` docstrings; canonical list:
 | `identity::did` | ✅ ported | Ed25519 identity, sign/verify, multisig, import/export. |
 | `identity::encryption` | ✅ ported | AES-GCM-256 vault key manager, HKDF-derived keys. |
 | `identity::manifest` | ✅ ported | Privilege sets + enforcer + `.prism.json` parse/serialise/validate. |
-| `identity::trust` | ❌ TODO | Not yet ported. |
-| `language::syntax` | 🚧 in progress | AST types, scanner, token stream, case utils. |
+| `identity::trust` | ✅ ported | Sovereign immune system — Luau sandbox, schema poison-pill validator, hashcash proof-of-work, peer trust graph, Shamir secret sharing, encrypted escrow, PBKDF2 password auth. |
+| `language::syntax` | 🚧 in progress | AST types (+ `SyntaxNode`/`RootNode`), scanner, token stream, case utils. |
 | `language::expression` | 🚧 in progress | Tokens, parser, evaluator, field resolver. |
+| `language::registry` | ✅ ported | Unified `LanguageContribution` registry (ADR-002 §A2) — `SurfaceMode`, `InlineTokenDef` + builder, wikilink token, `LanguageSurface`, compound-extension resolver. Generic over renderer (`R`) and editor-extension (`E`) types; `()` defaults keep it framework-free. Exposes `LanguageRegistry::resolve_file(&PrismFile)` for direct document→contribution lookup. |
+| `language::document` | ✅ ported | ADR-002 §A1 `PrismFile` — unified file record with `FileBody::{Text, Graph, Binary}`, narrowing helpers, and keyword-struct builders (`TextFileParams` / `GraphFileParams` / `BinaryFileParams`). `schema` is an opaque `serde_json::Value` until `language::forms` ports. |
+| `language::luau` | 🚧 in progress | ADR-002 §A4 / Phase 4. `create_luau_contribution()` returns a `LanguageContribution<R,E>` with `parse` (stub — returns empty `RootNode` until full-moon port), `syntax_provider` (`LuauSyntaxProvider` stub), and a `code` + `preview` `LanguageSurface`. `mlua`-backed execution lives in `prism-daemon::modules::luau_module` rather than here. |
+| `kernel::store` | ✅ ported | `Store<S>` + `Action<S>` trait + `Subscription` handle. Replaces `zustand` per §6.1 of the migration plan and satisfies §7's hot-reload constraints (one root struct, no global mut, serde-backed `snapshot` / `restore`). Backs `prism_shell::Shell`. 16 unit tests. |
 
 When porting a new module, match the leaf-first order: port the
 dependency-free pieces first, snapshot-test with `insta`, then layer

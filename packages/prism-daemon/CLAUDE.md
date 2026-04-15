@@ -2,7 +2,8 @@
 
 Rust library + standalone binary — the local physics engine. Transport-agnostic
 kernel of composable modules assembled via a fluent builder. Runs anywhere Rust
-runs (desktop via Tauri, mobile via Capacitor/FFI, headless via `prism-daemond`,
+runs (desktop via `prism-daemond` sidecar spawned by `prism-studio`, mobile via
+`cargo-mobile2` staticlib + C ABI on iOS/Android, headless via `prism-daemond`,
 **browser via `wasm32-unknown-emscripten`**).
 
 ## Build
@@ -17,7 +18,7 @@ Mirrors Studio's `createStudioKernel` / `LensBundle` / `StudioInitializer`
 paradigm, ported to Rust:
 
 - `src/registry.rs` — `CommandRegistry`: name → `Fn(JsonValue) -> Result<JsonValue>`.
-  The single transport-agnostic entry point. Every adapter (Tauri command,
+  The single transport-agnostic entry point. Every adapter (local IPC,
   UniFFI, stdio CLI, HTTP) funnels through `kernel.invoke(name, payload)`.
 - `src/module.rs` — `DaemonModule` trait. Self-registers commands into the
   builder's shared `CommandRegistry`.
@@ -84,8 +85,9 @@ paradigm, ported to Rust:
     `@prism/admin-kit`'s `AdminSnapshot` shape (health, uptime,
     metrics, services, activity). Installed last in `with_defaults()`
     so it captures every module installed before it.
-- `src/bin/prism_daemond.rs` — standalone stdio JSON daemon binary. Proves
-  the kernel runs detached from Tauri. Gated on the `cli` feature.
+- `src/bin/prism_daemond.rs` — standalone stdio JSON daemon binary. The
+  desktop sidecar spawned by `prism-studio` and the canonical headless
+  entry point. Gated on the `cli` feature.
 - `src/wasm.rs` — C-ABI adapter for the browser. Gated on the `wasm`
   feature. Exposes `prism_daemon_{create,destroy,invoke,free_string}` so
   emscripten can wrap them via `ccall`/`cwrap`. Uses a hand-rolled C ABI
@@ -107,23 +109,20 @@ paradigm, ported to Rust:
 | `transport-http` | axum + tokio + tower                        | HTTP adapter: `POST /invoke/:command`          |
 | `transport-grpc` | tonic + prost + tokio                       | gRPC adapter: hand-rolled `DaemonService/Invoke` |
 | `transport-uniffi` | uniffi                                    | Typed Swift/Kotlin bindings                    |
+| `transport-ipc`  | interprocess + postcard                     | Local IPC adapter: length-prefixed postcard frames over unix sockets / named pipes; the Tauri 2 no-webview Studio ↔ daemon sidecar wire per §4.5 |
 
 Mobile/embedded/wasm builds don't contain the code they can't run.
 Individual capabilities: `crdt`, `luau`, `build`, `watcher`, `vfs`,
 `crypto`, `actors`, `cli`. Strictly opt-in (not in any preset):
 `whisper` (needs `cmake` on PATH for the whisper.cpp build), `conferencing`
 (pulls the `webrtc` crate's network stack — desktop only), `vfs-s3`,
-`vfs-gcs`, `transport-http`, `transport-grpc`, `transport-uniffi`.
+`vfs-gcs`, `transport-http`, `transport-grpc`, `transport-uniffi`,
+`transport-ipc`.
 
 ## Transport-Agnostic
 `kernel.invoke(name, payload)` is the single entry point. Transport adapters
 are thin wrappers:
 
-- **Tauri**: `prism-studio/src-tauri/src/{main,commands}.rs` constructs a
-  `DaemonKernel` in `main()` via `DaemonBuilder::new().with_crdt().with_luau()
-  .with_build().with_watcher().build()`, `.manage()`s it, and `#[tauri::command]`
-  functions forward to `kernel.invoke()` or reach into `kernel.doc_manager()`
-  for hot paths (CRDT byte arrays).
 - **CLI**: `prism-daemond` wraps `kernel.invoke()` in a stdio JSON loop.
 - **Browser (WASM)**: `src/wasm.rs` wraps `kernel.invoke()` in a C ABI.
   Cross-compile to `wasm32-unknown-emscripten`; emscripten produces
@@ -143,8 +142,23 @@ are thin wrappers:
   bindings via `uniffi` proc macros. Feature `transport-uniffi`.
   `PrismDaemonHandle` object with `.invoke(command, payloadJson)`,
   `.capabilities()`, `.installedModules()`, `.dispose()`.
-- **Mobile C-ABI**: Capacitor staticlib, same as browser — build the
-  kernel, wrap `invoke()` in whatever the platform expects.
+- **Local IPC**: `src/transport/ipc_local.rs` — length-prefixed
+  `postcard` frames over `interprocess::local_socket` (abstract
+  namespace on Linux, named pipes on Windows, filesystem socket in
+  `std::env::temp_dir()` on macOS/BSDs). Feature `transport-ipc`.
+  Synchronous server: `serve_blocking(kernel, display)` binds a
+  listener and spawns one `std::thread` per accepted connection. Wire
+  types are `IpcRequest` / `IpcResponse` (re-exported from the crate
+  root); payloads stay JSON-encoded strings inside postcard because
+  `serde_json::Value` is `#[serde(untagged)]` and postcard's
+  non-self-describing format can't round-trip it. The `prism-daemond`
+  binary exposes this mode via `--ipc-socket <display>`; the
+  pure-`tao`/`wgpu` Studio (`prism-studio/src-tauri`, name is a
+  historical artefact) is the canonical client and uses it to talk to
+  the daemon sidecar per §4.5 Option C (locked 2026-04-15).
+- **Mobile C-ABI**: `cargo-mobile2` staticlib, same C ABI as the browser
+  build — the host (UIKit on iOS, Activity on Android via `winit`) calls
+  `prism_daemon_{create,invoke,destroy}` directly. No webview bridge.
 
 ## Adding a New Capability
 1. Create `src/modules/my_module.rs` with a struct impl'ing `DaemonModule`.
@@ -185,6 +199,13 @@ are thin wrappers:
   `prism-daemond` binary as a subprocess and drive every built-in
   module through the stdio JSON loop — the CLI-transport analogue of
   the Playwright browser suite.
+- **2 integration tests** in `tests/ipc_bin.rs` (gated on
+  `cli,transport-ipc`) that spawn `prism-daemond --ipc-socket` as a
+  subprocess, connect over `interprocess::local_socket`, drive the
+  banner + `daemon.capabilities` + `crdt.write` + unknown-command
+  error paths through length-prefixed postcard frames, and confirm
+  the child reaps cleanly after a kill. The spawn/supervise/kill
+  proof for Phase 0 spike #6 (§4.5 no-webview sidecar wire).
 - **19 Playwright E2E tests** (× 2 profiles = 38 runs) in
   `e2e/wasm.spec.ts` that compile the daemon to
   `wasm32-unknown-emscripten`, load it into Chromium, and exercise

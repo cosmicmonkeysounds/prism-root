@@ -7,10 +7,18 @@ description = "Prism Shell — the single-source UI tree for Studio. Clay-layout
 [lib]
 name = "prism_shell"
 path = "src/lib.rs"
-# `rlib` for native hosts (the Tauri shell binary pulls it in) plus
-# `cdylib` for the wasm-bindgen build so `wasm-pack` / `trunk` can
-# produce a `.wasm` consumable from a `<canvas>`-based web shell.
-crate-type = ["rlib", "cdylib"]
+# `rlib` only. The Studio host (packages/prism-studio/src-tauri) and
+# every `[[bin]]` in this crate consume the lib as an rlib, which is
+# the one linkage path that works cleanly across desktop + browser.
+#
+# On `wasm32-unknown-emscripten` a `cdylib` crate-type would trigger
+# a second emcc link step that produces a bare `.wasm` with no JS
+# glue, clashing with the `MODULARIZE`/`EXPORT_ES6` flags the
+# `prism_shell_wasm` bin passes via `.cargo/config.toml` — the
+# daemon hit this same trap and settled on `["staticlib", "rlib"]`.
+# prism-shell doesn't ship as a staticlib today (no mobile linkage),
+# so rlib-only is enough.
+crate-type = ["rlib"]
 
 # Native dev binary — hot-reload loop runs `cargo run -p prism-shell`
 # against a winit/wgpu window without any Tauri packaging involved.
@@ -21,15 +29,34 @@ name = "prism-shell"
 path = "src/bin/native.rs"
 required-features = ["native"]
 
+# Emscripten link entry point. Only compiled under `web` on
+# `wasm32-unknown-emscripten` — see `.cargo/config.toml` for the
+# full set of `-s` flags. The binary itself does nothing; it exists
+# only so emcc sees a `main` symbol and so LTO keeps the C ABI
+# exports in `src/web.rs` alive across the pipeline.
+[[bin]]
+name = "prism_shell_wasm"
+path = "src/bin/prism_shell_wasm.rs"
+required-features = ["web"]
+
 [features]
 # `native` pulls in the on-desktop stack (wgpu / tao / winit) and
 # the daemon. `clay` is additive: it flips `panels::identity` and
 # `render` from the count-of-commands stub to the real Clay path.
 # Spike #1 (2026-04-14) resolved the binding to `clay-layout` on
 # crates.io, so `clay` now ships on by default alongside `native`.
+#
+# `web` is the emscripten + C-ABI browser path. It deliberately does
+# NOT pull `wasm-bindgen` — `clay-layout` ships its own C core which
+# can only be compiled under `wasm32-unknown-emscripten`, and mixing
+# emscripten with `wasm-bindgen`'s `wasm32-unknown-unknown` glue is
+# not supported. The daemon makes the same choice (see
+# `packages/prism-daemon/src/wasm.rs` for the rationale). Under `web`
+# the crate exports a hand-rolled C ABI via `src/web.rs`; JS glue
+# lives next to `index.html` and drives the loop through `ccall`.
 default = ["native", "clay"]
 native = ["dep:wgpu", "dep:winit", "dep:tao", "dep:pollster", "dep:prism-daemon", "dep:glyphon", "dep:bytemuck", "dep:raw-window-handle"]
-web = ["dep:wasm-bindgen", "dep:web-sys", "dep:js-sys", "dep:console_error_panic_hook"]
+web = ["clay"]
 clay = ["dep:clay-layout"]
 
 [dependencies]
@@ -57,21 +84,10 @@ winit = { workspace = true, optional = true }
 pollster = { version = "0.4", optional = true }
 raw-window-handle = { version = "0.6", optional = true }
 
-# WASM glue (feature = "web").
-wasm-bindgen = { workspace = true, optional = true }
-web-sys = { workspace = true, optional = true, features = [
-    "Window",
-    "Document",
-    "Element",
-    "HtmlCanvasElement",
-    "CanvasRenderingContext2d",
-    "CssStyleDeclaration",
-    "MouseEvent",
-    "KeyboardEvent",
-    "WheelEvent",
-] }
-js-sys = { workspace = true, optional = true }
-console_error_panic_hook = { workspace = true, optional = true }
+# Browser `web` feature: pure C ABI, no wasm-bindgen / web-sys /
+# js-sys needed. The emscripten-produced `.js` loader handles every
+# DOM / canvas call from the JS side; Rust just emits render
+# commands into a shared byte buffer.
 
 # Shared.
 serde = { workspace = true }

@@ -1,12 +1,27 @@
 //! The `Component` trait — every renderable block implements this.
 //!
-//! The builder doesn't know how a component paints; it only knows how
-//! to serialize it, how to list its props for the property panel, and
-//! how to hand it a render context when it's time to emit Clay draw
-//! commands. The `render` function returns a placeholder for now; once
-//! the Clay binding lands it returns `ClayElement`.
+//! A component has two render targets:
+//!
+//! * **Clay** ([`Component::render_clay`]) — the interactive Studio
+//!   path. Components emit Clay declarations that `prism-shell` flattens
+//!   to `RenderCommand`s and draws with wgpu on native (and with Clay's
+//!   own `web/html` DOM renderer in the WASM web target). Still a stub
+//!   until Phase 3 wires `ClayLayoutScope` end-to-end.
+//! * **HTML** ([`Component::render_html`]) — the Sovereign Portal SSR
+//!   path. Components emit semantic HTML into an [`Html`] buffer so
+//!   `prism-relay` can serve a crawler-friendly, JS-less document to
+//!   anonymous visitors. This target is live today.
+//!
+//! The trait is deliberately object-safe so `Arc<dyn Component>`s can
+//! live in the [`crate::registry::ComponentRegistry`] and be dispatched
+//! by `ComponentId` at walk time.
 
 use serde_json::Value;
+use thiserror::Error;
+
+use crate::document::Node;
+use crate::html::Html;
+use crate::registry::ComponentRegistry;
 
 /// Stable identifier for a component *type* (e.g. `"card"`, `"button"`).
 ///
@@ -14,11 +29,59 @@ use serde_json::Value;
 /// looking up a renderer for a given node.
 pub type ComponentId = String;
 
-/// What a component needs to paint itself. Placeholder for the real
-/// render context that will carry the Clay arena, design tokens,
-/// selection state, etc. once the renderer is wired.
+/// Errors a component can hit while rendering into a target backend.
+/// Surfaces as 500s in `prism-relay` and as a developer-visible red
+/// banner in Studio's builder pane.
+#[derive(Debug, Error)]
+pub enum RenderError {
+    /// A child node references a `ComponentId` that isn't registered.
+    #[error("unknown component: {0}")]
+    UnknownComponent(ComponentId),
+
+    /// Props failed validation or a component chose to bail.
+    #[error("render failed: {0}")]
+    Failed(String),
+}
+
+/// Clay-side render context. Placeholder — grows a `ClayLayoutScope`,
+/// selection state, and hot-reload handles when Phase 3 lands the rest
+/// of the builder UI. Today it carries design tokens so components can
+/// already refer to the shared palette.
 pub struct RenderContext<'a> {
     pub tokens: &'a prism_core::design_tokens::DesignTokens,
+}
+
+/// HTML-side render context. Carries the registry (so parents can
+/// recurse into their children by `ComponentId`) plus the design
+/// tokens (so portal markup can inline a consistent theme without
+/// dragging in Studio's Clay path). Constructed fresh for each
+/// request by [`crate::render::render_document_html`].
+pub struct RenderHtmlContext<'a> {
+    pub tokens: &'a prism_core::design_tokens::DesignTokens,
+    pub registry: &'a ComponentRegistry,
+}
+
+impl<'a> RenderHtmlContext<'a> {
+    /// Render one child node into `out`. Components with slots call
+    /// this for each child they want to emit — the context owns the
+    /// registry lookup so components don't have to.
+    pub fn render_child(&self, child: &Node, out: &mut Html) -> Result<(), RenderError> {
+        let component = self
+            .registry
+            .get(&child.component)
+            .ok_or_else(|| RenderError::UnknownComponent(child.component.clone()))?;
+        component.render_html(self, &child.props, &child.children, out)
+    }
+
+    /// Render every child in order. The common case for layout-only
+    /// wrappers (cards, rows, columns) that don't need to reorder or
+    /// decorate their slots.
+    pub fn render_children(&self, children: &[Node], out: &mut Html) -> Result<(), RenderError> {
+        for child in children {
+            self.render_child(child, out)?;
+        }
+        Ok(())
+    }
 }
 
 /// The core contract. Trait-objects of this type live in the
@@ -32,11 +95,30 @@ pub trait Component: Send + Sync {
     /// layer will land on top of this in Phase 3.
     fn schema(&self) -> Value;
 
-    /// Paint the component. Stub until the Clay binding is wired — the
-    /// renderer just returns the serialized props so tests can assert
-    /// round-trips.
-    fn render(&self, ctx: &RenderContext<'_>, props: &Value) -> Value {
+    /// Paint the component into Clay. Stub until Phase 3 wires
+    /// `ClayLayoutScope` — the default impl echoes props so existing
+    /// round-trip tests keep compiling.
+    fn render_clay(&self, ctx: &RenderContext<'_>, props: &Value) -> Value {
         let _ = ctx;
         props.clone()
+    }
+
+    /// Paint the component as semantic HTML for the Sovereign Portal
+    /// SSR path. Default impl emits a generic `<div data-component="id">`
+    /// wrapper and renders children in order — good enough for
+    /// layout-only containers and a safe fallback for any component
+    /// that hasn't opted into a bespoke markup shape yet.
+    fn render_html(
+        &self,
+        ctx: &RenderHtmlContext<'_>,
+        props: &Value,
+        children: &[Node],
+        out: &mut Html,
+    ) -> Result<(), RenderError> {
+        let _ = props;
+        out.open_attrs("div", &[("data-component", self.id())]);
+        ctx.render_children(children, out)?;
+        out.close("div");
+        Ok(())
     }
 }

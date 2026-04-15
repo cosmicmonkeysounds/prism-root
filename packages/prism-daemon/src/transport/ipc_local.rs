@@ -107,7 +107,10 @@ fn fs_socket_path(display: &str) -> std::path::PathBuf {
 /// `None` because the socket lives in an OS namespace, not on disk.
 pub fn bind_listener(
     display: &str,
-) -> io::Result<(interprocess::local_socket::Listener, Option<std::path::PathBuf>)> {
+) -> io::Result<(
+    interprocess::local_socket::Listener,
+    Option<std::path::PathBuf>,
+)> {
     if GenericNamespaced::is_supported() {
         let name = display.to_ns_name::<GenericNamespaced>()?;
         let listener = ListenerOptions::new().name(name).create_sync()?;

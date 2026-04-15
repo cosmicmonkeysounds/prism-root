@@ -25,33 +25,27 @@ use std::process::Command;
 /// The external tool the builder wraps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Program {
-    /// `cargo` — rustc + the wider cargo ecosystem.
+    /// `cargo` — rustc + the wider cargo ecosystem. Covers every
+    /// Rust-side target, including the packaged Studio binary and
+    /// the emscripten-based web build.
     Cargo,
     /// `pnpm` — used to dispatch into the relay package.
     Pnpm,
-    /// `trunk` — WASM dev server for `prism-shell`.
-    Trunk,
-    /// `cargo tauri <subcommand>` — Tauri CLI via the cargo wrapper
-    /// so we don't assume a global `tauri` install.
-    Tauri,
+    /// `python3` — ad-hoc static-file server for the web dev loop
+    /// (`python3 -m http.server`). Pragmatic choice because the
+    /// binary is already on every macOS/Linux dev machine we care
+    /// about; swapped for a Rust static server if that becomes a
+    /// portability problem.
+    Python3,
 }
 
 impl Program {
     /// The executable name as it appears on `PATH`.
     pub fn executable(self) -> &'static str {
         match self {
-            Program::Cargo | Program::Tauri => "cargo",
+            Program::Cargo => "cargo",
             Program::Pnpm => "pnpm",
-            Program::Trunk => "trunk",
-        }
-    }
-
-    /// Prefix arguments that must precede anything the caller adds.
-    /// For `Tauri` we inject `tauri` so `cargo tauri …` works.
-    fn prefix_args(self) -> &'static [&'static str] {
-        match self {
-            Program::Tauri => &["tauri"],
-            _ => &[],
+            Program::Python3 => "python3",
         }
     }
 }
@@ -95,14 +89,9 @@ impl CommandBuilder {
         Self::new(Program::Pnpm)
     }
 
-    /// Shortcut: `trunk` builder.
-    pub fn trunk() -> Self {
-        Self::new(Program::Trunk)
-    }
-
-    /// Shortcut: `cargo tauri` builder.
-    pub fn tauri() -> Self {
-        Self::new(Program::Tauri)
+    /// Shortcut: `python3` builder.
+    pub fn python3() -> Self {
+        Self::new(Program::Python3)
     }
 
     /// Append a positional argument.
@@ -171,23 +160,11 @@ impl CommandBuilder {
     }
 
     /// Return `(program, argv)` as the child process will see them.
-    /// The program side is the *executable* that will be spawned
-    /// (`"cargo"` for both [`Program::Cargo`] and [`Program::Tauri`]),
-    /// and the argv includes any injected prefix args (e.g. `tauri`).
     pub fn argv(&self) -> (&str, Vec<String>) {
         if let Some(override_program) = &self.program_override {
-            // No prefix args for overrides — the test helper is
-            // responsible for constructing the full argv.
             return (override_program.as_str(), self.args.clone());
         }
-        let mut argv: Vec<String> = self
-            .program
-            .prefix_args()
-            .iter()
-            .map(|s| (*s).to_string())
-            .collect();
-        argv.extend(self.args.iter().cloned());
-        (self.program.executable(), argv)
+        (self.program.executable(), self.args.clone())
     }
 
     /// Render the command as a shell-style string for `--dry-run`
@@ -288,35 +265,24 @@ mod tests {
     }
 
     #[test]
-    fn tauri_injects_tauri_prefix() {
-        let cmd = CommandBuilder::tauri()
-            .arg("dev")
-            .arg("--config")
-            .arg("packages/prism-studio/src-tauri/tauri.conf.json");
+    fn python3_http_server_with_directory() {
+        let cmd = CommandBuilder::python3()
+            .arg("-m")
+            .arg("http.server")
+            .arg("1420")
+            .arg("--directory")
+            .arg("packages/prism-shell/web");
         let (program, argv) = cmd.argv();
-        assert_eq!(program, "cargo");
+        assert_eq!(program, "python3");
         assert_eq!(
             argv,
             vec![
-                "tauri",
-                "dev",
-                "--config",
-                "packages/prism-studio/src-tauri/tauri.conf.json"
+                "-m",
+                "http.server",
+                "1420",
+                "--directory",
+                "packages/prism-shell/web"
             ]
-        );
-    }
-
-    #[test]
-    fn trunk_serve_with_config() {
-        let cmd = CommandBuilder::trunk()
-            .arg("serve")
-            .arg("--config")
-            .arg("packages/prism-shell/Trunk.toml");
-        let (program, argv) = cmd.argv();
-        assert_eq!(program, "trunk");
-        assert_eq!(
-            argv,
-            vec!["serve", "--config", "packages/prism-shell/Trunk.toml"]
         );
     }
 

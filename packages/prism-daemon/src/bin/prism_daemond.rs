@@ -217,9 +217,7 @@ async fn main() -> std::io::Result<()> {
 
     #[cfg(not(feature = "transport-ipc"))]
     if cli.ipc_socket.is_some() {
-        eprintln!(
-            "prism-daemond: --ipc-socket requires the `transport-ipc` feature at build time"
-        );
+        eprintln!("prism-daemond: --ipc-socket requires the `transport-ipc` feature at build time");
         std::process::exit(2);
     }
 

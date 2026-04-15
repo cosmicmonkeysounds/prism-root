@@ -2,5 +2,5 @@
   "name": "@prism/studio",
   "version": "0.1.0",
   "private": true,
-  "description": "Prism Studio — Tauri 2 desktop shell (no-webview). The real source tree is Rust under src-tauri/ and the prism-shell crate; this package.json exists only to keep the pnpm workspace aware of the directory during the Clay migration window."
+  "description": "Prism Studio — packaged desktop shell. Pure tao + wgpu + prism-shell (no Tauri, no webview). The real source tree is Rust under src-tauri/ and the prism-shell crate; this package.json exists only to keep the pnpm workspace aware of the directory during the Clay migration window."
 }

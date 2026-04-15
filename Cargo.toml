@@ -7,6 +7,7 @@ members = [
     "packages/prism-shell",
     "packages/prism-studio/src-tauri",
     "packages/prism-cli",
+    "packages/prism-relay",
 ]
 
 # Keep `[workspace.package]` light: crates opt in to the common license /
@@ -30,6 +31,19 @@ interprocess = "2"
 loro = "1.4"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util"] }
 
+# HTTP stack for `prism-relay` (Sovereign Portal SSR) and `prism-daemon`'s
+# `transport-http` feature. axum is the idiomatic Rust web framework and
+# is already proven inside the daemon's HTTP adapter — pinning it at the
+# workspace level so both crates track the same version. `tower` /
+# `tower-http` carry the middleware stack (tracing, compression, CORS,
+# request limits) every HTTP-serving crate needs. Resolved by the Relay
+# rewrite decision (2026-04-15).
+axum = { version = "0.7", default-features = false, features = ["json", "http1", "tokio", "matched-path", "query", "form"] }
+tower = { version = "0.5", default-features = false }
+tower-http = { version = "0.6", default-features = false, features = ["trace", "compression-gzip", "limit"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["std", "fmt", "env-filter"] }
+
 # Clay binding — resolved by Phase 0 spike #1 (2026-04-14):
 # `clay-layout` 0.4.0 is live on crates.io, ships with a working
 # winit+wgpu example, and matches the migration plan's §4.5 render
@@ -41,13 +55,14 @@ clay-layout = { version = "0.4", default-features = false, features = ["std"] }
 glyphon = "0.8"
 bytemuck = { version = "1.23", features = ["derive"] }
 
-# Rendering stack — wgpu for every native target per §4.5 Option B.
+# Rendering stack — wgpu for every native target per §4.5 Option C.
 # Bumped to 24 to match glyphon 0.8's pinned wgpu requirement; the
 # clay-layout wgpu example itself was authored against wgpu 24.
+# tao is the sole windowing crate — tauri/tauri-build/wry were
+# removed 2026-04-15 when Option B was retired in favour of Option C
+# (see `docs/dev/clay-migration-plan.md` §4.5 decision log).
 wgpu = "24"
 tao = "0.30"
-tauri = { version = "2", default-features = false }
-tauri-build = "2"
 winit = "0.30"
 
 # Text + graphics primitives used by the renderer.
@@ -69,6 +84,8 @@ rand = "0.8"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 x25519-dalek = { version = "2", features = ["getrandom", "static_secrets"] }
 hkdf = "0.12"
+hmac = "0.12"
+pbkdf2 = { version = "0.12", default-features = false }
 aes-gcm = "0.10"
 chacha20poly1305 = "0.10"
 

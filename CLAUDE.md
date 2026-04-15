@@ -7,7 +7,7 @@ Distributed Visual Operating System. Hybrid Cargo (Rust) + pnpm (Hono JSX SSR re
 - `packages/prism-core` — Rust. Shared foundations: design tokens, shell mode, boot config, (port in progress).
 - `packages/prism-builder` — Rust. The Clay-native Puck replacement (registry, document tree, Puck-JSON reader).
 - `packages/prism-shell` — Rust (`rlib` + `cdylib`). Single source of truth for the UI tree. Native bin under `src/bin/native.rs`, wasm entry under `src/web.rs`.
-- `packages/prism-studio/src-tauri` — Rust. Tauri 2 desktop shell in **no-webview** configuration (§4.5 Option B). Embeds `prism-shell` as a library. Spawns `prism-daemon` as a sidecar.
+- `packages/prism-studio/src-tauri` — Rust. Packaged desktop shell built on bare `tao` + `wgpu` + `prism-shell` (§4.5 Option C, resolved 2026-04-15). No Tauri / wry / webview anywhere. Spawns `prism-daemon` as a sibling process over `interprocess`. The `src-tauri/` directory name is a pre-Option-C historical artefact; renaming it is a cleanup followup.
 - `packages/prism-cli` — Rust. The unified `prism` binary — one front door for `test`, `build`, `dev`, `lint`, `fmt` across every Rust crate + the relay. `prism dev all` spawns every dev server behind a tokio process supervisor with colored prefixed logs and Ctrl+C fan-out. See its `CLAUDE.md` for the full subcommand surface.
 - `packages/prism-relay` — Hono JSX SSR. Out of scope for the Clay migration; slated for its own rewrite.
 
@@ -25,8 +25,8 @@ this list can be audited with e.g. `prism --dry-run test --all`.
 The root `package.json` exposes the same surface via pnpm scripts
 (`pnpm test`, `pnpm dev`, `pnpm build`, `pnpm lint`, `pnpm format`) for users
 who prefer that entry point. Everything still decomposes to raw `cargo` /
-`pnpm` / `trunk` / `cargo tauri` under the hood — `prism` is purely a
-dispatcher, not a new layer of abstraction.
+`pnpm` / `trunk` under the hood — `prism` is purely a dispatcher, not a
+new layer of abstraction.
 
 ## Style
 - Rust 2021 edition, strict clippy.
@@ -38,8 +38,8 @@ dispatcher, not a new layer of abstraction.
 - Loro CRDT = source of truth (via the `loro` Rust crate).
 - Clay layout DSL = sole UI tree. No React, no Tailwind, no Puck.
 - Rust → WASM for web; Rust → native binary for desktop/mobile.
-- Tauri 2 provides packaging / updater / signing / sidecars, but **wry is not loaded**. Windowing via `tao`, rendering via `wgpu`.
-- Daemon runs as a Tauri sidecar on desktop, as an in-process tokio subsystem on mobile, and is remote (WebSocket relay) on web.
+- Desktop shell is pure `tao` + `wgpu` + `prism-shell` — §4.5 Option C, resolved 2026-04-15 after Option B (Tauri 2 no-webview) was retired for dropping raw pointer input at the wry wrapper. Packaging/signing/updater land in Phase 5 via `cargo-packager` + `self_update` + the standalone shell crates (`tray-icon`, `notify-rust`, `rfd`, `arboard`, `keyring`).
+- Daemon runs as a sibling process launched by the Studio shell on desktop (IPC via `interprocess` + `postcard`), as an in-process tokio subsystem on mobile, and is remote (WebSocket relay) on web.
 - Ephemeral state (cursors, drags) lives behind the same `AppState` struct but is serialized out on hot-reload snapshots.
 
 ## Workflow

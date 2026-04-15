@@ -1,8 +1,8 @@
 //! `prism-cli` — the unified Prism Framework CLI.
 //!
 //! A single `prism` binary replaces the ad-hoc mix of `cargo`,
-//! `pnpm`, `trunk`, and `cargo tauri` commands the workspace used to
-//! require. It is the umbrella runner for:
+//! `pnpm`, and `trunk` commands the workspace used to require. It
+//! is the umbrella runner for:
 //!
 //! - `prism test`  — run Rust unit tests (`cargo test`) and the
 //!   relay E2E suite (`playwright`) with per-package filtering and

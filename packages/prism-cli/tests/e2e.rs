@@ -108,9 +108,18 @@ fn build_target_all_dry_run() {
         s.contains("cargo build --package prism-shell --release"),
         "{s}"
     );
-    assert!(s.contains("cargo tauri build --config"), "{s}");
-    assert!(s.contains("trunk build --config"), "{s}");
+    assert!(
+        s.contains("cargo build --package prism-studio --release"),
+        "{s}"
+    );
+    assert!(
+        s.contains("cargo build --target wasm32-unknown-emscripten --package prism-shell"),
+        "{s}"
+    );
+    assert!(s.contains("--no-default-features --features web"), "{s}");
     assert!(s.contains("pnpm --filter @prism/relay run build"), "{s}");
+    // trunk is permanently retired for the web target.
+    assert!(!s.contains("trunk"), "{s}");
 }
 
 #[test]
@@ -121,8 +130,25 @@ fn build_relay_only_dry_run() {
     assert!(s.contains("pnpm --filter @prism/relay run build"), "{s}");
     // When the user asks for relay only, desktop/web/studio should NOT appear.
     assert!(!s.contains("cargo build --package prism-shell"), "{s}");
-    assert!(!s.contains("trunk build"), "{s}");
-    assert!(!s.contains("cargo tauri build"), "{s}");
+    assert!(!s.contains("wasm32-unknown-emscripten"), "{s}");
+    assert!(!s.contains("cargo build --package prism-studio"), "{s}");
+}
+
+#[test]
+fn build_web_only_dry_run_uses_emscripten_target() {
+    let out = run(&["--dry-run", "build", "--target", "web"]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let s = stdout(&out);
+    assert!(
+        s.contains("cargo build --target wasm32-unknown-emscripten --package prism-shell"),
+        "{s}"
+    );
+    assert!(s.contains("--features web --release"), "{s}");
+    assert!(!s.contains("trunk"), "{s}");
 }
 
 #[test]
@@ -142,13 +168,28 @@ fn dev_shell_default_dry_run() {
 }
 
 #[test]
-fn dev_all_dry_run_prints_four_labeled_commands() {
+fn dev_all_dry_run_prints_every_labeled_command() {
     let out = run(&["--dry-run", "dev", "all"]);
     assert!(out.status.success());
     let s = stdout(&out);
-    for label in ["[shell]", "[studio]", "[web]", "[relay]"] {
+    for label in ["[shell]", "[studio]", "[web-build]", "[web]", "[relay]"] {
         assert!(s.contains(label), "missing {label} in:\n{s}");
     }
+    assert!(s.contains("python3 -m http.server"), "{s}");
+    assert!(!s.contains("trunk"), "{s}");
+}
+
+#[test]
+fn dev_web_dry_run_prints_build_copy_serve() {
+    let out = run(&["--dry-run", "dev", "web"]);
+    assert!(out.status.success());
+    let s = stdout(&out);
+    assert!(
+        s.contains("cargo build --target wasm32-unknown-emscripten --package prism-shell"),
+        "{s}"
+    );
+    assert!(s.contains("python3 -m http.server"), "{s}");
+    assert!(s.contains("prism_shell_wasm"), "missing cp pseudo-command in:\n{s}");
 }
 
 #[test]

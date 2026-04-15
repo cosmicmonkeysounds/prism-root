@@ -20,17 +20,21 @@
 //!   (Ed25519 sign/verify, multi-sig, import/export) and `encryption`
 //!   (AES-GCM-256 vault key manager with HKDF-derived keys).
 //! - [`language`]     — syntax scanner / expression parser + evaluator.
+//! - [`kernel`]       — runtime wiring: the reducer-style `Store<S>`
+//!   that replaces `zustand` (§6.1 / §7 of the Clay migration plan).
 //!
-//! `identity::manifest`, `identity::trust`, `kernel`, `interaction`,
-//! `network`, and `domain` remain TODO.
+//! `kernel::actor`, `kernel::state_machine`, `interaction`, `network`,
+//! and `domain` remain TODO.
 
 pub mod boot_config;
 pub mod design_tokens;
 pub mod foundation;
 pub mod identity;
+pub mod kernel;
 pub mod language;
 pub mod shell_mode;
 
 pub use boot_config::{BootConfig, DEFAULT_BOOT_CONFIG};
 pub use design_tokens::DesignTokens;
+pub use kernel::{Action, Store, Subscription};
 pub use shell_mode::{Permission, ShellMode, ShellModeContext};
