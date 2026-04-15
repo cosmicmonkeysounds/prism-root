@@ -1,18 +1,37 @@
 // Prism Shell — root Slint component.
 //
-// Phase 0 parity with the old Clay sidebar: background canvas, a
-// 240px sidebar, a title row, and three action buttons. Labels and
-// colours come from Rust-side `DesignTokens` via the properties
-// exposed at the top of `AppWindow`.
+// Phase 3 parity: a left sidebar switches between four panels —
+// Identity, Builder, Inspector, Properties — and the main content
+// area renders panel-specific data bound from Rust-side providers.
 //
-// Phase 1 grows this into the full panel set via a `HorizontalBox`
-// splitter + one `Rectangle` per registered panel. For now the one
-// panel is hard-coded; `active_panel` is a bindable string property
-// so the host can switch between future panels without touching
-// Slint.
+// The Slint component is deliberately data-driven. Every panel is a
+// flat set of `in property <…>` bindings the Rust `Shell::sync_ui`
+// method pushes after every store mutation, so adding a new panel
+// variant does not require editing this file unless the new panel
+// needs a genuinely different layout surface.
+//
+// The builder panel shows the generated `.slint` DSL text that
+// `prism_builder::render_document_slint_source` emits from the
+// shell's component registry + active document; the inspector
+// panel shows a textual dump of the document's node tree; the
+// properties panel shows the selected node's field schema.
 
 struct ButtonSpec {
     label: string,
+}
+
+struct PanelNavItem {
+    id: int,
+    label: string,
+    selected: bool,
+}
+
+struct FieldRow {
+    key: string,
+    label: string,
+    kind: string,
+    value: string,
+    required: bool,
 }
 
 component SidebarButton inherits Rectangle {
@@ -30,8 +49,8 @@ component SidebarButton inherits Rectangle {
         padding-right: 12px;
         alignment: start;
         Text {
-            text: label;
-            color: text-color;
+            text: root.label;
+            color: root.text-color;
             font-size: 14px;
             vertical-alignment: center;
         }
@@ -39,6 +58,70 @@ component SidebarButton inherits Rectangle {
 
     TouchArea {
         clicked => { root.clicked(); }
+    }
+}
+
+component NavButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected;
+    in property <color> idle-color;
+    in property <color> selected-color;
+    in property <color> text-color;
+    callback clicked;
+
+    height: 32px;
+    background: selected ? selected-color : idle-color;
+    border-radius: 4px;
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        alignment: start;
+        Text {
+            text: root.label;
+            color: root.text-color;
+            font-size: 13px;
+            vertical-alignment: center;
+        }
+    }
+
+    TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+component FieldRowView inherits Rectangle {
+    in property <string> key;
+    in property <string> label;
+    in property <string> kind;
+    in property <string> value;
+    in property <bool> required;
+    in property <color> label-color;
+    in property <color> value-color;
+    in property <color> hint-color;
+
+    height: 56px;
+    background: transparent;
+
+    VerticalLayout {
+        spacing: 2px;
+        padding-top: 4px;
+        padding-bottom: 4px;
+        Text {
+            text: root.required ? root.label + " *" : root.label;
+            color: root.label-color;
+            font-size: 12px;
+        }
+        Text {
+            text: root.value;
+            color: root.value-color;
+            font-size: 13px;
+        }
+        Text {
+            text: root.kind + " · " + root.key;
+            color: root.hint-color;
+            font-size: 10px;
+        }
     }
 }
 
@@ -50,63 +133,169 @@ export component AppWindow inherits Window {
     // Design-token-backed colours. Bound from Rust on boot.
     in property <color> background-color: #12131a;
     in property <color> sidebar-color: #1e202c;
+    in property <color> sidebar-item-color: #262a38;
+    in property <color> sidebar-item-selected-color: #3c78dc;
     in property <color> button-color: #3c78dc;
     in property <color> text-color: #f0f0f5;
+    in property <color> text-muted-color: #9ca4b4;
+    in property <color> surface-color: #161a22;
 
     in property <string> panel-title: "Identity";
     in property <string> panel-hint: "Select an action from the sidebar.";
 
-    // Sidebar actions. The host populates this model; clicks are
-    // routed back via `clicked(index)`.
-    in property <[ButtonSpec]> actions: [
-        { label: "Create Identity" },
-        { label: "Load Vault" },
-        { label: "Sign Document" },
+    // Sidebar navigation — one entry per registered panel. Click
+    // dispatches `select_panel(id)` back into Rust.
+    in property <[PanelNavItem]> nav-items: [
+        { id: 0, label: "Identity", selected: true },
+        { id: 1, label: "Builder",  selected: false },
+        { id: 2, label: "Inspector", selected: false },
+        { id: 3, label: "Properties", selected: false },
     ];
+    callback select-panel(int);
+
+    // Identity panel data (flat action list, the Phase-0 surface).
+    in property <[ButtonSpec]> actions: [];
     callback clicked(int);
+
+    // Builder panel data. `builder-source` is the `.slint` DSL the
+    // walker emits from the active registry + document; the shell
+    // drops it into a monospace Text view as a read-only preview.
+    in property <string> builder-source: "";
+    in property <int> builder-node-count: 0;
+
+    // Inspector panel data — flat indented dump of the document's
+    // node tree, one node per line.
+    in property <string> inspector-tree: "";
+
+    // Properties panel data — ordered list of FieldRows describing
+    // the selected node's field schema. `selected-component` is the
+    // component id the schema came from, or an empty string.
+    in property <string> selected-component: "";
+    in property <[FieldRow]> field-rows: [];
 
     background: background-color;
 
     HorizontalLayout {
         spacing: 0px;
 
-        // Sidebar column.
+        // Left nav column.
         Rectangle {
-            width: 240px;
+            width: 200px;
             background: sidebar-color;
 
             VerticalLayout {
                 padding: 16px;
+                spacing: 8px;
+                alignment: start;
+
+                Text {
+                    text: "Panels";
+                    color: text-muted-color;
+                    font-size: 11px;
+                }
+
+                for nav[i] in nav-items : NavButton {
+                    label: nav.label;
+                    selected: nav.selected;
+                    idle-color: sidebar-item-color;
+                    selected-color: sidebar-item-selected-color;
+                    text-color: text-color;
+                    clicked => { root.select-panel(nav.id); }
+                }
+            }
+        }
+
+        // Main content column.
+        Rectangle {
+            background: background-color;
+
+            VerticalLayout {
+                padding: 24px;
                 spacing: 12px;
                 alignment: start;
 
                 Text {
                     text: panel-title;
                     color: text-color;
-                    font-size: 18px;
+                    font-size: 22px;
                 }
-
-                for action[i] in actions : SidebarButton {
-                    label: action.label;
-                    background-color: button-color;
-                    text-color: text-color;
-                    clicked => { root.clicked(i); }
-                }
-            }
-        }
-
-        // Main content placeholder.
-        Rectangle {
-            background: background-color;
-
-            VerticalLayout {
-                padding: 24px;
-                alignment: start;
                 Text {
                     text: panel-hint;
-                    color: text-color;
-                    font-size: 16px;
+                    color: text-muted-color;
+                    font-size: 13px;
                     wrap: word-wrap;
+                }
+
+                // Identity panel surface — sidebar-of-actions shape.
+                if actions.length > 0 : VerticalLayout {
+                    spacing: 8px;
+                    padding-top: 12px;
+                    for action[i] in actions : SidebarButton {
+                        label: action.label;
+                        background-color: button-color;
+                        text-color: text-color;
+                        clicked => { root.clicked(i); }
+                    }
+                }
+
+                // Builder panel surface — generated .slint DSL preview.
+                if builder-source != "" : Rectangle {
+                    background: surface-color;
+                    border-radius: 6px;
+                    min-height: 320px;
+                    VerticalLayout {
+                        padding: 12px;
+                        spacing: 8px;
+                        Text {
+                            text: builder-node-count + " node(s) · generated .slint DSL";
+                            color: text-muted-color;
+                            font-size: 11px;
+                        }
+                        Text {
+                            text: builder-source;
+                            color: text-color;
+                            font-family: "monospace";
+                            font-size: 11px;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+
+                // Inspector panel surface — indented node-tree dump.
+                if inspector-tree != "" : Rectangle {
+                    background: surface-color;
+                    border-radius: 6px;
+                    min-height: 200px;
+                    VerticalLayout {
+                        padding: 12px;
+                        Text {
+                            text: inspector-tree;
+                            color: text-color;
+                            font-family: "monospace";
+                            font-size: 12px;
+                        }
+                    }
+                }
+
+                // Properties panel surface — field-row list.
+                if field-rows.length > 0 : VerticalLayout {
+                    spacing: 4px;
+                    padding-top: 4px;
+                    Text {
+                        text: "Component: " + selected-component;
+                        color: text-muted-color;
+                        font-size: 11px;
+                    }
+                    for field[i] in field-rows : FieldRowView {
+                        key: field.key;
+                        label: field.label;
+                        kind: field.kind;
+                        value: field.value;
+                        required: field.required;
+                        label-color: text-color;
+                        value-color: text-color;
+                        hint-color: text-muted-color;
+                    }
                 }
             }
         }

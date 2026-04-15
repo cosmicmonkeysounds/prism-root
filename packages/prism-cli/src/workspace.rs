@@ -89,6 +89,15 @@ impl Workspace {
     pub fn shell_wasm_artifact(&self, release: bool) -> PathBuf {
         self.wasm_artifact_dir(release).join("prism_shell.wasm")
     }
+
+    /// Source tree the `prism dev shell` hot-reload loop watches for
+    /// `.rs` changes. Currently scoped to the shell's own `src/`
+    /// directory — Slint's native live-preview handles the `.slint`
+    /// half, and watching `prism-core`/other transitive crates is
+    /// deferred until the dev loop grows a broader policy.
+    pub fn shell_src_dir(&self) -> PathBuf {
+        self.package("prism-shell").join("src")
+    }
 }
 
 fn is_prism_workspace_manifest(path: &Path) -> Result<bool> {
@@ -159,9 +168,7 @@ mod tests {
         let ws = Workspace::new("/tmp/fake-root");
         assert_eq!(
             ws.shell_wasm_artifact(true),
-            PathBuf::from(
-                "/tmp/fake-root/target/wasm32-unknown-unknown/release/prism_shell.wasm"
-            )
+            PathBuf::from("/tmp/fake-root/target/wasm32-unknown-unknown/release/prism_shell.wasm")
         );
     }
 }

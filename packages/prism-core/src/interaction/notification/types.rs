@@ -5,13 +5,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum NotificationKind {
     System,
     Mention,
     Activity,
     Reminder,
+    #[default]
     Info,
     Success,
     Warning,
@@ -61,12 +62,6 @@ pub struct NotificationInput {
     pub created_at: Option<DateTime<Utc>>,
     pub expires_at: Option<DateTime<Utc>>,
     pub data: BTreeMap<String, JsonValue>,
-}
-
-impl Default for NotificationKind {
-    fn default() -> Self {
-        NotificationKind::Info
-    }
 }
 
 #[derive(Debug, Clone, Default)]

@@ -31,7 +31,6 @@
 //! # }
 //! ```
 
-pub mod components;
 pub mod portal;
 pub mod routes;
 pub mod state;

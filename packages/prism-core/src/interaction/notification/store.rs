@@ -13,8 +13,7 @@ use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 
 use super::types::{
-    Notification, NotificationChange, NotificationChangeType, NotificationFilter,
-    NotificationInput,
+    Notification, NotificationChange, NotificationChangeType, NotificationFilter, NotificationInput,
 };
 
 pub type NotificationListener = Box<dyn FnMut(&NotificationChange)>;
@@ -438,7 +437,10 @@ mod tests {
             });
         }
         let all = store.get_all(None);
-        assert_eq!(all.iter().map(|n| n.title.clone()).collect::<Vec<_>>(), vec!["c", "b", "a"]);
+        assert_eq!(
+            all.iter().map(|n| n.title.clone()).collect::<Vec<_>>(),
+            vec!["c", "b", "a"]
+        );
     }
 
     #[test]

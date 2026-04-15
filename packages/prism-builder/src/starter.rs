@@ -1,28 +1,33 @@
-//! Built-in components the portal surface ships out of the box.
+//! Starter component catalog — the default registry every boot ships.
 //!
-//! `prism-relay` owns a small starter catalog so portals can render
-//! meaningful content the moment the server boots — heading, text,
-//! link, image, and a layout container. Every component implements
-//! [`prism_builder::Component`]; the Slint render path will be wired
-//! in Phase 3 alongside Studio's interactive surface. These impls
-//! exist to exercise the `render_html` contract end-to-end and give
-//! the portal routes something real to serve.
+//! Five blocks land here: `heading`, `text`, `link`, `image`, and
+//! `container`. Each implements [`Component`] for *both* render
+//! targets: `render_html` drives the Sovereign Portal SSR path, and
+//! `render_slint` emits the matching `.slint` DSL via [`SlintEmitter`]
+//! so the same catalog round-trips through Studio's live builder
+//! panel and `prism-relay`'s HTTP response body.
 //!
-//! Legacy Puck documents that name these components (`"heading"`,
-//! `"text"`, `"link"`, …) boot unchanged — [`prism_builder::puck_json`]
-//! reads Puck JSON forever and the id strings here match.
+//! The catalog lives inside `prism-builder` (not `prism-relay`) because
+//! both the relay *and* the Studio shell want the same starter set —
+//! putting it behind the registry crate keeps the component inventory
+//! single-sourced and stops downstream crates from reimplementing
+//! heading/text/link/image/container every time they want a document
+//! to render.
 
 use std::sync::Arc;
 
-use prism_builder::{
-    Component, ComponentId, ComponentRegistry, Html, Node, RegistryError, RenderError,
-    RenderHtmlContext,
+use serde_json::Value;
+
+use crate::component::{
+    Component, ComponentId, RenderError, RenderHtmlContext, RenderSlintContext,
 };
-use serde_json::{json, Value};
+use crate::document::Node;
+use crate::html::Html;
+use crate::registry::{ComponentRegistry, FieldSpec, NumericBounds, RegistryError};
+use crate::slint_source::SlintEmitter;
 
 /// Register the starter catalog into `reg`. Call this once at boot
-/// — `AppState::new` already does it. Returns the first registry
-/// error if any id is already taken.
+/// to get a registry with five ready-to-render components.
 pub fn register_builtins(reg: &mut ComponentRegistry) -> Result<(), RegistryError> {
     reg.register(Arc::new(HeadingComponent {
         id: "heading".into(),
@@ -36,6 +41,17 @@ pub fn register_builtins(reg: &mut ComponentRegistry) -> Result<(), RegistryErro
     Ok(())
 }
 
+fn heading_font_size(level: u64) -> f64 {
+    match level {
+        1 => 32.0,
+        2 => 26.0,
+        3 => 22.0,
+        4 => 18.0,
+        5 => 16.0,
+        _ => 14.0,
+    }
+}
+
 /// `h1`–`h6` depending on `props.level` (clamped to 1..=6). Reads
 /// its label from `props.text` and escapes it.
 pub struct HeadingComponent {
@@ -46,11 +62,12 @@ impl Component for HeadingComponent {
     fn id(&self) -> &ComponentId {
         &self.id
     }
-    fn schema(&self) -> Value {
-        json!({
-            "text": "string",
-            "level": { "type": "integer", "min": 1, "max": 6, "default": 1 }
-        })
+    fn schema(&self) -> Vec<FieldSpec> {
+        vec![
+            FieldSpec::text("text", "Text").required(),
+            FieldSpec::integer("level", "Heading level", NumericBounds::min_max(1.0, 6.0))
+                .with_default(Value::from(1)),
+        ]
     }
     fn render_html(
         &self,
@@ -78,6 +95,27 @@ impl Component for HeadingComponent {
         out.close(tag);
         Ok(())
     }
+
+    fn render_slint(
+        &self,
+        _ctx: &RenderSlintContext<'_>,
+        props: &Value,
+        _children: &[Node],
+        out: &mut SlintEmitter,
+    ) -> Result<(), RenderError> {
+        let level = props
+            .get("level")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1)
+            .clamp(1, 6);
+        let text = props.get("text").and_then(|v| v.as_str()).unwrap_or("");
+        out.block("Text", |out| {
+            out.prop_string("text", text);
+            out.prop_px("font-size", heading_font_size(level));
+            out.line("font-weight: 700;");
+            Ok(())
+        })
+    }
 }
 
 /// Paragraph. Reads `props.body` as the text content.
@@ -89,8 +127,8 @@ impl Component for TextComponent {
     fn id(&self) -> &ComponentId {
         &self.id
     }
-    fn schema(&self) -> Value {
-        json!({ "body": "string" })
+    fn schema(&self) -> Vec<FieldSpec> {
+        vec![FieldSpec::textarea("body", "Body")]
     }
     fn render_html(
         &self,
@@ -105,6 +143,22 @@ impl Component for TextComponent {
         out.close("p");
         Ok(())
     }
+
+    fn render_slint(
+        &self,
+        _ctx: &RenderSlintContext<'_>,
+        props: &Value,
+        _children: &[Node],
+        out: &mut SlintEmitter,
+    ) -> Result<(), RenderError> {
+        let body = props.get("body").and_then(|v| v.as_str()).unwrap_or("");
+        out.block("Text", |out| {
+            out.prop_string("text", body);
+            out.prop_px("font-size", 14.0);
+            out.line("wrap: word-wrap;");
+            Ok(())
+        })
+    }
 }
 
 /// Anchor tag. Emits `<a href="…">text</a>`; children (if any) are
@@ -117,8 +171,11 @@ impl Component for LinkComponent {
     fn id(&self) -> &ComponentId {
         &self.id
     }
-    fn schema(&self) -> Value {
-        json!({ "href": "string", "text": "string" })
+    fn schema(&self) -> Vec<FieldSpec> {
+        vec![
+            FieldSpec::text("href", "URL").required(),
+            FieldSpec::text("text", "Label"),
+        ]
     }
     fn render_html(
         &self,
@@ -136,6 +193,28 @@ impl Component for LinkComponent {
         out.close("a");
         Ok(())
     }
+
+    fn render_slint(
+        &self,
+        _ctx: &RenderSlintContext<'_>,
+        props: &Value,
+        _children: &[Node],
+        out: &mut SlintEmitter,
+    ) -> Result<(), RenderError> {
+        // Slint has no built-in anchor element; show the label as
+        // underlined text the way the Studio previews external links.
+        let text = props
+            .get("text")
+            .and_then(|v| v.as_str())
+            .or_else(|| props.get("href").and_then(|v| v.as_str()))
+            .unwrap_or("");
+        out.block("Text", |out| {
+            out.prop_string("text", text);
+            out.prop_px("font-size", 14.0);
+            out.line("color: #5aa0ff;");
+            Ok(())
+        })
+    }
 }
 
 /// Void `img` element. Reads `props.src` and `props.alt`.
@@ -147,8 +226,11 @@ impl Component for ImageComponent {
     fn id(&self) -> &ComponentId {
         &self.id
     }
-    fn schema(&self) -> Value {
-        json!({ "src": "string", "alt": "string" })
+    fn schema(&self) -> Vec<FieldSpec> {
+        vec![
+            FieldSpec::text("src", "Image source").required(),
+            FieldSpec::text("alt", "Alt text"),
+        ]
     }
     fn render_html(
         &self,
@@ -162,6 +244,32 @@ impl Component for ImageComponent {
         out.void("img", &[("src", src), ("alt", alt)]);
         Ok(())
     }
+
+    fn render_slint(
+        &self,
+        _ctx: &RenderSlintContext<'_>,
+        props: &Value,
+        _children: &[Node],
+        out: &mut SlintEmitter,
+    ) -> Result<(), RenderError> {
+        // Slint's `Image` element expects `@image-url(...)`; we can't
+        // resolve user-supplied URLs at DSL emit time, so we fall back
+        // to a sized placeholder rectangle with the alt text overlaid.
+        let alt = props.get("alt").and_then(|v| v.as_str()).unwrap_or("image");
+        out.block("Rectangle", |out| {
+            out.prop_px("min-height", 120.0);
+            out.line("background: #2a3140;");
+            out.line("border-radius: 6px;");
+            out.block("Text", |out| {
+                out.prop_string("text", alt);
+                out.prop_px("font-size", 12.0);
+                out.line("color: #9ca4b4;");
+                out.line("horizontal-alignment: center;");
+                out.line("vertical-alignment: center;");
+                Ok(())
+            })
+        })
+    }
 }
 
 /// Semantic `<section>` wrapper with children rendered inside.
@@ -174,8 +282,13 @@ impl Component for ContainerComponent {
     fn id(&self) -> &ComponentId {
         &self.id
     }
-    fn schema(&self) -> Value {
-        json!({})
+    fn schema(&self) -> Vec<FieldSpec> {
+        vec![FieldSpec::integer(
+            "spacing",
+            "Child spacing (px)",
+            NumericBounds::min_max(0.0, 64.0),
+        )
+        .with_default(Value::from(12))]
     }
     fn render_html(
         &self,
@@ -189,12 +302,31 @@ impl Component for ContainerComponent {
         out.close("section");
         Ok(())
     }
+
+    fn render_slint(
+        &self,
+        ctx: &RenderSlintContext<'_>,
+        props: &Value,
+        children: &[Node],
+        out: &mut SlintEmitter,
+    ) -> Result<(), RenderError> {
+        let spacing = props
+            .get("spacing")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(12.0);
+        out.block("VerticalLayout", |out| {
+            out.prop_px("spacing", spacing);
+            out.line("alignment: start;");
+            ctx.render_children(children, out)
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prism_builder::{render_document_html, BuilderDocument};
+    use crate::render::{render_document_html, render_document_slint_source};
+    use crate::BuilderDocument;
     use prism_core::design_tokens::DesignTokens;
     use serde_json::json;
 
@@ -327,5 +459,60 @@ mod tests {
             render_document_html(&d, &reg, &tokens).unwrap(),
             "<h1>&lt;script&gt;alert(1)&lt;/script&gt;</h1>"
         );
+    }
+
+    #[test]
+    fn heading_schema_has_required_text_field() {
+        let comp = HeadingComponent {
+            id: "heading".into(),
+        };
+        let schema = comp.schema();
+        assert_eq!(schema.len(), 2);
+        assert_eq!(schema[0].key, "text");
+        assert!(schema[0].required);
+        assert_eq!(schema[1].key, "level");
+    }
+
+    #[test]
+    fn slint_walker_covers_full_catalog() {
+        let (reg, tokens) = setup();
+        let d = doc(Node {
+            id: "root".into(),
+            component: "container".into(),
+            props: json!({ "spacing": 16 }),
+            children: vec![
+                Node {
+                    id: "h".into(),
+                    component: "heading".into(),
+                    props: json!({ "text": "Welcome", "level": 2 }),
+                    children: vec![],
+                },
+                Node {
+                    id: "p".into(),
+                    component: "text".into(),
+                    props: json!({ "body": "intro body" }),
+                    children: vec![],
+                },
+                Node {
+                    id: "l".into(),
+                    component: "link".into(),
+                    props: json!({ "href": "/x", "text": "Read" }),
+                    children: vec![],
+                },
+                Node {
+                    id: "i".into(),
+                    component: "image".into(),
+                    props: json!({ "src": "/a.png", "alt": "hero" }),
+                    children: vec![],
+                },
+            ],
+        });
+        let source = render_document_slint_source(&d, &reg, &tokens).unwrap();
+        assert!(source.contains("VerticalLayout {"));
+        assert!(source.contains("spacing: 16"));
+        assert!(source.contains(r#"text: "Welcome";"#));
+        assert!(source.contains(r#"text: "intro body";"#));
+        assert!(source.contains(r#"text: "Read";"#));
+        assert!(source.contains(r#"text: "hero";"#));
     }
 }

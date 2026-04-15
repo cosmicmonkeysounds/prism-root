@@ -25,8 +25,10 @@
 pub mod app;
 pub mod input;
 pub mod panels;
+pub mod telemetry;
 
 pub use app::{AppState, InputAction, Shell};
+pub use telemetry::FirstPaint;
 
 // `slint::include_modules!()` inlines the Rust code generated from
 // `ui/app.slint` by `build.rs`. It exposes `AppWindow` + the

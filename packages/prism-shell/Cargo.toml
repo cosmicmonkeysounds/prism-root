@@ -31,8 +31,19 @@ required-features = ["native"]
 # `prism-daemon` (daemon runs remote via a relay on web). Pick one
 # per target triple — they are mutually exclusive at link time
 # because only one Slint backend is valid for each triple.
+#
+# `live-preview` turns on Slint's native hot-reload path: `slint-build`
+# notices `SLINT_LIVE_PREVIEW=1` at compile time and replaces the
+# baked `AppWindow` codegen with a `LiveReloadingComponent` wrapper
+# that parses `ui/app.slint` at runtime via `slint-interpreter` and
+# reloads it whenever the file changes on disk. The public `AppWindow`
+# API (`new`, getters, setters, callbacks) is unchanged, so
+# `Shell::sync_ui` keeps working. `prism dev shell` enables this by
+# default (env var + `--features live-preview`); `prism build` leaves
+# it off so release binaries don't pull in the interpreter.
 default = ["native"]
 native = ["dep:prism-daemon"]
+live-preview = ["slint/live-preview"]
 web = ["dep:wasm-bindgen", "dep:console_error_panic_hook", "dep:getrandom"]
 
 [dependencies]

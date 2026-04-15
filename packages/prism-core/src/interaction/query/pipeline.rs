@@ -181,9 +181,7 @@ fn matches_filter(obj: &GraphObject, filter: &FilterConfig) -> bool {
             _ => false,
         },
         FilterOp::Starts => match (&actual, expected) {
-            (Value::String(a), Value::String(e)) => {
-                a.to_lowercase().starts_with(&e.to_lowercase())
-            }
+            (Value::String(a), Value::String(e)) => a.to_lowercase().starts_with(&e.to_lowercase()),
             _ => false,
         },
         FilterOp::Gt | FilterOp::Gte | FilterOp::Lt | FilterOp::Lte => {
@@ -276,7 +274,11 @@ pub fn apply_groups(objects: &[GraphObject], groups: &[GroupConfig]) -> Vec<Grou
     order
         .into_iter()
         .map(|key| {
-            let label = if key == "__none__" { "None".to_string() } else { key.clone() };
+            let label = if key == "__none__" {
+                "None".to_string()
+            } else {
+                key.clone()
+            };
             let objects = buckets.remove(&key).unwrap_or_default();
             GroupedResult {
                 key,
@@ -541,8 +543,14 @@ mod tests {
         let out = apply_sorts(
             &[a, b, c],
             &[
-                SortConfig { field: "status".into(), dir: SortDir::Asc },
-                SortConfig { field: "position".into(), dir: SortDir::Asc },
+                SortConfig {
+                    field: "status".into(),
+                    dir: SortDir::Asc,
+                },
+                SortConfig {
+                    field: "position".into(),
+                    dir: SortDir::Asc,
+                },
             ],
         );
         assert_eq!(

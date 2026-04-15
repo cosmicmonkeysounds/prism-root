@@ -11,8 +11,9 @@
 //!        -p prism-shell --no-default-features --features web`,
 //!     2. `wasm-bindgen --target web --out-dir packages/prism-shell/web
 //!        target/wasm32-unknown-unknown/<profile>/prism_shell.wasm`.
-//!    wasm-bindgen writes `prism_shell.js` + `prism_shell_bg.wasm`
-//!    directly next to `index.html` — no post-copy step.
+//!
+//!   wasm-bindgen writes `prism_shell.js` + `prism_shell_bg.wasm`
+//!   directly next to `index.html` — no post-copy step.
 //! - `relay`   — `cargo build -p prism-relay` (the Rust axum SSR
 //!   server). The Hono TS relay was retired 2026-04-15.
 //! - `all`     — every target above, in the order listed.

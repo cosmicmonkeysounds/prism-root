@@ -6,11 +6,10 @@
 //! the HTTP server can scale across tokio worker threads without
 //! contention on a single owner.
 
-use prism_builder::{BuilderDocument, ComponentRegistry, Node};
+use prism_builder::{starter::register_builtins, BuilderDocument, ComponentRegistry, Node};
 use prism_core::design_tokens::{DesignTokens, DEFAULT_TOKENS};
 use serde_json::json;
 
-use crate::components::register_builtins;
 use crate::portal::{Portal, PortalLevel, PortalMeta, PortalStore};
 
 /// Everything a relay route handler needs. Construct once at boot,

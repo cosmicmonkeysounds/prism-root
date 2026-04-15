@@ -5,7 +5,7 @@
 //! (default/registry). Watchers fire when a key's *resolved* value
 //! changes.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
 
@@ -18,6 +18,10 @@ use super::types::{ConfigStore, SettingChange, SettingScope};
 pub type SettingWatcher = Box<dyn FnMut(&JsonValue, &SettingChange)>;
 pub type ChangeListener = Box<dyn FnMut(&SettingChange)>;
 
+type WatcherEntry = (Subscription, SettingWatcher);
+type WatcherMap = HashMap<String, Vec<WatcherEntry>>;
+type ListenerEntry = (Subscription, ChangeListener);
+
 /// Opaque handle returned by `watch` / `on_change`. Dropping it does
 /// **not** unsubscribe; call `ConfigModel::unwatch` / `unlisten`
 /// explicitly. This mirrors the `Subscription` pattern already used by
@@ -28,10 +32,7 @@ pub struct Subscription(u64);
 struct Inner {
     registry: Rc<ConfigRegistry>,
     layers: HashMap<SettingScope, IndexMap<String, JsonValue>>,
-    watchers: HashMap<String, Vec<(Subscription, SettingWatcher)>>,
-    change_listeners: Vec<(Subscription, ChangeListener)>,
     stores: HashMap<SettingScope, Box<dyn ConfigStore>>,
-    next_id: u64,
 }
 
 impl Inner {
@@ -43,17 +44,8 @@ impl Inner {
         Self {
             registry,
             layers,
-            watchers: HashMap::new(),
-            change_listeners: Vec::new(),
             stores: HashMap::new(),
-            next_id: 1,
         }
-    }
-
-    fn alloc_id(&mut self) -> Subscription {
-        let id = self.next_id;
-        self.next_id += 1;
-        Subscription(id)
     }
 
     fn layer(&self, scope: SettingScope) -> &IndexMap<String, JsonValue> {
@@ -113,27 +105,47 @@ impl Inner {
             .cloned()
             .unwrap_or(JsonValue::Null)
     }
-
-    fn notify_change(&mut self, change: SettingChange) {
-        for (_, l) in self.change_listeners.iter_mut() {
-            l(&change);
-        }
-        if let Some(watchers) = self.watchers.get_mut(&change.key) {
-            for (_, w) in watchers.iter_mut() {
-                w(&change.new_value, &change);
-            }
-        }
-    }
 }
 
 pub struct ConfigModel {
     inner: Rc<RefCell<Inner>>,
+    watchers: Rc<RefCell<WatcherMap>>,
+    change_listeners: Rc<RefCell<Vec<ListenerEntry>>>,
+    next_id: Rc<Cell<u64>>,
 }
 
 impl ConfigModel {
     pub fn new(registry: Rc<ConfigRegistry>) -> Self {
         Self {
             inner: Rc::new(RefCell::new(Inner::new(registry))),
+            watchers: Rc::new(RefCell::new(HashMap::new())),
+            change_listeners: Rc::new(RefCell::new(Vec::new())),
+            next_id: Rc::new(Cell::new(1)),
+        }
+    }
+
+    fn alloc_id(&self) -> Subscription {
+        let id = self.next_id.get();
+        self.next_id.set(id + 1);
+        Subscription(id)
+    }
+
+    /// Fire listeners + per-key watchers for a change event. The
+    /// `inner` borrow must already be released before this is called;
+    /// listeners are free to read or mutate config during dispatch —
+    /// they get fresh borrows each time.
+    fn dispatch_change(&self, change: SettingChange) {
+        {
+            let mut listeners = self.change_listeners.borrow_mut();
+            for (_, cb) in listeners.iter_mut() {
+                cb(&change);
+            }
+        }
+        let mut watchers = self.watchers.borrow_mut();
+        if let Some(w_list) = watchers.get_mut(&change.key) {
+            for (_, cb) in w_list.iter_mut() {
+                cb(&change.new_value, &change);
+            }
         }
     }
 
@@ -174,7 +186,7 @@ impl ConfigModel {
             }
         }
         for change in changes {
-            self.inner.borrow_mut().notify_change(change);
+            self.dispatch_change(change);
         }
     }
 
@@ -229,12 +241,7 @@ impl ConfigModel {
     /// Set a value in the given scope. Errors if the scope is not
     /// allowed by the definition, or if the validator rejects the
     /// value.
-    pub fn set(
-        &self,
-        key: &str,
-        value: JsonValue,
-        scope: SettingScope,
-    ) -> Result<(), String> {
+    pub fn set(&self, key: &str, value: JsonValue, scope: SettingScope) -> Result<(), String> {
         let change_opt = {
             let mut inner = self.inner.borrow_mut();
             if let Some(def) = inner.registry.get(key) {
@@ -268,7 +275,7 @@ impl ConfigModel {
         };
 
         if let Some(change) = change_opt {
-            self.inner.borrow_mut().notify_change(change);
+            self.dispatch_change(change);
         }
         self.persist_scope(scope);
         Ok(())
@@ -294,7 +301,7 @@ impl ConfigModel {
             }
         };
         if let Some(change) = change_opt {
-            self.inner.borrow_mut().notify_change(change);
+            self.dispatch_change(change);
         }
         self.persist_scope(scope);
     }
@@ -324,10 +331,9 @@ impl ConfigModel {
         };
         callback(&current, &immediate);
 
-        let id = self.inner.borrow_mut().alloc_id();
-        self.inner
+        let id = self.alloc_id();
+        self.watchers
             .borrow_mut()
-            .watchers
             .entry(key.to_string())
             .or_default()
             .push((id, Box::new(callback)));
@@ -335,9 +341,9 @@ impl ConfigModel {
     }
 
     pub fn unwatch(&self, key: &str, sub: Subscription) {
-        let mut inner = self.inner.borrow_mut();
-        if let Some(watchers) = inner.watchers.get_mut(key) {
-            watchers.retain(|(id, _)| *id != sub);
+        let mut watchers = self.watchers.borrow_mut();
+        if let Some(list) = watchers.get_mut(key) {
+            list.retain(|(id, _)| *id != sub);
         }
     }
 
@@ -347,17 +353,17 @@ impl ConfigModel {
     where
         F: FnMut(&SettingChange) + 'static,
     {
-        let id = self.inner.borrow_mut().alloc_id();
-        self.inner
+        let id = self.alloc_id();
+        self.change_listeners
             .borrow_mut()
-            .change_listeners
             .push((id, Box::new(callback)));
         id
     }
 
     pub fn unlisten(&self, sub: Subscription) {
-        let mut inner = self.inner.borrow_mut();
-        inner.change_listeners.retain(|(id, _)| *id != sub);
+        self.change_listeners
+            .borrow_mut()
+            .retain(|(id, _)| *id != sub);
     }
 
     // ── Serialization ────────────────────────────────────────────
@@ -368,11 +374,7 @@ impl ConfigModel {
         let inner = self.inner.borrow();
         let mut out = JsonMap::new();
         for (k, v) in inner.layer(scope) {
-            let masked = inner
-                .registry
-                .get(k)
-                .map(|d| d.secret)
-                .unwrap_or(false);
+            let masked = inner.registry.get(k).map(|d| d.secret).unwrap_or(false);
             if masked {
                 out.insert(k.clone(), JsonValue::String("***".into()));
             } else {
@@ -396,6 +398,9 @@ impl Clone for ConfigModel {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
+            watchers: self.watchers.clone(),
+            change_listeners: self.change_listeners.clone(),
+            next_id: self.next_id.clone(),
         }
     }
 }
@@ -428,7 +433,10 @@ mod tests {
     #[test]
     fn user_scope_overrides_workspace() {
         let model = ConfigModel::new(registry());
-        model.load(SettingScope::Workspace, jmap(&[("ui.theme", json!("dark"))]));
+        model.load(
+            SettingScope::Workspace,
+            jmap(&[("ui.theme", json!("dark"))]),
+        );
         assert_eq!(model.get("ui.theme"), json!("dark"));
         model.load(SettingScope::User, jmap(&[("ui.theme", json!("light"))]));
         assert_eq!(model.get("ui.theme"), json!("light"));
@@ -572,17 +580,11 @@ mod tests {
         });
         assert_eq!(theme_calls.get(), 1); // immediate.
 
-        model.load(
-            SettingScope::User,
-            jmap(&[("ui.theme", json!("dark"))]),
-        );
+        model.load(SettingScope::User, jmap(&[("ui.theme", json!("dark"))]));
         assert_eq!(theme_calls.get(), 2);
 
         // Replacing with the same resolved value should not refire.
-        model.load(
-            SettingScope::User,
-            jmap(&[("ui.theme", json!("dark"))]),
-        );
+        model.load(SettingScope::User, jmap(&[("ui.theme", json!("dark"))]));
         assert_eq!(theme_calls.get(), 2);
     }
 

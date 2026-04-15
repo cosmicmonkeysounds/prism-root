@@ -3,11 +3,13 @@
 //! A component has two render targets:
 //!
 //! * **Slint** ([`Component::render_slint`]) — the interactive Studio
-//!   path. Components emit a value tree that Phase 3 will feed into a
-//!   runtime-compiled Slint component via `slint-interpreter`, so the
-//!   same component registry that drives HTML SSR also drives the live
-//!   Studio preview. Still a stub until Phase 3 wires the interpreter
-//!   end-to-end.
+//!   path. Components emit `.slint` DSL snippets into a shared
+//!   [`crate::slint_source::SlintEmitter`]; the document walker in
+//!   [`crate::render::render_document_slint_source`] composes those
+//!   snippets into a self-contained component source the Studio shell
+//!   hands to [`slint_interpreter::Compiler`]. As of Phase 3 this path
+//!   is live — the same registry drives HTML SSR *and* live Studio
+//!   preview.
 //! * **HTML** ([`Component::render_html`]) — the Sovereign Portal SSR
 //!   path. Components emit semantic HTML into an [`Html`] buffer so
 //!   `prism-relay` can serve a crawler-friendly, JS-less document to
@@ -22,7 +24,8 @@ use thiserror::Error;
 
 use crate::document::Node;
 use crate::html::Html;
-use crate::registry::ComponentRegistry;
+use crate::registry::{ComponentRegistry, FieldSpec};
+use crate::slint_source::SlintEmitter;
 
 /// Stable identifier for a component *type* (e.g. `"card"`, `"button"`).
 ///
@@ -44,13 +47,59 @@ pub enum RenderError {
     Failed(String),
 }
 
-/// Slint-side render context. Placeholder — grows a
-/// `slint_interpreter::ComponentInstance`, selection state, and
-/// hot-reload handles when Phase 3 lands the rest of the builder UI.
-/// Today it carries design tokens so components can already refer
-/// to the shared palette.
+/// Slint-side render context — used by the Sovereign Portal's Phase-3
+/// interactive surface and by tests. Carries a reference to the design
+/// tokens so components can pull the shared palette without a
+/// thread-local.
+///
+/// Kept as a separate context from [`RenderSlintContext`] because the
+/// Studio builder (which writes through [`SlintEmitter`]) and the
+/// ad-hoc host-side Slint callers (which want typed values without
+/// DSL generation) have different needs. `RenderContext` is the
+/// simpler shape — it's what the legacy `render_slint(&self, ctx,
+/// props) -> Value` shim still honors below.
 pub struct RenderContext<'a> {
     pub tokens: &'a prism_core::design_tokens::DesignTokens,
+}
+
+/// Slint-side render context used by the DSL emitter. Carries the
+/// registry (so parents can recurse into their children by
+/// `ComponentId`) plus the design tokens (so components can reference
+/// the shared palette without a thread-local) and a running counter
+/// the walker uses to mint unique element ids.
+///
+/// Constructed fresh per document walk in
+/// [`crate::render::render_document_slint_source`].
+pub struct RenderSlintContext<'a> {
+    pub tokens: &'a prism_core::design_tokens::DesignTokens,
+    pub registry: &'a ComponentRegistry,
+}
+
+impl<'a> RenderSlintContext<'a> {
+    /// Render one child node into `out`. Components with slots call
+    /// this for each child they want to emit — the context owns the
+    /// registry lookup so components don't have to.
+    pub fn render_child(&self, child: &Node, out: &mut SlintEmitter) -> Result<(), RenderError> {
+        let component = self
+            .registry
+            .get(&child.component)
+            .ok_or_else(|| RenderError::UnknownComponent(child.component.clone()))?;
+        component.render_slint(self, &child.props, &child.children, out)
+    }
+
+    /// Render every child in order. The common case for layout-only
+    /// wrappers (rows, columns, sections) that don't need to reorder
+    /// or decorate their slots.
+    pub fn render_children(
+        &self,
+        children: &[Node],
+        out: &mut SlintEmitter,
+    ) -> Result<(), RenderError> {
+        for child in children {
+            self.render_child(child, out)?;
+        }
+        Ok(())
+    }
 }
 
 /// HTML-side render context. Carries the registry (so parents can
@@ -92,17 +141,30 @@ impl<'a> RenderHtmlContext<'a> {
 pub trait Component: Send + Sync {
     fn id(&self) -> &ComponentId;
 
-    /// Schema for the property panel. JSON today so the shape can
-    /// evolve without churning every call site; a typed field-factory
-    /// layer will land on top of this in Phase 3.
-    fn schema(&self) -> Value;
+    /// Typed schema for the Studio property panel. Returns the ordered
+    /// list of fields the component expects in a node's `props` map;
+    /// the panel renders one editor per entry using the factories in
+    /// [`crate::registry`].
+    fn schema(&self) -> Vec<FieldSpec>;
 
-    /// Paint the component into Slint. Stub until Phase 3 wires the
-    /// `slint-interpreter` pipeline — the default impl echoes props
-    /// so existing round-trip tests keep compiling.
-    fn render_slint(&self, ctx: &RenderContext<'_>, props: &Value) -> Value {
-        let _ = ctx;
-        props.clone()
+    /// Paint the component as `.slint` DSL into a shared
+    /// [`SlintEmitter`]. Mirrors [`Component::render_html`] — the
+    /// default impl emits a semantically transparent `Rectangle { }`
+    /// wrapper and recurses into children. Override to produce
+    /// bespoke Slint markup.
+    fn render_slint(
+        &self,
+        ctx: &RenderSlintContext<'_>,
+        props: &Value,
+        children: &[Node],
+        out: &mut SlintEmitter,
+    ) -> Result<(), RenderError> {
+        let _ = props;
+        let id = self.id().clone();
+        out.block(format!("// component: {id}\nRectangle"), |out| {
+            ctx.render_children(children, out)
+        })?;
+        Ok(())
     }
 
     /// Paint the component as semantic HTML for the Sovereign Portal

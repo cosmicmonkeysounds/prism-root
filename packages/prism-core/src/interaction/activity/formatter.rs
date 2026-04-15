@@ -475,9 +475,7 @@ pub fn group_activity_by_date_at(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interaction::activity::log::{
-        ActivityEvent, ActivityVerb, FieldChange,
-    };
+    use crate::interaction::activity::log::{ActivityEvent, ActivityVerb, FieldChange};
     use chrono::Duration;
     use serde_json::json;
 
@@ -588,10 +586,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert_eq!(
-            desc.text,
-            "Bob changed status from \"Todo\" to \"Done\""
-        );
+        assert_eq!(desc.text, "Bob changed status from \"Todo\" to \"Done\"");
     }
 
     #[test]
@@ -633,20 +628,33 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert_eq!(
-            desc.text,
-            "Alice changed priority from \"low\" to \"high\""
-        );
+        assert_eq!(desc.text, "Alice changed priority from \"low\" to \"high\"");
     }
 
     #[test]
     fn format_updated_multi_field_truncates() {
         let mut event = mk_event(ActivityVerb::Updated, Utc::now());
         event.changes = vec![
-            FieldChange { field: "a".into(), before: json!(0), after: json!(1) },
-            FieldChange { field: "b".into(), before: json!(0), after: json!(1) },
-            FieldChange { field: "c".into(), before: json!(0), after: json!(1) },
-            FieldChange { field: "d".into(), before: json!(0), after: json!(1) },
+            FieldChange {
+                field: "a".into(),
+                before: json!(0),
+                after: json!(1),
+            },
+            FieldChange {
+                field: "b".into(),
+                before: json!(0),
+                after: json!(1),
+            },
+            FieldChange {
+                field: "c".into(),
+                before: json!(0),
+                after: json!(1),
+            },
+            FieldChange {
+                field: "d".into(),
+                before: json!(0),
+                after: json!(1),
+            },
         ];
         let desc = format_activity(&event, FormatActivityOptions::default());
         assert_eq!(desc.text, "Someone updated a, b, c and 1 more");

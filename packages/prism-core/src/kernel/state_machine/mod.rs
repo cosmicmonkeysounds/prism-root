@@ -7,15 +7,15 @@
 //!   is what the kernel and internal subsystems use. Ported in full
 //!   as [`machine`].
 //! - `tool.machine.ts` — an xstate-backed machine for Studio's tool
-//!   mode tracking. The migration plan §9 calls for a `statig` rewrite
-//!   rather than a 1:1 port; that lands alongside the rest of the
-//!   Studio kernel wiring and has its own design pass.
-//!
-//! Only `machine` is exported here. The Studio tool machine slots in
-//! under its own submodule when the statig port arrives.
+//!   mode tracking. The migration plan originally pencilled in a
+//!   `statig` rewrite; the Rust port collapses it onto the already-
+//!   ported flat [`machine::Machine`] instead (3 states, 6 events —
+//!   zero reason to pull a new runtime crate). Exposed as [`tool`].
 
 pub mod machine;
+pub mod tool;
 
 pub use machine::{
     Machine, MachineDefinition, MachineOptions, StateNode, Subscription, Transition, TransitionFrom,
 };
+pub use tool::{create_tool_machine, tool_machine_definition, ToolEvent, ToolMode};

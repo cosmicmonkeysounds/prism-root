@@ -50,7 +50,9 @@ impl ConfigRegistry {
     }
 
     pub fn by_scope(&self, scope: SettingScope) -> impl Iterator<Item = &SettingDefinition> {
-        self.settings.values().filter(move |d| d.allows_scope(scope))
+        self.settings
+            .values()
+            .filter(move |d| d.allows_scope(scope))
     }
 
     pub fn get_default(&self, key: &str) -> Option<&JsonValue> {
@@ -216,7 +218,13 @@ pub(crate) fn built_in_settings() -> Vec<SettingDefinition> {
             vec![User],
             Some(sidebar_width_validator),
         ),
-        boolean("ui.showActivityBar", true, "Show activity bar", "ui", vec![User]),
+        boolean(
+            "ui.showActivityBar",
+            true,
+            "Show activity bar",
+            "ui",
+            vec![User],
+        ),
         // ── Editor ────────────────────────────────────────────────
         number(
             "editor.fontSize",

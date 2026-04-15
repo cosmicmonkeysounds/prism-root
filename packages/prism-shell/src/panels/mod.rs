@@ -4,26 +4,27 @@
 //! under Slint the root `AppWindow` is built once by [`crate::Shell`]
 //! and panels just populate slots on it.
 //!
-//! The legacy TS tree had ~40 of these; Phase 1 adds them back one
-//! at a time behind a new [`ActivePanel`] variant per panel.
-//!
-//! [`ActivePanel`]: crate::AppState::active_panel
+//! Phase 3 lands four panels — Identity (the legacy Phase-0 spike),
+//! Builder (live preview of the generated `.slint` DSL), Inspector
+//! (indented node-tree dump), and Properties (field-row editor for
+//! the currently selected node). Each panel is a pure data provider
+//! keyed by the active [`crate::AppState::active_panel`] variant;
+//! [`crate::Shell::sync_ui`] dispatches on the variant and pushes the
+//! matching props into the Slint window.
 
+pub mod builder;
 pub mod identity;
+pub mod inspector;
+pub mod properties;
 
-/// Panel surface: the minimum each panel needs to provide to drive
-/// the Slint `AppWindow` properties. Kept tiny in Phase 0; grows
-/// with the sidebar/content split once Phase 1 introduces more than
-/// one active panel.
+/// Panel metadata every concrete panel exposes: the title + hint
+/// shown in the panel header and the stable id the sidebar uses to
+/// dispatch `select_panel(int)` callbacks back into Rust. Kept tiny
+/// on purpose — the panel-specific data (builder source, inspector
+/// tree, field rows) lives on each panel's own provider struct.
 pub trait Panel {
+    fn id(&self) -> i32;
+    fn label(&self) -> &'static str;
     fn title(&self) -> &'static str;
     fn hint(&self) -> &'static str;
-    fn actions(&self) -> &'static [&'static str];
-}
-
-/// Panel-level sidebar click router. Slint's `clicked(int)`
-/// callback hits this with the index of the tapped button. Phase 0
-/// only logs; Phase 1 dispatches into `Store<AppState>`.
-pub fn on_sidebar_click(index: usize) {
-    eprintln!("prism-shell: sidebar click index={index}");
 }

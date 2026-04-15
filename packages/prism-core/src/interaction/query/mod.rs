@@ -11,6 +11,6 @@
 pub mod pipeline;
 
 pub use pipeline::{
-    apply_filters, apply_groups, apply_query, apply_sorts, get_field_value, FilterConfig,
-    FilterOp, GroupConfig, GroupedResult, Query, SortConfig, SortDir,
+    apply_filters, apply_groups, apply_query, apply_sorts, get_field_value, FilterConfig, FilterOp,
+    GroupConfig, GroupedResult, Query, SortConfig, SortDir,
 };

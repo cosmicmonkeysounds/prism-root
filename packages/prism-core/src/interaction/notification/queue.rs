@@ -96,19 +96,14 @@ impl NotificationQueue {
             }
 
             let idx = self.queue.len();
-            self.queue.push((
-                key.clone(),
-                PendingEntry { input },
-            ));
+            self.queue.push((key.clone(), PendingEntry { input }));
             self.queue_index.insert(key, idx);
         } else {
             self.fallback_counter += 1;
             let fallback_key = format!("__unique_{}", self.fallback_counter);
             let idx = self.queue.len();
-            self.queue.push((
-                fallback_key.clone(),
-                PendingEntry { input },
-            ));
+            self.queue
+                .push((fallback_key.clone(), PendingEntry { input }));
             self.queue_index.insert(fallback_key, idx);
         }
 

@@ -153,7 +153,7 @@ thiserror = "2"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "io-std", "io-util"], optional = true }
 
 # File system watching — not available on every target (e.g. iOS).
-notify = { version = "7", optional = true }
+notify = { workspace = true, optional = true }
 
 # VFS content-addressing — pure Rust SHA-256 + hex encoder. Tiny, no
 # system deps, compiles clean on wasm32-unknown-emscripten and every

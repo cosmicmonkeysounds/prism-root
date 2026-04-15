@@ -16,11 +16,38 @@
 //!   Portal SSR server; replaced the Hono TS relay 2026-04-15).
 //! - `all`    — every target above, spawned in parallel behind the
 //!   supervisor (web's preflight runs synchronously first).
+//!
+//! ## Hot-reload
+//!
+//! Any `dev` target that runs the shell defaults to Slint-native
+//! hot-reload. Two orthogonal mechanisms compose into one experience:
+//!
+//! 1. **`.slint` files** — the cargo command is built with
+//!    `SLINT_LIVE_PREVIEW=1` + `--features prism-shell/live-preview`,
+//!    which tells `slint-build` to replace the baked `AppWindow`
+//!    codegen with a `LiveReloadingComponent` wrapper. That wrapper
+//!    parses `ui/app.slint` at runtime via `slint-interpreter` and
+//!    reloads it automatically whenever the file changes. In-process,
+//!    no CLI work required.
+//! 2. **`.rs` files** — single-target `prism dev shell` runs the
+//!    cargo child inside a [`crate::dev_loop::DevLoop`] which watches
+//!    `packages/prism-shell/src/` (plus any extra roots the supervisor
+//!    adds) for `.rs` changes and kills + respawns the child when a
+//!    batch lands. cargo's incremental compilation keeps iteration
+//!    fast.
+//!
+//! `--no-hot-reload` opts out of both legs and falls back to a plain
+//! `cargo run` exec — useful when the interpreter adds unwanted
+//! compile cost or when debugging something the extra wiring obscures.
+
+use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::Result;
 use clap::{Args, ValueEnum};
 
 use crate::builder::CommandBuilder;
+use crate::dev_loop::DevLoop;
 use crate::supervisor::Supervisor;
 use crate::workspace::Workspace;
 
@@ -44,6 +71,22 @@ pub struct DevArgs {
     /// Which dev server(s) to run. Defaults to `shell`.
     #[arg(value_enum, default_value_t = DevTarget::Shell)]
     pub target: DevTarget,
+
+    /// Disable the unified Slint + Rust hot-reload path. Drops the
+    /// `SLINT_LIVE_PREVIEW=1` env var, the
+    /// `--features prism-shell/live-preview` flag, and the `.rs`
+    /// respawn loop. Use this when the interpreter's compile cost is
+    /// unacceptable or when debugging something the extra wiring
+    /// obscures.
+    #[arg(long = "no-hot-reload", default_value_t = false)]
+    pub no_hot_reload: bool,
+}
+
+impl DevArgs {
+    /// True when hot-reload is active for this invocation.
+    pub fn hot_reload(&self) -> bool {
+        !self.no_hot_reload
+    }
 }
 
 /// Resolve the dev target into a list of labeled command builders.
@@ -52,6 +95,13 @@ pub struct DevArgs {
 /// build, the wasm-bindgen post-process, and the python static
 /// server. The first two are synchronous preflight handled inside
 /// [`run`]; the static server is the long-running foreground child.
+///
+/// When [`DevArgs::hot_reload`] is true, every shell-bearing builder
+/// is augmented with `--features live-preview` + `SLINT_LIVE_PREVIEW=1`
+/// so Slint's native `.slint` hot-reload kicks in. The `.rs` respawn
+/// half is wired up separately in [`run`] — only the single-target
+/// `prism dev shell` path dispatches through
+/// [`crate::dev_loop::DevLoop`].
 pub fn plan(args: &DevArgs, workspace: &Workspace) -> Vec<CommandBuilder> {
     let targets: Vec<DevTarget> = match args.target {
         DevTarget::All => vec![
@@ -65,20 +115,16 @@ pub fn plan(args: &DevArgs, workspace: &Workspace) -> Vec<CommandBuilder> {
 
     let mut out = Vec::new();
     for t in targets {
-        for b in builders_for(t, workspace) {
+        for b in builders_for(t, workspace, args.hot_reload()) {
             out.push(b);
         }
     }
     out
 }
 
-fn builders_for(target: DevTarget, workspace: &Workspace) -> Vec<CommandBuilder> {
+fn builders_for(target: DevTarget, workspace: &Workspace, hot_reload: bool) -> Vec<CommandBuilder> {
     match target {
-        DevTarget::Shell => vec![CommandBuilder::cargo()
-            .arg("run")
-            .package("prism-shell")
-            .cwd(workspace.root())
-            .label("shell")],
+        DevTarget::Shell => vec![shell_dev_builder(workspace, hot_reload)],
         DevTarget::Studio => vec![CommandBuilder::cargo()
             .arg("run")
             .package("prism-studio")
@@ -96,6 +142,29 @@ fn builders_for(target: DevTarget, workspace: &Workspace) -> Vec<CommandBuilder>
             .label("relay")],
         DevTarget::All => unreachable!("expanded above"),
     }
+}
+
+/// Build the `cargo run -p prism-shell` command, optionally with
+/// Slint's native `.slint` hot-reload path enabled.
+fn shell_dev_builder(workspace: &Workspace, hot_reload: bool) -> CommandBuilder {
+    let mut b = CommandBuilder::cargo()
+        .arg("run")
+        .package("prism-shell")
+        .cwd(workspace.root())
+        .label("shell");
+    if hot_reload {
+        // `--features live-preview` composes with the default
+        // `native` feature, so the final set is `[native,
+        // live-preview]`. The env var must be set at *compile* time
+        // — `slint-build` inspects it from `build.rs` and swaps the
+        // rust generator for the live-preview variant that emits
+        // `LiveReloadingComponent` wrappers.
+        b = b
+            .arg("--features")
+            .arg("live-preview")
+            .env("SLINT_LIVE_PREVIEW", "1");
+    }
+    b
 }
 
 fn web_build_builder(workspace: &Workspace) -> CommandBuilder {
@@ -143,6 +212,14 @@ pub fn run(args: &DevArgs, workspace: &Workspace, dry_run: bool) -> Result<u8> {
         return exec_foreground(serve_cmd);
     }
 
+    // Single-target `prism dev shell` with hot-reload on: wrap the
+    // cargo child in a DevLoop so `.rs` changes kill + respawn the
+    // process. The `.slint` half is already handled in-process by
+    // Slint's live-preview (enabled via env var + feature above).
+    if args.target == DevTarget::Shell && args.hot_reload() && plan.len() == 1 {
+        return exec_dev_loop(&plan[0], workspace);
+    }
+
     // Single-target (non-web) dev is just a foreground exec — no
     // supervisor overhead, so Ctrl+C still lands on the child
     // directly.
@@ -184,9 +261,7 @@ pub fn run(args: &DevArgs, workspace: &Workspace, dry_run: bool) -> Result<u8> {
 /// Pull the `web-build`, `web-bindgen`, and `web` builders out of a
 /// single-target web plan. Panics if the plan shape doesn't match
 /// — the only caller is `run`, which has already verified the target.
-fn single_web_trio(
-    plan: &[CommandBuilder],
-) -> (&CommandBuilder, &CommandBuilder, &CommandBuilder) {
+fn single_web_trio(plan: &[CommandBuilder]) -> (&CommandBuilder, &CommandBuilder, &CommandBuilder) {
     let build = plan
         .iter()
         .find(|c| c.label_str() == Some("web-build"))
@@ -227,6 +302,26 @@ fn exec_foreground(cmd: &CommandBuilder) -> Result<u8> {
     Ok(status.code().unwrap_or(1) as u8)
 }
 
+/// Drive a cargo child through the `DevLoop` respawn supervisor.
+/// Watches the shell's `src/` tree for `.rs` changes and kills +
+/// respawns the child on every debounced batch. `.slint` changes are
+/// already handled in-process by Slint's live-preview, so they are
+/// deliberately absent from the watched-extension set.
+fn exec_dev_loop(cmd: &CommandBuilder, workspace: &Workspace) -> Result<u8> {
+    println!("$ {} (hot-reload)", cmd.display());
+    let watch_paths: Vec<PathBuf> = vec![workspace.shell_src_dir()];
+    let dev_loop =
+        DevLoop::new(cmd.clone(), watch_paths).with_sink(Arc::new(crate::supervisor::StdoutSink));
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async move {
+        let outcome = dev_loop.run().await?;
+        Ok(outcome.exit_code)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,22 +330,83 @@ mod tests {
         Workspace::new("/tmp/fake")
     }
 
+    fn args(target: DevTarget) -> DevArgs {
+        DevArgs {
+            target,
+            no_hot_reload: false,
+        }
+    }
+
+    fn args_no_reload(target: DevTarget) -> DevArgs {
+        DevArgs {
+            target,
+            no_hot_reload: true,
+        }
+    }
+
     #[test]
     fn shell_is_the_default_target() {
-        let a = DevArgs {
-            target: DevTarget::Shell,
-        };
+        let a = args(DevTarget::Shell);
         let p = plan(&a, &ws());
         assert_eq!(p.len(), 1);
         assert_eq!(p[0].label_str(), Some("shell"));
-        assert_eq!(p[0].argv().1, vec!["run", "--package", "prism-shell"]);
+        let argv = p[0].argv().1;
+        // Hot-reload is on by default — cargo command must include
+        // the live-preview feature.
+        assert_eq!(
+            argv,
+            vec![
+                "run",
+                "--package",
+                "prism-shell",
+                "--features",
+                "live-preview",
+            ]
+        );
+    }
+
+    #[test]
+    fn shell_no_hot_reload_drops_feature_and_env() {
+        let a = args_no_reload(DevTarget::Shell);
+        let p = plan(&a, &ws());
+        assert_eq!(p.len(), 1);
+        let argv = p[0].argv().1;
+        assert_eq!(argv, vec!["run", "--package", "prism-shell"]);
+        // No SLINT_LIVE_PREVIEW env var on the built command.
+        let built = p[0].build();
+        let envs: Vec<_> = built
+            .get_envs()
+            .filter_map(|(k, _)| k.to_str().map(|s| s.to_string()))
+            .collect();
+        assert!(
+            !envs.iter().any(|k| k == "SLINT_LIVE_PREVIEW"),
+            "expected SLINT_LIVE_PREVIEW to be absent when --no-hot-reload"
+        );
+    }
+
+    #[test]
+    fn shell_hot_reload_sets_slint_live_preview_env() {
+        let a = args(DevTarget::Shell);
+        let p = plan(&a, &ws());
+        let built = p[0].build();
+        let envs: std::collections::BTreeMap<String, Option<String>> = built
+            .get_envs()
+            .map(|(k, v)| {
+                (
+                    k.to_string_lossy().to_string(),
+                    v.map(|v| v.to_string_lossy().to_string()),
+                )
+            })
+            .collect();
+        assert_eq!(
+            envs.get("SLINT_LIVE_PREVIEW").and_then(|v| v.clone()),
+            Some("1".to_string())
+        );
     }
 
     #[test]
     fn studio_runs_cargo_run_on_prism_studio() {
-        let a = DevArgs {
-            target: DevTarget::Studio,
-        };
+        let a = args(DevTarget::Studio);
         let p = plan(&a, &ws());
         let argv = p[0].argv().1;
         assert_eq!(argv, vec!["run", "--package", "prism-studio"]);
@@ -259,9 +415,7 @@ mod tests {
 
     #[test]
     fn web_expands_into_build_bindgen_plus_python_serve() {
-        let a = DevArgs {
-            target: DevTarget::Web,
-        };
+        let a = args(DevTarget::Web);
         let p = plan(&a, &ws());
         assert_eq!(p.len(), 3);
 
@@ -295,9 +449,7 @@ mod tests {
 
     #[test]
     fn relay_runs_cargo_run_on_prism_relay() {
-        let a = DevArgs {
-            target: DevTarget::Relay,
-        };
+        let a = args(DevTarget::Relay);
         let p = plan(&a, &ws());
         assert_eq!(p[0].argv().1, vec!["run", "--package", "prism-relay"]);
         assert_eq!(p[0].label_str(), Some("relay"));
@@ -306,9 +458,7 @@ mod tests {
     #[test]
     fn all_target_fans_out_to_six_labeled_commands() {
         // shell + studio + web-build + web-bindgen + web (serve) + relay
-        let a = DevArgs {
-            target: DevTarget::All,
-        };
+        let a = args(DevTarget::All);
         let p = plan(&a, &ws());
         assert_eq!(p.len(), 6);
         let labels: Vec<_> = p.iter().map(|c| c.label_str().unwrap()).collect();
@@ -322,6 +472,24 @@ mod tests {
                 "web",
                 "relay"
             ]
+        );
+    }
+
+    #[test]
+    fn all_target_still_enables_slint_live_preview_on_the_shell_slot() {
+        // Supervisor-mode `dev all` can't respawn children, so the
+        // `.rs` reload half is inactive — but the `.slint` half
+        // (Slint's live-preview) is pure cargo build flags, and those
+        // still flow through the shell builder.
+        let a = args(DevTarget::All);
+        let p = plan(&a, &ws());
+        let shell = p
+            .iter()
+            .find(|c| c.label_str() == Some("shell"))
+            .expect("shell slot in all plan");
+        assert!(
+            shell.argv().1.contains(&"live-preview".to_string()),
+            "shell slot in `dev all` must still ship live-preview"
         );
     }
 }

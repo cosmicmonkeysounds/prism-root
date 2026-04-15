@@ -31,12 +31,25 @@
 //!   emitters + AST `TextEmitter` trait).
 //! - [`kernel`]       — runtime wiring: the reducer-style `Store<S>`
 //!   that replaces `zustand` (§6.1 / §7 of the Slint migration plan),
-//!   plus `state_machine::machine` — the flat, context-free FSM from
-//!   `kernel/state-machine/machine.ts`. The xstate-backed tool machine
-//!   is deferred to its own `statig` rewrite.
+//!   `state_machine::machine` (the flat, context-free FSM from
+//!   `kernel/state-machine/machine.ts`), and `config` — the layered
+//!   `ConfigRegistry` + `ConfigModel` + `FeatureFlags` port with
+//!   scope cascade, watchers, pluggable stores, and a JSON Schema
+//!   subset validator. The xstate-backed tool machine is deferred to
+//!   its own `statig` rewrite.
+//! - [`interaction`]  — pure-logic counterparts to the legacy
+//!   `@prism/core/interaction/*` subtree: `notification` (registry +
+//!   debounced queue), `activity` (per-object log + formatter +
+//!   date-bucketing), and `query` (filter / sort / group pipeline
+//!   over `GraphObject`). The legacy `ViewMode` enum is deliberately
+//!   not ported — every view is a `prism_builder::Component`.
 //!
-//! `kernel::actor`, `kernel::automation`, `interaction`, `network`,
-//! and `domain` remain TODO.
+//! Phase 2b (see `docs/dev/slint-migration-plan.md` §6.2) is the
+//! residual port scope: the ADR-002 `kernel` orchestration kit
+//! (`actor`, `automation`, `intelligence`, `plugin`, `plugin_bundles`,
+//! `builder`, `initializer`) that `PrismKernel` will compose, plus
+//! `network`, `domain`, and the `statig` rewrite of the xstate tool
+//! machine. None are on Phase 3's critical path.
 
 pub mod boot_config;
 pub mod design_tokens;

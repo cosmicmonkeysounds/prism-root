@@ -16,6 +16,11 @@ path = "src/main.rs"
 anyhow = { workspace = true }
 clap = { version = "4", features = ["derive"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "io-util", "process", "signal", "time"] }
+# Filesystem watcher — drives the Phase 1 notify-driven dev-server
+# scaffold (`watch` module). Receives events on a background thread
+# and debounces them before handing them to the dev server for
+# rebuild decisions.
+notify = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"

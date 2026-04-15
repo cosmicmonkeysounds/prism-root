@@ -2,15 +2,20 @@
 //! embedded expression and scripting languages.
 //!
 //! Port of `packages/prism-core/src/language/*` from the legacy
-//! TS tree. Ordered leaf-first: `syntax` (AST types, scanner,
-//! token stream, case utils) lands first, then `expression`
-//! (tokens, parser, evaluator, field resolver), then `registry`
-//! (the ADR-002 §A2 unified `LanguageContribution` record), then
-//! the expression-aware pieces of `syntax` (engine, providers).
+//! TS tree. Closed on its Phase-2a scope (Slint migration plan §6).
+//! Leaf-first order: `syntax` (AST types, scanner, token stream,
+//! case utils, LSP-like engine) → `expression` (tokens, parser,
+//! evaluator, field resolver) → `registry` (the ADR-002 §A2 unified
+//! `LanguageContribution` record) → `document` (ADR-002 §A1
+//! `PrismFile`) → `forms` (field / document / form schema + state,
+//! wiki links, Prism's in-house markdown dialect) → `markdown` and
+//! `luau` contributions → `codegen` (ADR-002 §A3 unified pipeline +
+//! symbol DSL + TS/C#/EmmyDoc/GDScript emitters).
 //!
-//! Later phases layer on the unified file abstraction (`document`,
-//! ADR-002 §A1) and per-language contributions (`luau`, …) that
-//! plug into the registry.
+//! The `luau::parse` hook is still a stub — the full-moon Rust
+//! parser lands in Phase 4. The mlua-backed execution runtime
+//! already lives in `prism-daemon::modules::luau_module`, so no
+//! parser is needed at runtime.
 
 pub mod codegen;
 pub mod document;

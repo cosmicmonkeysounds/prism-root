@@ -15,7 +15,9 @@
 pub mod formatter;
 pub mod log;
 
-pub use formatter::{format_activity, format_field_name, format_field_value, group_activity_by_date};
+pub use formatter::{
+    format_activity, format_field_name, format_field_value, group_activity_by_date,
+};
 pub use log::{
     ActivityDescription, ActivityEvent, ActivityEventInput, ActivityGroup, ActivityListener,
     ActivityStore, ActivityStoreOptions, ActivitySubscription, ActivityVerb, FieldChange,

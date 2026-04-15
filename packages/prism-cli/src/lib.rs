@@ -26,10 +26,14 @@
 
 pub mod builder;
 pub mod commands;
+pub mod dev_loop;
 pub mod supervisor;
+pub mod watch;
 pub mod workspace;
 
 pub use builder::{CommandBuilder, Program};
 pub use commands::{Cli, Command};
+pub use dev_loop::{DevLoop, DevLoopOutcome};
 pub use supervisor::{Supervisor, SupervisorOutcome};
+pub use watch::{WatchBatch, WatchLoop};
 pub use workspace::Workspace;

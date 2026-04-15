@@ -5,14 +5,36 @@
 > builder, and every Lens can run cross-platform from a single
 > codebase — while still shipping a first-class web target via WASM.
 
-**Status:** **Phase 0 closed 2026-04-15.** Phases 1–2 now in flight
-on branch `rust`. Rust workspace scaffolded; `prism-daemon`,
-`prism-cli`, and `prism-relay` shipping; `prism-core`,
-`prism-builder`, `prism-shell` under active port. `prism-studio/src-tauri`
-is the canonical desktop shell — a ~30-line launcher that spawns the
-daemon sidecar and hands control to `prism_shell::Shell`, which runs
-Slint's native winit + femtovg backend (see §4.5). Per-package
-`CLAUDE.md` files carry live status.
+**Status:** **Phase 0 closed 2026-04-15.** **Phase 1 closed 2026-04-15**
+end-to-end — `prism-shell::telemetry::FirstPaint` (first-paint
+telemetry wired into `Shell::run` via Slint's rendering notifier),
+`prism-cli::watch::WatchLoop` (notify-driven debounced file watcher),
+and `prism-cli::dev_loop::DevLoop` (rebuild-and-respawn supervisor
+that wraps the cargo child + WatchLoop into a single reload loop)
+are all live behind unit tests. `prism dev shell` now defaults to a
+unified hot-reload path: Slint's native `live-preview` feature
+(via `SLINT_LIVE_PREVIEW=1` + `--features prism-shell/live-preview`)
+reloads `.slint` files in-process through `slint-interpreter`, and
+the dev loop kills + respawns the cargo child on any `.rs` change
+under `packages/prism-shell/src/`. `--no-hot-reload` opts out of
+both legs. `prism-cli`'s web pipeline already targets
+`wasm32-unknown-unknown` + `wasm-bindgen`. **Phase 2 substantially
+closed 2026-04-15** — every leaf subtree the Slint migration put on
+`prism-core`'s plate (`foundation`, `identity`, `language`, `kernel::{store,
+state_machine, config}`, `interaction::{notification, activity, query}`)
+is ported and green under `cargo test -p prism-core` (655 tests, clippy
+clean). The residual Phase 2 surface — the ADR-002 `kernel` orchestration
+kit (`actor`, `automation`, `intelligence`, `plugin`, `plugin_bundles`,
+`builder`, `initializer`), plus the `network` and `domain` categories —
+is **deferred to Phase 2b** and unblocks Phase 3 work in parallel (Phase
+3's critical path depends only on what already landed). Phase 3 is the
+active porting surface. Rust workspace scaffolded; `prism-daemon`,
+`prism-cli`, and `prism-relay` shipping; `prism-core` closed on its
+Phase-2a scope; `prism-builder`, `prism-shell` under active port.
+`prism-studio/src-tauri` is the canonical desktop shell — a ~30-line
+launcher that spawns the daemon sidecar and hands control to
+`prism_shell::Shell`, which runs Slint's native winit + femtovg
+backend (see §4.5). Per-package `CLAUDE.md` files carry live status.
 
 **Owner:** TBD
 **Created:** 2026-04-14
@@ -81,12 +103,12 @@ carries that header.
 | `prism-daemon` | ✅ shipping | Rust, transport-agnostic kernel. Unchanged by pivot. |
 | `prism-cli` | ✅ shipping | Unified `prism` CLI. Web build path retargeted `wasm32-unknown-unknown` + `wasm-bindgen` 2026-04-15. |
 | `prism-relay` | ✅ shipping | Rust axum SSR, walks `BuilderDocument` via `prism_builder::render_document_html`. |
-| `prism-core` | 🚧 porting | Phase 2 — leaf-first port of `@prism/core` to Rust. Kernel store (`kernel::store`) and state machine are in; language surfaces and foundations landing by ADR-002 order. |
-| `prism-builder` | 🚧 porting | Phase 3 — `Component` trait + registry + HTML SSR path live; Slint render walker lands on top of `slint-interpreter`. |
-| `prism-shell` | 🚧 porting | Phase 3 — single `Shell` wrapper around a `Store<AppState>` and a Slint `AppWindow` compiled from `ui/app.slint`. Native bin + `wasm32-unknown-unknown` cdylib both in scope. |
+| `prism-core` | ✅ Phase 2a closed / 🚧 Phase 2b pending | Leaf-first port of `@prism/core` to Rust. **Landed:** `foundation::{batch, clipboard, date, object_model, persistence, template, undo, vfs}`, `identity::{did, encryption, manifest, trust}`, `language::{syntax, expression, registry, document, forms, markdown, codegen}` + the `luau` contribution stub, `kernel::{store, state_machine::machine, config}`, `interaction::{notification, activity, query}`. 655 unit tests, clippy clean. **Pending (Phase 2b):** `kernel::{actor, automation, intelligence, plugin, plugin_bundles, builder, initializer}` (ADR-002 §Part C `PrismKernel` orchestration), `network`, `domain`, and the `statig` rewrite of the xstate tool machine. None are on Phase 3's critical path. |
+| `prism-builder` | ✅ Phase 3 closed | `Component` trait (two render targets — Slint DSL via `SlintEmitter` + HTML SSR), `ComponentRegistry`, field factories (`FieldSpec` / `FieldKind` / `NumericBounds` / `SelectOption` / `FieldValue`), `slint_source::SlintEmitter` on `prism_core::language::codegen::SourceBuilder`, `render_document_slint_source` + `compile_slint_source` + `instantiate_document` (the last two gated on the `interpreter` cargo feature), `starter::register_builtins` catalog shared with `prism-relay`. 46 unit tests green (+ 1 interpreter round-trip under `--features interpreter`). |
+| `prism-shell` | ✅ Phase 3 closed | Four-panel `Shell` on Slint: Identity / Builder / Inspector / Properties. `AppState` holds a serializable `BuilderDocument` + selected-node id; the shell owns an `Arc<ComponentRegistry>` rebuilt via `prism_builder::register_builtins` on boot. `ui/app.slint` exposes `nav-items` + `select_panel(int)` callback and dispatches on `active_panel` to render identity actions, generated Slint DSL source, an indented tree, or a schema-driven field-row list. Native bin + `wasm32-unknown-unknown` cdylib both in scope. |
 | `prism-studio/src-tauri` | ✅ thin launcher | ~30-line `main.rs`: spawn daemon sidecar, build `Shell`, call `Shell::run()`. Slint owns the event loop. |
-| Studio panels (~40+) | ⏳ pending | Each panel → one `ui/*.slint` component + a Rust struct implementing `Panel`. Phase 3. |
-| Legacy Puck component impls (~30+) | ⏳ pending | Re-register against `prism_builder::ComponentRegistry`; share field factories per ADR-002. |
+| Studio panels (~40+) | 🚧 partial | Phase 3 landed four (Identity, Builder, Inspector, Properties). The remaining ~36 panels follow the same `Panel` trait + `ActivePanel` variant + `Shell::sync_ui` branch + Slint conditional surface. |
+| Legacy Puck component impls (~30+) | 🚧 partial | Phase 3 moved the starter catalog (heading/text/link/image/container) into `prism_builder::starter` — the shared home for both the shell builder panel and the relay's SSR route. Remaining legacy impls re-register against `prism_builder::ComponentRegistry` via the same pattern. |
 | `prism-admin-kit` | ⏳ pending | Port to Slint under Phase 3 / 4 depending on ordering. |
 
 ## 3. Host language: Rust (decided)
@@ -185,6 +207,89 @@ markdown dialect, codegen pipeline) is on the critical path for
 Phase 3 — the Studio builder depends on `LanguageContribution<R, E>`
 with `R` bound to a Slint component handle.
 
+### 6.0 Phase 2a — landed (2026-04-15)
+
+Everything Phase 3 depends on is green. Per-module status lives in
+`packages/prism-core/CLAUDE.md`; the summary below is the migration-plan
+view.
+
+**Foundations** — `foundation::{batch, date, object_model,
+undo, vfs, clipboard, template, persistence}`. `persistence` is gated
+behind the `crdt` feature and wraps Loro (`CollectionStore` +
+`VaultManager<A>` + `MemoryAdapter`).
+
+**Identity** — `identity::{did, encryption, manifest, trust}`. Ed25519
+identities with multi-sig, AES-GCM-256 vault key manager with HKDF
+derivation, privilege-set manifest parser/enforcer, and the sovereign
+immune system (Luau sandbox, schema poison-pill validator, hashcash PoW,
+peer trust graph, Shamir secret sharing, encrypted escrow, PBKDF2
+password auth).
+
+**Language** — `language::{syntax, expression, registry, document,
+forms, markdown, codegen}` + the `luau` contribution stub.
+`LanguageContribution<R, E>` is generic over renderer and editor slots
+so the Slint builder can specialise without leaking Slint types into
+`prism-core`. The Luau parser is stubbed (`parse` returns an empty
+`RootNode`) — the full-moon Rust port is Phase 4 scope; the mlua-backed
+execution runtime already lives in `prism-daemon::modules::luau_module`
+and does not need a parser.
+
+**Kernel** — `kernel::{store, state_machine::machine, config}`.
+`Store<S>` is the reducer + subscription bus from §6.1. `machine` is
+the flat hand-rolled FSM; the xstate-backed `tool.machine.ts` is
+deliberately not ported — it will return as a `statig` rewrite in Phase
+2b. `config` is the layered `ConfigRegistry` + `ConfigModel` +
+`FeatureFlags` trio with the 17 built-in settings, JSON-Schema-subset
+validator, and post-borrow listener dispatch so callbacks can re-enter
+the model safely.
+
+**Interaction** — `interaction::{notification, activity, query}`.
+Notification registry + debounced dedup queue (timer-agnostic via a
+`TimerProvider` trait), append-only activity log + formatter + date
+bucketing, and the pure filter/sort/group pipeline over `GraphObject`.
+`query` is the renamed half of the legacy `view` subtree; `SavedView` /
+`LiveView` / `ViewMode` are intentionally dropped — every "view" is a
+`prism_builder::Component`.
+
+**Tests & safety net** — 655 unit tests across `prism-core`, clippy
+clean under `-D warnings`. `cargo test --workspace` is the check the
+CI loop runs.
+
+### 6.2 Phase 2b — pending
+
+Four surfaces remain on the Phase 2 plate. None are on Phase 3's
+critical path, so they run in parallel with the builder/shell port:
+
+1. **`kernel` orchestration kit** (ADR-002 §Part C) — `actor`
+   (ProcessQueue, ActorRuntime), `intelligence` (`AiProviderRegistry`,
+   `ContextBuilder`, providers — split out of the legacy `actor/`
+   folder), `automation` (trigger/condition/action engine), `plugin` +
+   `plugin_bundles` (registry + bundles, renamed from the legacy
+   `plugin` / `plugins` pair), `builder` (the `BuildExecutor`-backed
+   page build manager, not to be confused with `prism-builder` the
+   crate), `initializer` (the initializer pattern). The big consumer is
+   `PrismKernel` — the canonical wiring layer extracted from the old
+   `studio-kernel.ts`, which owns every framework-agnostic orchestration
+   singleton (ObjectRegistry, CollectionStore, PrismBus, AtomStore,
+   UndoRedoManager, NotificationStore, SearchEngine, ActivityStore,
+   ConfigModel, PresenceManager, AutomationEngine, PluginRegistry,
+   InputRouter, VaultRoster, Identity, VfsManager, Trust, Facet system,
+   LensRegistry, DesignTokenRegistry).
+2. **`network`** — relay manager + peer/protocol plumbing (ADR-002
+   §Part B). The Sovereign Portal SSR path in `prism-relay` does not
+   depend on this; it consumes `prism_builder::render_document_html`
+   directly.
+3. **`domain`** — app-level content and domain entities (ADR-002 §Part
+   B). This is where Studio's `entities.ts` lands.
+4. **`kernel::state_machine::tool`** — the `statig`-backed rewrite of
+   the xstate tool mode FSM. A design pass happens before porting.
+
+Phase 2b does **not** block Phase 3. The Slint walker (`slint-interpreter`
+on top of `prism-builder`'s `render_slint`), the Studio panel ports,
+and the property panel + field factories all depend on `language::*`,
+`kernel::store`, `kernel::config`, and `interaction::*` — all of which
+are already green.
+
 ### 6.1 Kernel store — zustand replacement
 
 `kernel::store::Store<S>` is the hand-rolled reducer + subscription
@@ -204,28 +309,65 @@ constraints directly:
 `prism_shell::Shell` wraps a `Store<AppState>` and exposes the
 exact same snapshot/restore surface.
 
-## 7. Hot-reload constraints
+## 7. Hot-reload
 
-Slint's `.slint` files are compiled at build time by `slint-build`,
-so "hot-reload" for hand-written panels today means re-running
-`cargo run`. Two follow-ons bring genuine hot-reload online:
+`prism dev shell` ships a unified hot-reload path as of 2026-04-15.
+Two orthogonal mechanisms compose:
 
-1. **`slint-interpreter` live compilation** (Phase 3): the builder
-   panel re-parses `.slint` sources on every change and re-applies
-   them to the existing `Store<AppState>` snapshot. Because the
-   store is serde-backed, the app state survives the reload.
-2. **`subsecond`** (Phase 4): a rustc/lld integration that swaps
-   Rust code without tearing down the process. Deferred because
-   it's a large dependency and Phase 3 can ship without it.
+1. **`.slint` files — Slint's native `live-preview` feature.** The
+   cargo command `prism dev shell` produces adds
+   `--features prism-shell/live-preview` and sets
+   `SLINT_LIVE_PREVIEW=1` at compile time. `slint-build` notices
+   the env var and swaps the baked `AppWindow` codegen for a
+   `LiveReloadingComponent` wrapper that parses `ui/app.slint` at
+   runtime via `slint-interpreter` and reloads it whenever the file
+   changes on disk. The public `AppWindow` API (`new`, getters,
+   setters, callbacks) is unchanged, so `Shell::sync_ui` keeps
+   working — the migration is wire-compatible. State held in
+   `Store<AppState>` is untouched because the process never exits.
+2. **`.rs` files — `prism dev shell`'s respawn loop.** Rust source
+   changes can't be hot-swapped without something like `subsecond`
+   (Phase 4). Until then the cargo child runs inside
+   `prism_cli::dev_loop::DevLoop`, a kill-and-respawn supervisor
+   that wraps `WatchLoop` over `packages/prism-shell/src/`. Any
+   `.rs` batch kills the child and re-execs `cargo run`; cargo's
+   incremental compilation keeps iteration fast. Ctrl+C tears the
+   loop down cleanly via an injectable shutdown future (same
+   pattern the multi-process `Supervisor` uses).
+
+`--no-hot-reload` opts out of both legs (drops the env var, the
+feature flag, and the respawn supervisor) and falls back to a plain
+`cargo run` exec — useful when the interpreter's compile cost is
+unacceptable or when debugging something the extra wiring obscures.
+
+`prism dev all` includes the shell slot with the Slint live-preview
+half enabled (pure cargo build flags, cheap to propagate), but the
+`.rs` respawn half is **inactive in multi-target mode** — the
+`Supervisor` doesn't know how to kill + respawn individual children
+mid-run. Users who want the full loop should run `prism dev shell`
+alone.
+
+Phase 4 follow-on:
+
+- **`subsecond`** — a rustc/lld integration that swaps Rust code
+  without tearing down the process. Replaces the `.rs` respawn leg
+  above with something closer to Slint's in-process reload story.
+  Deferred because it's a large dependency and the dev loop ships
+  without it.
 
 Every reloadable structure must stay serde-serializable and live
 under a single root type. The §6.1 store is the enforcement point.
+`AppState` already satisfies this; the respawn path rebuilds the
+store from `AppState::default()` on every restart, so any field
+that should survive across a `.rs` reload must be persisted
+externally.
 
 ## 8. `prism-builder` — Puck replacement on Slint
 
 `prism-builder` owns the component-type registry, the
-`BuilderDocument` tree, the legacy Puck-JSON reader, and the HTML
-SSR render path. The Slint walker lands here in Phase 3.
+`BuilderDocument` tree, and two render targets — semantic HTML for
+Sovereign Portals and a `.slint` DSL emitter that feeds the
+`slint-interpreter` compile loop.
 
 ### 8.1 Component trait — two render targets
 
@@ -234,34 +376,56 @@ Every block implements `prism_builder::Component`:
 ```rust
 pub trait Component: Send + Sync {
     fn id(&self) -> &ComponentId;
-    fn schema(&self) -> serde_json::Value;
-    fn render_slint(&self, ctx: &RenderContext<'_>, props: &Value) -> Value { /* stub */ }
-    fn render_html(&self, ctx: &RenderHtmlContext<'_>, props: &Value,
-                   children: &[Node], out: &mut Html) -> Result<(), RenderError> { /* default */ }
+    fn schema(&self) -> Vec<FieldSpec>;
+    fn render_slint(
+        &self, ctx: &RenderSlintContext<'_>, props: &Value,
+        children: &[Node], out: &mut SlintEmitter,
+    ) -> Result<(), RenderError> { /* default: Rectangle { children } */ }
+    fn render_html(
+        &self, ctx: &RenderHtmlContext<'_>, props: &Value,
+        children: &[Node], out: &mut Html,
+    ) -> Result<(), RenderError> { /* default: <div data-component="id"> */ }
 }
 ```
 
-- `render_html` is **live today** — drives the Sovereign Portal
-  SSR path. Default impl emits `<div data-component="id">` +
-  recursive children.
-- `render_slint` is **stubbed until Phase 3** — Phase 3 will
-  materialise the returned value tree through `slint-interpreter`
-  to produce a live Slint component instance.
+- `render_html` drives the Sovereign Portal SSR path. Default impl
+  emits `<div data-component="id">` + recursive children.
+- `render_slint` drives the Studio builder surface. Components emit
+  `.slint` DSL snippets into a shared
+  [`SlintEmitter`][prism_builder::slint_source::SlintEmitter] —
+  itself a thin wrapper around `prism_core::language::codegen::SourceBuilder`
+  so the walker slots into the existing codegen pipeline. The
+  document-level walker
+  [`render_document_slint_source`][prism_builder::render::render_document_slint_source]
+  wraps every walked tree in an `export component BuilderRoot
+  inherits Window` shell; [`compile_slint_source`] and
+  [`instantiate_document`] (gated behind the `interpreter` cargo
+  feature) hand the synthesized source to `slint_interpreter::Compiler`
+  and return a live `ComponentDefinition` / `ComponentInstance`.
 
 ### 8.2 Registry as the single DI surface
 
 New block types go through `ComponentRegistry::register(Arc<dyn
-Component>)`. No side registries, no per-component singletons,
-no hand-wired `Node` factories. Field factories (the reusable
-property-panel primitives) will land in `registry` alongside
-`register` once Phase 3 brings the property panel over.
+Component>)`. No side registries, no per-component singletons, no
+hand-wired `Node` factories. Field factories are live in
+`registry.rs`: `FieldSpec` / `FieldKind` / `NumericBounds` /
+`SelectOption` / `FieldValue`, with typed builders (`text`,
+`textarea`, `number`, `integer`, `boolean`, `select`, `color`) that
+preserve default + required invariants. `Component::schema` returns
+`Vec<FieldSpec>`, which the Studio Properties panel walks to paint
+one field row per entry (read-only today; `Store<AppState>`-backed
+editing lands with the first interactive panel in Phase 4).
 
-### 8.3 Puck-JSON reader is permanent
+### 8.3 Starter catalog
 
-`puck_json.rs` reads legacy Puck `{ type, props, children }`
-documents forever. New documents are written in the
-`BuilderDocument` schema; old documents keep booting without a
-migration step.
+`prism_builder::starter::register_builtins(&mut registry)` seeds
+five components — `heading`, `text`, `link`, `image`, `container` —
+each implementing both render targets. The catalog is shared: both
+the Sovereign Portal relay (`prism_relay::AppState::new`) and the
+Studio shell (`prism_shell::Shell::from_state`) call it on boot.
+Adding a new default block means adding one file under
+`prism_builder::starter` and registering it in `register_builtins`;
+both crates pick it up automatically.
 
 ## 9. Phase 0 exit (2026-04-15)
 
@@ -303,10 +467,11 @@ cdylibs) are re-added as Phase 0 spike tasks when the
 | Phase | Scope | Status |
 |---|---|---|
 | 0 | Workspace scaffold, Slint pivot, license switch, `Shell::new()?.run()` end-to-end | ✅ closed 2026-04-15 |
-| 1 | `prism-cli` web pipeline retarget, first-paint telemetry, notify-driven watch loop scaffold | 🚧 in flight |
-| 2 | `prism-core` leaf-first port (foundations, language subtree, kernel) | 🚧 in flight |
-| 3 | `prism-builder` Slint walker via `slint-interpreter`, Studio panel ports, property panel + field factories | ⏳ pending |
-| 4 | Luau contribution runtime, advanced lenses, `subsecond` hot-reload | ⏳ pending |
+| 1 | `prism-cli` web pipeline retarget, first-paint telemetry, unified Slint live-preview + `.rs` respawn dev loop | ✅ closed 2026-04-15 |
+| 2a | `prism-core` leaf port: `foundation`, `identity`, `language::{syntax, expression, registry, document, forms, markdown, codegen}`, `kernel::{store, state_machine::machine, config}`, `interaction::{notification, activity, query}` | ✅ closed 2026-04-15 (655 tests, clippy clean) |
+| 2b | ADR-002 `kernel` orchestration kit (`actor`, `automation`, `intelligence`, `plugin`, `plugin_bundles`, `builder`, `initializer`) + `PrismKernel` wiring + `network` + `domain` + `kernel::state_machine::tool` (`statig` rewrite of the xstate tool machine) | 🚧 in flight (unblocks Phase 3 in parallel; none on critical path) |
+| 3 | `prism-builder` Slint walker via `slint-interpreter`, Studio panel ports, property panel + field factories | ✅ closed 2026-04-15 (767 tests, clippy clean) |
+| 4 | `language::luau` full-moon parser, advanced lenses, `subsecond` hot-reload | ⏳ pending |
 | 5 | `cargo-packager` bundling, `self_update` auto-update, mobile targets, tray/notification/clipboard/keyring wiring | ⏳ pending |
 
 ## 12. Decision log
@@ -335,3 +500,76 @@ cdylibs) are re-added as Phase 0 spike tasks when the
 - **2026-04-15** — Hono TS relay retired, Rust axum relay promoted
   to production. Legacy Playwright E2E suite retired. `prism test`
   becomes a thin Rust-only wrapper around `cargo test --workspace`.
+- **2026-04-15** — Phase 2 leaf ports landed in `prism-core`:
+  `interaction::{notification, activity, query}` and
+  `kernel::config`. `interaction::query` is the deliberate rename
+  of the legacy `view` subtree — every view is a
+  `prism_builder::Component`, never a `ViewMode` enum, so only the
+  filter / sort / group half is ported; `SavedView` / `LiveView`
+  are intentionally dropped. `kernel::config` ports the layered
+  `ConfigRegistry` + `ConfigModel` + `FeatureFlags` trio with the
+  17 built-in settings and the JSON Schema subset validator; the
+  `pattern` field was cut since no built-in setting needs it and
+  pulling regex into a leaf module costs more than the feature is
+  worth. The `ConfigStore` trait intentionally omits `subscribe` —
+  file watchers / IPC callbacks belong in the host crate, not in
+  `prism-core`. `ConfigModel` dispatches change events *after*
+  releasing the inner borrow so listener callbacks can read or
+  mutate config during dispatch. 655 unit tests across `prism-core`
+  (up from 623), clippy clean.
+- **2026-04-15** — Phase 1 closed on scaffolds. `prism-shell` grew a
+  `telemetry::FirstPaint` slot that `Shell::from_state` starts before
+  the `AppWindow` is built; `Shell::run` installs a Slint
+  `set_rendering_notifier` hook that stamps the first `AfterRendering`
+  frame into the telemetry and logs a one-shot
+  `prism-shell: first-paint Nms` line. `prism-cli` grew a
+  `watch::WatchLoop` scaffold that wraps `notify::RecommendedWatcher`
+  behind a debounced `next_batch` / `try_next_batch` API — 3 unit
+  tests (tempfile write, idle non-block, quiet-dir timeout) pin the
+  contract. `notify` moved to a workspace pin so `prism-cli::watch`
+  and `prism-daemon::watcher_module` track the same major.
+- **2026-04-15** — Phase 1 closed end-to-end with a unified hot-reload
+  path. `prism-shell` grew a `live-preview` cargo feature that enables
+  `slint/live-preview`; when `prism dev shell` compiles with
+  `SLINT_LIVE_PREVIEW=1` + `--features live-preview`, `slint-build`
+  replaces the baked `AppWindow` codegen with a
+  `LiveReloadingComponent` wrapper that parses `ui/app.slint` at
+  runtime via `slint-interpreter` and reloads it whenever the file
+  changes. The public `AppWindow` API is wire-compatible, so
+  `Shell::sync_ui` keeps working untouched. The `.rs` half lives in
+  a new `prism_cli::dev_loop::DevLoop` module — a rebuild-and-respawn
+  supervisor that wraps `WatchLoop` + a tokio child, filters batches
+  to `.rs` files, and kills + respawns the cargo child on every
+  batch. `prism dev shell` dispatches single-target runs through
+  `DevLoop` by default; `--no-hot-reload` drops the env var, the
+  feature flag, and the respawn supervisor and falls back to a plain
+  `cargo run` exec. `prism dev all` still propagates the live-preview
+  cargo flags to its shell slot so the `.slint` half stays active,
+  but the respawn half is inactive in multi-target mode (the
+  `Supervisor` can't kill + respawn individual children). 60 unit
+  tests across `prism-cli` (up from 49), including 6 new `dev_loop`
+  tests covering empty-path rejection, stdout routing, shutdown
+  interruption, `.rs` → respawn, `.md` → no-op, and the
+  extension-filter helper. Workspace clippy clean under
+  `-D warnings`.
+- **2026-04-15** — Phase 2 split into 2a / 2b and **2a closed**.
+  `prism-core` shipped every leaf subtree Phase 3 depends on:
+  `foundation` (batch, clipboard, date, object_model, persistence,
+  template, undo, vfs), `identity` (did, encryption, manifest, trust),
+  `language` (syntax, expression, registry, document, forms, markdown,
+  codegen + the `luau` contribution stub), `kernel::{store,
+  state_machine::machine, config}`, and `interaction::{notification,
+  activity, query}`. 655 unit tests, clippy clean under `-D warnings`.
+  `language::syntax` (2231 LOC, 21 tests) and `language::expression`
+  (1859 LOC, 29 tests) closed in the same cycle — the "🚧 in progress"
+  labels in `prism-core/CLAUDE.md` were stale and have been flipped.
+  Phase 2b is the residual ADR-002 scope: the `kernel` orchestration
+  kit (`actor`, `automation`, `intelligence`, `plugin`,
+  `plugin_bundles`, `builder`, `initializer`) that `PrismKernel` will
+  compose, plus `network`, `domain`, and the `statig` rewrite of the
+  xstate tool machine. None of 2b is on Phase 3's critical path, so it
+  runs in parallel with the builder/shell port rather than gating it.
+  The Luau parser (`language::luau::parse`) remains a stub until the
+  full-moon Rust port in Phase 4; mlua execution already lives in
+  `prism-daemon::modules::luau_module` so no parser is needed at
+  runtime.
