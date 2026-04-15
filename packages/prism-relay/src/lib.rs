@@ -7,7 +7,7 @@
 //! index. Every portal route walks a [`prism_builder::BuilderDocument`]
 //! against the [`prism_builder::ComponentRegistry`] through
 //! [`prism_builder::render_document_html`] — the same semantic-HTML
-//! pipeline Studio will re-target to Clay for its interactive path.
+//! pipeline Studio will re-target to Slint for its interactive path.
 //!
 //! Scope today is deliberately narrow. The legacy relay carried 17
 //! modules (federation, ACME, escrow, hashcash, capability tokens,

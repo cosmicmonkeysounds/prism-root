@@ -6,4 +6,4 @@ Living development documents. Unlike ADRs, these are mutable and track current s
 
 | File | Purpose |
 |------|---------|
-| [`clay-migration-plan.md`](clay-migration-plan.md) | The migration off React/TS/Puck onto Clay + Rust. The active plan. |
+| [`slint-migration-plan.md`](slint-migration-plan.md) | The migration off React/TS/Puck onto Slint + Rust. The active plan. |

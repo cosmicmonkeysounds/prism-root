@@ -2,8 +2,10 @@
 //!
 //! Walks a [`BuilderDocument`] against a [`ComponentRegistry`] and
 //! produces a rendered output for a given target backend. Today that
-//! means HTML for the Sovereign Portal SSR path; Clay's walker lands
-//! here in Phase 3 alongside the real `ClayLayoutScope` integration.
+//! means HTML for the Sovereign Portal SSR path; the Slint walker
+//! lands here in Phase 3 alongside the `slint-interpreter`
+//! integration that turns a `BuilderDocument` into a live Slint
+//! component tree.
 
 use prism_core::design_tokens::DesignTokens;
 

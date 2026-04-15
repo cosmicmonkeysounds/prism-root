@@ -1,10 +1,10 @@
-//! `prism-builder` — the Clay-native page builder that replaces Puck.
+//! `prism-builder` — the Slint-native page builder that replaces Puck.
 //!
-//! Scope (per `docs/dev/clay-migration-plan.md` §8):
+//! Scope (per `docs/dev/slint-migration-plan.md` §8):
 //!
 //! * [`registry`] — component-type registry, DI entry point, field factories.
 //! * [`component`] — the `Component` trait every renderable block implements,
-//!   with two render targets: Clay (Studio, stub) and HTML (Sovereign Portal
+//!   with two render targets: Slint (Studio, stub) and HTML (Sovereign Portal
 //!   SSR, live).
 //! * [`document`]  — the serializable document tree (the thing saved to disk).
 //! * [`html`]      — allocation-light HTML builder used by the SSR render path.
@@ -14,8 +14,9 @@
 //!   documents. We read Puck JSON forever; new docs are written in our native
 //!   schema.
 //!
-//! Clay-side render bodies are still stubs until Phase 3 wires a real
-//! `ClayLayoutScope`; the HTML render path is live and is what
+//! Slint-side render bodies are still stubs until Phase 3 materialises a
+//! `BuilderDocument` into a runtime-compiled Slint component tree via
+//! `slint-interpreter`; the HTML render path is live and is what
 //! `prism-relay` calls to serve Sovereign Portals.
 
 pub mod component;

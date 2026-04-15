@@ -42,7 +42,7 @@ const LUAU_MIME_TYPE: &str = "text/x-luau";
 /// buffer in a trace-aware view.
 ///
 /// The `R` / `E` type parameters let host crates specialise the
-/// contribution — Studio will bind `R` to its Clay renderer handle,
+/// contribution — Studio will bind `R` to its Slint renderer handle,
 /// while tests and headless callers leave them as `()`.
 pub fn create_luau_contribution<R, E>() -> LanguageContribution<R, E> {
     let surface = LanguageSurface::new(

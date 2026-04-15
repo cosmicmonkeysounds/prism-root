@@ -27,7 +27,7 @@ use std::process::Command;
 pub enum Program {
     /// `cargo` — rustc + the wider cargo ecosystem. Covers every
     /// Rust-side target, including the packaged Studio binary and
-    /// the emscripten-based web build.
+    /// the `wasm32-unknown-unknown` leg of the web build.
     Cargo,
     /// `pnpm` — used to dispatch into the relay package.
     Pnpm,
@@ -37,6 +37,12 @@ pub enum Program {
     /// about; swapped for a Rust static server if that becomes a
     /// portability problem.
     Python3,
+    /// `wasm-bindgen` — post-processes the `wasm32-unknown-unknown`
+    /// cdylib into an ESM loader + bindgen-processed wasm next to
+    /// `packages/prism-shell/web/index.html`. Install via
+    /// `cargo install wasm-bindgen-cli` (matching the version of
+    /// the `wasm-bindgen` crate pinned in the workspace manifest).
+    WasmBindgen,
 }
 
 impl Program {
@@ -46,6 +52,7 @@ impl Program {
             Program::Cargo => "cargo",
             Program::Pnpm => "pnpm",
             Program::Python3 => "python3",
+            Program::WasmBindgen => "wasm-bindgen",
         }
     }
 }
@@ -92,6 +99,11 @@ impl CommandBuilder {
     /// Shortcut: `python3` builder.
     pub fn python3() -> Self {
         Self::new(Program::Python3)
+    }
+
+    /// Shortcut: `wasm-bindgen` builder.
+    pub fn wasm_bindgen() -> Self {
+        Self::new(Program::WasmBindgen)
     }
 
     /// Append a positional argument.

@@ -1,8 +1,9 @@
 //! Local IPC transport — length-prefixed `postcard` frames over
 //! `interprocess::local_socket`.
 //!
-//! This is the wire the Tauri 2 no-webview `prism-studio` shell uses to
-//! talk to the daemon sidecar per §4.5 of the Clay migration plan. The
+//! This is the wire the Slint-based `prism-studio` shell uses to
+//! talk to the daemon sidecar (see `docs/dev/slint-migration-plan.md`).
+//! The
 //! plan's open question on "postcard vs. tarpc" is resolved to raw
 //! postcard here: the daemon kernel is sync and exposes a single
 //! `invoke(name, payload_json) -> result_json` entry point, which is a

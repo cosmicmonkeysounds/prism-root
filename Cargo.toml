@@ -10,10 +10,13 @@ members = [
     "packages/prism-relay",
 ]
 
-# Keep `[workspace.package]` light: crates opt in to the common license /
-# edition via `package.edition.workspace = true` etc. if they want the
-# inheritance. Keeping everything explicit for now so each crate's
-# Cargo.toml stays grep-able during the Clay migration.
+# Shared package metadata — every crate opts in to `license` via
+# `license.workspace = true`. The Prism codebase is GPL-3.0-or-later;
+# that choice is load-bearing for the Slint dependency, which ships
+# under GPLv3 + optional commercial. See the decision log in
+# `docs/dev/slint-migration-plan.md` (2026-04-15 Clay → Slint pivot).
+[workspace.package]
+license = "GPL-3.0-or-later"
 
 [workspace.dependencies]
 # Single versioned source of truth for deps every crate uses. Bumping
@@ -23,10 +26,9 @@ serde_json = "1"
 thiserror = "2"
 anyhow = "1"
 postcard = { version = "1", features = ["alloc"] }
-# Local IPC transport for the daemon sidecar channel (§4.5 Option B).
-# Unix domain sockets on Linux/macOS, named pipes on Windows — both
-# hidden behind one trait. Length-prefixed `postcard` frames ride on
-# top.
+# Local IPC transport for the daemon sidecar channel. Unix domain
+# sockets on Linux/macOS, named pipes on Windows — both hidden behind
+# one trait. Length-prefixed `postcard` frames ride on top.
 interprocess = "2"
 loro = "1.4"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util"] }
@@ -44,31 +46,19 @@ tower-http = { version = "0.6", default-features = false, features = ["trace", "
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["std", "fmt", "env-filter"] }
 
-# Clay binding — resolved by Phase 0 spike #1 (2026-04-14):
-# `clay-layout` 0.4.0 is live on crates.io, ships with a working
-# winit+wgpu example, and matches the migration plan's §4.5 render
-# target. `prism-shell`'s `clay` feature pulls it in. The native
-# bin / Studio shell enable that feature by default; the WASM
-# build will share the same layout code with a different render
-# backend in Phase 1.
-clay-layout = { version = "0.4", default-features = false, features = ["std"] }
-glyphon = "0.8"
-bytemuck = { version = "1.23", features = ["derive"] }
-
-# Rendering stack — wgpu for every native target per §4.5 Option C.
-# Bumped to 24 to match glyphon 0.8's pinned wgpu requirement; the
-# clay-layout wgpu example itself was authored against wgpu 24.
-# tao is the sole windowing crate — tauri/tauri-build/wry were
-# removed 2026-04-15 when Option B was retired in favour of Option C
-# (see `docs/dev/clay-migration-plan.md` §4.5 decision log).
-wgpu = "24"
-tao = "0.30"
-winit = "0.30"
-
-# Text + graphics primitives used by the renderer.
-cosmic-text = "0.12"
-lyon = "1"
-tiny-skia = "0.11"
+# UI toolkit — Slint owns both the declarative UI language
+# (`.slint` files) and the render + windowing stack. Same crate ships
+# the native backend (winit + femtovg/skia/software) and the web
+# backend (winit on wasm32-unknown-unknown + webgl via femtovg). The
+# 2026-04-15 Clay → Slint pivot (see `docs/dev/slint-migration-plan.md`)
+# retired the `clay-layout` + hand-vendored wgpu renderer path in one
+# stroke. `slint-build` drives the compile-time `.slint` → Rust codegen
+# from each crate's `build.rs`. `slint-interpreter` is a Phase 3
+# dependency of `prism-builder`, used to materialise a
+# `BuilderDocument` into a runtime-compiled Slint component tree.
+slint = { version = "1.8", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-femtovg"] }
+slint-build = "1.8"
+slint-interpreter = { version = "1.8", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-femtovg"] }
 
 # State + data structures.
 slotmap = "1"
@@ -89,11 +79,17 @@ pbkdf2 = { version = "0.12", default-features = false }
 aes-gcm = "0.10"
 chacha20poly1305 = "0.10"
 
-# WASM glue (only pulled in by prism-shell's wasm target).
+# WASM glue — used by `prism-shell`'s web target (Slint on
+# wasm32-unknown-unknown). The crate compiles to a wasm-bindgen
+# module that `web/index.html` loads directly; no emscripten is
+# involved on the shell side. The daemon still uses
+# wasm32-unknown-emscripten for its Luau C core — that target is
+# orthogonal and untouched by the Slint pivot.
 wasm-bindgen = "0.2"
 web-sys = "0.3"
 js-sys = "0.3"
 console_error_panic_hook = "0.1"
+getrandom = "0.2"
 
 # Dev-only.
 insta = "1"

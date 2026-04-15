@@ -2,7 +2,8 @@
 name = "prism-builder"
 version = "0.1.0"
 edition = "2021"
-description = "Prism page builder — Clay-native replacement for Puck. Owns the component registry, drag/drop, selection, property panel, and serialization. Phase 3 target of the Clay migration plan."
+license.workspace = true
+description = "Prism page builder — Slint-native replacement for Puck. Owns the component registry, drag/drop, selection, property panel, and serialization. Phase 3 target of the Slint migration plan."
 
 [lib]
 name = "prism_builder"

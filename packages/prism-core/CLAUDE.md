@@ -1,7 +1,7 @@
 # prism-core
 
-Shared Rust foundations for the Clay-era Prism stack. Phase-2 target of
-the Clay migration: the old `@prism/core` TypeScript package has been
+Shared Rust foundations for the Slint-era Prism stack. Phase-2 target of
+the Slint migration: the old `@prism/core` TypeScript package has been
 deleted, and the modules that still matter land here leaf-first.
 
 ## Build & Test
@@ -42,6 +42,7 @@ Tracked in the per-module `//!` docstrings; canonical list:
 | `foundation::vfs` | ✅ ported | |
 | `foundation::clipboard` | ✅ ported | `TreeClipboard` borrows tree/edges/undo per-call. |
 | `foundation::template` | ✅ ported | `TemplateRegistry` with `{{var}}` interpolation. |
+| `foundation::persistence` | ✅ ported | Gated behind the `crdt` feature. `CollectionStore` wraps a `LoroDoc` with `objects` + `edges` maps (records stored as JSON strings so snapshots round-trip with the legacy TS runtime), exposes CRUD + `ObjectFilter` / `EdgeFilter` + synchronous `on_change` listeners + `export_snapshot` / `import`. `VaultManager<A>` orchestrates a `PrismManifest`'s collections against a `PersistenceAdapter` trait; `MemoryAdapter` ships for tests. Lazy-loads stores on first `open_collection`, tracks dirty state via per-store change listeners, saves snapshots to `data/collections/{id}.loro`. 56 unit tests. |
 | `identity::did` | ✅ ported | Ed25519 identity, sign/verify, multisig, import/export. |
 | `identity::encryption` | ✅ ported | AES-GCM-256 vault key manager, HKDF-derived keys. |
 | `identity::manifest` | ✅ ported | Privilege sets + enforcer + `.prism.json` parse/serialise/validate. |
@@ -55,6 +56,7 @@ Tracked in the per-module `//!` docstrings; canonical list:
 | `language::markdown` | ✅ ported | `create_markdown_contribution()` returns a `LanguageContribution<R,E>` whose `parse` runs `language::forms::markdown::parse_markdown` and projects each block into a child `SyntaxNode` (`hr` / `h1` / `p` / `oli` / `task` / `code` / …). Surface defaults to `preview`, exposes `code` + `preview`, ships the registry wikilink inline token. |
 | `language::codegen` | ✅ ported | ADR-002 §A3 unified pipeline. `CodegenPipeline` dispatches heterogeneous emitters by an open `input_kind` string; `CodegenInputs` is a typed slot bundle backed by `Box<dyn Any>`. Symbol DSL: `SymbolDef` / `SymbolKind` / `SymbolParam` / `EnumValue` + `constant_namespace` / `fn_symbol` builders. Four concrete emitters — `SymbolTypeScriptEmitter`, `SymbolCSharpEmitter`, `SymbolEmmyDocEmitter`, `SymbolGDScriptEmitter` — plus `ts_name_transform` / `cs_name_transform` / `default_gdscript_name_transform`. `SourceBuilder` (line/indent/block/const_block) is the shared text buffer. `TextEmitter` trait rounds `RootNode` back to source text. 30 unit tests. |
 | `kernel::store` | ✅ ported | `Store<S>` + `Action<S>` trait + `Subscription` handle. Replaces `zustand` per §6.1 of the migration plan and satisfies §7's hot-reload constraints (one root struct, no global mut, serde-backed `snapshot` / `restore`). Backs `prism_shell::Shell`. 16 unit tests. |
+| `kernel::state_machine::machine` | ✅ ported | Flat, context-free finite state machine from `kernel/state-machine/machine.ts`. Generic over `State + Event` (`Eq + Hash + Clone`), `TransitionFrom::{One, Many, Any}` source matching, guards + actions, enter/exit hooks, terminal states, wildcard transitions, opaque `Subscription` handles. The xstate-backed `tool.machine.ts` is deferred to a `statig` rewrite and is not exported. 23 unit tests. |
 
 When porting a new module, match the leaf-first order: port the
 dependency-free pieces first, snapshot-test with `insta`, then layer

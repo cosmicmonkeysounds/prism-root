@@ -1,9 +1,9 @@
 # prism-builder
 
-The Clay-native page builder that replaces Puck. Phase-3 target of the
-Clay migration. Owns the component-type registry, the document tree
-schema, and the forward-only Puck JSON reader that keeps existing
-user content loadable forever.
+The Slint-native page builder that replaces Puck. Phase-3 target of
+the Slint migration. Owns the component-type registry, the document
+tree schema, and the forward-only Puck JSON reader that keeps
+existing user content loadable forever.
 
 ## Build & Test
 - `cargo build -p prism-builder`
@@ -13,7 +13,7 @@ user content loadable forever.
 From `src/lib.rs`:
 - `Component`, `ComponentId`, `RenderContext`, `RenderHtmlContext`,
   `RenderError` — the trait every renderable block implements plus
-  its id, per-frame Clay context, and SSR HTML context.
+  its id, per-frame Slint context, and SSR HTML context.
 - `BuilderDocument`, `Node`, `NodeId` — the serializable document
   tree written to disk by Studio.
 - `ComponentRegistry`, `RegistryError` — the DI entry point.
@@ -28,9 +28,10 @@ Six modules, all in `src/`:
 
 - `component.rs` — the `Component` trait every renderable block
   implements. Blocks are `Arc<dyn Component>`. Components expose
-  both a Clay render path (Phase 3) and a default `render_html`
-  that emits a `<div data-component="id">` wrapper plus recursive
-  children — override it to produce real markup for the SSR path.
+  both a Slint render path (Phase 3 — `render_slint`, stubbed
+  today) and a default `render_html` that emits a
+  `<div data-component="id">` wrapper plus recursive children.
+  Override `render_html` to produce real markup for the SSR path.
 - `document.rs` — `BuilderDocument` + `Node` + `NodeId`. The
   serializable tree that Studio saves / loads.
 - `registry.rs` — `ComponentRegistry`, backed by an `IndexMap`
@@ -45,14 +46,10 @@ Six modules, all in `src/`:
   attribute write; callers never touch the raw buffer.
 - `render.rs` — `render_document_html`, the SSR walker. Used by
   `prism-relay` to turn a `BuilderDocument` into a `text/html`
-  body on each request. The Clay walker lands here in Phase 3
-  alongside the real `ClayLayoutScope` integration.
-- `puck_json.rs` — **permanent** one-way reader for legacy
-  Puck `{ type, props, children }` documents. We read Puck JSON
-  forever so existing user content boots; new content is always
-  written in the `BuilderDocument` schema. This is not deprecation
-  and there is no phase-out planned — treat it as a load-only
-  compatibility layer.
+  body on each request. The Slint walker lands here in Phase 3
+  alongside the `slint-interpreter` integration that materialises
+  a `BuilderDocument` into a runtime-compiled Slint component tree.
+- `puck_json.rs` - RIP THIS SHIT OUT FUCK IT 
 
 ## Adding a new block type
 Contributors adding new drag-droppable blocks must go through the

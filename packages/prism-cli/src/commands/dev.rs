@@ -3,16 +3,19 @@
 //! The legal targets match the top-level `pnpm dev:*` scripts in
 //! the root `package.json`:
 //!
-//! - `shell`  — `cargo run -p prism-shell` (native tao+wgpu dev bin).
+//! - `shell`  — `cargo run -p prism-shell` (native Slint dev bin).
 //! - `studio` — `cargo run -p prism-studio` (packaged desktop shell).
-//! - `web`    — `cargo build --target wasm32-unknown-emscripten
-//!   -p prism-shell --features web`, copy artifacts into
-//!   `packages/prism-shell/web/`, then serve that directory via
-//!   `python3 -m http.server 1420`.
+//! - `web`    — two preflight steps followed by a static server:
+//!     1. `cargo build --target wasm32-unknown-unknown
+//!        -p prism-shell --no-default-features --features web`,
+//!     2. `wasm-bindgen --target web --out-dir packages/prism-shell/web
+//!        target/wasm32-unknown-unknown/<profile>/prism_shell.wasm`,
+//!     3. `python3 -m http.server 1420 --directory packages/prism-shell/web`
+//!        as the long-running foreground child.
 //! - `relay`  — `cargo run -p prism-relay` (Rust axum Sovereign
 //!   Portal SSR server; replaced the Hono TS relay 2026-04-15).
 //! - `all`    — every target above, spawned in parallel behind the
-//!   supervisor.
+//!   supervisor (web's preflight runs synchronously first).
 
 use anyhow::Result;
 use clap::{Args, ValueEnum};
@@ -45,12 +48,10 @@ pub struct DevArgs {
 
 /// Resolve the dev target into a list of labeled command builders.
 ///
-/// The web target expands into *two* builders in dry-run order: the
-/// emscripten cargo build followed by the static server. The copy
-/// step that lives between them is an in-process `std::fs` call
-/// handled inside [`run`] — it's not representable as an argv, so
-/// dry-run prints it as a `cp …` pseudo-command in
-/// [`run`]/[`prepare_web_artifacts`].
+/// The web target expands into *three* builders: the cargo wasm
+/// build, the wasm-bindgen post-process, and the python static
+/// server. The first two are synchronous preflight handled inside
+/// [`run`]; the static server is the long-running foreground child.
 pub fn plan(args: &DevArgs, workspace: &Workspace) -> Vec<CommandBuilder> {
     let targets: Vec<DevTarget> = match args.target {
         DevTarget::All => vec![
@@ -83,7 +84,11 @@ fn builders_for(target: DevTarget, workspace: &Workspace) -> Vec<CommandBuilder>
             .package("prism-studio")
             .cwd(workspace.root())
             .label("studio")],
-        DevTarget::Web => vec![web_build_builder(workspace), web_serve_builder(workspace)],
+        DevTarget::Web => vec![
+            web_build_builder(workspace),
+            super::build::web_bindgen_builder(workspace, false),
+            web_serve_builder(workspace),
+        ],
         DevTarget::Relay => vec![CommandBuilder::cargo()
             .arg("run")
             .package("prism-relay")
@@ -97,7 +102,7 @@ fn web_build_builder(workspace: &Workspace) -> CommandBuilder {
     CommandBuilder::cargo()
         .arg("build")
         .arg("--target")
-        .arg("wasm32-unknown-emscripten")
+        .arg("wasm32-unknown-unknown")
         .package("prism-shell")
         .arg("--no-default-features")
         .arg("--features")
@@ -119,29 +124,22 @@ fn web_serve_builder(workspace: &Workspace) -> CommandBuilder {
 
 pub fn run(args: &DevArgs, workspace: &Workspace, dry_run: bool) -> Result<u8> {
     let plan = plan(args, workspace);
-    let web_included = matches!(args.target, DevTarget::Web | DevTarget::All);
 
     if dry_run {
         for cmd in &plan {
             println!("$ [{}] {}", cmd.label_str().unwrap_or("?"), cmd.display());
         }
-        if web_included {
-            println!(
-                "$ [web-build] cp {}/prism_shell_wasm.{{js,wasm}} {}",
-                workspace.wasm_artifact_dir(false).display(),
-                workspace.shell_web_dir().display()
-            );
-        }
         return Ok(0);
     }
 
-    // Single-target web dev is three steps: cargo build, copy, serve.
-    // The build + copy are synchronous preflight; the serve is the
-    // long-running foreground exec that Ctrl+C drops onto.
+    // Single-target web dev is three steps: cargo build, wasm-bindgen,
+    // python serve. The cargo + wasm-bindgen pair are synchronous
+    // preflight; the serve is the long-running foreground exec that
+    // Ctrl+C drops onto.
     if args.target == DevTarget::Web {
-        let (build_cmd, serve_cmd) = single_web_pair(&plan);
+        let (build_cmd, bindgen_cmd, serve_cmd) = single_web_trio(&plan);
         run_cmd_sync(build_cmd)?;
-        super::build::copy_wasm_artifacts(workspace, false)?;
+        run_cmd_sync(bindgen_cmd)?;
         return exec_foreground(serve_cmd);
     }
 
@@ -152,25 +150,18 @@ pub fn run(args: &DevArgs, workspace: &Workspace, dry_run: bool) -> Result<u8> {
         return exec_foreground(&plan[0]);
     }
 
-    // Multi-target dev. Web needs its preflight (cargo + copy) to
-    // finish before the supervisor starts fanning out workers, so
+    // Multi-target dev. Web needs its preflight (cargo + wasm-bindgen)
+    // to finish before the supervisor starts fanning out workers, so
     // the supervisor sees a clean list of long-running children:
     // shell, studio, web-serve, relay.
+    let web_included = matches!(args.target, DevTarget::Web | DevTarget::All);
     let supervisor_plan: Vec<CommandBuilder> = if web_included {
-        // Extract the web-build step, run it synchronously, copy,
-        // then hand the remaining builders to the supervisor.
-        let mut remaining = Vec::with_capacity(plan.len().saturating_sub(1));
-        let mut ran_web_build = false;
+        let mut remaining = Vec::with_capacity(plan.len().saturating_sub(2));
         for cmd in plan {
-            if cmd.label_str() == Some("web-build") {
-                run_cmd_sync(&cmd)?;
-                ran_web_build = true;
-            } else {
-                remaining.push(cmd);
+            match cmd.label_str() {
+                Some("web-build") | Some("web-bindgen") => run_cmd_sync(&cmd)?,
+                _ => remaining.push(cmd),
             }
-        }
-        if ran_web_build {
-            super::build::copy_wasm_artifacts(workspace, false)?;
         }
         remaining
     } else {
@@ -190,19 +181,25 @@ pub fn run(args: &DevArgs, workspace: &Workspace, dry_run: bool) -> Result<u8> {
     })
 }
 
-/// Pull the `web-build` and `web` builders out of a single-target
-/// web plan. Panics if the plan shape doesn't match — the only
-/// caller is `run`, which has already verified the target.
-fn single_web_pair(plan: &[CommandBuilder]) -> (&CommandBuilder, &CommandBuilder) {
+/// Pull the `web-build`, `web-bindgen`, and `web` builders out of a
+/// single-target web plan. Panics if the plan shape doesn't match
+/// — the only caller is `run`, which has already verified the target.
+fn single_web_trio(
+    plan: &[CommandBuilder],
+) -> (&CommandBuilder, &CommandBuilder, &CommandBuilder) {
     let build = plan
         .iter()
         .find(|c| c.label_str() == Some("web-build"))
         .expect("web plan must include web-build");
+    let bindgen = plan
+        .iter()
+        .find(|c| c.label_str() == Some("web-bindgen"))
+        .expect("web plan must include web-bindgen");
     let serve = plan
         .iter()
         .find(|c| c.label_str() == Some("web"))
         .expect("web plan must include web serve");
-    (build, serve)
+    (build, bindgen, serve)
 }
 
 fn run_cmd_sync(cmd: &CommandBuilder) -> Result<()> {
@@ -261,24 +258,34 @@ mod tests {
     }
 
     #[test]
-    fn web_expands_into_build_plus_python_serve() {
+    fn web_expands_into_build_bindgen_plus_python_serve() {
         let a = DevArgs {
             target: DevTarget::Web,
         };
         let p = plan(&a, &ws());
-        assert_eq!(p.len(), 2);
+        assert_eq!(p.len(), 3);
+
         assert_eq!(p[0].label_str(), Some("web-build"));
         assert_eq!(p[0].program(), crate::builder::Program::Cargo);
         let build_argv = p[0].argv().1;
         assert_eq!(build_argv[0], "build");
-        assert!(build_argv.contains(&"wasm32-unknown-emscripten".to_string()));
+        assert!(build_argv.contains(&"wasm32-unknown-unknown".to_string()));
         assert!(build_argv.contains(&"prism-shell".to_string()));
         assert!(build_argv.contains(&"--no-default-features".to_string()));
         assert!(build_argv.contains(&"web".to_string()));
 
-        assert_eq!(p[1].label_str(), Some("web"));
-        assert_eq!(p[1].program(), crate::builder::Program::Python3);
-        let serve_argv = p[1].argv().1;
+        assert_eq!(p[1].label_str(), Some("web-bindgen"));
+        assert_eq!(p[1].program(), crate::builder::Program::WasmBindgen);
+        let bindgen_argv = p[1].argv().1;
+        assert_eq!(bindgen_argv[0], "--target");
+        assert_eq!(bindgen_argv[1], "web");
+        assert_eq!(bindgen_argv[2], "--out-dir");
+        assert!(bindgen_argv[3].ends_with("packages/prism-shell/web"));
+        assert!(bindgen_argv[4].ends_with("wasm32-unknown-unknown/debug/prism_shell.wasm"));
+
+        assert_eq!(p[2].label_str(), Some("web"));
+        assert_eq!(p[2].program(), crate::builder::Program::Python3);
+        let serve_argv = p[2].argv().1;
         assert_eq!(serve_argv[0], "-m");
         assert_eq!(serve_argv[1], "http.server");
         assert_eq!(serve_argv[2], WEB_DEV_PORT);
@@ -297,14 +304,24 @@ mod tests {
     }
 
     #[test]
-    fn all_target_fans_out_to_five_labeled_commands() {
-        // shell + studio + web-build + web (serve) + relay
+    fn all_target_fans_out_to_six_labeled_commands() {
+        // shell + studio + web-build + web-bindgen + web (serve) + relay
         let a = DevArgs {
             target: DevTarget::All,
         };
         let p = plan(&a, &ws());
-        assert_eq!(p.len(), 5);
+        assert_eq!(p.len(), 6);
         let labels: Vec<_> = p.iter().map(|c| c.label_str().unwrap()).collect();
-        assert_eq!(labels, vec!["shell", "studio", "web-build", "web", "relay"]);
+        assert_eq!(
+            labels,
+            vec![
+                "shell",
+                "studio",
+                "web-build",
+                "web-bindgen",
+                "web",
+                "relay"
+            ]
+        );
     }
 }

@@ -11,7 +11,7 @@
 //! Parity target is byte-identical to the TS tokenizer: the list of
 //! `BlockToken`s produced here must round-trip through a matching
 //! fixture in the Rust test suite and in `8426588` — see
-//! `docs/dev/clay-migration-plan.md` §10.
+//! `docs/dev/slint-migration-plan.md` §10.
 
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;

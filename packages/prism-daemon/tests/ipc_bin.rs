@@ -5,9 +5,9 @@
 //! subprocess with `--ipc-socket`, connects from the test process
 //! over `interprocess::local_socket`, and drives the same kind of
 //! roundtrip the stdio test does — except through the postcard wire
-//! format the Tauri 2 no-webview Studio shell will use per §4.5 of
-//! the Clay migration plan. This is the "confirm spawn / supervise /
-//! kill works" half of Phase 0 spike #6.
+//! format the Slint-based Studio shell uses (see
+//! `docs/dev/slint-migration-plan.md`). This is the "confirm spawn /
+//! supervise / kill works" half of Phase 0 spike #6.
 //!
 //! Gated on both `cli` (so the binary exists) and `transport-ipc`
 //! (so the `--ipc-socket` flag path compiles in). Mobile/embedded/

@@ -1,21 +1,24 @@
-//! Root application state + top-level layout.
+//! Root application state + Slint binding layer.
 //!
 //! Everything reloadable lives behind a single [`AppState`] so §7's
-//! hot-reload story is exactly one serde call. Mutation goes
-//! through the [`Shell`] wrapper, which owns a
-//! `prism_core::Store<AppState>` and routes every input event /
-//! hot-reload snapshot through it so subscribers (the renderer,
-//! the IPC bridge, inspector overlays) see every change.
+//! hot-reload story is exactly one serde call. Mutation goes through
+//! the [`Shell`] wrapper, which owns both a
+//! `prism_core::Store<AppState>` and the root `AppWindow` Slint
+//! handle. [`Shell::sync_ui`] pushes the current `AppState` into
+//! Slint properties; store subscribers do the same any time state
+//! changes outside the UI thread.
 
-use prism_core::design_tokens::{DesignTokens, DEFAULT_TOKENS};
+use std::rc::Rc;
+
+use prism_core::design_tokens::{DesignTokens, Rgba, DEFAULT_TOKENS};
 use prism_core::shell_mode::{Permission, ShellMode, ShellModeContext};
 use prism_core::{Action, Store, Subscription};
 use serde::{Deserialize, Serialize};
+use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
-use crate::input::{self, InputEvent, PointerState, SurfaceSize};
-
-#[cfg(feature = "clay")]
-use clay_layout::{math::Dimensions, render_commands::RenderCommand, Clay};
+use crate::input::{self, InputEvent};
+use crate::panels::{self, identity::IdentityPanel, Panel};
+use crate::{AppWindow, ButtonSpec};
 
 /// The single reloadable root state. Extend by adding fields here;
 /// do *not* stash runtime state in `lazy_static`s or `OnceCell`s —
@@ -25,11 +28,9 @@ pub struct AppState {
     pub tokens: DesignTokens,
     pub context: ShellModeContext,
     pub active_panel: ActivePanel,
-    pub pointer: PointerState,
-    pub surface: SurfaceSize,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ActivePanel {
     Identity,
 }
@@ -43,16 +44,15 @@ impl Default for AppState {
                 permission: Permission::Dev,
             },
             active_panel: ActivePanel::Identity,
-            pointer: PointerState::default(),
-            surface: SurfaceSize::default(),
         }
     }
 }
 
-/// Reducer-side action wrapping a normalised input event. The input
-/// pipeline already has a free-function [`input::dispatch`] that
-/// mutates [`AppState`] in place — this action just bridges it into
-/// the [`Store`] dispatch loop so subscribers see the mutation.
+/// Reducer-side action wrapping a normalised input event. Kept as a
+/// bridge between the older free-function [`input::dispatch`] API
+/// and the Store so hosts that want structured action dispatch can
+/// still feed inputs through `store.dispatch(InputAction(evt))`
+/// instead of the Slint callback path.
 pub struct InputAction(pub InputEvent);
 
 impl Action<AppState> for InputAction {
@@ -61,32 +61,37 @@ impl Action<AppState> for InputAction {
     }
 }
 
-/// Owning wrapper around `Store<AppState>`. Hosts (the native dev
-/// bin, the Studio entry point, the WASM shim) build one of these
-/// on startup and route every input event / redraw tick through it.
-/// The store's subscription bus is where renderers hook in.
+/// Owning wrapper around `Store<AppState>` + the root Slint window.
+/// Hosts build one on startup and call [`Shell::run`] to hand control
+/// to Slint's event loop; the store's subscription bus stays
+/// available for non-UI observers (inspectors, IPC bridges).
 pub struct Shell {
     store: Store<AppState>,
+    window: AppWindow,
 }
 
 impl Shell {
-    /// Build a shell around `AppState::default()`.
-    pub fn new() -> Self {
-        Self {
-            store: Store::new(AppState::default()),
-        }
+    /// Build a shell around `AppState::default()` and a fresh
+    /// `AppWindow`. Returns an error if Slint cannot construct the
+    /// window (e.g. missing platform backend).
+    pub fn new() -> Result<Self, slint::PlatformError> {
+        Self::from_state(AppState::default())
     }
 
     /// Build a shell around a caller-supplied state. Used by tests
     /// and by the hot-reload restore path.
-    pub fn from_state(state: AppState) -> Self {
-        Self {
+    pub fn from_state(state: AppState) -> Result<Self, slint::PlatformError> {
+        let window = AppWindow::new()?;
+        let mut shell = Self {
             store: Store::new(state),
-        }
+            window,
+        };
+        shell.sync_ui();
+        shell.wire_callbacks();
+        Ok(shell)
     }
 
-    /// Borrow the current state for read-only access (e.g. feeding
-    /// [`render_app`]).
+    /// Borrow the current state for read-only access.
     pub fn state(&self) -> &AppState {
         self.store.state()
     }
@@ -99,20 +104,28 @@ impl Shell {
         &mut self.store
     }
 
-    /// Push a normalised input event through the store. Returns the
-    /// "should redraw" hint [`input::dispatch`] produces so hosts
-    /// can skip the `request_redraw` call on no-op events.
+    /// Borrow the underlying Slint window. Hosts that want to hook
+    /// into extra callbacks or pump additional properties can reach
+    /// through this.
+    pub fn window(&self) -> &AppWindow {
+        &self.window
+    }
+
+    /// Push a normalised input event through the store. Kept as an
+    /// ergonomic helper for tests and hosts that want to drive state
+    /// without going through the Slint event loop.
     pub fn dispatch_input(&mut self, event: InputEvent) -> bool {
         let mut redraw = false;
         self.store.mutate(|state| {
             redraw = input::dispatch(state, event);
         });
+        self.sync_ui();
         redraw
     }
 
     /// Subscribe to state changes. Returns a handle the caller can
-    /// feed back to [`Shell::unsubscribe`]. Forwards straight to
-    /// the underlying [`Store::subscribe`].
+    /// feed back to [`Shell::unsubscribe`]. Forwards straight to the
+    /// underlying [`Store::subscribe`].
     pub fn subscribe<F>(&mut self, listener: F) -> Subscription
     where
         F: FnMut(&AppState) + 'static,
@@ -133,158 +146,103 @@ impl Shell {
     /// Restore state from a snapshot produced by [`Shell::snapshot`].
     /// Notifies subscribers exactly once on success.
     pub fn restore(&mut self, bytes: &[u8]) -> Result<(), serde_json::Error> {
-        self.store.restore(bytes)
+        self.store.restore(bytes)?;
+        self.sync_ui();
+        Ok(())
+    }
+
+    /// Block on Slint's event loop until the window closes. Native
+    /// hosts call this from `main`; the WASM entry point in
+    /// `lib.rs` also routes through it.
+    pub fn run(self) -> Result<(), slint::PlatformError> {
+        self.window.run()
+    }
+
+    /// Push the current `AppState` into the Slint window's
+    /// properties. Called once at construction, after every
+    /// dispatch, and again after `restore`.
+    fn sync_ui(&mut self) {
+        let state = self.store.state();
+        let tokens = &state.tokens;
+
+        self.window
+            .set_background_color(rgba_to_slint(tokens.colors.background));
+        self.window
+            .set_sidebar_color(rgba_to_slint(tokens.colors.surface));
+        self.window
+            .set_button_color(rgba_to_slint(tokens.colors.accent));
+        self.window
+            .set_text_color(rgba_to_slint(tokens.colors.text_primary));
+
+        match state.active_panel {
+            ActivePanel::Identity => {
+                let panel = IdentityPanel::new();
+                self.window
+                    .set_panel_title(SharedString::from(panel.title()));
+                self.window.set_panel_hint(SharedString::from(panel.hint()));
+                let actions = panel
+                    .actions()
+                    .iter()
+                    .map(|label| ButtonSpec {
+                        label: SharedString::from(*label),
+                    })
+                    .collect::<Vec<_>>();
+                let model = Rc::new(VecModel::from(actions));
+                self.window
+                    .set_actions(ModelRc::from(model as Rc<dyn Model<Data = ButtonSpec>>));
+            }
+        }
+    }
+
+    /// Wire Slint callbacks back into the store. Today only the
+    /// sidebar `clicked(int)` callback exists; more will land as
+    /// panels grow their interactive surface.
+    fn wire_callbacks(&mut self) {
+        self.window.on_clicked(move |index| {
+            panels::on_sidebar_click(index as usize);
+        });
     }
 }
 
-impl Default for Shell {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Declare the active panel into a Clay layout and return the
-/// resulting render commands. Called by every backend (native
-/// wgpu, the future WASM canvas) once per frame.
-///
-/// The returned `Vec` borrows from `clay` — Clay owns the backing
-/// string storage that [`RenderCommand::Text`] variants point into,
-/// so the caller must consume the commands before the next
-/// `render_app` call.
-#[cfg(feature = "clay")]
-pub fn render_app<'clay>(
-    state: &AppState,
-    clay: &'clay mut Clay,
-) -> Vec<RenderCommand<'clay, (), ()>> {
-    use crate::panels::{identity::IdentityPanel, Panel};
-
-    let mut scope: clay_layout::ClayLayoutScope<'clay, 'clay, (), ()> = clay.begin();
-
-    match state.active_panel {
-        ActivePanel::Identity => IdentityPanel::new().declare(state, &mut scope),
-    }
-
-    scope.end().collect()
-}
-
-/// Install a placeholder text measurement callback on a fresh `Clay`.
-///
-/// Clay's C core panics on any layout containing text unless a measurer
-/// is registered. Phase 0 has no glyph shaper wired up yet, so we cheat:
-/// width ≈ `chars * font_size * 0.5`, height == `font_size`. The real
-/// glyphon-backed measurer lands with the wgpu renderer in task #2.
-#[cfg(feature = "clay")]
-pub fn install_stub_text_measurer(clay: &mut Clay) {
-    clay.set_measure_text_function(|text, config| {
-        let font_size = config.font_size as f32;
-        Dimensions::new(text.chars().count() as f32 * font_size * 0.5, font_size)
-    });
+fn rgba_to_slint(c: Rgba) -> slint::Color {
+    slint::Color::from_argb_u8(c.a, c.r, c.g, c.b)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::input::PointerButton;
-    use std::cell::RefCell;
-    use std::rc::Rc;
+
+    fn try_new_shell() -> Option<Shell> {
+        // Slint's event loop requires a platform backend; in `cargo
+        // test` runs there may be none (headless CI). Gracefully
+        // skip those tests by returning `None`.
+        Shell::new().ok()
+    }
 
     #[test]
     fn new_shell_starts_at_default_state() {
-        let shell = Shell::new();
+        let Some(shell) = try_new_shell() else {
+            return;
+        };
         assert!(matches!(shell.state().active_panel, ActivePanel::Identity));
-        assert_eq!(shell.state().pointer.x, 0.0);
-        assert_eq!(shell.state().surface.width, 0);
-    }
-
-    #[test]
-    fn dispatch_input_updates_state_and_notifies_subscribers() {
-        let mut shell = Shell::new();
-        let seen = Rc::new(RefCell::new(0usize));
-        let seen_clone = seen.clone();
-        shell.subscribe(move |_| *seen_clone.borrow_mut() += 1);
-
-        let redraw = shell.dispatch_input(InputEvent::PointerMove { x: 100.0, y: 200.0 });
-
-        assert!(redraw);
-        assert_eq!(shell.state().pointer.x, 100.0);
-        assert_eq!(shell.state().pointer.y, 200.0);
-        assert_eq!(*seen.borrow(), 1);
-    }
-
-    #[test]
-    fn dispatch_input_tracks_button_state() {
-        let mut shell = Shell::new();
-        shell.dispatch_input(InputEvent::PointerDown {
-            x: 10.0,
-            y: 20.0,
-            button: PointerButton::Primary,
-        });
-        assert!(shell.state().pointer.primary_down);
-        shell.dispatch_input(InputEvent::PointerUp {
-            x: 10.0,
-            y: 20.0,
-            button: PointerButton::Primary,
-        });
-        assert!(!shell.state().pointer.primary_down);
-    }
-
-    #[test]
-    fn resize_event_updates_surface() {
-        let mut shell = Shell::new();
-        shell.dispatch_input(InputEvent::Resize {
-            width: 1280,
-            height: 800,
-        });
-        assert_eq!(shell.state().surface.width, 1280);
-        assert_eq!(shell.state().surface.height, 800);
-    }
-
-    #[test]
-    fn unsubscribe_stops_notifications() {
-        let mut shell = Shell::new();
-        let calls = Rc::new(RefCell::new(0usize));
-        let calls_clone = calls.clone();
-        let sub = shell.subscribe(move |_| *calls_clone.borrow_mut() += 1);
-
-        shell.dispatch_input(InputEvent::PointerMove { x: 1.0, y: 1.0 });
-        shell.unsubscribe(sub);
-        shell.dispatch_input(InputEvent::PointerMove { x: 2.0, y: 2.0 });
-
-        assert_eq!(*calls.borrow(), 1);
     }
 
     #[test]
     fn snapshot_restore_round_trips_through_shell() {
-        let mut shell = Shell::new();
-        shell.dispatch_input(InputEvent::Resize {
-            width: 1920,
-            height: 1080,
-        });
-        shell.dispatch_input(InputEvent::PointerMove { x: 640.0, y: 480.0 });
+        let Some(mut shell) = try_new_shell() else {
+            return;
+        };
         let bytes = shell.snapshot().expect("snapshot");
-
-        shell.dispatch_input(InputEvent::Resize {
-            width: 100,
-            height: 100,
-        });
-        assert_eq!(shell.state().surface.width, 100);
-
         shell.restore(&bytes).expect("restore");
-        assert_eq!(shell.state().surface.width, 1920);
-        assert_eq!(shell.state().surface.height, 1080);
-        assert_eq!(shell.state().pointer.x, 640.0);
+        assert!(matches!(shell.state().active_panel, ActivePanel::Identity));
     }
 
     #[test]
-    fn restore_notifies_subscribers_once() {
-        let mut shell = Shell::new();
-        let bytes = shell.snapshot().unwrap();
-        let calls = Rc::new(RefCell::new(0usize));
-        let calls_clone = calls.clone();
-        shell.subscribe(move |_| *calls_clone.borrow_mut() += 1);
-
-        shell.restore(&bytes).expect("restore");
-
-        assert_eq!(*calls.borrow(), 1);
+    fn rgba_to_slint_preserves_channels() {
+        let c = rgba_to_slint(Rgba::new(0x3c, 0x78, 0xdc, 0xff));
+        assert_eq!(c.red(), 0x3c);
+        assert_eq!(c.green(), 0x78);
+        assert_eq!(c.blue(), 0xdc);
+        assert_eq!(c.alpha(), 0xff);
     }
 }

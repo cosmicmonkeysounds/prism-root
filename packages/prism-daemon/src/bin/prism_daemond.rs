@@ -34,10 +34,10 @@
 //! stdio loop to the local-IPC transport defined in
 //! [`prism_daemon::transport::ipc_local`]. Frames are length-prefixed
 //! `postcard` encodings of [`prism_daemon::IpcRequest`] /
-//! [`prism_daemon::IpcResponse`]. This is the mode the Tauri 2
-//! no-webview Studio shell uses to talk to the daemon sidecar per
-//! §4.5 of the Clay migration plan. Only available when the binary
-//! is compiled with the `transport-ipc` feature.
+//! [`prism_daemon::IpcResponse`]. This is the mode the Slint-based
+//! Studio shell uses to talk to the daemon sidecar (see
+//! `docs/dev/slint-migration-plan.md`). Only available when the
+//! binary is compiled with the `transport-ipc` feature.
 //!
 //! ### Permission tier
 //!

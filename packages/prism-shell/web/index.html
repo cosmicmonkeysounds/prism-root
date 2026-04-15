@@ -18,7 +18,7 @@
           sans-serif;
       }
 
-      canvas#prism {
+      canvas {
         display: block;
         width: 100vw;
         height: 100vh;
@@ -26,7 +26,16 @@
     </style>
   </head>
   <body>
-    <canvas id="prism"></canvas>
-    <script type="module" src="./loader.js"></script>
+    <!--
+      The Slint winit backend (wasm32-unknown-unknown) locates the
+      canvas by id. `prism-shell`'s wasm-bindgen `(start)` entry
+      point constructs an `AppWindow` and runs the event loop into
+      this canvas.
+    -->
+    <canvas id="canvas"></canvas>
+    <script type="module">
+      import init from "./prism_shell.js";
+      init();
+    </script>
   </body>
 </html>

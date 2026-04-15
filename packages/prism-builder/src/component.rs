@@ -2,11 +2,12 @@
 //!
 //! A component has two render targets:
 //!
-//! * **Clay** ([`Component::render_clay`]) — the interactive Studio
-//!   path. Components emit Clay declarations that `prism-shell` flattens
-//!   to `RenderCommand`s and draws with wgpu on native (and with Clay's
-//!   own `web/html` DOM renderer in the WASM web target). Still a stub
-//!   until Phase 3 wires `ClayLayoutScope` end-to-end.
+//! * **Slint** ([`Component::render_slint`]) — the interactive Studio
+//!   path. Components emit a value tree that Phase 3 will feed into a
+//!   runtime-compiled Slint component via `slint-interpreter`, so the
+//!   same component registry that drives HTML SSR also drives the live
+//!   Studio preview. Still a stub until Phase 3 wires the interpreter
+//!   end-to-end.
 //! * **HTML** ([`Component::render_html`]) — the Sovereign Portal SSR
 //!   path. Components emit semantic HTML into an [`Html`] buffer so
 //!   `prism-relay` can serve a crawler-friendly, JS-less document to
@@ -43,10 +44,11 @@ pub enum RenderError {
     Failed(String),
 }
 
-/// Clay-side render context. Placeholder — grows a `ClayLayoutScope`,
-/// selection state, and hot-reload handles when Phase 3 lands the rest
-/// of the builder UI. Today it carries design tokens so components can
-/// already refer to the shared palette.
+/// Slint-side render context. Placeholder — grows a
+/// `slint_interpreter::ComponentInstance`, selection state, and
+/// hot-reload handles when Phase 3 lands the rest of the builder UI.
+/// Today it carries design tokens so components can already refer
+/// to the shared palette.
 pub struct RenderContext<'a> {
     pub tokens: &'a prism_core::design_tokens::DesignTokens,
 }
@@ -54,7 +56,7 @@ pub struct RenderContext<'a> {
 /// HTML-side render context. Carries the registry (so parents can
 /// recurse into their children by `ComponentId`) plus the design
 /// tokens (so portal markup can inline a consistent theme without
-/// dragging in Studio's Clay path). Constructed fresh for each
+/// dragging in Studio's Slint path). Constructed fresh for each
 /// request by [`crate::render::render_document_html`].
 pub struct RenderHtmlContext<'a> {
     pub tokens: &'a prism_core::design_tokens::DesignTokens,
@@ -95,10 +97,10 @@ pub trait Component: Send + Sync {
     /// layer will land on top of this in Phase 3.
     fn schema(&self) -> Value;
 
-    /// Paint the component into Clay. Stub until Phase 3 wires
-    /// `ClayLayoutScope` — the default impl echoes props so existing
-    /// round-trip tests keep compiling.
-    fn render_clay(&self, ctx: &RenderContext<'_>, props: &Value) -> Value {
+    /// Paint the component into Slint. Stub until Phase 3 wires the
+    /// `slint-interpreter` pipeline — the default impl echoes props
+    /// so existing round-trip tests keep compiling.
+    fn render_slint(&self, ctx: &RenderContext<'_>, props: &Value) -> Value {
         let _ = ctx;
         props.clone()
     }

@@ -1,31 +1,48 @@
 //! `prism-shell` — single source of truth for the Prism UI tree.
 //!
 //! Every Studio panel, the page builder, every lens — all of it lives
-//! behind [`render_app`], which takes the current [`AppState`] and a
-//! borrowed [`clay_layout::Clay`] instance and returns a vector of
-//! `RenderCommand`s. Downstream renderers (wgpu on native, a
-//! canvas-based wasm-bindgen glue on web) only walk that vector and
-//! turn it into pixels.
+//! behind a single Slint component tree whose properties are bound
+//! from the reloadable [`AppState`] struct. The [`Shell`] wrapper
+//! owns both a `prism_core::Store<AppState>` and the root `AppWindow`
+//! instance and funnels Slint callbacks back into the store so
+//! subscribers (inspector overlays, the IPC bridge, future panels)
+//! see every mutation.
 //!
-//! Phase 0 goal: render one hard-coded panel (a sidebar with three
-//! buttons) and forward mouse/keyboard events into Clay's input API.
-//! Anything beyond that lives behind TODOs until Phase 1.
+//! Phase 0 ships one hard-coded panel (`panels::identity`) with a
+//! sidebar of three buttons. Panels grow fan-out-style in Phase 1;
+//! adding one means: register its data in `panels/<name>.rs`, wire
+//! it into `ActivePanel`, and add a branch in `Shell::sync_ui`.
+//!
+//! ## Backend choice
+//!
+//! Slint (1.8) owns layout, renderer, and windowing. The native
+//! build runs on winit + femtovg; the web build runs on winit's
+//! wasm32-unknown-unknown backend, also via femtovg over WebGL. The
+//! 2026-04-15 Clay → Slint pivot (see
+//! `docs/dev/slint-migration-plan.md`) retired the old clay-layout
+//! DSL + hand-vendored wgpu pipeline + tao windowing in one stroke.
 
 pub mod app;
 pub mod input;
 pub mod panels;
-pub mod render;
-
-#[cfg(feature = "web")]
-pub mod web;
 
 pub use app::{AppState, InputAction, Shell};
 
-#[cfg(feature = "clay")]
-pub use app::{install_stub_text_measurer, render_app};
+// `slint::include_modules!()` inlines the Rust code generated from
+// `ui/app.slint` by `build.rs`. It exposes `AppWindow` + the
+// `ButtonSpec` struct used by the sidebar model.
+slint::include_modules!();
 
-// Re-export the Clay type when the feature is on so downstream
-// crates (the native dev bin, the Studio shell) don't have to
-// depend on `clay-layout` directly to construct a Clay instance.
-#[cfg(feature = "clay")]
-pub use clay_layout::Clay;
+/// Browser entry point. `wasm-bindgen` calls this automatically via
+/// its `(start)` attribute so the HTML loader only has to import the
+/// generated JS module and invoke `init()`.
+#[cfg(all(feature = "web", target_arch = "wasm32"))]
+#[wasm_bindgen::prelude::wasm_bindgen(start)]
+pub fn web_start() -> Result<(), wasm_bindgen::JsValue> {
+    console_error_panic_hook::set_once();
+    let shell = Shell::new().map_err(|e| wasm_bindgen::JsValue::from_str(&e.to_string()))?;
+    shell
+        .run()
+        .map_err(|e| wasm_bindgen::JsValue::from_str(&e.to_string()))?;
+    Ok(())
+}

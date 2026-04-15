@@ -1,11 +1,11 @@
 //! Design tokens — the canonical color / spacing / typography palette
-//! the Clay layout DSL reads from. Replaces what used to be Tailwind
+//! the Slint UI tree reads from. Replaces what used to be Tailwind
 //! classes + CSS variables in the React Studio.
 
 use serde::{Deserialize, Serialize};
 
-/// Static token table. Everything is a `const` so the Clay layout
-/// functions can reference them without any runtime lookup.
+/// Static token table. Everything is a `const` so the Slint property
+/// bindings can reference them without any runtime lookup.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct DesignTokens {
     pub colors: Colors,

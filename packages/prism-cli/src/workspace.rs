@@ -62,23 +62,32 @@ impl Workspace {
         self.root.join("packages").join(name)
     }
 
-    /// Directory served by `prism dev web` — holds `index.html`,
-    /// `loader.js`, and (after a build) the emscripten-produced
-    /// `prism_shell_wasm.{js,wasm}` pair.
+    /// Directory served by `prism dev web` — holds `index.html`
+    /// and (after a build) the wasm-bindgen-produced
+    /// `prism_shell.js` + `prism_shell_bg.wasm` pair.
     pub fn shell_web_dir(&self) -> PathBuf {
         self.package("prism-shell").join("web")
     }
 
-    /// Where cargo drops the emscripten artifacts for a given
-    /// profile. `debug` for `cargo build` without `--release`,
-    /// `release` otherwise. The `.js` / `.wasm` files live directly
-    /// under this directory next to the standard cargo scaffolding.
+    /// Where cargo drops the raw `wasm32-unknown-unknown` cdylib
+    /// for a given profile. `debug` for `cargo build` without
+    /// `--release`, `release` otherwise. `wasm-bindgen` reads
+    /// `prism_shell.wasm` from this directory and writes its
+    /// processed output into [`Self::shell_web_dir`].
     pub fn wasm_artifact_dir(&self, release: bool) -> PathBuf {
         let profile = if release { "release" } else { "debug" };
         self.root
             .join("target")
-            .join("wasm32-unknown-emscripten")
+            .join("wasm32-unknown-unknown")
             .join(profile)
+    }
+
+    /// Path to the cargo-emitted `prism_shell.wasm` for a given
+    /// profile — the input `wasm-bindgen` post-processes into the
+    /// ESM loader pair. Thin helper so build/dev don't duplicate
+    /// the join.
+    pub fn shell_wasm_artifact(&self, release: bool) -> PathBuf {
+        self.wasm_artifact_dir(release).join("prism_shell.wasm")
     }
 }
 
@@ -137,11 +146,22 @@ mod tests {
         let ws = Workspace::new("/tmp/fake-root");
         assert_eq!(
             ws.wasm_artifact_dir(false),
-            PathBuf::from("/tmp/fake-root/target/wasm32-unknown-emscripten/debug")
+            PathBuf::from("/tmp/fake-root/target/wasm32-unknown-unknown/debug")
         );
         assert_eq!(
             ws.wasm_artifact_dir(true),
-            PathBuf::from("/tmp/fake-root/target/wasm32-unknown-emscripten/release")
+            PathBuf::from("/tmp/fake-root/target/wasm32-unknown-unknown/release")
+        );
+    }
+
+    #[test]
+    fn shell_wasm_artifact_points_at_cargo_output() {
+        let ws = Workspace::new("/tmp/fake-root");
+        assert_eq!(
+            ws.shell_wasm_artifact(true),
+            PathBuf::from(
+                "/tmp/fake-root/target/wasm32-unknown-unknown/release/prism_shell.wasm"
+            )
         );
     }
 }

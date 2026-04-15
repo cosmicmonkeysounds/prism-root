@@ -1,11 +1,11 @@
 //! Runtime boot-config resolver. Legacy TS version lived at
 //! `prism-studio/src/boot/load-boot-config.ts`.
 //!
-//! In the Clay era the sources shrink from four to two — there is
+//! In the Slint era the sources shrink from four to two — there is
 //! no more JS runtime so `import.meta.env` and URL query params go
 //! away. Remaining sources:
 //!
-//! 1. `PRISM_BOOT_CONFIG` env var, if the Tauri shell (or a test
+//! 1. `PRISM_BOOT_CONFIG` env var, if the Studio shell (or a test
 //!    harness) set one.
 //! 2. Build-time default compiled into the binary.
 //! 3. [`DEFAULT_BOOT_CONFIG`] as the last-resort fallback.

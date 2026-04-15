@@ -109,7 +109,7 @@ paradigm, ported to Rust:
 | `transport-http` | axum + tokio + tower                        | HTTP adapter: `POST /invoke/:command`          |
 | `transport-grpc` | tonic + prost + tokio                       | gRPC adapter: hand-rolled `DaemonService/Invoke` |
 | `transport-uniffi` | uniffi                                    | Typed Swift/Kotlin bindings                    |
-| `transport-ipc`  | interprocess + postcard                     | Local IPC adapter: length-prefixed postcard frames over unix sockets / named pipes; the Tauri 2 no-webview Studio ↔ daemon sidecar wire per §4.5 |
+| `transport-ipc`  | interprocess + postcard                     | Local IPC adapter: length-prefixed postcard frames over unix sockets / named pipes; the Slint-based Studio ↔ daemon sidecar wire (see `docs/dev/slint-migration-plan.md`) |
 
 Mobile/embedded/wasm builds don't contain the code they can't run.
 Individual capabilities: `crdt`, `luau`, `build`, `watcher`, `vfs`,
@@ -153,9 +153,10 @@ are thin wrappers:
   `serde_json::Value` is `#[serde(untagged)]` and postcard's
   non-self-describing format can't round-trip it. The `prism-daemond`
   binary exposes this mode via `--ipc-socket <display>`; the
-  pure-`tao`/`wgpu` Studio (`prism-studio/src-tauri`, name is a
+  Slint-based Studio (`prism-studio/src-tauri`, name is a
   historical artefact) is the canonical client and uses it to talk to
-  the daemon sidecar per §4.5 Option C (locked 2026-04-15).
+  the daemon sidecar over this wire (see
+  `docs/dev/slint-migration-plan.md`).
 - **Mobile C-ABI**: `cargo-mobile2` staticlib, same C ABI as the browser
   build — the host (UIKit on iOS, Activity on Android via `winit`) calls
   `prism_daemon_{create,invoke,destroy}` directly. No webview bridge.
@@ -205,7 +206,7 @@ are thin wrappers:
   banner + `daemon.capabilities` + `crdt.write` + unknown-command
   error paths through length-prefixed postcard frames, and confirm
   the child reaps cleanly after a kill. The spawn/supervise/kill
-  proof for Phase 0 spike #6 (§4.5 no-webview sidecar wire).
+  proof for the Slint-Studio ↔ daemon sidecar wire.
 The Playwright-driven browser E2E suite (`e2e/wasm.spec.ts`) and the
 `scripts/test-all.sh` full-matrix runner were retired 2026-04-15
 alongside the Hono TS relay. The C-ABI `src/wasm.rs` tests still

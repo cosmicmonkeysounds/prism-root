@@ -2,7 +2,7 @@
 //! bus. Ports the zustand + reducer-bus shape the TS tree had onto
 //! pure Rust, with no framework coupling.
 //!
-//! Per §6.1 of `docs/dev/clay-migration-plan.md` we are *not* porting
+//! Per §6.1 of `docs/dev/slint-migration-plan.md` we are *not* porting
 //! zustand — we are rewriting the tiny part of it the codebase
 //! actually uses: a single owning container for app state, a way to
 //! mutate it via serializable actions, and a synchronous

@@ -3,7 +3,7 @@
 //! `prism-relay` owns a small starter catalog so portals can render
 //! meaningful content the moment the server boots — heading, text,
 //! link, image, and a layout container. Every component implements
-//! [`prism_builder::Component`]; the Clay render path will be wired
+//! [`prism_builder::Component`]; the Slint render path will be wired
 //! in Phase 3 alongside Studio's interactive surface. These impls
 //! exist to exercise the `render_html` contract end-to-end and give
 //! the portal routes something real to serve.

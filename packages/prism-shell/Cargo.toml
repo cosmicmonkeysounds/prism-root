@@ -2,97 +2,75 @@
 name = "prism-shell"
 version = "0.1.0"
 edition = "2021"
-description = "Prism Shell — the single-source UI tree for Studio. Clay-layout-based, rendered via wgpu on native and via wasm-bindgen on web. Owns every panel and the page builder surface."
+license.workspace = true
+description = "Prism Shell — the single-source UI tree for Studio. Slint-based, running natively via winit + femtovg on desktop and on wasm32-unknown-unknown + webgl in the browser. Owns every panel and the page builder surface."
 
 [lib]
 name = "prism_shell"
 path = "src/lib.rs"
-# `rlib` only. The Studio host (packages/prism-studio/src-tauri) and
-# every `[[bin]]` in this crate consume the lib as an rlib, which is
-# the one linkage path that works cleanly across desktop + browser.
-#
-# On `wasm32-unknown-emscripten` a `cdylib` crate-type would trigger
-# a second emcc link step that produces a bare `.wasm` with no JS
-# glue, clashing with the `MODULARIZE`/`EXPORT_ES6` flags the
-# `prism_shell_wasm` bin passes via `.cargo/config.toml` — the
-# daemon hit this same trap and settled on `["staticlib", "rlib"]`.
-# prism-shell doesn't ship as a staticlib today (no mobile linkage),
-# so rlib-only is enough.
-crate-type = ["rlib"]
+# Native target uses `rlib` (the Studio shell embeds it as a library).
+# The browser target (wasm32-unknown-unknown + wasm-bindgen) needs
+# `cdylib` so `wasm-bindgen` can produce its JS glue module. Emitting
+# both crate types unconditionally is the simplest cross-target
+# invariant and matches Slint's own template.
+crate-type = ["cdylib", "rlib"]
 
-# Native dev binary — hot-reload loop runs `cargo run -p prism-shell`
-# against a winit/wgpu window without any Tauri packaging involved.
-# The packaged desktop app is `prism-studio` in `packages/prism-studio/
-# src-tauri`; it embeds this crate as a library.
+# Native dev binary — opens a winit window via Slint's event loop and
+# runs the same `Shell` the Studio host does. The packaged desktop
+# app is `prism-studio` in `packages/prism-studio/src-tauri`; both
+# entry points drive the same Slint component through `Shell::run`.
 [[bin]]
 name = "prism-shell"
 path = "src/bin/native.rs"
 required-features = ["native"]
 
-# Emscripten link entry point. Only compiled under `web` on
-# `wasm32-unknown-emscripten` — see `.cargo/config.toml` for the
-# full set of `-s` flags. The binary itself does nothing; it exists
-# only so emcc sees a `main` symbol and so LTO keeps the C ABI
-# exports in `src/web.rs` alive across the pipeline.
-[[bin]]
-name = "prism_shell_wasm"
-path = "src/bin/prism_shell_wasm.rs"
-required-features = ["web"]
-
 [features]
-# `native` pulls in the on-desktop stack (wgpu / tao / winit) and
-# the daemon. `clay` is additive: it flips `panels::identity` and
-# `render` from the count-of-commands stub to the real Clay path.
-# Spike #1 (2026-04-14) resolved the binding to `clay-layout` on
-# crates.io, so `clay` now ships on by default alongside `native`.
-#
-# `web` is the emscripten + C-ABI browser path. It deliberately does
-# NOT pull `wasm-bindgen` — `clay-layout` ships its own C core which
-# can only be compiled under `wasm32-unknown-emscripten`, and mixing
-# emscripten with `wasm-bindgen`'s `wasm32-unknown-unknown` glue is
-# not supported. The daemon makes the same choice (see
-# `packages/prism-daemon/src/wasm.rs` for the rationale). Under `web`
-# the crate exports a hand-rolled C ABI via `src/web.rs`; JS glue
-# lives next to `index.html` and drives the loop through `ccall`.
-default = ["native", "clay"]
-native = ["dep:wgpu", "dep:winit", "dep:tao", "dep:pollster", "dep:prism-daemon", "dep:glyphon", "dep:bytemuck", "dep:raw-window-handle"]
-web = ["clay"]
-clay = ["dep:clay-layout"]
+# `native` pulls in the desktop stack (Slint + winit + femtovg +
+# prism-daemon sidecar). `web` flips to the wasm-bindgen entry point
+# for `wasm32-unknown-unknown`; the browser build does not depend on
+# `prism-daemon` (daemon runs remote via a relay on web). Pick one
+# per target triple — they are mutually exclusive at link time
+# because only one Slint backend is valid for each triple.
+default = ["native"]
+native = ["dep:prism-daemon"]
+web = ["dep:wasm-bindgen", "dep:console_error_panic_hook", "dep:getrandom"]
 
 [dependencies]
 # Shared Prism foundations.
 prism-core = { path = "../prism-core" }
 prism-builder = { path = "../prism-builder" }
+
 # Daemon is a native-only dep — the browser build talks to a remote
 # relay, not a local daemon. Feature-gated so the WASM target stays
 # small.
 prism-daemon = { path = "../prism-daemon", optional = true, default-features = false, features = ["crdt", "luau", "vfs", "crypto"] }
 
-# Core UI — clay-layout is the layout DSL (feature = "clay");
-# cosmic-text is kept as a future text shaping option. glyphon is
-# the runtime text rasterizer that backs the wgpu render pass and
-# comes in behind the `native` feature.
-clay-layout = { workspace = true, optional = true }
-cosmic-text = { workspace = true }
-glyphon = { workspace = true, optional = true }
-bytemuck = { workspace = true, optional = true }
+# Slint — the full UI toolkit. Owns layout, renderer, and windowing
+# for both native (winit + femtovg) and browser (winit on
+# wasm32-unknown-unknown + webgl via femtovg). Replaces the Clay
+# layout DSL + the hand-vendored wgpu pipeline + tao windowing in one
+# stroke. 2026-04-15 Clay → Slint pivot; see
+# `docs/dev/slint-migration-plan.md`.
+slint = { workspace = true }
 
-# Native rendering stack (feature = "native").
-wgpu = { workspace = true, optional = true }
-tao = { workspace = true, optional = true }
-winit = { workspace = true, optional = true }
-pollster = { version = "0.4", optional = true }
-raw-window-handle = { version = "0.6", optional = true }
-
-# Browser `web` feature: pure C ABI, no wasm-bindgen / web-sys /
-# js-sys needed. The emscripten-produced `.js` loader handles every
-# DOM / canvas call from the JS side; Rust just emits render
-# commands into a shared byte buffer.
+# Browser glue — only pulled under `web`. Slint's wasm build wires
+# itself into a `<canvas>` via winit's wasm32 backend; wasm-bindgen
+# provides the ABI glue, and `console_error_panic_hook` routes Rust
+# panics to the browser console. `getrandom` with `js` feature is
+# required by slint's dependency chain on wasm.
+wasm-bindgen = { workspace = true, optional = true }
+console_error_panic_hook = { workspace = true, optional = true }
+getrandom = { workspace = true, optional = true, features = ["js"] }
 
 # Shared.
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+
+[build-dependencies]
+# Compiles `ui/app.slint` into Rust code at build time. The generated
+# module is pulled in via `slint::include_modules!()` in `src/lib.rs`.
+slint-build = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }

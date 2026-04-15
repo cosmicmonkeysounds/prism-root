@@ -8,7 +8,7 @@
 //!
 //! NOTE: the registry also publishes a `wikilink_token` inline-token
 //! definition via [`crate::language::registry::wikilink_token`]. That
-//! variant is aimed at CodeMirror / Clay chip rendering and uses a
+//! variant is aimed at CodeMirror / Slint chip rendering and uses a
 //! slightly different capture-group layout. Both coexist on purpose:
 //! this module is used by the markdown block tokenizer, the registry
 //! variant is used by the language surface.

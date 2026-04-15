@@ -2,29 +2,24 @@
 name = "prism-studio"
 version = "0.1.0"
 edition = "2021"
-description = "Prism Studio — the packaged desktop shell. Pure tao + wgpu + prism-shell; packaging goes through cargo-packager in Phase 5. No Tauri, no wry, no webview in the dep tree."
+license.workspace = true
+description = "Prism Studio — the packaged desktop shell. Thin Slint host that owns the daemon sidecar; Slint owns windowing, layout, and rendering. Packaging goes through cargo-packager in Phase 5."
 
 [[bin]]
 name = "prism-studio"
 path = "src/main.rs"
 
 [dependencies]
-# Shared types and the UI tree we render. The `clay` feature brings
-# in `clay-layout` so we can drive the same render path as the
-# `prism-shell` dev binary.
-prism-shell = { path = "../../prism-shell", default-features = false, features = ["native", "clay"] }
+# Shared types and the UI tree we render. Studio embeds the shell
+# as a library and drives the same `Shell::run()` entry point the
+# standalone dev binary does.
+prism-shell = { path = "../../prism-shell", default-features = false, features = ["native"] }
 prism-core = { path = "../../prism-core" }
 
-# Render loop deps — mirror what `prism-shell`'s native bin uses so
-# the Studio host can drive the same `GraphicsContext` + `UiRenderer`
-# + `Clay` triple that the dev bin does. `tao` is the only windowing
-# crate in the tree now that Tauri is gone; Phase 0 spike #5 was
-# retried 2026-04-15 and Option C (standalone shell crates) was
-# adopted. The packaged desktop bundle goes through `cargo-packager`
-# in Phase 5 — no `tauri` / `wry` / `tauri-runtime-wry` anywhere.
-clay-layout = { workspace = true }
-tao = { workspace = true }
-raw-window-handle = "0.6"
+# Slint is pulled in so Studio can reach through to
+# `slint::PlatformError` when reporting boot failures. The shell
+# library already owns the actual event loop.
+slint = { workspace = true }
 
 # Daemon runs as a sidecar process — Studio does not link it as a
 # library. The `prism-daemon` crate is kept on the path so a dev

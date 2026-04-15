@@ -52,15 +52,16 @@ HTML (SEO-friendly, no JS required for L1), rendered through the same
   `prism_builder::render_document_html(doc, registry, tokens)` — the
   same `Component::render_html` trait the Studio will eventually share
   for its WASM web target.
-- **Clay is not involved on the server side.** Clay is an immediate-mode
-  pixel-oriented layout engine; its upstream `web/html` renderer is a
-  client-side WASM DOM-as-canvas thing that produces only `<div>`/`<a>`/
-  `<img>` with absolute-positioned CSS transforms. Search engines can't
-  read that. The Sovereign Portal path is a completely separate
-  semantic-HTML render target living in `prism_builder::html` +
-  `prism_builder::render` + each component's `render_html` impl.
+- **Slint is not involved on the server side.** Slint is a pixel-oriented
+  client renderer driving `femtovg`/wgpu in Studio and `<canvas>` in the
+  browser build — the markup it produces is meaningless to crawlers. The
+  Sovereign Portal path is a completely separate semantic-HTML render
+  target living in `prism_builder::html` + `prism_builder::render` +
+  each component's `render_html` impl. The relay never pulls in
+  `slint` or `slint-interpreter`.
 - **Component trait is two-target.** `prism_builder::Component` now
-  carries `render_clay` (stub → `Value`, filled in later by Studio) and
+  carries `render_slint` (stub → `Value`, filled in later by Studio
+  once `slint-interpreter` materialises the runtime tree) and
   `render_html` (live — default impl wraps children in
   `<div data-component="…">`). Five built-in components ship with the
   relay: `heading`, `text`, `link`, `image`, `container`.
