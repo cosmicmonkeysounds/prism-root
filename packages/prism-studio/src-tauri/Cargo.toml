@@ -9,6 +9,9 @@ description = "Prism Studio — the packaged desktop shell. Thin Slint host that
 name = "prism-studio"
 path = "src/main.rs"
 
+[features]
+live-preview = ["prism-shell/live-preview"]
+
 [dependencies]
 # Shared types and the UI tree we render. Studio embeds the shell
 # as a library and drives the same `Shell::run()` entry point the

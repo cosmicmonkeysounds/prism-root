@@ -32,8 +32,8 @@ use crate::search::SearchIndex;
 use crate::selection::SelectionModel;
 use crate::telemetry::FirstPaint;
 use crate::{
-    AppWindow, ButtonSpec, CommandItem, FieldRow, InspectorNode, PanelNavItem, SearchResultItem,
-    TabItem, ToastItem,
+    AppWindow, BuilderNode, ButtonSpec, CommandItem, ComponentPaletteItem, FieldRow, InspectorNode,
+    PanelNavItem, SearchResultItem, TabItem, ToastItem,
 };
 
 // ── Reloadable state ───────────────────────────────────────────────
@@ -52,6 +52,7 @@ pub struct AppState {
     pub search_query: String,
     pub toasts: Vec<ToastData>,
     next_toast_id: u64,
+    next_node_id: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -117,6 +118,7 @@ impl Default for AppState {
             search_query: String::new(),
             toasts: Vec::new(),
             next_toast_id: 0,
+            next_node_id: 100,
         }
     }
 }
@@ -398,6 +400,104 @@ impl Shell {
             eprintln!("prism-shell: identity-panel click index={index}");
         });
 
+        // Builder node selection
+        self.window.on_builder_node_clicked({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |node_id| {
+                inner.borrow_mut().store.mutate(|state| {
+                    state.selection.select(node_id.to_string());
+                });
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Inline text editing in builder
+        self.window.on_builder_text_edited({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |node_id, value| {
+                let node_id = node_id.to_string();
+                let value = value.to_string();
+                {
+                    let mut s = inner.borrow_mut();
+                    s.push_undo("Edit text");
+                    s.store.mutate(|state| {
+                        if let Some(ref mut root) = state.builder_document.root {
+                            let node = find_node(Some(&*root), &node_id);
+                            let key = match node.map(|n| n.component.as_str()) {
+                                Some("text") => "body",
+                                _ => "text",
+                            };
+                            mutate_node_prop(root, &node_id, key, &value, Some("text"));
+                        }
+                    });
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Delete node from builder
+        self.window.on_builder_delete_node({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |node_id| {
+                {
+                    let mut s = inner.borrow_mut();
+                    s.push_undo("Delete node");
+                    let nid = node_id.to_string();
+                    s.store.mutate(|state| {
+                        delete_node(&mut state.builder_document, &nid);
+                        state.selection.clear();
+                    });
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Add component from palette
+        self.window.on_add_component({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |component_type| {
+                let ct = component_type.to_string();
+                {
+                    let mut s = inner.borrow_mut();
+                    s.push_undo(&format!("Add {ct}"));
+                    let node_id = {
+                        let id = s.store.state().next_node_id;
+                        format!("n{id}")
+                    };
+                    let props = default_props_for_component(&ct);
+                    let new_node = Node {
+                        id: node_id.clone(),
+                        component: ct,
+                        props,
+                        children: vec![],
+                    };
+                    let parent_id = s.store.state().selection.primary().cloned();
+                    s.store.mutate(|state| {
+                        state.next_node_id += 1;
+                        add_node_to_document(
+                            &mut state.builder_document,
+                            parent_id.as_deref(),
+                            new_node,
+                        );
+                        state.selection.select(node_id);
+                    });
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
         // Property field editing
         self.window.on_field_edited({
             let inner = Rc::clone(&inner);
@@ -653,7 +753,6 @@ fn sync_ui_from_shared(shared: &Rc<RefCell<ShellInner>>, window: &AppWindow) {
 
 fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
     let state = inner.store.state();
-    let tokens = &state.tokens;
 
     // Sidebar nav (activity bar items)
     let nav_items = nav_model(state.active_panel);
@@ -672,7 +771,7 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
     match state.active_panel {
         ActivePanel::Identity => push_identity_actions(window),
         ActivePanel::Builder => {
-            push_builder_source(window, &state.builder_document, &inner.registry, tokens)
+            push_builder_preview(window, &state.builder_document, &state.selection)
         }
         ActivePanel::Inspector => {
             push_inspector_nodes(window, &state.builder_document, &state.selection)
@@ -771,8 +870,13 @@ fn clear_panel_slots(window: &AppWindow) {
     window.set_actions(ModelRc::from(
         empty_actions as Rc<dyn Model<Data = ButtonSpec>>,
     ));
-    window.set_builder_source(SharedString::new());
+    let empty_builder: Rc<VecModel<BuilderNode>> =
+        Rc::new(VecModel::from(Vec::<BuilderNode>::new()));
+    window.set_builder_nodes(ModelRc::from(
+        empty_builder as Rc<dyn Model<Data = BuilderNode>>,
+    ));
     window.set_builder_node_count(0);
+    window.set_builder_source(SharedString::new());
     window.set_inspector_tree(SharedString::new());
     let empty_nodes: Rc<VecModel<InspectorNode>> =
         Rc::new(VecModel::from(Vec::<InspectorNode>::new()));
@@ -782,6 +886,11 @@ fn clear_panel_slots(window: &AppWindow) {
     window.set_selected_component(SharedString::new());
     let empty_rows: Rc<VecModel<FieldRow>> = Rc::new(VecModel::from(Vec::<FieldRow>::new()));
     window.set_field_rows(ModelRc::from(empty_rows as Rc<dyn Model<Data = FieldRow>>));
+    let empty_palette: Rc<VecModel<ComponentPaletteItem>> =
+        Rc::new(VecModel::from(Vec::<ComponentPaletteItem>::new()));
+    window.set_component_palette(ModelRc::from(
+        empty_palette as Rc<dyn Model<Data = ComponentPaletteItem>>,
+    ));
 }
 
 fn push_identity_actions(window: &AppWindow) {
@@ -797,15 +906,17 @@ fn push_identity_actions(window: &AppWindow) {
     window.set_actions(ModelRc::from(model as Rc<dyn Model<Data = ButtonSpec>>));
 }
 
-fn push_builder_source(
-    window: &AppWindow,
-    doc: &BuilderDocument,
-    registry: &ComponentRegistry,
-    tokens: &DesignTokens,
-) {
-    let source = BuilderPanel::source(doc, registry, tokens);
-    window.set_builder_source(SharedString::from(source));
-    window.set_builder_node_count(BuilderPanel::node_count(doc) as i32);
+fn push_builder_preview(window: &AppWindow, doc: &BuilderDocument, selection: &SelectionModel) {
+    let items = flatten_builder_nodes(doc.root.as_ref(), selection);
+    let count = items.len() as i32;
+    let model = Rc::new(VecModel::from(items));
+    window.set_builder_nodes(ModelRc::from(model as Rc<dyn Model<Data = BuilderNode>>));
+    window.set_builder_node_count(count);
+    let palette = component_palette_items();
+    let palette_model = Rc::new(VecModel::from(palette));
+    window.set_component_palette(ModelRc::from(
+        palette_model as Rc<dyn Model<Data = ComponentPaletteItem>>,
+    ));
 }
 
 fn push_inspector_nodes(window: &AppWindow, doc: &BuilderDocument, selection: &SelectionModel) {
@@ -983,6 +1094,76 @@ fn flatten_walk(node: &Node, depth: i32, selection: &SelectionModel, out: &mut V
     }
 }
 
+fn flatten_builder_nodes(root: Option<&Node>, selection: &SelectionModel) -> Vec<BuilderNode> {
+    let mut items = Vec::new();
+    if let Some(node) = root {
+        flatten_builder_walk(node, 0, selection, &mut items);
+    }
+    items
+}
+
+fn flatten_builder_walk(
+    node: &Node,
+    depth: i32,
+    selection: &SelectionModel,
+    out: &mut Vec<BuilderNode>,
+) {
+    let props = &node.props;
+    let str_prop = |key| {
+        props
+            .get(key)
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    let int_prop =
+        |key, default: i64| props.get(key).and_then(|v| v.as_i64()).unwrap_or(default) as i32;
+    let bool_prop = |key| props.get(key).and_then(|v| v.as_bool()).unwrap_or(false);
+
+    let text = match node.component.as_str() {
+        "heading" | "link" | "button" => str_prop("text"),
+        "text" => str_prop("body"),
+        "input" => str_prop("name"),
+        "card" | "accordion" => str_prop("title"),
+        "code" => str_prop("code"),
+        "table" => str_prop("headers"),
+        "tabs" => str_prop("labels"),
+        _ => String::new(),
+    };
+
+    let label = match node.component.as_str() {
+        "card" => str_prop("body"),
+        "table" => str_prop("caption"),
+        _ => str_prop("label"),
+    };
+    let level = match node.component.as_str() {
+        "spacer" => int_prop("height", 24),
+        "columns" => int_prop("gap", 16),
+        _ => int_prop("level", 1),
+    };
+    let disabled = match node.component.as_str() {
+        "list" => bool_prop("ordered"),
+        _ => bool_prop("disabled"),
+    };
+
+    out.push(BuilderNode {
+        id: SharedString::from(&node.id),
+        component_type: SharedString::from(&node.component),
+        selected: selection.contains(&node.id),
+        depth,
+        text: SharedString::from(text),
+        level,
+        href: SharedString::from(str_prop("href")),
+        alt: SharedString::from(str_prop("alt")),
+        placeholder: SharedString::from(str_prop("placeholder")),
+        label: SharedString::from(label),
+        disabled,
+    });
+    for child in &node.children {
+        flatten_builder_walk(child, depth + 1, selection, out);
+    }
+}
+
 fn find_node<'a>(root: Option<&'a Node>, target: &str) -> Option<&'a Node> {
     let node = root?;
     if node.id == target {
@@ -1093,6 +1274,88 @@ fn delete_from_children(children: &mut Vec<Node>, target: &str) {
     }
 }
 
+fn add_node_to_document(doc: &mut BuilderDocument, parent_id: Option<&str>, new_node: Node) {
+    match parent_id {
+        Some(pid) => {
+            if let Some(ref mut root) = doc.root {
+                insert_child(root, pid, new_node);
+            }
+        }
+        None => {
+            if let Some(ref mut root) = doc.root {
+                root.children.push(new_node);
+            } else {
+                doc.root = Some(new_node);
+            }
+        }
+    }
+}
+
+fn insert_child(node: &mut Node, parent_id: &str, child: Node) -> bool {
+    if node.id == parent_id {
+        node.children.push(child);
+        return true;
+    }
+    for c in &mut node.children {
+        if insert_child(c, parent_id, child.clone()) {
+            return true;
+        }
+    }
+    false
+}
+
+fn default_props_for_component(component: &str) -> serde_json::Value {
+    match component {
+        "heading" => json!({ "text": "New heading", "level": 2 }),
+        "text" => json!({ "body": "New paragraph" }),
+        "link" => json!({ "href": "#", "text": "Link" }),
+        "image" => json!({ "src": "", "alt": "Image" }),
+        "container" => json!({ "spacing": 12 }),
+        "form" => json!({ "method": "post" }),
+        "input" => json!({ "name": "field", "type": "text", "placeholder": "Enter value" }),
+        "button" => json!({ "text": "Button" }),
+        "card" => json!({ "title": "Card", "body": "" }),
+        "code" => json!({ "code": "// code here", "language": "" }),
+        "divider" => json!({}),
+        "spacer" => json!({ "height": 24 }),
+        "columns" => json!({ "gap": 16 }),
+        "list" => json!({ "ordered": false }),
+        "table" => json!({ "headers": "Column 1, Column 2" }),
+        "tabs" => json!({ "labels": "Tab 1, Tab 2" }),
+        "accordion" => json!({ "title": "Section", "open": true }),
+        _ => json!({}),
+    }
+}
+
+fn component_palette_items() -> Vec<ComponentPaletteItem> {
+    [
+        ("heading", "Heading", "h1–h6 text heading"),
+        ("text", "Text", "Paragraph of body text"),
+        ("link", "Link", "Anchor / hyperlink"),
+        ("image", "Image", "Image placeholder"),
+        ("container", "Container", "Layout wrapper for children"),
+        ("card", "Card", "Bordered card with title and body"),
+        ("columns", "Columns", "Side-by-side horizontal layout"),
+        ("list", "List", "Ordered or unordered list"),
+        ("table", "Table", "Data table with column headers"),
+        ("tabs", "Tabs", "Tabbed content panels"),
+        ("accordion", "Accordion", "Collapsible content section"),
+        ("divider", "Divider", "Horizontal separator line"),
+        ("spacer", "Spacer", "Vertical spacing element"),
+        ("code", "Code", "Preformatted code block"),
+        ("form", "Form", "HTML form wrapper"),
+        ("input", "Input", "Text / email / password field"),
+        ("button", "Button", "Submit / action button"),
+    ]
+    .into_iter()
+    .map(|(ty, label, desc)| ComponentPaletteItem {
+        component_type: SharedString::from(ty),
+        label: SharedString::from(label),
+        description: SharedString::from(desc),
+    })
+    .collect()
+}
+
 fn collect_node_ids(root: Option<&Node>) -> Vec<NodeId> {
     let mut ids = Vec::new();
     if let Some(node) = root {
@@ -1165,7 +1428,6 @@ mod tests {
             ActivePanel::Properties
         ));
     }
-
 
     #[test]
     fn selection_model_replaces_selected_node() {
@@ -1272,6 +1534,66 @@ mod tests {
         let doc = sample_document();
         let ids = collect_node_ids(doc.root.as_ref());
         assert_eq!(ids, vec!["root", "hero", "intro"]);
+    }
+
+    #[test]
+    fn add_node_to_selected_parent() {
+        let mut doc = sample_document();
+        let new_node = Node {
+            id: "n100".into(),
+            component: "heading".into(),
+            props: json!({ "text": "Added", "level": 2 }),
+            children: vec![],
+        };
+        add_node_to_document(&mut doc, Some("root"), new_node);
+        assert_eq!(doc.root.as_ref().unwrap().children.len(), 3);
+        assert_eq!(doc.root.as_ref().unwrap().children[2].id, "n100");
+    }
+
+    #[test]
+    fn add_node_to_empty_document() {
+        let mut doc = BuilderDocument::default();
+        let new_node = Node {
+            id: "first".into(),
+            component: "heading".into(),
+            props: json!({ "text": "First" }),
+            children: vec![],
+        };
+        add_node_to_document(&mut doc, None, new_node);
+        assert_eq!(doc.root.as_ref().unwrap().id, "first");
+    }
+
+    #[test]
+    fn default_props_are_non_empty() {
+        for ct in [
+            "heading",
+            "text",
+            "link",
+            "image",
+            "container",
+            "form",
+            "input",
+            "button",
+            "card",
+            "code",
+            "spacer",
+            "columns",
+            "table",
+            "tabs",
+            "accordion",
+        ] {
+            let props = default_props_for_component(ct);
+            assert!(
+                !props.as_object().unwrap().is_empty(),
+                "{ct} should have default props"
+            );
+        }
+    }
+
+    #[test]
+    fn component_palette_has_all_seventeen_types() {
+        let items = component_palette_items();
+        assert_eq!(items.len(), 17);
     }
 
     #[test]

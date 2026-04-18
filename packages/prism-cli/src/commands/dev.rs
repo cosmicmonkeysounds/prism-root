@@ -125,11 +125,7 @@ pub fn plan(args: &DevArgs, workspace: &Workspace) -> Vec<CommandBuilder> {
 fn builders_for(target: DevTarget, workspace: &Workspace, hot_reload: bool) -> Vec<CommandBuilder> {
     match target {
         DevTarget::Shell => vec![shell_dev_builder(workspace, hot_reload)],
-        DevTarget::Studio => vec![CommandBuilder::cargo()
-            .arg("run")
-            .package("prism-studio")
-            .cwd(workspace.root())
-            .label("studio")],
+        DevTarget::Studio => vec![studio_dev_builder(workspace, hot_reload)],
         DevTarget::Web => vec![
             web_build_builder(workspace),
             super::build::web_bindgen_builder(workspace, false),
@@ -159,6 +155,21 @@ fn shell_dev_builder(workspace: &Workspace, hot_reload: bool) -> CommandBuilder 
         // — `slint-build` inspects it from `build.rs` and swaps the
         // rust generator for the live-preview variant that emits
         // `LiveReloadingComponent` wrappers.
+        b = b
+            .arg("--features")
+            .arg("live-preview")
+            .env("SLINT_LIVE_PREVIEW", "1");
+    }
+    b
+}
+
+fn studio_dev_builder(workspace: &Workspace, hot_reload: bool) -> CommandBuilder {
+    let mut b = CommandBuilder::cargo()
+        .arg("run")
+        .package("prism-studio")
+        .cwd(workspace.root())
+        .label("studio");
+    if hot_reload {
         b = b
             .arg("--features")
             .arg("live-preview")
@@ -212,12 +223,18 @@ pub fn run(args: &DevArgs, workspace: &Workspace, dry_run: bool) -> Result<u8> {
         return exec_foreground(serve_cmd);
     }
 
-    // Single-target `prism dev shell` with hot-reload on: wrap the
+    // Single-target shell or studio with hot-reload on: wrap the
     // cargo child in a DevLoop so `.rs` changes kill + respawn the
     // process. The `.slint` half is already handled in-process by
     // Slint's live-preview (enabled via env var + feature above).
     if args.target == DevTarget::Shell && args.hot_reload() && plan.len() == 1 {
-        return exec_dev_loop(&plan[0], workspace);
+        return exec_dev_loop(&plan[0], vec![workspace.shell_src_dir()]);
+    }
+    if args.target == DevTarget::Studio && args.hot_reload() && plan.len() == 1 {
+        return exec_dev_loop(
+            &plan[0],
+            vec![workspace.shell_src_dir(), workspace.studio_src_dir()],
+        );
     }
 
     // Single-target (non-web) dev is just a foreground exec — no
@@ -303,13 +320,12 @@ fn exec_foreground(cmd: &CommandBuilder) -> Result<u8> {
 }
 
 /// Drive a cargo child through the `DevLoop` respawn supervisor.
-/// Watches the shell's `src/` tree for `.rs` changes and kills +
+/// Watches the given source trees for `.rs` changes and kills +
 /// respawns the child on every debounced batch. `.slint` changes are
 /// already handled in-process by Slint's live-preview, so they are
 /// deliberately absent from the watched-extension set.
-fn exec_dev_loop(cmd: &CommandBuilder, workspace: &Workspace) -> Result<u8> {
+fn exec_dev_loop(cmd: &CommandBuilder, watch_paths: Vec<PathBuf>) -> Result<u8> {
     println!("$ {} (hot-reload)", cmd.display());
-    let watch_paths: Vec<PathBuf> = vec![workspace.shell_src_dir()];
     let dev_loop =
         DevLoop::new(cmd.clone(), watch_paths).with_sink(Arc::new(crate::supervisor::StdoutSink));
 
@@ -405,12 +421,40 @@ mod tests {
     }
 
     #[test]
-    fn studio_runs_cargo_run_on_prism_studio() {
+    fn studio_runs_cargo_run_on_prism_studio_with_live_preview() {
         let a = args(DevTarget::Studio);
         let p = plan(&a, &ws());
+        assert_eq!(p.len(), 1);
+        assert_eq!(p[0].label_str(), Some("studio"));
+        let argv = p[0].argv().1;
+        assert_eq!(
+            argv,
+            vec![
+                "run",
+                "--package",
+                "prism-studio",
+                "--features",
+                "live-preview",
+            ]
+        );
+    }
+
+    #[test]
+    fn studio_no_hot_reload_drops_feature_and_env() {
+        let a = args_no_reload(DevTarget::Studio);
+        let p = plan(&a, &ws());
+        assert_eq!(p.len(), 1);
         let argv = p[0].argv().1;
         assert_eq!(argv, vec!["run", "--package", "prism-studio"]);
-        assert_eq!(p[0].label_str(), Some("studio"));
+        let built = p[0].build();
+        let envs: Vec<_> = built
+            .get_envs()
+            .filter_map(|(k, _)| k.to_str().map(|s| s.to_string()))
+            .collect();
+        assert!(
+            !envs.iter().any(|k| k == "SLINT_LIVE_PREVIEW"),
+            "expected SLINT_LIVE_PREVIEW to be absent when --no-hot-reload"
+        );
     }
 
     #[test]

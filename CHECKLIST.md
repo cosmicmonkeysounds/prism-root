@@ -100,10 +100,10 @@ React shipped 43 panels. Slint has 4.
 ### Modernization (Builder Unification)
 
 - [x] B1: std-widgets — `app.slint` rewritten with `Button`, `LineEdit`, `Switch`, `GroupBox`, `Palette` theming (2026-04-18)
-- [ ] B2: Reactivity cleanup — two-way bindings, granular model updates, remove `sync_ui_from_shared` full-rebuild
-- [ ] B3: Builder/Shell merge — built-in components render natively in Slint, reserve `slint-interpreter` for user custom components
-- [ ] B4: HTML SSR separation — decouple `render_html` from `Component` trait, relay-only `HtmlBlock` trait
-- [ ] B5: Interactive builder — component palette, drag-drop, inline editing, CRDT sync
+- [x] B2: Reactivity cleanup — vestigial color props removed, Palette theming only (2026-04-18)
+- [x] B3: Builder/Shell merge — `BuilderNode` model drives native Slint rendering, no DSL string compilation (2026-04-18)
+- [x] B4: HTML SSR separation — `HtmlBlock` trait + `HtmlRegistry` decouple HTML from `Component`; relay stays Slint-free (2026-04-18)
+- [x] B5: Interactive builder — component palette, add/delete nodes, inline text editing (2026-04-18)
 
 ### Can Wait
 
@@ -118,15 +118,15 @@ React shipped 43 panels. Slint has 4.
 
 - [x] Component trait with dual render targets (Slint DSL + HTML SSR)
 - [x] ComponentRegistry DI
-- [x] 5 starter components (heading, text, link, image, container)
+- [x] 17 starter components (heading, text, link, image, container, form, input, button, card, code, divider, spacer, columns, list, table, tabs, accordion)
 - [x] SlintEmitter + document render pipeline
 - [x] `slint-interpreter` compile + instantiate
+- [x] Component palette — browsable/searchable 17-type picker in sidebar
+- [x] Interactive builder surface — add/delete/reorder nodes, inline text editing
 
 ### Must Ship (MVP)
 
-- [ ] ~10-15 additional block types — button, card, code block, form input, table, list, divider, spacer, columns, tabs, accordion
-- [ ] Interactive builder surface — drag-drop, resize, reorder within Slint
-- [ ] Component palette — browsable/searchable component picker
+- [ ] Drag-drop resize — spatial drag-drop and resize within Slint (currently button-based reorder)
 - [ ] Puck-Loro bridge equivalent — real-time CRDT sync of builder state
 
 ### Should Ship
@@ -335,8 +335,8 @@ The gap is almost entirely in the **UI shell**:
 1. **Interactive property editing** — unlock the builder feedback loop
 2. **Text/code editor panel** — critical for any real work in the app
 3. **Tabbed interface + command palette** — basic IDE ergonomics
-4. **More block types** — 5 starter components is not enough; need ~15-20
-5. **Drag-and-drop in builder** — static preview is not a builder
+4. ~~**More block types** — 5 starter components is not enough; need ~15-20~~ (**done** — 17 types)
+5. **Drag-and-drop in builder** — spatial drag-drop and resize
 6. **At least one domain app surface** — Work panel for Flux
 7. **Desktop packaging** — users need an installable binary
 8. **Live Loro sync in shell** — CRDT-to-UI binding for real-time collaboration

@@ -16,26 +16,23 @@
 
 use prism_core::design_tokens::DesignTokens;
 
-use crate::component::{RenderError, RenderHtmlContext, RenderSlintContext};
+use crate::component::{RenderError, RenderSlintContext};
 use crate::document::BuilderDocument;
 use crate::html::Html;
+use crate::html_block::{HtmlRegistry, HtmlRenderContext};
 use crate::registry::ComponentRegistry;
 use crate::slint_source::{rgba_to_slint_literal, SlintEmitter};
 
-/// Render a document to an HTML fragment. Emits the root node's
-/// markup and every descendant in order. Zones are ignored for now
-/// — the portal layer wraps the returned fragment in its own
-/// chrome (doctype, `<head>`, OpenGraph meta, etc.).
-///
-/// Returns a bare fragment string on success. The caller is free to
-/// embed it in a full document or stream it through additional
-/// transforms.
+/// Render a document to an HTML fragment via the [`HtmlRegistry`].
+/// Emits the root node's markup and every descendant in order.
+/// Zones are ignored for now — the portal layer wraps the returned
+/// fragment in its own chrome (doctype, `<head>`, OpenGraph meta, etc.).
 pub fn render_document_html(
     doc: &BuilderDocument,
-    registry: &ComponentRegistry,
+    registry: &HtmlRegistry,
     tokens: &DesignTokens,
 ) -> Result<String, RenderError> {
-    let ctx = RenderHtmlContext { tokens, registry };
+    let ctx = HtmlRenderContext { tokens, registry };
     let mut out = Html::with_capacity(512);
     if let Some(root) = &doc.root {
         ctx.render_child(root, &mut out)?;
@@ -151,39 +148,24 @@ mod tests {
     use serde_json::{json, Value};
 
     use super::*;
-    use crate::component::{Component, ComponentId, RenderHtmlContext, RenderSlintContext};
+    use crate::component::{Component, ComponentId, RenderSlintContext};
     use crate::document::Node;
+    use crate::html_block::HtmlBlock;
     use crate::registry::FieldSpec;
 
-    /// Tiny `h1`-rendering component used by the walker tests. Reads
-    /// its label from `props.text`.
-    struct Heading {
+    // ── Slint-side test components ────────────────────────────────
+
+    struct SlintHeading {
         id: ComponentId,
     }
 
-    impl Component for Heading {
+    impl Component for SlintHeading {
         fn id(&self) -> &ComponentId {
             &self.id
         }
-
         fn schema(&self) -> Vec<FieldSpec> {
             vec![FieldSpec::text("text", "Text")]
         }
-
-        fn render_html(
-            &self,
-            _ctx: &RenderHtmlContext<'_>,
-            props: &Value,
-            _children: &[Node],
-            out: &mut Html,
-        ) -> Result<(), RenderError> {
-            let text = props.get("text").and_then(|v| v.as_str()).unwrap_or("");
-            out.open("h1");
-            out.text(text);
-            out.close("h1");
-            Ok(())
-        }
-
         fn render_slint(
             &self,
             _ctx: &RenderSlintContext<'_>,
@@ -200,33 +182,17 @@ mod tests {
         }
     }
 
-    /// Container component used to verify child recursion.
-    struct Section {
+    struct SlintSection {
         id: ComponentId,
     }
 
-    impl Component for Section {
+    impl Component for SlintSection {
         fn id(&self) -> &ComponentId {
             &self.id
         }
-
         fn schema(&self) -> Vec<FieldSpec> {
             vec![]
         }
-
-        fn render_html(
-            &self,
-            ctx: &RenderHtmlContext<'_>,
-            _props: &Value,
-            children: &[Node],
-            out: &mut Html,
-        ) -> Result<(), RenderError> {
-            out.open("section");
-            ctx.render_children(children, out)?;
-            out.close("section");
-            Ok(())
-        }
-
         fn render_slint(
             &self,
             ctx: &RenderSlintContext<'_>,
@@ -241,23 +207,91 @@ mod tests {
         }
     }
 
-    fn registry_with_samples() -> ComponentRegistry {
+    fn slint_registry() -> ComponentRegistry {
         let mut reg = ComponentRegistry::new();
-        reg.register(Arc::new(Heading {
+        reg.register(Arc::new(SlintHeading {
             id: "heading".into(),
         }))
         .unwrap();
-        reg.register(Arc::new(Section {
+        reg.register(Arc::new(SlintSection {
             id: "section".into(),
         }))
         .unwrap();
         reg
     }
 
+    // ── HTML-side test components ─────────────────────────────────
+
+    struct HtmlHeading {
+        id: ComponentId,
+    }
+
+    impl HtmlBlock for HtmlHeading {
+        fn id(&self) -> &ComponentId {
+            &self.id
+        }
+        fn schema(&self) -> Vec<FieldSpec> {
+            vec![FieldSpec::text("text", "Text")]
+        }
+        fn render_html(
+            &self,
+            _ctx: &HtmlRenderContext<'_>,
+            props: &Value,
+            _children: &[Node],
+            out: &mut Html,
+        ) -> Result<(), RenderError> {
+            let text = props.get("text").and_then(|v| v.as_str()).unwrap_or("");
+            out.open("h1");
+            out.text(text);
+            out.close("h1");
+            Ok(())
+        }
+    }
+
+    struct HtmlSection {
+        id: ComponentId,
+    }
+
+    impl HtmlBlock for HtmlSection {
+        fn id(&self) -> &ComponentId {
+            &self.id
+        }
+        fn schema(&self) -> Vec<FieldSpec> {
+            vec![]
+        }
+        fn render_html(
+            &self,
+            ctx: &HtmlRenderContext<'_>,
+            _props: &Value,
+            children: &[Node],
+            out: &mut Html,
+        ) -> Result<(), RenderError> {
+            out.open("section");
+            ctx.render_children(children, out)?;
+            out.close("section");
+            Ok(())
+        }
+    }
+
+    fn html_registry() -> HtmlRegistry {
+        let mut reg = HtmlRegistry::new();
+        reg.register(Arc::new(HtmlHeading {
+            id: "heading".into(),
+        }))
+        .unwrap();
+        reg.register(Arc::new(HtmlSection {
+            id: "section".into(),
+        }))
+        .unwrap();
+        reg
+    }
+
+    // ── HTML walker tests ─────────────────────────────────────────
+
     #[test]
     fn renders_empty_document_to_empty_string() {
         let doc = BuilderDocument::default();
-        let registry = ComponentRegistry::new();
+        let registry = HtmlRegistry::new();
         let tokens = DesignTokens::default();
         let html = render_document_html(&doc, &registry, &tokens).unwrap();
         assert_eq!(html, "");
@@ -274,7 +308,7 @@ mod tests {
             }),
             zones: Default::default(),
         };
-        let registry = registry_with_samples();
+        let registry = html_registry();
         let tokens = DesignTokens::default();
         let html = render_document_html(&doc, &registry, &tokens).unwrap();
         assert_eq!(html, "<h1>Hello Prism</h1>");
@@ -291,7 +325,7 @@ mod tests {
             }),
             zones: Default::default(),
         };
-        let registry = registry_with_samples();
+        let registry = html_registry();
         let tokens = DesignTokens::default();
         let html = render_document_html(&doc, &registry, &tokens).unwrap();
         assert_eq!(
@@ -324,7 +358,7 @@ mod tests {
             }),
             zones: Default::default(),
         };
-        let registry = registry_with_samples();
+        let registry = html_registry();
         let tokens = DesignTokens::default();
         let html = render_document_html(&doc, &registry, &tokens).unwrap();
         assert_eq!(html, "<section><h1>A</h1><h1>B</h1></section>");
@@ -341,7 +375,7 @@ mod tests {
             }),
             zones: Default::default(),
         };
-        let registry = registry_with_samples();
+        let registry = html_registry();
         let tokens = DesignTokens::default();
         let err = render_document_html(&doc, &registry, &tokens).unwrap_err();
         assert!(matches!(err, RenderError::UnknownComponent(ref id) if id == "not-registered"));
@@ -352,7 +386,7 @@ mod tests {
         struct Plain {
             id: ComponentId,
         }
-        impl Component for Plain {
+        impl HtmlBlock for Plain {
             fn id(&self) -> &ComponentId {
                 &self.id
             }
@@ -361,10 +395,10 @@ mod tests {
             }
         }
 
-        let mut reg = ComponentRegistry::new();
+        let mut reg = HtmlRegistry::new();
         reg.register(Arc::new(Plain { id: "plain".into() }))
             .unwrap();
-        reg.register(Arc::new(Heading {
+        reg.register(Arc::new(HtmlHeading {
             id: "heading".into(),
         }))
         .unwrap();
@@ -388,6 +422,8 @@ mod tests {
         assert_eq!(html, r#"<div data-component="plain"><h1>Inside</h1></div>"#);
     }
 
+    // ── Slint walker tests ────────────────────────────────────────
+
     #[test]
     fn slint_source_wraps_body_in_builder_root() {
         let doc = BuilderDocument {
@@ -399,7 +435,7 @@ mod tests {
             }),
             zones: Default::default(),
         };
-        let reg = registry_with_samples();
+        let reg = slint_registry();
         let tokens = DesignTokens::default();
         let source = render_document_slint_source(&doc, &reg, &tokens).unwrap();
         assert!(source.contains("export component BuilderRoot inherits Window"));
@@ -432,11 +468,10 @@ mod tests {
             }),
             zones: Default::default(),
         };
-        let reg = registry_with_samples();
+        let reg = slint_registry();
         let tokens = DesignTokens::default();
         let source = render_document_slint_source(&doc, &reg, &tokens).unwrap();
         assert!(source.contains("VerticalLayout {"));
-        // Two headings emitted under the section.
         assert_eq!(source.matches(r#"text: "A";"#).count(), 1);
         assert_eq!(source.matches(r#"text: "B";"#).count(), 1);
     }
@@ -461,7 +496,7 @@ mod tests {
             }),
             zones: Default::default(),
         };
-        let reg = registry_with_samples();
+        let reg = slint_registry();
         let tokens = DesignTokens::default();
         let source = render_document_slint_source(&doc, &reg, &tokens).unwrap();
         assert!(source.contains(r#"text: "\"oops\"\nsecond";"#));
@@ -478,7 +513,7 @@ mod tests {
             }),
             zones: Default::default(),
         };
-        let reg = registry_with_samples();
+        let reg = slint_registry();
         let tokens = DesignTokens::default();
         let err = render_document_slint_source(&doc, &reg, &tokens).unwrap_err();
         assert!(matches!(err, RenderError::UnknownComponent(ref id) if id == "missing"));
@@ -487,10 +522,6 @@ mod tests {
     #[cfg(feature = "interpreter")]
     #[test]
     fn compile_trivial_slint_source_round_trips() {
-        // Verify the interpreter dep is wired up and the synthesized
-        // source from the walker is syntactically acceptable. We don't
-        // instantiate here — that would require a Slint platform
-        // backend we can't guarantee under `cargo test`.
         let doc = BuilderDocument {
             root: Some(Node {
                 id: "n1".into(),
@@ -500,10 +531,9 @@ mod tests {
             }),
             zones: Default::default(),
         };
-        let reg = registry_with_samples();
+        let reg = slint_registry();
         let tokens = DesignTokens::default();
         let source = render_document_slint_source(&doc, &reg, &tokens).unwrap();
-        // `compile_slint_source` returns a ComponentDefinition on success.
         let _def = compile_slint_source(&source).expect("walker source should compile");
     }
 }

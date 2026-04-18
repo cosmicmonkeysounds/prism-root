@@ -1,19 +1,14 @@
-//! The `Component` trait — every renderable block implements this.
+//! The `Component` trait — every Slint-renderable block implements this.
 //!
-//! A component has two render targets:
+//! [`Component::render_slint`] — the interactive Studio path. Components
+//! emit `.slint` DSL snippets into a shared [`crate::slint_source::SlintEmitter`];
+//! the document walker in [`crate::render::render_document_slint_source`]
+//! composes those snippets into a self-contained component source the
+//! Studio shell hands to [`slint_interpreter::Compiler`].
 //!
-//! * **Slint** ([`Component::render_slint`]) — the interactive Studio
-//!   path. Components emit `.slint` DSL snippets into a shared
-//!   [`crate::slint_source::SlintEmitter`]; the document walker in
-//!   [`crate::render::render_document_slint_source`] composes those
-//!   snippets into a self-contained component source the Studio shell
-//!   hands to [`slint_interpreter::Compiler`]. As of Phase 3 this path
-//!   is live — the same registry drives HTML SSR *and* live Studio
-//!   preview.
-//! * **HTML** ([`Component::render_html`]) — the Sovereign Portal SSR
-//!   path. Components emit semantic HTML into an [`Html`] buffer so
-//!   `prism-relay` can serve a crawler-friendly, JS-less document to
-//!   anonymous visitors. This target is live today.
+//! HTML SSR is handled by the separate [`crate::html_block::HtmlBlock`]
+//! trait and [`crate::html_block::HtmlRegistry`], which `prism-relay`
+//! uses for Sovereign Portal rendering.
 //!
 //! The trait is deliberately object-safe so `Arc<dyn Component>`s can
 //! live in the [`crate::registry::ComponentRegistry`] and be dispatched
@@ -23,7 +18,6 @@ use serde_json::Value;
 use thiserror::Error;
 
 use crate::document::Node;
-use crate::html::Html;
 use crate::registry::{ComponentRegistry, FieldSpec};
 use crate::slint_source::SlintEmitter;
 
@@ -102,40 +96,7 @@ impl<'a> RenderSlintContext<'a> {
     }
 }
 
-/// HTML-side render context. Carries the registry (so parents can
-/// recurse into their children by `ComponentId`) plus the design
-/// tokens (so portal markup can inline a consistent theme without
-/// dragging in Studio's Slint path). Constructed fresh for each
-/// request by [`crate::render::render_document_html`].
-pub struct RenderHtmlContext<'a> {
-    pub tokens: &'a prism_core::design_tokens::DesignTokens,
-    pub registry: &'a ComponentRegistry,
-}
-
-impl<'a> RenderHtmlContext<'a> {
-    /// Render one child node into `out`. Components with slots call
-    /// this for each child they want to emit — the context owns the
-    /// registry lookup so components don't have to.
-    pub fn render_child(&self, child: &Node, out: &mut Html) -> Result<(), RenderError> {
-        let component = self
-            .registry
-            .get(&child.component)
-            .ok_or_else(|| RenderError::UnknownComponent(child.component.clone()))?;
-        component.render_html(self, &child.props, &child.children, out)
-    }
-
-    /// Render every child in order. The common case for layout-only
-    /// wrappers (cards, rows, columns) that don't need to reorder or
-    /// decorate their slots.
-    pub fn render_children(&self, children: &[Node], out: &mut Html) -> Result<(), RenderError> {
-        for child in children {
-            self.render_child(child, out)?;
-        }
-        Ok(())
-    }
-}
-
-/// The core contract. Trait-objects of this type live in the
+/// The core Slint-side contract. Trait-objects of this type live in the
 /// registry; each node in the builder document is dispatched through
 /// whichever impl the registry hands back for its `ComponentId`.
 pub trait Component: Send + Sync {
@@ -148,10 +109,9 @@ pub trait Component: Send + Sync {
     fn schema(&self) -> Vec<FieldSpec>;
 
     /// Paint the component as `.slint` DSL into a shared
-    /// [`SlintEmitter`]. Mirrors [`Component::render_html`] — the
-    /// default impl emits a semantically transparent `Rectangle { }`
-    /// wrapper and recurses into children. Override to produce
-    /// bespoke Slint markup.
+    /// [`SlintEmitter`]. The default impl emits a semantically
+    /// transparent `Rectangle { }` wrapper and recurses into children.
+    /// Override to produce bespoke Slint markup.
     fn render_slint(
         &self,
         ctx: &RenderSlintContext<'_>,
@@ -164,25 +124,6 @@ pub trait Component: Send + Sync {
         out.block(format!("// component: {id}\nRectangle"), |out| {
             ctx.render_children(children, out)
         })?;
-        Ok(())
-    }
-
-    /// Paint the component as semantic HTML for the Sovereign Portal
-    /// SSR path. Default impl emits a generic `<div data-component="id">`
-    /// wrapper and renders children in order — good enough for
-    /// layout-only containers and a safe fallback for any component
-    /// that hasn't opted into a bespoke markup shape yet.
-    fn render_html(
-        &self,
-        ctx: &RenderHtmlContext<'_>,
-        props: &Value,
-        children: &[Node],
-        out: &mut Html,
-    ) -> Result<(), RenderError> {
-        let _ = props;
-        out.open_attrs("div", &[("data-component", self.id())]);
-        ctx.render_children(children, out)?;
-        out.close("div");
         Ok(())
     }
 }

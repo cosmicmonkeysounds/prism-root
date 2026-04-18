@@ -119,10 +119,10 @@ Decouple HTML rendering from the `Component` trait.
 - Relay stays Slint-free (no `interpreter` feature needed)
 
 Deliverables:
-- [ ] `HtmlBlock` trait with the 8 starter impls
-- [ ] `Component` trait simplified to Slint-only surface
-- [ ] Relay tests pass with separated traits
-- [ ] Zero Slint dependencies in relay dep graph
+- [x] `HtmlBlock` trait with the 8 starter impls (`html_block.rs` + `html_starter.rs`)
+- [x] `Component` trait simplified to Slint-only surface (no `render_html`)
+- [x] Relay tests pass with separated traits (73 tests: 42 builder + 23 relay + 8 integration)
+- [x] Zero Slint dependencies in relay dep graph
 
 ### B5 — Interactive Builder Surface
 
@@ -138,10 +138,11 @@ add the interactive editing features.
 - Puck-Loro bridge: `CollectionStore` ↔ `BuilderDocument` CRDT sync
 
 Deliverables:
-- [ ] Component palette panel
-- [ ] Drag-drop reordering in the builder surface
-- [ ] Inline editing of text props
-- [ ] CRDT sync of builder state
+- [x] Component palette panel (sidebar picker with 8 types, click to add)
+- [x] Add/delete nodes (add as child of selection, delete via `×` button)
+- [x] Inline editing of text props (heading/text editable via LineEdit when selected)
+- [ ] Drag-drop reordering (up/down buttons in inspector; full drag-drop is Phase 6)
+- [ ] CRDT sync of builder state (Loro bridge is Phase 6)
 
 ---
 

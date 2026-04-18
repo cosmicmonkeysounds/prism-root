@@ -75,7 +75,7 @@ async fn portal_detail(State(state): State<Arc<AppState>>, Path(id): Path<String
         return not_found();
     }
 
-    let body = match render_document_html(&portal.document, &state.registry, &state.tokens) {
+    let body = match render_document_html(&portal.document, &state.html_registry, &state.tokens) {
         Ok(b) => b,
         Err(err) => return render_error_response(err),
     };

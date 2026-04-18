@@ -477,8 +477,10 @@ editing lands with the first interactive panel in Phase 4).
 ### 8.3 Starter catalog
 
 `prism_builder::starter::register_builtins(&mut registry)` seeds
-five components — `heading`, `text`, `link`, `image`, `container` —
-each implementing both render targets. The catalog is shared: both
+seventeen components — `heading`, `text`, `link`, `image`,
+`container`, `form`, `input`, `button`, `card`, `code`, `divider`,
+`spacer`, `columns`, `list`, `table`, `tabs`, `accordion` — each
+implementing both render targets. The catalog is shared: both
 the Sovereign Portal relay (`prism_relay::AppState::new`) and the
 Studio shell (`prism_shell::Shell::from_state`) call it on boot.
 Adding a new default block means adding one file under

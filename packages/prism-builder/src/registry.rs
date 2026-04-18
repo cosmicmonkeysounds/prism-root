@@ -391,10 +391,7 @@ mod tests {
 
     #[test]
     fn registry_iter_preserves_insertion_order() {
-        use crate::component::RenderError;
-        use crate::component::{Component, ComponentId, RenderHtmlContext};
-        use crate::document::Node;
-        use crate::html::Html;
+        use crate::component::{Component, ComponentId};
 
         struct Stub(ComponentId);
         impl Component for Stub {
@@ -403,15 +400,6 @@ mod tests {
             }
             fn schema(&self) -> Vec<FieldSpec> {
                 vec![]
-            }
-            fn render_html(
-                &self,
-                _ctx: &RenderHtmlContext<'_>,
-                _props: &Value,
-                _children: &[Node],
-                _out: &mut Html,
-            ) -> Result<(), RenderError> {
-                Ok(())
             }
         }
 
@@ -425,10 +413,7 @@ mod tests {
 
     #[test]
     fn double_register_errors() {
-        use crate::component::RenderError;
-        use crate::component::{Component, ComponentId, RenderHtmlContext};
-        use crate::document::Node;
-        use crate::html::Html;
+        use crate::component::{Component, ComponentId};
 
         struct Stub;
         impl Component for Stub {
@@ -438,15 +423,6 @@ mod tests {
             }
             fn schema(&self) -> Vec<FieldSpec> {
                 vec![]
-            }
-            fn render_html(
-                &self,
-                _ctx: &RenderHtmlContext<'_>,
-                _props: &Value,
-                _children: &[Node],
-                _out: &mut Html,
-            ) -> Result<(), RenderError> {
-                Ok(())
             }
         }
 

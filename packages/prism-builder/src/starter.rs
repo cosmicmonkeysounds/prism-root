@@ -1,33 +1,26 @@
-//! Starter component catalog — the default registry every boot ships.
+//! Starter component catalog — the default Slint-side registry.
 //!
-//! Five blocks land here: `heading`, `text`, `link`, `image`, and
-//! `container`. Each implements [`Component`] for *both* render
-//! targets: `render_html` drives the Sovereign Portal SSR path, and
-//! `render_slint` emits the matching `.slint` DSL via [`SlintEmitter`]
-//! so the same catalog round-trips through Studio's live builder
-//! panel and `prism-relay`'s HTTP response body.
+//! Seventeen blocks land here: `heading`, `text`, `link`, `image`,
+//! `container`, `form`, `input`, `button`, `card`, `code`, `divider`,
+//! `spacer`, `columns`, `list`, `table`, `tabs`, and `accordion`.
+//! Each implements [`Component`] with a `render_slint` method that
+//! emits `.slint` DSL via [`SlintEmitter`] for Studio's live builder
+//! panel.
 //!
-//! The catalog lives inside `prism-builder` (not `prism-relay`) because
-//! both the relay *and* the Studio shell want the same starter set —
-//! putting it behind the registry crate keeps the component inventory
-//! single-sourced and stops downstream crates from reimplementing
-//! heading/text/link/image/container every time they want a document
-//! to render.
+//! HTML SSR is handled separately by [`crate::html_starter`] via the
+//! [`crate::html_block::HtmlBlock`] trait.
 
 use std::sync::Arc;
 
 use serde_json::Value;
 
-use crate::component::{
-    Component, ComponentId, RenderError, RenderHtmlContext, RenderSlintContext,
-};
+use crate::component::{Component, ComponentId, RenderError, RenderSlintContext};
 use crate::document::Node;
-use crate::html::Html;
 use crate::registry::{ComponentRegistry, FieldSpec, NumericBounds, RegistryError};
 use crate::slint_source::SlintEmitter;
 
 /// Register the starter catalog into `reg`. Call this once at boot
-/// to get a registry with eight ready-to-render components.
+/// to get a registry with seventeen ready-to-render components.
 pub fn register_builtins(reg: &mut ComponentRegistry) -> Result<(), RegistryError> {
     reg.register(Arc::new(HeadingComponent {
         id: "heading".into(),
@@ -42,6 +35,23 @@ pub fn register_builtins(reg: &mut ComponentRegistry) -> Result<(), RegistryErro
     reg.register(Arc::new(InputComponent { id: "input".into() }))?;
     reg.register(Arc::new(ButtonComponent {
         id: "button".into(),
+    }))?;
+    reg.register(Arc::new(CardComponent { id: "card".into() }))?;
+    reg.register(Arc::new(CodeComponent { id: "code".into() }))?;
+    reg.register(Arc::new(DividerComponent {
+        id: "divider".into(),
+    }))?;
+    reg.register(Arc::new(SpacerComponent {
+        id: "spacer".into(),
+    }))?;
+    reg.register(Arc::new(ColumnsComponent {
+        id: "columns".into(),
+    }))?;
+    reg.register(Arc::new(ListComponent { id: "list".into() }))?;
+    reg.register(Arc::new(TableComponent { id: "table".into() }))?;
+    reg.register(Arc::new(TabsComponent { id: "tabs".into() }))?;
+    reg.register(Arc::new(AccordionComponent {
+        id: "accordion".into(),
     }))?;
     Ok(())
 }
@@ -74,33 +84,6 @@ impl Component for HeadingComponent {
                 .with_default(Value::from(1)),
         ]
     }
-    fn render_html(
-        &self,
-        _ctx: &RenderHtmlContext<'_>,
-        props: &Value,
-        _children: &[Node],
-        out: &mut Html,
-    ) -> Result<(), RenderError> {
-        let level = props
-            .get("level")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1)
-            .clamp(1, 6);
-        let text = props.get("text").and_then(|v| v.as_str()).unwrap_or("");
-        let tag = match level {
-            1 => "h1",
-            2 => "h2",
-            3 => "h3",
-            4 => "h4",
-            5 => "h5",
-            _ => "h6",
-        };
-        out.open(tag);
-        out.text(text);
-        out.close(tag);
-        Ok(())
-    }
-
     fn render_slint(
         &self,
         _ctx: &RenderSlintContext<'_>,
@@ -135,20 +118,6 @@ impl Component for TextComponent {
     fn schema(&self) -> Vec<FieldSpec> {
         vec![FieldSpec::textarea("body", "Body")]
     }
-    fn render_html(
-        &self,
-        _ctx: &RenderHtmlContext<'_>,
-        props: &Value,
-        _children: &[Node],
-        out: &mut Html,
-    ) -> Result<(), RenderError> {
-        let body = props.get("body").and_then(|v| v.as_str()).unwrap_or("");
-        out.open("p");
-        out.text(body);
-        out.close("p");
-        Ok(())
-    }
-
     fn render_slint(
         &self,
         _ctx: &RenderSlintContext<'_>,
@@ -182,23 +151,6 @@ impl Component for LinkComponent {
             FieldSpec::text("text", "Label"),
         ]
     }
-    fn render_html(
-        &self,
-        ctx: &RenderHtmlContext<'_>,
-        props: &Value,
-        children: &[Node],
-        out: &mut Html,
-    ) -> Result<(), RenderError> {
-        let href = props.get("href").and_then(|v| v.as_str()).unwrap_or("#");
-        out.open_attrs("a", &[("href", href)]);
-        if let Some(text) = props.get("text").and_then(|v| v.as_str()) {
-            out.text(text);
-        }
-        ctx.render_children(children, out)?;
-        out.close("a");
-        Ok(())
-    }
-
     fn render_slint(
         &self,
         _ctx: &RenderSlintContext<'_>,
@@ -237,19 +189,6 @@ impl Component for ImageComponent {
             FieldSpec::text("alt", "Alt text"),
         ]
     }
-    fn render_html(
-        &self,
-        _ctx: &RenderHtmlContext<'_>,
-        props: &Value,
-        _children: &[Node],
-        out: &mut Html,
-    ) -> Result<(), RenderError> {
-        let src = props.get("src").and_then(|v| v.as_str()).unwrap_or("");
-        let alt = props.get("alt").and_then(|v| v.as_str()).unwrap_or("");
-        out.void("img", &[("src", src), ("alt", alt)]);
-        Ok(())
-    }
-
     fn render_slint(
         &self,
         _ctx: &RenderSlintContext<'_>,
@@ -257,9 +196,6 @@ impl Component for ImageComponent {
         _children: &[Node],
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
-        // Slint's `Image` element expects `@image-url(...)`; we can't
-        // resolve user-supplied URLs at DSL emit time, so we fall back
-        // to a sized placeholder rectangle with the alt text overlaid.
         let alt = props.get("alt").and_then(|v| v.as_str()).unwrap_or("image");
         out.block("Rectangle", |out| {
             out.prop_px("min-height", 120.0);
@@ -295,19 +231,6 @@ impl Component for ContainerComponent {
         )
         .with_default(Value::from(12))]
     }
-    fn render_html(
-        &self,
-        ctx: &RenderHtmlContext<'_>,
-        _props: &Value,
-        children: &[Node],
-        out: &mut Html,
-    ) -> Result<(), RenderError> {
-        out.open("section");
-        ctx.render_children(children, out)?;
-        out.close("section");
-        Ok(())
-    }
-
     fn render_slint(
         &self,
         ctx: &RenderSlintContext<'_>,
@@ -351,28 +274,6 @@ impl Component for FormComponent {
             .with_default(Value::from("post")),
         ]
     }
-    fn render_html(
-        &self,
-        ctx: &RenderHtmlContext<'_>,
-        props: &Value,
-        children: &[Node],
-        out: &mut Html,
-    ) -> Result<(), RenderError> {
-        let method = props
-            .get("method")
-            .and_then(|v| v.as_str())
-            .unwrap_or("post");
-        let mut attrs: Vec<(&str, &str)> = vec![("method", method)];
-        let action = props.get("action").and_then(|v| v.as_str()).unwrap_or("");
-        if !action.is_empty() {
-            attrs.push(("action", action));
-        }
-        out.open_attrs("form", &attrs);
-        ctx.render_children(children, out)?;
-        out.close("form");
-        Ok(())
-    }
-
     fn render_slint(
         &self,
         ctx: &RenderSlintContext<'_>,
@@ -419,47 +320,6 @@ impl Component for InputComponent {
             FieldSpec::text("label", "Label text"),
         ]
     }
-    fn render_html(
-        &self,
-        _ctx: &RenderHtmlContext<'_>,
-        props: &Value,
-        _children: &[Node],
-        out: &mut Html,
-    ) -> Result<(), RenderError> {
-        let name = props.get("name").and_then(|v| v.as_str()).unwrap_or("");
-        let input_type = props.get("type").and_then(|v| v.as_str()).unwrap_or("text");
-        let placeholder = props
-            .get("placeholder")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let value = props.get("value").and_then(|v| v.as_str()).unwrap_or("");
-        let required = props
-            .get("required")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        let label = props.get("label").and_then(|v| v.as_str()).unwrap_or("");
-
-        if !label.is_empty() {
-            out.open("label");
-            out.text(label);
-        }
-        let mut attrs = vec![("type", input_type), ("name", name)];
-        if !placeholder.is_empty() {
-            attrs.push(("placeholder", placeholder));
-        }
-        if !value.is_empty() {
-            attrs.push(("value", value));
-        }
-        if required {
-            attrs.push(("required", "required"));
-        }
-        out.void("input", &attrs);
-        if !label.is_empty() {
-            out.close("label");
-        }
-        Ok(())
-    }
-
     fn render_slint(
         &self,
         _ctx: &RenderSlintContext<'_>,
@@ -502,6 +362,387 @@ impl Component for InputComponent {
     }
 }
 
+/// Card with title, body, and optional children. Renders as a bordered
+/// rectangle in Slint, `<article>` in HTML.
+pub struct CardComponent {
+    pub id: ComponentId,
+}
+
+impl Component for CardComponent {
+    fn id(&self) -> &ComponentId {
+        &self.id
+    }
+    fn schema(&self) -> Vec<FieldSpec> {
+        vec![
+            FieldSpec::text("title", "Card title").required(),
+            FieldSpec::textarea("body", "Card body"),
+            FieldSpec::select(
+                "variant",
+                "Style variant",
+                vec![
+                    crate::registry::SelectOption::new("default", "Default"),
+                    crate::registry::SelectOption::new("outlined", "Outlined"),
+                ],
+            )
+            .with_default(Value::from("default")),
+        ]
+    }
+    fn render_slint(
+        &self,
+        ctx: &RenderSlintContext<'_>,
+        props: &Value,
+        children: &[Node],
+        out: &mut SlintEmitter,
+    ) -> Result<(), RenderError> {
+        let title = props.get("title").and_then(|v| v.as_str()).unwrap_or("");
+        let body = props.get("body").and_then(|v| v.as_str()).unwrap_or("");
+        out.block("Rectangle", |out| {
+            out.line("border-width: 1px;");
+            out.line("border-color: #3b4252;");
+            out.line("border-radius: 8px;");
+            out.line("background: #2e3440;");
+            out.block("VerticalLayout", |out| {
+                out.prop_px("padding", 16.0);
+                out.prop_px("spacing", 8.0);
+                out.block("Text", |out| {
+                    out.prop_string("text", title);
+                    out.prop_px("font-size", 18.0);
+                    out.line("font-weight: 600;");
+                    Ok(())
+                })?;
+                if !body.is_empty() {
+                    out.block("Text", |out| {
+                        out.prop_string("text", body);
+                        out.prop_px("font-size", 14.0);
+                        out.line("color: #9ca4b4;");
+                        out.line("wrap: word-wrap;");
+                        Ok(())
+                    })?;
+                }
+                ctx.render_children(children, out)
+            })
+        })
+    }
+}
+
+/// Preformatted code block with monospace font.
+pub struct CodeComponent {
+    pub id: ComponentId,
+}
+
+impl Component for CodeComponent {
+    fn id(&self) -> &ComponentId {
+        &self.id
+    }
+    fn schema(&self) -> Vec<FieldSpec> {
+        vec![
+            FieldSpec::textarea("code", "Code").required(),
+            FieldSpec::text("language", "Language"),
+        ]
+    }
+    fn render_slint(
+        &self,
+        _ctx: &RenderSlintContext<'_>,
+        props: &Value,
+        _children: &[Node],
+        out: &mut SlintEmitter,
+    ) -> Result<(), RenderError> {
+        let code = props.get("code").and_then(|v| v.as_str()).unwrap_or("");
+        out.block("Rectangle", |out| {
+            out.line("background: #1a1e28;");
+            out.line("border-radius: 6px;");
+            out.block("VerticalLayout", |out| {
+                out.prop_px("padding", 12.0);
+                out.block("Text", |out| {
+                    out.prop_string("text", code);
+                    out.prop_px("font-size", 13.0);
+                    out.line("color: #a3be8c;");
+                    out.line("font-family: \"monospace\";");
+                    out.line("wrap: word-wrap;");
+                    Ok(())
+                })
+            })
+        })
+    }
+}
+
+/// Horizontal rule / visual separator.
+pub struct DividerComponent {
+    pub id: ComponentId,
+}
+
+impl Component for DividerComponent {
+    fn id(&self) -> &ComponentId {
+        &self.id
+    }
+    fn schema(&self) -> Vec<FieldSpec> {
+        vec![]
+    }
+    fn render_slint(
+        &self,
+        _ctx: &RenderSlintContext<'_>,
+        _props: &Value,
+        _children: &[Node],
+        out: &mut SlintEmitter,
+    ) -> Result<(), RenderError> {
+        out.block("Rectangle", |out| {
+            out.prop_px("height", 1.0);
+            out.line("background: #3b4252;");
+            Ok(())
+        })
+    }
+}
+
+/// Empty vertical spacer with configurable height.
+pub struct SpacerComponent {
+    pub id: ComponentId,
+}
+
+impl Component for SpacerComponent {
+    fn id(&self) -> &ComponentId {
+        &self.id
+    }
+    fn schema(&self) -> Vec<FieldSpec> {
+        vec![
+            FieldSpec::integer("height", "Height (px)", NumericBounds::min_max(4.0, 128.0))
+                .with_default(Value::from(24)),
+        ]
+    }
+    fn render_slint(
+        &self,
+        _ctx: &RenderSlintContext<'_>,
+        props: &Value,
+        _children: &[Node],
+        out: &mut SlintEmitter,
+    ) -> Result<(), RenderError> {
+        let height = props.get("height").and_then(|v| v.as_f64()).unwrap_or(24.0);
+        out.block("Rectangle", |out| {
+            out.prop_px("height", height);
+            Ok(())
+        })
+    }
+}
+
+/// Multi-column horizontal layout. Children are placed side-by-side.
+pub struct ColumnsComponent {
+    pub id: ComponentId,
+}
+
+impl Component for ColumnsComponent {
+    fn id(&self) -> &ComponentId {
+        &self.id
+    }
+    fn schema(&self) -> Vec<FieldSpec> {
+        vec![
+            FieldSpec::integer("gap", "Column gap (px)", NumericBounds::min_max(0.0, 64.0))
+                .with_default(Value::from(16)),
+        ]
+    }
+    fn render_slint(
+        &self,
+        ctx: &RenderSlintContext<'_>,
+        props: &Value,
+        children: &[Node],
+        out: &mut SlintEmitter,
+    ) -> Result<(), RenderError> {
+        let gap = props.get("gap").and_then(|v| v.as_f64()).unwrap_or(16.0);
+        out.block("HorizontalLayout", |out| {
+            out.prop_px("spacing", gap);
+            ctx.render_children(children, out)
+        })
+    }
+}
+
+/// Ordered or unordered list wrapper. Each child becomes a list item.
+pub struct ListComponent {
+    pub id: ComponentId,
+}
+
+impl Component for ListComponent {
+    fn id(&self) -> &ComponentId {
+        &self.id
+    }
+    fn schema(&self) -> Vec<FieldSpec> {
+        vec![FieldSpec::boolean("ordered", "Ordered (numbered)")]
+    }
+    fn render_slint(
+        &self,
+        ctx: &RenderSlintContext<'_>,
+        _props: &Value,
+        children: &[Node],
+        out: &mut SlintEmitter,
+    ) -> Result<(), RenderError> {
+        out.block("VerticalLayout", |out| {
+            out.prop_px("spacing", 4.0);
+            out.line("alignment: start;");
+            ctx.render_children(children, out)
+        })
+    }
+}
+
+/// Simple data table with header columns and optional caption.
+pub struct TableComponent {
+    pub id: ComponentId,
+}
+
+impl Component for TableComponent {
+    fn id(&self) -> &ComponentId {
+        &self.id
+    }
+    fn schema(&self) -> Vec<FieldSpec> {
+        vec![
+            FieldSpec::text("headers", "Column headers (comma-separated)").required(),
+            FieldSpec::text("caption", "Table caption"),
+        ]
+    }
+    fn render_slint(
+        &self,
+        _ctx: &RenderSlintContext<'_>,
+        props: &Value,
+        _children: &[Node],
+        out: &mut SlintEmitter,
+    ) -> Result<(), RenderError> {
+        let headers = props.get("headers").and_then(|v| v.as_str()).unwrap_or("");
+        let caption = props.get("caption").and_then(|v| v.as_str()).unwrap_or("");
+        out.block("Rectangle", |out| {
+            out.line("border-width: 1px;");
+            out.line("border-color: #3b4252;");
+            out.line("border-radius: 4px;");
+            out.block("VerticalLayout", |out| {
+                out.prop_px("padding", 8.0);
+                out.prop_px("spacing", 4.0);
+                if !caption.is_empty() {
+                    out.block("Text", |out| {
+                        out.prop_string("text", caption);
+                        out.prop_px("font-size", 12.0);
+                        out.line("color: #9ca4b4;");
+                        Ok(())
+                    })?;
+                }
+                out.block("HorizontalLayout", |out| {
+                    out.prop_px("spacing", 16.0);
+                    for col in headers.split(',') {
+                        let col = col.trim();
+                        if !col.is_empty() {
+                            out.block("Text", |out| {
+                                out.prop_string("text", col);
+                                out.prop_px("font-size", 13.0);
+                                out.line("font-weight: 600;");
+                                Ok(())
+                            })?;
+                        }
+                    }
+                    Ok(())
+                })
+            })
+        })
+    }
+}
+
+/// Tabbed content container. Children map to tab panels; the `labels`
+/// prop names each panel.
+pub struct TabsComponent {
+    pub id: ComponentId,
+}
+
+impl Component for TabsComponent {
+    fn id(&self) -> &ComponentId {
+        &self.id
+    }
+    fn schema(&self) -> Vec<FieldSpec> {
+        vec![FieldSpec::text("labels", "Tab labels (comma-separated)").required()]
+    }
+    fn render_slint(
+        &self,
+        ctx: &RenderSlintContext<'_>,
+        props: &Value,
+        children: &[Node],
+        out: &mut SlintEmitter,
+    ) -> Result<(), RenderError> {
+        let labels = props.get("labels").and_then(|v| v.as_str()).unwrap_or("");
+        out.block("VerticalLayout", |out| {
+            out.prop_px("spacing", 0.0);
+            out.block("HorizontalLayout", |out| {
+                out.prop_px("spacing", 0.0);
+                for (i, label) in labels.split(',').enumerate() {
+                    let label = label.trim();
+                    if !label.is_empty() {
+                        out.block("Rectangle", |out| {
+                            out.prop_px("height", 32.0);
+                            out.prop_px("min-width", 80.0);
+                            if i == 0 {
+                                out.line("background: #2e3440;");
+                            } else {
+                                out.line("background: #1a1e28;");
+                            }
+                            out.block("Text", |out| {
+                                out.prop_string("text", label);
+                                out.prop_px("font-size", 13.0);
+                                out.line("horizontal-alignment: center;");
+                                out.line("vertical-alignment: center;");
+                                Ok(())
+                            })
+                        })?;
+                    }
+                }
+                Ok(())
+            })?;
+            out.block("VerticalLayout", |out| {
+                out.prop_px("padding", 12.0);
+                out.prop_px("spacing", 8.0);
+                ctx.render_children(children, out)
+            })
+        })
+    }
+}
+
+/// Collapsible section with a title. Renders as `<details>/<summary>` in HTML.
+pub struct AccordionComponent {
+    pub id: ComponentId,
+}
+
+impl Component for AccordionComponent {
+    fn id(&self) -> &ComponentId {
+        &self.id
+    }
+    fn schema(&self) -> Vec<FieldSpec> {
+        vec![
+            FieldSpec::text("title", "Section title").required(),
+            FieldSpec::boolean("open", "Initially open"),
+        ]
+    }
+    fn render_slint(
+        &self,
+        ctx: &RenderSlintContext<'_>,
+        props: &Value,
+        children: &[Node],
+        out: &mut SlintEmitter,
+    ) -> Result<(), RenderError> {
+        let title = props.get("title").and_then(|v| v.as_str()).unwrap_or("");
+        out.block("VerticalLayout", |out| {
+            out.prop_px("spacing", 4.0);
+            out.block("Rectangle", |out| {
+                out.prop_px("height", 32.0);
+                out.line("background: #2e3440;");
+                out.line("border-radius: 4px;");
+                out.block("Text", |out| {
+                    let display = format!("▸ {title}");
+                    out.prop_string("text", &display);
+                    out.prop_px("font-size", 14.0);
+                    out.line("font-weight: 600;");
+                    out.line("vertical-alignment: center;");
+                    Ok(())
+                })
+            })?;
+            out.block("VerticalLayout", |out| {
+                out.prop_px("padding-left", 16.0);
+                out.prop_px("spacing", 8.0);
+                ctx.render_children(children, out)
+            })
+        })
+    }
+}
+
 /// HTML `<button>`. Renders as `<button type="submit">text</button>`.
 pub struct ButtonComponent {
     pub id: ComponentId,
@@ -527,35 +768,6 @@ impl Component for ButtonComponent {
             FieldSpec::boolean("disabled", "Disabled"),
         ]
     }
-    fn render_html(
-        &self,
-        _ctx: &RenderHtmlContext<'_>,
-        props: &Value,
-        _children: &[Node],
-        out: &mut Html,
-    ) -> Result<(), RenderError> {
-        let text = props
-            .get("text")
-            .and_then(|v| v.as_str())
-            .unwrap_or("Submit");
-        let btn_type = props
-            .get("type")
-            .and_then(|v| v.as_str())
-            .unwrap_or("submit");
-        let disabled = props
-            .get("disabled")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        let mut attrs = vec![("type", btn_type)];
-        if disabled {
-            attrs.push(("disabled", "disabled"));
-        }
-        out.open_attrs("button", &attrs);
-        out.text(text);
-        out.close("button");
-        Ok(())
-    }
-
     fn render_slint(
         &self,
         _ctx: &RenderSlintContext<'_>,
@@ -588,7 +800,7 @@ impl Component for ButtonComponent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::render::{render_document_html, render_document_slint_source};
+    use crate::render::render_document_slint_source;
     use crate::BuilderDocument;
     use prism_core::design_tokens::DesignTokens;
     use serde_json::json;
@@ -607,124 +819,6 @@ mod tests {
     }
 
     #[test]
-    fn heading_respects_level_prop() {
-        let (reg, tokens) = setup();
-        let d = doc(Node {
-            id: "n".into(),
-            component: "heading".into(),
-            props: json!({ "text": "Prism", "level": 3 }),
-            children: vec![],
-        });
-        assert_eq!(
-            render_document_html(&d, &reg, &tokens).unwrap(),
-            "<h3>Prism</h3>"
-        );
-    }
-
-    #[test]
-    fn heading_defaults_to_h1() {
-        let (reg, tokens) = setup();
-        let d = doc(Node {
-            id: "n".into(),
-            component: "heading".into(),
-            props: json!({ "text": "Prism" }),
-            children: vec![],
-        });
-        assert_eq!(
-            render_document_html(&d, &reg, &tokens).unwrap(),
-            "<h1>Prism</h1>"
-        );
-    }
-
-    #[test]
-    fn text_renders_paragraph() {
-        let (reg, tokens) = setup();
-        let d = doc(Node {
-            id: "n".into(),
-            component: "text".into(),
-            props: json!({ "body": "Hello world" }),
-            children: vec![],
-        });
-        assert_eq!(
-            render_document_html(&d, &reg, &tokens).unwrap(),
-            "<p>Hello world</p>"
-        );
-    }
-
-    #[test]
-    fn link_href_is_attribute_escaped() {
-        let (reg, tokens) = setup();
-        let d = doc(Node {
-            id: "n".into(),
-            component: "link".into(),
-            props: json!({ "href": "/q?a=1&b=2", "text": "search" }),
-            children: vec![],
-        });
-        assert_eq!(
-            render_document_html(&d, &reg, &tokens).unwrap(),
-            r#"<a href="/q?a=1&amp;b=2">search</a>"#
-        );
-    }
-
-    #[test]
-    fn image_renders_void_tag() {
-        let (reg, tokens) = setup();
-        let d = doc(Node {
-            id: "n".into(),
-            component: "image".into(),
-            props: json!({ "src": "/a.png", "alt": "banner" }),
-            children: vec![],
-        });
-        assert_eq!(
-            render_document_html(&d, &reg, &tokens).unwrap(),
-            r#"<img src="/a.png" alt="banner">"#
-        );
-    }
-
-    #[test]
-    fn container_walks_children() {
-        let (reg, tokens) = setup();
-        let d = doc(Node {
-            id: "root".into(),
-            component: "container".into(),
-            props: json!({}),
-            children: vec![
-                Node {
-                    id: "n1".into(),
-                    component: "heading".into(),
-                    props: json!({ "text": "A", "level": 2 }),
-                    children: vec![],
-                },
-                Node {
-                    id: "n2".into(),
-                    component: "text".into(),
-                    props: json!({ "body": "B" }),
-                    children: vec![],
-                },
-            ],
-        });
-        assert_eq!(
-            render_document_html(&d, &reg, &tokens).unwrap(),
-            "<section><h2>A</h2><p>B</p></section>"
-        );
-    }
-
-    #[test]
-    fn xss_in_text_prop_is_escaped() {
-        let (reg, tokens) = setup();
-        let d = doc(Node {
-            id: "n".into(),
-            component: "heading".into(),
-            props: json!({ "text": "<script>alert(1)</script>" }),
-            children: vec![],
-        });
-        assert_eq!(
-            render_document_html(&d, &reg, &tokens).unwrap(),
-            "<h1>&lt;script&gt;alert(1)&lt;/script&gt;</h1>"
-        );
-    }
-
-    #[test]
     fn heading_schema_has_required_text_field() {
         let comp = HeadingComponent {
             id: "heading".into(),
@@ -737,60 +831,166 @@ mod tests {
     }
 
     #[test]
-    fn form_wraps_children_in_form_tag() {
+    fn register_builtins_seeds_seventeen_components() {
+        let (reg, _) = setup();
+        for id in [
+            "heading",
+            "text",
+            "link",
+            "image",
+            "container",
+            "form",
+            "input",
+            "button",
+            "card",
+            "code",
+            "divider",
+            "spacer",
+            "columns",
+            "list",
+            "table",
+            "tabs",
+            "accordion",
+        ] {
+            assert!(reg.get(id).is_some(), "missing component: {id}");
+        }
+    }
+
+    #[test]
+    fn card_schema_has_required_title() {
+        let comp = CardComponent { id: "card".into() };
+        let schema = comp.schema();
+        assert_eq!(schema[0].key, "title");
+        assert!(schema[0].required);
+    }
+
+    #[test]
+    fn divider_schema_is_empty() {
+        let comp = DividerComponent {
+            id: "divider".into(),
+        };
+        assert!(comp.schema().is_empty());
+    }
+
+    #[test]
+    fn slint_walker_renders_card() {
         let (reg, tokens) = setup();
         let d = doc(Node {
-            id: "f".into(),
-            component: "form".into(),
+            id: "c".into(),
+            component: "card".into(),
+            props: json!({ "title": "My Card", "body": "details" }),
+            children: vec![],
+        });
+        let source = render_document_slint_source(&d, &reg, &tokens).unwrap();
+        assert!(source.contains(r#"text: "My Card";"#));
+        assert!(source.contains(r#"text: "details";"#));
+    }
+
+    #[test]
+    fn slint_walker_renders_code() {
+        let (reg, tokens) = setup();
+        let d = doc(Node {
+            id: "c".into(),
+            component: "code".into(),
+            props: json!({ "code": "fn main() {}" }),
+            children: vec![],
+        });
+        let source = render_document_slint_source(&d, &reg, &tokens).unwrap();
+        assert!(source.contains(r#"text: "fn main() {}";"#));
+        assert!(source.contains("monospace"));
+    }
+
+    #[test]
+    fn slint_walker_renders_divider() {
+        let (reg, tokens) = setup();
+        let d = doc(Node {
+            id: "d".into(),
+            component: "divider".into(),
             props: json!({}),
-            children: vec![
-                Node {
-                    id: "i".into(),
-                    component: "input".into(),
-                    props: json!({ "name": "email", "type": "email", "placeholder": "you@example.com" }),
-                    children: vec![],
-                },
-                Node {
-                    id: "b".into(),
-                    component: "button".into(),
-                    props: json!({ "text": "Send" }),
-                    children: vec![],
-                },
-            ],
+            children: vec![],
         });
-        let html = render_document_html(&d, &reg, &tokens).unwrap();
-        assert!(html.starts_with(r#"<form method="post">"#));
-        assert!(html.contains(r#"<input type="email" name="email" placeholder="you@example.com">"#));
-        assert!(html.contains(r#"<button type="submit">Send</button>"#));
-        assert!(html.ends_with("</form>"));
+        let source = render_document_slint_source(&d, &reg, &tokens).unwrap();
+        assert!(source.contains("height: 1px;"));
     }
 
     #[test]
-    fn input_with_label() {
+    fn slint_walker_renders_spacer() {
         let (reg, tokens) = setup();
         let d = doc(Node {
-            id: "i".into(),
-            component: "input".into(),
-            props: json!({ "name": "user", "label": "Username", "required": true }),
+            id: "s".into(),
+            component: "spacer".into(),
+            props: json!({ "height": 48 }),
             children: vec![],
         });
-        let html = render_document_html(&d, &reg, &tokens).unwrap();
-        assert!(html.contains("<label>Username"));
-        assert!(html.contains(r#"required="required""#));
+        let source = render_document_slint_source(&d, &reg, &tokens).unwrap();
+        assert!(source.contains("height: 48px;"));
     }
 
     #[test]
-    fn button_disabled() {
+    fn slint_walker_renders_columns() {
         let (reg, tokens) = setup();
         let d = doc(Node {
-            id: "b".into(),
-            component: "button".into(),
-            props: json!({ "text": "Wait", "disabled": true }),
+            id: "cols".into(),
+            component: "columns".into(),
+            props: json!({ "gap": 24 }),
+            children: vec![Node {
+                id: "c1".into(),
+                component: "text".into(),
+                props: json!({ "body": "left" }),
+                children: vec![],
+            }],
+        });
+        let source = render_document_slint_source(&d, &reg, &tokens).unwrap();
+        assert!(source.contains("HorizontalLayout {"));
+        assert!(source.contains("spacing: 24px;"));
+    }
+
+    #[test]
+    fn slint_walker_renders_table() {
+        let (reg, tokens) = setup();
+        let d = doc(Node {
+            id: "t".into(),
+            component: "table".into(),
+            props: json!({ "headers": "Name, Age", "caption": "Users" }),
             children: vec![],
         });
-        let html = render_document_html(&d, &reg, &tokens).unwrap();
-        assert!(html.contains(r#"disabled="disabled""#));
-        assert!(html.contains("Wait"));
+        let source = render_document_slint_source(&d, &reg, &tokens).unwrap();
+        assert!(source.contains(r#"text: "Name";"#));
+        assert!(source.contains(r#"text: "Age";"#));
+        assert!(source.contains(r#"text: "Users";"#));
+    }
+
+    #[test]
+    fn slint_walker_renders_tabs() {
+        let (reg, tokens) = setup();
+        let d = doc(Node {
+            id: "t".into(),
+            component: "tabs".into(),
+            props: json!({ "labels": "Tab 1, Tab 2" }),
+            children: vec![],
+        });
+        let source = render_document_slint_source(&d, &reg, &tokens).unwrap();
+        assert!(source.contains(r#"text: "Tab 1";"#));
+        assert!(source.contains(r#"text: "Tab 2";"#));
+    }
+
+    #[test]
+    fn slint_walker_renders_accordion() {
+        let (reg, tokens) = setup();
+        let d = doc(Node {
+            id: "a".into(),
+            component: "accordion".into(),
+            props: json!({ "title": "FAQ", "open": true }),
+            children: vec![Node {
+                id: "a1".into(),
+                component: "text".into(),
+                props: json!({ "body": "answer" }),
+                children: vec![],
+            }],
+        });
+        let source = render_document_slint_source(&d, &reg, &tokens).unwrap();
+        assert!(source.contains("FAQ"));
+        assert!(source.contains(r#"text: "answer";"#));
     }
 
     #[test]

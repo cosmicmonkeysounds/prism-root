@@ -98,6 +98,12 @@ impl Workspace {
     pub fn shell_src_dir(&self) -> PathBuf {
         self.package("prism-shell").join("src")
     }
+
+    /// Source tree for Studio's own Rust code. Watched alongside
+    /// [`Self::shell_src_dir`] during `prism dev studio` hot-reload.
+    pub fn studio_src_dir(&self) -> PathBuf {
+        self.package("prism-studio").join("src-tauri").join("src")
+    }
 }
 
 fn is_prism_workspace_manifest(path: &Path) -> Result<bool> {

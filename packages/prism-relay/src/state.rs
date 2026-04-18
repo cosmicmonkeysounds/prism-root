@@ -6,7 +6,10 @@
 //! the HTTP server can scale across tokio worker threads without
 //! contention on a single owner.
 
-use prism_builder::{starter::register_builtins, BuilderDocument, ComponentRegistry, Node};
+use prism_builder::{
+    html_starter::register_html_builtins, starter::register_builtins, BuilderDocument,
+    ComponentRegistry, HtmlRegistry, Node,
+};
 use prism_core::design_tokens::{DesignTokens, DEFAULT_TOKENS};
 use serde_json::json;
 
@@ -17,6 +20,7 @@ use crate::portal::{Portal, PortalLevel, PortalMeta, PortalStore};
 pub struct AppState {
     pub portals: PortalStore,
     pub registry: ComponentRegistry,
+    pub html_registry: HtmlRegistry,
     pub tokens: DesignTokens,
 }
 
@@ -27,9 +31,12 @@ impl AppState {
     pub fn new() -> Self {
         let mut registry = ComponentRegistry::new();
         register_builtins(&mut registry).expect("builtin components must register");
+        let mut html_registry = HtmlRegistry::new();
+        register_html_builtins(&mut html_registry).expect("html builtins must register");
         Self {
             portals: PortalStore::new(),
             registry,
+            html_registry,
             tokens: DEFAULT_TOKENS,
         }
     }
@@ -119,7 +126,8 @@ mod tests {
     #[test]
     fn new_registers_builtins() {
         let state = AppState::new();
-        assert_eq!(state.registry.len(), 8);
+        assert_eq!(state.registry.len(), 17);
+        assert_eq!(state.html_registry.len(), 17);
         for id in [
             "heading",
             "text",
@@ -129,8 +137,21 @@ mod tests {
             "form",
             "input",
             "button",
+            "card",
+            "code",
+            "divider",
+            "spacer",
+            "columns",
+            "list",
+            "table",
+            "tabs",
+            "accordion",
         ] {
             assert!(state.registry.get(id).is_some(), "missing builtin: {id}");
+            assert!(
+                state.html_registry.get(id).is_some(),
+                "missing html builtin: {id}"
+            );
         }
     }
 

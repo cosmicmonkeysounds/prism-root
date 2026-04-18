@@ -1,9 +1,9 @@
 # prism-builder
 
-The Slint-native page builder that replaces Puck. **Phase 3 closed
-2026-04-15.** Owns the component-type registry, the document tree
-schema, two render targets (semantic HTML SSR + `.slint` DSL
-emitter), and the property-panel field factories.
+The Slint-native page builder that replaces Puck. Owns the
+component-type registry, the document tree schema, two independent
+render paths (Slint DSL + HTML SSR), and the property-panel field
+factories.
 
 ## Build & Test
 - `cargo build -p prism-builder`
@@ -12,114 +12,77 @@ emitter), and the property-panel field factories.
   path (`compile_slint_source` / `instantiate_document`) is
   available. `prism-shell` and `prism-studio` flip this on; the
   relay leaves it off so its dep graph stays Slint-free.
-- `cargo test -p prism-builder` — 45 unit tests (baseline).
+- `cargo test -p prism-builder` — 65 unit tests (baseline).
 - `cargo test -p prism-builder --features interpreter` — adds one
-  interpreter round-trip that compiles the walker's synthesized
-  source through `slint_interpreter::Compiler` (46 tests total).
+  interpreter round-trip (66 tests total).
 
 ## Public surface
 From `src/lib.rs`:
 
+### Slint side
 - `Component`, `ComponentId`, `RenderContext`, `RenderSlintContext`,
-  `RenderHtmlContext`, `RenderError` — the trait every renderable
-  block implements. `Component::schema` returns `Vec<FieldSpec>`;
-  `render_slint` emits `.slint` DSL into a shared `SlintEmitter`;
-  `render_html` emits HTML into an `Html` buffer. Both have safe
-  default impls (Rectangle / div-wrapper) so a bare `impl Component`
-  already walks without panicking.
-- `BuilderDocument`, `Node`, `NodeId` — the serializable document
-  tree Studio saves to disk.
+  `RenderError` — the Slint render trait. `Component::schema`
+  returns `Vec<FieldSpec>`; `render_slint` emits `.slint` DSL into
+  a shared `SlintEmitter`. Default impl emits a transparent
+  `Rectangle` wrapper.
 - `ComponentRegistry`, `RegistryError` — the DI entry point.
-  `register` is idempotent-per-id; `iter` walks the full catalog in
-  registration order.
-- `FieldSpec`, `FieldKind`, `NumericBounds`, `SelectOption`,
-  `FieldValue` — the property-panel field factories. Typed builders:
-  `text`, `textarea`, `number`, `integer`, `boolean`, `select`,
-  `color`, plus chainable `required()`, `with_default(Value)`, and
-  `with_help(&str)`. `FieldValue::read_{string,number,integer,boolean}`
-  pull values from a node's `props` with bounds clamping.
-- `Html`, `escape_text`, `escape_attr` — allocation-light HTML
-  builder used by `render_html` impls.
-- `SlintEmitter`, `SlintIdent` — `.slint` DSL emitter on top of
-  `prism_core::language::codegen::SourceBuilder`. `SlintEmitter`
-  exposes `line`, `blank`, `block`, `prop_string` (escaped),
-  `prop_px`, `prop_int`, `prop_float`, `prop_bool`, `prop_color`,
-  `build`. `SlintIdent::normalize` produces safe Slint identifiers.
-- `render_document_html(doc, registry, tokens) -> Result<String, _>`
-  — walks a document against a registry and returns a ready-to-serve
-  HTML fragment. `prism-relay` calls this per request.
-- `render_document_slint_source(doc, registry, tokens) -> Result<String, _>`
-  — walks the same document and returns a self-contained `.slint`
-  source string wrapping the walked tree in
-  `export component BuilderRoot inherits Window { … }`.
-- `compile_slint_source(source) -> Result<ComponentDefinition, _>`
-  and `instantiate_document(doc, registry, tokens) -> Result<ComponentInstance, _>`
-  — gated behind `interpreter`. Feeds the walker output into
-  `slint_interpreter::Compiler::build_from_source` via `spin_on`
-  (the async compile is synchronous as long as no file loader is
-  installed).
 - `starter::register_builtins(&mut ComponentRegistry)` — seeds the
-  shared five-component starter catalog (`heading`, `text`, `link`,
-  `image`, `container`). Both `prism-relay::AppState::new` and
-  `prism-shell::Shell::from_state` call this on boot; adding a new
-  default block means editing `src/starter.rs` once.
+  17-component Slint catalog.
+- `render_document_slint_source(doc, registry, tokens)` — walks a
+  document and returns a self-contained `.slint` source string.
+- `compile_slint_source` / `instantiate_document` — gated behind
+  `interpreter` feature.
+
+### HTML SSR side
+- `HtmlBlock`, `HtmlRegistry`, `HtmlRenderContext` — separate trait
+  + registry for HTML rendering. Decoupled from `Component` so the
+  relay's dep graph stays Slint-free.
+- `register_html_builtins(&mut HtmlRegistry)` — seeds the 17-block
+  HTML catalog (same component IDs as the Slint side).
+- `render_document_html(doc, html_registry, tokens)` — walks a
+  document against an `HtmlRegistry` and returns an HTML fragment.
+
+### Shared
+- `BuilderDocument`, `Node`, `NodeId` — the serializable document
+  tree.
+- `FieldSpec`, `FieldKind`, `NumericBounds`, `SelectOption`,
+  `FieldValue` — the property-panel field factories.
+- `Html`, `escape_text`, `escape_attr` — HTML builder.
+- `SlintEmitter`, `SlintIdent` — `.slint` DSL emitter.
 
 ## Architecture
-Seven modules in `src/`:
+Nine modules in `src/`:
 
-- `component.rs` — the `Component` trait + `RenderError` + two
-  context types (`RenderSlintContext` and `RenderHtmlContext`, each
-  with `render_child` / `render_children` helpers for layout-only
-  parents). Plus `RenderContext` — a simpler slot-free ctx kept as
-  the bridge for host-side code that wants typed values without
-  DSL generation.
-- `document.rs` — `BuilderDocument` + `Node` + `NodeId`. The
-  serializable tree Studio saves / loads.
-- `registry.rs` — `ComponentRegistry` backed by an `IndexMap` keyed
-  by `ComponentId`, plus the field-factory primitives (`FieldSpec`,
-  `FieldKind`, `NumericBounds`, `SelectOption`, `FieldValue`).
-  Register once at boot, look up by id at render time, walk the
-  iter to power palettes.
-- `html.rs` — `Html` buffer + `escape_text` / `escape_attr`. Thin
-  wrapper around `String` with `open` / `open_attrs` / `close` /
-  `void` / `text` / `raw` / `doctype` helpers.
-- `slint_source.rs` — `SlintEmitter` wrapping `SourceBuilder`
-  (4-space indent), `SlintIdent::normalize`, `escape_slint_string`,
-  `rgba_to_slint_literal`. The DSL emitter every `render_slint`
-  impl writes into.
-- `render.rs` — document-level walkers: `render_document_html`,
-  `render_document_slint_source`, and (behind `interpreter`)
-  `compile_slint_source` + `instantiate_document` +
-  `InstantiateError`.
-- `starter.rs` — the five built-in components + `register_builtins`.
-  Shared between the shell and the relay.
+- `component.rs` — the `Component` trait (Slint-only) + `RenderError`
+  + `RenderSlintContext` / `RenderContext`.
+- `html_block.rs` — the `HtmlBlock` trait + `HtmlRegistry` +
+  `HtmlRenderContext`. Independent from `component.rs`.
+- `html_starter.rs` — 17 built-in HTML blocks + `register_html_builtins`.
+- `document.rs` — `BuilderDocument` + `Node` + `NodeId`.
+- `registry.rs` — `ComponentRegistry` + field-factory primitives.
+- `html.rs` — `Html` buffer + escape helpers.
+- `slint_source.rs` — `SlintEmitter` wrapping `SourceBuilder`.
+- `render.rs` — document-level walkers: `render_document_html`
+  (uses `HtmlRegistry`), `render_document_slint_source` (uses
+  `ComponentRegistry`), plus `compile_slint_source` /
+  `instantiate_document` behind `interpreter`.
+- `starter.rs` — 17 built-in Slint components + `register_builtins`.
 
 ## Adding a new block type
-Contributors go through the registry. Do not hand-wire a `Node`,
-stash a block factory in a module-level static, or duplicate a
-component in a downstream crate.
 
-1. Add a struct implementing `Component` (usually in
-   `src/starter.rs` if the block should ship by default).
-2. Decide the component's `ComponentId` (stable string, versioned
-   when the props shape changes).
-3. Implement `schema` using `FieldSpec` builders — never hand-roll
-   the `FieldKind`/`NumericBounds` enums inline; the builders
-   preserve default/required invariants.
-4. Implement `render_html` and `render_slint`. Reuse the context
-   helpers (`ctx.render_children`) for layout-only slots.
-5. Register it: either in `starter::register_builtins` (default
-   catalog) or via a host-side `ComponentRegistry::register` call.
-6. Add unit tests alongside the component — both targets should
-   round-trip through `render_document_html` and
-   `render_document_slint_source`.
+1. Add a struct implementing `Component` in `src/starter.rs` (Slint
+   rendering).
+2. Add a struct implementing `HtmlBlock` in `src/html_starter.rs`
+   (HTML SSR). Use the same `ComponentId`.
+3. Implement `schema` using `FieldSpec` builders.
+4. Implement `render_slint` and `render_html` on their respective
+   traits.
+5. Register in both `register_builtins` and `register_html_builtins`.
+6. Add unit tests — Slint tests in `starter.rs`, HTML tests in
+   `html_starter.rs`.
 
 ## Dependencies
 - `prism-core` — `design_tokens`, `language::codegen::SourceBuilder`.
 - `slint` / `slint-interpreter` / `spin_on` — optional, behind the
-  `interpreter` feature. Used only by `render::compile_slint_source`
-  and `render::instantiate_document`. The relay keeps the feature
-  off so its dep graph stays Slint-free.
-- No hard dep on `prism-shell` or `prism-relay`: both of those
-  depend on `prism-builder`, not the other way around. Keep the
-  graph that direction.
+  `interpreter` feature. The relay keeps it off.
+- No hard dep on `prism-shell` or `prism-relay`.
