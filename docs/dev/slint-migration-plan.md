@@ -23,11 +23,15 @@ closed 2026-04-15** — every leaf subtree the Slint migration put on
 `prism-core`'s plate (`foundation`, `identity`, `language`, `kernel::{store,
 state_machine, config}`, `interaction::{notification, activity, query}`)
 is ported and green under `cargo test -p prism-core` (655 tests, clippy
-clean). The residual Phase 2 surface — the ADR-002 `kernel` orchestration
-kit (`actor`, `automation`, `intelligence`, `plugin`, `plugin_bundles`,
-`builder`, `initializer`), plus the `network` and `domain` categories —
-is **deferred to Phase 2b** and unblocks Phase 3 work in parallel (Phase
-3's critical path depends only on what already landed). Phase 3 is the
+clean). **Phase 2b closed 2026-04-15** as well — the ADR-002 `kernel`
+orchestration kit (`actor`, `intelligence`, `automation`, `plugin`,
+`plugin_bundles`, `builder`, `initializer`) and its `PrismKernel`
+wiring layer landed, alongside the `domain` subtree (`flux`, `timeline`,
+`graph_analysis`) and the `statig` rewrite of `kernel::state_machine::tool`.
+`cargo test -p prism-core --lib` now runs 897+ unit tests green. The
+`network` subtree is the one residual 2b surface still porting in the
+background; it does not gate anything else because `prism-relay`
+consumes `prism_builder::render_document_html` directly. Phase 3 is the
 active porting surface. Rust workspace scaffolded; `prism-daemon`,
 `prism-cli`, and `prism-relay` shipping; `prism-core` closed on its
 Phase-2a scope; `prism-builder`, `prism-shell` under active port.
@@ -255,40 +259,90 @@ bucketing, and the pure filter/sort/group pipeline over `GraphObject`.
 clean under `-D warnings`. `cargo test --workspace` is the check the
 CI loop runs.
 
-### 6.2 Phase 2b — pending
+### 6.2 Phase 2b — landed (2026-04-15)
 
-Four surfaces remain on the Phase 2 plate. None are on Phase 3's
-critical path, so they run in parallel with the builder/shell port:
+Phase 2b closed the residual Phase-2 surface. None of it was on
+Phase 3's critical path, so it ran in parallel with the builder/shell
+port.
 
-1. **`kernel` orchestration kit** (ADR-002 §Part C) — `actor`
-   (ProcessQueue, ActorRuntime), `intelligence` (`AiProviderRegistry`,
-   `ContextBuilder`, providers — split out of the legacy `actor/`
-   folder), `automation` (trigger/condition/action engine), `plugin` +
-   `plugin_bundles` (registry + bundles, renamed from the legacy
-   `plugin` / `plugins` pair), `builder` (the `BuildExecutor`-backed
-   page build manager, not to be confused with `prism-builder` the
-   crate), `initializer` (the initializer pattern). The big consumer is
-   `PrismKernel` — the canonical wiring layer extracted from the old
-   `studio-kernel.ts`, which owns every framework-agnostic orchestration
-   singleton (ObjectRegistry, CollectionStore, PrismBus, AtomStore,
-   UndoRedoManager, NotificationStore, SearchEngine, ActivityStore,
-   ConfigModel, PresenceManager, AutomationEngine, PluginRegistry,
-   InputRouter, VaultRoster, Identity, VfsManager, Trust, Facet system,
-   LensRegistry, DesignTokenRegistry).
-2. **`network`** — relay manager + peer/protocol plumbing (ADR-002
-   §Part B). The Sovereign Portal SSR path in `prism-relay` does not
-   depend on this; it consumes `prism_builder::render_document_html`
-   directly.
-3. **`domain`** — app-level content and domain entities (ADR-002 §Part
-   B). This is where Studio's `entities.ts` lands.
-4. **`kernel::state_machine::tool`** — the `statig`-backed rewrite of
-   the xstate tool mode FSM. A design pass happens before porting.
+1. ✅ **`kernel` orchestration kit** (ADR-002 §Part C). All seven
+   subtrees landed:
+   - ✅ `kernel::actor` — `ProcessQueue` + `ActorRuntime` trait +
+     `TestRuntime`, synchronous `process_next` / `process_all` (Rust
+     deviation from TS async), per-runtime `CapabilityScope` allow-lists,
+     priority queue, subscription bus. 14 unit tests.
+   - ✅ `kernel::intelligence` — `AiProviderRegistry` +
+     `AiProvider` trait + `OllamaProvider` / `ExternalProvider` /
+     `TestAiProvider` + `AiHttpClient` trait + `ContextBuilder`. Split
+     out of the legacy `actor/` folder per ADR-002 §Part C. 11 unit
+     tests.
+   - ✅ `kernel::automation` — trigger / condition / action engine.
+     `AutomationEngine::new(store, handlers, options)` takes
+     host-supplied `Arc<dyn AutomationStore>` + handler map, so it is
+     **not** wired into `PrismKernel` by default. `DelaySleeper` trait
+     (`SystemSleeper` + `FakeSleeper`), path-walking condition evaluator,
+     `{{…}}` template interpolation, cron-style `tick(now_ms)`. 24 unit
+     tests.
+   - ✅ `kernel::plugin` — `PluginRegistry` wraps four inner
+     `ContributionRegistry<T>` buckets (views / commands / keybindings /
+     context menus) with synchronous listener buses. `PrismPlugin` trait
+     + idempotent-by-id registration. 7 unit tests.
+   - ✅ `kernel::plugin_bundles` — six built-in bundles (`work` /
+     `finance` / `crm` / `life` / `assets` / `platform`) + `flux_types`
+     submodule, `PluginInstallContext<'a>` fan-out helper,
+     `create_builtin_bundles()` + `install_plugin_bundles()`. 8 unit
+     tests.
+   - ✅ `kernel::builder` — `BuilderManager` + `AppProfile` +
+     `BuildPlan` + `BuildStep` + `BuildTarget`. Two concrete
+     `BuildExecutor` impls: `DryRunExecutor` + `CallbackExecutor` (the
+     latter wraps an IPC closure for hosts talking to `prism-daemon`).
+     Six builtin profiles (studio / flux / lattice / cadence / grip /
+     relay) via `BuiltInProfileId`. `materialize_starter_app` seeds a
+     fresh workspace's app-shell + page-shell + route tree from a
+     `StarterAppTemplate`. Not to be confused with the `prism-builder`
+     crate. 22 unit tests.
+   - ✅ `kernel::initializer` — `KernelInitializer<TKernel>` generic
+     trait, `install_initializers(&[...], kernel) -> Disposer`, composite
+     reverse-order teardown, `noop_disposer()`. 3 unit tests.
 
-Phase 2b does **not** block Phase 3. The Slint walker (`slint-interpreter`
+   The big consumer, ✅ `kernel::prism_kernel::PrismKernel`, landed as
+   the canonical wiring layer — a **narrowed** port of `studio-kernel.ts`
+   (the legacy 2431-line class). It composes only framework-free
+   Layer-1 primitives: `ObjectRegistry`, `PluginRegistry`,
+   `ConfigRegistry` + `ConfigModel` + `FeatureFlags`, `NotificationStore`,
+   `ActivityStore`, `BuilderManager`, `ProcessQueue`,
+   `AiProviderRegistry`. `PrismKernelOptions` knobs let hosts swap the
+   config registry, skip the six built-in bundles, override the build
+   executor, or inject extra app profiles. `PrismKernel` is
+   **single-threaded by design** (`ConfigModel` / `FeatureFlags` /
+   `ActivityStore` are `!Send` — matches the TS main-thread invariant).
+   Intentional omissions: `CollectionStore` (gated on the `crdt` feature,
+   host-owned), `AutomationEngine` (host supplies store + handlers),
+   domain engines (stateless / per-document), and `network::*` (composes
+   differently per host). Puck / Lens / React / Tauri wiring stays out
+   of `prism-core` entirely and lives in `prism-shell` + the studio host
+   crate. 10 unit tests.
+2. ✅ **`domain`** — app-level content and domain entities (ADR-002
+   §Part B). `domain::flux` (Flux registry, 11 entity + 7 edge + 8
+   automation-preset defs, CSV / JSON export/import, 38 tests),
+   `domain::timeline` (pure-data NLE / show-control engine with
+   `TempoMap` + `ManualClock` + transport / track / clip / automation /
+   marker CRUD, 67 tests), `domain::graph_analysis` (dependency graphs,
+   Kahn topo sort, cycle detection, BFS impact analysis, CPM forward /
+   backward pass, 30 tests).
+3. ✅ **`kernel::state_machine::tool`** — the `statig`-backed rewrite
+   of the xstate tool-mode FSM.
+4. 🚧 **`network`** — relay manager + peer / protocol plumbing (ADR-002
+   §Part B). Port in progress; tracked separately from the rest of
+   Phase 2b because the Sovereign Portal SSR path in `prism-relay` does
+   not depend on it (it consumes `prism_builder::render_document_html`
+   directly), so the residual network work does not gate anything else.
+
+Phase 2b did **not** block Phase 3. The Slint walker (`slint-interpreter`
 on top of `prism-builder`'s `render_slint`), the Studio panel ports,
 and the property panel + field factories all depend on `language::*`,
 `kernel::store`, `kernel::config`, and `interaction::*` — all of which
-are already green.
+were already green before Phase 2b began.
 
 ### 6.1 Kernel store — zustand replacement
 
@@ -573,3 +627,40 @@ cdylibs) are re-added as Phase 0 spike tasks when the
   full-moon Rust port in Phase 4; mlua execution already lives in
   `prism-daemon::modules::luau_module` so no parser is needed at
   runtime.
+- **2026-04-15** — **Phase 2b closed** (modulo the `network` subtree,
+  which is porting on a background track and gates nothing). The
+  ADR-002 §Part C `kernel` orchestration kit landed end-to-end:
+  `kernel::actor` (14 tests) — `ProcessQueue` + `ActorRuntime` trait +
+  `CapabilityScope`; `kernel::intelligence` (11 tests) — split off
+  the legacy `actor/` folder with `AiProviderRegistry` + three providers
+  (`OllamaProvider` / `ExternalProvider` / `TestAiProvider`) behind an
+  `AiHttpClient` trait, plus `ContextBuilder`; `kernel::automation`
+  (24 tests) — trigger / condition / action engine with host-supplied
+  `AutomationStore` + `ActionHandler`s, path-walking condition
+  evaluator, `{{…}}` interpolation, cron-style `tick`; `kernel::plugin`
+  (7 tests) — `PluginRegistry` over four `ContributionRegistry<T>`
+  buckets; `kernel::plugin_bundles` (8 tests) — six built-in bundles
+  (work / finance / crm / life / assets / platform) plus `flux_types`
+  and `PluginInstallContext<'a>` fan-out; `kernel::builder` (22 tests)
+  — `BuilderManager` + `AppProfile` + `BuildPlan` with `DryRunExecutor`
+  / `CallbackExecutor` impls of the `BuildExecutor` trait, six built-in
+  profiles, and `materialize_starter_app`; `kernel::initializer`
+  (3 tests) — `KernelInitializer<TKernel>` generic trait with composite
+  reverse-order disposer. `kernel::prism_kernel::PrismKernel` landed
+  on top (10 tests) as a **narrowed** port of the legacy 2431-line
+  `studio-kernel.ts` — it composes only framework-free Layer-1
+  primitives (`ObjectRegistry`, `PluginRegistry`, `ConfigRegistry` +
+  `ConfigModel` + `FeatureFlags`, `NotificationStore`, `ActivityStore`,
+  `BuilderManager`, `ProcessQueue`, `AiProviderRegistry`) and is
+  single-threaded by design (`ConfigModel` / `FeatureFlags` /
+  `ActivityStore` are `!Send`, matching the TS main-thread invariant).
+  Intentional omissions: `CollectionStore` (gated on the `crdt` feature,
+  host-owned), `AutomationEngine` (requires host-supplied store +
+  handlers), domain engines (stateless / per-document), and `network::*`
+  (composes differently per host). Puck / Lens / React / Tauri wiring
+  stays out of `prism-core` and lives in `prism-shell` + the studio
+  host crate. The `domain` subtree landed alongside: `domain::flux`
+  (38 tests), `domain::timeline` (67 tests), `domain::graph_analysis`
+  (30 tests). `kernel::state_machine::tool` landed as the `statig`
+  rewrite of the xstate tool-mode FSM. `cargo test -p prism-core --lib`
+  now runs 897+ tests green under `-D warnings`.

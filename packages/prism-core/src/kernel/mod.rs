@@ -20,25 +20,30 @@
 //!   `FeatureFlags` bound to the model via the `on_change` bus. Ports
 //!   `kernel/config/*` from the legacy TS tree.
 //!
-//! **Phase 2b — pending.** The ADR-002 §Part C `PrismKernel`
-//! orchestration kit has not landed yet: `actor` (ProcessQueue,
-//! ActorRuntime), `intelligence` (AI provider registry + context
-//! builder, split out of the legacy `actor/`), `automation`
-//! (trigger/condition/action engine), `plugin` + `plugin_bundles`,
-//! `builder` (`BuildExecutor`-backed page build manager), and
-//! `initializer`. None are on Phase 3's critical path, so they run in
-//! parallel with the builder/shell port.
+//! Phase 2b (ADR-002 §Part C) landed the orchestration kit on top:
+//! `actor` (ProcessQueue + ActorRuntime trait), `intelligence` (AI
+//! provider registry + context builder), `automation`
+//! (trigger/condition/action engine), `plugin` + `plugin_bundles`
+//! (contribution fan-out + six built-in bundles), `builder`
+//! (`BuildExecutor`-backed profile/plan manager), `initializer`
+//! (self-installing startup hooks), and the [`PrismKernel`] struct
+//! itself — the canonical composition that wires all of the above
+//! into a single handle for hosts to hand around.
 
 pub mod actor;
 pub mod automation;
+pub mod builder;
 pub mod config;
 pub mod initializer;
 pub mod intelligence;
 pub mod plugin;
+pub mod plugin_bundles;
+pub mod prism_kernel;
 pub mod state_machine;
 pub mod store;
 
 pub use initializer::{
     install_initializers, noop_disposer, Disposer, KernelInitializer, KernelInitializerContext,
 };
+pub use prism_kernel::{PrismKernel, PrismKernelOptions};
 pub use store::{Action, Store, Subscription};

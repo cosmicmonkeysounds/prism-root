@@ -43,21 +43,31 @@
 //!   date-bucketing), and `query` (filter / sort / group pipeline
 //!   over `GraphObject`). The legacy `ViewMode` enum is deliberately
 //!   not ported — every view is a `prism_builder::Component`.
+//! - [`domain`]       — Layer-1 application domains ported from
+//!   `@prism/core/domain/*`: `flux` (Flux life-OS entity / edge /
+//!   automation registry + CSV / JSON import-export), `timeline`
+//!   (pure-data NLE / show-control engine with `TempoMap`,
+//!   `ManualClock`, transport / track / clip / automation / marker
+//!   CRUD, and an event bus), and `graph_analysis` (topological sort,
+//!   cycle detection, blocking-chain / impact-analysis BFS, and CPM
+//!   `compute_plan`).
 //!
 //! Phase 2b (see `docs/dev/slint-migration-plan.md` §6.2) is the
 //! residual port scope: the ADR-002 `kernel` orchestration kit
 //! (`actor`, `automation`, `intelligence`, `plugin`, `plugin_bundles`,
 //! `builder`, `initializer`) that `PrismKernel` will compose, plus
-//! `network`, `domain`, and the `statig` rewrite of the xstate tool
-//! machine. None are on Phase 3's critical path.
+//! `network` and the `statig` rewrite of the xstate tool machine.
+//! None are on Phase 3's critical path.
 
 pub mod boot_config;
 pub mod design_tokens;
+pub mod domain;
 pub mod foundation;
 pub mod identity;
 pub mod interaction;
 pub mod kernel;
 pub mod language;
+pub mod network;
 pub mod shell_mode;
 
 pub use boot_config::{BootConfig, DEFAULT_BOOT_CONFIG};
