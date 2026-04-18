@@ -33,13 +33,14 @@ thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
+# Time + encoding (used by route handlers and persistence).
+chrono = { workspace = true }
+base64 = { workspace = true }
+
 # CLI parsing for the `prism-relayd` binary.
 clap = { version = "4", features = ["derive"] }
 
 [dev-dependencies]
-# `tower::ServiceExt::oneshot` lets integration tests drive the router
-# without a real TCP socket.
 tower = { workspace = true, features = ["util"] }
-# `hyper`'s `body_util` helpers + http-body-util give us a clean way
-# to collect response bodies in tests.
 http-body-util = "0.1"
+tempfile = { workspace = true }

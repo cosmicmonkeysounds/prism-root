@@ -31,9 +31,12 @@
 //! into a single handle for hosts to hand around.
 
 pub mod actor;
+pub mod atom;
 pub mod automation;
 pub mod builder;
 pub mod config;
+#[cfg(feature = "crdt")]
+pub mod crdt_sync;
 pub mod initializer;
 pub mod intelligence;
 pub mod plugin;
@@ -42,6 +45,7 @@ pub mod prism_kernel;
 pub mod state_machine;
 pub mod store;
 
+pub use atom::{select, select_ref, Atom, AtomSubscription, SharedAtom};
 pub use initializer::{
     install_initializers, noop_disposer, Disposer, KernelInitializer, KernelInitializerContext,
 };

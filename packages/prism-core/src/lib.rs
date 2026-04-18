@@ -72,5 +72,8 @@ pub mod shell_mode;
 
 pub use boot_config::{BootConfig, DEFAULT_BOOT_CONFIG};
 pub use design_tokens::DesignTokens;
+pub use kernel::atom::{select, select_ref, Atom, AtomSubscription, SharedAtom};
+#[cfg(feature = "crdt")]
+pub use kernel::crdt_sync::{CrdtSync, SyncEvent, SyncSubscription};
 pub use kernel::{Action, Store, Subscription};
 pub use shell_mode::{Permission, ShellMode, ShellModeContext};

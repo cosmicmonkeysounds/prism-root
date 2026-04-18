@@ -1,189 +1,203 @@
 # prism-relay
 
-Rust-native relay server — the **Sovereign Portal** host. Built on
-`axum` + `tower` + `tokio`, it publishes portals as real server-rendered
-HTML (SEO-friendly, no JS required for L1), rendered through the same
+Rust-native relay server — **Sovereign Portal** host + full 17-module
+relay protocol. Built on `axum` + `tower` + `tokio`, it serves ~80 HTTP
+endpoints, a WebSocket relay protocol, and SSR portals through the same
 `prism-builder` component registry the Studio uses.
 
-> **Status:** Rust rewrite landed 2026-04-15. The legacy Hono JSX SSR
-> code (`@prism/relay`, the 17-module plugin system, vitest/playwright
-> suites) was ripped out of this folder and replaced with the Rust
-> crate documented below. The old 17-module feature surface (federation,
-> ACME, webhooks, admin dashboard, …) is tracked as a follow-on
-> checklist at the bottom — the skeleton only implements L1 portals +
-> SEO today.
+> **Status:** Full 17-module feature surface ported from the legacy Hono
+> JSX relay (2026-04-18). The composable module system lives in
+> `prism-core::network::relay`; the HTTP/WS surface lives here.
 
 ## Build & Test
 - `cargo build -p prism-relay` — lib + `prism-relayd` bin.
-- `cargo run -p prism-relay --bin prism-relayd -- --bind 127.0.0.1:1420`
-  — start the server.
-- `cargo test -p prism-relay` — 19 unit tests + 8 integration tests
-  (HTTP requests driven through `tower::ServiceExt::oneshot`, no TCP
-  listener needed) + 1 doctest.
-- Everything is also reachable through the unified CLI:
-  `cargo run -p prism-cli -- dev relay` and
+- `cargo run -p prism-relay --bin prism-relayd -- --bind 127.0.0.1:1420 --mode dev`
+  — start the server with all 17 modules.
+- `cargo test -p prism-relay` — 21 unit tests + 8 integration tests.
+- `cargo clippy -p prism-relay -- -D warnings` — zero warnings.
+- Also reachable via: `cargo run -p prism-cli -- dev relay` and
   `cargo run -p prism-cli -- build --target relay`.
 
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────┐
-│  AppState                                    │
-│  ├── PortalStore  (RwLock<HashMap>)          │
-│  ├── ComponentRegistry  (from prism-builder) │
-│  └── DesignTokens       (from prism-core)    │
-└──────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────┐
+│  FullRelayState                                      │
+│  ├── RelayInstance (17 modules via RelayBuilder)      │
+│  ├── RelayConfig (mode/env/CLI)                      │
+│  ├── RequestMetrics (Prometheus)                     │
+│  └── RateLimiter (token-bucket per IP)               │
+└──────────────────────────────────────────────────────┘
                     │
                     ▼
-        build_router(Arc<AppState>)
+        build_full_router(Arc<FullRelayState>)
                     │
-                    ▼
-   axum::Router ── tower::ServiceBuilder ── tokio::net::TcpListener
-                    │
-                    ▼
-         prism_builder::render_document_html
-                    │
-                    ▼
-            real semantic HTML
+         ┌──────────┼──────────┐
+         ▼          ▼          ▼
+    /api/*      /ws        SSR pages
+   (~80 routes)  (relay     (portals,
+                 protocol)   sitemap,
+                             robots)
 ```
 
-- **No webview, no JSX, no Hono.** The old relay rendered portals with
-  Hono's `jsxImportSource: "hono/jsx"`. The new one calls
-  `prism_builder::render_document_html(doc, registry, tokens)` — the
-  same `Component::render_html` trait the Studio will eventually share
-  for its WASM web target.
-- **Slint is not involved on the server side.** Slint is a pixel-oriented
-  client renderer driving `femtovg`/wgpu in Studio and `<canvas>` in the
-  browser build — the markup it produces is meaningless to crawlers. The
-  Sovereign Portal path is a completely separate semantic-HTML render
-  target living in `prism_builder::html` + `prism_builder::render` +
-  each component's `render_html` impl. The relay never pulls in
-  `slint` or `slint-interpreter`.
-- **Component trait is two-target.** `prism_builder::Component` now
-  carries `render_slint` (stub → `Value`, filled in later by Studio
-  once `slint-interpreter` materialises the runtime tree) and
-  `render_html` (live — default impl wraps children in
-  `<div data-component="…">`). Five built-in components ship with the
-  relay: `heading`, `text`, `link`, `image`, `container`.
-- **Portal levels.** Only L1 (static read-only HTML) is implemented in
-  the skeleton. L2–L4 (live patching / forms / hydration) land as
-  follow-on work — the routing + render layer already has the seams.
+Two routers coexist:
+- `build_full_router` — the complete relay (API + WS + admin + metrics + ACME).
+  Used by `prism-relayd` in production.
+- `build_router` — the original SSR-only router (portals + SEO).
+  Used by integration tests and any consumer that only needs L1 portals.
 
-## Routes
+### Modules (server-side)
 
-| Method | Path | Status | Description |
-|---|---|---|---|
-| GET | `/healthz` | ✅ | 200 `OK`, for load balancers |
-| GET | `/` | ✅ | Portal index (lists public portals) |
-| GET | `/portals` | ✅ | Same as `/` — canonical alias |
-| GET | `/portals/:id` | ✅ | Renders a single portal as HTML. 404 if private or missing |
-| GET | `/sitemap.xml` | ✅ | Auto-generated XML sitemap from public portals |
-| GET | `/robots.txt` | ✅ | Allows `/portals/`, disallows `/api/` |
+| Module | Description |
+|---|---|
+| `config` | `RelayConfig` with `RelayMode` (Server/P2p/Dev), env var overrides, mode-specific defaults |
+| `middleware` | CSRF (`X-Prism-CSRF: 1`), token-bucket rate limiting, body size limit, request metrics |
+| `persistence` | `RelayState` + `FileStore` — JSON file-based state persistence |
+| `relay_state` | `FullRelayState` — wires all 17 `prism-core` relay modules via `RelayBuilder`, typed capability accessors |
+| `router` | `build_full_router` — wires all API routes + WS + middleware into a single `axum::Router` |
+| `routes/` | 25 route modules covering the full API surface |
+| `ws` | WebSocket relay protocol (auth, envelope, collect, ping, sync, hashcash, presence) |
+| `ssr_routes` | Original SSR portal router (`build_router`) |
 
-All handlers render through `render_document_html`, which walks the
-portal's `Node` tree and dispatches each `Node::Component` into the
-registered component's `render_html` method. Unknown component ids
-return `RenderError::UnknownComponent(id)` — propagated to the HTTP
-layer as `500 Internal Server Error` so crawlers and admins both see
-the failure loud.
+## API Routes
 
-## Modules
+### Status & Admin
+| Method | Path | Handler |
+|---|---|---|
+| GET | `/api/status` | Relay status + DID + module list |
+| GET | `/api/modules` | Module enumeration |
+| GET | `/api/health` | Health check with uptime + peer count |
+| GET | `/admin` | Admin dashboard (HTML) |
+| GET | `/admin/api/snapshot` | Admin metrics snapshot |
+| GET | `/metrics` | Prometheus text format |
 
-- `components` — five built-in `Component` impls: `HeadingComponent`
-  (maps `level 1..=6` → `<h1>`..`<h6>`), `TextComponent` (`<p>`),
-  `LinkComponent` (`<a href>` with attribute escape), `ImageComponent`
-  (`<img src alt>`, self-closing), `ContainerComponent`
-  (`<div class="prism-container">` with child walk). `register_builtins`
-  installs all five.
-- `portal` — `PortalLevel` enum (L1–L4), `PortalMeta`, `Portal`,
-  `PortalStore` (a `RwLock<HashMap<PortalId, Portal>>`). Methods:
-  `upsert`, `get`, `list`, `list_public` (filtered + sorted by id).
-- `routes` — `build_router(Arc<AppState>) -> Router`. All page builders
-  (`portal_index_page`, `portal_detail_page`, `sitemap_xml`) are
-  free functions with their own unit tests so the SSR layer can be
-  exercised without a running HTTP stack.
-- `state` — `AppState { portals, registry, tokens }`. `AppState::new`
-  wires the registry with `components::register_builtins`;
-  `AppState::with_sample_portals` additionally seeds a public
-  `welcome` portal (container → heading + text + link) and a private
-  `draft` portal so tests have real content to crawl.
-- `bin/prism_relayd.rs` — clap CLI with `--bind <addr>` (default
-  `127.0.0.1:1420`), `tokio::main`, `tracing_subscriber::fmt`, and
-  `axum::serve` with `with_sample_portals`.
+### Portals & Collections
+| Method | Path | Handler |
+|---|---|---|
+| GET/POST | `/api/portals` | List / create portals |
+| GET/DELETE | `/api/portals/{id}` | Get / delete portal |
+| GET | `/api/portals/{id}/export` | Export portal + snapshot |
+| GET/POST | `/api/collections` | List / create collections |
+| GET/POST | `/api/collections/{id}/snapshot` | Export / import CRDT snapshot |
+| DELETE | `/api/collections/{id}` | Delete collection |
+| GET/POST/PUT/DELETE | `/api/rest/{collection_id}[/{object_id}]` | AutoREST gateway |
 
-## SEO
+### Auth
+| Method | Path | Handler |
+|---|---|---|
+| POST | `/api/auth/password/register` | PBKDF2-SHA256 registration |
+| POST | `/api/auth/password/login` | Password login |
+| POST | `/api/auth/password/change` | Change password |
+| GET/DELETE | `/api/auth/password/user/{username}` | Get / delete user |
+| GET | `/api/auth/providers` | OAuth provider list (stub) |
 
-- `<title>` + `<meta name="description">` pulled from `PortalMeta`.
-- OpenGraph and Twitter Card metadata get added as the render layer
-  grows — the portal skeleton exposes `PortalMeta { title, description,
-  og_image, published_at }` already.
-- `/sitemap.xml` iterates `PortalStore::list_public()` and emits one
-  `<url>` per public portal.
-- `/robots.txt` is static text — `User-agent: *`, `Allow: /portals/`,
-  `Disallow: /api/`, `Sitemap: /sitemap.xml`.
+### Webhooks & Tokens
+| Method | Path | Handler |
+|---|---|---|
+| GET/POST | `/api/webhooks` | List / create webhooks |
+| DELETE | `/api/webhooks/{id}` | Delete webhook |
+| GET | `/api/webhooks/{id}/deliveries` | Delivery history |
+| POST | `/api/webhooks/{id}/test` | Test fire |
+| GET | `/api/tokens` | List capability tokens |
+| POST | `/api/tokens/issue` | Issue token |
+| POST | `/api/tokens/verify` | Verify token |
+| POST | `/api/tokens/revoke` | Revoke token |
+
+### Trust & Safety
+| Method | Path | Handler |
+|---|---|---|
+| GET | `/api/trust` | List peer reputations |
+| GET | `/api/trust/{did}` | Get peer trust score |
+| POST | `/api/trust/{did}/ban` | Ban peer |
+| POST | `/api/trust/{did}/unban` | Unban peer |
+| POST | `/api/safety/report` | Report content |
+| GET | `/api/safety/hashes` | List flagged hashes |
+| POST | `/api/safety/hashes/import` | Import flagged hashes |
+| POST | `/api/safety/hashes/check` | Check hashes |
+| POST | `/api/safety/hashes/gossip` | Gossip flagged hashes |
+
+### Federation & Escrow
+| Method | Path | Handler |
+|---|---|---|
+| POST | `/api/federation/announce` | Announce relay |
+| GET | `/api/federation/peers` | List federation peers |
+| POST | `/api/federation/forward` | Forward envelope |
+| POST | `/api/federation/sync` | Receive sync |
+| POST | `/api/escrow/deposit` | Create escrow deposit |
+| POST | `/api/escrow/claim` | Claim deposit |
+| GET | `/api/escrow/{depositor_id}` | List deposits |
+
+### Signaling & Presence
+| Method | Path | Handler |
+|---|---|---|
+| GET | `/api/signaling/rooms` | List WebRTC rooms |
+| GET | `/api/signaling/rooms/{room_id}/peers` | Room peer list |
+| POST | `/api/signaling/rooms/{room_id}/join` | Join room |
+| POST | `/api/signaling/rooms/{room_id}/leave` | Leave room |
+| POST | `/api/signaling/rooms/{room_id}/signal` | Relay signal |
+| GET | `/api/presence` | Presence snapshot |
+
+### Vaults & Templates
+| Method | Path | Handler |
+|---|---|---|
+| GET/POST | `/api/vaults` | List / publish vaults |
+| GET/DELETE | `/api/vaults/{id}` | Get / delete vault |
+| GET/PUT | `/api/vaults/{id}/collections` | List / update vault collections |
+| GET | `/api/vaults/{id}/collections/{coll_id}` | Get collection snapshot |
+| GET | `/api/vaults/{id}/download` | Download full vault |
+| GET/POST | `/api/templates` | List / create templates |
+| GET/DELETE | `/api/templates/{id}` | Get / delete template |
+
+### Infrastructure
+| Method | Path | Handler |
+|---|---|---|
+| GET | `/.well-known/acme-challenge/{token}` | ACME challenge response |
+| POST/DELETE | `/api/acme/challenges[/{token}]` | Manage ACME challenges |
+| GET/POST | `/api/acme/certificates` | List / add certificates |
+| GET | `/api/acme/certificates/{domain}` | Get certificate |
+| POST | `/api/hashcash/challenge` | Create hashcash challenge |
+| POST | `/api/hashcash/verify` | Verify proof |
+| GET/POST | `/api/backup` | Export / import full state |
+| GET/DELETE | `/api/logs` | Query / clear logs |
+| GET | `/api/email/status` | Email transport status |
+| POST | `/api/email/send` | Send email (stub) |
+| GET | `/api/directory` | Relay directory feed |
+| GET | `/api/pings/devices` | List push devices |
+| POST | `/api/pings/register` | Register push device |
+| POST | `/api/pings/send` | Send push ping |
+| POST | `/api/pings/wake` | Wake device |
+
+### WebSocket (`/ws`)
+Wire protocol: `auth` → `auth-ok`, `envelope` → `route-result`,
+`collect` → inbound envelopes, `ping` → `pong`, `sync-request` →
+`sync-snapshot`, `sync-update`, `hashcash-proof` → `hashcash-ok`,
+`presence-update`.
+
+### SSR Pages (via `build_router`)
+| Method | Path | Description |
+|---|---|---|
+| GET | `/healthz` | Liveness probe |
+| GET | `/` or `/portals` | Portal index |
+| GET | `/portals/{id}` | Render portal as HTML |
+| GET | `/sitemap.xml` | XML sitemap |
+| GET | `/robots.txt` | Robots directives |
+
+## Middleware Stack
+- **CSRF** — `X-Prism-CSRF: 1` required on POST/PUT/DELETE to `/api/*`
+  (exempts ACME challenges, admin, metrics).
+- **Body limit** — rejects `Content-Length` > 1MB.
+- **Rate limiting** — token-bucket per IP (100 burst, 20/s refill, 10k entry LRU).
+- **Metrics** — atomic request counter + per-route status histogram, Prometheus `/metrics`.
 
 ## Tests
-
-- **Unit** — 19 tests across `portal.rs` (4: construction, visibility
-  filter, upsert overwrite, deterministic ordering), `components.rs`
-  (7: each component's render_html output, container recursion, attr
-  escape on link), `state.rs` (2: default boot, sample seed),
-  `routes.rs` (6: each page builder in isolation — index empty, index
-  with public portals, detail happy-path, detail 404 on private, detail
-  404 on missing, sitemap shape).
-- **Integration** — 8 tests in `tests/routes.rs` drive the real axum
-  router via `tower::ServiceExt::oneshot` + `http_body_util::BodyExt`,
-  asserting on status codes, `content-type`, and rendered HTML bodies.
-  No port binding needed, so CI runs green under sandboxing.
-- **Docs** — the one doctest on `AppState::with_sample_portals` seeds
-  the default state and asserts both portals round-trip through
-  `PortalStore::get`.
-
-## Follow-on modules (legacy Hono relay surface)
-
-The old Hono relay shipped 17 plug-in modules. Rust ports are scoped as
-follow-on work so the skeleton stays small and reviewable. Legend: ✅
-shipped in skeleton, ⏳ next-up, ❌ not started.
-
-| Module | Status | Notes |
-|---|---|---|
-| sovereign-portals (L1 static) | ✅ | Present in skeleton |
-| seo (sitemap + robots) | ✅ | Present in skeleton |
-| sovereign-portals (L2 live patch) | ❌ | Needs WS upgrade + snapshot diff |
-| sovereign-portals (L3 form submit) | ❌ | Needs ephemeral-DID auth |
-| sovereign-portals (L4 hydration) | ❌ | Needs `window.__PRISM_PORTAL__` JS shim |
-| blind-mailbox | ❌ | Port from TS |
-| relay-router | ❌ | Port from TS |
-| relay-timestamp | ❌ | Port from TS |
-| blind-ping | ❌ | APNs/FCM push transports |
-| capability-tokens | ❌ | Shared trait with `prism-core` |
-| webhooks | ❌ | Needs `reqwest` + timeout |
-| collection-host | ❌ | Needs `loro` integration |
-| hashcash | ❌ | Pure compute |
-| peer-trust | ❌ | Federation dep |
-| escrow | ❌ | PBKDF2 via `ring` or `argon2` |
-| federation | ❌ | Peer discovery + gossip |
-| acme-certificates | ❌ | `instant-acme` candidate |
-| portal-templates | ❌ | Trivial CRUD |
-| webrtc-signaling | ❌ | SFU rooms |
-| vault-host | ❌ | Owner-authed blob store |
-| password-auth | ❌ | PBKDF2-SHA256 |
-| admin dashboard | ❌ | Separate `prism-admin-kit` port |
-| metrics (`/metrics`) | ❌ | `metrics-exporter-prometheus` |
-
-No relay code is gated behind cargo features yet — add per-module
-features when the surface grows past what CI can type-check in one
-pass.
+- **Unit** — 21 tests: portal (4), components (7), state (2), SSR routes (6),
+  relay_state (2: module construction + capability accessor coverage).
+- **Integration** — 8 tests in `tests/routes.rs` via `tower::ServiceExt::oneshot`.
+- All tests pass with zero clippy warnings under `-D warnings`.
 
 ## Migration notes
-
-- The old folder contained ~30k lines of TypeScript across `src/`,
-  `tests/`, `e2e/`, Docker/compose files, and the 17-module plugin
-  system. Every one of those files was deleted as part of this
-  rewrite; `pnpm-workspace.yaml` no longer lists `packages/prism-relay`.
-- The `@prism/relay` package name / `prism-relay` CLI / port 1420 all
-  carry over so downstream tooling (Studio sidecar spawner, docs,
-  operator runbooks) keeps working once the feature surface is back.
-- The root `package.json` no longer installs vitest/playwright for
-  this subtree; `prism test` is Rust-only now (`cargo test --workspace`
-  picks up `prism-relay`'s unit + integration tests automatically).
+- The old folder contained ~30k lines of TypeScript. Every file was deleted
+  as part of the Rust rewrite; `pnpm-workspace.yaml` no longer lists
+  `packages/prism-relay`.
+- Port 1420 / `prism-relayd` binary name carry over for downstream tooling.
+- `prism test` is Rust-only (`cargo test --workspace`).

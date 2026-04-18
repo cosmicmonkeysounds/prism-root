@@ -28,10 +28,12 @@ orchestration kit (`actor`, `intelligence`, `automation`, `plugin`,
 `plugin_bundles`, `builder`, `initializer`) and its `PrismKernel`
 wiring layer landed, alongside the `domain` subtree (`flux`, `timeline`,
 `graph_analysis`) and the `statig` rewrite of `kernel::state_machine::tool`.
-`cargo test -p prism-core --lib` now runs 897+ unit tests green. The
-`network` subtree is the one residual 2b surface still porting in the
-background; it does not gate anything else because `prism-relay`
-consumes `prism_builder::render_document_html` directly. Phase 3 is the
+`cargo test -p prism-core --lib` now runs 1033 unit tests green. The
+`network` subtree's relay layer (`network::relay` — 17 composable modules
++ module system, `network::relay_manager`, `network::presence`) is fully
+ported; remaining stubs are `discovery`, `session`, `server`. `prism-relay`
+ships the full 17-module HTTP/WS surface (~80 API endpoints + WebSocket
+relay protocol + middleware stack + persistence + config). Phase 3 is the
 active porting surface. Rust workspace scaffolded; `prism-daemon`,
 `prism-cli`, and `prism-relay` shipping; `prism-core` closed on its
 Phase-2a scope; `prism-builder`, `prism-shell` under active port.
@@ -42,7 +44,7 @@ backend (see §4.5). Per-package `CLAUDE.md` files carry live status.
 
 **Owner:** TBD
 **Created:** 2026-04-14
-**Last updated:** 2026-04-15
+**Last updated:** 2026-04-18
 
 ---
 
@@ -332,11 +334,13 @@ port.
    backward pass, 30 tests).
 3. ✅ **`kernel::state_machine::tool`** — the `statig`-backed rewrite
    of the xstate tool-mode FSM.
-4. 🚧 **`network`** — relay manager + peer / protocol plumbing (ADR-002
-   §Part B). Port in progress; tracked separately from the rest of
-   Phase 2b because the Sovereign Portal SSR path in `prism-relay` does
-   not depend on it (it consumes `prism_builder::render_document_html`
-   directly), so the residual network work does not gate anything else.
+4. ✅ **`network`** (relay layer) — `presence` (39 tests),
+   `relay` (17 composable modules + module system, 29 tests), and
+   `relay_manager` (23 tests) are fully ported. The full 17-module
+   feature surface is wired end-to-end in `prism-relay` (~80 HTTP
+   endpoints, WebSocket relay protocol, middleware, persistence, config).
+   **Remaining stubs:** `discovery`, `session`, `server` — these are
+   not consumed by `prism-relay` and do not gate anything else.
 
 Phase 2b did **not** block Phase 3. The Slint walker (`slint-interpreter`
 on top of `prism-builder`'s `render_slint`), the Studio panel ports,
@@ -523,7 +527,7 @@ cdylibs) are re-added as Phase 0 spike tasks when the
 | 0 | Workspace scaffold, Slint pivot, license switch, `Shell::new()?.run()` end-to-end | ✅ closed 2026-04-15 |
 | 1 | `prism-cli` web pipeline retarget, first-paint telemetry, unified Slint live-preview + `.rs` respawn dev loop | ✅ closed 2026-04-15 |
 | 2a | `prism-core` leaf port: `foundation`, `identity`, `language::{syntax, expression, registry, document, forms, markdown, codegen}`, `kernel::{store, state_machine::machine, config}`, `interaction::{notification, activity, query}` | ✅ closed 2026-04-15 (655 tests, clippy clean) |
-| 2b | ADR-002 `kernel` orchestration kit (`actor`, `automation`, `intelligence`, `plugin`, `plugin_bundles`, `builder`, `initializer`) + `PrismKernel` wiring + `network` + `domain` + `kernel::state_machine::tool` (`statig` rewrite of the xstate tool machine) | 🚧 in flight (unblocks Phase 3 in parallel; none on critical path) |
+| 2b | ADR-002 `kernel` orchestration kit (`actor`, `automation`, `intelligence`, `plugin`, `plugin_bundles`, `builder`, `initializer`) + `PrismKernel` wiring + `network` (relay layer: 17 modules, relay_manager, presence) + `domain` + `kernel::state_machine::tool` (`statig` rewrite of the xstate tool machine) | ✅ closed 2026-04-18 (1033 tests, clippy clean; residual stubs: `network::{discovery, session, server}`) |
 | 3 | `prism-builder` Slint walker via `slint-interpreter`, Studio panel ports, property panel + field factories | ✅ closed 2026-04-15 (767 tests, clippy clean) |
 | 4 | `language::luau` full-moon parser, advanced lenses, `subsecond` hot-reload | ⏳ pending |
 | 5 | `cargo-packager` bundling, `self_update` auto-update, mobile targets, tray/notification/clipboard/keyring wiring | ⏳ pending |
@@ -664,3 +668,23 @@ cdylibs) are re-added as Phase 0 spike tasks when the
   (30 tests). `kernel::state_machine::tool` landed as the `statig`
   rewrite of the xstate tool-mode FSM. `cargo test -p prism-core --lib`
   now runs 897+ tests green under `-D warnings`.
+- **2026-04-18** — **Relay 17-module feature surface closed.** The full
+  relay feature set from the legacy Hono JSX relay (commit `8426588`) is
+  now ported into Rust: 17 composable `RelayModule` impls in
+  `prism-core::network::relay::modules` (blind_mailbox, relay_router,
+  timestamper, blind_ping, capability_tokens, webhooks, sovereign_portals,
+  signaling, collection_host, vault_host, hashcash, peer_trust, escrow,
+  federation, password_auth, acme, portal_templates), wired through
+  `RelayBuilder` → `RelayInstance` → `FullRelayState` in `prism-relay`.
+  HTTP surface: ~80 API routes across 25 route modules under `/api/*`,
+  admin dashboard at `/admin`, Prometheus metrics at `/metrics`, ACME
+  challenges at `/.well-known/acme-challenge/`. WebSocket relay protocol
+  at `/ws` (auth, envelope, collect, ping, CRDT sync, hashcash,
+  presence). Tower middleware: CSRF header check, token-bucket rate
+  limiting, body size limit, request metrics. Multi-source config
+  (`RelayConfig` with `Server` / `P2p` / `Dev` modes + env var
+  overrides). JSON file persistence via `FileStore`. `prism-relayd` bin
+  accepts `--mode` and `--relay-did` CLI flags. 1033 `prism-core` tests +
+  29 `prism-relay` tests (21 unit + 8 integration), zero clippy warnings.
+  Phase 2b marked closed (residual stubs: `network::{discovery, session,
+  server}` — not consumed by `prism-relay`).
