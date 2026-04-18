@@ -27,7 +27,7 @@ use crate::registry::{ComponentRegistry, FieldSpec, NumericBounds, RegistryError
 use crate::slint_source::SlintEmitter;
 
 /// Register the starter catalog into `reg`. Call this once at boot
-/// to get a registry with five ready-to-render components.
+/// to get a registry with eight ready-to-render components.
 pub fn register_builtins(reg: &mut ComponentRegistry) -> Result<(), RegistryError> {
     reg.register(Arc::new(HeadingComponent {
         id: "heading".into(),
@@ -37,6 +37,11 @@ pub fn register_builtins(reg: &mut ComponentRegistry) -> Result<(), RegistryErro
     reg.register(Arc::new(ImageComponent { id: "image".into() }))?;
     reg.register(Arc::new(ContainerComponent {
         id: "container".into(),
+    }))?;
+    reg.register(Arc::new(FormComponent { id: "form".into() }))?;
+    reg.register(Arc::new(InputComponent { id: "input".into() }))?;
+    reg.register(Arc::new(ButtonComponent {
+        id: "button".into(),
     }))?;
     Ok(())
 }
@@ -322,6 +327,264 @@ impl Component for ContainerComponent {
     }
 }
 
+/// HTML `<form>` wrapper. Renders children inside a `<form method="post">`.
+/// L3 portals use this for interactive submissions.
+pub struct FormComponent {
+    pub id: ComponentId,
+}
+
+impl Component for FormComponent {
+    fn id(&self) -> &ComponentId {
+        &self.id
+    }
+    fn schema(&self) -> Vec<FieldSpec> {
+        vec![
+            FieldSpec::text("action", "Form action URL"),
+            FieldSpec::select(
+                "method",
+                "HTTP method",
+                vec![
+                    crate::registry::SelectOption::new("post", "POST"),
+                    crate::registry::SelectOption::new("get", "GET"),
+                ],
+            )
+            .with_default(Value::from("post")),
+        ]
+    }
+    fn render_html(
+        &self,
+        ctx: &RenderHtmlContext<'_>,
+        props: &Value,
+        children: &[Node],
+        out: &mut Html,
+    ) -> Result<(), RenderError> {
+        let method = props
+            .get("method")
+            .and_then(|v| v.as_str())
+            .unwrap_or("post");
+        let mut attrs: Vec<(&str, &str)> = vec![("method", method)];
+        let action = props.get("action").and_then(|v| v.as_str()).unwrap_or("");
+        if !action.is_empty() {
+            attrs.push(("action", action));
+        }
+        out.open_attrs("form", &attrs);
+        ctx.render_children(children, out)?;
+        out.close("form");
+        Ok(())
+    }
+
+    fn render_slint(
+        &self,
+        ctx: &RenderSlintContext<'_>,
+        props: &Value,
+        children: &[Node],
+        out: &mut SlintEmitter,
+    ) -> Result<(), RenderError> {
+        let _ = props;
+        out.block("VerticalLayout", |out| {
+            out.prop_px("spacing", 8.0);
+            out.line("alignment: start;");
+            ctx.render_children(children, out)
+        })
+    }
+}
+
+/// HTML `<input>`. Renders as a void element with name, type, and placeholder.
+pub struct InputComponent {
+    pub id: ComponentId,
+}
+
+impl Component for InputComponent {
+    fn id(&self) -> &ComponentId {
+        &self.id
+    }
+    fn schema(&self) -> Vec<FieldSpec> {
+        vec![
+            FieldSpec::text("name", "Field name").required(),
+            FieldSpec::select(
+                "type",
+                "Input type",
+                vec![
+                    crate::registry::SelectOption::new("text", "Text"),
+                    crate::registry::SelectOption::new("email", "Email"),
+                    crate::registry::SelectOption::new("password", "Password"),
+                    crate::registry::SelectOption::new("number", "Number"),
+                    crate::registry::SelectOption::new("hidden", "Hidden"),
+                ],
+            )
+            .with_default(Value::from("text")),
+            FieldSpec::text("placeholder", "Placeholder"),
+            FieldSpec::text("value", "Default value"),
+            FieldSpec::boolean("required", "Required"),
+            FieldSpec::text("label", "Label text"),
+        ]
+    }
+    fn render_html(
+        &self,
+        _ctx: &RenderHtmlContext<'_>,
+        props: &Value,
+        _children: &[Node],
+        out: &mut Html,
+    ) -> Result<(), RenderError> {
+        let name = props.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        let input_type = props.get("type").and_then(|v| v.as_str()).unwrap_or("text");
+        let placeholder = props
+            .get("placeholder")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let value = props.get("value").and_then(|v| v.as_str()).unwrap_or("");
+        let required = props
+            .get("required")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let label = props.get("label").and_then(|v| v.as_str()).unwrap_or("");
+
+        if !label.is_empty() {
+            out.open("label");
+            out.text(label);
+        }
+        let mut attrs = vec![("type", input_type), ("name", name)];
+        if !placeholder.is_empty() {
+            attrs.push(("placeholder", placeholder));
+        }
+        if !value.is_empty() {
+            attrs.push(("value", value));
+        }
+        if required {
+            attrs.push(("required", "required"));
+        }
+        out.void("input", &attrs);
+        if !label.is_empty() {
+            out.close("label");
+        }
+        Ok(())
+    }
+
+    fn render_slint(
+        &self,
+        _ctx: &RenderSlintContext<'_>,
+        props: &Value,
+        _children: &[Node],
+        out: &mut SlintEmitter,
+    ) -> Result<(), RenderError> {
+        let label = props.get("label").and_then(|v| v.as_str()).unwrap_or("");
+        let placeholder = props
+            .get("placeholder")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        out.block("VerticalLayout", |out| {
+            out.prop_px("spacing", 4.0);
+            if !label.is_empty() {
+                out.block("Text", |out| {
+                    out.prop_string("text", label);
+                    out.prop_px("font-size", 12.0);
+                    Ok(())
+                })?;
+            }
+            out.block("Rectangle", |out| {
+                out.prop_px("height", 32.0);
+                out.line("background: #1e2533;");
+                out.line("border-radius: 4px;");
+                out.block("Text", |out| {
+                    let display = if placeholder.is_empty() {
+                        "..."
+                    } else {
+                        placeholder
+                    };
+                    out.prop_string("text", display);
+                    out.prop_px("font-size", 14.0);
+                    out.line("color: #6b7280;");
+                    out.line("vertical-alignment: center;");
+                    Ok(())
+                })
+            })
+        })
+    }
+}
+
+/// HTML `<button>`. Renders as `<button type="submit">text</button>`.
+pub struct ButtonComponent {
+    pub id: ComponentId,
+}
+
+impl Component for ButtonComponent {
+    fn id(&self) -> &ComponentId {
+        &self.id
+    }
+    fn schema(&self) -> Vec<FieldSpec> {
+        vec![
+            FieldSpec::text("text", "Button label").required(),
+            FieldSpec::select(
+                "type",
+                "Button type",
+                vec![
+                    crate::registry::SelectOption::new("submit", "Submit"),
+                    crate::registry::SelectOption::new("button", "Button"),
+                    crate::registry::SelectOption::new("reset", "Reset"),
+                ],
+            )
+            .with_default(Value::from("submit")),
+            FieldSpec::boolean("disabled", "Disabled"),
+        ]
+    }
+    fn render_html(
+        &self,
+        _ctx: &RenderHtmlContext<'_>,
+        props: &Value,
+        _children: &[Node],
+        out: &mut Html,
+    ) -> Result<(), RenderError> {
+        let text = props
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Submit");
+        let btn_type = props
+            .get("type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("submit");
+        let disabled = props
+            .get("disabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let mut attrs = vec![("type", btn_type)];
+        if disabled {
+            attrs.push(("disabled", "disabled"));
+        }
+        out.open_attrs("button", &attrs);
+        out.text(text);
+        out.close("button");
+        Ok(())
+    }
+
+    fn render_slint(
+        &self,
+        _ctx: &RenderSlintContext<'_>,
+        props: &Value,
+        _children: &[Node],
+        out: &mut SlintEmitter,
+    ) -> Result<(), RenderError> {
+        let text = props
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Submit");
+        out.block("Rectangle", |out| {
+            out.prop_px("height", 36.0);
+            out.prop_px("min-width", 80.0);
+            out.line("background: #3b82f6;");
+            out.line("border-radius: 6px;");
+            out.block("Text", |out| {
+                out.prop_string("text", text);
+                out.prop_px("font-size", 14.0);
+                out.line("color: #ffffff;");
+                out.line("font-weight: 600;");
+                out.line("horizontal-alignment: center;");
+                out.line("vertical-alignment: center;");
+                Ok(())
+            })
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -471,6 +734,63 @@ mod tests {
         assert_eq!(schema[0].key, "text");
         assert!(schema[0].required);
         assert_eq!(schema[1].key, "level");
+    }
+
+    #[test]
+    fn form_wraps_children_in_form_tag() {
+        let (reg, tokens) = setup();
+        let d = doc(Node {
+            id: "f".into(),
+            component: "form".into(),
+            props: json!({}),
+            children: vec![
+                Node {
+                    id: "i".into(),
+                    component: "input".into(),
+                    props: json!({ "name": "email", "type": "email", "placeholder": "you@example.com" }),
+                    children: vec![],
+                },
+                Node {
+                    id: "b".into(),
+                    component: "button".into(),
+                    props: json!({ "text": "Send" }),
+                    children: vec![],
+                },
+            ],
+        });
+        let html = render_document_html(&d, &reg, &tokens).unwrap();
+        assert!(html.starts_with(r#"<form method="post">"#));
+        assert!(html.contains(r#"<input type="email" name="email" placeholder="you@example.com">"#));
+        assert!(html.contains(r#"<button type="submit">Send</button>"#));
+        assert!(html.ends_with("</form>"));
+    }
+
+    #[test]
+    fn input_with_label() {
+        let (reg, tokens) = setup();
+        let d = doc(Node {
+            id: "i".into(),
+            component: "input".into(),
+            props: json!({ "name": "user", "label": "Username", "required": true }),
+            children: vec![],
+        });
+        let html = render_document_html(&d, &reg, &tokens).unwrap();
+        assert!(html.contains("<label>Username"));
+        assert!(html.contains(r#"required="required""#));
+    }
+
+    #[test]
+    fn button_disabled() {
+        let (reg, tokens) = setup();
+        let d = doc(Node {
+            id: "b".into(),
+            component: "button".into(),
+            props: json!({ "text": "Wait", "disabled": true }),
+            children: vec![],
+        });
+        let html = render_document_html(&d, &reg, &tokens).unwrap();
+        assert!(html.contains(r#"disabled="disabled""#));
+        assert!(html.contains("Wait"));
     }
 
     #[test]

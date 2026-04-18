@@ -11,6 +11,7 @@ pub mod directory;
 pub mod email;
 pub mod escrow;
 pub mod federation;
+pub mod forms;
 pub mod hashcash;
 pub mod logs;
 pub mod metrics;

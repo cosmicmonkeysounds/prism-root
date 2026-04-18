@@ -23,11 +23,19 @@
 //! DSL + hand-vendored wgpu pipeline + tao windowing in one stroke.
 
 pub mod app;
+pub mod command;
 pub mod input;
+pub mod keyboard;
 pub mod panels;
+pub mod search;
+pub mod selection;
 pub mod telemetry;
 
 pub use app::{AppState, InputAction, Shell};
+pub use command::{CommandEntry, CommandRegistry};
+pub use keyboard::{KeyBinding, KeyCombo, KeyboardModel, Modifiers};
+pub use search::{SearchIndex, SearchResult};
+pub use selection::SelectionModel;
 pub use telemetry::FirstPaint;
 
 // `slint::include_modules!()` inlines the Rust code generated from

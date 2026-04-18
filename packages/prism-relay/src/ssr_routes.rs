@@ -18,18 +18,19 @@
 //! `Router::with_state`, handlers that walk the portal store and
 //! call [`prism_builder::render_document_html`] for the body.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::{
-    extract::{Path, State},
+    extract::{Form, Path, State},
     http::{header, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
     Router,
 };
 use prism_builder::{render_document_html, Html, RenderError};
 
-use crate::portal::Portal;
+use crate::portal::{Portal, PortalLevel};
 use crate::state::AppState;
 
 /// Build the axum router with every route wired to its handler.
@@ -41,6 +42,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/", get(index))
         .route("/portals", get(index))
         .route("/portals/:id", get(portal_detail))
+        .route("/portals/:id", post(portal_form_submit))
         .route("/sitemap.xml", get(sitemap))
         .route("/robots.txt", get(robots))
         .with_state(state)
@@ -61,14 +63,15 @@ async fn index(State(state): State<Arc<AppState>>) -> Response {
 /// Portal detail page. Walks the document tree through the SSR
 /// pipeline and wraps the returned fragment in a full HTML
 /// document with an OpenGraph-friendly `<head>`.
+///
+/// L3 portals render with `<form>` support (the form component handles this).
+/// L4 portals inject a hydration script that connects to WebSocket for
+/// real-time CRDT sync.
 async fn portal_detail(State(state): State<Arc<AppState>>, Path(id): Path<String>) -> Response {
     let Some(portal) = state.portals.get(&id) else {
         return not_found();
     };
     if !portal.meta.public {
-        // Non-public portals behave as if they don't exist to
-        // unauthenticated visitors — the capability-token path
-        // that unlocks them lands in a follow-on phase.
         return not_found();
     }
 
@@ -78,6 +81,58 @@ async fn portal_detail(State(state): State<Arc<AppState>>, Path(id): Path<String
     };
     let page = wrap_portal_page(&portal, &body);
     html_response(page)
+}
+
+/// L3 form submission handler. Parses URL-encoded form data and
+/// returns a confirmation page.
+async fn portal_form_submit(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Form(data): Form<HashMap<String, String>>,
+) -> Response {
+    let Some(portal) = state.portals.get(&id) else {
+        return not_found();
+    };
+    if !portal.meta.public {
+        return not_found();
+    }
+    if portal.meta.level != PortalLevel::L3 && portal.meta.level != PortalLevel::L4 {
+        return (
+            StatusCode::METHOD_NOT_ALLOWED,
+            "Portal does not accept form submissions",
+        )
+            .into_response();
+    }
+
+    let mut h = Html::with_capacity(512);
+    h.doctype();
+    h.open("html");
+    render_head(&mut h, &format!("Submitted — {}", portal.meta.title), "");
+    h.open("body");
+    h.open("h1");
+    h.text("Submission Received");
+    h.close("h1");
+    h.open("p");
+    h.text("Your form has been submitted successfully.");
+    h.close("p");
+    if !data.is_empty() {
+        h.open("dl");
+        for (key, value) in &data {
+            h.open("dt");
+            h.text(key);
+            h.close("dt");
+            h.open("dd");
+            h.text(value);
+            h.close("dd");
+        }
+        h.close("dl");
+    }
+    h.open_attrs("a", &[("href", &format!("/portals/{}", id))]);
+    h.text("Back to portal");
+    h.close("a");
+    h.close("body");
+    h.close("html");
+    html_response(h.into_string())
 }
 
 /// XML sitemap. One `<url>` entry per public portal, pointing at
@@ -132,16 +187,39 @@ pub fn render_index_page(portals: &[Portal]) -> String {
 /// Wrap a portal body fragment (already HTML) in a full page with
 /// an OpenGraph-ready `<head>`. The fragment is inserted raw —
 /// it's already been escaped by the component walker.
+///
+/// L4 portals get a hydration `<script>` that connects to the relay
+/// WebSocket and subscribes to CRDT updates for real-time sync.
 pub fn wrap_portal_page(portal: &Portal, body_html: &str) -> String {
-    let mut h = Html::with_capacity(body_html.len() + 512);
+    let mut h = Html::with_capacity(body_html.len() + 1024);
     h.doctype();
     h.open("html");
     render_head(&mut h, &portal.meta.title, &portal.meta.description);
     h.open("body");
     h.raw(body_html);
+    if portal.meta.level == PortalLevel::L4 {
+        h.raw(&hydration_script(&portal.id));
+    }
     h.close("body");
     h.close("html");
     h.into_string()
+}
+
+fn hydration_script(portal_id: &str) -> String {
+    let escaped_id = prism_builder::escape_attr(portal_id);
+    format!(
+        r#"<script data-prism-hydration="true">(function(){{
+var ws=new WebSocket((location.protocol==="https:"?"wss:":"ws:")+"//"+ location.host+"/ws");
+var portalId="{}";
+ws.onopen=function(){{ws.send(JSON.stringify({{type:"auth",did:"did:web:portal:"+portalId}}));
+ws.send(JSON.stringify({{type:"sync-request",collection_id:portalId}}));}};
+ws.onmessage=function(e){{try{{var msg=JSON.parse(e.data);
+if(msg.type==="sync-update"){{document.dispatchEvent(new CustomEvent("prism:sync",{{detail:msg}}));}}
+}}catch(err){{}}}};
+ws.onclose=function(){{setTimeout(function(){{location.reload();}},5000);}};
+}})()</script>"#,
+        escaped_id
+    )
 }
 
 /// Render the sitemap XML for a list of public portals.
@@ -329,5 +407,22 @@ mod tests {
         assert!(txt.contains("User-agent: *"));
         assert!(txt.contains("Allow: /portals/alpha"));
         assert!(txt.contains("Sitemap: /sitemap.xml"));
+    }
+
+    #[test]
+    fn l4_portal_includes_hydration_script() {
+        let mut p = portal("live", "Live Portal", true);
+        p.meta.level = PortalLevel::L4;
+        let page = wrap_portal_page(&p, "<h1>Live</h1>");
+        assert!(page.contains("data-prism-hydration"));
+        assert!(page.contains("WebSocket"));
+        assert!(page.contains("sync-request"));
+    }
+
+    #[test]
+    fn l1_portal_has_no_hydration_script() {
+        let p = portal("static", "Static Portal", true);
+        let page = wrap_portal_page(&p, "<h1>Static</h1>");
+        assert!(!page.contains("data-prism-hydration"));
     }
 }

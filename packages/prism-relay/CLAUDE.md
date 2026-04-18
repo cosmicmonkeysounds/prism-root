@@ -1,18 +1,18 @@
 # prism-relay
 
-Rust-native relay server — **Sovereign Portal** host + full 17-module
+Rust-native relay server — **Sovereign Portal** host + full 18-module
 relay protocol. Built on `axum` + `tower` + `tokio`, it serves ~80 HTTP
 endpoints, a WebSocket relay protocol, and SSR portals through the same
 `prism-builder` component registry the Studio uses.
 
-> **Status:** Full 17-module feature surface ported from the legacy Hono
+> **Status:** Full 18-module feature surface ported from the legacy Hono
 > JSX relay (2026-04-18). The composable module system lives in
 > `prism-core::network::relay`; the HTTP/WS surface lives here.
 
 ## Build & Test
 - `cargo build -p prism-relay` — lib + `prism-relayd` bin.
 - `cargo run -p prism-relay --bin prism-relayd -- --bind 127.0.0.1:1420 --mode dev`
-  — start the server with all 17 modules.
+  — start the server with all 18 modules.
 - `cargo test -p prism-relay` — 21 unit tests + 8 integration tests.
 - `cargo clippy -p prism-relay -- -D warnings` — zero warnings.
 - Also reachable via: `cargo run -p prism-cli -- dev relay` and
@@ -23,7 +23,7 @@ endpoints, a WebSocket relay protocol, and SSR portals through the same
 ```
 ┌──────────────────────────────────────────────────────┐
 │  FullRelayState                                      │
-│  ├── RelayInstance (17 modules via RelayBuilder)      │
+│  ├── RelayInstance (18 modules via RelayBuilder)      │
 │  ├── RelayConfig (mode/env/CLI)                      │
 │  ├── RequestMetrics (Prometheus)                     │
 │  └── RateLimiter (token-bucket per IP)               │

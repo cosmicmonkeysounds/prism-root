@@ -52,15 +52,12 @@ pub fn create_luau_contribution<R, E>() -> LanguageContribution<R, E> {
 
     LanguageContribution::new(LUAU_ID, LUAU_EXTENSIONS.iter().copied(), "Luau", surface)
         .with_mime_type(LUAU_MIME_TYPE)
-        .with_parse(luau_parse_stub)
+        .with_parse(luau_parse)
         .with_syntax_provider(luau_syntax_provider_factory)
 }
 
-/// Placeholder `parse` hook. Returns an empty root node while the
-/// full-moon Rust parser is being ported — matches the TS
-/// contribution's behaviour when `isLuauParserReady()` was false.
-fn luau_parse_stub(_source: &str) -> RootNode {
-    RootNode::default()
+fn luau_parse(source: &str) -> RootNode {
+    super::parser::parse_luau(source)
 }
 
 /// Factory wired into `LanguageContribution::syntax_provider`.
@@ -91,18 +88,15 @@ mod tests {
             c.syntax_provider.is_some(),
             "syntax provider factory should be wired"
         );
-        assert!(
-            c.serialize.is_none(),
-            "serialize round-trips through full-moon; not wired yet"
-        );
     }
 
     #[test]
-    fn parse_stub_returns_empty_root() {
+    fn parse_returns_ast_nodes() {
         let c = create_luau_contribution::<(), ()>();
         let parse = c.parse.as_ref().expect("parse hook");
         let root = parse("return 1 + 2");
-        assert!(root.children.is_empty());
+        assert!(!root.children.is_empty(), "parser should produce AST nodes");
+        assert_eq!(root.children[0].kind, "return");
     }
 
     #[test]

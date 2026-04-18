@@ -80,6 +80,7 @@ imbl = "3"
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
 regex = "1"
+full_moon = { version = "2", features = ["luau"] }
 sha2 = "0.10"
 hex = "0.4"
 base64 = "0.22"

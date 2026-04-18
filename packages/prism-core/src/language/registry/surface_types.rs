@@ -28,6 +28,9 @@ pub enum SurfaceMode {
     Spreadsheet,
     /// Full HTML layout engine.
     Report,
+    /// Bidirectional visual node-graph editor.
+    #[serde(rename = "visual_script")]
+    VisualScript,
 }
 
 // ── Inline Token Definition ────────────────────────────────────────

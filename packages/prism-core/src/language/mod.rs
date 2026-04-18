@@ -25,3 +25,4 @@ pub mod luau;
 pub mod markdown;
 pub mod registry;
 pub mod syntax;
+pub mod visual;

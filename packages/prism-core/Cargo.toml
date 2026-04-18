@@ -24,6 +24,7 @@ slotmap = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 regex = { workspace = true }
+full_moon = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
 base64 = { workspace = true }

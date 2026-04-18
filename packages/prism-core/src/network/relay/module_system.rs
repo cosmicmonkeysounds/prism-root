@@ -29,6 +29,7 @@ pub mod capabilities {
     pub const SIGNALING: &str = "relay:signaling";
     pub const VAULT_HOST: &str = "relay:vault-host";
     pub const PASSWORD_AUTH: &str = "relay:password-auth";
+    pub const OAUTH: &str = "relay:oauth";
 }
 
 /// Server-side relay configuration.

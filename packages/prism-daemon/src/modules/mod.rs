@@ -8,6 +8,9 @@ pub mod crdt_module;
 #[cfg(feature = "luau")]
 pub mod luau_module;
 
+#[cfg(feature = "luau")]
+pub mod debug_module;
+
 #[cfg(feature = "build")]
 pub mod build_module;
 

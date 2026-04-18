@@ -529,6 +529,8 @@ cdylibs) are re-added as Phase 0 spike tasks when the
 | 2a | `prism-core` leaf port: `foundation`, `identity`, `language::{syntax, expression, registry, document, forms, markdown, codegen}`, `kernel::{store, state_machine::machine, config}`, `interaction::{notification, activity, query}` | ✅ closed 2026-04-15 (655 tests, clippy clean) |
 | 2b | ADR-002 `kernel` orchestration kit (`actor`, `automation`, `intelligence`, `plugin`, `plugin_bundles`, `builder`, `initializer`) + `PrismKernel` wiring + `network` (relay layer: 17 modules, relay_manager, presence) + `domain` + `kernel::state_machine::tool` (`statig` rewrite of the xstate tool machine) | ✅ closed 2026-04-18 (1033 tests, clippy clean; residual stubs: `network::{discovery, session, server}`) |
 | 3 | `prism-builder` Slint walker via `slint-interpreter`, Studio panel ports, property panel + field factories | ✅ closed 2026-04-15 (767 tests, clippy clean) |
+| B1 | Builder unification: shell std-widgets rewrite (`Button`, `LineEdit`, `Switch`, `Palette` theming) | ✅ closed 2026-04-18 |
+| B2–B5 | Builder unification: reactivity cleanup, builder/shell merge, HTML SSR separation, interactive builder | ⏳ pending (see `docs/dev/builder-unification.md`) |
 | 4 | `language::luau` full-moon parser, advanced lenses, `subsecond` hot-reload | ⏳ pending |
 | 5 | `cargo-packager` bundling, `self_update` auto-update, mobile targets, tray/notification/clipboard/keyring wiring | ⏳ pending |
 

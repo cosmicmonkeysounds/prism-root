@@ -119,8 +119,17 @@ mod tests {
     #[test]
     fn new_registers_builtins() {
         let state = AppState::new();
-        assert_eq!(state.registry.len(), 5);
-        for id in ["heading", "text", "link", "image", "container"] {
+        assert_eq!(state.registry.len(), 8);
+        for id in [
+            "heading",
+            "text",
+            "link",
+            "image",
+            "container",
+            "form",
+            "input",
+            "button",
+        ] {
             assert!(state.registry.get(id).is_some(), "missing builtin: {id}");
         }
     }

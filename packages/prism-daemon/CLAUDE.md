@@ -60,6 +60,12 @@ paradigm, ported to Rust:
     inbox/outbox mailboxes. First supported actor kind is a Luau script;
     `python` / `llm_sidecar` kinds will land later behind their own
     sub-features. Depends on `luau`.
+  - `debug_module.rs` → `prism.debug` → `luau.debug.{launch,
+    set_breakpoints,continue,step_in,step_over,step_out,inspect,
+    evaluate,terminate}` — Luau debugger with thread-per-session
+    execution, interrupt-based breakpoints via `set_interrupt`, condvar
+    parking for pause/resume, call stack inspection via `inspect_stack`,
+    and in-session expression evaluation while paused. Depends on `luau`.
   - `whisper_module.rs` → `prism.whisper` → batch: `whisper.{load_model,
     unload_model,list_models,transcribe_pcm,transcribe_file}` + streaming:
     `whisper.{create_session,push_audio,poll_segments,close_session}` —
@@ -170,9 +176,9 @@ are thin wrappers:
    `kernel.invoke()` roundtrip.
 
 ## Tests
-- **72 unit tests** across registry + modules (default feature set): 7
-  registry, 4 crdt, 4 luau, 11 build, 5 watcher, 13 vfs, 14 crypto, 10
-  actors, plus doc-manager internals.
+- **78 unit tests** across registry + modules (default feature set): 7
+  registry, 4 crdt, 4 luau, 6 debug, 11 build, 5 watcher, 13 vfs, 14
+  crypto, 10 actors, plus doc-manager internals.
 - **107 unit tests** with all new features on (`--features vfs-s3,vfs-gcs,
   transport-http,transport-grpc,transport-uniffi`): 72 default + 17 s3 +
   5 http + 7 grpc + 6 uniffi.

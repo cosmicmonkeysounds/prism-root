@@ -12,6 +12,7 @@ pub mod collection_host;
 pub mod escrow;
 pub mod federation;
 pub mod hashcash;
+pub mod oauth;
 pub mod password_auth;
 pub mod peer_trust;
 pub mod portal_templates;

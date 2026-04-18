@@ -10,8 +10,8 @@
 ## Core Infrastructure
 
 - [x] Workspace compiles — `cargo check --workspace` clean
-- [x] prism-core foundations — 988 tests, all leaf modules ported
-- [x] prism-daemon — 12 modules, 6 transports, 93+ tests
+- [x] prism-core foundations — 1,190 tests, all leaf modules ported
+- [x] prism-daemon — 13 modules, 6 transports, 95 tests
 - [x] prism-cli — all 5 subcommands (test, build, dev, lint, fmt)
 - [x] Hot-reload — `.slint` live-preview + `.rs` respawn loop
 - [x] WASM web target — `wasm32-unknown-unknown` + `wasm-bindgen` pipeline
@@ -84,18 +84,26 @@ React shipped 43 panels. Slint has 4.
 
 ### Must Ship (MVP)
 
-- [ ] Interactive property editing — currently read-only; needs Store-backed field mutation
-- [ ] Tabbed MDI — ActivityBar + TabBar multi-document interface
-- [ ] Command palette — kbar-equivalent global search/command
-- [ ] Keyboard binding system — InputScope / InputRouter / KeyboardModel
-- [ ] Notification toasts — visual notification display (backend exists in prism-core)
-- [ ] Selection model — multi-select with focus depth
+- [x] Interactive property editing — Store-backed field mutation via editable FieldRowView + MutateNodeProp
+- [x] Tabbed MDI — ActivityBar (48px icon strip) + TabBar multi-document interface
+- [x] Command palette — Ctrl+Shift+P overlay with fuzzy command filtering
+- [x] Keyboard binding system — KeyCombo / KeyBinding / KeyboardModel with context-aware resolution
+- [x] Notification toasts — visual toast overlay (bottom-right) with kind-colored indicators
+- [x] Selection model — multi-select with focus depth (SelectionModel replaces selected_node)
 
 ### Should Ship
 
-- [ ] Drag-and-drop — node manipulation in builder panel
-- [ ] Undo/redo UI — UndoStatusBar (backend exists in prism-core)
-- [ ] Search — TF-IDF cross-collection search
+- [x] Drag-and-drop — node move-up/move-down reordering in inspector panel
+- [x] Undo/redo UI — StatusBar with undo/redo buttons, labels, and document snapshot stack
+- [x] Search — TF-IDF cross-collection search with sidebar results
+
+### Modernization (Builder Unification)
+
+- [x] B1: std-widgets — `app.slint` rewritten with `Button`, `LineEdit`, `Switch`, `GroupBox`, `Palette` theming (2026-04-18)
+- [ ] B2: Reactivity cleanup — two-way bindings, granular model updates, remove `sync_ui_from_shared` full-rebuild
+- [ ] B3: Builder/Shell merge — built-in components render natively in Slint, reserve `slint-interpreter` for user custom components
+- [ ] B4: HTML SSR separation — decouple `render_html` from `Component` trait, relay-only `HtmlBlock` trait
+- [ ] B5: Interactive builder — component palette, drag-drop, inline editing, CRDT sync
 
 ### Can Wait
 
@@ -160,7 +168,7 @@ React shipped 43 panels. Slint has 4.
 
 ## Relay / Server
 
-React had 15+ Hono modules. Rust relay has 17 modules, 97 routes, full WebSocket protocol.
+React had 15+ Hono modules. Rust relay has 18 modules, 100 routes, full WebSocket protocol.
 
 ### Shipped
 
@@ -199,9 +207,9 @@ React had 15+ Hono modules. Rust relay has 17 modules, 97 routes, full WebSocket
 
 ### Remaining
 
-- [ ] OAuth/OIDC — Google/GitHub redirect + callback (routes exist, return NOT_IMPLEMENTED)
-- [ ] Hydration — L4 interactive portals
-- [ ] Form submit — L3 portal forms
+- [x] OAuth/OIDC — Google/GitHub redirect + callback (18th module: session state, identity linking, escrow derive/recover)
+- [x] Hydration — L4 interactive portals (WebSocket hydration script injection)
+- [x] Form submit — L3 portal forms (form/input/button components + POST handler)
 
 ---
 
@@ -237,12 +245,19 @@ React had 15+ Hono modules. Rust relay has 17 modules, 97 routes, full WebSocket
 - [x] Forms / field schemas
 - [x] Language registry (`LanguageContribution<R, E>`)
 
+### Shipped (Phase 4)
+
+- [x] Luau parser — full-moon 2.2.0 Rust parser in prism-core (14 tests)
+- [x] LuauSyntaxProvider — real diagnostics, completions, hover via full_moon (11 tests)
+- [x] Luau browser runtime — daemon compiles to wasm32-unknown-emscripten with mlua vendored Luau
+- [x] Debugger — `luau.debug.*` commands in prism-daemon: launch, breakpoints, stepping, inspect, eval, terminate (6 tests)
+- [x] Visual script bridge — generalized `VisualLanguage` trait + `ScriptGraph` IR for bidirectional code↔graph editing (19 tests)
+- [x] LuauVisualLanguage — decompile (source→graph) + compile (graph→source) + palette + validation (11 tests)
+- [x] `SurfaceMode::VisualScript` — new surface mode for visual node-graph editors
+
 ### Remaining
 
-- [ ] Luau parser — currently stub; full-moon Rust port (Phase 4)
-- [ ] Luau browser runtime — React had `luau-web` WASM; currently mlua in daemon only
-- [ ] Debugger — breakpoints, step, variable inspection
-- [ ] Visual script editor — step sequencer UI
+- [ ] Visual script editor UI — Slint node-graph panel (scaffolding in place, needs Slint surface)
 
 ---
 
@@ -281,7 +296,7 @@ React had 15+ Hono modules. Rust relay has 17 modules, 97 routes, full WebSocket
 
 ### Shipped
 
-- [x] 1,413 unit tests passing
+- [x] 1,547 unit + integration tests passing
 - [x] Integration tests — daemon (kernel, stdio, IPC)
 - [x] Integration tests — relay (HTTP via tower)
 
@@ -305,10 +320,11 @@ React had 15+ Hono modules. Rust relay has 17 modules, 97 routes, full WebSocket
 
 ### What's Done
 
-The **engine and relay are built**. Daemon (12 modules, 6 transports),
-core (1,141 tests, all 6 network modules shipped), relay (17 modules,
-97 routes, full WebSocket protocol), CLI, build pipeline, CRDT, identity,
-trust, domain models, and the component registry with dual-target rendering
+The **engine and relay are built**. Daemon (13 modules, 6 transports),
+core (1,190 tests, all 6 network modules shipped), relay (18 modules,
+100 routes, full WebSocket protocol), CLI, build pipeline, CRDT, identity,
+trust, domain models, language tooling (Luau parser, debugger, visual
+script bridge), and the component registry with dual-target rendering
 are all shipping. The Slint desktop + WASM pipeline works end-to-end with
 hot-reload.
 
@@ -324,9 +340,9 @@ The gap is almost entirely in the **UI shell**:
 6. **At least one domain app surface** — Work panel for Flux
 7. **Desktop packaging** — users need an installable binary
 8. **Live Loro sync in shell** — CRDT-to-UI binding for real-time collaboration
-9. **OAuth/OIDC** — relay password auth ships, but OAuth stubs need implementation
+9. ~~**OAuth/OIDC** — relay password auth ships, but OAuth stubs need implementation~~ (**done**)
 
 ### What Can Ship After v1
 
-Full 43-panel parity, 3D viewport, admin kit, mobile, visual scripting,
-Luau debugger, L3/L4 portal forms + hydration, all four apps, E2E test suite.
+Full 43-panel parity, 3D viewport, admin kit, mobile, visual script
+editor UI (bridge layer shipped), all four apps, E2E test suite.

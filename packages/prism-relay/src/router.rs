@@ -189,7 +189,16 @@ pub fn build_full_router(state: Arc<FullRelayState>) -> Router {
         .route("/email/status", get(routes::email::email_status))
         .route("/email/send", post(routes::email::send_email))
         // Directory
-        .route("/directory", get(routes::directory::directory));
+        .route("/directory", get(routes::directory::directory))
+        // Form submissions (L3 portals)
+        .route(
+            "/portals/{id}/submissions",
+            post(routes::forms::submit_form),
+        )
+        .route(
+            "/portals/{id}/submissions",
+            get(routes::forms::list_submissions),
+        );
 
     Router::new()
         // ACME challenge (outside /api prefix, no CSRF)

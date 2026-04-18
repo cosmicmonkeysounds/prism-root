@@ -292,6 +292,13 @@ impl DaemonBuilder {
         self.with_module(crate::modules::luau_module::LuauModule)
     }
 
+    /// Install the Luau debugger module (`luau.debug.*` — launch,
+    /// breakpoints, stepping, variable inspection, in-session eval).
+    #[cfg(feature = "luau")]
+    pub fn with_debug(self) -> Self {
+        self.with_module(crate::modules::debug_module::DebugModule)
+    }
+
     /// Install the build-step executor (`build.run_step`). Not safe on
     /// iOS (process spawning is banned by the OS) — leave this off for
     /// mobile builds.
@@ -370,6 +377,7 @@ impl DaemonBuilder {
         #[cfg(feature = "luau")]
         {
             self = self.with_luau();
+            self = self.with_debug();
         }
         #[cfg(feature = "build")]
         {

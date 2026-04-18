@@ -13,7 +13,7 @@ use prism_core::network::relay::modules::{
     acme::AcmeCertificateManager, blind_mailbox::BlindMailbox, blind_ping::BlindPinger,
     capability_tokens::CapabilityTokenManager, collection_host::CollectionHost,
     escrow::RelayEscrowManager, federation::FederationRegistry, hashcash::HashcashGate,
-    password_auth::RelayPasswordAuth, peer_trust::RelayTrustGraph,
+    oauth::RelayOAuth, password_auth::RelayPasswordAuth, peer_trust::RelayTrustGraph,
     portal_templates::PortalTemplateRegistry, relay_router::RelayRouter, signaling::SignalingHub,
     sovereign_portals::PortalRegistry, timestamper::RelayTimestamper, vault_host::VaultHost,
     webhooks::WebhookEmitter,
@@ -62,17 +62,55 @@ impl FullRelayState {
             .use_module(password_auth::PasswordAuthModule)
             .use_module(acme::AcmeCertificateModule)
             .use_module(portal_templates::PortalTemplateModule)
+            .use_module(oauth::OAuthModule)
             .build()
             .expect("relay module build must succeed");
 
-        Self {
+        let state = Self {
             relay: Arc::new(relay),
             config,
             metrics: RequestMetrics::new(),
             rate_limiter: RateLimiter::new(100, 20, 10_000),
             relay_did,
             started_at: chrono::Utc::now().to_rfc3339(),
+        };
+
+        // Wire OAuth provider configs from RelayConfig into the module.
+        let oauth = state.oauth();
+        if let Some(ref google) = state.config.oauth.google {
+            use prism_core::network::relay::modules::oauth::{
+                OAuthProviderConfig, OAuthProviderKind,
+            };
+            oauth.add_provider(OAuthProviderConfig {
+                kind: OAuthProviderKind::Google,
+                client_id: google.client_id.clone(),
+                auth_url: OAuthProviderKind::Google.default_auth_url().into(),
+                scopes: if google.scopes.is_empty() {
+                    OAuthProviderKind::Google.default_scopes().into()
+                } else {
+                    google.scopes.clone()
+                },
+                redirect_uri: google.redirect_uri.clone(),
+            });
         }
+        if let Some(ref github) = state.config.oauth.github {
+            use prism_core::network::relay::modules::oauth::{
+                OAuthProviderConfig, OAuthProviderKind,
+            };
+            oauth.add_provider(OAuthProviderConfig {
+                kind: OAuthProviderKind::GitHub,
+                client_id: github.client_id.clone(),
+                auth_url: OAuthProviderKind::GitHub.default_auth_url().into(),
+                scopes: if github.scopes.is_empty() {
+                    OAuthProviderKind::GitHub.default_scopes().into()
+                } else {
+                    github.scopes.clone()
+                },
+                redirect_uri: github.redirect_uri.clone(),
+            });
+        }
+
+        state
     }
 
     // ── Capability accessors ───────────────────────────────────────
@@ -150,6 +188,10 @@ impl FullRelayState {
     pub fn vaults(&self) -> Arc<VaultHost> {
         self.relay.get_capability(capabilities::VAULT_HOST).unwrap()
     }
+
+    pub fn oauth(&self) -> Arc<RelayOAuth> {
+        self.relay.get_capability(capabilities::OAUTH).unwrap()
+    }
 }
 
 #[cfg(test)]
@@ -160,7 +202,7 @@ mod tests {
     fn constructs_with_all_modules() {
         let config = RelayConfig::default();
         let state = FullRelayState::new(config, "did:key:test".into());
-        assert_eq!(state.relay.modules().len(), 17);
+        assert_eq!(state.relay.modules().len(), 18);
     }
 
     #[test]
@@ -184,5 +226,6 @@ mod tests {
         let _ = state.templates();
         let _ = state.signaling();
         let _ = state.vaults();
+        let _ = state.oauth();
     }
 }

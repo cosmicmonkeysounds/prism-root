@@ -4,52 +4,68 @@
 //! hot-reload story is exactly one serde call. Mutation goes through
 //! the [`Shell`] wrapper, which owns both a
 //! `prism_core::Store<AppState>` and the root `AppWindow` Slint
-//! handle. [`Shell::sync_ui`] pushes the current `AppState` into the
-//! Slint properties matching the active panel; store subscribers do
-//! the same any time state changes outside the UI thread.
-//!
-//! Phase 3 grew the shell from one panel (Identity) to four — Identity,
-//! Builder, Inspector, Properties. The builder/inspector/properties
-//! panels all read from a shared [`prism_builder::BuilderDocument`] +
-//! [`prism_builder::ComponentRegistry`] owned by the shell. The document
-//! is part of `AppState` (so it round-trips through snapshot / restore);
-//! the registry is rebuilt from scratch on every boot via
-//! [`prism_builder::register_builtins`], which is what [`Shell::from_state`] does.
+//! handle. Shell state that callbacks need to mutate lives behind
+//! `Rc<RefCell<ShellInner>>` so Slint closures can borrow it.
 
+use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use prism_builder::{starter::register_builtins, BuilderDocument, ComponentRegistry, Node, NodeId};
-use prism_core::design_tokens::{DesignTokens, Rgba, DEFAULT_TOKENS};
+use prism_builder::{
+    starter::register_builtins, BuilderDocument, ComponentRegistry, FieldKind, Node, NodeId,
+};
+use prism_core::design_tokens::{DesignTokens, DEFAULT_TOKENS};
 use prism_core::shell_mode::{Permission, ShellMode, ShellModeContext};
 use prism_core::{Action, Store, Subscription};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
+use crate::command::CommandRegistry;
 use crate::input::{self, InputEvent};
+use crate::keyboard::KeyboardModel;
 use crate::panels::{
     builder::BuilderPanel, identity::IdentityPanel, inspector::InspectorPanel,
     properties::PropertiesPanel, Panel,
 };
+use crate::search::SearchIndex;
+use crate::selection::SelectionModel;
 use crate::telemetry::FirstPaint;
-use crate::{AppWindow, ButtonSpec, FieldRow, PanelNavItem};
+use crate::{
+    AppWindow, ButtonSpec, CommandItem, FieldRow, InspectorNode, PanelNavItem, SearchResultItem,
+    TabItem, ToastItem,
+};
 
-/// The single reloadable root state. Extend by adding fields here;
-/// do *not* stash runtime state in `lazy_static`s or `OnceCell`s —
-/// that breaks the hot-reload loop.
+// ── Reloadable state ───────────────────────────────────────────────
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppState {
     pub tokens: DesignTokens,
     pub context: ShellModeContext,
     pub active_panel: ActivePanel,
-    /// The builder document every non-identity panel reads from.
-    /// Serializable so `Shell::snapshot` / `restore` carries it over
-    /// a hot reload.
     pub builder_document: BuilderDocument,
-    /// Currently selected node id (used by the Properties panel).
-    /// `None` means "nothing selected".
-    pub selected_node: Option<NodeId>,
+    pub selection: SelectionModel,
+    pub tabs: Vec<Tab>,
+    pub active_tab: i32,
+    pub command_palette_open: bool,
+    pub command_palette_query: String,
+    pub search_query: String,
+    pub toasts: Vec<ToastData>,
+    next_toast_id: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Tab {
+    pub id: i32,
+    pub title: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToastData {
+    pub id: u64,
+    pub title: String,
+    pub body: String,
+    pub kind: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -61,8 +77,6 @@ pub enum ActivePanel {
 }
 
 impl ActivePanel {
-    /// Panel id used to bridge between Slint's int callback and the
-    /// Rust enum. Matches each panel's `ID` const.
     pub fn as_id(self) -> i32 {
         match self {
             ActivePanel::Identity => IdentityPanel::ID,
@@ -72,9 +86,6 @@ impl ActivePanel {
         }
     }
 
-    /// Reverse of [`Self::as_id`]. Unknown ids fall back to Identity
-    /// so an out-of-range click can't put the shell into an invalid
-    /// state.
     pub fn from_id(id: i32) -> Self {
         match id {
             x if x == BuilderPanel::ID => ActivePanel::Builder,
@@ -95,16 +106,21 @@ impl Default for AppState {
             },
             active_panel: ActivePanel::Identity,
             builder_document: sample_document(),
-            selected_node: Some("hero".into()),
+            selection: SelectionModel::single("hero".into()),
+            tabs: vec![Tab {
+                id: 0,
+                title: "Welcome".into(),
+            }],
+            active_tab: 0,
+            command_palette_open: false,
+            command_palette_query: String::new(),
+            search_query: String::new(),
+            toasts: Vec::new(),
+            next_toast_id: 0,
         }
     }
 }
 
-/// A small starter document so the Builder / Inspector / Properties
-/// panels have something to render before any real editing has
-/// happened. Mirrors the shape the Sovereign Portal relay seeds its
-/// sample "welcome" portal with, so both crates exercise the same
-/// component ids end-to-end.
 fn sample_document() -> BuilderDocument {
     BuilderDocument {
         root: Some(Node {
@@ -132,11 +148,8 @@ fn sample_document() -> BuilderDocument {
     }
 }
 
-/// Reducer-side action wrapping a normalised input event. Kept as a
-/// bridge between the older free-function [`input::dispatch`] API
-/// and the Store so hosts that want structured action dispatch can
-/// still feed inputs through `store.dispatch(InputAction(evt))`
-/// instead of the Slint callback path.
+// ── Actions ────────────────────────────────────────────────────────
+
 pub struct InputAction(pub InputEvent);
 
 impl Action<AppState> for InputAction {
@@ -145,8 +158,6 @@ impl Action<AppState> for InputAction {
     }
 }
 
-/// Reducer-side action that switches the active panel. Wired up to
-/// the Slint sidebar's `select_panel(int)` callback.
 pub struct SelectPanel(pub ActivePanel);
 
 impl Action<AppState> for SelectPanel {
@@ -155,143 +166,192 @@ impl Action<AppState> for SelectPanel {
     }
 }
 
-/// Owning wrapper around `Store<AppState>` + the root Slint window +
-/// the component registry. Hosts build one on startup and call
-/// [`Shell::run`] to hand control to Slint's event loop; the store's
-/// subscription bus stays available for non-UI observers.
-pub struct Shell {
+// ── Undo snapshots ─────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+struct DocumentSnapshot {
+    description: String,
+    document: BuilderDocument,
+    selection: SelectionModel,
+}
+
+// ── Shell inner state (shared with callbacks) ──────────────────────
+
+struct ShellInner {
     store: Store<AppState>,
+    registry: Arc<ComponentRegistry>,
+    keyboard: KeyboardModel,
+    commands: CommandRegistry,
+    undo_past: Vec<DocumentSnapshot>,
+    undo_future: Vec<DocumentSnapshot>,
+}
+
+impl ShellInner {
+    fn push_undo(&mut self, description: &str) {
+        let state = self.store.state();
+        self.undo_past.push(DocumentSnapshot {
+            description: description.into(),
+            document: state.builder_document.clone(),
+            selection: state.selection.clone(),
+        });
+        self.undo_future.clear();
+        if self.undo_past.len() > 100 {
+            self.undo_past.remove(0);
+        }
+    }
+
+    fn perform_undo(&mut self) {
+        let Some(snapshot) = self.undo_past.pop() else {
+            return;
+        };
+        let state = self.store.state();
+        self.undo_future.push(DocumentSnapshot {
+            description: snapshot.description.clone(),
+            document: state.builder_document.clone(),
+            selection: state.selection.clone(),
+        });
+        let doc = snapshot.document;
+        let sel = snapshot.selection;
+        self.store.mutate(|state| {
+            state.builder_document = doc;
+            state.selection = sel;
+        });
+    }
+
+    fn perform_redo(&mut self) {
+        let Some(snapshot) = self.undo_future.pop() else {
+            return;
+        };
+        let state = self.store.state();
+        self.undo_past.push(DocumentSnapshot {
+            description: snapshot.description.clone(),
+            document: state.builder_document.clone(),
+            selection: state.selection.clone(),
+        });
+        let doc = snapshot.document;
+        let sel = snapshot.selection;
+        self.store.mutate(|state| {
+            state.builder_document = doc;
+            state.selection = sel;
+        });
+    }
+
+    fn add_toast(&mut self, title: &str, body: &str, kind: &str) {
+        self.store.mutate(|state| {
+            let id = state.next_toast_id;
+            state.next_toast_id += 1;
+            state.toasts.push(ToastData {
+                id,
+                title: title.into(),
+                body: body.into(),
+                kind: kind.into(),
+            });
+            if state.toasts.len() > 5 {
+                state.toasts.remove(0);
+            }
+        });
+    }
+}
+
+// ── Shell ──────────────────────────────────────────────────────────
+
+pub struct Shell {
+    inner: Rc<RefCell<ShellInner>>,
     window: AppWindow,
     telemetry: FirstPaint,
-    /// Component catalog backing the Builder + Properties panels.
-    /// Wrapped in `Arc` so callback closures can share it cheaply
-    /// without forcing `Shell` itself to be `Clone`.
-    registry: Arc<ComponentRegistry>,
 }
 
 impl Shell {
-    /// Build a shell around `AppState::default()` and a fresh
-    /// `AppWindow`. Returns an error if Slint cannot construct the
-    /// window (e.g. missing platform backend).
     pub fn new() -> Result<Self, slint::PlatformError> {
         Self::from_state(AppState::default())
     }
 
-    /// Build a shell around a caller-supplied state. Used by tests
-    /// and by the hot-reload restore path.
     pub fn from_state(state: AppState) -> Result<Self, slint::PlatformError> {
-        // Start the first-paint timer *before* touching Slint so the
-        // measured window actually reflects boot cost (window
-        // construction, property sync, callback wiring).
         let telemetry = FirstPaint::start();
         let window = AppWindow::new()?;
         let mut registry = ComponentRegistry::new();
         register_builtins(&mut registry).expect("starter components must register");
-        let mut shell = Self {
+        let inner = Rc::new(RefCell::new(ShellInner {
             store: Store::new(state),
+            registry: Arc::new(registry),
+            keyboard: KeyboardModel::with_defaults(),
+            commands: CommandRegistry::with_builtins(),
+            undo_past: Vec::new(),
+            undo_future: Vec::new(),
+        }));
+        let shell = Self {
+            inner,
             window,
             telemetry,
-            registry: Arc::new(registry),
         };
-        shell.sync_ui();
+        sync_ui_from_shared(&shell.inner, &shell.window);
         shell.wire_callbacks();
         Ok(shell)
     }
 
-    /// Borrow the current state for read-only access.
-    pub fn state(&self) -> &AppState {
-        self.store.state()
+    pub fn state(&self) -> AppState {
+        self.inner.borrow().store.state().clone()
     }
 
-    /// Borrow the shell's component registry. Exposed so panels
-    /// that register new component types (tests, late-bound plugin
-    /// hosts) can look up the existing catalog without rebuilding it.
-    pub fn registry(&self) -> &ComponentRegistry {
-        &self.registry
+    pub fn registry(&self) -> Arc<ComponentRegistry> {
+        Arc::clone(&self.inner.borrow().registry)
     }
 
-    /// Mutable access to the underlying store. Expose it so hosts
-    /// can register / drop subscribers, dispatch custom actions, or
-    /// run hot-reload snapshot/restore without going through a
-    /// bespoke API for every call site.
-    pub fn store_mut(&mut self) -> &mut Store<AppState> {
-        &mut self.store
-    }
-
-    /// Borrow the underlying Slint window. Hosts that want to hook
-    /// into extra callbacks or pump additional properties can reach
-    /// through this.
     pub fn window(&self) -> &AppWindow {
         &self.window
     }
 
-    /// Clone-handle to the first-paint telemetry slot. Hosts that
-    /// drive a Slint rendering notifier themselves can hand the clone
-    /// to the notifier closure; [`Shell::run`] wires this up
-    /// automatically for the standard native + WASM entry points.
     pub fn telemetry(&self) -> FirstPaint {
         self.telemetry.clone()
     }
 
-    /// Push a normalised input event through the store. Kept as an
-    /// ergonomic helper for tests and hosts that want to drive state
-    /// without going through the Slint event loop.
-    pub fn dispatch_input(&mut self, event: InputEvent) -> bool {
-        let mut redraw = false;
-        self.store.mutate(|state| {
-            redraw = input::dispatch(state, event);
-        });
-        self.sync_ui();
+    pub fn dispatch_input(&self, event: InputEvent) -> bool {
+        let mut inner = self.inner.borrow_mut();
+        let redraw = {
+            let mut result = false;
+            inner.store.mutate(|state| {
+                result = input::dispatch(state, event);
+            });
+            result
+        };
+        drop(inner);
+        sync_ui_from_shared(&self.inner, &self.window);
         redraw
     }
 
-    /// Switch the active panel and push the new panel's data into
-    /// the Slint window. Hosts can call this directly or drive it
-    /// via the `select_panel(int)` Slint callback.
-    pub fn select_panel(&mut self, panel: ActivePanel) {
-        self.store.mutate(|state| {
+    pub fn select_panel(&self, panel: ActivePanel) {
+        self.inner.borrow_mut().store.mutate(|state| {
             state.active_panel = panel;
         });
-        self.sync_ui();
+        sync_ui_from_shared(&self.inner, &self.window);
     }
 
-    /// Subscribe to state changes. Returns a handle the caller can
-    /// feed back to [`Shell::unsubscribe`]. Forwards straight to the
-    /// underlying [`Store::subscribe`].
-    pub fn subscribe<F>(&mut self, listener: F) -> Subscription
+    pub fn subscribe<F>(&self, listener: F) -> Subscription
     where
         F: FnMut(&AppState) + 'static,
     {
-        self.store.subscribe(listener)
+        self.inner.borrow_mut().store.subscribe(listener)
     }
 
-    /// Drop a previously registered subscription.
-    pub fn unsubscribe(&mut self, subscription: Subscription) {
-        self.store.unsubscribe(subscription);
+    pub fn unsubscribe(&self, subscription: Subscription) {
+        self.inner.borrow_mut().store.unsubscribe(subscription);
     }
 
-    /// Serialise the current state for §7 hot-reload.
     pub fn snapshot(&self) -> Result<Vec<u8>, serde_json::Error> {
-        self.store.snapshot()
+        self.inner.borrow().store.snapshot()
     }
 
-    /// Restore state from a snapshot produced by [`Shell::snapshot`].
-    /// Notifies subscribers exactly once on success.
-    pub fn restore(&mut self, bytes: &[u8]) -> Result<(), serde_json::Error> {
-        self.store.restore(bytes)?;
-        self.sync_ui();
+    pub fn restore(&self, bytes: &[u8]) -> Result<(), serde_json::Error> {
+        self.inner.borrow_mut().store.restore(bytes)?;
+        sync_ui_from_shared(&self.inner, &self.window);
         Ok(())
     }
 
-    /// Block on Slint's event loop until the window closes. Native
-    /// hosts call this from `main`; the WASM entry point in
-    /// `lib.rs` also routes through it.
-    ///
-    /// Installs a Slint rendering notifier that records first paint
-    /// into [`Shell::telemetry`] the moment the first frame is
-    /// presented. The closure logs a one-shot boot line (`prism-shell:
-    /// first-paint Xms`) so the dev loop surfaces the measurement
-    /// without requiring a structured-logging dep.
+    pub fn add_notification(&self, title: &str, body: &str, kind: &str) {
+        self.inner.borrow_mut().add_toast(title, body, kind);
+        sync_ui_from_shared(&self.inner, &self.window);
+    }
+
     pub fn run(self) -> Result<(), slint::PlatformError> {
         let telemetry = self.telemetry.clone();
         let already_logged = Rc::new(std::cell::Cell::new(false));
@@ -315,207 +375,398 @@ impl Shell {
         self.window.run()
     }
 
-    /// Push the current `AppState` into the Slint window's
-    /// properties. Called once at construction, after every
-    /// dispatch, and again after `restore`.
-    fn sync_ui(&mut self) {
-        let state = self.store.state();
-        let tokens = &state.tokens;
-
-        // Design-token-backed palette.
-        self.window
-            .set_background_color(rgba_to_slint(tokens.colors.background));
-        self.window
-            .set_sidebar_color(rgba_to_slint(tokens.colors.surface));
-        self.window
-            .set_sidebar_item_color(rgba_to_slint(tokens.colors.surface_elevated));
-        self.window
-            .set_sidebar_item_selected_color(rgba_to_slint(tokens.colors.accent));
-        self.window
-            .set_surface_color(rgba_to_slint(tokens.colors.surface_elevated));
-        self.window
-            .set_button_color(rgba_to_slint(tokens.colors.accent));
-        self.window
-            .set_text_color(rgba_to_slint(tokens.colors.text_primary));
-        self.window
-            .set_text_muted_color(rgba_to_slint(tokens.colors.text_secondary));
-
-        // Sidebar nav — one entry per panel, with `selected` bound
-        // to the current `active_panel`.
-        let nav_items = nav_model(state.active_panel);
-        let nav_model = Rc::new(VecModel::from(nav_items));
-        self.window.set_nav_items(ModelRc::from(
-            nav_model as Rc<dyn Model<Data = PanelNavItem>>,
-        ));
-
-        // Panel title + hint come from each panel's static metadata.
-        let (title, hint): (&'static str, &'static str) = match state.active_panel {
-            ActivePanel::Identity => {
-                let p = IdentityPanel::new();
-                (p.title(), p.hint())
-            }
-            ActivePanel::Builder => {
-                let p = BuilderPanel::new();
-                (p.title(), p.hint())
-            }
-            ActivePanel::Inspector => {
-                let p = InspectorPanel::new();
-                (p.title(), p.hint())
-            }
-            ActivePanel::Properties => {
-                let p = PropertiesPanel::new();
-                (p.title(), p.hint())
-            }
-        };
-        self.window.set_panel_title(SharedString::from(title));
-        self.window.set_panel_hint(SharedString::from(hint));
-
-        // Panel-specific data. Only the active panel's slot is
-        // populated — every other slot is cleared so the Slint `if`
-        // guards in `ui/app.slint` hide unrelated surfaces.
-        self.clear_panel_slots();
-        match state.active_panel {
-            ActivePanel::Identity => self.push_identity_actions(),
-            ActivePanel::Builder => {
-                self.push_builder_source(&state.builder_document, tokens);
-            }
-            ActivePanel::Inspector => {
-                self.push_inspector_tree(&state.builder_document);
-            }
-            ActivePanel::Properties => {
-                self.push_property_rows(&state.builder_document, &state.selected_node);
-            }
-        }
-    }
-
-    fn clear_panel_slots(&self) {
-        let empty_actions: Rc<VecModel<ButtonSpec>> =
-            Rc::new(VecModel::from(Vec::<ButtonSpec>::new()));
-        self.window.set_actions(ModelRc::from(
-            empty_actions as Rc<dyn Model<Data = ButtonSpec>>,
-        ));
-        self.window.set_builder_source(SharedString::new());
-        self.window.set_builder_node_count(0);
-        self.window.set_inspector_tree(SharedString::new());
-        self.window.set_selected_component(SharedString::new());
-        let empty_rows: Rc<VecModel<FieldRow>> = Rc::new(VecModel::from(Vec::<FieldRow>::new()));
-        self.window
-            .set_field_rows(ModelRc::from(empty_rows as Rc<dyn Model<Data = FieldRow>>));
-    }
-
-    fn push_identity_actions(&self) {
-        let panel = IdentityPanel::new();
-        let actions = panel
-            .actions()
-            .iter()
-            .map(|label| ButtonSpec {
-                label: SharedString::from(*label),
-            })
-            .collect::<Vec<_>>();
-        let model = Rc::new(VecModel::from(actions));
-        self.window
-            .set_actions(ModelRc::from(model as Rc<dyn Model<Data = ButtonSpec>>));
-    }
-
-    fn push_builder_source(&self, doc: &BuilderDocument, tokens: &DesignTokens) {
-        let source = BuilderPanel::source(doc, &self.registry, tokens);
-        self.window.set_builder_source(SharedString::from(source));
-        self.window
-            .set_builder_node_count(BuilderPanel::node_count(doc) as i32);
-    }
-
-    fn push_inspector_tree(&self, doc: &BuilderDocument) {
-        let tree = InspectorPanel::tree(doc);
-        self.window.set_inspector_tree(SharedString::from(tree));
-    }
-
-    fn push_property_rows(&self, doc: &BuilderDocument, selected: &Option<NodeId>) {
-        let component_id = PropertiesPanel::selected_component(doc, selected);
-        self.window
-            .set_selected_component(SharedString::from(component_id));
-        let rows = PropertiesPanel::rows(doc, &self.registry, selected)
-            .into_iter()
-            .map(|r| FieldRow {
-                key: SharedString::from(r.key),
-                label: SharedString::from(r.label),
-                kind: SharedString::from(r.kind),
-                value: SharedString::from(r.value),
-                required: r.required,
-            })
-            .collect::<Vec<_>>();
-        let model = Rc::new(VecModel::from(rows));
-        self.window
-            .set_field_rows(ModelRc::from(model as Rc<dyn Model<Data = FieldRow>>));
-    }
-
-    /// Wire Slint callbacks back into the store. The sidebar owns
-    /// a `select_panel(int)` callback that flips `AppState::active_panel`
-    /// through a weak-`AppWindow` handle; the identity panel owns a
-    /// `clicked(int)` callback that just logs for now.
-    fn wire_callbacks(&mut self) {
+    fn wire_callbacks(&self) {
         let weak = self.window.as_weak();
-        let registry = Arc::clone(&self.registry);
-        self.window.on_select_panel(move |id| {
-            let Some(window) = weak.upgrade() else {
-                return;
-            };
-            let panel = ActivePanel::from_id(id);
-            push_active_panel(&window, &registry, panel);
+        let inner = Rc::clone(&self.inner);
+
+        // Panel selection (sidebar + activity bar)
+        self.window.on_select_panel({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |id| {
+                inner.borrow_mut().store.mutate(|state| {
+                    state.active_panel = ActivePanel::from_id(id);
+                });
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
         });
+
+        // Identity panel click
         self.window.on_clicked(move |index| {
             eprintln!("prism-shell: identity-panel click index={index}");
         });
+
+        // Property field editing
+        self.window.on_field_edited({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |key, value| {
+                let key = key.to_string();
+                let value = value.to_string();
+                {
+                    let mut s = inner.borrow_mut();
+                    let selected_id = s.store.state().selection.primary().cloned();
+                    if let Some(ref target_id) = selected_id {
+                        let kind = field_kind_for_key(&s, &key);
+                        s.push_undo(&format!("Edit {key}"));
+                        s.store.mutate(|state| {
+                            if let Some(ref mut root) = state.builder_document.root {
+                                mutate_node_prop(root, target_id, &key, &value, kind.as_deref());
+                            }
+                        });
+                    }
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Inspector node selection
+        self.window.on_node_clicked({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |node_id| {
+                inner.borrow_mut().store.mutate(|state| {
+                    state.selection.select(node_id.to_string());
+                });
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Node reordering
+        self.window.on_node_move_up({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |node_id| {
+                {
+                    let mut s = inner.borrow_mut();
+                    s.push_undo("Move node up");
+                    s.store.mutate(|state| {
+                        move_node_in_siblings(&mut state.builder_document, &node_id, -1);
+                    });
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+        self.window.on_node_move_down({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |node_id| {
+                {
+                    let mut s = inner.borrow_mut();
+                    s.push_undo("Move node down");
+                    s.store.mutate(|state| {
+                        move_node_in_siblings(&mut state.builder_document, &node_id, 1);
+                    });
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Tab management
+        self.window.on_tab_activated({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |tab_id| {
+                inner.borrow_mut().store.mutate(|state| {
+                    state.active_tab = tab_id;
+                });
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+        self.window.on_tab_closed({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |tab_id| {
+                inner.borrow_mut().store.mutate(|state| {
+                    state.tabs.retain(|t| t.id != tab_id);
+                    if state.active_tab == tab_id {
+                        state.active_tab = state.tabs.first().map(|t| t.id).unwrap_or(0);
+                    }
+                });
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Command palette
+        self.window.on_toggle_command_palette({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move || {
+                {
+                    let mut s = inner.borrow_mut();
+                    let open = s.store.state().command_palette_open;
+                    s.store.mutate(|state| {
+                        state.command_palette_open = !open;
+                        if open {
+                            state.command_palette_query.clear();
+                        }
+                    });
+                    s.keyboard.set_context("commandPaletteOpen", !open);
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+        self.window.on_command_palette_input({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |query| {
+                inner.borrow_mut().store.mutate(|state| {
+                    state.command_palette_query = query.to_string();
+                });
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+        self.window.on_command_selected({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |index| {
+                let cmd_id = {
+                    let s = inner.borrow();
+                    let query = &s.store.state().command_palette_query;
+                    let results = s.commands.filter(query);
+                    results.get(index as usize).map(|c| c.id.clone())
+                };
+                if let Some(cmd_id) = cmd_id {
+                    execute_command(&inner, &weak, &cmd_id);
+                }
+            }
+        });
+
+        // Notifications
+        self.window.on_dismiss_notification({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |toast_id| {
+                inner.borrow_mut().store.mutate(|state| {
+                    state.toasts.retain(|t| t.id != toast_id as u64);
+                });
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Undo / redo
+        self.window.on_undo_clicked({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move || {
+                inner.borrow_mut().perform_undo();
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+        self.window.on_redo_clicked({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move || {
+                inner.borrow_mut().perform_redo();
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Escape
+        self.window.on_escape_pressed({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move || {
+                let was_palette;
+                {
+                    let mut s = inner.borrow_mut();
+                    was_palette = s.store.state().command_palette_open;
+                    if was_palette {
+                        s.store.mutate(|state| {
+                            state.command_palette_open = false;
+                            state.command_palette_query.clear();
+                        });
+                        s.keyboard.set_context("commandPaletteOpen", false);
+                    } else {
+                        s.store.mutate(|state| {
+                            state.selection.clear();
+                        });
+                    }
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Search
+        self.window.on_search_input({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |query| {
+                inner.borrow_mut().store.mutate(|state| {
+                    state.search_query = query.to_string();
+                });
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+        self.window.on_search_result_clicked({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |node_id| {
+                inner.borrow_mut().store.mutate(|state| {
+                    state.selection.select(node_id.to_string());
+                    state.active_panel = ActivePanel::Properties;
+                });
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        self.window.on_search_focus(|| {});
     }
 }
 
-/// Build the sidebar nav model with `selected` set on the currently
-/// active panel.
-fn nav_model(active: ActivePanel) -> Vec<PanelNavItem> {
-    let entries = [
-        (
-            IdentityPanel::ID,
-            IdentityPanel::new().label(),
-            ActivePanel::Identity,
-        ),
-        (
-            BuilderPanel::ID,
-            BuilderPanel::new().label(),
-            ActivePanel::Builder,
-        ),
-        (
-            InspectorPanel::ID,
-            InspectorPanel::new().label(),
-            ActivePanel::Inspector,
-        ),
-        (
-            PropertiesPanel::ID,
-            PropertiesPanel::new().label(),
-            ActivePanel::Properties,
-        ),
-    ];
-    entries
-        .into_iter()
-        .map(|(id, label, panel)| PanelNavItem {
-            id,
-            label: SharedString::from(label),
-            selected: panel == active,
-        })
-        .collect()
+// ── Sync UI ────────────────────────────────────────────────────────
+
+fn sync_ui_from_shared(shared: &Rc<RefCell<ShellInner>>, window: &AppWindow) {
+    let inner = shared.borrow();
+    sync_ui_impl(&inner, window);
 }
 
-/// Slint callback helper — patches the window's panel-specific
-/// properties without going through the full `Shell::sync_ui`. Used
-/// by the `select_panel` callback which only has a weak handle to
-/// the window and a clone of the registry, not a `&mut Shell`.
-fn push_active_panel(window: &AppWindow, registry: &ComponentRegistry, panel: ActivePanel) {
-    // Refresh nav highlight.
-    let nav_items = nav_model(panel);
-    let nav_model_rc = Rc::new(VecModel::from(nav_items));
-    window.set_nav_items(ModelRc::from(
-        nav_model_rc as Rc<dyn Model<Data = PanelNavItem>>,
+fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
+    let state = inner.store.state();
+    let tokens = &state.tokens;
+
+    // Sidebar nav (activity bar items)
+    let nav_items = nav_model(state.active_panel);
+    let nav_rc = Rc::new(VecModel::from(nav_items));
+    window.set_nav_items(ModelRc::from(nav_rc as Rc<dyn Model<Data = PanelNavItem>>));
+
+    // Panel title + hint
+    let (title, hint) = panel_metadata(state.active_panel);
+    window.set_panel_title(SharedString::from(title));
+    window.set_panel_hint(SharedString::from(hint));
+
+    // Clear all panel slots
+    clear_panel_slots(window);
+
+    // Fill active panel
+    match state.active_panel {
+        ActivePanel::Identity => push_identity_actions(window),
+        ActivePanel::Builder => {
+            push_builder_source(window, &state.builder_document, &inner.registry, tokens)
+        }
+        ActivePanel::Inspector => {
+            push_inspector_nodes(window, &state.builder_document, &state.selection)
+        }
+        ActivePanel::Properties => push_property_rows(
+            window,
+            &state.builder_document,
+            &inner.registry,
+            &state.selection,
+        ),
+    }
+
+    // Tabs
+    let tab_items: Vec<TabItem> = state
+        .tabs
+        .iter()
+        .map(|t| TabItem {
+            id: t.id,
+            title: SharedString::from(&t.title),
+            active: t.id == state.active_tab,
+        })
+        .collect();
+    let tab_rc = Rc::new(VecModel::from(tab_items));
+    window.set_tabs(ModelRc::from(tab_rc as Rc<dyn Model<Data = TabItem>>));
+
+    // Command palette
+    window.set_command_palette_visible(state.command_palette_open);
+    let filtered = inner.commands.filter(&state.command_palette_query);
+    let cmd_items: Vec<CommandItem> = filtered
+        .iter()
+        .map(|c| CommandItem {
+            label: SharedString::from(&c.label),
+            shortcut: SharedString::from(c.shortcut.as_deref().unwrap_or("")),
+            category: SharedString::from(&c.category),
+        })
+        .collect();
+    let cmd_rc = Rc::new(VecModel::from(cmd_items));
+    window.set_command_results(ModelRc::from(cmd_rc as Rc<dyn Model<Data = CommandItem>>));
+
+    // Notifications
+    let toast_items: Vec<ToastItem> = state
+        .toasts
+        .iter()
+        .map(|t| ToastItem {
+            id: t.id as i32,
+            title: SharedString::from(&t.title),
+            body: SharedString::from(&t.body),
+            kind: SharedString::from(&t.kind),
+        })
+        .collect();
+    let toast_rc = Rc::new(VecModel::from(toast_items));
+    window.set_notifications(ModelRc::from(toast_rc as Rc<dyn Model<Data = ToastItem>>));
+
+    // Undo/redo state
+    window.set_can_undo(!inner.undo_past.is_empty());
+    window.set_can_redo(!inner.undo_future.is_empty());
+    window.set_undo_label(SharedString::from(
+        inner
+            .undo_past
+            .last()
+            .map(|s| s.description.as_str())
+            .unwrap_or(""),
+    ));
+    window.set_redo_label(SharedString::from(
+        inner
+            .undo_future
+            .last()
+            .map(|s| s.description.as_str())
+            .unwrap_or(""),
     ));
 
-    // Clear every panel slot, then fill in the one the user picked.
+    // Search results
+    let search_items: Vec<SearchResultItem> = if state.search_query.is_empty() {
+        Vec::new()
+    } else {
+        let idx = SearchIndex::build(&state.builder_document);
+        idx.query(&state.search_query)
+            .into_iter()
+            .take(10)
+            .map(|r| SearchResultItem {
+                node_id: SharedString::from(&r.node_id),
+                component_type: SharedString::from(&r.component),
+                field: SharedString::from(&r.field),
+                snippet: SharedString::from(&r.snippet),
+            })
+            .collect()
+    };
+    let search_rc = Rc::new(VecModel::from(search_items));
+    window.set_search_results(ModelRc::from(
+        search_rc as Rc<dyn Model<Data = SearchResultItem>>,
+    ));
+}
+
+fn clear_panel_slots(window: &AppWindow) {
     let empty_actions: Rc<VecModel<ButtonSpec>> = Rc::new(VecModel::from(Vec::<ButtonSpec>::new()));
     window.set_actions(ModelRc::from(
         empty_actions as Rc<dyn Model<Data = ButtonSpec>>,
@@ -523,78 +774,346 @@ fn push_active_panel(window: &AppWindow, registry: &ComponentRegistry, panel: Ac
     window.set_builder_source(SharedString::new());
     window.set_builder_node_count(0);
     window.set_inspector_tree(SharedString::new());
+    let empty_nodes: Rc<VecModel<InspectorNode>> =
+        Rc::new(VecModel::from(Vec::<InspectorNode>::new()));
+    window.set_inspector_nodes(ModelRc::from(
+        empty_nodes as Rc<dyn Model<Data = InspectorNode>>,
+    ));
     window.set_selected_component(SharedString::new());
     let empty_rows: Rc<VecModel<FieldRow>> = Rc::new(VecModel::from(Vec::<FieldRow>::new()));
     window.set_field_rows(ModelRc::from(empty_rows as Rc<dyn Model<Data = FieldRow>>));
-
-    let (title, hint): (&'static str, &'static str) = match panel {
-        ActivePanel::Identity => {
-            let p = IdentityPanel::new();
-            let actions = p
-                .actions()
-                .iter()
-                .map(|label| ButtonSpec {
-                    label: SharedString::from(*label),
-                })
-                .collect::<Vec<_>>();
-            let model = Rc::new(VecModel::from(actions));
-            window.set_actions(ModelRc::from(model as Rc<dyn Model<Data = ButtonSpec>>));
-            (p.title(), p.hint())
-        }
-        ActivePanel::Builder => {
-            let p = BuilderPanel::new();
-            let doc = sample_document();
-            let source = BuilderPanel::source(&doc, registry, &DEFAULT_TOKENS);
-            window.set_builder_source(SharedString::from(source));
-            window.set_builder_node_count(BuilderPanel::node_count(&doc) as i32);
-            (p.title(), p.hint())
-        }
-        ActivePanel::Inspector => {
-            let p = InspectorPanel::new();
-            let doc = sample_document();
-            let tree = InspectorPanel::tree(&doc);
-            window.set_inspector_tree(SharedString::from(tree));
-            (p.title(), p.hint())
-        }
-        ActivePanel::Properties => {
-            let p = PropertiesPanel::new();
-            let doc = sample_document();
-            let selected = Some("hero".to_string());
-            let component_id = PropertiesPanel::selected_component(&doc, &selected);
-            window.set_selected_component(SharedString::from(component_id));
-            let rows = PropertiesPanel::rows(&doc, registry, &selected)
-                .into_iter()
-                .map(|r| FieldRow {
-                    key: SharedString::from(r.key),
-                    label: SharedString::from(r.label),
-                    kind: SharedString::from(r.kind),
-                    value: SharedString::from(r.value),
-                    required: r.required,
-                })
-                .collect::<Vec<_>>();
-            let model = Rc::new(VecModel::from(rows));
-            window.set_field_rows(ModelRc::from(model as Rc<dyn Model<Data = FieldRow>>));
-            (p.title(), p.hint())
-        }
-    };
-    window.set_panel_title(SharedString::from(title));
-    window.set_panel_hint(SharedString::from(hint));
 }
 
-fn rgba_to_slint(c: Rgba) -> slint::Color {
-    slint::Color::from_argb_u8(c.a, c.r, c.g, c.b)
+fn push_identity_actions(window: &AppWindow) {
+    let panel = IdentityPanel::new();
+    let actions: Vec<ButtonSpec> = panel
+        .actions()
+        .iter()
+        .map(|label| ButtonSpec {
+            label: SharedString::from(*label),
+        })
+        .collect();
+    let model = Rc::new(VecModel::from(actions));
+    window.set_actions(ModelRc::from(model as Rc<dyn Model<Data = ButtonSpec>>));
 }
+
+fn push_builder_source(
+    window: &AppWindow,
+    doc: &BuilderDocument,
+    registry: &ComponentRegistry,
+    tokens: &DesignTokens,
+) {
+    let source = BuilderPanel::source(doc, registry, tokens);
+    window.set_builder_source(SharedString::from(source));
+    window.set_builder_node_count(BuilderPanel::node_count(doc) as i32);
+}
+
+fn push_inspector_nodes(window: &AppWindow, doc: &BuilderDocument, selection: &SelectionModel) {
+    let items = flatten_inspector_nodes(doc.root.as_ref(), selection);
+    let model = Rc::new(VecModel::from(items));
+    window.set_inspector_nodes(ModelRc::from(model as Rc<dyn Model<Data = InspectorNode>>));
+}
+
+fn push_property_rows(
+    window: &AppWindow,
+    doc: &BuilderDocument,
+    registry: &ComponentRegistry,
+    selection: &SelectionModel,
+) {
+    let selected = selection.as_option();
+    let component_id = PropertiesPanel::selected_component(doc, &selected);
+    window.set_selected_component(SharedString::from(component_id));
+    let rows: Vec<FieldRow> = PropertiesPanel::rows(doc, registry, &selected)
+        .into_iter()
+        .map(|r| FieldRow {
+            key: SharedString::from(r.key),
+            label: SharedString::from(r.label),
+            kind: SharedString::from(r.kind),
+            value: SharedString::from(r.value),
+            required: r.required,
+        })
+        .collect();
+    let model = Rc::new(VecModel::from(rows));
+    window.set_field_rows(ModelRc::from(model as Rc<dyn Model<Data = FieldRow>>));
+}
+
+// ── Command dispatch ───────────────────────────────────────────────
+
+fn execute_command(
+    shared: &Rc<RefCell<ShellInner>>,
+    weak: &slint::Weak<AppWindow>,
+    command_id: &str,
+) {
+    match command_id {
+        "edit.undo" => {
+            shared.borrow_mut().perform_undo();
+        }
+        "edit.redo" => {
+            shared.borrow_mut().perform_redo();
+        }
+        "command_palette.toggle" | "command_palette.close" => {
+            let mut s = shared.borrow_mut();
+            let open = s.store.state().command_palette_open;
+            s.store.mutate(|state| {
+                state.command_palette_open = !open;
+                if open {
+                    state.command_palette_query.clear();
+                }
+            });
+            s.keyboard.set_context("commandPaletteOpen", !open);
+        }
+        "panel.identity" => {
+            shared
+                .borrow_mut()
+                .store
+                .mutate(|s| s.active_panel = ActivePanel::Identity);
+        }
+        "panel.builder" => {
+            shared
+                .borrow_mut()
+                .store
+                .mutate(|s| s.active_panel = ActivePanel::Builder);
+        }
+        "panel.inspector" => {
+            shared
+                .borrow_mut()
+                .store
+                .mutate(|s| s.active_panel = ActivePanel::Inspector);
+        }
+        "panel.properties" => {
+            shared
+                .borrow_mut()
+                .store
+                .mutate(|s| s.active_panel = ActivePanel::Properties);
+        }
+        "selection.delete" => {
+            let mut s = shared.borrow_mut();
+            let selected_id = s.store.state().selection.primary().cloned();
+            if let Some(ref target_id) = selected_id {
+                s.push_undo("Delete node");
+                let tid = target_id.clone();
+                s.store.mutate(|state| {
+                    delete_node(&mut state.builder_document, &tid);
+                    state.selection.clear();
+                });
+            }
+        }
+        "selection.all" => {
+            let mut s = shared.borrow_mut();
+            let all_ids = collect_node_ids(s.store.state().builder_document.root.as_ref());
+            s.store.mutate(|state| {
+                state.selection.clear();
+                for id in all_ids {
+                    state.selection.extend(id);
+                }
+            });
+        }
+        "notification.dismiss_all" => {
+            shared.borrow_mut().store.mutate(|state| {
+                state.toasts.clear();
+            });
+        }
+        _ => {
+            eprintln!("prism-shell: unknown command {command_id}");
+        }
+    }
+    // Close palette after command execution
+    {
+        let mut s = shared.borrow_mut();
+        if s.store.state().command_palette_open {
+            s.store.mutate(|state| {
+                state.command_palette_open = false;
+                state.command_palette_query.clear();
+            });
+            s.keyboard.set_context("commandPaletteOpen", false);
+        }
+    }
+    if let Some(w) = weak.upgrade() {
+        sync_ui_from_shared(shared, &w);
+    }
+}
+
+// ── Helpers ────────────────────────────────────────────────────────
+
+fn panel_metadata(panel: ActivePanel) -> (&'static str, &'static str) {
+    match panel {
+        ActivePanel::Identity => (IdentityPanel::new().title(), IdentityPanel::new().hint()),
+        ActivePanel::Builder => (BuilderPanel::new().title(), BuilderPanel::new().hint()),
+        ActivePanel::Inspector => (InspectorPanel::new().title(), InspectorPanel::new().hint()),
+        ActivePanel::Properties => (
+            PropertiesPanel::new().title(),
+            PropertiesPanel::new().hint(),
+        ),
+    }
+}
+
+fn nav_model(active: ActivePanel) -> Vec<PanelNavItem> {
+    [
+        (IdentityPanel::ID, "Id", ActivePanel::Identity),
+        (BuilderPanel::ID, "Bu", ActivePanel::Builder),
+        (InspectorPanel::ID, "In", ActivePanel::Inspector),
+        (PropertiesPanel::ID, "Pr", ActivePanel::Properties),
+    ]
+    .into_iter()
+    .map(|(id, label, panel)| PanelNavItem {
+        id,
+        label: SharedString::from(label),
+        selected: panel == active,
+    })
+    .collect()
+}
+
+fn flatten_inspector_nodes(root: Option<&Node>, selection: &SelectionModel) -> Vec<InspectorNode> {
+    let mut items = Vec::new();
+    if let Some(node) = root {
+        flatten_walk(node, 0, selection, &mut items);
+    }
+    items
+}
+
+fn flatten_walk(node: &Node, depth: i32, selection: &SelectionModel, out: &mut Vec<InspectorNode>) {
+    out.push(InspectorNode {
+        id: SharedString::from(&node.id),
+        component_id: SharedString::from(&node.component),
+        depth,
+        selected: selection.contains(&node.id),
+    });
+    for child in &node.children {
+        flatten_walk(child, depth + 1, selection, out);
+    }
+}
+
+fn find_node<'a>(root: Option<&'a Node>, target: &str) -> Option<&'a Node> {
+    let node = root?;
+    if node.id == target {
+        return Some(node);
+    }
+    for child in &node.children {
+        if let Some(hit) = find_node(Some(child), target) {
+            return Some(hit);
+        }
+    }
+    None
+}
+
+fn field_kind_for_key(inner: &ShellInner, key: &str) -> Option<String> {
+    let state = inner.store.state();
+    let selected = state.selection.primary()?;
+    let node = find_node(state.builder_document.root.as_ref(), selected)?;
+    let component = inner.registry.get(&node.component)?;
+    Some(
+        component
+            .schema()
+            .into_iter()
+            .find(|s| s.key == key)
+            .map(|s| match s.kind {
+                FieldKind::Number(_) => "number",
+                FieldKind::Integer(_) => "integer",
+                FieldKind::Boolean => "boolean",
+                _ => "text",
+            })
+            .unwrap_or("text")
+            .to_string(),
+    )
+}
+
+fn mutate_node_prop(
+    root: &mut Node,
+    target: &str,
+    key: &str,
+    value: &str,
+    kind: Option<&str>,
+) -> bool {
+    if root.id == target {
+        if let Some(obj) = root.props.as_object_mut() {
+            let json_value = match kind {
+                Some("number") => value
+                    .parse::<f64>()
+                    .ok()
+                    .and_then(|n| serde_json::Number::from_f64(n).map(serde_json::Value::Number))
+                    .unwrap_or_else(|| serde_json::Value::String(value.to_string())),
+                Some("integer") => value
+                    .parse::<i64>()
+                    .map(serde_json::Value::from)
+                    .unwrap_or_else(|_| serde_json::Value::String(value.to_string())),
+                Some("boolean") => serde_json::Value::Bool(value == "true"),
+                _ => serde_json::Value::String(value.to_string()),
+            };
+            obj.insert(key.to_string(), json_value);
+        }
+        return true;
+    }
+    for child in &mut root.children {
+        if mutate_node_prop(child, target, key, value, kind) {
+            return true;
+        }
+    }
+    false
+}
+
+fn move_node_in_siblings(doc: &mut BuilderDocument, node_id: &str, direction: i32) {
+    if let Some(ref mut root) = doc.root {
+        move_in_children(&mut root.children, node_id, direction);
+    }
+}
+
+fn move_in_children(children: &mut [Node], target: &str, direction: i32) -> bool {
+    if let Some(pos) = children.iter().position(|n| n.id == target) {
+        let new_pos = pos as i32 + direction;
+        if new_pos >= 0 && (new_pos as usize) < children.len() {
+            children.swap(pos, new_pos as usize);
+            return true;
+        }
+    }
+    for child in children.iter_mut() {
+        if move_in_children(&mut child.children, target, direction) {
+            return true;
+        }
+    }
+    false
+}
+
+fn delete_node(doc: &mut BuilderDocument, target: &str) {
+    if let Some(ref mut root) = doc.root {
+        if root.id == target {
+            doc.root = None;
+            return;
+        }
+        delete_from_children(&mut root.children, target);
+    }
+}
+
+fn delete_from_children(children: &mut Vec<Node>, target: &str) {
+    if let Some(pos) = children.iter().position(|n| n.id == target) {
+        children.remove(pos);
+        return;
+    }
+    for child in children.iter_mut() {
+        delete_from_children(&mut child.children, target);
+    }
+}
+
+fn collect_node_ids(root: Option<&Node>) -> Vec<NodeId> {
+    let mut ids = Vec::new();
+    if let Some(node) = root {
+        collect_ids_walk(node, &mut ids);
+    }
+    ids
+}
+
+fn collect_ids_walk(node: &Node, ids: &mut Vec<NodeId>) {
+    ids.push(node.id.clone());
+    for child in &node.children {
+        collect_ids_walk(child, ids);
+    }
+}
+
+// ── Tests ──────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// `Shell::new` builds an `AppWindow`, and Slint's winit event
-    /// loop must run on the main thread on macOS — `cargo test`
-    /// workers panic the moment they touch it. These tests stay on
-    /// the pure data + store surface and leave the actual
-    /// `Shell::run` path for the integration bin at
-    /// `src/bin/native.rs`.
     #[test]
     fn default_app_state_starts_on_identity_panel() {
         let state = AppState::default();
@@ -605,7 +1124,7 @@ mod tests {
     fn default_state_seeds_sample_document() {
         let state = AppState::default();
         assert!(state.builder_document.root.is_some());
-        assert_eq!(state.selected_node.as_deref(), Some("hero"));
+        assert_eq!(state.selection.primary(), Some(&"hero".to_string()));
     }
 
     #[test]
@@ -647,12 +1166,124 @@ mod tests {
         ));
     }
 
+
     #[test]
-    fn rgba_to_slint_preserves_channels() {
-        let c = rgba_to_slint(Rgba::new(0x3c, 0x78, 0xdc, 0xff));
-        assert_eq!(c.red(), 0x3c);
-        assert_eq!(c.green(), 0x78);
-        assert_eq!(c.blue(), 0xdc);
-        assert_eq!(c.alpha(), 0xff);
+    fn selection_model_replaces_selected_node() {
+        let state = AppState::default();
+        assert_eq!(state.selection.as_option(), Some("hero".to_string()));
+    }
+
+    #[test]
+    fn tabs_default_to_one_welcome_tab() {
+        let state = AppState::default();
+        assert_eq!(state.tabs.len(), 1);
+        assert_eq!(state.tabs[0].title, "Welcome");
+        assert_eq!(state.active_tab, 0);
+    }
+
+    #[test]
+    fn mutate_node_prop_updates_text_value() {
+        let mut doc = sample_document();
+        let root = doc.root.as_mut().unwrap();
+        assert!(mutate_node_prop(
+            root,
+            "hero",
+            "text",
+            "Hello",
+            Some("text")
+        ));
+        let hero = find_node(doc.root.as_ref(), "hero").unwrap();
+        assert_eq!(hero.props["text"], "Hello");
+    }
+
+    #[test]
+    fn mutate_node_prop_updates_integer_value() {
+        let mut doc = sample_document();
+        let root = doc.root.as_mut().unwrap();
+        assert!(mutate_node_prop(
+            root,
+            "hero",
+            "level",
+            "3",
+            Some("integer")
+        ));
+        let hero = find_node(doc.root.as_ref(), "hero").unwrap();
+        assert_eq!(hero.props["level"], 3);
+    }
+
+    #[test]
+    fn mutate_node_prop_returns_false_for_unknown_node() {
+        let mut doc = sample_document();
+        let root = doc.root.as_mut().unwrap();
+        assert!(!mutate_node_prop(root, "nonexistent", "x", "y", None));
+    }
+
+    #[test]
+    fn move_node_swaps_siblings() {
+        let mut doc = sample_document();
+        let children_before: Vec<String> = doc
+            .root
+            .as_ref()
+            .unwrap()
+            .children
+            .iter()
+            .map(|n| n.id.clone())
+            .collect();
+        assert_eq!(children_before, vec!["hero", "intro"]);
+
+        move_node_in_siblings(&mut doc, "hero", 1);
+        let children_after: Vec<String> = doc
+            .root
+            .as_ref()
+            .unwrap()
+            .children
+            .iter()
+            .map(|n| n.id.clone())
+            .collect();
+        assert_eq!(children_after, vec!["intro", "hero"]);
+    }
+
+    #[test]
+    fn delete_node_removes_child() {
+        let mut doc = sample_document();
+        delete_node(&mut doc, "hero");
+        assert_eq!(doc.root.as_ref().unwrap().children.len(), 1);
+        assert_eq!(doc.root.as_ref().unwrap().children[0].id, "intro");
+    }
+
+    #[test]
+    fn flatten_inspector_nodes_produces_correct_depths() {
+        let doc = sample_document();
+        let sel = SelectionModel::single("hero".into());
+        let items = flatten_inspector_nodes(doc.root.as_ref(), &sel);
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0].depth, 0);
+        assert_eq!(items[0].id, "root");
+        assert!(!items[0].selected);
+        assert_eq!(items[1].depth, 1);
+        assert_eq!(items[1].id, "hero");
+        assert!(items[1].selected);
+        assert_eq!(items[2].depth, 1);
+        assert_eq!(items[2].id, "intro");
+    }
+
+    #[test]
+    fn collect_node_ids_walks_full_tree() {
+        let doc = sample_document();
+        let ids = collect_node_ids(doc.root.as_ref());
+        assert_eq!(ids, vec!["root", "hero", "intro"]);
+    }
+
+    #[test]
+    fn toast_data_serializes() {
+        let toast = ToastData {
+            id: 1,
+            title: "Saved".into(),
+            body: "Document saved.".into(),
+            kind: "success".into(),
+        };
+        let json = serde_json::to_string(&toast).unwrap();
+        let restored: ToastData = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.title, "Saved");
     }
 }

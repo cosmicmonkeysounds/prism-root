@@ -77,6 +77,25 @@ impl Default for DirectoryConfig {
     }
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OAuthProviderEntry {
+    pub client_id: String,
+    #[serde(default)]
+    pub redirect_uri: String,
+    #[serde(default)]
+    pub scopes: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OAuthConfig {
+    #[serde(default)]
+    pub google: Option<OAuthProviderEntry>,
+    #[serde(default)]
+    pub github: Option<OAuthProviderEntry>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RelayConfig {
@@ -110,6 +129,8 @@ pub struct RelayConfig {
     pub logging: LoggingConfig,
     #[serde(default)]
     pub directory: DirectoryConfig,
+    #[serde(default)]
+    pub oauth: OAuthConfig,
 }
 
 fn default_host() -> String {
@@ -152,6 +173,7 @@ impl Default for RelayConfig {
             eviction_interval_ms: default_eviction_interval(),
             logging: LoggingConfig::default(),
             directory: DirectoryConfig::default(),
+            oauth: OAuthConfig::default(),
         }
     }
 }

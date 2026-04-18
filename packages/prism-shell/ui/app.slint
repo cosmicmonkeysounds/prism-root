@@ -1,20 +1,7 @@
-// Prism Shell — root Slint component.
-//
-// Phase 3 parity: a left sidebar switches between four panels —
-// Identity, Builder, Inspector, Properties — and the main content
-// area renders panel-specific data bound from Rust-side providers.
-//
-// The Slint component is deliberately data-driven. Every panel is a
-// flat set of `in property <…>` bindings the Rust `Shell::sync_ui`
-// method pushes after every store mutation, so adding a new panel
-// variant does not require editing this file unless the new panel
-// needs a genuinely different layout surface.
-//
-// The builder panel shows the generated `.slint` DSL text that
-// `prism_builder::render_document_slint_source` emits from the
-// shell's component registry + active document; the inspector
-// panel shows a textual dump of the document's node tree; the
-// properties panel shows the selected node's field schema.
+import { Button, LineEdit, Switch, ComboBox, ListView, ScrollView,
+         VerticalBox, HorizontalBox, GroupBox, Palette, TabWidget } from "std-widgets.slint";
+
+// ── Data structs ───────────────────────────────────────────────────
 
 struct ButtonSpec {
     label: string,
@@ -34,55 +21,64 @@ struct FieldRow {
     required: bool,
 }
 
-component SidebarButton inherits Rectangle {
-    in property <string> label;
-    in property <color> background-color;
-    in property <color> text-color;
-    callback clicked;
-
-    height: 36px;
-    background: background-color;
-    border-radius: 4px;
-
-    HorizontalLayout {
-        padding-left: 12px;
-        padding-right: 12px;
-        alignment: start;
-        Text {
-            text: root.label;
-            color: root.text-color;
-            font-size: 14px;
-            vertical-alignment: center;
-        }
-    }
-
-    TouchArea {
-        clicked => { root.clicked(); }
-    }
+struct TabItem {
+    id: int,
+    title: string,
+    active: bool,
 }
+
+struct CommandItem {
+    label: string,
+    shortcut: string,
+    category: string,
+}
+
+struct ToastItem {
+    id: int,
+    title: string,
+    body: string,
+    kind: string,
+}
+
+struct InspectorNode {
+    id: string,
+    component-id: string,
+    depth: int,
+    selected: bool,
+}
+
+struct SearchResultItem {
+    node-id: string,
+    component-type: string,
+    field: string,
+    snippet: string,
+}
+
+// ── Reusable components ────────────────────────────────────────────
 
 component NavButton inherits Rectangle {
     in property <string> label;
     in property <bool> selected;
-    in property <color> idle-color;
-    in property <color> selected-color;
-    in property <color> text-color;
     callback clicked;
 
-    height: 32px;
-    background: selected ? selected-color : idle-color;
-    border-radius: 4px;
+    width: 48px;
+    height: 48px;
+    background: selected ? Palette.accent-background : transparent;
 
-    HorizontalLayout {
-        padding-left: 10px;
-        padding-right: 10px;
-        alignment: start;
-        Text {
-            text: root.label;
-            color: root.text-color;
-            font-size: 13px;
-            vertical-alignment: center;
-        }
+    Rectangle {
+        x: 0px;
+        y: 0px;
+        width: 3px;
+        height: parent.height;
+        background: root.selected ? Palette.accent-background : transparent;
+    }
+
+    Text {
+        text: root.label;
+        color: root.selected ? Palette.accent-foreground : Palette.foreground;
+        font-size: 18px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
     }
 
     TouchArea {
@@ -90,214 +86,600 @@ component NavButton inherits Rectangle {
     }
 }
 
-component FieldRowView inherits Rectangle {
+component FieldEditor inherits Rectangle {
     in property <string> key;
     in property <string> label;
     in property <string> kind;
     in property <string> value;
     in property <bool> required;
-    in property <color> label-color;
-    in property <color> value-color;
-    in property <color> hint-color;
+    callback field-edited(string, string);
 
-    height: 56px;
+    height: 64px;
     background: transparent;
 
     VerticalLayout {
         spacing: 2px;
         padding-top: 4px;
         padding-bottom: 4px;
+
         Text {
             text: root.required ? root.label + " *" : root.label;
-            color: root.label-color;
+            color: Palette.foreground;
             font-size: 12px;
         }
-        Text {
-            text: root.value;
-            color: root.value-color;
-            font-size: 13px;
+
+        if root.kind == "boolean" : HorizontalLayout {
+            alignment: start;
+            height: 24px;
+            Switch {
+                checked: root.value == "true";
+                toggled => {
+                    root.field-edited(root.key, self.checked ? "true" : "false");
+                }
+            }
         }
+
+        if root.kind != "boolean" : LineEdit {
+            height: 28px;
+            text: root.value;
+            placeholder-text: root.label;
+            accepted(text) => {
+                root.field-edited(root.key, text);
+            }
+        }
+
         Text {
             text: root.kind + " · " + root.key;
-            color: root.hint-color;
+            color: Palette.foreground.transparentize(50%);
             font-size: 10px;
         }
     }
 }
+
+component InspectorRow inherits Rectangle {
+    in property <string> node-id;
+    in property <string> component-id;
+    in property <int> depth;
+    in property <bool> selected;
+    callback clicked;
+    callback move-up;
+    callback move-down;
+
+    height: 28px;
+    background: selected ? Palette.accent-background : transparent;
+    border-radius: 3px;
+
+    HorizontalLayout {
+        padding-left: root.depth * 16px + 12px;
+        padding-right: 8px;
+        alignment: space-between;
+
+        Text {
+            text: root.node-id + " · " + root.component-id;
+            color: root.selected ? Palette.accent-foreground : Palette.foreground.transparentize(30%);
+            font-size: 12px;
+            font-family: "monospace";
+            vertical-alignment: center;
+        }
+
+        if root.selected : HorizontalLayout {
+            spacing: 2px;
+            width: 56px;
+            Button {
+                text: "↑";
+                clicked => { root.move-up(); }
+            }
+            Button {
+                text: "↓";
+                clicked => { root.move-down(); }
+            }
+        }
+    }
+
+    TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+component Toast inherits Rectangle {
+    in property <string> title;
+    in property <string> body;
+    in property <string> kind;
+    callback dismissed;
+
+    property <color> kind-color: root.kind == "error" ? #dc3c3c :
+                                  root.kind == "warning" ? #dcaa3c :
+                                  root.kind == "success" ? #3cdc6e :
+                                  Palette.accent-background;
+
+    width: 320px;
+    background: Palette.alternate-background;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: kind-color;
+    clip: true;
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 4px;
+
+        HorizontalLayout {
+            spacing: 8px;
+            Rectangle {
+                width: 6px;
+                height: 6px;
+                border-radius: 3px;
+                background: root.kind-color;
+                y: 6px;
+            }
+            Text {
+                text: root.title;
+                color: Palette.foreground;
+                font-size: 13px;
+                font-weight: 600;
+                overflow: elide;
+            }
+            Rectangle { horizontal-stretch: 1; }
+            Button {
+                text: "×";
+                clicked => { root.dismissed(); }
+            }
+        }
+
+        if root.body != "" : Text {
+            text: root.body;
+            color: Palette.foreground.transparentize(30%);
+            font-size: 12px;
+            wrap: word-wrap;
+        }
+    }
+}
+
+// ── Root component ─────────────────────────────────────────────────
 
 export component AppWindow inherits Window {
     title: "Prism Shell";
     preferred-width: 1280px;
     preferred-height: 800px;
 
-    // Design-token-backed colours. Bound from Rust on boot.
-    in property <color> background-color: #12131a;
-    in property <color> sidebar-color: #1e202c;
-    in property <color> sidebar-item-color: #262a38;
-    in property <color> sidebar-item-selected-color: #3c78dc;
-    in property <color> button-color: #3c78dc;
-    in property <color> text-color: #f0f0f5;
-    in property <color> text-muted-color: #9ca4b4;
-    in property <color> surface-color: #161a22;
-
-    in property <string> panel-title: "Identity";
-    in property <string> panel-hint: "Select an action from the sidebar.";
-
-    // Sidebar navigation — one entry per registered panel. Click
-    // dispatches `select_panel(id)` back into Rust.
-    in property <[PanelNavItem]> nav-items: [
-        { id: 0, label: "Identity", selected: true },
-        { id: 1, label: "Builder",  selected: false },
-        { id: 2, label: "Inspector", selected: false },
-        { id: 3, label: "Properties", selected: false },
-    ];
+    // Sidebar navigation
+    in property <[PanelNavItem]> nav-items: [];
     callback select-panel(int);
 
-    // Identity panel data (flat action list, the Phase-0 surface).
+    // Identity panel
     in property <[ButtonSpec]> actions: [];
     callback clicked(int);
 
-    // Builder panel data. `builder-source` is the `.slint` DSL the
-    // walker emits from the active registry + document; the shell
-    // drops it into a monospace Text view as a read-only preview.
+    // Builder panel
     in property <string> builder-source: "";
     in property <int> builder-node-count: 0;
 
-    // Inspector panel data — flat indented dump of the document's
-    // node tree, one node per line.
+    // Inspector panel
     in property <string> inspector-tree: "";
+    in property <[InspectorNode]> inspector-nodes: [];
+    callback node-clicked(string);
+    callback node-move-up(string);
+    callback node-move-down(string);
 
-    // Properties panel data — ordered list of FieldRows describing
-    // the selected node's field schema. `selected-component` is the
-    // component id the schema came from, or an empty string.
+    // Properties panel
     in property <string> selected-component: "";
     in property <[FieldRow]> field-rows: [];
+    callback field-edited(string, string);
 
-    background: background-color;
+    // Tabbed MDI
+    in property <[TabItem]> tabs: [];
+    callback tab-activated(int);
+    callback tab-closed(int);
 
-    HorizontalLayout {
-        spacing: 0px;
+    // Command palette
+    in property <bool> command-palette-visible: false;
+    in property <[CommandItem]> command-results: [];
+    callback toggle-command-palette();
+    callback command-palette-input(string);
+    callback command-selected(int);
 
-        // Left nav column.
-        Rectangle {
-            width: 200px;
-            background: sidebar-color;
+    // Notifications
+    in property <[ToastItem]> notifications: [];
+    callback dismiss-notification(int);
 
-            VerticalLayout {
-                padding: 16px;
-                spacing: 8px;
-                alignment: start;
+    // Undo/redo
+    in property <bool> can-undo: false;
+    in property <bool> can-redo: false;
+    in property <string> undo-label: "";
+    in property <string> redo-label: "";
+    callback undo-clicked;
+    callback redo-clicked;
 
-                Text {
-                    text: "Panels";
-                    color: text-muted-color;
-                    font-size: 11px;
-                }
+    // Search
+    in property <string> search-query: "";
+    in property <[SearchResultItem]> search-results: [];
+    callback search-input(string);
+    callback search-result-clicked(string);
 
-                for nav[i] in nav-items : NavButton {
-                    label: nav.label;
-                    selected: nav.selected;
-                    idle-color: sidebar-item-color;
-                    selected-color: sidebar-item-selected-color;
-                    text-color: text-color;
-                    clicked => { root.select-panel(nav.id); }
-                }
+    // Keyboard
+    callback escape-pressed;
+    callback search-focus;
+    in property <string> panel-title: "Identity";
+    in property <string> panel-hint: "Select an action from the sidebar.";
+
+    background: Palette.background;
+
+    // Global keyboard handler
+    fs := FocusScope {
+        width: 100%;
+        height: 100%;
+
+        key-pressed(event) => {
+            if (event.modifiers.control && event.modifiers.shift && event.text == "P") {
+                root.toggle-command-palette();
+                return accept;
             }
+            if (event.modifiers.control && !event.modifiers.shift && event.text == "\u{001a}") {
+                root.undo-clicked();
+                return accept;
+            }
+            if (event.modifiers.control && event.modifiers.shift && event.text == "\u{001a}") {
+                root.redo-clicked();
+                return accept;
+            }
+            if (event.modifiers.control && event.text == "\u{0006}") {
+                root.search-focus();
+                return accept;
+            }
+            if (event.text == Key.Escape) {
+                root.escape-pressed();
+                return accept;
+            }
+            return reject;
         }
 
-        // Main content column.
-        Rectangle {
-            background: background-color;
+        VerticalLayout {
+            // Main content area
+            HorizontalLayout {
+                spacing: 0px;
+                vertical-stretch: 1;
 
-            VerticalLayout {
-                padding: 24px;
-                spacing: 12px;
-                alignment: start;
+                // Activity bar (leftmost icon strip)
+                Rectangle {
+                    width: 48px;
+                    background: Palette.background;
 
-                Text {
-                    text: panel-title;
-                    color: text-color;
-                    font-size: 22px;
-                }
-                Text {
-                    text: panel-hint;
-                    color: text-muted-color;
-                    font-size: 13px;
-                    wrap: word-wrap;
-                }
+                    VerticalLayout {
+                        padding-top: 8px;
+                        spacing: 0px;
+                        alignment: start;
 
-                // Identity panel surface — sidebar-of-actions shape.
-                if actions.length > 0 : VerticalLayout {
-                    spacing: 8px;
-                    padding-top: 12px;
-                    for action[i] in actions : SidebarButton {
-                        label: action.label;
-                        background-color: button-color;
-                        text-color: text-color;
-                        clicked => { root.clicked(i); }
+                        for nav[i] in root.nav-items : NavButton {
+                            label: nav.label;
+                            selected: nav.selected;
+                            clicked => { root.select-panel(nav.id); }
+                        }
                     }
                 }
 
-                // Builder panel surface — generated .slint DSL preview.
-                if builder-source != "" : Rectangle {
-                    background: surface-color;
-                    border-radius: 6px;
-                    min-height: 320px;
+                // Sidebar
+                Rectangle {
+                    width: 200px;
+                    background: Palette.alternate-background;
+
                     VerticalLayout {
-                        padding: 12px;
+                        padding: 16px;
                         spacing: 8px;
+                        alignment: start;
+
                         Text {
-                            text: builder-node-count + " node(s) · generated .slint DSL";
-                            color: text-muted-color;
-                            font-size: 11px;
+                            text: root.panel-title;
+                            color: Palette.foreground;
+                            font-size: 16px;
+                            font-weight: 600;
                         }
+
                         Text {
-                            text: builder-source;
-                            color: text-color;
-                            font-family: "monospace";
+                            text: root.panel-hint;
+                            color: Palette.foreground.transparentize(30%);
                             font-size: 11px;
                             wrap: word-wrap;
                         }
-                    }
-                }
 
-                // Inspector panel surface — indented node-tree dump.
-                if inspector-tree != "" : Rectangle {
-                    background: surface-color;
-                    border-radius: 6px;
-                    min-height: 200px;
-                    VerticalLayout {
-                        padding: 12px;
-                        Text {
-                            text: inspector-tree;
-                            color: text-color;
-                            font-family: "monospace";
-                            font-size: 12px;
+                        // Identity panel actions in sidebar
+                        if root.actions.length > 0 : VerticalLayout {
+                            spacing: 4px;
+                            padding-top: 8px;
+                            for action[i] in root.actions : Button {
+                                text: action.label;
+                                clicked => { root.clicked(i); }
+                            }
+                        }
+
+                        // Search input
+                        LineEdit {
+                            height: 28px;
+                            text: root.search-query;
+                            placeholder-text: "Search…";
+                            edited(text) => {
+                                root.search-input(text);
+                            }
+                        }
+
+                        // Search results
+                        if root.search-results.length > 0 : VerticalLayout {
+                            spacing: 2px;
+                            for result[i] in root.search-results : Rectangle {
+                                height: 44px;
+                                background: Palette.control-background;
+                                border-radius: 4px;
+
+                                VerticalLayout {
+                                    padding: 6px;
+                                    spacing: 2px;
+                                    Text {
+                                        text: result.node-id + " · " + result.field;
+                                        color: Palette.foreground;
+                                        font-size: 11px;
+                                        overflow: elide;
+                                    }
+                                    Text {
+                                        text: result.snippet;
+                                        color: Palette.foreground.transparentize(30%);
+                                        font-size: 10px;
+                                        overflow: elide;
+                                    }
+                                }
+
+                                TouchArea {
+                                    clicked => { root.search-result-clicked(result.node-id); }
+                                }
+                            }
                         }
                     }
                 }
 
-                // Properties panel surface — field-row list.
-                if field-rows.length > 0 : VerticalLayout {
-                    spacing: 4px;
-                    padding-top: 4px;
-                    Text {
-                        text: "Component: " + selected-component;
-                        color: text-muted-color;
-                        font-size: 11px;
+                // Main content area
+                VerticalLayout {
+                    horizontal-stretch: 1;
+
+                    // Tab bar
+                    if root.tabs.length > 0 : Rectangle {
+                        height: 34px;
+                        background: Palette.background;
+
+                        HorizontalLayout {
+                            spacing: 1px;
+                            padding-left: 0px;
+                            alignment: start;
+
+                            for tab[i] in root.tabs : Rectangle {
+                                height: 32px;
+                                min-width: 120px;
+                                max-width: 200px;
+                                background: tab.active ? Palette.control-background : Palette.alternate-background;
+                                border-radius: 3px;
+
+                                Rectangle {
+                                    x: 0px;
+                                    y: parent.height - 2px;
+                                    width: parent.width;
+                                    height: 2px;
+                                    background: tab.active ? Palette.accent-background : transparent;
+                                }
+
+                                HorizontalLayout {
+                                    padding-left: 12px;
+                                    padding-right: 4px;
+                                    spacing: 4px;
+                                    alignment: start;
+                                    Text {
+                                        text: tab.title;
+                                        color: tab.active ? Palette.foreground : Palette.foreground.transparentize(30%);
+                                        font-size: 12px;
+                                        vertical-alignment: center;
+                                        overflow: elide;
+                                    }
+                                    Button {
+                                        text: "×";
+                                        clicked => { root.tab-closed(tab.id); }
+                                    }
+                                }
+
+                                TouchArea {
+                                    clicked => { root.tab-activated(tab.id); }
+                                }
+                            }
+                        }
                     }
-                    for field[i] in field-rows : FieldRowView {
-                        key: field.key;
-                        label: field.label;
-                        kind: field.kind;
-                        value: field.value;
-                        required: field.required;
-                        label-color: text-color;
-                        value-color: text-color;
-                        hint-color: text-muted-color;
+
+                    // Panel content
+                    Rectangle {
+                        background: Palette.background;
+                        vertical-stretch: 1;
+
+                        ScrollView {
+                            VerticalLayout {
+                                padding: 24px;
+                                spacing: 12px;
+                                alignment: start;
+
+                                // Builder panel surface
+                                if root.builder-source != "" : GroupBox {
+                                    title: root.builder-node-count + " node(s) · generated .slint DSL";
+
+                                    Text {
+                                        text: root.builder-source;
+                                        color: Palette.foreground;
+                                        font-family: "monospace";
+                                        font-size: 11px;
+                                        wrap: word-wrap;
+                                    }
+                                }
+
+                                // Inspector panel surface (structured)
+                                if root.inspector-nodes.length > 0 : VerticalLayout {
+                                    spacing: 1px;
+                                    for node[i] in root.inspector-nodes : InspectorRow {
+                                        node-id: node.id;
+                                        component-id: node.component-id;
+                                        depth: node.depth;
+                                        selected: node.selected;
+                                        clicked => { root.node-clicked(node.id); }
+                                        move-up => { root.node-move-up(node.id); }
+                                        move-down => { root.node-move-down(node.id); }
+                                    }
+                                }
+
+                                // Properties panel surface
+                                if root.field-rows.length > 0 : VerticalLayout {
+                                    spacing: 4px;
+                                    padding-top: 4px;
+                                    Text {
+                                        text: "Component: " + root.selected-component;
+                                        color: Palette.foreground.transparentize(30%);
+                                        font-size: 11px;
+                                    }
+                                    for field[i] in root.field-rows : FieldEditor {
+                                        key: field.key;
+                                        label: field.label;
+                                        kind: field.kind;
+                                        value: field.value;
+                                        required: field.required;
+                                        field-edited(key, val) => { root.field-edited(key, val); }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Status bar
+                    Rectangle {
+                        height: 28px;
+                        background: Palette.alternate-background;
+
+                        HorizontalLayout {
+                            padding-left: 12px;
+                            padding-right: 12px;
+                            spacing: 8px;
+                            alignment: start;
+
+                            Button {
+                                text: root.undo-label != "" ? "↶ " + root.undo-label : "↶ Undo";
+                                enabled: root.can-undo;
+                                clicked => { root.undo-clicked(); }
+                            }
+
+                            Button {
+                                text: root.redo-label != "" ? "↷ " + root.redo-label : "↷ Redo";
+                                enabled: root.can-redo;
+                                clicked => { root.redo-clicked(); }
+                            }
+
+                            Rectangle { horizontal-stretch: 1; }
+
+                            Text {
+                                text: "Prism Shell";
+                                color: Palette.foreground.transparentize(30%);
+                                font-size: 11px;
+                                vertical-alignment: center;
+                            }
+                        }
                     }
                 }
             }
+        }
+    }
+
+    // ── Command palette backdrop + overlay ─────────────────────────
+    if root.command-palette-visible : Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #00000060;
+        TouchArea {
+            clicked => { root.toggle-command-palette(); }
+        }
+    }
+
+    if root.command-palette-visible : Rectangle {
+        x: (root.width - 500px) / 2;
+        y: 64px;
+        width: 500px;
+        height: min(root.command-results.length * 36px + 48px, 420px);
+        background: Palette.alternate-background;
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: Palette.accent-background;
+        clip: true;
+
+        VerticalLayout {
+            padding: 8px;
+            spacing: 4px;
+
+            LineEdit {
+                height: 32px;
+                placeholder-text: "Type a command…";
+                edited(text) => { root.command-palette-input(text); }
+                accepted(text) => {
+                    if (root.command-results.length > 0) {
+                        root.command-selected(0);
+                    }
+                }
+            }
+
+            ScrollView {
+                VerticalLayout {
+                    spacing: 1px;
+                    for cmd[i] in root.command-results : Rectangle {
+                        height: 32px;
+                        background: transparent;
+                        border-radius: 4px;
+
+                        HorizontalLayout {
+                            padding-left: 12px;
+                            padding-right: 12px;
+                            alignment: space-between;
+
+                            HorizontalLayout {
+                                spacing: 8px;
+                                if cmd.category != "" : Text {
+                                    text: cmd.category;
+                                    color: Palette.foreground.transparentize(30%);
+                                    font-size: 12px;
+                                    vertical-alignment: center;
+                                }
+                                Text {
+                                    text: cmd.label;
+                                    color: Palette.foreground;
+                                    font-size: 13px;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            if cmd.shortcut != "" : Text {
+                                text: cmd.shortcut;
+                                color: Palette.foreground.transparentize(30%);
+                                font-size: 11px;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        TouchArea {
+                            clicked => { root.command-selected(i); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Notification toasts ────────────────────────────────────────
+    if root.notifications.length > 0 : VerticalLayout {
+        x: root.width - 340px;
+        y: root.height - root.notifications.length * 100px - 20px;
+        width: 320px;
+        spacing: 8px;
+
+        for notif[i] in root.notifications : Toast {
+            title: notif.title;
+            body: notif.body;
+            kind: notif.kind;
+            dismissed => { root.dismiss-notification(notif.id); }
         }
     }
 }
