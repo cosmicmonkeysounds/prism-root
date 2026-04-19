@@ -17,6 +17,8 @@ pub mod identity;
 pub mod inspector;
 pub mod properties;
 
+use prism_core::help::HelpEntry;
+
 /// Panel metadata every concrete panel exposes: the title + hint
 /// shown in the panel header and the stable id the sidebar uses to
 /// dispatch `select_panel(int)` callbacks back into Rust. Kept tiny
@@ -27,4 +29,10 @@ pub trait Panel {
     fn label(&self) -> &'static str;
     fn title(&self) -> &'static str;
     fn hint(&self) -> &'static str;
+
+    /// Optional help entry for this panel. Override to provide
+    /// context-sensitive tooltip content in the activity bar.
+    fn help_entry(&self) -> Option<HelpEntry> {
+        None
+    }
 }

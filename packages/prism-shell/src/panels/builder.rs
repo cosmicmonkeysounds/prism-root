@@ -8,6 +8,7 @@
 
 use prism_builder::{render_document_slint_source, BuilderDocument, ComponentRegistry};
 use prism_core::design_tokens::DesignTokens;
+use prism_core::help::HelpEntry;
 
 use super::Panel;
 
@@ -63,6 +64,13 @@ impl Panel for BuilderPanel {
     }
     fn hint(&self) -> &'static str {
         "Live preview of the generated .slint DSL for the active document."
+    }
+    fn help_entry(&self) -> Option<HelpEntry> {
+        Some(HelpEntry::new(
+            "shell.panels.builder",
+            "Builder",
+            "Visual page builder with WYSIWYG editing. Click components to select, then edit inline or in the properties panel.",
+        ))
     }
 }
 

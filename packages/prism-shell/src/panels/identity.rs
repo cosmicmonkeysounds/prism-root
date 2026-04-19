@@ -5,6 +5,8 @@
 //! this into the real identity UX (DID, document, sign/verify,
 //! export/import).
 
+use prism_core::help::HelpEntry;
+
 use super::Panel;
 
 pub struct IdentityPanel;
@@ -37,6 +39,13 @@ impl Panel for IdentityPanel {
     }
     fn hint(&self) -> &'static str {
         "Select an action from the sidebar."
+    }
+    fn help_entry(&self) -> Option<HelpEntry> {
+        Some(HelpEntry::new(
+            "shell.panels.identity",
+            "Identity",
+            "Authentication and identity panel. View your DID identity and vault status.",
+        ))
     }
 }
 

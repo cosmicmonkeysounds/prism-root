@@ -12,6 +12,7 @@
 
 use std::sync::Arc;
 
+use prism_core::help::HelpEntry;
 use serde_json::Value;
 
 use crate::component::{Component, ComponentId, RenderError, RenderSlintContext};
@@ -84,6 +85,13 @@ impl Component for HeadingComponent {
                 .with_default(Value::from(1)),
         ]
     }
+    fn help_entry(&self) -> Option<HelpEntry> {
+        Some(HelpEntry::new(
+            "builder.components.heading",
+            "Heading",
+            "Section heading (h1\u{2013}h6) with inline editing. Set the level to control size and document outline.",
+        ))
+    }
     fn render_slint(
         &self,
         _ctx: &RenderSlintContext<'_>,
@@ -118,6 +126,13 @@ impl Component for TextComponent {
     fn schema(&self) -> Vec<FieldSpec> {
         vec![FieldSpec::textarea("body", "Body")]
     }
+    fn help_entry(&self) -> Option<HelpEntry> {
+        Some(HelpEntry::new(
+            "builder.components.text",
+            "Text",
+            "Paragraph of body text. Supports inline editing when selected in the builder canvas.",
+        ))
+    }
     fn render_slint(
         &self,
         _ctx: &RenderSlintContext<'_>,
@@ -150,6 +165,13 @@ impl Component for LinkComponent {
             FieldSpec::text("href", "URL").required(),
             FieldSpec::text("text", "Label"),
         ]
+    }
+    fn help_entry(&self) -> Option<HelpEntry> {
+        Some(HelpEntry::new(
+            "builder.components.link",
+            "Link",
+            "Anchor hyperlink with text label and URL. Opens in a new tab by default.",
+        ))
     }
     fn render_slint(
         &self,
@@ -188,6 +210,13 @@ impl Component for ImageComponent {
             FieldSpec::text("src", "Image source").required(),
             FieldSpec::text("alt", "Alt text"),
         ]
+    }
+    fn help_entry(&self) -> Option<HelpEntry> {
+        Some(HelpEntry::new(
+            "builder.components.image",
+            "Image",
+            "Embedded image with alt text, configurable fit and aspect ratio.",
+        ))
     }
     fn render_slint(
         &self,
@@ -231,6 +260,13 @@ impl Component for ContainerComponent {
         )
         .with_default(Value::from(12))]
     }
+    fn help_entry(&self) -> Option<HelpEntry> {
+        Some(HelpEntry::new(
+            "builder.components.container",
+            "Container",
+            "Layout wrapper that groups child components with configurable spacing.",
+        ))
+    }
     fn render_slint(
         &self,
         ctx: &RenderSlintContext<'_>,
@@ -273,6 +309,13 @@ impl Component for FormComponent {
             )
             .with_default(Value::from("post")),
         ]
+    }
+    fn help_entry(&self) -> Option<HelpEntry> {
+        Some(HelpEntry::new(
+            "builder.components.form",
+            "Form",
+            "HTML form wrapper. Nest input and button components inside to build forms.",
+        ))
     }
     fn render_slint(
         &self,
@@ -319,6 +362,13 @@ impl Component for InputComponent {
             FieldSpec::boolean("required", "Required"),
             FieldSpec::text("label", "Label text"),
         ]
+    }
+    fn help_entry(&self) -> Option<HelpEntry> {
+        Some(HelpEntry::new(
+            "builder.components.input",
+            "Input",
+            "Text, email, or password field with placeholder and name binding.",
+        ))
     }
     fn render_slint(
         &self,
@@ -387,6 +437,13 @@ impl Component for CardComponent {
             .with_default(Value::from("default")),
         ]
     }
+    fn help_entry(&self) -> Option<HelpEntry> {
+        Some(HelpEntry::new(
+            "builder.components.card",
+            "Card",
+            "Bordered content card with title and body text slots.",
+        ))
+    }
     fn render_slint(
         &self,
         ctx: &RenderSlintContext<'_>,
@@ -440,6 +497,13 @@ impl Component for CodeComponent {
             FieldSpec::text("language", "Language"),
         ]
     }
+    fn help_entry(&self) -> Option<HelpEntry> {
+        Some(HelpEntry::new(
+            "builder.components.code",
+            "Code",
+            "Preformatted code block with optional language label.",
+        ))
+    }
     fn render_slint(
         &self,
         _ctx: &RenderSlintContext<'_>,
@@ -478,6 +542,13 @@ impl Component for DividerComponent {
     fn schema(&self) -> Vec<FieldSpec> {
         vec![]
     }
+    fn help_entry(&self) -> Option<HelpEntry> {
+        Some(HelpEntry::new(
+            "builder.components.divider",
+            "Divider",
+            "Horizontal separator line between content sections.",
+        ))
+    }
     fn render_slint(
         &self,
         _ctx: &RenderSlintContext<'_>,
@@ -507,6 +578,13 @@ impl Component for SpacerComponent {
             FieldSpec::integer("height", "Height (px)", NumericBounds::min_max(4.0, 128.0))
                 .with_default(Value::from(24)),
         ]
+    }
+    fn help_entry(&self) -> Option<HelpEntry> {
+        Some(HelpEntry::new(
+            "builder.components.spacer",
+            "Spacer",
+            "Vertical spacing element with configurable height in pixels.",
+        ))
     }
     fn render_slint(
         &self,
@@ -538,6 +616,13 @@ impl Component for ColumnsComponent {
                 .with_default(Value::from(16)),
         ]
     }
+    fn help_entry(&self) -> Option<HelpEntry> {
+        Some(HelpEntry::new(
+            "builder.components.columns",
+            "Columns",
+            "Side-by-side horizontal layout with configurable gap between children.",
+        ))
+    }
     fn render_slint(
         &self,
         ctx: &RenderSlintContext<'_>,
@@ -564,6 +649,13 @@ impl Component for ListComponent {
     }
     fn schema(&self) -> Vec<FieldSpec> {
         vec![FieldSpec::boolean("ordered", "Ordered (numbered)")]
+    }
+    fn help_entry(&self) -> Option<HelpEntry> {
+        Some(HelpEntry::new(
+            "builder.components.list",
+            "List",
+            "Ordered or unordered list. Toggle the ordered property to switch between numbered and bulleted styles.",
+        ))
     }
     fn render_slint(
         &self,
@@ -594,6 +686,13 @@ impl Component for TableComponent {
             FieldSpec::text("headers", "Column headers (comma-separated)").required(),
             FieldSpec::text("caption", "Table caption"),
         ]
+    }
+    fn help_entry(&self) -> Option<HelpEntry> {
+        Some(HelpEntry::new(
+            "builder.components.table",
+            "Table",
+            "Data table with comma-separated column headers and optional caption.",
+        ))
     }
     fn render_slint(
         &self,
@@ -651,6 +750,13 @@ impl Component for TabsComponent {
     }
     fn schema(&self) -> Vec<FieldSpec> {
         vec![FieldSpec::text("labels", "Tab labels (comma-separated)").required()]
+    }
+    fn help_entry(&self) -> Option<HelpEntry> {
+        Some(HelpEntry::new(
+            "builder.components.tabs",
+            "Tabs",
+            "Tabbed content panels with comma-separated labels. Each child renders as one tab panel.",
+        ))
     }
     fn render_slint(
         &self,
@@ -711,6 +817,13 @@ impl Component for AccordionComponent {
             FieldSpec::boolean("open", "Initially open"),
         ]
     }
+    fn help_entry(&self) -> Option<HelpEntry> {
+        Some(HelpEntry::new(
+            "builder.components.accordion",
+            "Accordion",
+            "Collapsible content section with a title bar. Toggle open state to expand or collapse.",
+        ))
+    }
     fn render_slint(
         &self,
         ctx: &RenderSlintContext<'_>,
@@ -767,6 +880,13 @@ impl Component for ButtonComponent {
             .with_default(Value::from("submit")),
             FieldSpec::boolean("disabled", "Disabled"),
         ]
+    }
+    fn help_entry(&self) -> Option<HelpEntry> {
+        Some(HelpEntry::new(
+            "builder.components.button",
+            "Button",
+            "Submit or action button with configurable text and disabled state.",
+        ))
     }
     fn render_slint(
         &self,

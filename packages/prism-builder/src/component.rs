@@ -14,6 +14,7 @@
 //! live in the [`crate::registry::ComponentRegistry`] and be dispatched
 //! by `ComponentId` at walk time.
 
+use prism_core::help::HelpEntry;
 use serde_json::Value;
 use thiserror::Error;
 
@@ -107,6 +108,15 @@ pub trait Component: Send + Sync {
     /// the panel renders one editor per entry using the factories in
     /// [`crate::registry`].
     fn schema(&self) -> Vec<FieldSpec>;
+
+    /// Optional help entry for this component. Override to provide
+    /// context-sensitive tooltip content in the Studio builder.
+    /// Default returns `None`; the monolithic fallback in
+    /// `prism-shell/src/help.rs` covers components that don't
+    /// override this yet.
+    fn help_entry(&self) -> Option<HelpEntry> {
+        None
+    }
 
     /// Paint the component as `.slint` DSL into a shared
     /// [`SlintEmitter`]. The default impl emits a semantically

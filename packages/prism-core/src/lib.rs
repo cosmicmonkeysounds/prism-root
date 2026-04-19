@@ -63,6 +63,7 @@ pub mod boot_config;
 pub mod design_tokens;
 pub mod domain;
 pub mod foundation;
+pub mod help;
 pub mod identity;
 pub mod interaction;
 pub mod kernel;

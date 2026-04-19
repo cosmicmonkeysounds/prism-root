@@ -19,6 +19,7 @@
 //! keeps component authors from hand-rolling schemas.
 
 use indexmap::IndexMap;
+use prism_core::help::{HelpEntry, HelpProvider};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
@@ -77,6 +78,15 @@ impl ComponentRegistry {
     /// dictionary.
     pub fn iter(&self) -> impl Iterator<Item = (&ComponentId, &Arc<dyn Component>)> {
         self.components.iter()
+    }
+}
+
+impl HelpProvider for ComponentRegistry {
+    fn help_entries(&self) -> Vec<HelpEntry> {
+        self.components
+            .values()
+            .filter_map(|c| c.help_entry())
+            .collect()
     }
 }
 

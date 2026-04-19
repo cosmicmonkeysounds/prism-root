@@ -126,6 +126,21 @@ From `src/lib.rs`:
   `InputEvent`.
 - `panels` — data-provider structs (one per panel) that feed Slint
   properties. Four panels: Identity, Builder, Inspector, Properties.
+- `help` (`src/help.rs`) — `register_help_entries(&mut HelpRegistry,
+  &ComponentRegistry)` coordinates distributed help registration.
+  Component entries come from `Component::help_entry()` via
+  `ComponentRegistry`'s `HelpProvider` impl; panel entries from
+  `Panel::help_entry()` on each panel struct; field/toolbar/shell
+  entries remain in `help.rs`. New modules add help by implementing
+  `HelpProvider` or `Component::help_entry` / `Panel::help_entry`.
+  9 unit tests.
+  The help tooltip is wired via `help-hover(id, x, y)` /
+  `help-leave()` callbacks on `AppWindow`. A `slint::Timer`-based
+  show delay (380ms) and auto-hide (8s idle) manages the tooltip
+  lifecycle. Elements with help support call `help-hover` from
+  their `moved` handler; the Rust side looks up the entry in the
+  `HelpRegistry` on `ShellInner` and pushes `HelpTooltipData` to
+  the Slint overlay. Escape dismisses the tooltip.
 
 ## Phase 4 status
 The shell is now an interactive editor. All MVP and Should Ship
@@ -162,6 +177,11 @@ shell framework features are implemented:
 - **Undo/redo UI**: StatusBar at bottom with undo/redo buttons,
   description labels, and document snapshot stack (100-entry limit).
 - **Search**: TF-IDF full-text search in sidebar with live results.
+- **Help tooltips**: context-sensitive hover tooltips on all interactive
+  elements (activity bar, toolbar, component palette, tabs). Port of the
+  React help system per ADR-005. `HelpRegistry` in `prism-core` +
+  `register_help_entries` in `prism-shell/src/help.rs` + Slint tooltip
+  overlay with 380ms show delay and 8s auto-hide.
 
 ## Downstream
 - `prism-studio/src-tauri` embeds this crate as a library with

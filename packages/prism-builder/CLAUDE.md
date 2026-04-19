@@ -23,9 +23,12 @@ From `src/lib.rs`:
 - `Component`, `ComponentId`, `RenderContext`, `RenderSlintContext`,
   `RenderError` — the Slint render trait. `Component::schema`
   returns `Vec<FieldSpec>`; `render_slint` emits `.slint` DSL into
-  a shared `SlintEmitter`. Default impl emits a transparent
-  `Rectangle` wrapper.
+  a shared `SlintEmitter`; `help_entry` returns an optional
+  `HelpEntry` for context-sensitive tooltips (default `None`).
+  Default render impl emits a transparent `Rectangle` wrapper.
 - `ComponentRegistry`, `RegistryError` — the DI entry point.
+  Implements `HelpProvider` — collects help entries from all
+  registered components via `Component::help_entry()`.
 - `starter::register_builtins(&mut ComponentRegistry)` — seeds the
   17-component Slint catalog.
 - `render_document_slint_source(doc, registry, tokens)` — walks a

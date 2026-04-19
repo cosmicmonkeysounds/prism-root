@@ -4,6 +4,7 @@
 //! lands when the Properties panel needs to drive it.
 
 use prism_builder::{BuilderDocument, Node};
+use prism_core::help::HelpEntry;
 
 use super::Panel;
 
@@ -60,6 +61,13 @@ impl Panel for InspectorPanel {
     }
     fn hint(&self) -> &'static str {
         "Flat indented dump of the active document's node tree."
+    }
+    fn help_entry(&self) -> Option<HelpEntry> {
+        Some(HelpEntry::new(
+            "shell.panels.inspector",
+            "Inspector",
+            "Document tree inspector. Shows the component hierarchy with drag-to-reorder and selection.",
+        ))
     }
 }
 

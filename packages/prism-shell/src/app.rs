@@ -15,13 +15,15 @@ use prism_builder::{
     starter::register_builtins, BuilderDocument, ComponentRegistry, FieldKind, Node, NodeId,
 };
 use prism_core::design_tokens::{DesignTokens, DEFAULT_TOKENS};
+use prism_core::help::HelpRegistry;
 use prism_core::shell_mode::{Permission, ShellMode, ShellModeContext};
 use prism_core::{Action, Store, Subscription};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
 
 use crate::command::CommandRegistry;
+use crate::help::register_help_entries;
 use crate::input::{self, InputEvent};
 use crate::keyboard::KeyboardModel;
 use crate::panels::{
@@ -32,8 +34,8 @@ use crate::search::SearchIndex;
 use crate::selection::SelectionModel;
 use crate::telemetry::FirstPaint;
 use crate::{
-    AppWindow, BuilderNode, ButtonSpec, CommandItem, ComponentPaletteItem, FieldRow, InspectorNode,
-    SearchResultItem, TabItem, ToastItem,
+    AppWindow, BuilderNode, ButtonSpec, CommandItem, ComponentPaletteItem, FieldRow,
+    HelpTooltipData, InspectorNode, SearchResultItem, TabItem, ToastItem,
 };
 
 // ── Reloadable state ───────────────────────────────────────────────
@@ -182,11 +184,14 @@ struct DocumentSnapshot {
 struct ShellInner {
     store: Store<AppState>,
     registry: Arc<ComponentRegistry>,
+    help: HelpRegistry,
     keyboard: KeyboardModel,
     commands: CommandRegistry,
     undo_past: Vec<DocumentSnapshot>,
     undo_future: Vec<DocumentSnapshot>,
     clipboard: Option<Node>,
+    help_pending_id: String,
+    help_active_id: String,
 }
 
 impl ShellInner {
@@ -274,14 +279,19 @@ impl Shell {
         let window = AppWindow::new()?;
         let mut registry = ComponentRegistry::new();
         register_builtins(&mut registry).expect("starter components must register");
+        let mut help = HelpRegistry::new();
+        register_help_entries(&mut help, &registry);
         let inner = Rc::new(RefCell::new(ShellInner {
             store: Store::new(state),
             registry: Arc::new(registry),
+            help,
             keyboard: KeyboardModel::with_defaults(),
             commands: CommandRegistry::with_builtins(),
             undo_past: Vec::new(),
             undo_future: Vec::new(),
             clipboard: None,
+            help_pending_id: String::new(),
+            help_active_id: String::new(),
         }));
         let shell = Self {
             inner,
@@ -719,8 +729,14 @@ impl Shell {
             let weak = weak.clone();
             move || {
                 let was_palette;
+                let was_tooltip;
                 {
                     let mut s = inner.borrow_mut();
+                    was_tooltip = !s.help_active_id.is_empty();
+                    if was_tooltip {
+                        s.help_active_id.clear();
+                        s.help_pending_id.clear();
+                    }
                     was_palette = s.store.state().command_palette_open;
                     if was_palette {
                         s.store.mutate(|state| {
@@ -728,13 +744,23 @@ impl Shell {
                             state.command_palette_query.clear();
                         });
                         s.keyboard.set_context("commandPaletteOpen", false);
-                    } else {
+                    } else if !was_tooltip {
                         s.store.mutate(|state| {
                             state.selection.clear();
                         });
                     }
                 }
                 if let Some(w) = weak.upgrade() {
+                    if was_tooltip {
+                        w.set_help_tooltip(HelpTooltipData {
+                            visible: false,
+                            title: SharedString::new(),
+                            summary: SharedString::new(),
+                            has_docs: false,
+                            tip_x: 0.0,
+                            tip_y: 0.0,
+                        });
+                    }
                     sync_ui_from_shared(&inner, &w);
                 }
             }
@@ -768,6 +794,152 @@ impl Shell {
         });
 
         self.window.on_search_focus(|| {});
+
+        // Help tooltip hover
+        let show_timer = Rc::new(Timer::default());
+        let hide_timer = Rc::new(Timer::default());
+
+        self.window.on_help_hover({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            let show_timer = Rc::clone(&show_timer);
+            let hide_timer = Rc::clone(&hide_timer);
+            move |help_id, x, y| {
+                let help_id = help_id.to_string();
+                hide_timer.stop();
+
+                if help_id == "__tooltip__" {
+                    return;
+                }
+
+                let active_id = inner.borrow().help_active_id.clone();
+                if help_id == active_id {
+                    return;
+                }
+
+                inner.borrow_mut().help_pending_id = help_id.clone();
+
+                let inner_show = Rc::clone(&inner);
+                let weak_show = weak.clone();
+                let hide_timer_show = Rc::clone(&hide_timer);
+                let x_val = x;
+                let y_val = y;
+                show_timer.start(
+                    TimerMode::SingleShot,
+                    std::time::Duration::from_millis(380),
+                    move || {
+                        let pending = inner_show.borrow().help_pending_id.clone();
+                        if pending.is_empty() {
+                            return;
+                        }
+                        let (title, summary, has_docs) = {
+                            let s = inner_show.borrow();
+                            match s.help.get(&pending) {
+                                Some(entry) => (
+                                    entry.title.clone(),
+                                    entry.summary.clone(),
+                                    entry.doc_path.is_some(),
+                                ),
+                                None => return,
+                            }
+                        };
+                        inner_show.borrow_mut().help_active_id = pending;
+                        if let Some(w) = weak_show.upgrade() {
+                            w.set_help_tooltip(HelpTooltipData {
+                                visible: true,
+                                title: SharedString::from(title),
+                                summary: SharedString::from(summary),
+                                has_docs,
+                                tip_x: x_val,
+                                tip_y: y_val,
+                            });
+                        }
+
+                        // Auto-hide after 8 seconds of inactivity
+                        let inner_autohide = Rc::clone(&inner_show);
+                        let weak_autohide = weak_show.clone();
+                        hide_timer_show.start(
+                            TimerMode::SingleShot,
+                            std::time::Duration::from_secs(8),
+                            move || {
+                                inner_autohide.borrow_mut().help_active_id.clear();
+                                inner_autohide.borrow_mut().help_pending_id.clear();
+                                if let Some(w) = weak_autohide.upgrade() {
+                                    w.set_help_tooltip(HelpTooltipData {
+                                        visible: false,
+                                        title: SharedString::new(),
+                                        summary: SharedString::new(),
+                                        has_docs: false,
+                                        tip_x: 0.0,
+                                        tip_y: 0.0,
+                                    });
+                                }
+                            },
+                        );
+                    },
+                );
+            }
+        });
+
+        self.window.on_help_leave({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            let show_timer = Rc::clone(&show_timer);
+            let hide_timer = Rc::clone(&hide_timer);
+            move || {
+                show_timer.stop();
+                inner.borrow_mut().help_pending_id.clear();
+
+                let inner_hide = Rc::clone(&inner);
+                let weak_hide = weak.clone();
+                hide_timer.start(
+                    TimerMode::SingleShot,
+                    std::time::Duration::from_millis(120),
+                    move || {
+                        inner_hide.borrow_mut().help_active_id.clear();
+                        if let Some(w) = weak_hide.upgrade() {
+                            w.set_help_tooltip(HelpTooltipData {
+                                visible: false,
+                                title: SharedString::new(),
+                                summary: SharedString::new(),
+                                has_docs: false,
+                                tip_x: 0.0,
+                                tip_y: 0.0,
+                            });
+                        }
+                    },
+                );
+            }
+        });
+
+        self.window.on_help_docs_clicked({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move || {
+                let active_id = inner.borrow().help_active_id.clone();
+                if !active_id.is_empty() {
+                    let mut s = inner.borrow_mut();
+                    s.add_toast(
+                        "Documentation",
+                        &format!("Opening docs for {active_id}"),
+                        "info",
+                    );
+                    s.help_active_id.clear();
+                    s.help_pending_id.clear();
+                }
+                if let Some(w) = weak.upgrade() {
+                    w.set_help_tooltip(HelpTooltipData {
+                        visible: false,
+                        title: SharedString::new(),
+                        summary: SharedString::new(),
+                        has_docs: false,
+                        tip_x: 0.0,
+                        tip_y: 0.0,
+                    });
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
 
         // Clipboard: copy
         self.window.on_copy_clicked({

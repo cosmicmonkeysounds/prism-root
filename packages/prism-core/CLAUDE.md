@@ -44,12 +44,23 @@ From `src/lib.rs`:
 - `KernelInitializer`, `install_initializers`, `Disposer`,
   `KernelInitializerContext`, `noop_disposer` — the self-installing
   startup-hook runner, generic over the kernel type.
+- `HelpEntry`, `HelpRegistry`, `HelpProvider` — context-sensitive help
+  system (port of the React `HelpRegistry` per ADR-005). `HelpEntry`
+  carries `id`, `title`, `summary`, optional `doc_path` + `doc_anchor`.
+  `HelpRegistry` is an `IndexMap`-backed store with `register` /
+  `register_many` / `register_provider` / `get` / `get_all` / `search`
+  (case-insensitive AND-word match) / `clear`. `HelpProvider` trait
+  lets any type contribute help entries (implemented by `HelpEntry`
+  itself, `ComponentRegistry`, and available for custom types). Pure
+  data, no UI — any crate registers entries and the shell looks them
+  up at hover time.
 
 ## Module status
 Tracked in the per-module `//!` docstrings; canonical list:
 
 | Module | Status | Notes |
 |---|---|---|
+| `help` | ✅ ported | `HelpEntry` + `HelpRegistry` + `HelpProvider` trait (register/register_provider/search/get/clear). Port of React `HelpRegistry` per ADR-005. 17 unit tests. |
 | `design_tokens` | ✅ ported | Leaf, no deps. |
 | `shell_mode` | ✅ ported | Pure data + pure functions. |
 | `boot_config` | ✅ ported | Uses `shell_mode`. |

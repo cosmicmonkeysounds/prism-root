@@ -68,13 +68,25 @@ struct BuilderNode {
     disabled: bool,
 }
 
+struct HelpTooltipData {
+    visible: bool,
+    title: string,
+    summary: string,
+    has-docs: bool,
+    tip-x: length,
+    tip-y: length,
+}
+
 // ── Icon button ───────────────────────────────────────────────────
 
 component IconButton inherits Rectangle {
     in property <image> icon;
     in property <bool> enabled: true;
     in property <string> tooltip-text: "";
+    in property <string> help-id: "";
     callback clicked;
+    callback hover-start(string, length, length);
+    callback hover-end();
 
     width: 28px;
     height: 28px;
@@ -94,6 +106,13 @@ component IconButton inherits Rectangle {
         mouse-cursor: root.enabled ? pointer : default;
         clicked => {
             if root.enabled { root.clicked(); }
+        }
+        moved => {
+            if (root.help-id != "") {
+                root.hover-start(root.help-id,
+                    root.absolute-position.x + root.width + 8px,
+                    root.absolute-position.y);
+            }
         }
     }
 }
@@ -497,7 +516,10 @@ component BuilderBlock inherits Rectangle {
 component NavButton inherits Rectangle {
     in property <image> icon;
     in property <bool> selected;
+    in property <string> help-id: "";
     callback clicked;
+    callback hover-start(string, length, length);
+    callback hover-end();
 
     width: 48px;
     height: 48px;
@@ -522,6 +544,13 @@ component NavButton inherits Rectangle {
     TouchArea {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
+        moved => {
+            if (root.help-id != "") {
+                root.hover-start(root.help-id,
+                    root.absolute-position.x + root.width + 8px,
+                    root.absolute-position.y);
+            }
+        }
     }
 }
 
@@ -776,6 +805,15 @@ export component AppWindow inherits Window {
     in property <string> panel-title: "Identity";
     in property <string> panel-hint: "Select an action from the sidebar.";
 
+    // Help tooltip
+    in property <HelpTooltipData> help-tooltip: {
+        visible: false, title: "", summary: "", has-docs: false,
+        tip-x: 0px, tip-y: 0px
+    };
+    callback help-hover(/* id */ string, /* x */ length, /* y */ length);
+    callback help-leave();
+    callback help-docs-clicked;
+
     background: Palette.background;
 
     // Global keyboard handler
@@ -846,22 +884,34 @@ export component AppWindow inherits Window {
                         NavButton {
                             icon: @image-url("icons/user.svg");
                             selected: root.active-panel-id == 0;
+                            help-id: "shell.panels.identity";
                             clicked => { root.select-panel(0); }
+                            hover-start(id, x, y) => { root.help-hover(id, x, y); }
+                            hover-end => { root.help-leave(); }
                         }
                         NavButton {
                             icon: @image-url("icons/layout.svg");
                             selected: root.active-panel-id == 1;
+                            help-id: "shell.panels.builder";
                             clicked => { root.select-panel(1); }
+                            hover-start(id, x, y) => { root.help-hover(id, x, y); }
+                            hover-end => { root.help-leave(); }
                         }
                         NavButton {
                             icon: @image-url("icons/tree.svg");
                             selected: root.active-panel-id == 2;
+                            help-id: "shell.panels.inspector";
                             clicked => { root.select-panel(2); }
+                            hover-start(id, x, y) => { root.help-hover(id, x, y); }
+                            hover-end => { root.help-leave(); }
                         }
                         NavButton {
                             icon: @image-url("icons/sliders.svg");
                             selected: root.active-panel-id == 3;
+                            help-id: "shell.panels.properties";
                             clicked => { root.select-panel(3); }
+                            hover-start(id, x, y) => { root.help-hover(id, x, y); }
+                            hover-end => { root.help-leave(); }
                         }
                     }
                 }
@@ -1052,6 +1102,12 @@ export component AppWindow inherits Window {
                                         touch-area := TouchArea {
                                             mouse-cursor: pointer;
                                             clicked => { root.add-component(comp.component-type); }
+                                            moved => {
+                                                root.help-hover(
+                                                    "builder.components." + comp.component-type,
+                                                    parent.absolute-position.x + parent.width + 8px,
+                                                    parent.absolute-position.y);
+                                            }
                                         }
                                     }
                                 }
@@ -1167,8 +1223,13 @@ export component AppWindow inherits Window {
                                     }
                                 }
 
-                                TouchArea {
+                                tab-touch := TouchArea {
                                     clicked => { root.tab-activated(tab.id); }
+                                    moved => {
+                                        root.help-hover("shell.tabs",
+                                            parent.absolute-position.x + parent.width / 2,
+                                            parent.absolute-position.y + parent.height + 4px);
+                                    }
                                 }
                             }
                         }
@@ -1196,12 +1257,18 @@ export component AppWindow inherits Window {
                             IconButton {
                                 icon: @image-url("icons/undo.svg");
                                 enabled: root.can-undo;
+                                help-id: "shell.toolbar.undo";
                                 clicked => { root.undo-clicked(); }
+                                hover-start(id, x, y) => { root.help-hover(id, x, y); }
+                                hover-end => { root.help-leave(); }
                             }
                             IconButton {
                                 icon: @image-url("icons/redo.svg");
                                 enabled: root.can-redo;
+                                help-id: "shell.toolbar.redo";
                                 clicked => { root.redo-clicked(); }
+                                hover-start(id, x, y) => { root.help-hover(id, x, y); }
+                                hover-end => { root.help-leave(); }
                             }
 
                             ToolbarSeparator { }
@@ -1209,22 +1276,34 @@ export component AppWindow inherits Window {
                             IconButton {
                                 icon: @image-url("icons/copy.svg");
                                 enabled: root.has-selection;
+                                help-id: "shell.toolbar.copy";
                                 clicked => { root.copy-clicked(); }
+                                hover-start(id, x, y) => { root.help-hover(id, x, y); }
+                                hover-end => { root.help-leave(); }
                             }
                             IconButton {
                                 icon: @image-url("icons/scissors.svg");
                                 enabled: root.has-selection;
+                                help-id: "shell.toolbar.cut";
                                 clicked => { root.cut-clicked(); }
+                                hover-start(id, x, y) => { root.help-hover(id, x, y); }
+                                hover-end => { root.help-leave(); }
                             }
                             IconButton {
                                 icon: @image-url("icons/paste.svg");
                                 enabled: root.has-clipboard;
+                                help-id: "shell.toolbar.paste";
                                 clicked => { root.paste-clicked(); }
+                                hover-start(id, x, y) => { root.help-hover(id, x, y); }
+                                hover-end => { root.help-leave(); }
                             }
                             IconButton {
                                 icon: @image-url("icons/duplicate.svg");
                                 enabled: root.has-selection;
+                                help-id: "shell.toolbar.duplicate";
                                 clicked => { root.duplicate-clicked(); }
+                                hover-start(id, x, y) => { root.help-hover(id, x, y); }
+                                hover-end => { root.help-leave(); }
                             }
 
                             ToolbarSeparator { }
@@ -1232,12 +1311,18 @@ export component AppWindow inherits Window {
                             IconButton {
                                 icon: @image-url("icons/chevron-up.svg");
                                 enabled: root.has-selection;
+                                help-id: "shell.toolbar.move-up";
                                 clicked => { root.node-move-up(""); }
+                                hover-start(id, x, y) => { root.help-hover(id, x, y); }
+                                hover-end => { root.help-leave(); }
                             }
                             IconButton {
                                 icon: @image-url("icons/chevron-down.svg");
                                 enabled: root.has-selection;
+                                help-id: "shell.toolbar.move-down";
                                 clicked => { root.node-move-down(""); }
+                                hover-start(id, x, y) => { root.help-hover(id, x, y); }
+                                hover-end => { root.help-leave(); }
                             }
 
                             ToolbarSeparator { }
@@ -1245,7 +1330,10 @@ export component AppWindow inherits Window {
                             IconButton {
                                 icon: @image-url("icons/trash.svg");
                                 enabled: root.has-selection;
+                                help-id: "shell.toolbar.delete";
                                 clicked => { root.builder-delete-node(""); }
+                                hover-start(id, x, y) => { root.help-hover(id, x, y); }
+                                hover-end => { root.help-leave(); }
                             }
 
                             Rectangle { horizontal-stretch: 1; }
@@ -1511,6 +1599,110 @@ export component AppWindow inherits Window {
             body: notif.body;
             kind: notif.kind;
             dismissed => { root.dismiss-notification(notif.id); }
+        }
+    }
+
+    // ── Help tooltip overlay ──────────────────────────────────────────
+    if root.help-tooltip.visible : Rectangle {
+        x: min(root.help-tooltip.tip-x, root.width - 284px);
+        y: min(root.help-tooltip.tip-y, root.height - 140px);
+        width: 276px;
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: Palette.foreground.transparentize(85%);
+        background: Palette.alternate-background;
+        clip: true;
+
+        VerticalLayout {
+            Rectangle {
+                height: 32px;
+
+                HorizontalLayout {
+                    padding: 8px;
+                    padding-left: 12px;
+                    spacing: 8px;
+                    alignment: start;
+
+                    Image {
+                        source: @image-url("icons/help-circle.svg");
+                        width: 12px;
+                        height: 12px;
+                        colorize: Palette.accent-background;
+                        y: 2px;
+                    }
+
+                    Text {
+                        text: root.help-tooltip.title;
+                        color: Palette.foreground;
+                        font-size: 12px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+            }
+
+            Rectangle {
+                height: 1px;
+                background: Palette.foreground.transparentize(85%);
+            }
+
+            Rectangle {
+                VerticalLayout {
+                    padding: 10px;
+                    padding-left: 12px;
+                    padding-right: 12px;
+
+                    Text {
+                        text: root.help-tooltip.summary;
+                        color: Palette.foreground.transparentize(30%);
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+
+            if root.help-tooltip.has-docs : Rectangle {
+                height: 32px;
+
+                Rectangle {
+                    y: 0px;
+                    height: 1px;
+                    width: parent.width;
+                    background: Palette.foreground.transparentize(85%);
+                }
+
+                HorizontalLayout {
+                    padding: 8px;
+                    padding-left: 12px;
+                    spacing: 6px;
+                    alignment: start;
+
+                    Image {
+                        source: @image-url("icons/book.svg");
+                        width: 11px;
+                        height: 11px;
+                        colorize: Palette.accent-background;
+                    }
+
+                    Text {
+                        text: "View full docs";
+                        color: Palette.accent-background;
+                        font-size: 12px;
+                    }
+                }
+
+                TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.help-docs-clicked(); }
+                }
+            }
+        }
+
+        help-tip-touch := TouchArea {
+            moved => {
+                root.help-hover("__tooltip__", 0px, 0px);
+            }
         }
     }
 }

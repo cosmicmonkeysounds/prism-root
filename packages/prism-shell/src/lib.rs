@@ -24,6 +24,7 @@
 
 pub mod app;
 pub mod command;
+pub mod help;
 pub mod input;
 pub mod keyboard;
 pub mod panels;

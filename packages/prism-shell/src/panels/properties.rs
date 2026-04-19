@@ -11,6 +11,7 @@
 use prism_builder::{
     BuilderDocument, ComponentRegistry, FieldKind, FieldSpec, FieldValue, Node, NodeId,
 };
+use prism_core::help::HelpEntry;
 use serde_json::Value;
 
 use super::Panel;
@@ -148,6 +149,13 @@ impl Panel for PropertiesPanel {
     }
     fn hint(&self) -> &'static str {
         "Schema-driven editor for the selected node."
+    }
+    fn help_entry(&self) -> Option<HelpEntry> {
+        Some(HelpEntry::new(
+            "shell.panels.properties",
+            "Properties",
+            "Property editor for the selected component. Fields are type-aware: text, numbers, booleans, selects, and colors.",
+        ))
     }
 }
 
