@@ -200,8 +200,9 @@ impl InputManager {
                 .bind("ctrl+7", "navigate.tab.7")
                 .bind("ctrl+8", "navigate.tab.8")
                 .bind("ctrl+9", "navigate.tab.9")
-                // Sidebar
-                .bind("ctrl+b", "navigate.sidebar_toggle")
+                // Sidebar visibility
+                .bind("ctrl+b", "view.toggle_left_sidebar")
+                .bind("ctrl+shift+b", "view.toggle_right_sidebar")
                 // Escape: palette first, then general
                 .bind_when("escape", "command_palette.close", "commandPaletteOpen")
                 .bind_when("escape", "navigate.escape", "!commandPaletteOpen")
@@ -266,8 +267,7 @@ impl InputManager {
     pub fn set_focus(&mut self, region: FocusRegion) {
         self.focus = region;
         for r in FocusRegion::all() {
-            self.context
-                .insert(r.context_key().into(), *r == region);
+            self.context.insert(r.context_key().into(), *r == region);
         }
     }
 
@@ -343,7 +343,12 @@ pub fn combo_from_slint(
     meta: bool,
 ) -> Option<KeyCombo> {
     let ch = text.chars().next()?;
-    let modifiers = Modifiers { ctrl, shift, alt, meta };
+    let modifiers = Modifiers {
+        ctrl,
+        shift,
+        alt,
+        meta,
+    };
 
     let key: &str = match ch {
         '\u{001B}' => "escape",
@@ -468,8 +473,16 @@ mod tests {
     #[test]
     fn dispatch_top_layer_wins() {
         let mut mgr = InputManager::new();
-        mgr.register(InputScheme::builder("base").bind("ctrl+z", "base.undo").build());
-        mgr.register(InputScheme::builder("layer").bind("ctrl+z", "layer.undo").build());
+        mgr.register(
+            InputScheme::builder("base")
+                .bind("ctrl+z", "base.undo")
+                .build(),
+        );
+        mgr.register(
+            InputScheme::builder("layer")
+                .bind("ctrl+z", "layer.undo")
+                .build(),
+        );
         mgr.push("base");
         mgr.push("layer");
         let combo = KeyCombo::parse("ctrl+z").unwrap();
@@ -587,7 +600,10 @@ mod tests {
         let mgr = InputManager::with_defaults();
         for n in 1..=9 {
             let combo = KeyCombo::parse(&format!("ctrl+{n}")).unwrap();
-            assert_eq!(mgr.dispatch(&combo), Some(format!("navigate.tab.{n}").as_str()));
+            assert_eq!(
+                mgr.dispatch(&combo),
+                Some(format!("navigate.tab.{n}").as_str())
+            );
         }
     }
 

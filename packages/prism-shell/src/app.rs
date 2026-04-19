@@ -8,6 +8,7 @@
 //! `Rc<RefCell<ShellInner>>` so Slint closures can borrow it.
 
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -40,9 +41,9 @@ use crate::selection::SelectionModel;
 use crate::telemetry::FirstPaint;
 use crate::{
     AppCardItem, AppWindow, BreadcrumbItem, BuilderNode, ButtonSpec, CommandItem,
-    ComponentPaletteItem, DocsPanelData, EditorLine, EditorToken, FieldRow, GutterRect,
-    HelpTooltipData, InspectorNode, ModifierItem, PageLayoutData, SearchResultItem, SignalItem,
-    TabItem, ToastItem, VariantItem,
+    ComponentPaletteItem, DocsPanelData, EditorLine, EditorToken, ExplorerNodeItem, FieldRow,
+    GutterRect, HelpTooltipData, InspectorNode, MenuDef, MenuItem, ModifierItem, PageLayoutData,
+    SearchResultItem, SignalItem, TabItem, ToastItem, VariantItem,
 };
 
 // ── Reloadable state ───────────────────────────────────────────────
@@ -62,6 +63,11 @@ pub struct AppState {
     pub editor_state: EditorState,
     pub toasts: Vec<ToastData>,
     pub show_grid_overlay: bool,
+    pub show_activity_bar: bool,
+    pub show_left_sidebar: bool,
+    pub show_right_sidebar: bool,
+    pub explorer_expanded: HashSet<String>,
+    pub explorer_view_mode: crate::explorer::ExplorerViewMode,
     next_toast_id: u64,
     next_node_id: u64,
     next_app_id: u64,
@@ -131,6 +137,7 @@ pub enum ActivePanel {
     Identity,
     Edit,
     CodeEditor,
+    Explorer,
 }
 
 impl ActivePanel {
@@ -139,6 +146,7 @@ impl ActivePanel {
             ActivePanel::Identity => 0,
             ActivePanel::Edit => 1,
             ActivePanel::CodeEditor => 2,
+            ActivePanel::Explorer => 3,
         }
     }
 
@@ -146,6 +154,7 @@ impl ActivePanel {
         match id {
             0 => ActivePanel::Identity,
             2 => ActivePanel::CodeEditor,
+            3 => ActivePanel::Explorer,
             _ => ActivePanel::Edit,
         }
     }
@@ -177,6 +186,11 @@ impl Default for AppState {
             },
             toasts: Vec::new(),
             show_grid_overlay: true,
+            show_activity_bar: true,
+            show_left_sidebar: true,
+            show_right_sidebar: true,
+            explorer_expanded: HashSet::new(),
+            explorer_view_mode: crate::explorer::ExplorerViewMode::default(),
             next_toast_id: 0,
             next_node_id: 100,
             next_app_id: 10,
@@ -400,6 +414,7 @@ struct ShellInner {
     help: HelpRegistry,
     input: InputManager,
     commands: CommandRegistry,
+    menus: crate::menu::MenuRegistry,
     undo_past: Vec<DocumentSnapshot>,
     undo_future: Vec<DocumentSnapshot>,
     clipboard: Option<Node>,
@@ -500,6 +515,7 @@ impl Shell {
             help,
             input: InputManager::with_defaults(),
             commands: CommandRegistry::with_builtins(),
+            menus: crate::menu::MenuRegistry::with_builtins(),
             undo_past: Vec::new(),
             undo_future: Vec::new(),
             clipboard: None,
@@ -619,6 +635,15 @@ impl Shell {
                 } else {
                     false
                 }
+            }
+        });
+
+        // Menu bar command dispatch
+        self.window.on_menu_command({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |cmd_id| {
+                execute_command(&inner, &weak, &cmd_id);
             }
         });
 
@@ -884,6 +909,68 @@ impl Shell {
                     state.sync_document_to_app();
                     state.shell_view = ShellView::Launchpad;
                     state.selection.clear();
+                });
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Explorer: node clicked — navigate to app/page
+        self.window.on_explorer_node_clicked({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |node_id| {
+                let nid = node_id.to_string();
+                {
+                    let mut s = inner.borrow_mut();
+                    if let Some(app_id) = nid.strip_prefix("app:") {
+                        s.store.mutate(|state| {
+                            state.sync_document_to_app();
+                            state.shell_view = ShellView::App {
+                                app_id: app_id.into(),
+                            };
+                            state.active_panel = ActivePanel::Explorer;
+                            state.selection.clear();
+                            state.sync_document_from_app();
+                        });
+                    } else if let Some(rest) = nid.strip_prefix("page:") {
+                        let parts: Vec<&str> = rest.splitn(2, ':').collect();
+                        if parts.len() == 2 {
+                            let aid = parts[0].to_string();
+                            let pid = parts[1].to_string();
+                            s.store.mutate(|state| {
+                                state.sync_document_to_app();
+                                state.shell_view = ShellView::App { app_id: aid };
+                                if let Some(app) = state.active_app_mut() {
+                                    if let Some(idx) = app.pages.iter().position(|p| p.id == pid) {
+                                        app.active_page = idx;
+                                    }
+                                }
+                                state.selection.clear();
+                                state.sync_document_from_app();
+                            });
+                        }
+                    }
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Explorer: toggle expand/collapse
+        self.window.on_explorer_toggle_expand({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |node_id| {
+                let nid = node_id.to_string();
+                inner.borrow_mut().store.mutate(|state| {
+                    if state.explorer_expanded.contains(&nid) {
+                        state.explorer_expanded.remove(&nid);
+                    } else {
+                        state.explorer_expanded.insert(nid);
+                    }
                 });
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
@@ -1543,11 +1630,26 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
     if is_launchpad {
         push_app_cards(window, &state.apps);
         window.set_active_app_name(SharedString::new());
+        window.set_active_page_name(SharedString::new());
     } else {
+        let app = state.active_app();
         window.set_active_app_name(SharedString::from(
-            state.active_app().map(|a| a.name.as_str()).unwrap_or(""),
+            app.map(|a| a.name.as_str()).unwrap_or(""),
+        ));
+        window.set_active_page_name(SharedString::from(
+            app.and_then(|a| a.pages.get(a.active_page))
+                .map(|p| p.title.as_str())
+                .unwrap_or(""),
         ));
     }
+
+    // Shell chrome visibility
+    window.set_show_activity_bar(state.show_activity_bar);
+    window.set_show_left_sidebar(state.show_left_sidebar);
+    window.set_show_right_sidebar(state.show_right_sidebar);
+
+    // Menu bar
+    push_menu_defs(window, &inner.menus, &inner.commands);
 
     // Activity bar panel selection
     window.set_active_panel_id(state.active_panel.as_id());
@@ -1589,6 +1691,14 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
             }
             ActivePanel::CodeEditor => {
                 push_editor_data(window, &state.editor_state);
+            }
+            ActivePanel::Explorer => {
+                push_explorer_nodes(
+                    window,
+                    &state.apps,
+                    &state.shell_view,
+                    &state.explorer_expanded,
+                );
             }
         }
     }
@@ -1704,6 +1814,61 @@ fn clear_panel_slots(window: &AppWindow) {
     window.set_component_palette(ModelRc::from(
         empty_palette as Rc<dyn Model<Data = ComponentPaletteItem>>,
     ));
+}
+
+fn push_explorer_nodes(
+    window: &AppWindow,
+    apps: &[PrismApp],
+    shell_view: &ShellView,
+    expanded: &HashSet<String>,
+) {
+    let tree = crate::explorer::build_explorer_tree(apps, shell_view, expanded);
+    let items: Vec<ExplorerNodeItem> = tree
+        .into_iter()
+        .map(|n| ExplorerNodeItem {
+            id: SharedString::from(&n.id),
+            label: SharedString::from(&n.label),
+            kind: SharedString::from(n.kind.as_str()),
+            depth: n.depth,
+            expanded: n.expanded,
+            is_active: n.is_active,
+        })
+        .collect();
+    let model = Rc::new(VecModel::from(items));
+    window.set_explorer_nodes(ModelRc::from(
+        model as Rc<dyn Model<Data = ExplorerNodeItem>>,
+    ));
+}
+
+fn push_menu_defs(
+    window: &AppWindow,
+    menus: &crate::menu::MenuRegistry,
+    commands: &CommandRegistry,
+) {
+    let defs: Vec<MenuDef> = menus
+        .menu_names()
+        .iter()
+        .map(|name| {
+            let resolved = menus.items_for_menu(name, commands);
+            let items: Vec<MenuItem> = resolved
+                .into_iter()
+                .map(|r| MenuItem {
+                    label: SharedString::from(&r.label),
+                    shortcut: SharedString::from(&r.shortcut),
+                    command_id: SharedString::from(&r.command_id),
+                    enabled: true,
+                    is_separator: r.is_separator,
+                })
+                .collect();
+            let items_model = Rc::new(VecModel::from(items));
+            MenuDef {
+                label: SharedString::from(name.as_str()),
+                items: ModelRc::from(items_model as Rc<dyn Model<Data = MenuItem>>),
+            }
+        })
+        .collect();
+    let model = Rc::new(VecModel::from(defs));
+    window.set_menu_defs(ModelRc::from(model as Rc<dyn Model<Data = MenuDef>>));
 }
 
 fn push_app_cards(window: &AppWindow, apps: &[PrismApp]) {
@@ -1938,6 +2103,12 @@ fn execute_command(
                 .mutate(|state| state.active_panel = ActivePanel::CodeEditor);
             update_panel_schemes(&mut s.input, ActivePanel::CodeEditor.as_id());
         }
+        "panel.explorer" | "view.file_explorer" => {
+            let mut s = shared.borrow_mut();
+            s.store
+                .mutate(|state| state.active_panel = ActivePanel::Explorer);
+            update_panel_schemes(&mut s.input, ActivePanel::Explorer.as_id());
+        }
         "selection.delete" => {
             let mut s = shared.borrow_mut();
             let selected_id = s.store.state().selection.primary().cloned();
@@ -2133,7 +2304,27 @@ fn execute_command(
             }
             s.input.set_focus(FocusRegion::Search);
         }
-        "navigate.sidebar_toggle" | "file.save" => {}
+        "view.toggle_left_sidebar" | "navigate.sidebar_toggle" => {
+            shared.borrow_mut().store.mutate(|state| {
+                state.show_left_sidebar = !state.show_left_sidebar;
+            });
+        }
+        "view.toggle_right_sidebar" => {
+            shared.borrow_mut().store.mutate(|state| {
+                state.show_right_sidebar = !state.show_right_sidebar;
+            });
+        }
+        "view.toggle_activity_bar" => {
+            shared.borrow_mut().store.mutate(|state| {
+                state.show_activity_bar = !state.show_activity_bar;
+            });
+        }
+        "view.toggle_grid" => {
+            shared.borrow_mut().store.mutate(|state| {
+                state.show_grid_overlay = !state.show_grid_overlay;
+            });
+        }
+        "file.save" => {}
         other => {
             if let Some(n) = other
                 .strip_prefix("navigate.tab.")
@@ -2190,6 +2381,7 @@ fn panel_metadata(panel: ActivePanel) -> (&'static str, &'static str) {
             let p = CodeEditorPanel::new();
             (p.title(), p.hint())
         }
+        ActivePanel::Explorer => ("Explorer", "Browse apps, pages, and documents."),
     }
 }
 

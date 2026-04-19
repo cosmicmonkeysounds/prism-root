@@ -74,6 +74,24 @@ impl CommandRegistry {
             CommandEntry::new("selection.all", "Select All", "Edit").with_shortcut("Ctrl+A"),
         );
         reg.register(CommandEntry::new(
+            "view.toggle_activity_bar",
+            "Toggle Activity Bar",
+            "View",
+        ));
+        reg.register(
+            CommandEntry::new("view.toggle_left_sidebar", "Toggle Left Sidebar", "View")
+                .with_shortcut("Ctrl+B"),
+        );
+        reg.register(
+            CommandEntry::new("view.toggle_right_sidebar", "Toggle Right Sidebar", "View")
+                .with_shortcut("Ctrl+Shift+B"),
+        );
+        reg.register(CommandEntry::new(
+            "view.toggle_grid",
+            "Toggle Grid Overlay",
+            "View",
+        ));
+        reg.register(CommandEntry::new(
             "panel.identity",
             "Go to Identity",
             "Panel",
@@ -93,11 +111,10 @@ impl CommandRegistry {
             CommandEntry::new("navigate.prev_tab", "Previous Tab", "Navigate")
                 .with_shortcut("Ctrl+Shift+Tab"),
         );
-        reg.register(CommandEntry::new(
-            "navigate.sidebar_toggle",
-            "Toggle Sidebar",
-            "Navigate",
-        ).with_shortcut("Ctrl+B"));
+        reg.register(
+            CommandEntry::new("navigate.sidebar_toggle", "Toggle Sidebar", "Navigate")
+                .with_shortcut("Ctrl+B"),
+        );
         reg.register(CommandEntry::new(
             "navigate.escape",
             "Dismiss / Deselect",
@@ -118,12 +135,20 @@ impl CommandRegistry {
             "Go to Code Editor",
             "Panel",
         ));
+        reg.register(CommandEntry::new(
+            "panel.explorer",
+            "Go to Explorer",
+            "Panel",
+        ));
         for n in 1..=9 {
-            reg.register(CommandEntry::new(
-                format!("navigate.tab.{n}"),
-                format!("Go to Tab {n}"),
-                "Navigate",
-            ).with_shortcut(format!("Ctrl+{n}")));
+            reg.register(
+                CommandEntry::new(
+                    format!("navigate.tab.{n}"),
+                    format!("Go to Tab {n}"),
+                    "Navigate",
+                )
+                .with_shortcut(format!("Ctrl+{n}")),
+            );
         }
         reg
     }

@@ -159,6 +159,28 @@ struct EditorLine {
     sel-to: int,
 }
 
+struct ExplorerNodeItem {
+    id: string,
+    label: string,
+    kind: string,
+    depth: int,
+    expanded: bool,
+    is-active: bool,
+}
+
+struct MenuItem {
+    label: string,
+    shortcut: string,
+    command-id: string,
+    enabled: bool,
+    is-separator: bool,
+}
+
+struct MenuDef {
+    label: string,
+    items: [MenuItem],
+}
+
 // ── Icon button ───────────────────────────────────────────────────
 
 component IconButton inherits Rectangle {
@@ -233,6 +255,57 @@ component SplitHandle inherits Rectangle {
         background: split-touch.has-hover || split-touch.pressed
             ? Palette.accent-background.transparentize(30%)
             : transparent;
+    }
+}
+
+// ── Menu bar ─────────────────────────────────────────────────────
+
+component MenuBarRow inherits Rectangle {
+    in property <[MenuDef]> menus: [];
+    in-out property <int> active-menu: -1;
+    callback item-clicked(string);
+
+    height: 28px;
+    background: Palette.alternate-background;
+
+    Rectangle { x: 0px; y: parent.height - 1px; width: parent.width; height: 1px; background: Palette.foreground.transparentize(90%); }
+
+    HorizontalLayout {
+        padding-left: 8px;
+        spacing: 0px;
+        alignment: start;
+
+        for menu[idx] in root.menus : Rectangle {
+            height: 28px;
+            width: menu-label.preferred-width + 20px;
+            background: root.active-menu == idx
+                ? Palette.accent-background.transparentize(85%)
+                : (menu-touch.has-hover ? Palette.control-background.transparentize(40%) : transparent);
+            border-radius: 4px;
+
+            menu-label := Text {
+                text: menu.label;
+                color: Palette.foreground;
+                font-size: 12px;
+                font-weight: 500;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+
+            menu-touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    root.active-menu = root.active-menu == idx ? -1 : idx;
+                }
+                changed has-hover => {
+                    if (self.has-hover && root.active-menu >= 0 && root.active-menu != idx) {
+                        root.active-menu = idx;
+                    }
+                }
+            }
+        }
+
+        Rectangle { horizontal-stretch: 1; }
     }
 }
 
@@ -1038,11 +1111,27 @@ export component AppWindow inherits Window {
     in property <bool> is-launchpad: true;
     in property <[AppCardItem]> app-cards: [];
     in property <string> active-app-name: "";
+    in property <string> active-page-name: "";
     callback open-app(string);
     callback create-app;
     callback go-home;
     callback add-page;
     callback switch-page(int);
+
+    // Menu bar
+    in property <[MenuDef]> menu-defs: [];
+    callback menu-command(string);
+
+    // Explorer
+    in property <[ExplorerNodeItem]> explorer-nodes: [];
+    in-out property <bool> explorer-list-mode: true;
+    callback explorer-node-clicked(string);
+    callback explorer-toggle-expand(string);
+
+    // Shell chrome visibility
+    in property <bool> show-activity-bar: true;
+    in property <bool> show-left-sidebar: true;
+    in property <bool> show-right-sidebar: true;
 
     // Panel resize
     property <length> identity-sidebar-width: 220px;
@@ -1062,13 +1151,23 @@ export component AppWindow inherits Window {
             return reject;
         }
 
+        // Menu dropdown state (local to Slint)
+        property <int> menu-active-index: -1;
+
         VerticalLayout {
+            // ── Menu bar ─────────────────────────────────────────
+            if root.menu-defs.length > 0 : MenuBarRow {
+                menus: root.menu-defs;
+                active-menu <=> fs.menu-active-index;
+                item-clicked(cmd) => { root.menu-command(cmd); fs.menu-active-index = -1; }
+            }
+
             HorizontalLayout {
                 spacing: 0px;
                 vertical-stretch: 1;
 
                 // ── Activity bar ──────────────────────────────────
-                Rectangle {
+                if root.show-activity-bar : Rectangle {
                     width: 48px;
                     background: Palette.alternate-background;
                     VerticalLayout {
@@ -1098,6 +1197,14 @@ export component AppWindow inherits Window {
                             hover-end => { root.help-leave(); }
                         }
                         if !root.is-launchpad : NavButton {
+                            icon: @image-url("icons/tree.svg");
+                            selected: !root.is-launchpad && root.active-panel-id == 3;
+                            help-id: "shell.panels.explorer";
+                            clicked => { root.select-panel(3); }
+                            hover-start(id, x, y) => { root.help-hover(id, x, y); }
+                            hover-end => { root.help-leave(); }
+                        }
+                        if !root.is-launchpad : NavButton {
                             icon: @image-url("icons/layout.svg");
                             selected: !root.is-launchpad && root.active-panel-id == 1;
                             help-id: "shell.panels.editor";
@@ -1117,7 +1224,7 @@ export component AppWindow inherits Window {
                 }
 
                 // ── Identity sidebar ─────────────────────────────
-                if !root.is-launchpad && root.active-panel-id == 0 : Rectangle {
+                if !root.is-launchpad && root.active-panel-id == 0 && root.show-left-sidebar : Rectangle {
                     width: root.identity-sidebar-width;
                     background: Palette.alternate-background;
                     clip: true;
@@ -1135,12 +1242,12 @@ export component AppWindow inherits Window {
                         }
                     }
                 }
-                if !root.is-launchpad && root.active-panel-id == 0 : SplitHandle {
+                if !root.is-launchpad && root.active-panel-id == 0 && root.show-left-sidebar : SplitHandle {
                     dragged(delta) => { root.identity-sidebar-width = clamp(root.identity-sidebar-width + delta, 120px, 500px); }
                 }
 
                 // ── Edit mode: left sidebar ──────────────────────
-                if !root.is-launchpad && root.active-panel-id == 1 : Rectangle {
+                if !root.is-launchpad && root.active-panel-id == 1 && root.show-left-sidebar : Rectangle {
                     width: root.left-sidebar-width;
                     background: Palette.alternate-background;
                     clip: true;
@@ -1479,7 +1586,115 @@ export component AppWindow inherits Window {
                         }
                     }
                 }
-                if !root.is-launchpad && root.active-panel-id == 1 : SplitHandle {
+                if !root.is-launchpad && root.active-panel-id == 1 && root.show-left-sidebar : SplitHandle {
+                    dragged(delta) => { root.left-sidebar-width = clamp(root.left-sidebar-width + delta, 160px, 500px); }
+                }
+
+                // ── Explorer sidebar ─────────────────────────
+                if !root.is-launchpad && root.active-panel-id == 3 && root.show-left-sidebar : Rectangle {
+                    width: root.left-sidebar-width;
+                    background: Palette.alternate-background;
+                    clip: true;
+                    Rectangle { x: parent.width - 1px; y: 0px; width: 1px; height: parent.height; background: Palette.foreground.transparentize(90%); }
+
+                    ScrollView {
+                        vertical-stretch: 1;
+                        VerticalLayout {
+                            padding: 12px;
+                            spacing: 4px;
+
+                            HorizontalLayout {
+                                spacing: 6px;
+                                alignment: space-between;
+                                Text { text: "Explorer"; color: Palette.foreground; font-size: 14px; font-weight: 700; }
+                                HorizontalLayout {
+                                    spacing: 2px;
+                                    alignment: end;
+                                    IconButton {
+                                        icon: @image-url("icons/list.svg");
+                                        clicked => { root.explorer-list-mode = true; }
+                                    }
+                                    IconButton {
+                                        icon: @image-url("icons/columns.svg");
+                                        clicked => { root.explorer-list-mode = false; }
+                                    }
+                                }
+                            }
+
+                            Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
+
+                            for enode[i] in root.explorer-nodes : Rectangle {
+                                height: 30px;
+                                background: enode.is-active
+                                    ? Palette.accent-background.transparentize(85%)
+                                    : (exp-touch.has-hover ? Palette.control-background : transparent);
+                                border-radius: 4px;
+
+                                HorizontalLayout {
+                                    padding-left: enode.depth * 16px + 8px;
+                                    spacing: 6px;
+                                    alignment: start;
+
+                                    if enode.kind == "app" : Image {
+                                        source: enode.expanded
+                                            ? @image-url("icons/chevron-down.svg")
+                                            : @image-url("icons/chevron-left.svg");
+                                        width: 10px; height: 10px;
+                                        colorize: Palette.foreground.transparentize(40%);
+                                        y: 2px;
+                                        TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.explorer-toggle-expand(enode.id); }
+                                        }
+                                    }
+                                    if enode.kind == "page" : Image {
+                                        source: enode.expanded
+                                            ? @image-url("icons/chevron-down.svg")
+                                            : @image-url("icons/chevron-left.svg");
+                                        width: 10px; height: 10px;
+                                        colorize: Palette.foreground.transparentize(40%);
+                                        y: 2px;
+                                        TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.explorer-toggle-expand(enode.id); }
+                                        }
+                                    }
+
+                                    if enode.kind == "app" : Image {
+                                        source: @image-url("icons/box.svg");
+                                        width: 14px; height: 14px;
+                                        colorize: enode.is-active ? Palette.accent-background : Palette.foreground.transparentize(40%);
+                                    }
+                                    if enode.kind == "page" : Image {
+                                        source: @image-url("icons/layout.svg");
+                                        width: 14px; height: 14px;
+                                        colorize: enode.is-active ? Palette.accent-background : Palette.foreground.transparentize(40%);
+                                    }
+                                    if enode.kind == "node" : Image {
+                                        source: @image-url("icons/grip.svg");
+                                        width: 12px; height: 12px;
+                                        colorize: Palette.foreground.transparentize(50%);
+                                    }
+
+                                    Text {
+                                        text: enode.label;
+                                        color: enode.is-active ? Palette.accent-foreground : Palette.foreground;
+                                        font-size: 12px;
+                                        font-weight: enode.is-active ? 600 : 400;
+                                        vertical-alignment: center;
+                                        overflow: elide;
+                                    }
+                                }
+
+                                exp-touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.explorer-node-clicked(enode.id); }
+                                }
+                            }
+                        }
+                    }
+                }
+                if !root.is-launchpad && root.active-panel-id == 3 && root.show-left-sidebar : SplitHandle {
                     dragged(delta) => { root.left-sidebar-width = clamp(root.left-sidebar-width + delta, 160px, 500px); }
                 }
 
@@ -2224,27 +2439,63 @@ export component AppWindow inherits Window {
                         background: root.active-panel-id == 2 ? #1b1f27 : Palette.alternate-background;
                         Rectangle { x: 0px; y: 0px; width: parent.width; height: 1px; background: Palette.foreground.transparentize(90%); }
                         HorizontalLayout {
-                            padding-left: 12px; padding-right: 12px; spacing: 12px; alignment: start;
+                            padding-left: 12px; padding-right: 12px; spacing: 8px; alignment: start;
+                            // Left: panel + breadcrumb
                             Text { text: root.panel-title; color: Palette.foreground.transparentize(40%); font-size: 11px; vertical-alignment: center; }
+                            if !root.is-launchpad && root.active-app-name != "" : Text { text: "›"; color: Palette.foreground.transparentize(60%); font-size: 11px; vertical-alignment: center; }
+                            if !root.is-launchpad && root.active-app-name != "" : Text { text: root.active-app-name; color: Palette.foreground.transparentize(30%); font-size: 11px; vertical-alignment: center; }
+                            if !root.is-launchpad && root.active-page-name != "" : Text { text: "›"; color: Palette.foreground.transparentize(60%); font-size: 11px; vertical-alignment: center; }
+                            if !root.is-launchpad && root.active-page-name != "" : Text { text: root.active-page-name; color: Palette.foreground.transparentize(30%); font-size: 11px; vertical-alignment: center; }
                             if root.active-panel-id != 2 && root.has-selection : Text { text: "·"; color: Palette.foreground.transparentize(60%); font-size: 11px; vertical-alignment: center; }
                             if root.active-panel-id != 2 && root.has-selection : Text { text: "Selected"; color: Palette.accent-foreground; font-size: 11px; vertical-alignment: center; }
                             if root.active-panel-id == 2 : Text { text: "·"; color: Palette.foreground.transparentize(60%); font-size: 11px; vertical-alignment: center; }
                             if root.active-panel-id == 2 : Text { text: "Ln " + (root.editor-cursor-line + 1) + ", Col " + (root.editor-cursor-col + 1); color: Palette.foreground.transparentize(30%); font-size: 11px; vertical-alignment: center; }
                             Rectangle { horizontal-stretch: 1; }
+                            // Right: sidebar toggles + metadata
+                            if !root.is-launchpad && root.active-panel-id == 1 : Text { text: root.builder-node-count + " nodes"; color: Palette.foreground.transparentize(50%); font-size: 11px; vertical-alignment: center; }
+                            if !root.is-launchpad && root.active-panel-id == 1 : Text { text: "·"; color: Palette.foreground.transparentize(60%); font-size: 11px; vertical-alignment: center; }
                             if root.active-panel-id == 2 : Text { text: root.editor-line-count + " lines"; color: Palette.foreground.transparentize(50%); font-size: 11px; vertical-alignment: center; }
                             if root.active-panel-id == 2 : Text { text: "·"; color: Palette.foreground.transparentize(60%); font-size: 11px; vertical-alignment: center; }
                             if root.active-panel-id == 2 : Text { text: root.editor-language; color: Palette.foreground.transparentize(40%); font-size: 11px; vertical-alignment: center; }
                             if root.active-panel-id == 2 : Text { text: "·"; color: Palette.foreground.transparentize(60%); font-size: 11px; vertical-alignment: center; }
+                            // Sidebar toggle icons
+                            Rectangle {
+                                width: 20px; height: 20px;
+                                TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.menu-command("view.toggle_left_sidebar"); }
+                                }
+                                Image {
+                                    source: @image-url("icons/sidebar-left.svg");
+                                    width: 14px; height: 14px;
+                                    x: 3px; y: 3px;
+                                    colorize: root.show-left-sidebar ? Palette.foreground.transparentize(30%) : Palette.foreground.transparentize(60%);
+                                }
+                            }
+                            Rectangle {
+                                width: 20px; height: 20px;
+                                TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.menu-command("view.toggle_right_sidebar"); }
+                                }
+                                Image {
+                                    source: @image-url("icons/sidebar-right.svg");
+                                    width: 14px; height: 14px;
+                                    x: 3px; y: 3px;
+                                    colorize: root.show-right-sidebar ? Palette.foreground.transparentize(30%) : Palette.foreground.transparentize(60%);
+                                }
+                            }
+                            Text { text: "·"; color: Palette.foreground.transparentize(60%); font-size: 11px; vertical-alignment: center; }
                             Text { text: "Prism Studio"; color: Palette.foreground.transparentize(50%); font-size: 11px; vertical-alignment: center; }
                         }
                     }
                 }
 
                 // ── Edit mode: right sidebar (properties) ────────
-                if !root.is-launchpad && root.active-panel-id == 1 : SplitHandle {
+                if !root.is-launchpad && root.active-panel-id == 1 && root.show-right-sidebar : SplitHandle {
                     dragged(delta) => { root.right-sidebar-width = clamp(root.right-sidebar-width - delta, 180px, 500px); }
                 }
-                if !root.is-launchpad && root.active-panel-id == 1 : Rectangle {
+                if !root.is-launchpad && root.active-panel-id == 1 && root.show-right-sidebar : Rectangle {
                     width: root.right-sidebar-width;
                     background: Palette.alternate-background;
                     clip: true;
@@ -2419,6 +2670,87 @@ export component AppWindow inherits Window {
     if root.notifications.length > 0 : VerticalLayout {
         x: root.width - 340px; y: root.height - root.notifications.length * 100px - 20px; width: 320px; spacing: 8px;
         for notif[i] in root.notifications : Toast { title: notif.title; body: notif.body; kind: notif.kind; dismissed => { root.dismiss-notification(notif.id); } }
+    }
+
+    // ── Menu dropdown ──────────────────────────────────────────────
+    if fs.menu-active-index >= 0 : Rectangle {
+        width: 100%; height: 100%; background: transparent;
+        TouchArea { clicked => { fs.menu-active-index = -1; } }
+    }
+    if fs.menu-active-index >= 0 && fs.menu-active-index < root.menu-defs.length : Rectangle {
+        property <int> mi: fs.menu-active-index;
+
+        x: {
+            // Approximate menu label position: 8px padding + index * 70px
+            8px + mi * 70px
+        }
+        y: 28px;
+        width: 220px;
+        height: menu-drop-layout.preferred-height;
+        background: Palette.alternate-background;
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: Palette.foreground.transparentize(85%);
+        drop-shadow-blur: 12px;
+        drop-shadow-color: #00000020;
+        clip: true;
+
+        menu-drop-layout := VerticalLayout {
+            padding: 4px;
+            spacing: 0px;
+
+            for item[ii] in root.menu-defs[mi].items : Rectangle {
+                height: item.is-separator ? 9px : 28px;
+
+                if item.is-separator : Rectangle {
+                    height: 1px;
+                    y: 4px;
+                    background: Palette.foreground.transparentize(85%);
+                }
+
+                if !item.is-separator : Rectangle {
+                    background: menu-item-touch.has-hover ? Palette.accent-background.transparentize(85%) : transparent;
+                    border-radius: 4px;
+                    height: 28px;
+
+                    HorizontalLayout {
+                        padding-left: 12px;
+                        padding-right: 12px;
+                        alignment: space-between;
+
+                        Text {
+                            text: item.label;
+                            color: Palette.foreground;
+                            font-size: 12px;
+                            vertical-alignment: center;
+                        }
+
+                        if item.shortcut != "" : Rectangle {
+                            background: Palette.control-background;
+                            border-radius: 3px;
+                            height: 18px;
+                            width: shortcut-label.preferred-width + 10px;
+                            y: 5px;
+                            shortcut-label := Text {
+                                text: item.shortcut;
+                                color: Palette.foreground.transparentize(40%);
+                                font-size: 10px;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+
+                    menu-item-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            root.menu-command(item.command-id);
+                            fs.menu-active-index = -1;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // ── Help tooltip ──────────────────────────────────────────────

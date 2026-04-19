@@ -36,6 +36,7 @@ pub fn register_help_entries(registry: &mut HelpRegistry, components: &Component
     registry.register_many(field_entries());
     registry.register_many(toolbar_entries());
     registry.register_many(shell_entries());
+    registry.register_many(chrome_entries());
 }
 
 fn panels() -> Vec<Box<dyn Panel>> {
@@ -182,6 +183,32 @@ pub fn shell_entries() -> Vec<HelpEntry> {
     ]
 }
 
+pub fn chrome_entries() -> Vec<HelpEntry> {
+    vec![
+        HelpEntry::new(
+            "shell.menu-bar",
+            "Menu Bar",
+            "Application menu with File, Edit, View, Window, and Help menus.",
+        )
+        .with_body("The menu bar provides access to all application commands organized by category. Click a menu name to open it, hover to switch between menus. Each item shows its keyboard shortcut if available.\n\nMenus: File (save), Edit (undo, redo, clipboard, selection), View (command palette, search, sidebar toggles, grid), Window (panel navigation), Help.")
+        .with_doc("shell/menu-bar"),
+        HelpEntry::new(
+            "shell.explorer",
+            "File Explorer",
+            "Browse apps, pages, and top-level nodes in a tree view.",
+        )
+        .with_body("The explorer panel shows all apps in the workspace as a tree. Expand an app to see its pages; expand a page to see its top-level nodes.\n\n• Click an app to expand/collapse it.\n• Click a page to navigate to it.\n• Toggle between list and grid views with the toolbar buttons.\n\nThe active app is auto-expanded when you open the explorer.")
+        .with_doc("shell/explorer"),
+        HelpEntry::new(
+            "shell.sidebar-toggle",
+            "Sidebar Toggles",
+            "Show or hide the left and right sidebars.",
+        )
+        .with_body("Sidebar toggle buttons in the status bar let you quickly show or hide the left sidebar (component palette, layers, explorer) and right sidebar (properties).\n\nKeyboard shortcuts:\n• Ctrl+B — Toggle left sidebar\n• Ctrl+Shift+B — Toggle right sidebar\n\nHide both sidebars for a distraction-free canvas view.")
+        .with_doc("shell/sidebars"),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -280,6 +307,14 @@ mod tests {
         let (reg, _) = setup();
         assert!(reg.get("shell.toolbar.undo").is_some());
         assert!(reg.get("shell.toolbar.delete").is_some());
+    }
+
+    #[test]
+    fn chrome_entries_registered() {
+        let (reg, _) = setup();
+        assert!(reg.get("shell.menu-bar").is_some());
+        assert!(reg.get("shell.explorer").is_some());
+        assert!(reg.get("shell.sidebar-toggle").is_some());
     }
 
     #[test]
