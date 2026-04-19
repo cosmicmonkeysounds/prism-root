@@ -111,7 +111,7 @@ impl Default for AppState {
                 shell_mode: ShellMode::Build,
                 permission: Permission::Dev,
             },
-            active_panel: ActivePanel::Edit,
+            active_panel: ActivePanel::CodeEditor,
             builder_document: sample_document(),
             selection: SelectionModel::single("hero".into()),
             tabs: vec![Tab {
@@ -2673,15 +2673,9 @@ fn push_editor_data(window: &AppWindow, es: &EditorState) {
         let trimmed = raw.trim_end_matches('\n');
         let tokens_raw = highlight_line(trimmed, &es.language);
 
-        let mut col = 0i32;
         let tokens: Vec<EditorToken> = tokens_raw
             .into_iter()
-            .filter_map(|t| {
-                let token_col = col;
-                col += t.text.chars().count() as i32;
-                if t.kind == TokenKind::Whitespace {
-                    return None;
-                }
+            .map(|t| {
                 let c = match t.kind {
                     TokenKind::Keyword => slint::Color::from_rgb_u8(0xc6, 0x78, 0xdd),
                     TokenKind::String => slint::Color::from_rgb_u8(0x98, 0xc3, 0x79),
@@ -2690,14 +2684,14 @@ fn push_editor_data(window: &AppWindow, es: &EditorState) {
                     TokenKind::Operator => slint::Color::from_rgb_u8(0x56, 0xb6, 0xc2),
                     TokenKind::Punctuation => slint::Color::from_rgb_u8(0xab, 0xb2, 0xbf),
                     TokenKind::Identifier => slint::Color::from_rgb_u8(0xe0, 0x6c, 0x75),
-                    TokenKind::Whitespace => unreachable!(),
+                    TokenKind::Whitespace => slint::Color::from_argb_u8(0, 0, 0, 0),
                     TokenKind::Plain => slint::Color::from_rgb_u8(0xab, 0xb2, 0xbf),
                 };
-                Some(EditorToken {
+                EditorToken {
                     text: SharedString::from(t.text),
                     token_color: c,
-                    col_offset: token_col,
-                })
+                    col_offset: 0,
+                }
             })
             .collect();
         let token_model = Rc::new(VecModel::from(tokens));
@@ -2720,6 +2714,16 @@ fn push_editor_data(window: &AppWindow, es: &EditorState) {
     window.set_editor_cursor_line(cursor_line as i32);
     window.set_editor_cursor_col(cursor_col as i32);
     window.set_editor_cursor_visible(true);
+
+    let cursor_prefix: String = es
+        .buffer
+        .line(cursor_line)
+        .unwrap_or_default()
+        .trim_end_matches('\n')
+        .chars()
+        .take(cursor_col)
+        .collect();
+    window.set_editor_cursor_prefix(SharedString::from(cursor_prefix));
     window.set_editor_language(SharedString::from(&es.language));
     window.set_editor_line_count(line_count as i32);
     window.set_editor_char_count(es.buffer.len_chars() as i32);
@@ -2757,9 +2761,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_app_state_starts_on_edit_panel() {
+    fn default_app_state_starts_on_code_editor_panel() {
         let state = AppState::default();
-        assert!(matches!(state.active_panel, ActivePanel::Edit));
+        assert!(matches!(state.active_panel, ActivePanel::CodeEditor));
     }
 
     #[test]

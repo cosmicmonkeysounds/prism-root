@@ -574,16 +574,19 @@ component FieldEditor inherits Rectangle {
             }
         }
 
-        // Number/Integer with bounds → LineEdit + Slider
-        if root.is-numeric && root.has-bounds : VerticalLayout {
-            spacing: 2px;
+        // Number/Integer with bounds → LineEdit + Slider (inline)
+        if root.is-numeric && root.has-bounds : HorizontalLayout {
+            spacing: 4px;
+            height: 28px;
             LineEdit {
+                width: 56px;
                 height: 28px;
                 text: root.value;
                 placeholder-text: root.label;
                 accepted(text) => { root.field-edited(root.key, text); }
             }
             Slider {
+                horizontal-stretch: 1;
                 height: 20px;
                 minimum: root.min;
                 maximum: root.max;
@@ -836,11 +839,17 @@ export component AppWindow inherits Window {
     callback help-docs-clicked;
     callback help-entry-clicked;
 
+    // Sidebar section collapse state
+    in-out property <bool> components-expanded: true;
+    in-out property <bool> layers-expanded: true;
+    in-out property <bool> page-layout-expanded: true;
+
     // Code editor
     in property <[EditorLine]> editor-lines: [];
     in property <int> editor-cursor-line: 0;
     in property <int> editor-cursor-col: 0;
     in property <bool> editor-cursor-visible: true;
+    in property <string> editor-cursor-prefix: "";
     in property <string> editor-language: "rust";
     in property <int> editor-line-count: 0;
     in property <int> editor-char-count: 0;
@@ -982,20 +991,33 @@ export component AppWindow inherits Window {
                     clip: true;
                     Rectangle { x: parent.width - 1px; y: 0px; width: 1px; height: parent.height; background: Palette.foreground.transparentize(90%); }
 
-                    VerticalLayout {
-                        padding: 12px;
-                        spacing: 6px;
+                    ScrollView {
+                        vertical-stretch: 1;
+                        VerticalLayout {
+                            padding: 12px;
+                            spacing: 6px;
 
-                        // Components
-                        HorizontalLayout {
-                            spacing: 6px; alignment: start;
-                            Image { source: @image-url("icons/plus.svg"); width: 12px; height: 12px; colorize: Palette.foreground.transparentize(30%); }
-                            Text { text: "Components"; color: Palette.foreground.transparentize(30%); font-size: 11px; font-weight: 600; vertical-alignment: center; }
-                        }
+                            // Components (collapsible)
+                            Rectangle {
+                                height: 20px;
+                                HorizontalLayout {
+                                    spacing: 6px; alignment: start;
+                                    Image {
+                                        source: root.components-expanded ? @image-url("icons/chevron-down.svg") : @image-url("icons/chevron-left.svg");
+                                        width: 10px; height: 10px;
+                                        colorize: Palette.foreground.transparentize(30%);
+                                        y: 1px;
+                                    }
+                                    Image { source: @image-url("icons/plus.svg"); width: 12px; height: 12px; colorize: Palette.foreground.transparentize(30%); }
+                                    Text { text: "Components"; color: Palette.foreground.transparentize(30%); font-size: 11px; font-weight: 600; vertical-alignment: center; }
+                                }
+                                TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.components-expanded = !root.components-expanded; }
+                                }
+                            }
 
-                        ScrollView {
-                            vertical-stretch: 1;
-                            VerticalLayout {
+                            if root.components-expanded : VerticalLayout {
                                 min-width: 200px;
                                 spacing: 1px;
                                 for comp[i] in root.component-palette : Rectangle {
@@ -1038,20 +1060,30 @@ export component AppWindow inherits Window {
                                     }
                                 }
                             }
-                        }
 
-                        Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
+                            Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
 
-                        // Layers
-                        HorizontalLayout {
-                            spacing: 6px; alignment: start;
-                            Image { source: @image-url("icons/tree.svg"); width: 12px; height: 12px; colorize: Palette.foreground.transparentize(30%); }
-                            Text { text: "Layers"; color: Palette.foreground.transparentize(30%); font-size: 11px; font-weight: 600; vertical-alignment: center; }
-                        }
+                            // Layers (collapsible)
+                            Rectangle {
+                                height: 20px;
+                                HorizontalLayout {
+                                    spacing: 6px; alignment: start;
+                                    Image {
+                                        source: root.layers-expanded ? @image-url("icons/chevron-down.svg") : @image-url("icons/chevron-left.svg");
+                                        width: 10px; height: 10px;
+                                        colorize: Palette.foreground.transparentize(30%);
+                                        y: 1px;
+                                    }
+                                    Image { source: @image-url("icons/tree.svg"); width: 12px; height: 12px; colorize: Palette.foreground.transparentize(30%); }
+                                    Text { text: "Layers"; color: Palette.foreground.transparentize(30%); font-size: 11px; font-weight: 600; vertical-alignment: center; }
+                                }
+                                TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.layers-expanded = !root.layers-expanded; }
+                                }
+                            }
 
-                        ScrollView {
-                            vertical-stretch: 1;
-                            VerticalLayout {
+                            if root.layers-expanded : VerticalLayout {
                                 min-width: 200px;
                                 spacing: 1px;
                                 for node[i] in root.inspector-nodes : InspectorRow {
@@ -1064,193 +1096,230 @@ export component AppWindow inherits Window {
                                     move-down => { root.node-move-down(node.id); }
                                 }
                             }
-                        }
 
-                        Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
+                            Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
 
-                        // Page Layout
-                        HorizontalLayout {
-                            spacing: 6px; alignment: start;
-                            Image { source: @image-url("icons/layout.svg"); width: 12px; height: 12px; colorize: Palette.foreground.transparentize(30%); }
-                            Text { text: "Page Layout"; color: Palette.foreground.transparentize(30%); font-size: 11px; font-weight: 600; vertical-alignment: center; }
-                        }
-
-                        // Grid overlay toggle
-                        HorizontalLayout {
-                            spacing: 8px; alignment: start; height: 28px;
-                            Switch { checked: root.page-layout.show-grid; toggled => { root.toggle-grid-overlay(); } }
-                            Text { text: "Show grid"; color: Palette.foreground; font-size: 12px; vertical-alignment: center; }
-                        }
-
-                        // Page size — ComboBox
-                        VerticalLayout {
-                            spacing: 2px;
-                            Text { text: "Size"; color: Palette.foreground.transparentize(40%); font-size: 11px; }
-                            ComboBox {
-                                height: 28px;
-                                model: ["Responsive", "A4", "A3", "A5", "Letter", "Legal", "Tabloid", "Custom"];
-                                current-value: root.page-layout.page-size-label;
-                                selected(val) => { root.page-layout-edited("page_size", val); }
-                            }
-                        }
-
-                        // Columns — slider + text
-                        VerticalLayout {
-                            spacing: 2px;
-                            Text { text: "Columns"; color: Palette.foreground.transparentize(40%); font-size: 11px; }
-                            LineEdit {
-                                height: 24px;
-                                text: root.page-layout.column-count;
-                                placeholder-text: "1";
-                                accepted(val) => { root.page-layout-edited("columns", val); }
-                            }
-                            Slider {
+                            // Page Layout (collapsible)
+                            Rectangle {
                                 height: 20px;
-                                minimum: 1; maximum: 24;
-                                value: root.page-layout.column-count;
-                                changed(val) => { root.page-layout-edited("columns", round(val)); }
-                            }
-                        }
-
-                        // Column gap — slider + text
-                        VerticalLayout {
-                            spacing: 2px;
-                            Text { text: "Column Gap"; color: Palette.foreground.transparentize(40%); font-size: 11px; }
-                            LineEdit {
-                                height: 24px;
-                                text: root.page-layout.column-gap;
-                                placeholder-text: "0";
-                                accepted(val) => { root.page-layout-edited("column_gap", val); }
-                            }
-                            Slider {
-                                height: 20px;
-                                minimum: 0; maximum: 128;
-                                value: root.page-layout.column-gap;
-                                changed(val) => { root.page-layout-edited("column_gap", round(val)); }
-                            }
-                        }
-
-                        // Rows — slider + text
-                        VerticalLayout {
-                            spacing: 2px;
-                            Text { text: "Rows"; color: Palette.foreground.transparentize(40%); font-size: 11px; }
-                            LineEdit {
-                                height: 24px;
-                                text: root.page-layout.row-count;
-                                placeholder-text: "0";
-                                accepted(val) => { root.page-layout-edited("rows", val); }
-                            }
-                            Slider {
-                                height: 20px;
-                                minimum: 0; maximum: 24;
-                                value: root.page-layout.row-count;
-                                changed(val) => { root.page-layout-edited("rows", round(val)); }
-                            }
-                        }
-
-                        // Row gap — slider + text
-                        VerticalLayout {
-                            spacing: 2px;
-                            Text { text: "Row Gap"; color: Palette.foreground.transparentize(40%); font-size: 11px; }
-                            LineEdit {
-                                height: 24px;
-                                text: root.page-layout.row-gap;
-                                placeholder-text: "0";
-                                accepted(val) => { root.page-layout-edited("row_gap", val); }
-                            }
-                            Slider {
-                                height: 20px;
-                                minimum: 0; maximum: 128;
-                                value: root.page-layout.row-gap;
-                                changed(val) => { root.page-layout-edited("row_gap", round(val)); }
-                            }
-                        }
-
-                        // Margins — individual sliders
-                        VerticalLayout {
-                            spacing: 2px;
-                            Text { text: "Margin Top"; color: Palette.foreground.transparentize(40%); font-size: 11px; }
-                            LineEdit {
-                                height: 24px;
-                                text: root.page-layout.margin-top;
-                                placeholder-text: "0";
-                                accepted(val) => { root.page-layout-edited("margin_top", val); }
-                            }
-                            Slider {
-                                height: 20px;
-                                minimum: 0; maximum: 256;
-                                value: root.page-layout.margin-top;
-                                changed(val) => { root.page-layout-edited("margin_top", round(val)); }
-                            }
-                        }
-                        VerticalLayout {
-                            spacing: 2px;
-                            Text { text: "Margin Right"; color: Palette.foreground.transparentize(40%); font-size: 11px; }
-                            LineEdit {
-                                height: 24px;
-                                text: root.page-layout.margin-right;
-                                placeholder-text: "0";
-                                accepted(val) => { root.page-layout-edited("margin_right", val); }
-                            }
-                            Slider {
-                                height: 20px;
-                                minimum: 0; maximum: 256;
-                                value: root.page-layout.margin-right;
-                                changed(val) => { root.page-layout-edited("margin_right", round(val)); }
-                            }
-                        }
-                        VerticalLayout {
-                            spacing: 2px;
-                            Text { text: "Margin Bottom"; color: Palette.foreground.transparentize(40%); font-size: 11px; }
-                            LineEdit {
-                                height: 24px;
-                                text: root.page-layout.margin-bottom;
-                                placeholder-text: "0";
-                                accepted(val) => { root.page-layout-edited("margin_bottom", val); }
-                            }
-                            Slider {
-                                height: 20px;
-                                minimum: 0; maximum: 256;
-                                value: root.page-layout.margin-bottom;
-                                changed(val) => { root.page-layout-edited("margin_bottom", round(val)); }
-                            }
-                        }
-                        VerticalLayout {
-                            spacing: 2px;
-                            Text { text: "Margin Left"; color: Palette.foreground.transparentize(40%); font-size: 11px; }
-                            LineEdit {
-                                height: 24px;
-                                text: root.page-layout.margin-left;
-                                placeholder-text: "0";
-                                accepted(val) => { root.page-layout-edited("margin_left", val); }
-                            }
-                            Slider {
-                                height: 20px;
-                                minimum: 0; maximum: 256;
-                                value: root.page-layout.margin-left;
-                                changed(val) => { root.page-layout-edited("margin_left", round(val)); }
-                            }
-                        }
-
-                        Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
-
-                        // Search
-                        HorizontalLayout {
-                            spacing: 6px;
-                            Image { source: @image-url("icons/search.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(50%); y: 7px; }
-                            LineEdit { height: 28px; horizontal-stretch: 1; text: root.search-query; placeholder-text: "Search nodes..."; edited(text) => { root.search-input(text); } }
-                        }
-
-                        if root.search-results.length > 0 : VerticalLayout {
-                            spacing: 2px;
-                            for result[i] in root.search-results : Rectangle {
-                                height: 44px; background: Palette.control-background; border-radius: 4px;
-                                VerticalLayout {
-                                    padding: 6px; spacing: 2px;
-                                    Text { text: result.node-id + " · " + result.field; color: Palette.foreground; font-size: 11px; overflow: elide; }
-                                    Text { text: result.snippet; color: Palette.foreground.transparentize(30%); font-size: 10px; overflow: elide; }
+                                HorizontalLayout {
+                                    spacing: 6px; alignment: start;
+                                    Image {
+                                        source: root.page-layout-expanded ? @image-url("icons/chevron-down.svg") : @image-url("icons/chevron-left.svg");
+                                        width: 10px; height: 10px;
+                                        colorize: Palette.foreground.transparentize(30%);
+                                        y: 1px;
+                                    }
+                                    Image { source: @image-url("icons/layout.svg"); width: 12px; height: 12px; colorize: Palette.foreground.transparentize(30%); }
+                                    Text { text: "Page Layout"; color: Palette.foreground.transparentize(30%); font-size: 11px; font-weight: 600; vertical-alignment: center; }
                                 }
-                                TouchArea { mouse-cursor: pointer; clicked => { root.search-result-clicked(result.node-id); } }
+                                TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.page-layout-expanded = !root.page-layout-expanded; }
+                                }
+                            }
+
+                            // Grid overlay toggle
+                            if root.page-layout-expanded : HorizontalLayout {
+                                spacing: 8px; alignment: start; height: 28px;
+                                Switch { checked: root.page-layout.show-grid; toggled => { root.toggle-grid-overlay(); } }
+                                Text { text: "Show grid"; color: Palette.foreground; font-size: 12px; vertical-alignment: center; }
+                            }
+
+                            // Page size — ComboBox
+                            if root.page-layout-expanded : VerticalLayout {
+                                spacing: 2px;
+                                Text { text: "Size"; color: Palette.foreground.transparentize(40%); font-size: 11px; }
+                                ComboBox {
+                                    height: 28px;
+                                    model: ["Responsive", "A4", "A3", "A5", "Letter", "Legal", "Tabloid", "Custom"];
+                                    current-value: root.page-layout.page-size-label;
+                                    selected(val) => { root.page-layout-edited("page_size", val); }
+                                }
+                            }
+
+                            // Columns — inline slider + text
+                            if root.page-layout-expanded : VerticalLayout {
+                                spacing: 2px;
+                                Text { text: "Columns"; color: Palette.foreground.transparentize(40%); font-size: 11px; }
+                                HorizontalLayout {
+                                    spacing: 4px; height: 24px;
+                                    LineEdit {
+                                        width: 48px; height: 24px;
+                                        text: root.page-layout.column-count;
+                                        placeholder-text: "1";
+                                        accepted(val) => { root.page-layout-edited("columns", val); }
+                                    }
+                                    Slider {
+                                        horizontal-stretch: 1; height: 20px;
+                                        minimum: 1; maximum: 24;
+                                        value: root.page-layout.column-count;
+                                        changed(val) => { root.page-layout-edited("columns", round(val)); }
+                                    }
+                                }
+                            }
+
+                            // Column gap — inline slider + text
+                            if root.page-layout-expanded : VerticalLayout {
+                                spacing: 2px;
+                                Text { text: "Column Gap"; color: Palette.foreground.transparentize(40%); font-size: 11px; }
+                                HorizontalLayout {
+                                    spacing: 4px; height: 24px;
+                                    LineEdit {
+                                        width: 48px; height: 24px;
+                                        text: root.page-layout.column-gap;
+                                        placeholder-text: "0";
+                                        accepted(val) => { root.page-layout-edited("column_gap", val); }
+                                    }
+                                    Slider {
+                                        horizontal-stretch: 1; height: 20px;
+                                        minimum: 0; maximum: 128;
+                                        value: root.page-layout.column-gap;
+                                        changed(val) => { root.page-layout-edited("column_gap", round(val)); }
+                                    }
+                                }
+                            }
+
+                            // Rows — inline slider + text
+                            if root.page-layout-expanded : VerticalLayout {
+                                spacing: 2px;
+                                Text { text: "Rows"; color: Palette.foreground.transparentize(40%); font-size: 11px; }
+                                HorizontalLayout {
+                                    spacing: 4px; height: 24px;
+                                    LineEdit {
+                                        width: 48px; height: 24px;
+                                        text: root.page-layout.row-count;
+                                        placeholder-text: "0";
+                                        accepted(val) => { root.page-layout-edited("rows", val); }
+                                    }
+                                    Slider {
+                                        horizontal-stretch: 1; height: 20px;
+                                        minimum: 0; maximum: 24;
+                                        value: root.page-layout.row-count;
+                                        changed(val) => { root.page-layout-edited("rows", round(val)); }
+                                    }
+                                }
+                            }
+
+                            // Row gap — inline slider + text
+                            if root.page-layout-expanded : VerticalLayout {
+                                spacing: 2px;
+                                Text { text: "Row Gap"; color: Palette.foreground.transparentize(40%); font-size: 11px; }
+                                HorizontalLayout {
+                                    spacing: 4px; height: 24px;
+                                    LineEdit {
+                                        width: 48px; height: 24px;
+                                        text: root.page-layout.row-gap;
+                                        placeholder-text: "0";
+                                        accepted(val) => { root.page-layout-edited("row_gap", val); }
+                                    }
+                                    Slider {
+                                        horizontal-stretch: 1; height: 20px;
+                                        minimum: 0; maximum: 128;
+                                        value: root.page-layout.row-gap;
+                                        changed(val) => { root.page-layout-edited("row_gap", round(val)); }
+                                    }
+                                }
+                            }
+
+                            // Margins — inline sliders
+                            if root.page-layout-expanded : VerticalLayout {
+                                spacing: 2px;
+                                Text { text: "Margin Top"; color: Palette.foreground.transparentize(40%); font-size: 11px; }
+                                HorizontalLayout {
+                                    spacing: 4px; height: 24px;
+                                    LineEdit {
+                                        width: 48px; height: 24px;
+                                        text: root.page-layout.margin-top;
+                                        placeholder-text: "0";
+                                        accepted(val) => { root.page-layout-edited("margin_top", val); }
+                                    }
+                                    Slider {
+                                        horizontal-stretch: 1; height: 20px;
+                                        minimum: 0; maximum: 256;
+                                        value: root.page-layout.margin-top;
+                                        changed(val) => { root.page-layout-edited("margin_top", round(val)); }
+                                    }
+                                }
+                            }
+                            if root.page-layout-expanded : VerticalLayout {
+                                spacing: 2px;
+                                Text { text: "Margin Right"; color: Palette.foreground.transparentize(40%); font-size: 11px; }
+                                HorizontalLayout {
+                                    spacing: 4px; height: 24px;
+                                    LineEdit {
+                                        width: 48px; height: 24px;
+                                        text: root.page-layout.margin-right;
+                                        placeholder-text: "0";
+                                        accepted(val) => { root.page-layout-edited("margin_right", val); }
+                                    }
+                                    Slider {
+                                        horizontal-stretch: 1; height: 20px;
+                                        minimum: 0; maximum: 256;
+                                        value: root.page-layout.margin-right;
+                                        changed(val) => { root.page-layout-edited("margin_right", round(val)); }
+                                    }
+                                }
+                            }
+                            if root.page-layout-expanded : VerticalLayout {
+                                spacing: 2px;
+                                Text { text: "Margin Bottom"; color: Palette.foreground.transparentize(40%); font-size: 11px; }
+                                HorizontalLayout {
+                                    spacing: 4px; height: 24px;
+                                    LineEdit {
+                                        width: 48px; height: 24px;
+                                        text: root.page-layout.margin-bottom;
+                                        placeholder-text: "0";
+                                        accepted(val) => { root.page-layout-edited("margin_bottom", val); }
+                                    }
+                                    Slider {
+                                        horizontal-stretch: 1; height: 20px;
+                                        minimum: 0; maximum: 256;
+                                        value: root.page-layout.margin-bottom;
+                                        changed(val) => { root.page-layout-edited("margin_bottom", round(val)); }
+                                    }
+                                }
+                            }
+                            if root.page-layout-expanded : VerticalLayout {
+                                spacing: 2px;
+                                Text { text: "Margin Left"; color: Palette.foreground.transparentize(40%); font-size: 11px; }
+                                HorizontalLayout {
+                                    spacing: 4px; height: 24px;
+                                    LineEdit {
+                                        width: 48px; height: 24px;
+                                        text: root.page-layout.margin-left;
+                                        placeholder-text: "0";
+                                        accepted(val) => { root.page-layout-edited("margin_left", val); }
+                                    }
+                                    Slider {
+                                        horizontal-stretch: 1; height: 20px;
+                                        minimum: 0; maximum: 256;
+                                        value: root.page-layout.margin-left;
+                                        changed(val) => { root.page-layout-edited("margin_left", round(val)); }
+                                    }
+                                }
+                            }
+
+                            Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
+
+                            // Search
+                            HorizontalLayout {
+                                spacing: 6px;
+                                Image { source: @image-url("icons/search.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(50%); y: 7px; }
+                                LineEdit { height: 28px; horizontal-stretch: 1; text: root.search-query; placeholder-text: "Search nodes..."; edited(text) => { root.search-input(text); } }
+                            }
+
+                            if root.search-results.length > 0 : VerticalLayout {
+                                spacing: 2px;
+                                for result[i] in root.search-results : Rectangle {
+                                    height: 44px; background: Palette.control-background; border-radius: 4px;
+                                    VerticalLayout {
+                                        padding: 6px; spacing: 2px;
+                                        Text { text: result.node-id + " · " + result.field; color: Palette.foreground; font-size: 11px; overflow: elide; }
+                                        Text { text: result.snippet; color: Palette.foreground.transparentize(30%); font-size: 10px; overflow: elide; }
+                                    }
+                                    TouchArea { mouse-cursor: pointer; clicked => { root.search-result-clicked(result.node-id); } }
+                                }
                             }
                         }
                     }
@@ -1649,7 +1718,15 @@ export component AppWindow inherits Window {
                             property <length> gutter-w: 44px;
                             property <length> content-pad: 8px;
 
-                            // Character width measurement
+                            // Cursor position measurement — uses actual font rendering width
+                            cursor-measure := Text {
+                                text: root.editor-cursor-prefix;
+                                font-size: 13px;
+                                font-family: "monospace";
+                                opacity: 0;
+                            }
+
+                            // Approximate char-w for click mapping and selection
                             measure-char := Text {
                                 text: "0000000000";
                                 font-size: 13px;
@@ -1781,21 +1858,27 @@ export component AppWindow inherits Window {
                                                 background: #ffffff08;
                                             }
 
-                                            // Tokens — absolute-positioned on the character grid
-                                            for token in line.tokens : Text {
-                                                x: gutter-w + content-pad + token.col-offset * char-w;
+                                            // Tokens — flow layout for correct font-native spacing
+                                            HorizontalLayout {
+                                                x: gutter-w + content-pad;
                                                 y: 0px;
-                                                text: token.text;
-                                                color: token.token-color;
-                                                font-size: 13px;
-                                                font-family: "monospace";
-                                                vertical-alignment: center;
                                                 height: line-h;
+                                                spacing: 0px;
+                                                alignment: start;
+
+                                                for token in line.tokens : Text {
+                                                    text: token.text;
+                                                    color: token.token-color;
+                                                    font-size: 13px;
+                                                    font-family: "monospace";
+                                                    vertical-alignment: center;
+                                                    horizontal-stretch: 0;
+                                                }
                                             }
 
-                                            // Cursor
+                                            // Cursor — positioned via actual text measurement
                                             if line.is-current && root.editor-cursor-visible : Rectangle {
-                                                x: gutter-w + content-pad + root.editor-cursor-col * char-w;
+                                                x: gutter-w + content-pad + cursor-measure.preferred-width;
                                                 y: 1px;
                                                 width: 2px;
                                                 height: line-h - 2px;
@@ -1823,7 +1906,7 @@ export component AppWindow inherits Window {
                                         editor-focus.focus();
                                         root.editor-click(
                                             clamp(floor((self.mouse-y - editor-sv.viewport-y) / line-h), 0, root.editor-lines.length - 1),
-                                            max(0, round((self.mouse-x - gutter-w - content-pad) / char-w))
+                                            max(0, floor((self.mouse-x - gutter-w - content-pad + char-w / 2) / char-w))
                                         );
                                     }
                                 }
@@ -1831,7 +1914,7 @@ export component AppWindow inherits Window {
                                     if self.pressed {
                                         root.editor-drag(
                                             clamp(floor((self.mouse-y - editor-sv.viewport-y) / line-h), 0, root.editor-lines.length - 1),
-                                            max(0, round((self.mouse-x - gutter-w - content-pad) / char-w))
+                                            max(0, floor((self.mouse-x - gutter-w - content-pad + char-w / 2) / char-w))
                                         );
                                     }
                                 }
@@ -1880,119 +1963,118 @@ export component AppWindow inherits Window {
                     Rectangle { x: 0px; y: 0px; width: 1px; height: parent.height; background: Palette.foreground.transparentize(90%); }
 
                     VerticalLayout {
-                        padding: 16px; spacing: 8px; alignment: start;
+                        padding: 16px; spacing: 8px;
 
                         Text { text: "Properties"; color: Palette.foreground; font-size: 14px; font-weight: 700; }
 
-                        if root.has-selection && root.selected-component != "" : VerticalLayout {
-                            spacing: 8px;
-                            HorizontalLayout {
-                                spacing: 6px; alignment: start;
-                                Image { source: @image-url("icons/sliders.svg"); width: 12px; height: 12px; colorize: Palette.foreground.transparentize(40%); y: 1px; }
-                                Text { text: root.selected-component; color: Palette.foreground.transparentize(30%); font-size: 11px; font-weight: 600; vertical-alignment: center; }
-                            }
-                            ScrollView {
-                                vertical-stretch: 1;
-                                VerticalLayout {
-                                    min-width: 220px;
-                                    spacing: 4px;
+                        if root.has-selection && root.selected-component != "" : HorizontalLayout {
+                            spacing: 6px; alignment: start;
+                            Image { source: @image-url("icons/sliders.svg"); width: 12px; height: 12px; colorize: Palette.foreground.transparentize(40%); y: 1px; }
+                            Text { text: root.selected-component; color: Palette.foreground.transparentize(30%); font-size: 11px; font-weight: 600; vertical-alignment: center; }
+                        }
 
-                                    // Component properties
-                                    for field[i] in root.field-rows : FieldEditor {
-                                        key: field.key; label: field.label; kind: field.kind; value: field.value; required: field.required;
-                                        min: field.min; max: field.max; has-bounds: field.has-bounds; options: field.options; swatch: field.swatch;
-                                        field-edited(key, val) => { root.field-edited(key, val); }
-                                        field-edited-number(key, val) => { root.field-edited-number(key, val); }
-                                    }
+                        ScrollView {
+                            vertical-stretch: 1;
+                            visible: root.has-selection && root.selected-component != "";
+                            VerticalLayout {
+                                min-width: 220px;
+                                spacing: 4px;
 
-                                    // Layout section separator
-                                    if root.layout-rows.length > 0 : Rectangle { height: 8px; }
-                                    if root.layout-rows.length > 0 : Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
-                                    if root.layout-rows.length > 0 : Rectangle { height: 4px; }
+                                // Component properties
+                                for field[i] in root.field-rows : FieldEditor {
+                                    key: field.key; label: field.label; kind: field.kind; value: field.value; required: field.required;
+                                    min: field.min; max: field.max; has-bounds: field.has-bounds; options: field.options; swatch: field.swatch;
+                                    field-edited(key, val) => { root.field-edited(key, val); }
+                                    field-edited-number(key, val) => { root.field-edited-number(key, val); }
+                                }
 
-                                    if root.layout-rows.length > 0 : HorizontalLayout {
-                                        spacing: 6px; alignment: start;
-                                        Image { source: @image-url("icons/layout.svg"); width: 12px; height: 12px; colorize: Palette.foreground.transparentize(40%); y: 1px; }
-                                        Text { text: "Layout"; color: Palette.foreground.transparentize(30%); font-size: 11px; font-weight: 600; vertical-alignment: center; }
-                                    }
+                                // Layout section separator
+                                if root.layout-rows.length > 0 : Rectangle { height: 8px; }
+                                if root.layout-rows.length > 0 : Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
+                                if root.layout-rows.length > 0 : Rectangle { height: 4px; }
 
-                                    // Layout properties
-                                    for lfield[i] in root.layout-rows : FieldEditor {
-                                        key: lfield.key; label: lfield.label; kind: lfield.kind; value: lfield.value; required: lfield.required;
-                                        min: lfield.min; max: lfield.max; has-bounds: lfield.has-bounds; options: lfield.options; swatch: lfield.swatch;
-                                        field-edited(key, val) => { root.layout-field-edited(key, val); }
-                                        field-edited-number(key, val) => { root.layout-field-edited-number(key, val); }
-                                    }
+                                if root.layout-rows.length > 0 : HorizontalLayout {
+                                    spacing: 6px; alignment: start;
+                                    Image { source: @image-url("icons/layout.svg"); width: 12px; height: 12px; colorize: Palette.foreground.transparentize(40%); y: 1px; }
+                                    Text { text: "Layout"; color: Palette.foreground.transparentize(30%); font-size: 11px; font-weight: 600; vertical-alignment: center; }
+                                }
 
-                                    // ── Variants ──────────────────
-                                    if root.variant-items.length > 0 : Rectangle { height: 8px; }
-                                    if root.variant-items.length > 0 : Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
-                                    if root.variant-items.length > 0 : Rectangle { height: 4px; }
-                                    if root.variant-items.length > 0 : HorizontalLayout {
-                                        spacing: 6px; alignment: start;
-                                        Text { text: "Variants"; color: Palette.foreground.transparentize(30%); font-size: 11px; font-weight: 600; vertical-alignment: center; }
-                                    }
-                                    for vitem[i] in root.variant-items : HorizontalLayout {
-                                        spacing: 8px; height: 28px;
-                                        Text { text: vitem.label; color: Palette.foreground.transparentize(40%); font-size: 11px; width: 80px; vertical-alignment: center; }
-                                        ComboBox {
-                                            model: vitem.options;
-                                            current-value: vitem.selected;
-                                            horizontal-stretch: 1;
-                                        }
-                                    }
+                                // Layout properties
+                                for lfield[i] in root.layout-rows : FieldEditor {
+                                    key: lfield.key; label: lfield.label; kind: lfield.kind; value: lfield.value; required: lfield.required;
+                                    min: lfield.min; max: lfield.max; has-bounds: lfield.has-bounds; options: lfield.options; swatch: lfield.swatch;
+                                    field-edited(key, val) => { root.layout-field-edited(key, val); }
+                                    field-edited-number(key, val) => { root.layout-field-edited-number(key, val); }
+                                }
 
-                                    // ── Modifiers ─────────────────
-                                    if root.modifier-items.length > 0 : Rectangle { height: 8px; }
-                                    if root.modifier-items.length > 0 : Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
-                                    if root.modifier-items.length > 0 : Rectangle { height: 4px; }
-                                    if root.modifier-items.length > 0 : HorizontalLayout {
-                                        spacing: 6px; alignment: start;
-                                        Text { text: "Modifiers"; color: Palette.foreground.transparentize(30%); font-size: 11px; font-weight: 600; vertical-alignment: center; }
+                                // ── Variants ──────────────────
+                                if root.variant-items.length > 0 : Rectangle { height: 8px; }
+                                if root.variant-items.length > 0 : Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
+                                if root.variant-items.length > 0 : Rectangle { height: 4px; }
+                                if root.variant-items.length > 0 : HorizontalLayout {
+                                    spacing: 6px; alignment: start;
+                                    Text { text: "Variants"; color: Palette.foreground.transparentize(30%); font-size: 11px; font-weight: 600; vertical-alignment: center; }
+                                }
+                                for vitem[i] in root.variant-items : HorizontalLayout {
+                                    spacing: 8px; height: 28px;
+                                    Text { text: vitem.label; color: Palette.foreground.transparentize(40%); font-size: 11px; width: 80px; vertical-alignment: center; }
+                                    ComboBox {
+                                        model: vitem.options;
+                                        current-value: vitem.selected;
+                                        horizontal-stretch: 1;
                                     }
-                                    for mitem[i] in root.modifier-items : Rectangle {
-                                        height: 24px;
-                                        HorizontalLayout {
-                                            spacing: 6px; alignment: start; padding-left: 4px;
-                                            Rectangle { width: 6px; height: 6px; border-radius: 3px; background: Palette.accent-background; y: 5px; }
-                                            Text { text: mitem.label; color: Palette.foreground.transparentize(20%); font-size: 11px; vertical-alignment: center; }
-                                        }
-                                    }
+                                }
 
-                                    // ── Signals ───────────────────
-                                    if root.signal-items.length > 0 : Rectangle { height: 8px; }
-                                    if root.signal-items.length > 0 : Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
-                                    if root.signal-items.length > 0 : Rectangle { height: 4px; }
-                                    if root.signal-items.length > 0 : HorizontalLayout {
-                                        spacing: 6px; alignment: start;
-                                        Text { text: "Signals"; color: Palette.foreground.transparentize(30%); font-size: 11px; font-weight: 600; vertical-alignment: center; }
-                                        if root.connection-count > 0 : Text {
-                                            text: root.connection-count == 1 ? "1 connection" : "\{root.connection-count} connections";
-                                            color: Palette.accent-background; font-size: 10px; vertical-alignment: center;
-                                        }
+                                // ── Modifiers ─────────────────
+                                if root.modifier-items.length > 0 : Rectangle { height: 8px; }
+                                if root.modifier-items.length > 0 : Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
+                                if root.modifier-items.length > 0 : Rectangle { height: 4px; }
+                                if root.modifier-items.length > 0 : HorizontalLayout {
+                                    spacing: 6px; alignment: start;
+                                    Text { text: "Modifiers"; color: Palette.foreground.transparentize(30%); font-size: 11px; font-weight: 600; vertical-alignment: center; }
+                                }
+                                for mitem[i] in root.modifier-items : Rectangle {
+                                    height: 24px;
+                                    HorizontalLayout {
+                                        spacing: 6px; alignment: start; padding-left: 4px;
+                                        Rectangle { width: 6px; height: 6px; border-radius: 3px; background: Palette.accent-background; y: 5px; }
+                                        Text { text: mitem.label; color: Palette.foreground.transparentize(20%); font-size: 11px; vertical-alignment: center; }
                                     }
-                                    for sitem[i] in root.signal-items : Rectangle {
-                                        height: 24px;
-                                        HorizontalLayout {
-                                            spacing: 6px; alignment: start; padding-left: 4px;
-                                            Text { text: "⚡"; font-size: 10px; vertical-alignment: center; }
-                                            Text { text: sitem.name; color: Palette.foreground.transparentize(20%); font-size: 11px; font-weight: 500; vertical-alignment: center; }
-                                            Text { text: sitem.description; color: Palette.foreground.transparentize(50%); font-size: 10px; vertical-alignment: center; }
-                                        }
-                                    }
+                                }
 
-                                    // ── Document summary ──────────
-                                    if root.resource-count > 0 || root.prefab-count > 0 : Rectangle { height: 8px; }
-                                    if root.resource-count > 0 || root.prefab-count > 0 : Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
-                                    if root.resource-count > 0 || root.prefab-count > 0 : Rectangle { height: 4px; }
-                                    if root.resource-count > 0 : Text {
-                                        text: root.resource-count == 1 ? "1 resource" : "\{root.resource-count} resources";
-                                        color: Palette.foreground.transparentize(50%); font-size: 10px;
+                                // ── Signals ───────────────────
+                                if root.signal-items.length > 0 : Rectangle { height: 8px; }
+                                if root.signal-items.length > 0 : Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
+                                if root.signal-items.length > 0 : Rectangle { height: 4px; }
+                                if root.signal-items.length > 0 : HorizontalLayout {
+                                    spacing: 6px; alignment: start;
+                                    Text { text: "Signals"; color: Palette.foreground.transparentize(30%); font-size: 11px; font-weight: 600; vertical-alignment: center; }
+                                    if root.connection-count > 0 : Text {
+                                        text: root.connection-count == 1 ? "1 connection" : "\{root.connection-count} connections";
+                                        color: Palette.accent-background; font-size: 10px; vertical-alignment: center;
                                     }
-                                    if root.prefab-count > 0 : Text {
-                                        text: root.prefab-count == 1 ? "1 prefab" : "\{root.prefab-count} prefabs";
-                                        color: Palette.foreground.transparentize(50%); font-size: 10px;
+                                }
+                                for sitem[i] in root.signal-items : Rectangle {
+                                    height: 24px;
+                                    HorizontalLayout {
+                                        spacing: 6px; alignment: start; padding-left: 4px;
+                                        Text { text: "⚡"; font-size: 10px; vertical-alignment: center; }
+                                        Text { text: sitem.name; color: Palette.foreground.transparentize(20%); font-size: 11px; font-weight: 500; vertical-alignment: center; }
+                                        Text { text: sitem.description; color: Palette.foreground.transparentize(50%); font-size: 10px; vertical-alignment: center; }
                                     }
+                                }
+
+                                // ── Document summary ──────────
+                                if root.resource-count > 0 || root.prefab-count > 0 : Rectangle { height: 8px; }
+                                if root.resource-count > 0 || root.prefab-count > 0 : Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
+                                if root.resource-count > 0 || root.prefab-count > 0 : Rectangle { height: 4px; }
+                                if root.resource-count > 0 : Text {
+                                    text: root.resource-count == 1 ? "1 resource" : "\{root.resource-count} resources";
+                                    color: Palette.foreground.transparentize(50%); font-size: 10px;
+                                }
+                                if root.prefab-count > 0 : Text {
+                                    text: root.prefab-count == 1 ? "1 prefab" : "\{root.prefab-count} prefabs";
+                                    color: Palette.foreground.transparentize(50%); font-size: 10px;
                                 }
                             }
                         }
