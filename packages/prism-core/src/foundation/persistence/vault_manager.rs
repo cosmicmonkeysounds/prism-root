@@ -27,7 +27,7 @@ use super::collection_store::{CollectionStore, CollectionStoreOptions, Persisten
 
 /// Pluggable storage I/O for Loro snapshots. Paths are relative to the
 /// vault root; the adapter resolves them against whatever backing
-/// store it wraps (filesystem, Tauri IPC, in-memory map, …).
+/// store it wraps (filesystem, daemon IPC, in-memory map, …).
 pub trait PersistenceAdapter {
     /// Load a binary blob. Returns `None` if the path does not exist.
     fn load(&self, path: &str) -> Option<Vec<u8>>;

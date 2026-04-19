@@ -28,7 +28,7 @@
 //!
 //! The API is deliberately single-threaded. The shell reducer runs
 //! on the host event loop thread; background work goes through the
-//! `kernel::actor` message bus (Phase 2 TODO) and marshals state
+//! `kernel::actor` message bus and marshals state
 //! changes back as actions.
 
 use std::marker::PhantomData;

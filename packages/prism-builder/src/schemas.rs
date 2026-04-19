@@ -122,21 +122,17 @@ pub fn divider() -> Vec<FieldSpec> {
 }
 
 pub fn spacer() -> Vec<FieldSpec> {
-    vec![FieldSpec::integer(
-        "height",
-        "Height (px)",
-        NumericBounds::min_max(4.0, 128.0),
-    )
-    .with_default(Value::from(24))]
+    vec![
+        FieldSpec::integer("height", "Height (px)", NumericBounds::min_max(4.0, 128.0))
+            .with_default(Value::from(24)),
+    ]
 }
 
 pub fn columns() -> Vec<FieldSpec> {
-    vec![FieldSpec::integer(
-        "gap",
-        "Column gap (px)",
-        NumericBounds::min_max(0.0, 64.0),
-    )
-    .with_default(Value::from(16))]
+    vec![
+        FieldSpec::integer("gap", "Column gap (px)", NumericBounds::min_max(0.0, 64.0))
+            .with_default(Value::from(16)),
+    ]
 }
 
 pub fn list() -> Vec<FieldSpec> {

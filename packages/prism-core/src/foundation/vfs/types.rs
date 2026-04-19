@@ -103,7 +103,7 @@ pub type VfsResult<T> = Result<T, VfsError>;
 ///
 /// Implementations:
 /// - [`crate::foundation::vfs::MemoryVfsAdapter`] — in-memory for testing
-/// - Local filesystem via Tauri IPC — future
+/// - Local filesystem via daemon IPC — future
 pub trait VfsAdapter: Send + Sync {
     /// Read a blob by its content hash. Returns `None` if not found.
     fn read(&self, hash: &str) -> Option<Vec<u8>>;

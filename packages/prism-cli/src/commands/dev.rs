@@ -124,8 +124,18 @@ pub fn plan(args: &DevArgs, workspace: &Workspace) -> Vec<CommandBuilder> {
 
 fn builders_for(target: DevTarget, workspace: &Workspace, hot_reload: bool) -> Vec<CommandBuilder> {
     match target {
-        DevTarget::Shell => vec![shell_dev_builder(workspace, hot_reload)],
-        DevTarget::Studio => vec![studio_dev_builder(workspace, hot_reload)],
+        DevTarget::Shell => vec![cargo_run_dev_builder(
+            "prism-shell",
+            "shell",
+            workspace,
+            hot_reload,
+        )],
+        DevTarget::Studio => vec![cargo_run_dev_builder(
+            "prism-studio",
+            "studio",
+            workspace,
+            hot_reload,
+        )],
         DevTarget::Web => vec![
             web_build_builder(workspace),
             super::build::web_bindgen_builder(workspace, false),
@@ -140,35 +150,17 @@ fn builders_for(target: DevTarget, workspace: &Workspace, hot_reload: bool) -> V
     }
 }
 
-/// Build the `cargo run -p prism-shell` command, optionally with
-/// Slint's native `.slint` hot-reload path enabled.
-fn shell_dev_builder(workspace: &Workspace, hot_reload: bool) -> CommandBuilder {
+fn cargo_run_dev_builder(
+    package: &str,
+    label: &str,
+    workspace: &Workspace,
+    hot_reload: bool,
+) -> CommandBuilder {
     let mut b = CommandBuilder::cargo()
         .arg("run")
-        .package("prism-shell")
+        .package(package)
         .cwd(workspace.root())
-        .label("shell");
-    if hot_reload {
-        // `--features live-preview` composes with the default
-        // `native` feature, so the final set is `[native,
-        // live-preview]`. The env var must be set at *compile* time
-        // — `slint-build` inspects it from `build.rs` and swaps the
-        // rust generator for the live-preview variant that emits
-        // `LiveReloadingComponent` wrappers.
-        b = b
-            .arg("--features")
-            .arg("live-preview")
-            .env("SLINT_LIVE_PREVIEW", "1");
-    }
-    b
-}
-
-fn studio_dev_builder(workspace: &Workspace, hot_reload: bool) -> CommandBuilder {
-    let mut b = CommandBuilder::cargo()
-        .arg("run")
-        .package("prism-studio")
-        .cwd(workspace.root())
-        .label("studio");
+        .label(label);
     if hot_reload {
         b = b
             .arg("--features")

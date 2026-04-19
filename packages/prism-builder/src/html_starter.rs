@@ -12,7 +12,8 @@ use crate::component::{ComponentId, RenderError};
 use crate::document::Node;
 use crate::html::Html;
 use crate::html_block::{HtmlBlock, HtmlRegistry, HtmlRenderContext};
-use crate::registry::{FieldSpec, NumericBounds, RegistryError, SelectOption};
+use crate::registry::{prop_bool, prop_str, prop_u64, FieldSpec, RegistryError};
+use crate::schemas;
 
 pub fn register_html_builtins(reg: &mut HtmlRegistry) -> Result<(), RegistryError> {
     reg.register(Arc::new(HtmlHeading {
@@ -58,11 +59,7 @@ impl HtmlBlock for HtmlHeading {
         &self.id
     }
     fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::text("text", "Text").required(),
-            FieldSpec::integer("level", "Heading level", NumericBounds::min_max(1.0, 6.0))
-                .with_default(Value::from(1)),
-        ]
+        schemas::heading()
     }
     fn render_html(
         &self,
@@ -71,12 +68,8 @@ impl HtmlBlock for HtmlHeading {
         _children: &[Node],
         out: &mut Html,
     ) -> Result<(), RenderError> {
-        let level = props
-            .get("level")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1)
-            .clamp(1, 6);
-        let text = props.get("text").and_then(|v| v.as_str()).unwrap_or("");
+        let level = prop_u64(props, "level", 1).clamp(1, 6);
+        let text = prop_str(props, "text", "");
         let tag = match level {
             1 => "h1",
             2 => "h2",
@@ -101,7 +94,7 @@ impl HtmlBlock for HtmlText {
         &self.id
     }
     fn schema(&self) -> Vec<FieldSpec> {
-        vec![FieldSpec::textarea("body", "Body")]
+        schemas::text()
     }
     fn render_html(
         &self,
@@ -110,7 +103,7 @@ impl HtmlBlock for HtmlText {
         _children: &[Node],
         out: &mut Html,
     ) -> Result<(), RenderError> {
-        let body = props.get("body").and_then(|v| v.as_str()).unwrap_or("");
+        let body = prop_str(props, "body", "");
         out.open("p");
         out.text(body);
         out.close("p");
@@ -127,10 +120,7 @@ impl HtmlBlock for HtmlLink {
         &self.id
     }
     fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::text("href", "URL").required(),
-            FieldSpec::text("text", "Label"),
-        ]
+        schemas::link()
     }
     fn render_html(
         &self,
@@ -139,7 +129,7 @@ impl HtmlBlock for HtmlLink {
         children: &[Node],
         out: &mut Html,
     ) -> Result<(), RenderError> {
-        let href = props.get("href").and_then(|v| v.as_str()).unwrap_or("#");
+        let href = prop_str(props, "href", "#");
         out.open_attrs("a", &[("href", href)]);
         if let Some(text) = props.get("text").and_then(|v| v.as_str()) {
             out.text(text);
@@ -159,10 +149,7 @@ impl HtmlBlock for HtmlImage {
         &self.id
     }
     fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::text("src", "Image source").required(),
-            FieldSpec::text("alt", "Alt text"),
-        ]
+        schemas::image()
     }
     fn render_html(
         &self,
@@ -171,8 +158,8 @@ impl HtmlBlock for HtmlImage {
         _children: &[Node],
         out: &mut Html,
     ) -> Result<(), RenderError> {
-        let src = props.get("src").and_then(|v| v.as_str()).unwrap_or("");
-        let alt = props.get("alt").and_then(|v| v.as_str()).unwrap_or("");
+        let src = prop_str(props, "src", "");
+        let alt = prop_str(props, "alt", "");
         out.void("img", &[("src", src), ("alt", alt)]);
         Ok(())
     }
@@ -187,12 +174,7 @@ impl HtmlBlock for HtmlContainer {
         &self.id
     }
     fn schema(&self) -> Vec<FieldSpec> {
-        vec![FieldSpec::integer(
-            "spacing",
-            "Child spacing (px)",
-            NumericBounds::min_max(0.0, 64.0),
-        )
-        .with_default(Value::from(12))]
+        schemas::container()
     }
     fn render_html(
         &self,
@@ -217,18 +199,7 @@ impl HtmlBlock for HtmlForm {
         &self.id
     }
     fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::text("action", "Form action URL"),
-            FieldSpec::select(
-                "method",
-                "HTTP method",
-                vec![
-                    SelectOption::new("post", "POST"),
-                    SelectOption::new("get", "GET"),
-                ],
-            )
-            .with_default(Value::from("post")),
-        ]
+        schemas::form()
     }
     fn render_html(
         &self,
@@ -237,12 +208,9 @@ impl HtmlBlock for HtmlForm {
         children: &[Node],
         out: &mut Html,
     ) -> Result<(), RenderError> {
-        let method = props
-            .get("method")
-            .and_then(|v| v.as_str())
-            .unwrap_or("post");
+        let method = prop_str(props, "method", "post");
+        let action = prop_str(props, "action", "");
         let mut attrs: Vec<(&str, &str)> = vec![("method", method)];
-        let action = props.get("action").and_then(|v| v.as_str()).unwrap_or("");
         if !action.is_empty() {
             attrs.push(("action", action));
         }
@@ -262,25 +230,7 @@ impl HtmlBlock for HtmlInput {
         &self.id
     }
     fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::text("name", "Field name").required(),
-            FieldSpec::select(
-                "type",
-                "Input type",
-                vec![
-                    SelectOption::new("text", "Text"),
-                    SelectOption::new("email", "Email"),
-                    SelectOption::new("password", "Password"),
-                    SelectOption::new("number", "Number"),
-                    SelectOption::new("hidden", "Hidden"),
-                ],
-            )
-            .with_default(Value::from("text")),
-            FieldSpec::text("placeholder", "Placeholder"),
-            FieldSpec::text("value", "Default value"),
-            FieldSpec::boolean("required", "Required"),
-            FieldSpec::text("label", "Label text"),
-        ]
+        schemas::input()
     }
     fn render_html(
         &self,
@@ -289,18 +239,12 @@ impl HtmlBlock for HtmlInput {
         _children: &[Node],
         out: &mut Html,
     ) -> Result<(), RenderError> {
-        let name = props.get("name").and_then(|v| v.as_str()).unwrap_or("");
-        let input_type = props.get("type").and_then(|v| v.as_str()).unwrap_or("text");
-        let placeholder = props
-            .get("placeholder")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let value = props.get("value").and_then(|v| v.as_str()).unwrap_or("");
-        let required = props
-            .get("required")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        let label = props.get("label").and_then(|v| v.as_str()).unwrap_or("");
+        let name = prop_str(props, "name", "");
+        let input_type = prop_str(props, "type", "text");
+        let placeholder = prop_str(props, "placeholder", "");
+        let value = prop_str(props, "value", "");
+        let required = prop_bool(props, "required");
+        let label = prop_str(props, "label", "");
 
         if !label.is_empty() {
             out.open("label");
@@ -333,20 +277,7 @@ impl HtmlBlock for HtmlButton {
         &self.id
     }
     fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::text("text", "Button label").required(),
-            FieldSpec::select(
-                "type",
-                "Button type",
-                vec![
-                    SelectOption::new("submit", "Submit"),
-                    SelectOption::new("button", "Button"),
-                    SelectOption::new("reset", "Reset"),
-                ],
-            )
-            .with_default(Value::from("submit")),
-            FieldSpec::boolean("disabled", "Disabled"),
-        ]
+        schemas::button()
     }
     fn render_html(
         &self,
@@ -355,18 +286,9 @@ impl HtmlBlock for HtmlButton {
         _children: &[Node],
         out: &mut Html,
     ) -> Result<(), RenderError> {
-        let text = props
-            .get("text")
-            .and_then(|v| v.as_str())
-            .unwrap_or("Submit");
-        let btn_type = props
-            .get("type")
-            .and_then(|v| v.as_str())
-            .unwrap_or("submit");
-        let disabled = props
-            .get("disabled")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
+        let text = prop_str(props, "text", "Submit");
+        let btn_type = prop_str(props, "type", "submit");
+        let disabled = prop_bool(props, "disabled");
         let mut attrs = vec![("type", btn_type)];
         if disabled {
             attrs.push(("disabled", "disabled"));
@@ -387,19 +309,7 @@ impl HtmlBlock for HtmlCard {
         &self.id
     }
     fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::text("title", "Card title").required(),
-            FieldSpec::textarea("body", "Card body"),
-            FieldSpec::select(
-                "variant",
-                "Style variant",
-                vec![
-                    SelectOption::new("default", "Default"),
-                    SelectOption::new("outlined", "Outlined"),
-                ],
-            )
-            .with_default(Value::from("default")),
-        ]
+        schemas::card()
     }
     fn render_html(
         &self,
@@ -408,8 +318,8 @@ impl HtmlBlock for HtmlCard {
         children: &[Node],
         out: &mut Html,
     ) -> Result<(), RenderError> {
-        let title = props.get("title").and_then(|v| v.as_str()).unwrap_or("");
-        let body = props.get("body").and_then(|v| v.as_str()).unwrap_or("");
+        let title = prop_str(props, "title", "");
+        let body = prop_str(props, "body", "");
         out.open("article");
         out.open("h3");
         out.text(title);
@@ -434,10 +344,7 @@ impl HtmlBlock for HtmlCode {
         &self.id
     }
     fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::textarea("code", "Code").required(),
-            FieldSpec::text("language", "Language"),
-        ]
+        schemas::code()
     }
     fn render_html(
         &self,
@@ -446,8 +353,8 @@ impl HtmlBlock for HtmlCode {
         _children: &[Node],
         out: &mut Html,
     ) -> Result<(), RenderError> {
-        let code = props.get("code").and_then(|v| v.as_str()).unwrap_or("");
-        let lang = props.get("language").and_then(|v| v.as_str()).unwrap_or("");
+        let code = prop_str(props, "code", "");
+        let lang = prop_str(props, "language", "");
         out.open("pre");
         if lang.is_empty() {
             out.open("code");
@@ -470,7 +377,7 @@ impl HtmlBlock for HtmlDivider {
         &self.id
     }
     fn schema(&self) -> Vec<FieldSpec> {
-        vec![]
+        schemas::divider()
     }
     fn render_html(
         &self,
@@ -493,10 +400,7 @@ impl HtmlBlock for HtmlSpacer {
         &self.id
     }
     fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::integer("height", "Height (px)", NumericBounds::min_max(4.0, 128.0))
-                .with_default(Value::from(24)),
-        ]
+        schemas::spacer()
     }
     fn render_html(
         &self,
@@ -505,7 +409,7 @@ impl HtmlBlock for HtmlSpacer {
         _children: &[Node],
         out: &mut Html,
     ) -> Result<(), RenderError> {
-        let height = props.get("height").and_then(|v| v.as_u64()).unwrap_or(24);
+        let height = prop_u64(props, "height", 24);
         let style = format!("height:{height}px");
         out.open_attrs("div", &[("style", &style), ("aria-hidden", "true")]);
         out.close("div");
@@ -522,10 +426,7 @@ impl HtmlBlock for HtmlColumns {
         &self.id
     }
     fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::integer("gap", "Column gap (px)", NumericBounds::min_max(0.0, 64.0))
-                .with_default(Value::from(16)),
-        ]
+        schemas::columns()
     }
     fn render_html(
         &self,
@@ -534,7 +435,7 @@ impl HtmlBlock for HtmlColumns {
         children: &[Node],
         out: &mut Html,
     ) -> Result<(), RenderError> {
-        let gap = props.get("gap").and_then(|v| v.as_u64()).unwrap_or(16);
+        let gap = prop_u64(props, "gap", 16);
         let style = format!("display:flex;gap:{gap}px");
         out.open_attrs("div", &[("style", &style)]);
         for child in children {
@@ -556,7 +457,7 @@ impl HtmlBlock for HtmlList {
         &self.id
     }
     fn schema(&self) -> Vec<FieldSpec> {
-        vec![FieldSpec::boolean("ordered", "Ordered (numbered)")]
+        schemas::list()
     }
     fn render_html(
         &self,
@@ -565,10 +466,7 @@ impl HtmlBlock for HtmlList {
         children: &[Node],
         out: &mut Html,
     ) -> Result<(), RenderError> {
-        let ordered = props
-            .get("ordered")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
+        let ordered = prop_bool(props, "ordered");
         let tag = if ordered { "ol" } else { "ul" };
         out.open(tag);
         for child in children {
@@ -590,10 +488,7 @@ impl HtmlBlock for HtmlTable {
         &self.id
     }
     fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::text("headers", "Column headers (comma-separated)").required(),
-            FieldSpec::text("caption", "Table caption"),
-        ]
+        schemas::table()
     }
     fn render_html(
         &self,
@@ -602,8 +497,8 @@ impl HtmlBlock for HtmlTable {
         _children: &[Node],
         out: &mut Html,
     ) -> Result<(), RenderError> {
-        let headers = props.get("headers").and_then(|v| v.as_str()).unwrap_or("");
-        let caption = props.get("caption").and_then(|v| v.as_str()).unwrap_or("");
+        let headers = prop_str(props, "headers", "");
+        let caption = prop_str(props, "caption", "");
         out.open("table");
         if !caption.is_empty() {
             out.open("caption");
@@ -636,7 +531,7 @@ impl HtmlBlock for HtmlTabs {
         &self.id
     }
     fn schema(&self) -> Vec<FieldSpec> {
-        vec![FieldSpec::text("labels", "Tab labels (comma-separated)").required()]
+        schemas::tabs()
     }
     fn render_html(
         &self,
@@ -645,7 +540,7 @@ impl HtmlBlock for HtmlTabs {
         children: &[Node],
         out: &mut Html,
     ) -> Result<(), RenderError> {
-        let labels = props.get("labels").and_then(|v| v.as_str()).unwrap_or("");
+        let labels = prop_str(props, "labels", "");
         out.open_attrs("div", &[("role", "tablist")]);
         for (i, label) in labels.split(',').enumerate() {
             let label = label.trim();
@@ -680,10 +575,7 @@ impl HtmlBlock for HtmlAccordion {
         &self.id
     }
     fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::text("title", "Section title").required(),
-            FieldSpec::boolean("open", "Initially open"),
-        ]
+        schemas::accordion()
     }
     fn render_html(
         &self,
@@ -692,8 +584,8 @@ impl HtmlBlock for HtmlAccordion {
         children: &[Node],
         out: &mut Html,
     ) -> Result<(), RenderError> {
-        let title = props.get("title").and_then(|v| v.as_str()).unwrap_or("");
-        let open = props.get("open").and_then(|v| v.as_bool()).unwrap_or(false);
+        let title = prop_str(props, "title", "");
+        let open = prop_bool(props, "open");
         if open {
             out.open_attrs("details", &[("open", "open")]);
         } else {

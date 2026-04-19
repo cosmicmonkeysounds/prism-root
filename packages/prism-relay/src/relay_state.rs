@@ -72,7 +72,7 @@ impl FullRelayState {
             metrics: RequestMetrics::new(),
             rate_limiter: RateLimiter::new(100, 20, 10_000),
             relay_did,
-            started_at: chrono::Utc::now().to_rfc3339(),
+            started_at: crate::util::now_rfc3339(),
         };
 
         // Wire OAuth provider configs from RelayConfig into the module.

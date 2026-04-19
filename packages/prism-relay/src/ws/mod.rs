@@ -188,7 +188,7 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<FullRelayState>) {
             } => {
                 use base64::Engine;
                 if let Ok(data) = base64::engine::general_purpose::STANDARD.decode(&update) {
-                    let now = chrono::Utc::now().to_rfc3339();
+                    let now = crate::util::now_rfc3339();
                     state
                         .collections()
                         .import_snapshot(&collection_id, data, &now);

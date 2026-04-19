@@ -28,11 +28,12 @@ pub async fn api_modules(State(state): State<Arc<FullRelayState>>) -> impl IntoR
 
 pub async fn api_health(State(state): State<Arc<FullRelayState>>) -> impl IntoResponse {
     let uptime = state.metrics.uptime_seconds();
+    let peer_count = state.federation().get_peers().len();
     Json(json!({
         "running": true,
         "did": state.relay_did,
         "uptime": uptime,
-        "peerCount": state.federation().get_peers().len(),
-        "federationPeers": state.federation().get_peers().len(),
+        "peerCount": peer_count,
+        "federationPeers": peer_count,
     }))
 }

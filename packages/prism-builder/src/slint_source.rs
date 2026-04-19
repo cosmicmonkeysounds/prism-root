@@ -10,9 +10,7 @@
 //! Internally the emitter reuses
 //! [`prism_core::language::codegen::SourceBuilder`] so we share indent
 //! / block semantics with every other Prism codegen emitter
-//! (TypeScript / C# / EmmyDoc / GDScript). That means the Slint
-//! walker slots directly into the `CodegenPipeline` once Studio wants
-//! to expose "export this page as `.slint` source" as a user action.
+//! (TypeScript / C# / EmmyDoc / GDScript).
 //!
 //! The API is deliberately narrow. It escapes string literals so
 //! user-supplied text can't break out of a Slint property binding,

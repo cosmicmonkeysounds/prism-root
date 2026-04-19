@@ -50,9 +50,7 @@ pub enum RenderError {
 /// Kept as a separate context from [`RenderSlintContext`] because the
 /// Studio builder (which writes through [`SlintEmitter`]) and the
 /// ad-hoc host-side Slint callers (which want typed values without
-/// DSL generation) have different needs. `RenderContext` is the
-/// simpler shape — it's what the legacy `render_slint(&self, ctx,
-/// props) -> Value` shim still honors below.
+/// DSL generation) have different needs.
 pub struct RenderContext<'a> {
     pub tokens: &'a prism_core::design_tokens::DesignTokens,
 }

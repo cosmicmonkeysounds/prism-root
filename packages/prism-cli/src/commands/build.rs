@@ -62,24 +62,20 @@ pub fn plan(args: &BuildArgs, workspace: &Workspace) -> Vec<CommandBuilder> {
     for target in targets {
         match target {
             BuildTarget::Desktop => {
-                let mut cmd = CommandBuilder::cargo()
-                    .arg("build")
-                    .package("prism-shell")
-                    .label("desktop-build");
-                if !args.debug {
-                    cmd = cmd.release();
-                }
-                plan.push(cmd.cwd(workspace.root()));
+                plan.push(build_cargo_target(
+                    "prism-shell",
+                    "desktop-build",
+                    workspace,
+                    !args.debug,
+                ));
             }
             BuildTarget::Studio => {
-                let mut cmd = CommandBuilder::cargo()
-                    .arg("build")
-                    .package("prism-studio")
-                    .label("studio-build");
-                if !args.debug {
-                    cmd = cmd.release();
-                }
-                plan.push(cmd.cwd(workspace.root()));
+                plan.push(build_cargo_target(
+                    "prism-studio",
+                    "studio-build",
+                    workspace,
+                    !args.debug,
+                ));
             }
             BuildTarget::Web => {
                 let mut cargo_cmd = CommandBuilder::cargo()
@@ -98,19 +94,33 @@ pub fn plan(args: &BuildArgs, workspace: &Workspace) -> Vec<CommandBuilder> {
                 plan.push(web_bindgen_builder(workspace, !args.debug));
             }
             BuildTarget::Relay => {
-                let mut cmd = CommandBuilder::cargo()
-                    .arg("build")
-                    .package("prism-relay")
-                    .label("relay-build");
-                if !args.debug {
-                    cmd = cmd.release();
-                }
-                plan.push(cmd.cwd(workspace.root()));
+                plan.push(build_cargo_target(
+                    "prism-relay",
+                    "relay-build",
+                    workspace,
+                    !args.debug,
+                ));
             }
             BuildTarget::All => unreachable!("expanded above"),
         }
     }
     plan
+}
+
+fn build_cargo_target(
+    package: &str,
+    label: &str,
+    workspace: &Workspace,
+    release: bool,
+) -> CommandBuilder {
+    let mut cmd = CommandBuilder::cargo()
+        .arg("build")
+        .package(package)
+        .label(label);
+    if release {
+        cmd = cmd.release();
+    }
+    cmd.cwd(workspace.root())
 }
 
 /// `wasm-bindgen --target web --out-dir <shell-web-dir> <cargo-wasm>`.

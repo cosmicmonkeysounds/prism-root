@@ -339,6 +339,22 @@ impl FieldValue {
     }
 }
 
+pub fn prop_str<'a>(props: &'a Value, key: &str, default: &'a str) -> &'a str {
+    props.get(key).and_then(|v| v.as_str()).unwrap_or(default)
+}
+
+pub fn prop_u64(props: &Value, key: &str, default: u64) -> u64 {
+    props.get(key).and_then(|v| v.as_u64()).unwrap_or(default)
+}
+
+pub fn prop_f64(props: &Value, key: &str, default: f64) -> f64 {
+    props.get(key).and_then(|v| v.as_f64()).unwrap_or(default)
+}
+
+pub fn prop_bool(props: &Value, key: &str) -> bool {
+    props.get(key).and_then(|v| v.as_bool()).unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

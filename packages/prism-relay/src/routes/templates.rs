@@ -30,7 +30,7 @@ pub async fn create_template(
     State(state): State<Arc<FullRelayState>>,
     Json(input): Json<CreateTemplateInput>,
 ) -> impl IntoResponse {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::util::now_rfc3339();
     let tpl = state.templates().register(
         &input.name,
         &input.description,

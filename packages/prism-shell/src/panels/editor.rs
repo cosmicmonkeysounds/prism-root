@@ -13,7 +13,7 @@ impl CodeEditorPanel {
 
 impl Panel for CodeEditorPanel {
     fn id(&self) -> i32 {
-        2
+        4
     }
     fn label(&self) -> &'static str {
         "Code"

@@ -25,7 +25,7 @@ pub async fn report(
     State(state): State<Arc<FullRelayState>>,
     Json(input): Json<ReportInput>,
 ) -> impl IntoResponse {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::util::now_rfc3339();
     state
         .trust()
         .flag_content(&input.content_hash, &input.category, &input.reporter, &now);

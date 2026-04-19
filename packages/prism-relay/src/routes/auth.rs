@@ -32,7 +32,7 @@ fn provider_redirect(
     provider: OAuthProviderKind,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let oauth = state.oauth();
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::util::now_rfc3339();
     let session = oauth.create_session(provider, &now);
     let url = oauth
         .build_auth_url(provider, &session.state)
@@ -83,7 +83,7 @@ fn provider_callback(
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::util::now_rfc3339();
     let identity = OAuthIdentity {
         provider,
         provider_user_id: input.provider_user_id.clone(),
@@ -129,7 +129,7 @@ pub async fn escrow_derive(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::util::now_rfc3339();
     let deposit = state
         .escrow()
         .deposit(&input.did, &input.encrypted_payload, None, &now);

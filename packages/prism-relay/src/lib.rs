@@ -1,7 +1,7 @@
 //! `prism-relay` — Sovereign Portal SSR server + full relay protocol.
 //!
 //! Rust rewrite of the Hono JSX TypeScript relay. Ships the complete
-//! 17-module feature surface: blind mailbox, relay router, timestamper,
+//! 18-module feature surface: blind mailbox, relay router, timestamper,
 //! blind ping, capability tokens, webhooks, sovereign portals (L1 SSR),
 //! WebRTC signaling, collection host, vault host, hashcash,
 //! peer trust, escrow, federation, password auth, ACME certificates,
@@ -21,6 +21,7 @@ pub mod router;
 pub mod routes;
 pub mod ssr_routes;
 pub mod state;
+pub mod util;
 pub mod ws;
 
 pub use portal::{Portal, PortalId, PortalStore};

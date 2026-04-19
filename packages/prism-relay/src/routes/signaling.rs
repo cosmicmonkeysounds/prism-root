@@ -58,7 +58,7 @@ pub async fn join_room(
     Json(input): Json<JoinInput>,
 ) -> impl IntoResponse {
     use prism_core::network::relay::modules::signaling::SignalingPeer;
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::util::now_rfc3339();
     let existing = state.signaling().join(
         &room_id,
         SignalingPeer {
@@ -78,7 +78,7 @@ pub async fn leave_room(
     Path(room_id): Path<String>,
     Json(input): Json<LeaveInput>,
 ) -> impl IntoResponse {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::util::now_rfc3339();
     state.signaling().leave(&room_id, &input.peer_id, &now);
     StatusCode::OK
 }
@@ -89,7 +89,7 @@ pub async fn relay_signal(
     Json(input): Json<SignalInput>,
 ) -> impl IntoResponse {
     use prism_core::network::relay::modules::signaling::{SignalMessage, SignalType};
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::util::now_rfc3339();
     let signal_type = match input.signal_type.as_str() {
         "offer" => SignalType::Offer,
         "answer" => SignalType::Answer,

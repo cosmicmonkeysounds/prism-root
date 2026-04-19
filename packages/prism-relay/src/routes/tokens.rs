@@ -31,7 +31,7 @@ pub async fn issue_token(
     State(state): State<Arc<FullRelayState>>,
     Json(input): Json<IssueTokenInput>,
 ) -> impl IntoResponse {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::util::now_rfc3339();
     let expires = input.ttl_ms.map(|ttl| {
         let exp = chrono::Utc::now() + chrono::Duration::milliseconds(ttl as i64);
         exp.to_rfc3339()

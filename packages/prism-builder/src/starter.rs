@@ -17,7 +17,8 @@ use serde_json::Value;
 
 use crate::component::{Component, ComponentId, RenderError, RenderSlintContext};
 use crate::document::Node;
-use crate::registry::{ComponentRegistry, FieldSpec, NumericBounds, RegistryError};
+use crate::registry::{prop_f64, prop_str, prop_u64, ComponentRegistry, FieldSpec, RegistryError};
+use crate::schemas;
 use crate::slint_source::SlintEmitter;
 
 /// Register the starter catalog into `reg`. Call this once at boot
@@ -79,11 +80,7 @@ impl Component for HeadingComponent {
         &self.id
     }
     fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::text("text", "Text").required(),
-            FieldSpec::integer("level", "Heading level", NumericBounds::min_max(1.0, 6.0))
-                .with_default(Value::from(1)),
-        ]
+        schemas::heading()
     }
     fn help_entry(&self) -> Option<HelpEntry> {
         Some(HelpEntry::new(
@@ -99,12 +96,8 @@ impl Component for HeadingComponent {
         _children: &[Node],
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
-        let level = props
-            .get("level")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1)
-            .clamp(1, 6);
-        let text = props.get("text").and_then(|v| v.as_str()).unwrap_or("");
+        let level = prop_u64(props, "level", 1).clamp(1, 6);
+        let text = prop_str(props, "text", "");
         out.block("Text", |out| {
             out.prop_string("text", text);
             out.prop_px("font-size", heading_font_size(level));
@@ -124,7 +117,7 @@ impl Component for TextComponent {
         &self.id
     }
     fn schema(&self) -> Vec<FieldSpec> {
-        vec![FieldSpec::textarea("body", "Body")]
+        schemas::text()
     }
     fn help_entry(&self) -> Option<HelpEntry> {
         Some(HelpEntry::new(
@@ -140,7 +133,7 @@ impl Component for TextComponent {
         _children: &[Node],
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
-        let body = props.get("body").and_then(|v| v.as_str()).unwrap_or("");
+        let body = prop_str(props, "body", "");
         out.block("Text", |out| {
             out.prop_string("text", body);
             out.prop_px("font-size", 14.0);
@@ -161,10 +154,7 @@ impl Component for LinkComponent {
         &self.id
     }
     fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::text("href", "URL").required(),
-            FieldSpec::text("text", "Label"),
-        ]
+        schemas::link()
     }
     fn help_entry(&self) -> Option<HelpEntry> {
         Some(HelpEntry::new(
@@ -180,8 +170,6 @@ impl Component for LinkComponent {
         _children: &[Node],
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
-        // Slint has no built-in anchor element; show the label as
-        // underlined text the way the Studio previews external links.
         let text = props
             .get("text")
             .and_then(|v| v.as_str())
@@ -206,10 +194,7 @@ impl Component for ImageComponent {
         &self.id
     }
     fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::text("src", "Image source").required(),
-            FieldSpec::text("alt", "Alt text"),
-        ]
+        schemas::image()
     }
     fn help_entry(&self) -> Option<HelpEntry> {
         Some(HelpEntry::new(
@@ -225,7 +210,7 @@ impl Component for ImageComponent {
         _children: &[Node],
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
-        let alt = props.get("alt").and_then(|v| v.as_str()).unwrap_or("image");
+        let alt = prop_str(props, "alt", "image");
         out.block("Rectangle", |out| {
             out.prop_px("min-height", 120.0);
             out.line("background: #2a3140;");
@@ -253,12 +238,7 @@ impl Component for ContainerComponent {
         &self.id
     }
     fn schema(&self) -> Vec<FieldSpec> {
-        vec![FieldSpec::integer(
-            "spacing",
-            "Child spacing (px)",
-            NumericBounds::min_max(0.0, 64.0),
-        )
-        .with_default(Value::from(12))]
+        schemas::container()
     }
     fn help_entry(&self) -> Option<HelpEntry> {
         Some(HelpEntry::new(
@@ -274,10 +254,7 @@ impl Component for ContainerComponent {
         children: &[Node],
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
-        let spacing = props
-            .get("spacing")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(12.0);
+        let spacing = prop_f64(props, "spacing", 12.0);
         out.block("VerticalLayout", |out| {
             out.prop_px("spacing", spacing);
             out.line("alignment: start;");
@@ -297,18 +274,7 @@ impl Component for FormComponent {
         &self.id
     }
     fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::text("action", "Form action URL"),
-            FieldSpec::select(
-                "method",
-                "HTTP method",
-                vec![
-                    crate::registry::SelectOption::new("post", "POST"),
-                    crate::registry::SelectOption::new("get", "GET"),
-                ],
-            )
-            .with_default(Value::from("post")),
-        ]
+        schemas::form()
     }
     fn help_entry(&self) -> Option<HelpEntry> {
         Some(HelpEntry::new(
@@ -343,25 +309,7 @@ impl Component for InputComponent {
         &self.id
     }
     fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::text("name", "Field name").required(),
-            FieldSpec::select(
-                "type",
-                "Input type",
-                vec![
-                    crate::registry::SelectOption::new("text", "Text"),
-                    crate::registry::SelectOption::new("email", "Email"),
-                    crate::registry::SelectOption::new("password", "Password"),
-                    crate::registry::SelectOption::new("number", "Number"),
-                    crate::registry::SelectOption::new("hidden", "Hidden"),
-                ],
-            )
-            .with_default(Value::from("text")),
-            FieldSpec::text("placeholder", "Placeholder"),
-            FieldSpec::text("value", "Default value"),
-            FieldSpec::boolean("required", "Required"),
-            FieldSpec::text("label", "Label text"),
-        ]
+        schemas::input()
     }
     fn help_entry(&self) -> Option<HelpEntry> {
         Some(HelpEntry::new(
@@ -377,11 +325,8 @@ impl Component for InputComponent {
         _children: &[Node],
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
-        let label = props.get("label").and_then(|v| v.as_str()).unwrap_or("");
-        let placeholder = props
-            .get("placeholder")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let label = prop_str(props, "label", "");
+        let placeholder = prop_str(props, "placeholder", "");
         out.block("VerticalLayout", |out| {
             out.prop_px("spacing", 4.0);
             if !label.is_empty() {
@@ -423,19 +368,7 @@ impl Component for CardComponent {
         &self.id
     }
     fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::text("title", "Card title").required(),
-            FieldSpec::textarea("body", "Card body"),
-            FieldSpec::select(
-                "variant",
-                "Style variant",
-                vec![
-                    crate::registry::SelectOption::new("default", "Default"),
-                    crate::registry::SelectOption::new("outlined", "Outlined"),
-                ],
-            )
-            .with_default(Value::from("default")),
-        ]
+        schemas::card()
     }
     fn help_entry(&self) -> Option<HelpEntry> {
         Some(HelpEntry::new(
@@ -451,8 +384,8 @@ impl Component for CardComponent {
         children: &[Node],
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
-        let title = props.get("title").and_then(|v| v.as_str()).unwrap_or("");
-        let body = props.get("body").and_then(|v| v.as_str()).unwrap_or("");
+        let title = prop_str(props, "title", "");
+        let body = prop_str(props, "body", "");
         out.block("Rectangle", |out| {
             out.line("border-width: 1px;");
             out.line("border-color: #3b4252;");
@@ -492,10 +425,7 @@ impl Component for CodeComponent {
         &self.id
     }
     fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::textarea("code", "Code").required(),
-            FieldSpec::text("language", "Language"),
-        ]
+        schemas::code()
     }
     fn help_entry(&self) -> Option<HelpEntry> {
         Some(HelpEntry::new(
@@ -511,7 +441,7 @@ impl Component for CodeComponent {
         _children: &[Node],
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
-        let code = props.get("code").and_then(|v| v.as_str()).unwrap_or("");
+        let code = prop_str(props, "code", "");
         out.block("Rectangle", |out| {
             out.line("background: #1a1e28;");
             out.line("border-radius: 6px;");
@@ -540,7 +470,7 @@ impl Component for DividerComponent {
         &self.id
     }
     fn schema(&self) -> Vec<FieldSpec> {
-        vec![]
+        schemas::divider()
     }
     fn help_entry(&self) -> Option<HelpEntry> {
         Some(HelpEntry::new(
@@ -574,10 +504,7 @@ impl Component for SpacerComponent {
         &self.id
     }
     fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::integer("height", "Height (px)", NumericBounds::min_max(4.0, 128.0))
-                .with_default(Value::from(24)),
-        ]
+        schemas::spacer()
     }
     fn help_entry(&self) -> Option<HelpEntry> {
         Some(HelpEntry::new(
@@ -593,7 +520,7 @@ impl Component for SpacerComponent {
         _children: &[Node],
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
-        let height = props.get("height").and_then(|v| v.as_f64()).unwrap_or(24.0);
+        let height = prop_f64(props, "height", 24.0);
         out.block("Rectangle", |out| {
             out.prop_px("height", height);
             Ok(())
@@ -611,10 +538,7 @@ impl Component for ColumnsComponent {
         &self.id
     }
     fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::integer("gap", "Column gap (px)", NumericBounds::min_max(0.0, 64.0))
-                .with_default(Value::from(16)),
-        ]
+        schemas::columns()
     }
     fn help_entry(&self) -> Option<HelpEntry> {
         Some(HelpEntry::new(
@@ -630,7 +554,7 @@ impl Component for ColumnsComponent {
         children: &[Node],
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
-        let gap = props.get("gap").and_then(|v| v.as_f64()).unwrap_or(16.0);
+        let gap = prop_f64(props, "gap", 16.0);
         out.block("HorizontalLayout", |out| {
             out.prop_px("spacing", gap);
             ctx.render_children(children, out)
@@ -648,7 +572,7 @@ impl Component for ListComponent {
         &self.id
     }
     fn schema(&self) -> Vec<FieldSpec> {
-        vec![FieldSpec::boolean("ordered", "Ordered (numbered)")]
+        schemas::list()
     }
     fn help_entry(&self) -> Option<HelpEntry> {
         Some(HelpEntry::new(
@@ -682,10 +606,7 @@ impl Component for TableComponent {
         &self.id
     }
     fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::text("headers", "Column headers (comma-separated)").required(),
-            FieldSpec::text("caption", "Table caption"),
-        ]
+        schemas::table()
     }
     fn help_entry(&self) -> Option<HelpEntry> {
         Some(HelpEntry::new(
@@ -701,8 +622,8 @@ impl Component for TableComponent {
         _children: &[Node],
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
-        let headers = props.get("headers").and_then(|v| v.as_str()).unwrap_or("");
-        let caption = props.get("caption").and_then(|v| v.as_str()).unwrap_or("");
+        let headers = prop_str(props, "headers", "");
+        let caption = prop_str(props, "caption", "");
         out.block("Rectangle", |out| {
             out.line("border-width: 1px;");
             out.line("border-color: #3b4252;");
@@ -749,7 +670,7 @@ impl Component for TabsComponent {
         &self.id
     }
     fn schema(&self) -> Vec<FieldSpec> {
-        vec![FieldSpec::text("labels", "Tab labels (comma-separated)").required()]
+        schemas::tabs()
     }
     fn help_entry(&self) -> Option<HelpEntry> {
         Some(HelpEntry::new(
@@ -765,7 +686,7 @@ impl Component for TabsComponent {
         children: &[Node],
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
-        let labels = props.get("labels").and_then(|v| v.as_str()).unwrap_or("");
+        let labels = prop_str(props, "labels", "");
         out.block("VerticalLayout", |out| {
             out.prop_px("spacing", 0.0);
             out.block("HorizontalLayout", |out| {
@@ -812,10 +733,7 @@ impl Component for AccordionComponent {
         &self.id
     }
     fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::text("title", "Section title").required(),
-            FieldSpec::boolean("open", "Initially open"),
-        ]
+        schemas::accordion()
     }
     fn help_entry(&self) -> Option<HelpEntry> {
         Some(HelpEntry::new(
@@ -831,7 +749,7 @@ impl Component for AccordionComponent {
         children: &[Node],
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
-        let title = props.get("title").and_then(|v| v.as_str()).unwrap_or("");
+        let title = prop_str(props, "title", "");
         out.block("VerticalLayout", |out| {
             out.prop_px("spacing", 4.0);
             out.block("Rectangle", |out| {
@@ -866,20 +784,7 @@ impl Component for ButtonComponent {
         &self.id
     }
     fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::text("text", "Button label").required(),
-            FieldSpec::select(
-                "type",
-                "Button type",
-                vec![
-                    crate::registry::SelectOption::new("submit", "Submit"),
-                    crate::registry::SelectOption::new("button", "Button"),
-                    crate::registry::SelectOption::new("reset", "Reset"),
-                ],
-            )
-            .with_default(Value::from("submit")),
-            FieldSpec::boolean("disabled", "Disabled"),
-        ]
+        schemas::button()
     }
     fn help_entry(&self) -> Option<HelpEntry> {
         Some(HelpEntry::new(
@@ -895,10 +800,7 @@ impl Component for ButtonComponent {
         _children: &[Node],
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
-        let text = props
-            .get("text")
-            .and_then(|v| v.as_str())
-            .unwrap_or("Submit");
+        let text = prop_str(props, "text", "Submit");
         out.block("Rectangle", |out| {
             out.prop_px("height", 36.0);
             out.prop_px("min-width", 80.0);

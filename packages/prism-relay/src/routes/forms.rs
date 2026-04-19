@@ -31,7 +31,7 @@ pub async fn submit_form(
         return Err(StatusCode::NOT_FOUND);
     }
 
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::util::now_rfc3339();
     let submission = FormSubmission {
         id: format!("sub-{}", chrono::Utc::now().timestamp_millis()),
         portal_id: portal_id.clone(),

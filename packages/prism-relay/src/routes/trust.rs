@@ -37,7 +37,7 @@ pub async fn ban_peer(
     Path(did): Path<String>,
     Json(input): Json<BanInput>,
 ) -> impl IntoResponse {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::util::now_rfc3339();
     state.trust().ban(&did, &input.reason, &now);
     StatusCode::OK
 }

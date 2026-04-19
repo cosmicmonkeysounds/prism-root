@@ -51,7 +51,7 @@ pub async fn publish_vault(
     Json(input): Json<PublishVaultInput>,
 ) -> impl IntoResponse {
     use base64::Engine;
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::util::now_rfc3339();
     let collections: HashMap<String, Vec<u8>> = input
         .collections
         .into_iter()
@@ -135,7 +135,7 @@ pub async fn update_vault_collections(
     Json(input): Json<UpdateCollectionsInput>,
 ) -> impl IntoResponse {
     use base64::Engine;
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::util::now_rfc3339();
     let updates: HashMap<String, Vec<u8>> = input
         .snapshots
         .into_iter()

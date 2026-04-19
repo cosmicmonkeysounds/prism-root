@@ -26,6 +26,7 @@ pub mod html_starter;
 pub mod layout;
 pub mod registry;
 pub mod render;
+pub mod schemas;
 pub mod slint_source;
 pub mod starter;
 

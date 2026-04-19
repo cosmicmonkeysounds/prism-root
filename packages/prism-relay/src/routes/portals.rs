@@ -21,7 +21,7 @@ pub struct CreatePortalInput {
     pub collection_id: String,
     #[serde(default = "default_base_path")]
     pub base_path: String,
-    #[serde(default = "default_true")]
+    #[serde(default = "crate::util::default_true")]
     pub is_public: bool,
     pub domain: Option<String>,
     pub access_scope: Option<String>,
@@ -29,9 +29,6 @@ pub struct CreatePortalInput {
 
 fn default_base_path() -> String {
     "/".into()
-}
-fn default_true() -> bool {
-    true
 }
 
 pub async fn list_portals(State(state): State<Arc<FullRelayState>>) -> impl IntoResponse {
@@ -58,7 +55,7 @@ pub async fn create_portal(
     State(state): State<Arc<FullRelayState>>,
     Json(input): Json<CreatePortalInput>,
 ) -> impl IntoResponse {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::util::now_rfc3339();
     let manifest = state.portal_registry().register(
         &input.name,
         input.level,

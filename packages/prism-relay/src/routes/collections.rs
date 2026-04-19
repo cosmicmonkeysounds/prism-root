@@ -31,7 +31,7 @@ pub async fn create_collection(
     State(state): State<Arc<FullRelayState>>,
     Json(input): Json<CreateCollectionInput>,
 ) -> impl IntoResponse {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::util::now_rfc3339();
     if state.collections().create(&input.id, &now) {
         StatusCode::CREATED
     } else {
@@ -63,7 +63,7 @@ pub async fn import_snapshot(
     let data = base64::engine::general_purpose::STANDARD
         .decode(&input.data)
         .map_err(|_| StatusCode::BAD_REQUEST)?;
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::util::now_rfc3339();
     state.collections().import_snapshot(&id, data, &now);
     Ok::<_, StatusCode>(StatusCode::OK)
 }

@@ -52,7 +52,7 @@ pub async fn create_object(
     if state.collections().get(&collection_id).is_none() {
         return Err(StatusCode::NOT_FOUND);
     }
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::util::now_rfc3339();
     state
         .webhooks()
         .emit("object.created", &body.to_string(), &now);
@@ -67,7 +67,7 @@ pub async fn update_object(
     if state.collections().get(&collection_id).is_none() {
         return Err(StatusCode::NOT_FOUND);
     }
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::util::now_rfc3339();
     state
         .webhooks()
         .emit("object.updated", &body.to_string(), &now);
@@ -81,7 +81,7 @@ pub async fn delete_object(
     if state.collections().get(&collection_id).is_none() {
         return Err(StatusCode::NOT_FOUND);
     }
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::util::now_rfc3339();
     state.webhooks().emit(
         "object.deleted",
         &json!({"id": object_id}).to_string(),

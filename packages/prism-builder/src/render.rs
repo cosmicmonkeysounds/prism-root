@@ -25,8 +25,8 @@ use crate::slint_source::{rgba_to_slint_literal, SlintEmitter};
 
 /// Render a document to an HTML fragment via the [`HtmlRegistry`].
 /// Emits the root node's markup and every descendant in order.
-/// Zones are ignored for now — the portal layer wraps the returned
-/// fragment in its own chrome (doctype, `<head>`, OpenGraph meta, etc.).
+/// The caller wraps the returned fragment in its own chrome
+/// (doctype, `<head>`, OpenGraph meta, etc.).
 pub fn render_document_html(
     doc: &BuilderDocument,
     registry: &HtmlRegistry,

@@ -31,7 +31,7 @@ pub async fn announce(
     State(state): State<Arc<FullRelayState>>,
     Json(input): Json<AnnounceInput>,
 ) -> impl IntoResponse {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::util::now_rfc3339();
     state
         .federation()
         .announce(&input.relay_did, &input.url, &now);
@@ -56,7 +56,7 @@ pub async fn sync_receive(
     State(state): State<Arc<FullRelayState>>,
     Json(input): Json<SyncInput>,
 ) -> impl IntoResponse {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::util::now_rfc3339();
     if let Some(snapshot_b64) = &input.snapshot {
         use base64::Engine;
         if let Ok(data) = base64::engine::general_purpose::STANDARD.decode(snapshot_b64) {

@@ -54,7 +54,7 @@ pub async fn send_ping(
     State(state): State<Arc<FullRelayState>>,
     Json(input): Json<SendPingInput>,
 ) -> impl IntoResponse {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::util::now_rfc3339();
     let ok = state
         .pinger()
         .ping(&input.recipient_did, input.badge_count, &now);
@@ -65,7 +65,7 @@ pub async fn wake(
     State(state): State<Arc<FullRelayState>>,
     Json(input): Json<SendPingInput>,
 ) -> impl IntoResponse {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::util::now_rfc3339();
     let ok = state
         .pinger()
         .wake(&input.recipient_did, input.badge_count, &now);

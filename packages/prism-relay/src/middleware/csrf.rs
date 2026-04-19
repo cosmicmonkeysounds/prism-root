@@ -8,14 +8,16 @@ use axum::{
 };
 
 pub async fn csrf_middleware(request: Request, next: Next) -> Result<Response, StatusCode> {
-    let method = request.method().clone();
-    let path = request.uri().path().to_string();
-
-    let needs_csrf = matches!(method, Method::POST | Method::PUT | Method::DELETE)
-        && path.starts_with("/api/")
-        && !path.starts_with("/api/acme-challenge")
-        && path != "/metrics"
-        && !path.starts_with("/admin");
+    let needs_csrf = matches!(
+        *request.method(),
+        Method::POST | Method::PUT | Method::DELETE
+    ) && {
+        let path = request.uri().path();
+        path.starts_with("/api/")
+            && !path.starts_with("/api/acme-challenge")
+            && path != "/metrics"
+            && !path.starts_with("/admin")
+    };
 
     if needs_csrf {
         let has_header = request

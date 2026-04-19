@@ -18,12 +18,8 @@ pub struct CreateWebhookInput {
     pub url: String,
     pub events: Vec<String>,
     pub secret: Option<String>,
-    #[serde(default = "default_true")]
+    #[serde(default = "crate::util::default_true")]
     pub active: bool,
-}
-
-fn default_true() -> bool {
-    true
 }
 
 pub async fn list_webhooks(State(state): State<Arc<FullRelayState>>) -> impl IntoResponse {
@@ -62,7 +58,7 @@ pub async fn test_webhook(
     State(state): State<Arc<FullRelayState>>,
     Path(_id): Path<String>,
 ) -> impl IntoResponse {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::util::now_rfc3339();
     let deliveries = state.webhooks().emit("test", r#"{"test": true}"#, &now);
     Json(json!(deliveries))
 }

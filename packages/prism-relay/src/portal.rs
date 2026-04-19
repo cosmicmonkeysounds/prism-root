@@ -56,13 +56,9 @@ pub struct PortalMeta {
     pub title: String,
     #[serde(default)]
     pub description: String,
-    #[serde(default = "default_true")]
+    #[serde(default = "crate::util::default_true")]
     pub public: bool,
     pub level: PortalLevel,
-}
-
-fn default_true() -> bool {
-    true
 }
 
 /// A portal is metadata + a builder document. The document is what

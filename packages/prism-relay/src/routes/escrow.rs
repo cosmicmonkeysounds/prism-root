@@ -29,7 +29,7 @@ pub async fn deposit(
     State(state): State<Arc<FullRelayState>>,
     Json(input): Json<DepositInput>,
 ) -> impl IntoResponse {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::util::now_rfc3339();
     let dep = state.escrow().deposit(
         &input.depositor_id,
         &input.encrypted_payload,

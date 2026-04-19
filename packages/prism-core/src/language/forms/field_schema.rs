@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 /// The set of input widgets a [`FieldSchema`] can request. Matches the
-/// TS union exactly so Puck/Flux docs round-trip without translation.
+/// TS union exactly so Flux docs round-trip without translation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum FieldType {

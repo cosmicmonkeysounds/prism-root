@@ -42,7 +42,7 @@ pub async fn register(
     State(state): State<Arc<FullRelayState>>,
     Json(input): Json<RegisterInput>,
 ) -> impl IntoResponse {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = crate::util::now_rfc3339();
     match state.password_auth().register(
         &input.username,
         &input.password,

@@ -24,8 +24,7 @@ pub struct TextSection {
 }
 
 /// An ordered group of field ids, optionally laid out in multiple
-/// columns. Columns map 1:1 to the legacy Puck "stack / two-col /
-/// three-col" layouts.
+/// columns.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FieldGroupSection {
     pub id: String,

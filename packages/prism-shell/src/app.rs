@@ -409,11 +409,6 @@ impl Shell {
             }
         });
 
-        // Identity panel click
-        self.window.on_clicked(move |index| {
-            eprintln!("prism-shell: identity-panel click index={index}");
-        });
-
         // Builder node selection
         self.window.on_builder_node_clicked({
             let inner = Rc::clone(&inner);
@@ -563,53 +558,41 @@ impl Shell {
         });
 
         // Node reordering
+        fn handle_node_move(
+            inner: &Rc<RefCell<ShellInner>>,
+            weak: &slint::Weak<AppWindow>,
+            node_id: &slint::SharedString,
+            direction: i32,
+            label: &str,
+        ) {
+            {
+                let mut s = inner.borrow_mut();
+                let nid = if node_id.is_empty() {
+                    match s.store.state().selection.primary().cloned() {
+                        Some(id) => id,
+                        None => return,
+                    }
+                } else {
+                    node_id.to_string()
+                };
+                s.push_undo(label);
+                s.store.mutate(|state| {
+                    move_node_in_siblings(&mut state.builder_document, &nid, direction);
+                });
+            }
+            if let Some(w) = weak.upgrade() {
+                sync_ui_from_shared(inner, &w);
+            }
+        }
         self.window.on_node_move_up({
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
-            move |node_id| {
-                {
-                    let mut s = inner.borrow_mut();
-                    let nid = if node_id.is_empty() {
-                        match s.store.state().selection.primary().cloned() {
-                            Some(id) => id,
-                            None => return,
-                        }
-                    } else {
-                        node_id.to_string()
-                    };
-                    s.push_undo("Move node up");
-                    s.store.mutate(|state| {
-                        move_node_in_siblings(&mut state.builder_document, &nid, -1);
-                    });
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
-            }
+            move |node_id| handle_node_move(&inner, &weak, &node_id, -1, "Move node up")
         });
         self.window.on_node_move_down({
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
-            move |node_id| {
-                {
-                    let mut s = inner.borrow_mut();
-                    let nid = if node_id.is_empty() {
-                        match s.store.state().selection.primary().cloned() {
-                            Some(id) => id,
-                            None => return,
-                        }
-                    } else {
-                        node_id.to_string()
-                    };
-                    s.push_undo("Move node down");
-                    s.store.mutate(|state| {
-                        move_node_in_siblings(&mut state.builder_document, &nid, 1);
-                    });
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
-            }
+            move |node_id| handle_node_move(&inner, &weak, &node_id, 1, "Move node down")
         });
 
         // Tab management
@@ -1686,17 +1669,19 @@ fn add_node_to_document(doc: &mut BuilderDocument, parent_id: Option<&str>, new_
     }
 }
 
-fn insert_child(node: &mut Node, parent_id: &str, child: Node) -> bool {
+fn insert_child(node: &mut Node, parent_id: &str, child: Node) -> Option<Node> {
     if node.id == parent_id {
         node.children.push(child);
-        return true;
+        return None;
     }
+    let mut remaining = child;
     for c in &mut node.children {
-        if insert_child(c, parent_id, child.clone()) {
-            return true;
+        match insert_child(c, parent_id, remaining) {
+            None => return None,
+            Some(returned) => remaining = returned,
         }
     }
-    false
+    Some(remaining)
 }
 
 fn default_props_for_component(component: &str) -> serde_json::Value {

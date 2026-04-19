@@ -83,9 +83,8 @@ pub fn create_dry_run_executor() -> Arc<dyn BuildExecutor> {
 // ── Daemon-backed executor (callback-driven) ───────────────────────────────
 
 /// Executor that dispatches each step through a caller-supplied
-/// `invoke` callback — mirrors the TS `createTauriExecutor(invoke)`
-/// shape. Hosts that talk to the Prism Daemon wrap their IPC layer
-/// in this closure; tests can supply a mock.
+/// `invoke` callback. Hosts that talk to the Prism Daemon wrap
+/// their IPC layer in this closure; tests can supply a mock.
 pub struct CallbackExecutor<F>
 where
     F: Fn(&BuildStep, &BuildExecutionContext) -> Result<CallbackExecutorOutput, String>
