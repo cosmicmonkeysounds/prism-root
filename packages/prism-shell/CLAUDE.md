@@ -47,13 +47,16 @@ licence requires.
   `std-widgets.slint` (`Button`, `LineEdit`, `Switch`, `ComboBox`,
   `ListView`, `ScrollView`, `GroupBox`, `Palette`, etc.) instead of
   hand-rolling every widget from `Rectangle` + `Text` + `TouchArea`.
-  Three custom components remain: `NavButton` (activity bar icon
-  with selection indicator), `FieldEditor` (property row using
-  `LineEdit` / `Switch` per kind), and `InspectorRow` (indented tree
-  node with move buttons). All color references use `Palette.*` for
-  native Slint theming; legacy Rust-side color overrides are kept as
-  `in property` stubs for backward compatibility but will be removed
-  in phase B2. Four-panel switcher layout unchanged.
+  Six custom components: `NavButton` (activity bar icon with
+  selection indicator, uses `Image` + `colorize`), `IconButton`
+  (28px icon-only button for toolbars/actions), `ToolbarSeparator`,
+  `FieldEditor` (property row using `LineEdit` / `Switch` per kind),
+  `InspectorRow` (indented tree node with icon move buttons), and
+  `BuilderBlock` (WYSIWYG component preview with inline editing).
+  All color references use `Palette.*` for native Slint theming.
+  Activity bar uses hardcoded `NavButton` instances with
+  `@image-url("icons/*.svg")` instead of a dynamic model.
+  Four-panel switcher layout unchanged.
 
 ## Features
 - `native` (default) — on-desktop stack. Pulls in `slint` (with the
@@ -131,6 +134,18 @@ shell framework features are implemented:
   `TextInput` for text/number/color/select fields and toggle switch
   for booleans. Edits commit on Enter and dispatch through
   `MutateNodeProp` with type-aware JSON value coercion.
+- **Icon library**: 26 SVG icons in `ui/icons/` for navigation,
+  toolbar actions, and component palette. Icons are loaded via
+  `@image-url()` in Slint and tinted with `colorize` for theming.
+- **Builder toolbar**: Icon-button toolbar above the canvas with
+  undo/redo, copy/cut/paste/duplicate, move up/down, and delete.
+- **Clipboard**: Internal clipboard buffer on `ShellInner` for
+  copy (Ctrl+C), cut (Ctrl+X), paste (Ctrl+V), and duplicate
+  (Ctrl+D). Paste generates new node IDs via `clone_node_with_new_ids`.
+  Duplicate inserts the clone as the next sibling.
+- **Expanded inline editing**: Heading, text, link, button, card,
+  code, and accordion components are all inline-editable when
+  selected in the builder canvas (press Enter to commit).
 - **Tabbed MDI**: 48px `ActivityBar` icon strip (left edge) +
   `TabBar` above content for open documents.
 - **Command palette**: Ctrl+Shift+P overlay with fuzzy command

@@ -153,6 +153,19 @@ impl KeyboardModel {
             KeyCombo::parse("ctrl+a").unwrap(),
             "selection.all",
         ));
+        model.register(
+            KeyBinding::new(KeyCombo::parse("ctrl+c").unwrap(), "edit.copy").when("hasSelection"),
+        );
+        model.register(
+            KeyBinding::new(KeyCombo::parse("ctrl+v").unwrap(), "edit.paste").when("hasClipboard"),
+        );
+        model.register(
+            KeyBinding::new(KeyCombo::parse("ctrl+x").unwrap(), "edit.cut").when("hasSelection"),
+        );
+        model.register(
+            KeyBinding::new(KeyCombo::parse("ctrl+d").unwrap(), "edit.duplicate")
+                .when("hasSelection"),
+        );
         model
     }
 

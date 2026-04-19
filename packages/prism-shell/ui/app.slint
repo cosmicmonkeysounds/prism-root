@@ -7,12 +7,6 @@ struct ButtonSpec {
     label: string,
 }
 
-struct PanelNavItem {
-    id: int,
-    label: string,
-    selected: bool,
-}
-
 struct FieldRow {
     key: string,
     label: string,
@@ -65,7 +59,6 @@ struct BuilderNode {
     component-type: string,
     selected: bool,
     depth: int,
-    // Common content fields
     text: string,
     level: int,
     href: string,
@@ -73,6 +66,42 @@ struct BuilderNode {
     placeholder: string,
     label: string,
     disabled: bool,
+}
+
+// ── Icon button ───────────────────────────────────────────────────
+
+component IconButton inherits Rectangle {
+    in property <image> icon;
+    in property <bool> enabled: true;
+    in property <string> tooltip-text: "";
+    callback clicked;
+
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    background: touch.has-hover && root.enabled ? Palette.control-background : transparent;
+
+    Image {
+        source: root.icon;
+        width: 16px;
+        height: 16px;
+        colorize: root.enabled
+            ? (touch.has-hover ? Palette.foreground : Palette.foreground.transparentize(20%))
+            : Palette.foreground.transparentize(70%);
+    }
+
+    touch := TouchArea {
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => {
+            if root.enabled { root.clicked(); }
+        }
+    }
+}
+
+component ToolbarSeparator inherits Rectangle {
+    width: 1px;
+    height: 20px;
+    background: Palette.foreground.transparentize(80%);
 }
 
 // ── Builder block components ──────────────────────────────────────
@@ -93,7 +122,7 @@ component BuilderBlock inherits Rectangle {
     callback text-edited(string, string);
     callback delete-clicked(string);
 
-    border-radius: 4px;
+    border-radius: 6px;
     border-width: root.selected ? 2px : 0px;
     border-color: Palette.accent-background;
     background: root.selected ? Palette.accent-background.transparentize(90%) : transparent;
@@ -101,12 +130,12 @@ component BuilderBlock inherits Rectangle {
     HorizontalLayout {
         VerticalLayout {
             horizontal-stretch: 1;
-            padding-left: root.depth * 16px + 8px;
+            padding-left: root.depth * 16px + 12px;
             padding-right: 8px;
-            padding-top: 4px;
-            padding-bottom: 4px;
+            padding-top: 6px;
+            padding-bottom: 6px;
 
-            // heading — editable when selected
+            // ── heading ──
             if root.component-type == "heading" && !root.selected : Text {
                 text: root.text;
                 color: Palette.foreground;
@@ -126,7 +155,7 @@ component BuilderBlock inherits Rectangle {
                 accepted(val) => { root.text-edited(root.node-id, val); }
             }
 
-            // text (paragraph) — editable when selected
+            // ── text (paragraph) ──
             if root.component-type == "text" && !root.selected : Text {
                 text: root.text;
                 color: Palette.foreground;
@@ -139,41 +168,81 @@ component BuilderBlock inherits Rectangle {
                 accepted(val) => { root.text-edited(root.node-id, val); }
             }
 
-            // link
-            if root.component-type == "link" : Text {
-                text: root.text != "" ? root.text : root.href;
-                color: Palette.accent-foreground;
-                font-size: 14px;
+            // ── link ──
+            if root.component-type == "link" && !root.selected : HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
+                Image {
+                    source: @image-url("icons/link.svg");
+                    width: 14px;
+                    height: 14px;
+                    colorize: Palette.accent-background;
+                    y: 2px;
+                }
+                Text {
+                    text: root.text != "" ? root.text : root.href;
+                    color: Palette.accent-foreground;
+                    font-size: 14px;
+                }
+            }
+            if root.component-type == "link" && root.selected : VerticalLayout {
+                spacing: 4px;
+                LineEdit {
+                    height: 28px;
+                    text: root.text;
+                    placeholder-text: "Link text";
+                    accepted(val) => { root.text-edited(root.node-id, val); }
+                }
             }
 
-            // image placeholder
+            // ── image placeholder ──
             if root.component-type == "image" : Rectangle {
                 min-height: 80px;
                 background: Palette.control-background;
                 border-radius: 6px;
-                Text {
-                    text: root.alt != "" ? root.alt : "image";
-                    color: Palette.foreground.transparentize(40%);
-                    font-size: 12px;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
+                HorizontalLayout {
+                    alignment: center;
+                    spacing: 6px;
+                    Image {
+                        source: @image-url("icons/image.svg");
+                        width: 16px;
+                        height: 16px;
+                        colorize: Palette.foreground.transparentize(40%);
+                    }
+                    Text {
+                        text: root.alt != "" ? root.alt : "Image";
+                        color: Palette.foreground.transparentize(40%);
+                        font-size: 12px;
+                        vertical-alignment: center;
+                    }
                 }
             }
 
-            // container (shows as a subtle grouping indicator)
+            // ── container ──
             if root.component-type == "container" : Rectangle {
                 height: 4px;
             }
 
-            // form
-            if root.component-type == "form" : Text {
-                text: "Form";
-                color: Palette.foreground.transparentize(40%);
-                font-size: 11px;
-                font-weight: 600;
+            // ── form ──
+            if root.component-type == "form" : HorizontalLayout {
+                spacing: 4px;
+                alignment: start;
+                Image {
+                    source: @image-url("icons/box.svg");
+                    width: 12px;
+                    height: 12px;
+                    colorize: Palette.foreground.transparentize(40%);
+                }
+                Text {
+                    text: "Form";
+                    color: Palette.foreground.transparentize(40%);
+                    font-size: 11px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
             }
 
-            // input
+            // ── input ──
             if root.component-type == "input" : VerticalLayout {
                 spacing: 4px;
                 if root.label != "" : Text {
@@ -188,16 +257,22 @@ component BuilderBlock inherits Rectangle {
                 }
             }
 
-            // button
-            if root.component-type == "button" : HorizontalLayout {
+            // ── button ──
+            if root.component-type == "button" && !root.selected : HorizontalLayout {
                 alignment: start;
                 Button {
                     text: root.text != "" ? root.text : "Button";
                     enabled: !root.disabled;
                 }
             }
+            if root.component-type == "button" && root.selected : LineEdit {
+                height: 28px;
+                text: root.text != "" ? root.text : "Button";
+                placeholder-text: "Button text";
+                accepted(val) => { root.text-edited(root.node-id, val); }
+            }
 
-            // card
+            // ── card ──
             if root.component-type == "card" : Rectangle {
                 border-width: 1px;
                 border-color: Palette.control-background;
@@ -208,11 +283,17 @@ component BuilderBlock inherits Rectangle {
                 VerticalLayout {
                     padding: 12px;
                     spacing: 4px;
-                    Text {
+                    if !root.selected : Text {
                         text: root.text != "" ? root.text : "Card";
                         color: Palette.foreground;
                         font-size: 16px;
                         font-weight: 600;
+                    }
+                    if root.selected : LineEdit {
+                        height: 28px;
+                        text: root.text != "" ? root.text : "Card";
+                        placeholder-text: "Card title";
+                        accepted(val) => { root.text-edited(root.node-id, val); }
                     }
                     if root.label != "" : Text {
                         text: root.label;
@@ -223,7 +304,7 @@ component BuilderBlock inherits Rectangle {
                 }
             }
 
-            // code
+            // ── code ──
             if root.component-type == "code" : Rectangle {
                 background: Palette.control-background;
                 border-radius: 6px;
@@ -231,23 +312,28 @@ component BuilderBlock inherits Rectangle {
 
                 VerticalLayout {
                     padding: 10px;
-                    Text {
+                    if !root.selected : Text {
                         text: root.text != "" ? root.text : "// code";
                         color: Palette.foreground.transparentize(20%);
                         font-size: 13px;
                         font-family: "monospace";
                         wrap: word-wrap;
                     }
+                    if root.selected : LineEdit {
+                        height: 28px;
+                        text: root.text != "" ? root.text : "// code";
+                        accepted(val) => { root.text-edited(root.node-id, val); }
+                    }
                 }
             }
 
-            // divider
+            // ── divider ──
             if root.component-type == "divider" : Rectangle {
                 height: 1px;
                 background: Palette.foreground.transparentize(70%);
             }
 
-            // spacer
+            // ── spacer ──
             if root.component-type == "spacer" : Rectangle {
                 height: root.level > 0 ? root.level * 1px : 24px;
                 border-width: 1px;
@@ -255,32 +341,51 @@ component BuilderBlock inherits Rectangle {
                 border-radius: 2px;
             }
 
-            // columns
+            // ── columns ──
             if root.component-type == "columns" : HorizontalLayout {
-                spacing: 4px;
+                spacing: 6px;
                 alignment: start;
+                Image {
+                    source: @image-url("icons/columns.svg");
+                    width: 12px;
+                    height: 12px;
+                    colorize: Palette.foreground.transparentize(40%);
+                }
                 Text {
                     text: "Columns";
                     color: Palette.foreground.transparentize(40%);
                     font-size: 11px;
                     font-weight: 600;
+                    vertical-alignment: center;
                 }
                 Text {
                     text: root.level > 0 ? "gap: " + root.level + "px" : "gap: 16px";
                     color: Palette.foreground.transparentize(60%);
                     font-size: 10px;
+                    vertical-alignment: center;
                 }
             }
 
-            // list
-            if root.component-type == "list" : Text {
-                text: root.disabled ? "Ordered List (ol)" : "Unordered List (ul)";
-                color: Palette.foreground.transparentize(40%);
-                font-size: 11px;
-                font-weight: 600;
+            // ── list ──
+            if root.component-type == "list" : HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
+                Image {
+                    source: @image-url("icons/list.svg");
+                    width: 12px;
+                    height: 12px;
+                    colorize: Palette.foreground.transparentize(40%);
+                }
+                Text {
+                    text: root.disabled ? "Ordered List (ol)" : "Unordered List (ul)";
+                    color: Palette.foreground.transparentize(40%);
+                    font-size: 11px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
             }
 
-            // table
+            // ── table ──
             if root.component-type == "table" : Rectangle {
                 border-width: 1px;
                 border-color: Palette.control-background;
@@ -295,50 +400,76 @@ component BuilderBlock inherits Rectangle {
                         color: Palette.foreground.transparentize(40%);
                         font-size: 11px;
                     }
-                    Text {
-                        text: root.text != "" ? "⊞ " + root.text : "⊞ Table";
-                        color: Palette.foreground;
-                        font-size: 12px;
-                        font-weight: 600;
+                    HorizontalLayout {
+                        spacing: 6px;
+                        alignment: start;
+                        Image {
+                            source: @image-url("icons/table.svg");
+                            width: 14px;
+                            height: 14px;
+                            colorize: Palette.foreground;
+                        }
+                        Text {
+                            text: root.text != "" ? root.text : "Table";
+                            color: Palette.foreground;
+                            font-size: 12px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
                     }
                 }
             }
 
-            // tabs
+            // ── tabs ──
             if root.component-type == "tabs" : HorizontalLayout {
-                spacing: 4px;
+                spacing: 6px;
                 alignment: start;
+                Image {
+                    source: @image-url("icons/layout.svg");
+                    width: 12px;
+                    height: 12px;
+                    colorize: Palette.foreground.transparentize(30%);
+                }
                 Text {
-                    text: root.text != "" ? "⊟ " + root.text : "⊟ Tabs";
+                    text: root.text != "" ? root.text : "Tabs";
                     color: Palette.foreground.transparentize(30%);
                     font-size: 12px;
                     font-weight: 500;
+                    vertical-alignment: center;
                 }
             }
 
-            // accordion
+            // ── accordion ──
             if root.component-type == "accordion" : Rectangle {
                 background: Palette.alternate-background;
                 border-radius: 4px;
-                min-height: 28px;
+                min-height: 32px;
 
                 HorizontalLayout {
                     padding-left: 8px;
                     padding-right: 8px;
                     spacing: 6px;
                     alignment: start;
-                    Text {
-                        text: "▸";
-                        color: Palette.foreground.transparentize(40%);
-                        font-size: 12px;
+                    Image {
+                        source: @image-url("icons/chevron-down.svg");
+                        width: 14px;
+                        height: 14px;
+                        colorize: Palette.foreground.transparentize(40%);
                         vertical-alignment: center;
                     }
-                    Text {
+                    if !root.selected : Text {
                         text: root.text != "" ? root.text : "Accordion";
                         color: Palette.foreground;
                         font-size: 13px;
                         font-weight: 600;
                         vertical-alignment: center;
+                    }
+                    if root.selected : LineEdit {
+                        height: 28px;
+                        text: root.text != "" ? root.text : "Accordion";
+                        placeholder-text: "Section title";
+                        horizontal-stretch: 1;
+                        accepted(val) => { root.text-edited(root.node-id, val); }
                     }
                 }
             }
@@ -347,10 +478,10 @@ component BuilderBlock inherits Rectangle {
         // Delete button on selected nodes
         if root.selected : VerticalLayout {
             alignment: start;
-            padding-top: 4px;
+            padding-top: 6px;
             padding-right: 4px;
-            Button {
-                text: "×";
+            IconButton {
+                icon: @image-url("icons/x.svg");
                 clicked => { root.delete-clicked(root.node-id); }
             }
         }
@@ -364,13 +495,13 @@ component BuilderBlock inherits Rectangle {
 // ── Reusable components ────────────────────────────────────────────
 
 component NavButton inherits Rectangle {
-    in property <string> label;
+    in property <image> icon;
     in property <bool> selected;
     callback clicked;
 
     width: 48px;
     height: 48px;
-    background: selected ? Palette.accent-background : transparent;
+    background: selected ? Palette.accent-background.transparentize(85%) : transparent;
 
     Rectangle {
         x: 0px;
@@ -378,17 +509,18 @@ component NavButton inherits Rectangle {
         width: 3px;
         height: parent.height;
         background: root.selected ? Palette.accent-background : transparent;
+        border-radius: 1px;
     }
 
-    Text {
-        text: root.label;
-        color: root.selected ? Palette.accent-foreground : Palette.foreground;
-        font-size: 18px;
-        horizontal-alignment: center;
-        vertical-alignment: center;
+    Image {
+        source: root.icon;
+        width: 20px;
+        height: 20px;
+        colorize: root.selected ? Palette.accent-foreground : Palette.foreground.transparentize(30%);
     }
 
     TouchArea {
+        mouse-cursor: pointer;
         clicked => { root.clicked(); }
     }
 }
@@ -452,32 +584,51 @@ component InspectorRow inherits Rectangle {
     callback move-up;
     callback move-down;
 
-    height: 28px;
-    background: selected ? Palette.accent-background : transparent;
-    border-radius: 3px;
+    height: 30px;
+    background: selected ? Palette.accent-background.transparentize(85%) : transparent;
+    border-radius: 4px;
 
     HorizontalLayout {
         padding-left: root.depth * 16px + 12px;
         padding-right: 8px;
         alignment: space-between;
 
-        Text {
-            text: root.node-id + " · " + root.component-id;
-            color: root.selected ? Palette.accent-foreground : Palette.foreground.transparentize(30%);
-            font-size: 12px;
-            font-family: "monospace";
-            vertical-alignment: center;
+        HorizontalLayout {
+            spacing: 6px;
+            alignment: start;
+            Rectangle {
+                width: 6px;
+                height: 6px;
+                border-radius: 3px;
+                background: root.selected ? Palette.accent-background : Palette.foreground.transparentize(60%);
+                y: 12px;
+            }
+            Text {
+                text: root.component-id;
+                color: root.selected ? Palette.accent-foreground : Palette.foreground;
+                font-size: 12px;
+                font-weight: root.selected ? 600 : 400;
+                vertical-alignment: center;
+            }
+            Text {
+                text: root.node-id;
+                color: Palette.foreground.transparentize(50%);
+                font-size: 10px;
+                font-family: "monospace";
+                vertical-alignment: center;
+            }
         }
 
         if root.selected : HorizontalLayout {
             spacing: 2px;
-            width: 56px;
-            Button {
-                text: "↑";
+            width: 60px;
+            alignment: end;
+            IconButton {
+                icon: @image-url("icons/chevron-up.svg");
                 clicked => { root.move-up(); }
             }
-            Button {
-                text: "↓";
+            IconButton {
+                icon: @image-url("icons/chevron-down.svg");
                 clicked => { root.move-down(); }
             }
         }
@@ -527,8 +678,8 @@ component Toast inherits Rectangle {
                 overflow: elide;
             }
             Rectangle { horizontal-stretch: 1; }
-            Button {
-                text: "×";
+            IconButton {
+                icon: @image-url("icons/x.svg");
                 clicked => { root.dismissed(); }
             }
         }
@@ -545,12 +696,12 @@ component Toast inherits Rectangle {
 // ── Root component ─────────────────────────────────────────────────
 
 export component AppWindow inherits Window {
-    title: "Prism Shell";
+    title: "Prism Studio";
     preferred-width: 1280px;
     preferred-height: 800px;
 
-    // Sidebar navigation
-    in property <[PanelNavItem]> nav-items: [];
+    // Panel navigation
+    in property <int> active-panel-id: 0;
     callback select-panel(int);
 
     // Identity panel
@@ -563,7 +714,6 @@ export component AppWindow inherits Window {
     callback builder-node-clicked(string);
     callback builder-text-edited(string, string);
     callback builder-delete-node(string);
-    // Legacy DSL source (kept for debug view)
     in property <string> builder-source: "";
 
     // Component palette
@@ -612,6 +762,14 @@ export component AppWindow inherits Window {
     callback search-input(string);
     callback search-result-clicked(string);
 
+    // Clipboard / editing toolbar
+    in property <bool> has-selection: false;
+    in property <bool> has-clipboard: false;
+    callback copy-clicked;
+    callback paste-clicked;
+    callback cut-clicked;
+    callback duplicate-clicked;
+
     // Keyboard
     callback escape-pressed;
     callback search-focus;
@@ -642,8 +800,28 @@ export component AppWindow inherits Window {
                 root.search-focus();
                 return accept;
             }
+            if (event.modifiers.control && !event.modifiers.shift && event.text == "\u{0003}") {
+                root.copy-clicked();
+                return accept;
+            }
+            if (event.modifiers.control && !event.modifiers.shift && event.text == "\u{0016}") {
+                root.paste-clicked();
+                return accept;
+            }
+            if (event.modifiers.control && !event.modifiers.shift && event.text == "\u{0018}") {
+                root.cut-clicked();
+                return accept;
+            }
+            if (event.modifiers.control && event.text == "\u{0004}") {
+                root.duplicate-clicked();
+                return accept;
+            }
             if (event.text == Key.Escape) {
                 root.escape-pressed();
+                return accept;
+            }
+            if (event.text == Key.Delete) {
+                root.builder-delete-node("");
                 return accept;
             }
             return reject;
@@ -658,25 +836,49 @@ export component AppWindow inherits Window {
                 // Activity bar (leftmost icon strip)
                 Rectangle {
                     width: 48px;
-                    background: Palette.background;
+                    background: Palette.alternate-background;
 
                     VerticalLayout {
                         padding-top: 8px;
                         spacing: 0px;
                         alignment: start;
 
-                        for nav[i] in root.nav-items : NavButton {
-                            label: nav.label;
-                            selected: nav.selected;
-                            clicked => { root.select-panel(nav.id); }
+                        NavButton {
+                            icon: @image-url("icons/user.svg");
+                            selected: root.active-panel-id == 0;
+                            clicked => { root.select-panel(0); }
+                        }
+                        NavButton {
+                            icon: @image-url("icons/layout.svg");
+                            selected: root.active-panel-id == 1;
+                            clicked => { root.select-panel(1); }
+                        }
+                        NavButton {
+                            icon: @image-url("icons/tree.svg");
+                            selected: root.active-panel-id == 2;
+                            clicked => { root.select-panel(2); }
+                        }
+                        NavButton {
+                            icon: @image-url("icons/sliders.svg");
+                            selected: root.active-panel-id == 3;
+                            clicked => { root.select-panel(3); }
                         }
                     }
                 }
 
                 // Sidebar
                 Rectangle {
-                    width: 200px;
+                    width: 220px;
                     background: Palette.alternate-background;
+                    border-width: 0px;
+
+                    Rectangle {
+                        x: parent.width - 1px;
+                        y: 0px;
+                        width: 1px;
+                        height: parent.height;
+                        background: Palette.foreground.transparentize(90%);
+                    }
 
                     VerticalLayout {
                         padding: 16px;
@@ -686,13 +888,14 @@ export component AppWindow inherits Window {
                         Text {
                             text: root.panel-title;
                             color: Palette.foreground;
-                            font-size: 16px;
-                            font-weight: 600;
+                            font-size: 14px;
+                            font-weight: 700;
+                            letter-spacing: 0.3px;
                         }
 
                         Text {
                             text: root.panel-hint;
-                            color: Palette.foreground.transparentize(30%);
+                            color: Palette.foreground.transparentize(40%);
                             font-size: 11px;
                             wrap: word-wrap;
                         }
@@ -712,49 +915,167 @@ export component AppWindow inherits Window {
                             spacing: 2px;
                             padding-top: 8px;
 
-                            Text {
-                                text: "Add Component";
-                                color: Palette.foreground.transparentize(30%);
-                                font-size: 11px;
-                                font-weight: 600;
+                            HorizontalLayout {
+                                spacing: 6px;
+                                alignment: start;
+                                Image {
+                                    source: @image-url("icons/plus.svg");
+                                    width: 12px;
+                                    height: 12px;
+                                    colorize: Palette.foreground.transparentize(30%);
+                                }
+                                Text {
+                                    text: "Add Component";
+                                    color: Palette.foreground.transparentize(30%);
+                                    font-size: 11px;
+                                    font-weight: 600;
+                                    vertical-alignment: center;
+                                }
                             }
 
-                            for comp[i] in root.component-palette : Rectangle {
-                                height: 40px;
-                                background: touch-area.has-hover ? Palette.control-background : transparent;
-                                border-radius: 4px;
-
+                            ScrollView {
+                                vertical-stretch: 1;
                                 VerticalLayout {
-                                    padding: 6px;
-                                    padding-left: 10px;
                                     spacing: 1px;
-                                    Text {
-                                        text: comp.label;
-                                        color: Palette.foreground;
-                                        font-size: 12px;
-                                        font-weight: 500;
-                                    }
-                                    Text {
-                                        text: comp.description;
-                                        color: Palette.foreground.transparentize(40%);
-                                        font-size: 10px;
-                                        overflow: elide;
-                                    }
-                                }
+                                    for comp[i] in root.component-palette : Rectangle {
+                                        height: 36px;
+                                        background: touch-area.has-hover ? Palette.control-background : transparent;
+                                        border-radius: 4px;
 
-                                touch-area := TouchArea {
-                                    clicked => { root.add-component(comp.component-type); }
+                                        HorizontalLayout {
+                                            padding-left: 10px;
+                                            padding-right: 10px;
+                                            spacing: 8px;
+                                            alignment: start;
+
+                                            VerticalLayout {
+                                                alignment: center;
+                                                // Component type icon
+                                                if comp.component-type == "heading" || comp.component-type == "text" : Image {
+                                                    source: @image-url("icons/type.svg");
+                                                    width: 14px;
+                                                    height: 14px;
+                                                    colorize: Palette.foreground.transparentize(40%);
+                                                }
+                                                if comp.component-type == "link" : Image {
+                                                    source: @image-url("icons/link.svg");
+                                                    width: 14px;
+                                                    height: 14px;
+                                                    colorize: Palette.foreground.transparentize(40%);
+                                                }
+                                                if comp.component-type == "image" : Image {
+                                                    source: @image-url("icons/image.svg");
+                                                    width: 14px;
+                                                    height: 14px;
+                                                    colorize: Palette.foreground.transparentize(40%);
+                                                }
+                                                if comp.component-type == "container" || comp.component-type == "form" || comp.component-type == "button" : Image {
+                                                    source: @image-url("icons/box.svg");
+                                                    width: 14px;
+                                                    height: 14px;
+                                                    colorize: Palette.foreground.transparentize(40%);
+                                                }
+                                                if comp.component-type == "card" : Image {
+                                                    source: @image-url("icons/box.svg");
+                                                    width: 14px;
+                                                    height: 14px;
+                                                    colorize: Palette.foreground.transparentize(40%);
+                                                }
+                                                if comp.component-type == "columns" : Image {
+                                                    source: @image-url("icons/columns.svg");
+                                                    width: 14px;
+                                                    height: 14px;
+                                                    colorize: Palette.foreground.transparentize(40%);
+                                                }
+                                                if comp.component-type == "list" : Image {
+                                                    source: @image-url("icons/list.svg");
+                                                    width: 14px;
+                                                    height: 14px;
+                                                    colorize: Palette.foreground.transparentize(40%);
+                                                }
+                                                if comp.component-type == "table" : Image {
+                                                    source: @image-url("icons/table.svg");
+                                                    width: 14px;
+                                                    height: 14px;
+                                                    colorize: Palette.foreground.transparentize(40%);
+                                                }
+                                                if comp.component-type == "tabs" : Image {
+                                                    source: @image-url("icons/layout.svg");
+                                                    width: 14px;
+                                                    height: 14px;
+                                                    colorize: Palette.foreground.transparentize(40%);
+                                                }
+                                                if comp.component-type == "accordion" : Image {
+                                                    source: @image-url("icons/chevron-down.svg");
+                                                    width: 14px;
+                                                    height: 14px;
+                                                    colorize: Palette.foreground.transparentize(40%);
+                                                }
+                                                if comp.component-type == "divider" : Image {
+                                                    source: @image-url("icons/minus.svg");
+                                                    width: 14px;
+                                                    height: 14px;
+                                                    colorize: Palette.foreground.transparentize(40%);
+                                                }
+                                                if comp.component-type == "spacer" : Image {
+                                                    source: @image-url("icons/grip.svg");
+                                                    width: 14px;
+                                                    height: 14px;
+                                                    colorize: Palette.foreground.transparentize(40%);
+                                                }
+                                                if comp.component-type == "code" : Image {
+                                                    source: @image-url("icons/code.svg");
+                                                    width: 14px;
+                                                    height: 14px;
+                                                    colorize: Palette.foreground.transparentize(40%);
+                                                }
+                                                if comp.component-type == "input" : Image {
+                                                    source: @image-url("icons/type.svg");
+                                                    width: 14px;
+                                                    height: 14px;
+                                                    colorize: Palette.foreground.transparentize(40%);
+                                                }
+                                            }
+
+                                            VerticalLayout {
+                                                alignment: center;
+                                                spacing: 0px;
+                                                Text {
+                                                    text: comp.label;
+                                                    color: Palette.foreground;
+                                                    font-size: 12px;
+                                                    font-weight: 500;
+                                                }
+                                            }
+                                        }
+
+                                        touch-area := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.add-component(comp.component-type); }
+                                        }
+                                    }
                                 }
                             }
                         }
 
                         // Search input
-                        LineEdit {
-                            height: 28px;
-                            text: root.search-query;
-                            placeholder-text: "Search…";
-                            edited(text) => {
-                                root.search-input(text);
+                        HorizontalLayout {
+                            spacing: 6px;
+                            Image {
+                                source: @image-url("icons/search.svg");
+                                width: 14px;
+                                height: 14px;
+                                colorize: Palette.foreground.transparentize(50%);
+                                y: 7px;
+                            }
+                            LineEdit {
+                                height: 28px;
+                                horizontal-stretch: 1;
+                                text: root.search-query;
+                                placeholder-text: "Search nodes...";
+                                edited(text) => {
+                                    root.search-input(text);
+                                }
                             }
                         }
 
@@ -784,6 +1105,7 @@ export component AppWindow inherits Window {
                                 }
 
                                 TouchArea {
+                                    mouse-cursor: pointer;
                                     clicked => { root.search-result-clicked(result.node-id); }
                                 }
                             }
@@ -797,20 +1119,27 @@ export component AppWindow inherits Window {
 
                     // Tab bar
                     if root.tabs.length > 0 : Rectangle {
-                        height: 34px;
-                        background: Palette.background;
+                        height: 36px;
+                        background: Palette.alternate-background;
+
+                        Rectangle {
+                            x: 0px;
+                            y: parent.height - 1px;
+                            width: parent.width;
+                            height: 1px;
+                            background: Palette.foreground.transparentize(90%);
+                        }
 
                         HorizontalLayout {
-                            spacing: 1px;
+                            spacing: 0px;
                             padding-left: 0px;
                             alignment: start;
 
                             for tab[i] in root.tabs : Rectangle {
-                                height: 32px;
+                                height: 35px;
                                 min-width: 120px;
                                 max-width: 200px;
-                                background: tab.active ? Palette.control-background : Palette.alternate-background;
-                                border-radius: 3px;
+                                background: tab.active ? Palette.background : Palette.alternate-background;
 
                                 Rectangle {
                                     x: 0px;
@@ -821,19 +1150,19 @@ export component AppWindow inherits Window {
                                 }
 
                                 HorizontalLayout {
-                                    padding-left: 12px;
-                                    padding-right: 4px;
-                                    spacing: 4px;
+                                    padding-left: 14px;
+                                    padding-right: 8px;
+                                    spacing: 8px;
                                     alignment: start;
                                     Text {
                                         text: tab.title;
-                                        color: tab.active ? Palette.foreground : Palette.foreground.transparentize(30%);
+                                        color: tab.active ? Palette.foreground : Palette.foreground.transparentize(40%);
                                         font-size: 12px;
                                         vertical-alignment: center;
                                         overflow: elide;
                                     }
-                                    Button {
-                                        text: "×";
+                                    IconButton {
+                                        icon: @image-url("icons/x.svg");
                                         clicked => { root.tab-closed(tab.id); }
                                     }
                                 }
@@ -841,6 +1170,91 @@ export component AppWindow inherits Window {
                                 TouchArea {
                                     clicked => { root.tab-activated(tab.id); }
                                 }
+                            }
+                        }
+                    }
+
+                    // Builder toolbar (visible when builder panel is active)
+                    if root.builder-nodes.length > 0 : Rectangle {
+                        height: 40px;
+                        background: Palette.background;
+
+                        Rectangle {
+                            x: 0px;
+                            y: parent.height - 1px;
+                            width: parent.width;
+                            height: 1px;
+                            background: Palette.foreground.transparentize(90%);
+                        }
+
+                        HorizontalLayout {
+                            padding-left: 12px;
+                            padding-right: 12px;
+                            spacing: 4px;
+                            alignment: start;
+
+                            IconButton {
+                                icon: @image-url("icons/undo.svg");
+                                enabled: root.can-undo;
+                                clicked => { root.undo-clicked(); }
+                            }
+                            IconButton {
+                                icon: @image-url("icons/redo.svg");
+                                enabled: root.can-redo;
+                                clicked => { root.redo-clicked(); }
+                            }
+
+                            ToolbarSeparator { }
+
+                            IconButton {
+                                icon: @image-url("icons/copy.svg");
+                                enabled: root.has-selection;
+                                clicked => { root.copy-clicked(); }
+                            }
+                            IconButton {
+                                icon: @image-url("icons/scissors.svg");
+                                enabled: root.has-selection;
+                                clicked => { root.cut-clicked(); }
+                            }
+                            IconButton {
+                                icon: @image-url("icons/paste.svg");
+                                enabled: root.has-clipboard;
+                                clicked => { root.paste-clicked(); }
+                            }
+                            IconButton {
+                                icon: @image-url("icons/duplicate.svg");
+                                enabled: root.has-selection;
+                                clicked => { root.duplicate-clicked(); }
+                            }
+
+                            ToolbarSeparator { }
+
+                            IconButton {
+                                icon: @image-url("icons/chevron-up.svg");
+                                enabled: root.has-selection;
+                                clicked => { root.node-move-up(""); }
+                            }
+                            IconButton {
+                                icon: @image-url("icons/chevron-down.svg");
+                                enabled: root.has-selection;
+                                clicked => { root.node-move-down(""); }
+                            }
+
+                            ToolbarSeparator { }
+
+                            IconButton {
+                                icon: @image-url("icons/trash.svg");
+                                enabled: root.has-selection;
+                                clicked => { root.builder-delete-node(""); }
+                            }
+
+                            Rectangle { horizontal-stretch: 1; }
+
+                            Text {
+                                text: root.builder-node-count + " nodes";
+                                color: Palette.foreground.transparentize(50%);
+                                font-size: 11px;
+                                vertical-alignment: center;
                             }
                         }
                     }
@@ -853,12 +1267,12 @@ export component AppWindow inherits Window {
                         ScrollView {
                             VerticalLayout {
                                 padding: 24px;
-                                spacing: 12px;
+                                spacing: 4px;
                                 alignment: start;
 
                                 // Builder panel — live preview
                                 if root.builder-nodes.length > 0 : VerticalLayout {
-                                    spacing: 4px;
+                                    spacing: 2px;
                                     for bnode[i] in root.builder-nodes : BuilderBlock {
                                         node-id: bnode.id;
                                         component-type: bnode.component-type;
@@ -895,11 +1309,26 @@ export component AppWindow inherits Window {
                                 if root.field-rows.length > 0 : VerticalLayout {
                                     spacing: 4px;
                                     padding-top: 4px;
-                                    Text {
-                                        text: "Component: " + root.selected-component;
-                                        color: Palette.foreground.transparentize(30%);
-                                        font-size: 11px;
+
+                                    HorizontalLayout {
+                                        spacing: 6px;
+                                        alignment: start;
+                                        Image {
+                                            source: @image-url("icons/sliders.svg");
+                                            width: 12px;
+                                            height: 12px;
+                                            colorize: Palette.foreground.transparentize(40%);
+                                            y: 1px;
+                                        }
+                                        Text {
+                                            text: root.selected-component;
+                                            color: Palette.foreground.transparentize(30%);
+                                            font-size: 11px;
+                                            font-weight: 600;
+                                            vertical-alignment: center;
+                                        }
                                     }
+
                                     for field[i] in root.field-rows : FieldEditor {
                                         key: field.key;
                                         label: field.label;
@@ -915,32 +1344,49 @@ export component AppWindow inherits Window {
 
                     // Status bar
                     Rectangle {
-                        height: 28px;
+                        height: 26px;
                         background: Palette.alternate-background;
+
+                        Rectangle {
+                            x: 0px;
+                            y: 0px;
+                            width: parent.width;
+                            height: 1px;
+                            background: Palette.foreground.transparentize(90%);
+                        }
 
                         HorizontalLayout {
                             padding-left: 12px;
                             padding-right: 12px;
-                            spacing: 8px;
+                            spacing: 12px;
                             alignment: start;
 
-                            Button {
-                                text: root.undo-label != "" ? "↶ " + root.undo-label : "↶ Undo";
-                                enabled: root.can-undo;
-                                clicked => { root.undo-clicked(); }
+                            Text {
+                                text: root.panel-title;
+                                color: Palette.foreground.transparentize(40%);
+                                font-size: 11px;
+                                vertical-alignment: center;
                             }
 
-                            Button {
-                                text: root.redo-label != "" ? "↷ " + root.redo-label : "↷ Redo";
-                                enabled: root.can-redo;
-                                clicked => { root.redo-clicked(); }
+                            if root.has-selection : Text {
+                                text: "·";
+                                color: Palette.foreground.transparentize(60%);
+                                font-size: 11px;
+                                vertical-alignment: center;
+                            }
+
+                            if root.has-selection : Text {
+                                text: "Selected";
+                                color: Palette.accent-foreground;
+                                font-size: 11px;
+                                vertical-alignment: center;
                             }
 
                             Rectangle { horizontal-stretch: 1; }
 
                             Text {
-                                text: "Prism Shell";
-                                color: Palette.foreground.transparentize(30%);
+                                text: "Prism Studio";
+                                color: Palette.foreground.transparentize(50%);
                                 font-size: 11px;
                                 vertical-alignment: center;
                             }
@@ -976,13 +1422,24 @@ export component AppWindow inherits Window {
             padding: 8px;
             spacing: 4px;
 
-            LineEdit {
-                height: 32px;
-                placeholder-text: "Type a command…";
-                edited(text) => { root.command-palette-input(text); }
-                accepted(text) => {
-                    if (root.command-results.length > 0) {
-                        root.command-selected(0);
+            HorizontalLayout {
+                spacing: 8px;
+                Image {
+                    source: @image-url("icons/search.svg");
+                    width: 16px;
+                    height: 16px;
+                    colorize: Palette.foreground.transparentize(40%);
+                    y: 8px;
+                }
+                LineEdit {
+                    height: 32px;
+                    horizontal-stretch: 1;
+                    placeholder-text: "Type a command...";
+                    edited(text) => { root.command-palette-input(text); }
+                    accepted(text) => {
+                        if (root.command-results.length > 0) {
+                            root.command-selected(0);
+                        }
                     }
                 }
             }
@@ -992,7 +1449,7 @@ export component AppWindow inherits Window {
                     spacing: 1px;
                     for cmd[i] in root.command-results : Rectangle {
                         height: 32px;
-                        background: transparent;
+                        background: cmd-touch.has-hover ? Palette.control-background : transparent;
                         border-radius: 4px;
 
                         HorizontalLayout {
@@ -1004,8 +1461,8 @@ export component AppWindow inherits Window {
                                 spacing: 8px;
                                 if cmd.category != "" : Text {
                                     text: cmd.category;
-                                    color: Palette.foreground.transparentize(30%);
-                                    font-size: 12px;
+                                    color: Palette.foreground.transparentize(40%);
+                                    font-size: 11px;
                                     vertical-alignment: center;
                                 }
                                 Text {
@@ -1016,15 +1473,24 @@ export component AppWindow inherits Window {
                                 }
                             }
 
-                            if cmd.shortcut != "" : Text {
-                                text: cmd.shortcut;
-                                color: Palette.foreground.transparentize(30%);
-                                font-size: 11px;
-                                vertical-alignment: center;
+                            if cmd.shortcut != "" : Rectangle {
+                                background: Palette.control-background;
+                                border-radius: 3px;
+                                height: 20px;
+                                width: shortcut-text.preferred-width + 12px;
+                                y: 6px;
+                                shortcut-text := Text {
+                                    text: cmd.shortcut;
+                                    color: Palette.foreground.transparentize(30%);
+                                    font-size: 10px;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
                             }
                         }
 
-                        TouchArea {
+                        cmd-touch := TouchArea {
+                            mouse-cursor: pointer;
                             clicked => { root.command-selected(i); }
                         }
                     }

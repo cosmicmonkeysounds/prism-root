@@ -33,7 +33,7 @@ use crate::selection::SelectionModel;
 use crate::telemetry::FirstPaint;
 use crate::{
     AppWindow, BuilderNode, ButtonSpec, CommandItem, ComponentPaletteItem, FieldRow, InspectorNode,
-    PanelNavItem, SearchResultItem, TabItem, ToastItem,
+    SearchResultItem, TabItem, ToastItem,
 };
 
 // ── Reloadable state ───────────────────────────────────────────────
@@ -186,6 +186,7 @@ struct ShellInner {
     commands: CommandRegistry,
     undo_past: Vec<DocumentSnapshot>,
     undo_future: Vec<DocumentSnapshot>,
+    clipboard: Option<Node>,
 }
 
 impl ShellInner {
@@ -280,6 +281,7 @@ impl Shell {
             commands: CommandRegistry::with_builtins(),
             undo_past: Vec::new(),
             undo_future: Vec::new(),
+            clipboard: None,
         }));
         let shell = Self {
             inner,
@@ -429,6 +431,8 @@ impl Shell {
                             let node = find_node(Some(&*root), &node_id);
                             let key = match node.map(|n| n.component.as_str()) {
                                 Some("text") => "body",
+                                Some("card") | Some("accordion") => "title",
+                                Some("code") => "code",
                                 _ => "text",
                             };
                             mutate_node_prop(root, &node_id, key, &value, Some("text"));
@@ -448,8 +452,15 @@ impl Shell {
             move |node_id| {
                 {
                     let mut s = inner.borrow_mut();
+                    let nid = if node_id.is_empty() {
+                        match s.store.state().selection.primary().cloned() {
+                            Some(id) => id,
+                            None => return,
+                        }
+                    } else {
+                        node_id.to_string()
+                    };
                     s.push_undo("Delete node");
-                    let nid = node_id.to_string();
                     s.store.mutate(|state| {
                         delete_node(&mut state.builder_document, &nid);
                         state.selection.clear();
@@ -545,9 +556,17 @@ impl Shell {
             move |node_id| {
                 {
                     let mut s = inner.borrow_mut();
+                    let nid = if node_id.is_empty() {
+                        match s.store.state().selection.primary().cloned() {
+                            Some(id) => id,
+                            None => return,
+                        }
+                    } else {
+                        node_id.to_string()
+                    };
                     s.push_undo("Move node up");
                     s.store.mutate(|state| {
-                        move_node_in_siblings(&mut state.builder_document, &node_id, -1);
+                        move_node_in_siblings(&mut state.builder_document, &nid, -1);
                     });
                 }
                 if let Some(w) = weak.upgrade() {
@@ -561,9 +580,17 @@ impl Shell {
             move |node_id| {
                 {
                     let mut s = inner.borrow_mut();
+                    let nid = if node_id.is_empty() {
+                        match s.store.state().selection.primary().cloned() {
+                            Some(id) => id,
+                            None => return,
+                        }
+                    } else {
+                        node_id.to_string()
+                    };
                     s.push_undo("Move node down");
                     s.store.mutate(|state| {
-                        move_node_in_siblings(&mut state.builder_document, &node_id, 1);
+                        move_node_in_siblings(&mut state.builder_document, &nid, 1);
                     });
                 }
                 if let Some(w) = weak.upgrade() {
@@ -741,6 +768,42 @@ impl Shell {
         });
 
         self.window.on_search_focus(|| {});
+
+        // Clipboard: copy
+        self.window.on_copy_clicked({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move || {
+                execute_command(&inner, &weak, "edit.copy");
+            }
+        });
+
+        // Clipboard: paste
+        self.window.on_paste_clicked({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move || {
+                execute_command(&inner, &weak, "edit.paste");
+            }
+        });
+
+        // Clipboard: cut
+        self.window.on_cut_clicked({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move || {
+                execute_command(&inner, &weak, "edit.cut");
+            }
+        });
+
+        // Clipboard: duplicate
+        self.window.on_duplicate_clicked({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move || {
+                execute_command(&inner, &weak, "edit.duplicate");
+            }
+        });
     }
 }
 
@@ -754,10 +817,12 @@ fn sync_ui_from_shared(shared: &Rc<RefCell<ShellInner>>, window: &AppWindow) {
 fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
     let state = inner.store.state();
 
-    // Sidebar nav (activity bar items)
-    let nav_items = nav_model(state.active_panel);
-    let nav_rc = Rc::new(VecModel::from(nav_items));
-    window.set_nav_items(ModelRc::from(nav_rc as Rc<dyn Model<Data = PanelNavItem>>));
+    // Activity bar panel selection
+    window.set_active_panel_id(state.active_panel.as_id());
+
+    // Toolbar state
+    window.set_has_selection(!state.selection.is_empty());
+    window.set_has_clipboard(inner.clipboard.is_some());
 
     // Panel title + hint
     let (title, hint) = panel_metadata(state.active_panel);
@@ -1019,6 +1084,71 @@ fn execute_command(
                 }
             });
         }
+        "edit.copy" => {
+            let mut s = shared.borrow_mut();
+            if let Some(target_id) = s.store.state().selection.primary().cloned() {
+                let cloned =
+                    find_node(s.store.state().builder_document.root.as_ref(), &target_id).cloned();
+                if let Some(node) = cloned {
+                    let comp = node.component.clone();
+                    s.clipboard = Some(node);
+                    s.add_toast("Copied", &format!("{comp} copied"), "info");
+                }
+            }
+        }
+        "edit.paste" => {
+            let mut s = shared.borrow_mut();
+            let clip = s.clipboard.clone();
+            if let Some(ref clip) = clip {
+                s.push_undo("Paste");
+                let mut next_id = s.store.state().next_node_id;
+                let new_node = clone_node_with_new_ids(clip, &mut next_id);
+                let new_id = new_node.id.clone();
+                s.store.mutate(|state| {
+                    state.next_node_id = next_id;
+                    let parent_id = state.selection.primary().cloned();
+                    add_node_to_document(
+                        &mut state.builder_document,
+                        parent_id.as_deref(),
+                        new_node,
+                    );
+                    state.selection.select(new_id);
+                });
+            }
+        }
+        "edit.cut" => {
+            let mut s = shared.borrow_mut();
+            if let Some(target_id) = s.store.state().selection.primary().cloned() {
+                let cloned =
+                    find_node(s.store.state().builder_document.root.as_ref(), &target_id).cloned();
+                if let Some(node) = cloned {
+                    s.clipboard = Some(node);
+                    s.push_undo("Cut");
+                    s.store.mutate(|state| {
+                        delete_node(&mut state.builder_document, &target_id);
+                        state.selection.clear();
+                    });
+                }
+            }
+        }
+        "edit.duplicate" => {
+            let mut s = shared.borrow_mut();
+            if let Some(target_id) = s.store.state().selection.primary().cloned() {
+                let cloned =
+                    find_node(s.store.state().builder_document.root.as_ref(), &target_id).cloned();
+                if let Some(node) = cloned {
+                    s.push_undo("Duplicate");
+                    let mut next_id = s.store.state().next_node_id;
+                    let new_node = clone_node_with_new_ids(&node, &mut next_id);
+                    let new_id = new_node.id.clone();
+                    s.store.mutate(|state| {
+                        state.next_node_id = next_id;
+                        insert_after_sibling(&mut state.builder_document, &target_id, new_node);
+                        state.selection.select(new_id);
+                    });
+                }
+            }
+        }
         "notification.dismiss_all" => {
             shared.borrow_mut().store.mutate(|state| {
                 state.toasts.clear();
@@ -1056,22 +1186,6 @@ fn panel_metadata(panel: ActivePanel) -> (&'static str, &'static str) {
             PropertiesPanel::new().hint(),
         ),
     }
-}
-
-fn nav_model(active: ActivePanel) -> Vec<PanelNavItem> {
-    [
-        (IdentityPanel::ID, "Id", ActivePanel::Identity),
-        (BuilderPanel::ID, "Bu", ActivePanel::Builder),
-        (InspectorPanel::ID, "In", ActivePanel::Inspector),
-        (PropertiesPanel::ID, "Pr", ActivePanel::Properties),
-    ]
-    .into_iter()
-    .map(|(id, label, panel)| PanelNavItem {
-        id,
-        label: SharedString::from(label),
-        selected: panel == active,
-    })
-    .collect()
 }
 
 fn flatten_inspector_nodes(root: Option<&Node>, selection: &SelectionModel) -> Vec<InspectorNode> {
@@ -1356,6 +1470,42 @@ fn component_palette_items() -> Vec<ComponentPaletteItem> {
     .collect()
 }
 
+fn clone_node_with_new_ids(node: &Node, counter: &mut u64) -> Node {
+    let new_id = format!("n{}", *counter);
+    *counter += 1;
+    Node {
+        id: new_id,
+        component: node.component.clone(),
+        props: node.props.clone(),
+        children: node
+            .children
+            .iter()
+            .map(|c| clone_node_with_new_ids(c, counter))
+            .collect(),
+    }
+}
+
+fn insert_after_sibling(doc: &mut BuilderDocument, sibling_id: &str, new_node: Node) {
+    if let Some(ref mut root) = doc.root {
+        if !insert_after_in_children(&mut root.children, sibling_id, new_node.clone()) {
+            root.children.push(new_node);
+        }
+    }
+}
+
+fn insert_after_in_children(children: &mut Vec<Node>, sibling_id: &str, new_node: Node) -> bool {
+    if let Some(pos) = children.iter().position(|n| n.id == sibling_id) {
+        children.insert(pos + 1, new_node);
+        return true;
+    }
+    for child in children.iter_mut() {
+        if insert_after_in_children(&mut child.children, sibling_id, new_node.clone()) {
+            return true;
+        }
+    }
+    false
+}
+
 fn collect_node_ids(root: Option<&Node>) -> Vec<NodeId> {
     let mut ids = Vec::new();
     if let Some(node) = root {
@@ -1607,5 +1757,44 @@ mod tests {
         let json = serde_json::to_string(&toast).unwrap();
         let restored: ToastData = serde_json::from_str(&json).unwrap();
         assert_eq!(restored.title, "Saved");
+    }
+
+    #[test]
+    fn clone_node_with_new_ids_generates_unique_ids() {
+        let node = Node {
+            id: "original".into(),
+            component: "heading".into(),
+            props: json!({ "text": "Hello" }),
+            children: vec![Node {
+                id: "child".into(),
+                component: "text".into(),
+                props: json!({ "body": "World" }),
+                children: vec![],
+            }],
+        };
+        let mut counter = 50u64;
+        let cloned = clone_node_with_new_ids(&node, &mut counter);
+        assert_eq!(cloned.id, "n50");
+        assert_eq!(cloned.children[0].id, "n51");
+        assert_eq!(counter, 52);
+        assert_eq!(cloned.component, "heading");
+        assert_eq!(cloned.props["text"], "Hello");
+    }
+
+    #[test]
+    fn insert_after_sibling_places_correctly() {
+        let mut doc = sample_document();
+        let new_node = Node {
+            id: "between".into(),
+            component: "divider".into(),
+            props: json!({}),
+            children: vec![],
+        };
+        insert_after_sibling(&mut doc, "hero", new_node);
+        let children = &doc.root.as_ref().unwrap().children;
+        assert_eq!(children.len(), 3);
+        assert_eq!(children[0].id, "hero");
+        assert_eq!(children[1].id, "between");
+        assert_eq!(children[2].id, "intro");
     }
 }

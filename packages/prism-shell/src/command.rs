@@ -59,6 +59,12 @@ impl CommandRegistry {
         reg.register(CommandEntry::new("edit.redo", "Redo", "Edit").with_shortcut("Ctrl+Shift+Z"));
         reg.register(CommandEntry::new("file.save", "Save", "File").with_shortcut("Ctrl+S"));
         reg.register(CommandEntry::new("search.focus", "Search", "View").with_shortcut("Ctrl+F"));
+        reg.register(CommandEntry::new("edit.copy", "Copy", "Edit").with_shortcut("Ctrl+C"));
+        reg.register(CommandEntry::new("edit.paste", "Paste", "Edit").with_shortcut("Ctrl+V"));
+        reg.register(CommandEntry::new("edit.cut", "Cut", "Edit").with_shortcut("Ctrl+X"));
+        reg.register(
+            CommandEntry::new("edit.duplicate", "Duplicate", "Edit").with_shortcut("Ctrl+D"),
+        );
         reg.register(CommandEntry::new(
             "selection.delete",
             "Delete Selected",
@@ -233,6 +239,19 @@ mod tests {
         assert!(reg.get("edit.undo").is_some());
         assert!(reg.get("edit.redo").is_some());
         assert!(reg.get("command_palette.toggle").is_some());
+    }
+
+    #[test]
+    fn with_builtins_has_clipboard_commands() {
+        let reg = CommandRegistry::with_builtins();
+        assert!(reg.get("edit.copy").is_some());
+        assert!(reg.get("edit.paste").is_some());
+        assert!(reg.get("edit.cut").is_some());
+        assert!(reg.get("edit.duplicate").is_some());
+        assert_eq!(
+            reg.get("edit.copy").unwrap().shortcut,
+            Some("Ctrl+C".to_string())
+        );
     }
 
     #[test]
