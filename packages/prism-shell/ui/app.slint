@@ -956,7 +956,8 @@ export component AppWindow inherits Window {
     callback cut-clicked;
     callback duplicate-clicked;
 
-    // Keyboard
+    // Input dispatch
+    callback dispatch-key(string /* text */, bool /* ctrl */, bool /* shift */, bool /* alt */, bool /* meta */) -> bool;
     callback escape-pressed;
     callback search-focus;
     in property <string> panel-title: "Editor";
@@ -1055,16 +1056,9 @@ export component AppWindow inherits Window {
         height: 100%;
 
         key-pressed(event) => {
-            if (event.modifiers.control && event.modifiers.shift && event.text == "P") { root.toggle-command-palette(); return accept; }
-            if (event.modifiers.control && !event.modifiers.shift && event.text == "\u{001a}") { root.undo-clicked(); return accept; }
-            if (event.modifiers.control && event.modifiers.shift && event.text == "\u{001a}") { root.redo-clicked(); return accept; }
-            if (event.modifiers.control && event.text == "\u{0006}") { root.search-focus(); return accept; }
-            if (event.modifiers.control && !event.modifiers.shift && event.text == "\u{0003}") { root.copy-clicked(); return accept; }
-            if (event.modifiers.control && !event.modifiers.shift && event.text == "\u{0016}") { root.paste-clicked(); return accept; }
-            if (event.modifiers.control && !event.modifiers.shift && event.text == "\u{0018}") { root.cut-clicked(); return accept; }
-            if (event.modifiers.control && event.text == "\u{0004}") { root.duplicate-clicked(); return accept; }
-            if (event.text == Key.Escape) { root.escape-pressed(); return accept; }
-            if (event.text == Key.Delete) { root.builder-delete-node(""); return accept; }
+            if (root.dispatch-key(event.text, event.modifiers.control, event.modifiers.shift, event.modifiers.alt, event.modifiers.meta)) {
+                return accept;
+            }
             return reject;
         }
 

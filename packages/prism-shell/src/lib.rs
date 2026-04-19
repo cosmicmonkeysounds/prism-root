@@ -22,6 +22,7 @@
 pub mod app;
 pub mod command;
 pub mod help;
+pub mod input;
 pub mod keyboard;
 pub mod panels;
 pub mod search;
@@ -30,6 +31,7 @@ pub mod telemetry;
 
 pub use app::{AppState, Shell};
 pub use command::{CommandEntry, CommandRegistry};
+pub use input::{combo_from_slint, FocusRegion, InputManager, InputScheme, InputSchemeBuilder};
 pub use keyboard::{KeyBinding, KeyCombo, KeyboardModel, Modifiers};
 pub use search::{SearchIndex, SearchResult};
 pub use selection::SelectionModel;

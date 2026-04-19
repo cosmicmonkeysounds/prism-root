@@ -88,14 +88,14 @@ licence requires.
 From `src/lib.rs`:
 - `Shell` — owning wrapper around `Rc<RefCell<ShellInner>>` +
   the root Slint `AppWindow`. `ShellInner` holds the `Store<AppState>`,
-  `ComponentRegistry`, `KeyboardModel`, `CommandRegistry`, and undo
+  `ComponentRegistry`, `InputManager`, `CommandRegistry`, and undo
   stacks. Callbacks capture `Rc::clone` of the inner state so Slint
   closures can mutate the store directly. Build one with `Shell::new()`,
   call `Shell::run()` to hand control to Slint's event loop.
   `sync_ui_from_shared` pushes current state into Slint properties
-  after every mutation; `Shell::dispatch_input`, `subscribe` /
-  `unsubscribe`, and `snapshot` / `restore` keep the §7 hot-reload
-  story alive. `Shell::add_notification` pushes toast notifications.
+  after every mutation; `subscribe` / `unsubscribe`, and `snapshot` /
+  `restore` keep the §7 hot-reload story alive.
+  `Shell::add_notification` pushes toast notifications.
 - `FirstPaint` — boot telemetry slot (`src/telemetry.rs`).
 - `AppState`, `ActivePanel` — the reloadable root state. Phase 4
   replaced `selected_node: Option<NodeId>` with `SelectionModel`
@@ -107,15 +107,26 @@ From `src/lib.rs`:
 - `SelectionModel` (`src/selection.rs`) — multi-select with focus
   index and depth. Methods: `select`, `toggle`, `extend`, `clear`,
   `primary`, `contains`, `is_multi`, `deepen`, `shallow`.
-- `KeyboardModel` (`src/keyboard.rs`) — `KeyCombo` (parsed from
-  "ctrl+shift+p" strings), `KeyBinding` (combo + command + optional
-  `when` context predicate), `KeyboardModel` (register bindings,
-  resolve key events to command ids, context-aware matching with
-  negation support). `with_defaults()` registers standard shortcuts.
+- `InputManager` (`src/input.rs`) — layered input scheme stack.
+  Apps/editors register `InputScheme`s via the builder pattern
+  (`InputScheme::builder("id").bind("ctrl+z","cmd").build()`),
+  then push/pop them onto the active stack. Key events dispatch
+  top-down through the stack; the first matching binding wins.
+  `with_defaults()` seeds three built-in schemes: `shell.base`
+  (global shortcuts + tab/panel navigation), `shell.edit` (inspector
+  arrow-key navigation, delete), and `shell.search`. `FocusRegion`
+  enum tracks which UI area has keyboard focus. `combo_from_slint()`
+  translates Slint key events into `KeyCombo` for dispatch. Context
+  flags (`hasSelection`, `hasClipboard`, `commandPaletteOpen`, and
+  per-focus-region flags) are auto-synced after every mutation.
+- `KeyboardModel` (`src/keyboard.rs`) — low-level `KeyCombo` parsing
+  and `KeyBinding` data types (combo + command + optional `when`
+  context predicate). Used internally by `InputScheme`.
 - `CommandRegistry` (`src/command.rs`) — `CommandEntry` (id, label,
   category, shortcut) and `CommandRegistry` (register, get, list,
   filter by fuzzy multi-word query). `with_builtins()` registers
-  standard commands (undo, redo, palette, panels, search, etc.).
+  standard commands (undo, redo, palette, panels, search,
+  navigation, etc.).
 - `SearchIndex` (`src/search.rs`) — TF-IDF full-text search over
   `BuilderDocument` node properties. `SearchIndex::build(doc)` indexes
   all text/number/boolean fields; `query(str)` returns ranked
@@ -165,9 +176,14 @@ shell framework features are implemented:
   `TabBar` above content for open documents.
 - **Command palette**: Ctrl+Shift+P overlay with fuzzy command
   filtering, keyboard navigation, and shortcut labels.
-- **Keyboard binding system**: `KeyCombo` parsing, context-aware
-  `KeyboardModel` resolution, standard shortcuts wired to command
-  dispatch.
+- **Layered input manager**: `InputManager` with composable
+  `InputScheme` stack. Builder pattern for scheme construction,
+  registration/DI for apps to push/pop their own hotkey maps.
+  All key events route through a single `dispatch-key` callback
+  from Slint to Rust's `InputManager::dispatch()`, replacing the
+  hardcoded FocusScope handler. Built-in schemes for shell, edit
+  panel, and search. Tab navigation (Ctrl+Tab, Ctrl+1-9), inspector
+  arrow-key navigation, and panel switching via command system.
 - **Notification toasts**: bottom-right toast overlay with
   kind-colored indicators (info/success/warning/error) and dismiss.
 - **Selection model**: `SelectionModel` replaces `selected_node`,

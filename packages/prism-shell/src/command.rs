@@ -84,6 +84,47 @@ impl CommandRegistry {
             "Dismiss All Notifications",
             "View",
         ));
+        // Navigation
+        reg.register(
+            CommandEntry::new("navigate.next_tab", "Next Tab", "Navigate")
+                .with_shortcut("Ctrl+Tab"),
+        );
+        reg.register(
+            CommandEntry::new("navigate.prev_tab", "Previous Tab", "Navigate")
+                .with_shortcut("Ctrl+Shift+Tab"),
+        );
+        reg.register(CommandEntry::new(
+            "navigate.sidebar_toggle",
+            "Toggle Sidebar",
+            "Navigate",
+        ).with_shortcut("Ctrl+B"));
+        reg.register(CommandEntry::new(
+            "navigate.escape",
+            "Dismiss / Deselect",
+            "Navigate",
+        ));
+        reg.register(CommandEntry::new(
+            "navigate.inspector_prev",
+            "Inspector: Previous Node",
+            "Navigate",
+        ));
+        reg.register(CommandEntry::new(
+            "navigate.inspector_next",
+            "Inspector: Next Node",
+            "Navigate",
+        ));
+        reg.register(CommandEntry::new(
+            "panel.code_editor",
+            "Go to Code Editor",
+            "Panel",
+        ));
+        for n in 1..=9 {
+            reg.register(CommandEntry::new(
+                format!("navigate.tab.{n}"),
+                format!("Go to Tab {n}"),
+                "Navigate",
+            ).with_shortcut(format!("Ctrl+{n}")));
+        }
         reg
     }
 

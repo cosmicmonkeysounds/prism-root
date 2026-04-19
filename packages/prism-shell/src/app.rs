@@ -31,7 +31,7 @@ use slint::{ComponentHandle, Model, ModelRc, SharedString, Timer, TimerMode, Vec
 
 use crate::command::CommandRegistry;
 use crate::help::register_help_entries;
-use crate::keyboard::KeyboardModel;
+use crate::input::{combo_from_slint, update_panel_schemes, FocusRegion, InputManager};
 use crate::panels::{
     editor::CodeEditorPanel, identity::IdentityPanel, properties::PropertiesPanel, Panel,
 };
@@ -398,7 +398,7 @@ struct ShellInner {
     store: Store<AppState>,
     registry: Arc<ComponentRegistry>,
     help: HelpRegistry,
-    keyboard: KeyboardModel,
+    input: InputManager,
     commands: CommandRegistry,
     undo_past: Vec<DocumentSnapshot>,
     undo_future: Vec<DocumentSnapshot>,
@@ -498,7 +498,7 @@ impl Shell {
             store: Store::new(state),
             registry: Arc::new(registry),
             help,
-            keyboard: KeyboardModel::with_defaults(),
+            input: InputManager::with_defaults(),
             commands: CommandRegistry::with_builtins(),
             undo_past: Vec::new(),
             undo_future: Vec::new(),
@@ -506,6 +506,15 @@ impl Shell {
             help_pending_id: String::new(),
             help_active_id: String::new(),
         }));
+        {
+            let mut s = inner.borrow_mut();
+            let state = s.store.state();
+            let panel = state.active_panel;
+            let has_sel = !state.selection.is_empty();
+            update_panel_schemes(&mut s.input, panel.as_id());
+            s.input.set_context("hasSelection", has_sel);
+            s.input.set_context("hasClipboard", false);
+        }
         let shell = Self {
             inner,
             window,
@@ -592,14 +601,39 @@ impl Shell {
         let weak = self.window.as_weak();
         let inner = Rc::clone(&self.inner);
 
+        // Unified key dispatch — replaces hardcoded Slint FocusScope
+        self.window.on_dispatch_key({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |text, ctrl, shift, alt, meta| -> bool {
+                let cmd_id = {
+                    let combo = combo_from_slint(&text, ctrl, shift, alt, meta);
+                    match combo {
+                        Some(ref c) => inner.borrow().input.dispatch(c).map(String::from),
+                        None => None,
+                    }
+                };
+                if let Some(cmd_id) = cmd_id {
+                    execute_command(&inner, &weak, &cmd_id);
+                    true
+                } else {
+                    false
+                }
+            }
+        });
+
         // Panel selection (sidebar + activity bar)
         self.window.on_select_panel({
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |id| {
-                inner.borrow_mut().store.mutate(|state| {
-                    state.active_panel = ActivePanel::from_id(id);
-                });
+                {
+                    let mut s = inner.borrow_mut();
+                    s.store.mutate(|state| {
+                        state.active_panel = ActivePanel::from_id(id);
+                    });
+                    update_panel_schemes(&mut s.input, id);
+                }
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
                 }
@@ -974,20 +1008,7 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move || {
-                {
-                    let mut s = inner.borrow_mut();
-                    let open = s.store.state().command_palette_open;
-                    s.store.mutate(|state| {
-                        state.command_palette_open = !open;
-                        if open {
-                            state.command_palette_query.clear();
-                        }
-                    });
-                    s.keyboard.set_context("commandPaletteOpen", !open);
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
+                execute_command(&inner, &weak, "command_palette.toggle");
             }
         });
         self.window.on_command_palette_input({
@@ -1054,58 +1075,17 @@ impl Shell {
             }
         });
 
-        // Escape
+        // Escape (from editor FocusScope and other direct callers)
         self.window.on_escape_pressed({
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move || {
-                let was_palette;
-                let was_tooltip;
-                {
-                    let mut s = inner.borrow_mut();
-                    was_tooltip = !s.help_active_id.is_empty();
-                    if was_tooltip {
-                        s.help_active_id.clear();
-                        s.help_pending_id.clear();
-                    }
-                    was_palette = s.store.state().command_palette_open;
-                    if was_palette {
-                        s.store.mutate(|state| {
-                            state.command_palette_open = false;
-                            state.command_palette_query.clear();
-                        });
-                        s.keyboard.set_context("commandPaletteOpen", false);
-                    } else if !was_tooltip {
-                        s.store.mutate(|state| {
-                            state.selection.clear();
-                        });
-                    }
-                }
-                if let Some(w) = weak.upgrade() {
-                    if was_tooltip {
-                        w.set_help_tooltip(HelpTooltipData {
-                            visible: false,
-                            title: SharedString::new(),
-                            summary: SharedString::new(),
-                            has_docs: false,
-                            tip_x: 0.0,
-                            tip_y: 0.0,
-                        });
-                    }
-                    let empty_docs = DocsPanelData {
-                        visible: false,
-                        help_id: SharedString::new(),
-                        title: SharedString::new(),
-                        summary: SharedString::new(),
-                        body: SharedString::new(),
-                    };
-                    if w.get_docs_view().visible {
-                        w.set_docs_view(empty_docs);
-                    } else if w.get_docs_panel().visible {
-                        w.set_docs_panel(empty_docs);
-                    }
-                    sync_ui_from_shared(&inner, &w);
-                }
+                let cmd = if inner.borrow().store.state().command_palette_open {
+                    "command_palette.close"
+                } else {
+                    "navigate.escape"
+                };
+                execute_command(&inner, &weak, cmd);
             }
         });
 
@@ -1135,7 +1115,13 @@ impl Shell {
             }
         });
 
-        self.window.on_search_focus(|| {});
+        self.window.on_search_focus({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move || {
+                execute_command(&inner, &weak, "search.focus");
+            }
+        });
 
         // Help tooltip hover
         let show_timer = Rc::new(Timer::default());
@@ -1534,13 +1520,16 @@ impl Shell {
 // ── Sync UI ────────────────────────────────────────────────────────
 
 fn sync_ui_from_shared(shared: &Rc<RefCell<ShellInner>>, window: &AppWindow) {
-    {
-        let mut inner = shared.borrow_mut();
-        inner.store.mutate(|state| {
-            state.sync_document_to_app();
-        });
-    }
-    let inner = shared.borrow();
+    let mut inner = shared.borrow_mut();
+    inner.store.mutate(|state| {
+        state.sync_document_to_app();
+    });
+    let has_sel = !inner.store.state().selection.is_empty();
+    let has_clip = inner.clipboard.is_some();
+    let palette_open = inner.store.state().command_palette_open;
+    inner.input.set_context("hasSelection", has_sel);
+    inner.input.set_context("hasClipboard", has_clip);
+    inner.input.set_context("commandPaletteOpen", palette_open);
     sync_ui_impl(&inner, window);
 }
 
@@ -1873,7 +1862,7 @@ fn execute_command(
         "edit.redo" => {
             shared.borrow_mut().perform_redo();
         }
-        "command_palette.toggle" | "command_palette.close" => {
+        "command_palette.toggle" => {
             let mut s = shared.borrow_mut();
             let open = s.store.state().command_palette_open;
             s.store.mutate(|state| {
@@ -1882,19 +1871,72 @@ fn execute_command(
                     state.command_palette_query.clear();
                 }
             });
-            s.keyboard.set_context("commandPaletteOpen", !open);
+            s.input.set_context("commandPaletteOpen", !open);
+        }
+        "command_palette.close" => {
+            let mut s = shared.borrow_mut();
+            s.store.mutate(|state| {
+                state.command_palette_open = false;
+                state.command_palette_query.clear();
+            });
+            s.input.set_context("commandPaletteOpen", false);
+        }
+        "navigate.escape" => {
+            let was_tooltip;
+            {
+                let mut s = shared.borrow_mut();
+                was_tooltip = !s.help_active_id.is_empty();
+                if was_tooltip {
+                    s.help_active_id.clear();
+                    s.help_pending_id.clear();
+                } else {
+                    s.store.mutate(|state| {
+                        state.selection.clear();
+                    });
+                }
+            }
+            if let Some(w) = weak.upgrade() {
+                if was_tooltip {
+                    w.set_help_tooltip(HelpTooltipData {
+                        visible: false,
+                        title: SharedString::new(),
+                        summary: SharedString::new(),
+                        has_docs: false,
+                        tip_x: 0.0,
+                        tip_y: 0.0,
+                    });
+                }
+                let empty_docs = DocsPanelData {
+                    visible: false,
+                    help_id: SharedString::new(),
+                    title: SharedString::new(),
+                    summary: SharedString::new(),
+                    body: SharedString::new(),
+                };
+                if w.get_docs_view().visible {
+                    w.set_docs_view(empty_docs);
+                } else if w.get_docs_panel().visible {
+                    w.set_docs_panel(empty_docs);
+                }
+            }
         }
         "panel.identity" => {
-            shared
-                .borrow_mut()
-                .store
-                .mutate(|s| s.active_panel = ActivePanel::Identity);
+            let mut s = shared.borrow_mut();
+            s.store
+                .mutate(|state| state.active_panel = ActivePanel::Identity);
+            update_panel_schemes(&mut s.input, ActivePanel::Identity.as_id());
         }
         "panel.edit" | "panel.builder" | "panel.inspector" | "panel.properties" => {
-            shared
-                .borrow_mut()
-                .store
-                .mutate(|s| s.active_panel = ActivePanel::Edit);
+            let mut s = shared.borrow_mut();
+            s.store
+                .mutate(|state| state.active_panel = ActivePanel::Edit);
+            update_panel_schemes(&mut s.input, ActivePanel::Edit.as_id());
+        }
+        "panel.code_editor" => {
+            let mut s = shared.borrow_mut();
+            s.store
+                .mutate(|state| state.active_panel = ActivePanel::CodeEditor);
+            update_panel_schemes(&mut s.input, ActivePanel::CodeEditor.as_id());
         }
         "selection.delete" => {
             let mut s = shared.borrow_mut();
@@ -2008,19 +2050,129 @@ fn execute_command(
                 state.toasts.clear();
             });
         }
-        _ => {
-            eprintln!("prism-shell: unknown command {command_id}");
+        // ── Navigation ────────────────────────────────────────────
+        "navigate.next_tab" => {
+            let mut s = shared.borrow_mut();
+            let page_count = s
+                .store
+                .state()
+                .active_app()
+                .map(|a| a.pages.len())
+                .unwrap_or(0);
+            if page_count > 1 {
+                s.store.mutate(|state| {
+                    state.sync_document_to_app();
+                    if let Some(app) = state.active_app_mut() {
+                        app.active_page = (app.active_page + 1) % app.pages.len();
+                    }
+                    state.selection.clear();
+                    state.sync_document_from_app();
+                });
+            }
+        }
+        "navigate.prev_tab" => {
+            let mut s = shared.borrow_mut();
+            let page_count = s
+                .store
+                .state()
+                .active_app()
+                .map(|a| a.pages.len())
+                .unwrap_or(0);
+            if page_count > 1 {
+                s.store.mutate(|state| {
+                    state.sync_document_to_app();
+                    if let Some(app) = state.active_app_mut() {
+                        let len = app.pages.len();
+                        app.active_page = if app.active_page == 0 {
+                            len - 1
+                        } else {
+                            app.active_page - 1
+                        };
+                    }
+                    state.selection.clear();
+                    state.sync_document_from_app();
+                });
+            }
+        }
+        "navigate.inspector_prev" => {
+            let mut s = shared.borrow_mut();
+            let ids = collect_node_ids(s.store.state().builder_document.root.as_ref());
+            if let Some(current) = s.store.state().selection.primary().cloned() {
+                if let Some(idx) = ids.iter().position(|id| *id == current) {
+                    if idx > 0 {
+                        let new_id = ids[idx - 1].clone();
+                        s.store.mutate(|state| state.selection.select(new_id));
+                    }
+                }
+            } else if !ids.is_empty() {
+                let first = ids[0].clone();
+                s.store.mutate(|state| state.selection.select(first));
+            }
+        }
+        "navigate.inspector_next" => {
+            let mut s = shared.borrow_mut();
+            let ids = collect_node_ids(s.store.state().builder_document.root.as_ref());
+            if let Some(current) = s.store.state().selection.primary().cloned() {
+                if let Some(idx) = ids.iter().position(|id| *id == current) {
+                    if idx + 1 < ids.len() {
+                        let new_id = ids[idx + 1].clone();
+                        s.store.mutate(|state| state.selection.select(new_id));
+                    }
+                }
+            } else if !ids.is_empty() {
+                let first = ids[0].clone();
+                s.store.mutate(|state| state.selection.select(first));
+            }
+        }
+        "search.focus" => {
+            let mut s = shared.borrow_mut();
+            if s.store.state().active_panel != ActivePanel::Edit {
+                s.store
+                    .mutate(|state| state.active_panel = ActivePanel::Edit);
+                update_panel_schemes(&mut s.input, ActivePanel::Edit.as_id());
+            }
+            s.input.set_focus(FocusRegion::Search);
+        }
+        "navigate.sidebar_toggle" | "file.save" => {}
+        other => {
+            if let Some(n) = other
+                .strip_prefix("navigate.tab.")
+                .and_then(|s| s.parse::<usize>().ok())
+            {
+                let mut s = shared.borrow_mut();
+                let page_count = s
+                    .store
+                    .state()
+                    .active_app()
+                    .map(|a| a.pages.len())
+                    .unwrap_or(0);
+                if n >= 1 && n <= page_count {
+                    s.store.mutate(|state| {
+                        state.sync_document_to_app();
+                        if let Some(app) = state.active_app_mut() {
+                            app.active_page = n - 1;
+                        }
+                        state.selection.clear();
+                        state.sync_document_from_app();
+                    });
+                }
+            } else {
+                eprintln!("prism-shell: unknown command {other}");
+            }
         }
     }
-    // Close palette after command execution
-    {
+    // Close palette after non-palette command execution
+    if !matches!(
+        command_id,
+        "command_palette.toggle" | "command_palette.close"
+    ) {
         let mut s = shared.borrow_mut();
         if s.store.state().command_palette_open {
             s.store.mutate(|state| {
                 state.command_palette_open = false;
                 state.command_palette_query.clear();
             });
-            s.keyboard.set_context("commandPaletteOpen", false);
+            s.input.set_context("commandPaletteOpen", false);
         }
     }
     if let Some(w) = weak.upgrade() {
