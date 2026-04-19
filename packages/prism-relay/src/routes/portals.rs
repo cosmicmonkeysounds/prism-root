@@ -98,12 +98,7 @@ pub async fn export_portal(
         return Err(StatusCode::NOT_FOUND);
     };
     let snapshot = state.collections().export_snapshot(&portal.collection_id);
-    let encoded = snapshot
-        .map(|s| {
-            use base64::Engine;
-            base64::engine::general_purpose::STANDARD.encode(s)
-        })
-        .unwrap_or_default();
+    let encoded = snapshot.map(crate::util::b64_encode).unwrap_or_default();
     Ok(Json(json!({
         "portal": portal,
         "snapshot": encoded,

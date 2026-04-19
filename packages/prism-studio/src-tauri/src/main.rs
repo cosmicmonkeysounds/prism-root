@@ -14,7 +14,6 @@
 mod sidecar;
 
 use prism_shell::Shell;
-use sidecar::DaemonSidecar;
 
 fn main() -> Result<(), slint::PlatformError> {
     // Spawn the daemon sidecar before the event loop takes over the
@@ -22,7 +21,7 @@ fn main() -> Result<(), slint::PlatformError> {
     // still useful for UI iteration when the kernel is down. The
     // handle stays alive in a local binding so its `Drop` runs on
     // shutdown and kills the child deterministically.
-    let _daemon: Option<DaemonSidecar> = match sidecar::spawn_dev() {
+    let _daemon = match sidecar::spawn_dev() {
         Ok(handle) => Some(handle),
         Err(err) => {
             eprintln!("prism-studio: daemon sidecar unavailable: {err:#}");

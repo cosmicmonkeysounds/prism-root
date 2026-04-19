@@ -50,17 +50,11 @@ pub async fn publish_vault(
     State(state): State<Arc<FullRelayState>>,
     Json(input): Json<PublishVaultInput>,
 ) -> impl IntoResponse {
-    use base64::Engine;
     let now = crate::util::now_rfc3339();
     let collections: HashMap<String, Vec<u8>> = input
         .collections
         .into_iter()
-        .filter_map(|(k, v)| {
-            base64::engine::general_purpose::STANDARD
-                .decode(&v)
-                .ok()
-                .map(|d| (k, d))
-        })
+        .filter_map(|(k, v)| crate::util::b64_decode(&v).ok().map(|d| (k, d)))
         .collect();
     let vault = state.vaults().publish(
         input.manifest,
@@ -103,12 +97,7 @@ pub async fn get_vault_collection(
     Path((vault_id, coll_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
     match state.vaults().get_snapshot(&vault_id, &coll_id) {
-        Some(data) => {
-            use base64::Engine;
-            Ok(Json(
-                json!({"snapshot": base64::engine::general_purpose::STANDARD.encode(data)}),
-            ))
-        }
+        Some(data) => Ok(Json(json!({"snapshot": crate::util::b64_encode(data)}))),
         None => Err(StatusCode::NOT_FOUND),
     }
 }
@@ -119,10 +108,9 @@ pub async fn download_vault(
 ) -> impl IntoResponse {
     let vault = state.vaults().get(&id).ok_or(StatusCode::NOT_FOUND)?;
     let snaps = state.vaults().get_all_snapshots(&id).unwrap_or_default();
-    use base64::Engine;
     let encoded: HashMap<String, String> = snaps
         .into_iter()
-        .map(|(k, v)| (k, base64::engine::general_purpose::STANDARD.encode(v)))
+        .map(|(k, v)| (k, crate::util::b64_encode(v)))
         .collect();
     Ok::<_, StatusCode>(Json(
         json!({"manifest": vault.manifest, "collections": encoded}),
@@ -134,17 +122,11 @@ pub async fn update_vault_collections(
     Path(id): Path<String>,
     Json(input): Json<UpdateCollectionsInput>,
 ) -> impl IntoResponse {
-    use base64::Engine;
     let now = crate::util::now_rfc3339();
     let updates: HashMap<String, Vec<u8>> = input
         .snapshots
         .into_iter()
-        .filter_map(|(k, v)| {
-            base64::engine::general_purpose::STANDARD
-                .decode(&v)
-                .ok()
-                .map(|d| (k, d))
-        })
+        .filter_map(|(k, v)| crate::util::b64_decode(&v).ok().map(|d| (k, d)))
         .collect();
     if state
         .vaults()

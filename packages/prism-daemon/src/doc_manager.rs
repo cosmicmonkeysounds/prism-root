@@ -23,11 +23,12 @@ impl DocManager {
     }
 
     /// Ensure a LoroDoc exists for the given ID, creating one if needed.
-    pub fn get_or_create(&self, doc_id: &str) {
-        let mut docs = self.docs.lock().unwrap();
+    pub fn get_or_create(&self, doc_id: &str) -> Result<(), DaemonError> {
+        let mut docs = self.docs.lock().map_err(|_| DaemonError::LockPoisoned)?;
         if !docs.contains_key(doc_id) {
             docs.insert(doc_id.to_string(), LoroDoc::new());
         }
+        Ok(())
     }
 
     /// Write a key-value pair to a document's root map.

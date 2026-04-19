@@ -109,10 +109,12 @@ impl WatcherManager {
 
     pub fn watch(&self, path: &Path) -> Result<u64, String> {
         let handle = watch_directory(path)?;
-        let mut next = self.next_id.lock().map_err(|_| "lock poisoned")?;
-        let id = *next;
-        *next += 1;
-        drop(next);
+        let id = {
+            let mut next = self.next_id.lock().map_err(|_| "lock poisoned")?;
+            let id = *next;
+            *next += 1;
+            id
+        };
         self.watchers
             .lock()
             .map_err(|_| "lock poisoned")?

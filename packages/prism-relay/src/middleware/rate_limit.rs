@@ -1,10 +1,10 @@
 //! Token-bucket rate limiter — per-IP, bounded memory.
 
-use std::collections::HashMap;
 use std::sync::RwLock;
 use std::time::Instant;
 
 use axum::{extract::Request, middleware::Next, response::Response};
+use indexmap::IndexMap;
 
 struct Bucket {
     tokens: f64,
@@ -12,7 +12,7 @@ struct Bucket {
 }
 
 pub struct RateLimiter {
-    buckets: RwLock<HashMap<String, Bucket>>,
+    buckets: RwLock<IndexMap<String, Bucket>>,
     burst: f64,
     refill_rate: f64,
     max_entries: usize,
@@ -21,7 +21,7 @@ pub struct RateLimiter {
 impl RateLimiter {
     pub fn new(burst: u32, refill_per_sec: u32, max_entries: usize) -> Self {
         Self {
-            buckets: RwLock::new(HashMap::new()),
+            buckets: RwLock::new(IndexMap::new()),
             burst: burst as f64,
             refill_rate: refill_per_sec as f64,
             max_entries,
@@ -33,9 +33,7 @@ impl RateLimiter {
         let mut buckets = self.buckets.write().unwrap();
 
         if buckets.len() >= self.max_entries && !buckets.contains_key(key) {
-            if let Some(oldest_key) = buckets.keys().next().cloned() {
-                buckets.remove(&oldest_key);
-            }
+            buckets.shift_remove_index(0);
         }
 
         let bucket = buckets.entry(key.to_string()).or_insert(Bucket {

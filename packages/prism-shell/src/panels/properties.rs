@@ -8,9 +8,7 @@
 //! mutate-prop action in Phase 4. Read-only for now is fine — the
 //! important thing for Phase 3 is that the schema walks end-to-end.
 
-use prism_builder::{
-    BuilderDocument, ComponentRegistry, FieldKind, FieldSpec, FieldValue, Node, NodeId,
-};
+use prism_builder::{BuilderDocument, ComponentRegistry, FieldKind, FieldSpec, FieldValue, NodeId};
 use prism_core::help::HelpEntry;
 use serde_json::Value;
 
@@ -40,7 +38,7 @@ impl PropertiesPanel {
     pub fn selected_component(doc: &BuilderDocument, selected: &Option<NodeId>) -> String {
         selected
             .as_ref()
-            .and_then(|id| find_node(doc.root.as_ref(), id))
+            .and_then(|id| doc.root.as_ref().and_then(|n| n.find(id)))
             .map(|n| n.component.clone())
             .unwrap_or_default()
     }
@@ -56,7 +54,7 @@ impl PropertiesPanel {
         let Some(selected_id) = selected else {
             return vec![];
         };
-        let Some(node) = find_node(doc.root.as_ref(), selected_id) else {
+        let Some(node) = doc.root.as_ref().and_then(|n| n.find(selected_id)) else {
             return vec![];
         };
         let Some(component) = registry.get(&node.component) else {
@@ -68,19 +66,6 @@ impl PropertiesPanel {
             .map(|spec| row_from_spec(&spec, &node.props))
             .collect()
     }
-}
-
-fn find_node<'a>(root: Option<&'a Node>, target: &str) -> Option<&'a Node> {
-    let node = root?;
-    if node.id == target {
-        return Some(node);
-    }
-    for child in &node.children {
-        if let Some(hit) = find_node(Some(child), target) {
-            return Some(hit);
-        }
-    }
-    None
 }
 
 fn row_from_spec(spec: &FieldSpec, props: &Value) -> FieldRowData {

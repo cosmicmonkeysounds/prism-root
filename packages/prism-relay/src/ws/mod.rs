@@ -171,12 +171,11 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<FullRelayState>) {
             }
             ClientMessage::SyncRequest { collection_id } => {
                 if let Some(snapshot) = state.collections().export_snapshot(&collection_id) {
-                    use base64::Engine;
                     let _ = send(
                         &mut socket,
                         &ServerMessage::SyncSnapshot {
                             collection_id,
-                            snapshot: base64::engine::general_purpose::STANDARD.encode(snapshot),
+                            snapshot: crate::util::b64_encode(snapshot),
                         },
                     )
                     .await;
@@ -186,8 +185,7 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<FullRelayState>) {
                 collection_id,
                 update,
             } => {
-                use base64::Engine;
-                if let Ok(data) = base64::engine::general_purpose::STANDARD.decode(&update) {
+                if let Ok(data) = crate::util::b64_decode(&update) {
                     let now = crate::util::now_rfc3339();
                     state
                         .collections()
@@ -222,6 +220,6 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<FullRelayState>) {
 }
 
 async fn send(socket: &mut WebSocket, msg: &ServerMessage) -> Result<(), axum::Error> {
-    let json = serde_json::to_string(msg).unwrap_or_default();
+    let json = serde_json::to_string(msg).expect("ServerMessage is always serializable");
     socket.send(Message::Text(json)).await
 }

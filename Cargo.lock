@@ -5550,6 +5550,7 @@ dependencies = [
  "chrono",
  "clap",
  "http-body-util",
+ "indexmap 2.14.0",
  "prism-builder",
  "prism-core",
  "serde",

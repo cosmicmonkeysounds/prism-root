@@ -42,7 +42,8 @@ impl DaemonModule for CrdtModule {
         let mgr = manager.clone();
         registry.register("crdt.write", move |payload| {
             let args: WriteArgs = parse(payload, "crdt.write")?;
-            mgr.get_or_create(&args.doc_id);
+            mgr.get_or_create(&args.doc_id)
+                .map_err(|e| CommandError::handler("crdt.write", e.to_string()))?;
             let bytes = mgr
                 .write(&args.doc_id, &args.key, &args.value)
                 .map_err(|e| CommandError::handler("crdt.write", e.to_string()))?;
@@ -52,7 +53,8 @@ impl DaemonModule for CrdtModule {
         let mgr = manager.clone();
         registry.register("crdt.read", move |payload| {
             let args: ReadArgs = parse(payload, "crdt.read")?;
-            mgr.get_or_create(&args.doc_id);
+            mgr.get_or_create(&args.doc_id)
+                .map_err(|e| CommandError::handler("crdt.read", e.to_string()))?;
             let value = mgr
                 .read(&args.doc_id, &args.key)
                 .map_err(|e| CommandError::handler("crdt.read", e.to_string()))?;
@@ -62,7 +64,8 @@ impl DaemonModule for CrdtModule {
         let mgr = manager.clone();
         registry.register("crdt.export", move |payload| {
             let args: ExportArgs = parse(payload, "crdt.export")?;
-            mgr.get_or_create(&args.doc_id);
+            mgr.get_or_create(&args.doc_id)
+                .map_err(|e| CommandError::handler("crdt.export", e.to_string()))?;
             let bytes = mgr
                 .export_snapshot(&args.doc_id)
                 .map_err(|e| CommandError::handler("crdt.export", e.to_string()))?;
@@ -172,7 +175,7 @@ mod tests {
     #[test]
     fn crdt_module_reuses_injected_doc_manager() {
         let injected = Arc::new(DocManager::new());
-        injected.get_or_create("preloaded");
+        injected.get_or_create("preloaded").unwrap();
         injected.write("preloaded", "k", "v").unwrap();
 
         let mut builder = DaemonBuilder::new();

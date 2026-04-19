@@ -37,6 +37,9 @@ serde_json = { workspace = true }
 chrono = { workspace = true }
 base64 = { workspace = true }
 
+# Ordered map (rate-limiter LRU eviction).
+indexmap = { workspace = true }
+
 # CLI parsing for the `prism-relayd` binary.
 clap = { version = "4", features = ["derive"] }
 

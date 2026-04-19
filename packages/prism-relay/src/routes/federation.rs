@@ -58,8 +58,7 @@ pub async fn sync_receive(
 ) -> impl IntoResponse {
     let now = crate::util::now_rfc3339();
     if let Some(snapshot_b64) = &input.snapshot {
-        use base64::Engine;
-        if let Ok(data) = base64::engine::general_purpose::STANDARD.decode(snapshot_b64) {
+        if let Ok(data) = crate::util::b64_decode(snapshot_b64) {
             state
                 .collections()
                 .import_snapshot(&input.collection_id, data, &now);

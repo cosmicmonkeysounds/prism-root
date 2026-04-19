@@ -22,14 +22,13 @@
 pub mod app;
 pub mod command;
 pub mod help;
-pub mod input;
 pub mod keyboard;
 pub mod panels;
 pub mod search;
 pub mod selection;
 pub mod telemetry;
 
-pub use app::{AppState, InputAction, Shell};
+pub use app::{AppState, Shell};
 pub use command::{CommandEntry, CommandRegistry};
 pub use keyboard::{KeyBinding, KeyCombo, KeyboardModel, Modifiers};
 pub use search::{SearchIndex, SearchResult};

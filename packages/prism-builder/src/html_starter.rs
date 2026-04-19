@@ -541,23 +541,24 @@ impl HtmlBlock for HtmlTabs {
         out: &mut Html,
     ) -> Result<(), RenderError> {
         let labels = prop_str(props, "labels", "");
+        let tab_labels: Vec<&str> = labels
+            .split(',')
+            .map(|l| l.trim())
+            .filter(|l| !l.is_empty())
+            .collect();
         out.open_attrs("div", &[("role", "tablist")]);
-        for (i, label) in labels.split(',').enumerate() {
-            let label = label.trim();
-            if !label.is_empty() {
-                let selected = if i == 0 { "true" } else { "false" };
-                out.open_attrs("button", &[("role", "tab"), ("aria-selected", selected)]);
-                out.text(label);
-                out.close("button");
-            }
+        for (i, label) in tab_labels.iter().enumerate() {
+            let selected = if i == 0 { "true" } else { "false" };
+            out.open_attrs("button", &[("role", "tab"), ("aria-selected", selected)]);
+            out.text(label);
+            out.close("button");
         }
         out.close("div");
-        for (i, child) in children.iter().enumerate() {
-            let hidden = if i == 0 { "" } else { "true" };
-            if hidden.is_empty() {
+        for (i, child) in children.iter().take(tab_labels.len()).enumerate() {
+            if i == 0 {
                 out.open_attrs("div", &[("role", "tabpanel")]);
             } else {
-                out.open_attrs("div", &[("role", "tabpanel"), ("hidden", hidden)]);
+                out.open_attrs("div", &[("role", "tabpanel"), ("hidden", "true")]);
             }
             ctx.render_child(child, out)?;
             out.close("div");

@@ -25,6 +25,20 @@ pub struct Node {
     pub transform: Transform2D,
 }
 
+impl Node {
+    pub fn find(&self, target: &str) -> Option<&Node> {
+        if self.id == target {
+            return Some(self);
+        }
+        for child in &self.children {
+            if let Some(hit) = child.find(target) {
+                return Some(hit);
+            }
+        }
+        None
+    }
+}
+
 impl Default for Node {
     fn default() -> Self {
         Self {

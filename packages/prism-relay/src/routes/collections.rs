@@ -44,12 +44,7 @@ pub async fn get_snapshot(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     match state.collections().export_snapshot(&id) {
-        Some(data) => {
-            use base64::Engine;
-            Ok(Json(
-                json!({"snapshot": base64::engine::general_purpose::STANDARD.encode(data)}),
-            ))
-        }
+        Some(data) => Ok(Json(json!({"snapshot": crate::util::b64_encode(data)}))),
         None => Err(StatusCode::NOT_FOUND),
     }
 }
@@ -59,10 +54,7 @@ pub async fn import_snapshot(
     Path(id): Path<String>,
     Json(input): Json<ImportSnapshotInput>,
 ) -> impl IntoResponse {
-    use base64::Engine;
-    let data = base64::engine::general_purpose::STANDARD
-        .decode(&input.data)
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let data = crate::util::b64_decode(&input.data).map_err(|_| StatusCode::BAD_REQUEST)?;
     let now = crate::util::now_rfc3339();
     state.collections().import_snapshot(&id, data, &now);
     Ok::<_, StatusCode>(StatusCode::OK)

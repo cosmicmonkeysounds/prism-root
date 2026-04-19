@@ -107,15 +107,16 @@ impl CommandRegistry {
         F: Fn(JsonValue) -> Result<JsonValue, CommandError> + Send + Sync + 'static,
     {
         let name = name.into();
-        let mut map = self
-            .handlers
-            .write()
-            .map_err(|_| CommandError::LockPoisoned)?;
-        if map.contains_key(&name) {
-            return Err(CommandError::AlreadyRegistered { command: name });
+        {
+            let mut map = self
+                .handlers
+                .write()
+                .map_err(|_| CommandError::LockPoisoned)?;
+            if map.contains_key(&name) {
+                return Err(CommandError::AlreadyRegistered { command: name });
+            }
+            map.insert(name.clone(), Arc::new(handler));
         }
-        map.insert(name.clone(), Arc::new(handler));
-        drop(map);
         let mut perms = self
             .permissions
             .write()
@@ -134,12 +135,13 @@ impl CommandRegistry {
 
     /// Unregister a handler (used on module uninstall / kernel dispose).
     pub fn unregister(&self, name: &str) -> Result<(), CommandError> {
-        let mut map = self
-            .handlers
-            .write()
-            .map_err(|_| CommandError::LockPoisoned)?;
-        map.remove(name);
-        drop(map);
+        {
+            let mut map = self
+                .handlers
+                .write()
+                .map_err(|_| CommandError::LockPoisoned)?;
+            map.remove(name);
+        }
         if let Ok(mut perms) = self.permissions.write() {
             perms.remove(name);
         }
