@@ -93,32 +93,42 @@ pub fn toolbar_entries() -> Vec<HelpEntry> {
             "shell.toolbar.undo",
             "Undo",
             "Revert the last document change. Keyboard shortcut: Ctrl+Z.",
-        ),
+        )
+        .with_body("Undo reverts the most recent document mutation. Prism keeps a snapshot stack of up to 100 entries. Each undo restores both the document tree and the selection state at the time of the change.\n\nKeyboard shortcut: Ctrl+Z\n\nThe undo stack is per-session and resets when the document is reloaded.")
+        .with_doc("shell/toolbar"),
         HelpEntry::new(
             "shell.toolbar.redo",
             "Redo",
             "Re-apply the last undone change. Keyboard shortcut: Ctrl+Shift+Z.",
-        ),
+        )
+        .with_body("Redo re-applies a previously undone change. The redo stack is cleared whenever a new mutation occurs after an undo.\n\nKeyboard shortcut: Ctrl+Shift+Z")
+        .with_doc("shell/toolbar"),
         HelpEntry::new(
             "shell.toolbar.copy",
             "Copy",
             "Copy the selected node to the internal clipboard. Keyboard shortcut: Ctrl+C.",
-        ),
+        )
+        .with_body("Copy places a deep clone of the selected node (including all children) into the internal clipboard buffer. The original node is left in place.\n\nKeyboard shortcut: Ctrl+C\n\nThe clipboard is internal to the Prism session — it does not interact with the system clipboard.")
+        .with_doc("shell/toolbar"),
         HelpEntry::new(
             "shell.toolbar.cut",
             "Cut",
             "Cut the selected node (copy then delete). Keyboard shortcut: Ctrl+X.",
-        ),
+        )
+        .with_doc("shell/toolbar"),
         HelpEntry::new(
             "shell.toolbar.paste",
             "Paste",
             "Insert a copy of the clipboard node as a child of the selection. Keyboard shortcut: Ctrl+V.",
-        ),
+        )
+        .with_body("Paste inserts a deep clone of the clipboard node as a child of the currently selected node. All node IDs are regenerated to avoid duplicates.\n\nKeyboard shortcut: Ctrl+V\n\nIf no node is selected, paste is unavailable.")
+        .with_doc("shell/toolbar"),
         HelpEntry::new(
             "shell.toolbar.duplicate",
             "Duplicate",
             "Clone the selected node and insert it as the next sibling. Keyboard shortcut: Ctrl+D.",
-        ),
+        )
+        .with_doc("shell/toolbar"),
         HelpEntry::new(
             "shell.toolbar.move-up",
             "Move Up",
@@ -133,27 +143,42 @@ pub fn toolbar_entries() -> Vec<HelpEntry> {
             "shell.toolbar.delete",
             "Delete",
             "Remove the selected node from the document. Keyboard shortcut: Delete.",
-        ),
+        )
+        .with_body("Delete removes the selected node and all its children from the document tree. The operation is undoable via Ctrl+Z.\n\nKeyboard shortcut: Delete\n\nIf the deleted node was the last child of its parent, the parent becomes the new selection.")
+        .with_doc("shell/toolbar"),
     ]
 }
 
 pub fn shell_entries() -> Vec<HelpEntry> {
     vec![
         HelpEntry::new(
+            "shell.panels.editor",
+            "Editor",
+            "Visual page editor. Canvas, component palette, layer tree, and properties are all visible simultaneously. Select elements on the canvas or in the layers panel to edit their properties.",
+        )
+        .with_body("The Editor panel is Prism Studio's primary workspace. It combines four surfaces:\n\n• Component Palette — drag components from the sidebar to add them to the document tree.\n• Canvas — WYSIWYG preview of the document. Click to select, Enter to inline-edit.\n• Layers — hierarchical tree view of all nodes. Reorder with the arrow buttons.\n• Properties — schema-driven field editor for the selected component's properties.\n\nThe toolbar at the top provides undo/redo, clipboard operations, and node reordering.")
+        .with_doc("shell/editor"),
+        HelpEntry::new(
             "shell.tabs",
             "Tabs",
             "Open documents. Click a tab to switch, click the X to close.",
-        ),
+        )
+        .with_body("Tabs provide a multi-document interface. Each open document gets its own tab in the tab bar above the canvas.\n\n• Click a tab to switch to that document.\n• Click the X to close a tab.\n• The active tab is highlighted with the accent color.\n\nClosing the last tab does not close the editor — a blank canvas is shown instead.")
+        .with_doc("shell/tabs"),
         HelpEntry::new(
             "shell.command-palette",
             "Command Palette",
             "Search and run any command. Open with Ctrl+Shift+P.",
-        ),
+        )
+        .with_body("The Command Palette provides quick access to all registered commands. Type to filter by label or category, then press Enter or click to execute.\n\nKeyboard shortcut: Ctrl+Shift+P\n\nCommands include panel navigation, clipboard operations, undo/redo, and search. Each command shows its keyboard shortcut on the right.")
+        .with_doc("shell/command-palette"),
         HelpEntry::new(
             "shell.search",
             "Search",
             "Full-text search across all node properties in the current document. Open with Ctrl+F.",
-        ),
+        )
+        .with_body("Search uses TF-IDF full-text indexing to find nodes by their property values. Results are ranked by relevance and show the matching field and a text snippet.\n\nKeyboard shortcut: Ctrl+F\n\nClick a search result to select that node in the canvas and inspector.")
+        .with_doc("shell/search"),
     ]
 }
 
@@ -242,9 +267,9 @@ mod tests {
     }
 
     #[test]
-    fn all_four_panels_registered() {
+    fn all_panels_registered() {
         let (reg, _) = setup();
-        for panel in ["identity", "builder", "inspector", "properties"] {
+        for panel in ["identity", "builder", "inspector", "properties", "editor"] {
             let id = format!("shell.panels.{panel}");
             assert!(reg.get(&id).is_some(), "missing panel entry: {id}");
         }

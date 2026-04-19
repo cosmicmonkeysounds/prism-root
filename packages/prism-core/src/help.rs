@@ -33,6 +33,8 @@ pub struct HelpEntry {
     pub title: String,
     pub summary: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub doc_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub doc_anchor: Option<String>,
@@ -48,9 +50,15 @@ impl HelpEntry {
             id: id.into(),
             title: title.into(),
             summary: summary.into(),
+            body: None,
             doc_path: None,
             doc_anchor: None,
         }
+    }
+
+    pub fn with_body(mut self, body: impl Into<String>) -> Self {
+        self.body = Some(body.into());
+        self
     }
 
     pub fn with_doc(mut self, path: impl Into<String>) -> Self {

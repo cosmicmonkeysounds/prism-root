@@ -78,17 +78,7 @@ impl CommandRegistry {
             "Go to Identity",
             "Panel",
         ));
-        reg.register(CommandEntry::new("panel.builder", "Go to Builder", "Panel"));
-        reg.register(CommandEntry::new(
-            "panel.inspector",
-            "Go to Inspector",
-            "Panel",
-        ));
-        reg.register(CommandEntry::new(
-            "panel.properties",
-            "Go to Properties",
-            "Panel",
-        ));
+        reg.register(CommandEntry::new("panel.edit", "Go to Editor", "Panel"));
         reg.register(CommandEntry::new(
             "notification.dismiss_all",
             "Dismiss All Notifications",

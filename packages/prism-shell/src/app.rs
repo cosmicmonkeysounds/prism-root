@@ -26,16 +26,13 @@ use crate::command::CommandRegistry;
 use crate::help::register_help_entries;
 use crate::input::{self, InputEvent};
 use crate::keyboard::KeyboardModel;
-use crate::panels::{
-    builder::BuilderPanel, identity::IdentityPanel, inspector::InspectorPanel,
-    properties::PropertiesPanel, Panel,
-};
+use crate::panels::{identity::IdentityPanel, properties::PropertiesPanel, Panel};
 use crate::search::SearchIndex;
 use crate::selection::SelectionModel;
 use crate::telemetry::FirstPaint;
 use crate::{
-    AppWindow, BuilderNode, ButtonSpec, CommandItem, ComponentPaletteItem, FieldRow,
-    HelpTooltipData, InspectorNode, SearchResultItem, TabItem, ToastItem,
+    AppWindow, BreadcrumbItem, BuilderNode, ButtonSpec, CommandItem, ComponentPaletteItem,
+    DocsPanelData, FieldRow, HelpTooltipData, InspectorNode, SearchResultItem, TabItem, ToastItem,
 };
 
 // ── Reloadable state ───────────────────────────────────────────────
@@ -74,27 +71,21 @@ pub struct ToastData {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ActivePanel {
     Identity,
-    Builder,
-    Inspector,
-    Properties,
+    Edit,
 }
 
 impl ActivePanel {
     pub fn as_id(self) -> i32 {
         match self {
-            ActivePanel::Identity => IdentityPanel::ID,
-            ActivePanel::Builder => BuilderPanel::ID,
-            ActivePanel::Inspector => InspectorPanel::ID,
-            ActivePanel::Properties => PropertiesPanel::ID,
+            ActivePanel::Identity => 0,
+            ActivePanel::Edit => 1,
         }
     }
 
     pub fn from_id(id: i32) -> Self {
         match id {
-            x if x == BuilderPanel::ID => ActivePanel::Builder,
-            x if x == InspectorPanel::ID => ActivePanel::Inspector,
-            x if x == PropertiesPanel::ID => ActivePanel::Properties,
-            _ => ActivePanel::Identity,
+            0 => ActivePanel::Identity,
+            _ => ActivePanel::Edit,
         }
     }
 }
@@ -107,7 +98,7 @@ impl Default for AppState {
                 shell_mode: ShellMode::Build,
                 permission: Permission::Dev,
             },
-            active_panel: ActivePanel::Identity,
+            active_panel: ActivePanel::Edit,
             builder_document: sample_document(),
             selection: SelectionModel::single("hero".into()),
             tabs: vec![Tab {
@@ -761,6 +752,18 @@ impl Shell {
                             tip_y: 0.0,
                         });
                     }
+                    let empty_docs = DocsPanelData {
+                        visible: false,
+                        help_id: SharedString::new(),
+                        title: SharedString::new(),
+                        summary: SharedString::new(),
+                        body: SharedString::new(),
+                    };
+                    if w.get_docs_view().visible {
+                        w.set_docs_view(empty_docs);
+                    } else if w.get_docs_panel().visible {
+                        w.set_docs_panel(empty_docs);
+                    }
                     sync_ui_from_shared(&inner, &w);
                 }
             }
@@ -785,7 +788,6 @@ impl Shell {
             move |node_id| {
                 inner.borrow_mut().store.mutate(|state| {
                     state.selection.select(node_id.to_string());
-                    state.active_panel = ActivePanel::Properties;
                 });
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
@@ -916,26 +918,80 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move || {
-                let active_id = inner.borrow().help_active_id.clone();
-                if !active_id.is_empty() {
-                    let mut s = inner.borrow_mut();
-                    s.add_toast(
-                        "Documentation",
-                        &format!("Opening docs for {active_id}"),
-                        "info",
-                    );
-                    s.help_active_id.clear();
-                    s.help_pending_id.clear();
-                }
+                open_docs_panel(&inner, &weak);
+            }
+        });
+
+        self.window.on_help_entry_clicked({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move || {
+                open_docs_panel(&inner, &weak);
+            }
+        });
+
+        self.window.on_docs_open_full({
+            let weak = weak.clone();
+            move || {
                 if let Some(w) = weak.upgrade() {
-                    w.set_help_tooltip(HelpTooltipData {
+                    let sidebar = w.get_docs_panel();
+                    w.set_docs_view(DocsPanelData {
+                        visible: true,
+                        help_id: sidebar.help_id.clone(),
+                        title: sidebar.title.clone(),
+                        summary: sidebar.summary.clone(),
+                        body: sidebar.body.clone(),
+                    });
+                    w.set_docs_panel(DocsPanelData {
                         visible: false,
+                        help_id: SharedString::new(),
                         title: SharedString::new(),
                         summary: SharedString::new(),
-                        has_docs: false,
-                        tip_x: 0.0,
-                        tip_y: 0.0,
+                        body: SharedString::new(),
                     });
+                }
+            }
+        });
+
+        self.window.on_docs_panel_close({
+            let weak = weak.clone();
+            move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_docs_panel(DocsPanelData {
+                        visible: false,
+                        help_id: SharedString::new(),
+                        title: SharedString::new(),
+                        summary: SharedString::new(),
+                        body: SharedString::new(),
+                    });
+                }
+            }
+        });
+
+        self.window.on_docs_view_close({
+            let weak = weak.clone();
+            move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_docs_view(DocsPanelData {
+                        visible: false,
+                        help_id: SharedString::new(),
+                        title: SharedString::new(),
+                        summary: SharedString::new(),
+                        body: SharedString::new(),
+                    });
+                }
+            }
+        });
+
+        // Breadcrumb navigation
+        self.window.on_breadcrumb_clicked({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |node_id| {
+                inner.borrow_mut().store.mutate(|state| {
+                    state.selection.select(node_id.to_string());
+                });
+                if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
                 }
             }
@@ -1007,18 +1063,17 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
     // Fill active panel
     match state.active_panel {
         ActivePanel::Identity => push_identity_actions(window),
-        ActivePanel::Builder => {
-            push_builder_preview(window, &state.builder_document, &state.selection)
+        ActivePanel::Edit => {
+            push_builder_preview(window, &state.builder_document, &state.selection);
+            push_inspector_nodes(window, &state.builder_document, &state.selection);
+            push_property_rows(
+                window,
+                &state.builder_document,
+                &inner.registry,
+                &state.selection,
+            );
+            push_breadcrumbs(window, &state.builder_document, &state.selection);
         }
-        ActivePanel::Inspector => {
-            push_inspector_nodes(window, &state.builder_document, &state.selection)
-        }
-        ActivePanel::Properties => push_property_rows(
-            window,
-            &state.builder_document,
-            &inner.registry,
-            &state.selection,
-        ),
     }
 
     // Tabs
@@ -1185,6 +1240,48 @@ fn push_property_rows(
     window.set_field_rows(ModelRc::from(model as Rc<dyn Model<Data = FieldRow>>));
 }
 
+// ── Docs panel ────────────────────────────────────────────────────
+
+fn open_docs_panel(shared: &Rc<RefCell<ShellInner>>, weak: &slint::Weak<AppWindow>) {
+    let active_id = shared.borrow().help_active_id.clone();
+    if active_id.is_empty() {
+        return;
+    }
+    let (title, summary, body) = {
+        let s = shared.borrow();
+        match s.help.get(&active_id) {
+            Some(entry) => (
+                entry.title.clone(),
+                entry.summary.clone(),
+                entry.body.clone().unwrap_or_default(),
+            ),
+            None => return,
+        }
+    };
+    {
+        let mut s = shared.borrow_mut();
+        s.help_active_id.clear();
+        s.help_pending_id.clear();
+    }
+    if let Some(w) = weak.upgrade() {
+        w.set_help_tooltip(HelpTooltipData {
+            visible: false,
+            title: SharedString::new(),
+            summary: SharedString::new(),
+            has_docs: false,
+            tip_x: 0.0,
+            tip_y: 0.0,
+        });
+        w.set_docs_panel(DocsPanelData {
+            visible: true,
+            help_id: SharedString::from(&active_id),
+            title: SharedString::from(title),
+            summary: SharedString::from(summary),
+            body: SharedString::from(body),
+        });
+    }
+}
+
 // ── Command dispatch ───────────────────────────────────────────────
 
 fn execute_command(
@@ -1216,23 +1313,11 @@ fn execute_command(
                 .store
                 .mutate(|s| s.active_panel = ActivePanel::Identity);
         }
-        "panel.builder" => {
+        "panel.edit" | "panel.builder" | "panel.inspector" | "panel.properties" => {
             shared
                 .borrow_mut()
                 .store
-                .mutate(|s| s.active_panel = ActivePanel::Builder);
-        }
-        "panel.inspector" => {
-            shared
-                .borrow_mut()
-                .store
-                .mutate(|s| s.active_panel = ActivePanel::Inspector);
-        }
-        "panel.properties" => {
-            shared
-                .borrow_mut()
-                .store
-                .mutate(|s| s.active_panel = ActivePanel::Properties);
+                .mutate(|s| s.active_panel = ActivePanel::Edit);
         }
         "selection.delete" => {
             let mut s = shared.borrow_mut();
@@ -1351,12 +1436,7 @@ fn execute_command(
 fn panel_metadata(panel: ActivePanel) -> (&'static str, &'static str) {
     match panel {
         ActivePanel::Identity => (IdentityPanel::new().title(), IdentityPanel::new().hint()),
-        ActivePanel::Builder => (BuilderPanel::new().title(), BuilderPanel::new().hint()),
-        ActivePanel::Inspector => (InspectorPanel::new().title(), InspectorPanel::new().hint()),
-        ActivePanel::Properties => (
-            PropertiesPanel::new().title(),
-            PropertiesPanel::new().hint(),
-        ),
+        ActivePanel::Edit => ("Editor", "Build your page visually."),
     }
 }
 
@@ -1678,6 +1758,40 @@ fn insert_after_in_children(children: &mut Vec<Node>, sibling_id: &str, new_node
     false
 }
 
+fn push_breadcrumbs(window: &AppWindow, doc: &BuilderDocument, selection: &SelectionModel) {
+    let selected = selection.primary();
+    let items: Vec<BreadcrumbItem> = if let (Some(root), Some(target)) = (&doc.root, selected) {
+        let mut path = Vec::new();
+        find_path_to_node(root, target, &mut path);
+        path.iter()
+            .enumerate()
+            .map(|(i, (id, component))| BreadcrumbItem {
+                id: SharedString::from(id.as_str()),
+                label: SharedString::from(component.as_str()),
+                has_separator: i > 0,
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let model = Rc::new(VecModel::from(items));
+    window.set_breadcrumbs(ModelRc::from(model as Rc<dyn Model<Data = BreadcrumbItem>>));
+}
+
+fn find_path_to_node(node: &Node, target: &str, path: &mut Vec<(String, String)>) -> bool {
+    path.push((node.id.clone(), node.component.clone()));
+    if node.id == target {
+        return true;
+    }
+    for child in &node.children {
+        if find_path_to_node(child, target, path) {
+            return true;
+        }
+    }
+    path.pop();
+    false
+}
+
 fn collect_node_ids(root: Option<&Node>) -> Vec<NodeId> {
     let mut ids = Vec::new();
     if let Some(node) = root {
@@ -1700,9 +1814,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_app_state_starts_on_identity_panel() {
+    fn default_app_state_starts_on_edit_panel() {
         let state = AppState::default();
-        assert!(matches!(state.active_panel, ActivePanel::Identity));
+        assert!(matches!(state.active_panel, ActivePanel::Edit));
     }
 
     #[test]
@@ -1715,40 +1829,32 @@ mod tests {
     #[test]
     fn store_snapshot_restore_round_trips_app_state() {
         let mut store: Store<AppState> = Store::new(AppState::default());
-        store.mutate(|s| s.active_panel = ActivePanel::Builder);
+        store.mutate(|s| s.active_panel = ActivePanel::Identity);
         let bytes = store.snapshot().expect("snapshot");
         let mut fresh: Store<AppState> = Store::new(AppState::default());
         fresh.restore(&bytes).expect("restore");
-        assert!(matches!(fresh.state().active_panel, ActivePanel::Builder));
+        assert!(matches!(fresh.state().active_panel, ActivePanel::Identity));
         assert!(fresh.state().builder_document.root.is_some());
     }
 
     #[test]
     fn active_panel_roundtrips_through_id() {
-        for panel in [
-            ActivePanel::Identity,
-            ActivePanel::Builder,
-            ActivePanel::Inspector,
-            ActivePanel::Properties,
-        ] {
+        for panel in [ActivePanel::Identity, ActivePanel::Edit] {
             assert_eq!(ActivePanel::from_id(panel.as_id()), panel);
         }
     }
 
     #[test]
-    fn unknown_panel_id_falls_back_to_identity() {
-        assert_eq!(ActivePanel::from_id(999), ActivePanel::Identity);
-        assert_eq!(ActivePanel::from_id(-1), ActivePanel::Identity);
+    fn unknown_panel_id_falls_back_to_edit() {
+        assert_eq!(ActivePanel::from_id(999), ActivePanel::Edit);
+        assert_eq!(ActivePanel::from_id(-1), ActivePanel::Edit);
     }
 
     #[test]
     fn select_panel_action_mutates_state() {
         let mut store: Store<AppState> = Store::new(AppState::default());
-        store.dispatch(SelectPanel(ActivePanel::Properties));
-        assert!(matches!(
-            store.state().active_panel,
-            ActivePanel::Properties
-        ));
+        store.dispatch(SelectPanel(ActivePanel::Identity));
+        assert!(matches!(store.state().active_panel, ActivePanel::Identity));
     }
 
     #[test]
@@ -1951,6 +2057,26 @@ mod tests {
         assert_eq!(counter, 52);
         assert_eq!(cloned.component, "heading");
         assert_eq!(cloned.props["text"], "Hello");
+    }
+
+    #[test]
+    fn find_path_to_node_returns_path() {
+        let doc = sample_document();
+        let root = doc.root.as_ref().unwrap();
+        let mut path = Vec::new();
+        assert!(find_path_to_node(root, "hero", &mut path));
+        assert_eq!(path.len(), 2);
+        assert_eq!(path[0].0, "root");
+        assert_eq!(path[1].0, "hero");
+    }
+
+    #[test]
+    fn find_path_to_node_returns_false_for_missing() {
+        let doc = sample_document();
+        let root = doc.root.as_ref().unwrap();
+        let mut path = Vec::new();
+        assert!(!find_path_to_node(root, "nonexistent", &mut path));
+        assert!(path.is_empty());
     }
 
     #[test]
