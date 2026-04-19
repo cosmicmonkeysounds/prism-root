@@ -12,7 +12,12 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use prism_builder::{
-    starter::register_builtins, BuilderDocument, ComponentRegistry, FieldKind, Node, NodeId,
+    layout::{
+        AlignOption, Dimension, FlexDirection, FlowDisplay, FlowProps, GridPlacement,
+        JustifyOption, LayoutMode, PageSize, TrackSize,
+    },
+    starter::register_builtins,
+    BuilderDocument, ComponentRegistry, FieldKind, Node, NodeId,
 };
 use prism_core::design_tokens::{DesignTokens, DEFAULT_TOKENS};
 use prism_core::editor::EditorState;
@@ -34,7 +39,8 @@ use crate::selection::SelectionModel;
 use crate::telemetry::FirstPaint;
 use crate::{
     AppWindow, BreadcrumbItem, BuilderNode, ButtonSpec, CommandItem, ComponentPaletteItem,
-    DocsPanelData, FieldRow, HelpTooltipData, InspectorNode, SearchResultItem, TabItem, ToastItem,
+    DocsPanelData, FieldRow, GutterRect, HelpTooltipData, InspectorNode, ModifierItem,
+    PageLayoutData, SearchResultItem, SignalItem, TabItem, ToastItem, VariantItem,
 };
 
 // ── Reloadable state ───────────────────────────────────────────────
@@ -53,6 +59,7 @@ pub struct AppState {
     pub search_query: String,
     pub editor_state: EditorState,
     pub toasts: Vec<ToastData>,
+    pub show_grid_overlay: bool,
     next_toast_id: u64,
     next_node_id: u64,
 }
@@ -117,6 +124,7 @@ impl Default for AppState {
             search_query: String::new(),
             editor_state: EditorState::with_text("// Welcome to Prism Code Editor\n// Start typing to edit\n\nfn main() {\n    println!(\"Hello, Prism!\");\n}\n"),
             toasts: Vec::new(),
+            show_grid_overlay: true,
             next_toast_id: 0,
             next_node_id: 100,
         }
@@ -124,11 +132,20 @@ impl Default for AppState {
 }
 
 fn sample_document() -> BuilderDocument {
+    use prism_builder::layout::PageLayout;
+    use prism_core::foundation::geometry::Edges;
+
     BuilderDocument {
         root: Some(Node {
             id: "root".into(),
             component: "container".into(),
             props: json!({ "spacing": 16 }),
+            layout_mode: LayoutMode::Flow(FlowProps {
+                display: FlowDisplay::Flex,
+                flex_direction: FlexDirection::Column,
+                gap: 16.0,
+                ..Default::default()
+            }),
             children: vec![
                 Node {
                     id: "hero".into(),
@@ -146,9 +163,56 @@ fn sample_document() -> BuilderDocument {
                     children: vec![],
                     ..Default::default()
                 },
+                Node {
+                    id: "cols".into(),
+                    component: "columns".into(),
+                    props: json!({ "gap": 16 }),
+                    layout_mode: LayoutMode::Flow(FlowProps {
+                        display: FlowDisplay::Flex,
+                        flex_direction: FlexDirection::Row,
+                        gap: 16.0,
+                        ..Default::default()
+                    }),
+                    children: vec![
+                        Node {
+                            id: "col1".into(),
+                            component: "card".into(),
+                            props: json!({ "title": "Build", "body": "Create pages visually with drag-and-drop components." }),
+                            layout_mode: LayoutMode::Flow(FlowProps {
+                                flex_grow: 1.0,
+                                ..Default::default()
+                            }),
+                            children: vec![],
+                            ..Default::default()
+                        },
+                        Node {
+                            id: "col2".into(),
+                            component: "card".into(),
+                            props: json!({ "title": "Collaborate", "body": "Real-time CRDT sync across all connected peers." }),
+                            layout_mode: LayoutMode::Flow(FlowProps {
+                                flex_grow: 1.0,
+                                ..Default::default()
+                            }),
+                            children: vec![],
+                            ..Default::default()
+                        },
+                    ],
+                    ..Default::default()
+                },
             ],
             ..Default::default()
         }),
+        page_layout: PageLayout {
+            size: PageSize::Responsive,
+            margins: Edges::new(32.0, 48.0, 32.0, 48.0),
+            columns: vec![
+                TrackSize::Fr { value: 1.0 },
+                TrackSize::Fr { value: 2.0 },
+                TrackSize::Fr { value: 1.0 },
+            ],
+            column_gap: 24.0,
+            ..Default::default()
+        },
         ..Default::default()
     }
 }
@@ -506,6 +570,35 @@ impl Shell {
                     let selected_id = s.store.state().selection.primary().cloned();
                     if let Some(ref target_id) = selected_id {
                         let kind = field_kind_for_key(&s, &key);
+                        s.push_undo(&format!("Edit {key}"));
+                        s.store.mutate(|state| {
+                            if let Some(ref mut root) = state.builder_document.root {
+                                mutate_node_prop(root, target_id, &key, &value, kind.as_deref());
+                            }
+                        });
+                    }
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Numeric field editing (from sliders)
+        self.window.on_field_edited_number({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |key, val| {
+                let key = key.to_string();
+                {
+                    let mut s = inner.borrow_mut();
+                    let selected_id = s.store.state().selection.primary().cloned();
+                    if let Some(ref target_id) = selected_id {
+                        let kind = field_kind_for_key(&s, &key);
+                        let value = match kind.as_deref() {
+                            Some("integer") => format!("{}", val as i64),
+                            _ => format_slider_value(val),
+                        };
                         s.push_undo(&format!("Edit {key}"));
                         s.store.mutate(|state| {
                             if let Some(ref mut root) = state.builder_document.root {
@@ -1014,6 +1107,96 @@ impl Shell {
                 });
             }
         });
+
+        // Grid overlay toggle
+        self.window.on_toggle_grid_overlay({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move || {
+                inner.borrow_mut().store.mutate(|state| {
+                    state.show_grid_overlay = !state.show_grid_overlay;
+                });
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Page layout editing
+        self.window.on_page_layout_edited({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |key, value| {
+                let key = key.to_string();
+                let value = value.to_string();
+                {
+                    let mut s = inner.borrow_mut();
+                    s.push_undo(&format!("Edit page {key}"));
+                    s.store.mutate(|state| {
+                        apply_page_layout_edit(
+                            &mut state.builder_document.page_layout,
+                            &key,
+                            &value,
+                        );
+                    });
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Layout field editing (per-node)
+        self.window.on_layout_field_edited({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |key, value| {
+                let key = key.to_string();
+                let value = value.to_string();
+                {
+                    let mut s = inner.borrow_mut();
+                    let selected_id = s.store.state().selection.primary().cloned();
+                    if let Some(ref target_id) = selected_id {
+                        s.push_undo(&format!("Edit layout {key}"));
+                        let tid = target_id.clone();
+                        s.store.mutate(|state| {
+                            if let Some(ref mut root) = state.builder_document.root {
+                                apply_node_layout_edit(root, &tid, &key, &value);
+                            }
+                        });
+                    }
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Layout numeric field editing (from sliders)
+        self.window.on_layout_field_edited_number({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |key, val| {
+                let key = key.to_string();
+                let value = format_slider_value(val);
+                {
+                    let mut s = inner.borrow_mut();
+                    let selected_id = s.store.state().selection.primary().cloned();
+                    if let Some(ref target_id) = selected_id {
+                        s.push_undo(&format!("Edit layout {key}"));
+                        let tid = target_id.clone();
+                        s.store.mutate(|state| {
+                            if let Some(ref mut root) = state.builder_document.root {
+                                apply_node_layout_edit(root, &tid, &key, &value);
+                            }
+                        });
+                    }
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
     }
 }
 
@@ -1055,6 +1238,14 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
                 &state.selection,
             );
             push_breadcrumbs(window, &state.builder_document, &state.selection);
+            push_page_layout_data(window, &state.builder_document, state.show_grid_overlay);
+            push_layout_rows(window, &state.builder_document, &state.selection);
+            push_game_engine_data(
+                window,
+                &state.builder_document,
+                &inner.registry,
+                &state.selection,
+            );
         }
         ActivePanel::CodeEditor => {
             window.set_editor_text(SharedString::from(state.editor_state.text()));
@@ -1202,6 +1393,41 @@ fn push_inspector_nodes(window: &AppWindow, doc: &BuilderDocument, selection: &S
     window.set_inspector_nodes(ModelRc::from(model as Rc<dyn Model<Data = InspectorNode>>));
 }
 
+fn field_row_data_to_slint(r: &crate::panels::properties::FieldRowData) -> FieldRow {
+    use slint::Color;
+    let swatch = if r.kind == "color" {
+        parse_hex_color(&r.value)
+    } else {
+        Color::from_argb_u8(0, 0, 0, 0)
+    };
+    let opts: Vec<SharedString> = r
+        .options
+        .iter()
+        .map(|o| SharedString::from(o.as_str()))
+        .collect();
+    FieldRow {
+        key: SharedString::from(r.key.as_str()),
+        label: SharedString::from(r.label.as_str()),
+        kind: SharedString::from(r.kind.as_str()),
+        value: SharedString::from(r.value.as_str()),
+        required: r.required,
+        min: r.min,
+        max: r.max,
+        has_bounds: r.has_bounds,
+        options: ModelRc::from(Rc::new(VecModel::from(opts)) as Rc<dyn Model<Data = SharedString>>),
+        swatch,
+    }
+}
+
+fn parse_hex_color(hex: &str) -> slint::Color {
+    let hex = hex.trim_start_matches('#');
+    let r = u8::from_str_radix(hex.get(0..2).unwrap_or("00"), 16).unwrap_or(0);
+    let g = u8::from_str_radix(hex.get(2..4).unwrap_or("00"), 16).unwrap_or(0);
+    let b = u8::from_str_radix(hex.get(4..6).unwrap_or("00"), 16).unwrap_or(0);
+    let a = u8::from_str_radix(hex.get(6..8).unwrap_or("ff"), 16).unwrap_or(255);
+    slint::Color::from_argb_u8(a, r, g, b)
+}
+
 fn push_property_rows(
     window: &AppWindow,
     doc: &BuilderDocument,
@@ -1213,13 +1439,7 @@ fn push_property_rows(
     window.set_selected_component(SharedString::from(component_id));
     let rows: Vec<FieldRow> = PropertiesPanel::rows(doc, registry, &selected)
         .into_iter()
-        .map(|r| FieldRow {
-            key: SharedString::from(r.key),
-            label: SharedString::from(r.label),
-            kind: SharedString::from(r.kind),
-            value: SharedString::from(r.value),
-            required: r.required,
-        })
+        .map(|r| field_row_data_to_slint(&r))
         .collect();
     let model = Rc::new(VecModel::from(rows));
     window.set_field_rows(ModelRc::from(model as Rc<dyn Model<Data = FieldRow>>));
@@ -1521,6 +1741,16 @@ fn flatten_builder_walk(
         _ => bool_prop("disabled"),
     };
 
+    let display_mode = match &node.layout_mode {
+        LayoutMode::Flow(f) => match f.display {
+            FlowDisplay::Block => "block",
+            FlowDisplay::Flex => "flex",
+            FlowDisplay::Grid => "grid",
+            FlowDisplay::None => "none",
+        },
+        LayoutMode::Free => "free",
+    };
+
     out.push(BuilderNode {
         id: SharedString::from(&node.id),
         component_type: SharedString::from(&node.component),
@@ -1533,6 +1763,8 @@ fn flatten_builder_walk(
         placeholder: SharedString::from(str_prop("placeholder")),
         label: SharedString::from(label),
         disabled,
+        display_mode: SharedString::from(display_mode),
+        has_children: !node.children.is_empty(),
     });
     for child in &node.children {
         flatten_builder_walk(child, depth + 1, selection, out);
@@ -1562,6 +1794,14 @@ fn field_kind_for_key(inner: &ShellInner, key: &str) -> Option<String> {
             .unwrap_or("text")
             .to_string(),
     )
+}
+
+fn format_slider_value(val: f32) -> String {
+    if val.fract() == 0.0 && val.is_finite() {
+        format!("{}", val as i64)
+    } else {
+        format!("{:.2}", val)
+    }
 }
 
 fn mutate_node_prop(
@@ -1738,6 +1978,7 @@ fn clone_node_with_new_ids(node: &Node, counter: &mut u64) -> Node {
             .collect(),
         layout_mode: node.layout_mode.clone(),
         transform: node.transform.clone(),
+        modifiers: node.modifiers.clone(),
     }
 }
 
@@ -1817,6 +2058,404 @@ fn collect_ids_walk(node: &Node, ids: &mut Vec<NodeId>) {
     for child in &node.children {
         collect_ids_walk(child, ids);
     }
+}
+
+// ── Page layout data ──────────────────────────────────────────────
+
+fn push_page_layout_data(window: &AppWindow, doc: &BuilderDocument, show_grid: bool) {
+    let pl = &doc.page_layout;
+    let resolved = pl.resolved_size();
+    let is_responsive = resolved.is_none();
+    let (pw, ph) = resolved
+        .map(|s| (s.width, s.height))
+        .unwrap_or((1280.0, 800.0));
+
+    let size_label = match pl.size {
+        PageSize::Responsive => "Responsive",
+        PageSize::A4 => "A4",
+        PageSize::A3 => "A3",
+        PageSize::A5 => "A5",
+        PageSize::Letter => "Letter",
+        PageSize::Legal => "Legal",
+        PageSize::Tabloid => "Tabloid",
+        PageSize::Custom { .. } => "Custom",
+    };
+
+    window.set_page_layout(PageLayoutData {
+        page_width: pw,
+        page_height: ph,
+        margin_top: pl.margins.top,
+        margin_right: pl.margins.right,
+        margin_bottom: pl.margins.bottom,
+        margin_left: pl.margins.left,
+        column_gap: pl.column_gap,
+        row_gap: pl.row_gap,
+        column_count: pl.columns.len().max(1) as i32,
+        row_count: pl.rows.len() as i32,
+        show_grid,
+        is_responsive,
+        page_size_label: SharedString::from(size_label),
+    });
+
+    let content_width = pw - pl.margins.left - pl.margins.right;
+    let content_height = ph - pl.margins.top - pl.margins.bottom;
+
+    let col_gutters = compute_gutter_rects(&pl.columns, pl.column_gap, content_width);
+    let row_gutters = compute_gutter_rects(&pl.rows, pl.row_gap, content_height);
+
+    let col_model = Rc::new(VecModel::from(col_gutters));
+    window.set_column_gutters(ModelRc::from(col_model as Rc<dyn Model<Data = GutterRect>>));
+
+    let row_model = Rc::new(VecModel::from(row_gutters));
+    window.set_row_gutters(ModelRc::from(row_model as Rc<dyn Model<Data = GutterRect>>));
+}
+
+fn compute_gutter_rects(tracks: &[TrackSize], gap: f32, available: f32) -> Vec<GutterRect> {
+    if tracks.len() <= 1 || gap <= 0.0 {
+        return Vec::new();
+    }
+
+    let num_gaps = tracks.len() - 1;
+    let total_gap = gap * num_gaps as f32;
+    let track_space = (available - total_gap).max(0.0);
+
+    let total_fr: f32 = tracks
+        .iter()
+        .map(|t| match t {
+            TrackSize::Fr { value } => *value,
+            _ => 0.0,
+        })
+        .sum();
+
+    let fixed_space: f32 = tracks
+        .iter()
+        .map(|t| match t {
+            TrackSize::Fixed { value } => *value,
+            TrackSize::Percent { value } => available * value / 100.0,
+            TrackSize::MinMax { min, .. } => *min,
+            _ => 0.0,
+        })
+        .sum();
+
+    let fr_available = (track_space - fixed_space).max(0.0);
+    let fr_unit = if total_fr > 0.0 {
+        fr_available / total_fr
+    } else {
+        0.0
+    };
+
+    let track_sizes: Vec<f32> = tracks
+        .iter()
+        .map(|t| match t {
+            TrackSize::Fixed { value } => *value,
+            TrackSize::Fr { value } => fr_unit * value,
+            TrackSize::Auto => {
+                if total_fr > 0.0 {
+                    0.0
+                } else {
+                    track_space / tracks.len() as f32
+                }
+            }
+            TrackSize::MinMax { min, max } => (fr_unit).clamp(*min, *max),
+            TrackSize::Percent { value } => available * value / 100.0,
+        })
+        .collect();
+
+    let mut gutters = Vec::with_capacity(num_gaps);
+    let mut pos: f32 = 0.0;
+    for (i, size) in track_sizes.iter().enumerate() {
+        pos += size;
+        if i < num_gaps {
+            gutters.push(GutterRect {
+                offset: pos,
+                size: gap,
+            });
+            pos += gap;
+        }
+    }
+    gutters
+}
+
+fn apply_page_layout_edit(pl: &mut prism_builder::layout::PageLayout, key: &str, value: &str) {
+    let parse_f32 = |s: &str| s.parse::<f32>().unwrap_or(0.0);
+    let parse_usize = |s: &str| s.parse::<usize>().unwrap_or(0);
+
+    match key {
+        "columns" => {
+            let count = parse_usize(value).max(1);
+            pl.columns = (0..count).map(|_| TrackSize::Fr { value: 1.0 }).collect();
+        }
+        "rows" => {
+            let count = parse_usize(value);
+            pl.rows = (0..count).map(|_| TrackSize::Auto).collect();
+        }
+        "column_gap" => pl.column_gap = parse_f32(value),
+        "row_gap" => pl.row_gap = parse_f32(value),
+        "margin_top" => pl.margins.top = parse_f32(value),
+        "margin_right" => pl.margins.right = parse_f32(value),
+        "margin_bottom" => pl.margins.bottom = parse_f32(value),
+        "margin_left" => pl.margins.left = parse_f32(value),
+        _ => {}
+    }
+}
+
+fn apply_node_layout_edit(root: &mut Node, target: &str, key: &str, value: &str) -> bool {
+    if root.id == target {
+        apply_layout_to_node(root, key, value);
+        return true;
+    }
+    for child in &mut root.children {
+        if apply_node_layout_edit(child, target, key, value) {
+            return true;
+        }
+    }
+    false
+}
+
+fn apply_layout_to_node(node: &mut Node, key: &str, value: &str) {
+    let parse_f32 = |s: &str| s.parse::<f32>().unwrap_or(0.0);
+
+    let flow = match &mut node.layout_mode {
+        LayoutMode::Flow(f) => f,
+        LayoutMode::Free => {
+            if key == "layout.display" && value != "free" {
+                node.layout_mode = LayoutMode::Flow(FlowProps::default());
+                match &mut node.layout_mode {
+                    LayoutMode::Flow(f) => f,
+                    _ => unreachable!(),
+                }
+            } else {
+                return;
+            }
+        }
+    };
+
+    match key {
+        "layout.display" => match value {
+            "block" => flow.display = FlowDisplay::Block,
+            "flex" => flow.display = FlowDisplay::Flex,
+            "grid" => flow.display = FlowDisplay::Grid,
+            "none" => flow.display = FlowDisplay::None,
+            "free" => {
+                node.layout_mode = LayoutMode::Free;
+            }
+            _ => {}
+        },
+        "layout.width" => flow.width = parse_dimension(value),
+        "layout.height" => flow.height = parse_dimension(value),
+        "layout.gap" => flow.gap = parse_f32(value),
+        "layout.flex_direction" => {
+            flow.flex_direction = match value {
+                "row" => FlexDirection::Row,
+                "column" => FlexDirection::Column,
+                "row-reverse" => FlexDirection::RowReverse,
+                "column-reverse" => FlexDirection::ColumnReverse,
+                _ => flow.flex_direction,
+            };
+        }
+        "layout.flex_grow" => flow.flex_grow = parse_f32(value),
+        "layout.flex_shrink" => flow.flex_shrink = parse_f32(value),
+        "layout.align_items" => {
+            flow.align_items = match value {
+                "auto" => AlignOption::Auto,
+                "start" => AlignOption::Start,
+                "end" => AlignOption::End,
+                "center" => AlignOption::Center,
+                "stretch" => AlignOption::Stretch,
+                "baseline" => AlignOption::Baseline,
+                _ => flow.align_items,
+            };
+        }
+        "layout.justify_content" => {
+            flow.justify_content = match value {
+                "start" => JustifyOption::Start,
+                "end" => JustifyOption::End,
+                "center" => JustifyOption::Center,
+                "space-between" => JustifyOption::SpaceBetween,
+                "space-around" => JustifyOption::SpaceAround,
+                "space-evenly" => JustifyOption::SpaceEvenly,
+                "stretch" => JustifyOption::Stretch,
+                _ => flow.justify_content,
+            };
+        }
+        "layout.grid_column" => flow.grid_column = parse_grid_placement(value),
+        "layout.grid_row" => flow.grid_row = parse_grid_placement(value),
+        "layout.padding" => {
+            let vals = parse_edge_values(value);
+            flow.padding = vals;
+        }
+        "layout.margin" => {
+            let vals = parse_edge_values(value);
+            flow.margin = vals;
+        }
+        _ => {}
+    }
+}
+
+fn parse_dimension(s: &str) -> Dimension {
+    let s = s.trim();
+    if s == "auto" {
+        return Dimension::Auto;
+    }
+    if let Some(px) = s.strip_suffix("px") {
+        if let Ok(v) = px.trim().parse::<f32>() {
+            return Dimension::Px { value: v };
+        }
+    }
+    if let Some(pct) = s.strip_suffix('%') {
+        if let Ok(v) = pct.trim().parse::<f32>() {
+            return Dimension::Percent { value: v };
+        }
+    }
+    if let Ok(v) = s.parse::<f32>() {
+        return Dimension::Px { value: v };
+    }
+    Dimension::Auto
+}
+
+fn parse_grid_placement(s: &str) -> GridPlacement {
+    let s = s.trim();
+    if s == "auto" {
+        return GridPlacement::Auto;
+    }
+    if let Some(rest) = s.strip_prefix("span ") {
+        if let Ok(v) = rest.trim().parse::<u16>() {
+            return GridPlacement::Span { count: v };
+        }
+    }
+    if let Some(rest) = s.strip_prefix("line ") {
+        if let Ok(v) = rest.trim().parse::<i16>() {
+            return GridPlacement::Line { index: v };
+        }
+    }
+    if let Ok(v) = s.parse::<i16>() {
+        return GridPlacement::Line { index: v };
+    }
+    GridPlacement::Auto
+}
+
+fn parse_edge_values(s: &str) -> prism_core::foundation::geometry::Edges<f32> {
+    let parts: Vec<f32> = s
+        .split_whitespace()
+        .filter_map(|p| p.parse::<f32>().ok())
+        .collect();
+    match parts.len() {
+        1 => prism_core::foundation::geometry::Edges::all(parts[0]),
+        2 => prism_core::foundation::geometry::Edges::symmetric(parts[0], parts[1]),
+        4 => prism_core::foundation::geometry::Edges::new(parts[0], parts[1], parts[2], parts[3]),
+        _ => prism_core::foundation::geometry::Edges::ZERO,
+    }
+}
+
+fn push_layout_rows(window: &AppWindow, doc: &BuilderDocument, selection: &SelectionModel) {
+    let selected = selection.as_option();
+    let rows: Vec<FieldRow> = PropertiesPanel::layout_rows(doc, &selected)
+        .into_iter()
+        .map(|r| field_row_data_to_slint(&r))
+        .collect();
+    let model = Rc::new(VecModel::from(rows));
+    window.set_layout_rows(ModelRc::from(model as Rc<dyn Model<Data = FieldRow>>));
+}
+
+fn push_game_engine_data(
+    window: &AppWindow,
+    doc: &BuilderDocument,
+    registry: &prism_builder::ComponentRegistry,
+    selection: &SelectionModel,
+) {
+    let selected = selection.as_option();
+
+    // Modifiers on the selected node
+    let modifiers: Vec<ModifierItem> = selected
+        .as_ref()
+        .and_then(|id| doc.root.as_ref().and_then(|r| r.find(id)))
+        .map(|node| {
+            node.modifiers
+                .iter()
+                .map(|m| ModifierItem {
+                    kind: SharedString::from(
+                        serde_json::to_string(&m.kind)
+                            .unwrap_or_default()
+                            .trim_matches('"'),
+                    ),
+                    label: SharedString::from(m.kind.label()),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let model = Rc::new(VecModel::from(modifiers));
+    window.set_modifier_items(ModelRc::from(model as Rc<dyn Model<Data = ModifierItem>>));
+
+    // Signals declared by the selected component
+    let signals: Vec<SignalItem> = selected
+        .as_ref()
+        .and_then(|id| doc.root.as_ref().and_then(|r| r.find(id)))
+        .and_then(|node| registry.get(&node.component))
+        .map(|comp| {
+            comp.signals()
+                .into_iter()
+                .map(|s| SignalItem {
+                    name: SharedString::from(s.name.as_str()),
+                    description: SharedString::from(s.description.as_str()),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let model = Rc::new(VecModel::from(signals));
+    window.set_signal_items(ModelRc::from(model as Rc<dyn Model<Data = SignalItem>>));
+
+    // Variant axes declared by the selected component
+    let variants: Vec<VariantItem> = selected
+        .as_ref()
+        .and_then(|id| doc.root.as_ref().and_then(|r| r.find(id)))
+        .and_then(|node| {
+            let comp = registry.get(&node.component)?;
+            let axes = comp.variants();
+            if axes.is_empty() {
+                return None;
+            }
+            Some(
+                axes.into_iter()
+                    .map(|axis| {
+                        let current = node
+                            .props
+                            .get(&axis.key)
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let opts: Vec<SharedString> = axis
+                            .options
+                            .iter()
+                            .map(|o| SharedString::from(o.label.as_str()))
+                            .collect();
+                        VariantItem {
+                            key: SharedString::from(axis.key.as_str()),
+                            label: SharedString::from(axis.label.as_str()),
+                            selected: SharedString::from(current),
+                            options: ModelRc::from(
+                                Rc::new(VecModel::from(opts)) as Rc<dyn Model<Data = SharedString>>
+                            ),
+                        }
+                    })
+                    .collect(),
+            )
+        })
+        .unwrap_or_default();
+    let model = Rc::new(VecModel::from(variants));
+    window.set_variant_items(ModelRc::from(model as Rc<dyn Model<Data = VariantItem>>));
+
+    // Document-level counts
+    let conn_count = doc
+        .connections
+        .iter()
+        .filter(|c| {
+            selected
+                .as_ref()
+                .is_some_and(|id| c.source_node == *id || c.target_node == *id)
+        })
+        .count();
+    window.set_connection_count(conn_count as i32);
+    window.set_resource_count(doc.resources.len() as i32);
+    window.set_prefab_count(doc.prefabs.len() as i32);
 }
 
 // ── Tests ──────────────────────────────────────────────────────────
@@ -1931,7 +2570,7 @@ mod tests {
             .iter()
             .map(|n| n.id.clone())
             .collect();
-        assert_eq!(children_before, vec!["hero", "intro"]);
+        assert_eq!(children_before, vec!["hero", "intro", "cols"]);
 
         move_node_in_siblings(&mut doc, "hero", 1);
         let children_after: Vec<String> = doc
@@ -1942,15 +2581,16 @@ mod tests {
             .iter()
             .map(|n| n.id.clone())
             .collect();
-        assert_eq!(children_after, vec!["intro", "hero"]);
+        assert_eq!(children_after, vec!["intro", "hero", "cols"]);
     }
 
     #[test]
     fn delete_node_removes_child() {
         let mut doc = sample_document();
         delete_node(&mut doc, "hero");
-        assert_eq!(doc.root.as_ref().unwrap().children.len(), 1);
+        assert_eq!(doc.root.as_ref().unwrap().children.len(), 2);
         assert_eq!(doc.root.as_ref().unwrap().children[0].id, "intro");
+        assert_eq!(doc.root.as_ref().unwrap().children[1].id, "cols");
     }
 
     #[test]
@@ -1958,7 +2598,7 @@ mod tests {
         let doc = sample_document();
         let sel = SelectionModel::single("hero".into());
         let items = flatten_inspector_nodes(doc.root.as_ref(), &sel);
-        assert_eq!(items.len(), 3);
+        assert_eq!(items.len(), 6);
         assert_eq!(items[0].depth, 0);
         assert_eq!(items[0].id, "root");
         assert!(!items[0].selected);
@@ -1967,13 +2607,19 @@ mod tests {
         assert!(items[1].selected);
         assert_eq!(items[2].depth, 1);
         assert_eq!(items[2].id, "intro");
+        assert_eq!(items[3].depth, 1);
+        assert_eq!(items[3].id, "cols");
+        assert_eq!(items[4].depth, 2);
+        assert_eq!(items[4].id, "col1");
+        assert_eq!(items[5].depth, 2);
+        assert_eq!(items[5].id, "col2");
     }
 
     #[test]
     fn collect_node_ids_walks_full_tree() {
         let doc = sample_document();
         let ids = collect_node_ids(doc.root.as_ref());
-        assert_eq!(ids, vec!["root", "hero", "intro"]);
+        assert_eq!(ids, vec!["root", "hero", "intro", "cols", "col1", "col2"]);
     }
 
     #[test]
@@ -1987,8 +2633,8 @@ mod tests {
             ..Default::default()
         };
         add_node_to_document(&mut doc, Some("root"), new_node);
-        assert_eq!(doc.root.as_ref().unwrap().children.len(), 3);
-        assert_eq!(doc.root.as_ref().unwrap().children[2].id, "n100");
+        assert_eq!(doc.root.as_ref().unwrap().children.len(), 4);
+        assert_eq!(doc.root.as_ref().unwrap().children[3].id, "n100");
     }
 
     #[test]
@@ -2107,9 +2753,10 @@ mod tests {
         };
         insert_after_sibling(&mut doc, "hero", new_node);
         let children = &doc.root.as_ref().unwrap().children;
-        assert_eq!(children.len(), 3);
+        assert_eq!(children.len(), 4);
         assert_eq!(children[0].id, "hero");
         assert_eq!(children[1].id, "between");
         assert_eq!(children[2].id, "intro");
+        assert_eq!(children[3].id, "cols");
     }
 }

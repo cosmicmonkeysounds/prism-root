@@ -1,4 +1,4 @@
-import { Button, LineEdit, TextEdit, Switch, ComboBox, ListView, ScrollView,
+import { Button, LineEdit, TextEdit, Switch, ComboBox, Slider, ListView, ScrollView,
          VerticalBox, HorizontalBox, GroupBox, Palette, TabWidget } from "std-widgets.slint";
 
 // ── Data structs ───────────────────────────────────────────────────
@@ -13,6 +13,11 @@ struct FieldRow {
     kind: string,
     value: string,
     required: bool,
+    min: float,
+    max: float,
+    has-bounds: bool,
+    options: [string],
+    swatch: color,
 }
 
 struct TabItem {
@@ -66,6 +71,8 @@ struct BuilderNode {
     placeholder: string,
     label: string,
     disabled: bool,
+    display-mode: string,
+    has-children: bool,
 }
 
 struct HelpTooltipData {
@@ -89,6 +96,44 @@ struct DocsPanelData {
     title: string,
     summary: string,
     body: string,
+}
+
+struct PageLayoutData {
+    page-width: float,
+    page-height: float,
+    margin-top: float,
+    margin-right: float,
+    margin-bottom: float,
+    margin-left: float,
+    column-gap: float,
+    row-gap: float,
+    column-count: int,
+    row-count: int,
+    show-grid: bool,
+    is-responsive: bool,
+    page-size-label: string,
+}
+
+struct GutterRect {
+    offset: float,
+    size: float,
+}
+
+struct ModifierItem {
+    kind: string,
+    label: string,
+}
+
+struct SignalItem {
+    name: string,
+    description: string,
+}
+
+struct VariantItem {
+    key: string,
+    label: string,
+    selected: string,
+    options: [string],
 }
 
 // ── Icon button ───────────────────────────────────────────────────
@@ -154,6 +199,8 @@ component BuilderBlock inherits Rectangle {
     in property <string> placeholder;
     in property <string> label;
     in property <bool> disabled;
+    in property <string> display-mode: "block";
+    in property <bool> has-children: false;
     callback clicked(string);
     callback text-edited(string, string);
     callback delete-clicked(string);
@@ -248,7 +295,24 @@ component BuilderBlock inherits Rectangle {
                 }
             }
 
-            if root.component-type == "container" : Rectangle { height: 4px; }
+            if root.component-type == "container" : HorizontalLayout {
+                spacing: 6px; alignment: start; height: 24px;
+                Image { source: @image-url("icons/box.svg"); width: 12px; height: 12px; colorize: Palette.foreground.transparentize(40%); }
+                Text { text: "Container"; color: Palette.foreground.transparentize(40%); font-size: 11px; font-weight: 600; vertical-alignment: center; }
+                if root.display-mode == "flex" : Rectangle {
+                    width: 42px; height: 16px; border-radius: 3px; background: Palette.accent-background.transparentize(85%);
+                    Text { text: "Flex"; color: Palette.accent-background; font-size: 9px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                }
+                if root.display-mode == "grid" : Rectangle {
+                    width: 42px; height: 16px; border-radius: 3px; background: Palette.accent-background.transparentize(85%);
+                    Text { text: "Grid"; color: Palette.accent-background; font-size: 9px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                }
+                if root.display-mode == "block" : Rectangle {
+                    width: 42px; height: 16px; border-radius: 3px; background: Palette.foreground.transparentize(90%);
+                    Text { text: "Block"; color: Palette.foreground.transparentize(40%); font-size: 9px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                }
+                if root.has-children : Text { text: "▸ nested"; color: Palette.foreground.transparentize(60%); font-size: 10px; vertical-alignment: center; }
+            }
 
             if root.component-type == "form" : HorizontalLayout {
                 spacing: 4px; alignment: start;
@@ -304,7 +368,11 @@ component BuilderBlock inherits Rectangle {
                 spacing: 6px; alignment: start;
                 Image { source: @image-url("icons/columns.svg"); width: 12px; height: 12px; colorize: Palette.foreground.transparentize(40%); }
                 Text { text: "Columns"; color: Palette.foreground.transparentize(40%); font-size: 11px; font-weight: 600; vertical-alignment: center; }
-                Text { text: root.level > 0 ? "gap: " + root.level + "px" : "gap: 16px"; color: Palette.foreground.transparentize(60%); font-size: 10px; vertical-alignment: center; }
+                Rectangle {
+                    width: 42px; height: 16px; border-radius: 3px; background: Palette.accent-background.transparentize(85%);
+                    Text { text: "Flex →"; color: Palette.accent-background; font-size: 9px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                }
+                Text { text: "gap: " + (root.level > 0 ? root.level : 16) + "px"; color: Palette.foreground.transparentize(60%); font-size: 10px; vertical-alignment: center; }
             }
 
             if root.component-type == "list" : HorizontalLayout {
@@ -406,9 +474,16 @@ component FieldEditor inherits Rectangle {
     in property <string> kind;
     in property <string> value;
     in property <bool> required;
+    in property <float> min;
+    in property <float> max;
+    in property <bool> has-bounds;
+    in property <[string]> options;
+    in property <color> swatch;
     callback field-edited(string, string);
+    callback field-edited-number(string, float);
 
-    height: 64px;
+    property <bool> is-numeric: root.kind == "number" || root.kind == "integer";
+
     background: transparent;
 
     VerticalLayout {
@@ -422,6 +497,7 @@ component FieldEditor inherits Rectangle {
             font-size: 12px;
         }
 
+        // Boolean → Switch
         if root.kind == "boolean" : HorizontalLayout {
             alignment: start; height: 24px;
             Switch {
@@ -430,13 +506,75 @@ component FieldEditor inherits Rectangle {
             }
         }
 
-        if root.kind != "boolean" : LineEdit {
+        // Select → ComboBox
+        if root.kind == "select" : ComboBox {
+            height: 28px;
+            model: root.options;
+            current-value: root.value;
+            selected(val) => { root.field-edited(root.key, val); }
+        }
+
+        // Color → swatch + hex input
+        if root.kind == "color" : HorizontalLayout {
+            spacing: 6px; height: 28px;
+            Rectangle {
+                width: 28px; height: 28px;
+                border-radius: 4px;
+                border-width: 1px;
+                border-color: Palette.foreground.transparentize(80%);
+                background: root.swatch;
+            }
+            LineEdit {
+                horizontal-stretch: 1;
+                text: root.value;
+                placeholder-text: "#000000";
+                accepted(text) => { root.field-edited(root.key, text); }
+            }
+        }
+
+        // Number/Integer with bounds → LineEdit + Slider
+        if root.is-numeric && root.has-bounds : VerticalLayout {
+            spacing: 2px;
+            LineEdit {
+                height: 28px;
+                text: root.value;
+                placeholder-text: root.label;
+                accepted(text) => { root.field-edited(root.key, text); }
+            }
+            Slider {
+                height: 20px;
+                minimum: root.min;
+                maximum: root.max;
+                value: root.value.to-float();
+                changed(val) => { root.field-edited-number(root.key, val); }
+            }
+        }
+
+        // Number/Integer without bounds → plain LineEdit
+        if root.is-numeric && !root.has-bounds : LineEdit {
             height: 28px;
             text: root.value;
             placeholder-text: root.label;
             accepted(text) => { root.field-edited(root.key, text); }
         }
 
+        // Textarea → LineEdit (multi-line editing happens inline on canvas)
+        if root.kind == "textarea" : LineEdit {
+            height: 28px;
+            text: root.value;
+            placeholder-text: root.label;
+            accepted(text) => { root.field-edited(root.key, text); }
+        }
+
+        // Text → standard LineEdit
+        if root.kind == "text" : LineEdit {
+            height: 28px;
+            text: root.value;
+            placeholder-text: root.label;
+            accepted(text) => { root.field-edited(root.key, text); }
+        }
+
+        // Kind hint
         Text {
             text: root.kind + " · " + root.key;
             color: Palette.foreground.transparentize(50%);
@@ -596,6 +734,7 @@ export component AppWindow inherits Window {
     in property <string> selected-component: "";
     in property <[FieldRow]> field-rows: [];
     callback field-edited(string, string);
+    callback field-edited-number(string, float);
 
     // Tabbed MDI
     in property <[TabItem]> tabs: [];
@@ -658,6 +797,33 @@ export component AppWindow inherits Window {
     // Code editor
     in property <string> editor-text: "";
     callback editor-text-changed(string);
+
+    // Page layout
+    in property <PageLayoutData> page-layout: {
+        page-width: 1280.0, page-height: 800.0,
+        margin-top: 0.0, margin-right: 0.0, margin-bottom: 0.0, margin-left: 0.0,
+        column-gap: 0.0, row-gap: 0.0,
+        column-count: 1, row-count: 0,
+        show-grid: false, is-responsive: true,
+        page-size-label: "Responsive",
+    };
+    in property <[GutterRect]> column-gutters: [];
+    in property <[GutterRect]> row-gutters: [];
+    callback toggle-grid-overlay;
+    callback page-layout-edited(string, string);
+
+    // Layout properties for selected node
+    in property <[FieldRow]> layout-rows: [];
+    callback layout-field-edited(string, string);
+    callback layout-field-edited-number(string, float);
+
+    // Game engine systems
+    in property <[ModifierItem]> modifier-items: [];
+    in property <[SignalItem]> signal-items: [];
+    in property <[VariantItem]> variant-items: [];
+    in property <int> connection-count: 0;
+    in property <int> resource-count: 0;
+    in property <int> prefab-count: 0;
 
     // Docs panel (sidebar) and docs view (full)
     in property <DocsPanelData> docs-panel: {
@@ -836,6 +1002,100 @@ export component AppWindow inherits Window {
 
                         Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
 
+                        // Page Layout
+                        HorizontalLayout {
+                            spacing: 6px; alignment: start;
+                            Image { source: @image-url("icons/layout.svg"); width: 12px; height: 12px; colorize: Palette.foreground.transparentize(30%); }
+                            Text { text: "Page Layout"; color: Palette.foreground.transparentize(30%); font-size: 11px; font-weight: 600; vertical-alignment: center; }
+                        }
+
+                        // Grid overlay toggle
+                        HorizontalLayout {
+                            spacing: 8px; alignment: start; height: 28px;
+                            Switch { checked: root.page-layout.show-grid; toggled => { root.toggle-grid-overlay(); } }
+                            Text { text: "Show grid"; color: Palette.foreground; font-size: 12px; vertical-alignment: center; }
+                        }
+
+                        // Page size
+                        HorizontalLayout {
+                            spacing: 4px; height: 28px; alignment: start;
+                            Text { text: "Size"; color: Palette.foreground.transparentize(40%); font-size: 11px; vertical-alignment: center; width: 52px; }
+                            Rectangle {
+                                height: 22px; border-radius: 4px; background: Palette.control-background; horizontal-stretch: 1;
+                                Text { text: root.page-layout.page-size-label; color: Palette.foreground; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
+                            }
+                        }
+
+                        // Columns + gap
+                        HorizontalLayout {
+                            spacing: 4px; height: 28px; alignment: start;
+                            Text { text: "Cols"; color: Palette.foreground.transparentize(40%); font-size: 11px; vertical-alignment: center; width: 52px; }
+                            LineEdit {
+                                height: 24px; horizontal-stretch: 1;
+                                text: root.page-layout.column-count;
+                                placeholder-text: "1";
+                                accepted(val) => { root.page-layout-edited("columns", val); }
+                            }
+                            Text { text: "Gap"; color: Palette.foreground.transparentize(40%); font-size: 11px; vertical-alignment: center; }
+                            LineEdit {
+                                height: 24px; width: 48px;
+                                text: root.page-layout.column-gap;
+                                placeholder-text: "0";
+                                accepted(val) => { root.page-layout-edited("column_gap", val); }
+                            }
+                        }
+
+                        // Rows + gap
+                        HorizontalLayout {
+                            spacing: 4px; height: 28px; alignment: start;
+                            Text { text: "Rows"; color: Palette.foreground.transparentize(40%); font-size: 11px; vertical-alignment: center; width: 52px; }
+                            LineEdit {
+                                height: 24px; horizontal-stretch: 1;
+                                text: root.page-layout.row-count;
+                                placeholder-text: "0";
+                                accepted(val) => { root.page-layout-edited("rows", val); }
+                            }
+                            Text { text: "Gap"; color: Palette.foreground.transparentize(40%); font-size: 11px; vertical-alignment: center; }
+                            LineEdit {
+                                height: 24px; width: 48px;
+                                text: root.page-layout.row-gap;
+                                placeholder-text: "0";
+                                accepted(val) => { root.page-layout-edited("row_gap", val); }
+                            }
+                        }
+
+                        // Margins (TRBL)
+                        HorizontalLayout {
+                            spacing: 4px; height: 28px; alignment: start;
+                            Text { text: "Margin"; color: Palette.foreground.transparentize(40%); font-size: 11px; vertical-alignment: center; width: 52px; }
+                            LineEdit {
+                                height: 24px; horizontal-stretch: 1;
+                                text: root.page-layout.margin-top;
+                                placeholder-text: "T";
+                                accepted(val) => { root.page-layout-edited("margin_top", val); }
+                            }
+                            LineEdit {
+                                height: 24px; horizontal-stretch: 1;
+                                text: root.page-layout.margin-right;
+                                placeholder-text: "R";
+                                accepted(val) => { root.page-layout-edited("margin_right", val); }
+                            }
+                            LineEdit {
+                                height: 24px; horizontal-stretch: 1;
+                                text: root.page-layout.margin-bottom;
+                                placeholder-text: "B";
+                                accepted(val) => { root.page-layout-edited("margin_bottom", val); }
+                            }
+                            LineEdit {
+                                height: 24px; horizontal-stretch: 1;
+                                text: root.page-layout.margin-left;
+                                placeholder-text: "L";
+                                accepted(val) => { root.page-layout-edited("margin_left", val); }
+                            }
+                        }
+
+                        Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
+
                         // Search
                         HorizontalLayout {
                             spacing: 6px;
@@ -1009,7 +1269,16 @@ export component AppWindow inherits Window {
                             IconButton { icon: @image-url("icons/chevron-down.svg"); enabled: root.has-selection; help-id: "shell.toolbar.move-down"; clicked => { root.node-move-down(""); } hover-start(id, x, y) => { root.help-hover(id, x, y); } hover-end => { root.help-leave(); } }
                             ToolbarSeparator { }
                             IconButton { icon: @image-url("icons/trash.svg"); enabled: root.has-selection; help-id: "shell.toolbar.delete"; clicked => { root.builder-delete-node(""); } hover-start(id, x, y) => { root.help-hover(id, x, y); } hover-end => { root.help-leave(); } }
+                            ToolbarSeparator { }
+                            Rectangle {
+                                width: 28px; height: 28px; border-radius: 6px;
+                                background: root.page-layout.show-grid ? Palette.accent-background.transparentize(85%) : (grid-toggle-touch.has-hover ? Palette.control-background : transparent);
+                                Image { source: @image-url("icons/columns.svg"); width: 16px; height: 16px; colorize: root.page-layout.show-grid ? Palette.accent-foreground : Palette.foreground.transparentize(20%); }
+                                grid-toggle-touch := TouchArea { mouse-cursor: pointer; clicked => { root.toggle-grid-overlay(); } }
+                            }
                             Rectangle { horizontal-stretch: 1; }
+                            if root.page-layout.column-count > 1 : Text { text: root.page-layout.column-count + " cols"; color: Palette.foreground.transparentize(50%); font-size: 11px; vertical-alignment: center; }
+                            if root.page-layout.column-count > 1 : Text { text: "·"; color: Palette.foreground.transparentize(60%); font-size: 11px; vertical-alignment: center; }
                             Text { text: root.builder-node-count + " nodes"; color: Palette.foreground.transparentize(50%); font-size: 11px; vertical-alignment: center; }
                         }
                     }
@@ -1091,27 +1360,135 @@ export component AppWindow inherits Window {
                         }
 
                         // ── Builder canvas ───────────────────────
-                        if !root.docs-view.visible : ScrollView {
-                            VerticalLayout {
-                                padding: 24px; spacing: 4px; alignment: start;
+                        if !root.docs-view.visible && root.active-panel-id == 1 : Rectangle {
+                            horizontal-stretch: 1;
+                            vertical-stretch: 1;
+                            background: Palette.alternate-background.transparentize(40%);
 
-                                if root.active-panel-id == 1 && root.builder-nodes.length > 0 : VerticalLayout {
-                                    spacing: 2px;
-                                    for bnode[i] in root.builder-nodes : BuilderBlock {
-                                        node-id: bnode.id; component-type: bnode.component-type; selected: bnode.selected; depth: bnode.depth;
-                                        text: bnode.text; level: bnode.level; href: bnode.href; alt: bnode.alt;
-                                        placeholder: bnode.placeholder; label: bnode.label; disabled: bnode.disabled;
-                                        clicked(id) => { root.builder-node-clicked(id); }
-                                        text-edited(id, val) => { root.builder-text-edited(id, val); }
-                                        delete-clicked(id) => { root.builder-delete-node(id); }
+                            ScrollView {
+                                VerticalLayout {
+                                    alignment: start;
+                                    padding: root.page-layout.is-responsive ? 0px : 24px;
+
+                                    // Page surface
+                                    Rectangle {
+                                        horizontal-stretch: 1;
+                                        min-height: root.page-layout.is-responsive ? 400px : root.page-layout.page-height * 1px;
+                                        background: Palette.background;
+                                        border-width: root.page-layout.is-responsive ? 0px : 1px;
+                                        border-color: Palette.foreground.transparentize(85%);
+                                        border-radius: root.page-layout.is-responsive ? 0px : 2px;
+                                        drop-shadow-blur: root.page-layout.is-responsive ? 0px : 6px;
+                                        drop-shadow-color: #00000008;
+
+                                        // Margin tint overlays
+                                        if root.page-layout.margin-top > 0.0 : Rectangle {
+                                            x: 0px; y: 0px; width: parent.width;
+                                            height: root.page-layout.margin-top * 1px;
+                                            background: Palette.accent-background.transparentize(95%);
+                                        }
+                                        if root.page-layout.margin-bottom > 0.0 : Rectangle {
+                                            x: 0px; width: parent.width;
+                                            y: parent.height - root.page-layout.margin-bottom * 1px;
+                                            height: root.page-layout.margin-bottom * 1px;
+                                            background: Palette.accent-background.transparentize(95%);
+                                        }
+                                        if root.page-layout.margin-left > 0.0 : Rectangle {
+                                            x: 0px; y: root.page-layout.margin-top * 1px;
+                                            width: root.page-layout.margin-left * 1px;
+                                            height: parent.height - root.page-layout.margin-top * 1px - root.page-layout.margin-bottom * 1px;
+                                            background: Palette.accent-background.transparentize(95%);
+                                        }
+                                        if root.page-layout.margin-right > 0.0 : Rectangle {
+                                            y: root.page-layout.margin-top * 1px;
+                                            x: parent.width - root.page-layout.margin-right * 1px;
+                                            width: root.page-layout.margin-right * 1px;
+                                            height: parent.height - root.page-layout.margin-top * 1px - root.page-layout.margin-bottom * 1px;
+                                            background: Palette.accent-background.transparentize(95%);
+                                        }
+
+                                        // Grid overlay
+                                        if root.page-layout.show-grid : Rectangle {
+                                            x: 0px; y: 0px; width: parent.width; height: parent.height;
+
+                                            // Margin boundary lines
+                                            if root.page-layout.margin-left > 0.0 : Rectangle {
+                                                x: root.page-layout.margin-left * 1px; y: 0px; width: 1px; height: parent.height;
+                                                background: Palette.accent-background.transparentize(82%);
+                                            }
+                                            if root.page-layout.margin-right > 0.0 : Rectangle {
+                                                x: parent.width - root.page-layout.margin-right * 1px; y: 0px; width: 1px; height: parent.height;
+                                                background: Palette.accent-background.transparentize(82%);
+                                            }
+                                            if root.page-layout.margin-top > 0.0 : Rectangle {
+                                                x: 0px; y: root.page-layout.margin-top * 1px; width: parent.width; height: 1px;
+                                                background: Palette.accent-background.transparentize(82%);
+                                            }
+                                            if root.page-layout.margin-bottom > 0.0 : Rectangle {
+                                                x: 0px; y: parent.height - root.page-layout.margin-bottom * 1px; width: parent.width; height: 1px;
+                                                background: Palette.accent-background.transparentize(82%);
+                                            }
+
+                                            // Column gutters
+                                            for cg[i] in root.column-gutters : Rectangle {
+                                                x: cg.offset * 1px + root.page-layout.margin-left * 1px;
+                                                y: root.page-layout.margin-top * 1px;
+                                                width: cg.size * 1px;
+                                                height: parent.height - root.page-layout.margin-top * 1px - root.page-layout.margin-bottom * 1px;
+                                                background: Palette.accent-background.transparentize(92%);
+                                                Rectangle { x: 0px; y: 0px; width: 1px; height: parent.height; background: Palette.accent-background.transparentize(78%); }
+                                                Rectangle { x: parent.width - 1px; y: 0px; width: 1px; height: parent.height; background: Palette.accent-background.transparentize(78%); }
+                                            }
+
+                                            // Row gutters
+                                            for rg[i] in root.row-gutters : Rectangle {
+                                                x: root.page-layout.margin-left * 1px;
+                                                y: rg.offset * 1px + root.page-layout.margin-top * 1px;
+                                                width: parent.width - root.page-layout.margin-left * 1px - root.page-layout.margin-right * 1px;
+                                                height: rg.size * 1px;
+                                                background: Palette.accent-background.transparentize(92%);
+                                                Rectangle { x: 0px; y: 0px; width: parent.width; height: 1px; background: Palette.accent-background.transparentize(78%); }
+                                                Rectangle { x: 0px; y: parent.height - 1px; width: parent.width; height: 1px; background: Palette.accent-background.transparentize(78%); }
+                                            }
+                                        }
+
+                                        // Content area (inside margins)
+                                        VerticalLayout {
+                                            padding-left: root.page-layout.margin-left * 1px;
+                                            padding-right: root.page-layout.margin-right * 1px;
+                                            padding-top: root.page-layout.margin-top * 1px;
+                                            padding-bottom: root.page-layout.margin-bottom * 1px;
+                                            spacing: 4px;
+                                            alignment: start;
+
+                                            if root.builder-nodes.length > 0 : VerticalLayout {
+                                                spacing: 2px;
+                                                for bnode[i] in root.builder-nodes : BuilderBlock {
+                                                    node-id: bnode.id; component-type: bnode.component-type; selected: bnode.selected; depth: bnode.depth;
+                                                    text: bnode.text; level: bnode.level; href: bnode.href; alt: bnode.alt;
+                                                    placeholder: bnode.placeholder; label: bnode.label; disabled: bnode.disabled;
+                                                    display-mode: bnode.display-mode; has-children: bnode.has-children;
+                                                    clicked(id) => { root.builder-node-clicked(id); }
+                                                    text-edited(id, val) => { root.builder-text-edited(id, val); }
+                                                    delete-clicked(id) => { root.builder-delete-node(id); }
+                                                }
+                                            }
+
+                                            if root.builder-nodes.length == 0 : VerticalLayout {
+                                                alignment: center; spacing: 8px; padding-top: 80px;
+                                                Text { text: "Empty document"; color: Palette.foreground.transparentize(50%); font-size: 16px; horizontal-alignment: center; }
+                                                Text { text: "Add a component from the palette to get started."; color: Palette.foreground.transparentize(60%); font-size: 12px; horizontal-alignment: center; }
+                                            }
+                                        }
                                     }
                                 }
+                            }
+                        }
 
-                                if root.active-panel-id == 1 && root.builder-nodes.length == 0 : VerticalLayout {
-                                    alignment: center; spacing: 8px; padding-top: 80px;
-                                    Text { text: "Empty document"; color: Palette.foreground.transparentize(50%); font-size: 16px; horizontal-alignment: center; }
-                                    Text { text: "Add a component from the palette to get started."; color: Palette.foreground.transparentize(60%); font-size: 12px; horizontal-alignment: center; }
-                                }
+                        // ── Non-builder panels ──────────────────────
+                        if !root.docs-view.visible && root.active-panel-id != 1 && root.active-panel-id != 2 : ScrollView {
+                            VerticalLayout {
+                                padding: 24px; spacing: 4px; alignment: start;
 
                                 if root.active-panel-id == 0 : VerticalLayout {
                                     spacing: 12px;
@@ -1203,9 +1580,102 @@ export component AppWindow inherits Window {
                                 vertical-stretch: 1;
                                 VerticalLayout {
                                     spacing: 4px;
+
+                                    // Component properties
                                     for field[i] in root.field-rows : FieldEditor {
                                         key: field.key; label: field.label; kind: field.kind; value: field.value; required: field.required;
+                                        min: field.min; max: field.max; has-bounds: field.has-bounds; options: field.options; swatch: field.swatch;
                                         field-edited(key, val) => { root.field-edited(key, val); }
+                                        field-edited-number(key, val) => { root.field-edited-number(key, val); }
+                                    }
+
+                                    // Layout section separator
+                                    if root.layout-rows.length > 0 : Rectangle { height: 8px; }
+                                    if root.layout-rows.length > 0 : Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
+                                    if root.layout-rows.length > 0 : Rectangle { height: 4px; }
+
+                                    if root.layout-rows.length > 0 : HorizontalLayout {
+                                        spacing: 6px; alignment: start;
+                                        Image { source: @image-url("icons/layout.svg"); width: 12px; height: 12px; colorize: Palette.foreground.transparentize(40%); y: 1px; }
+                                        Text { text: "Layout"; color: Palette.foreground.transparentize(30%); font-size: 11px; font-weight: 600; vertical-alignment: center; }
+                                    }
+
+                                    // Layout properties
+                                    for lfield[i] in root.layout-rows : FieldEditor {
+                                        key: lfield.key; label: lfield.label; kind: lfield.kind; value: lfield.value; required: lfield.required;
+                                        min: lfield.min; max: lfield.max; has-bounds: lfield.has-bounds; options: lfield.options; swatch: lfield.swatch;
+                                        field-edited(key, val) => { root.layout-field-edited(key, val); }
+                                        field-edited-number(key, val) => { root.layout-field-edited-number(key, val); }
+                                    }
+
+                                    // ── Variants ──────────────────
+                                    if root.variant-items.length > 0 : Rectangle { height: 8px; }
+                                    if root.variant-items.length > 0 : Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
+                                    if root.variant-items.length > 0 : Rectangle { height: 4px; }
+                                    if root.variant-items.length > 0 : HorizontalLayout {
+                                        spacing: 6px; alignment: start;
+                                        Text { text: "Variants"; color: Palette.foreground.transparentize(30%); font-size: 11px; font-weight: 600; vertical-alignment: center; }
+                                    }
+                                    for vitem[i] in root.variant-items : HorizontalLayout {
+                                        spacing: 8px; height: 28px;
+                                        Text { text: vitem.label; color: Palette.foreground.transparentize(40%); font-size: 11px; width: 80px; vertical-alignment: center; }
+                                        ComboBox {
+                                            model: vitem.options;
+                                            current-value: vitem.selected;
+                                            horizontal-stretch: 1;
+                                        }
+                                    }
+
+                                    // ── Modifiers ─────────────────
+                                    if root.modifier-items.length > 0 : Rectangle { height: 8px; }
+                                    if root.modifier-items.length > 0 : Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
+                                    if root.modifier-items.length > 0 : Rectangle { height: 4px; }
+                                    if root.modifier-items.length > 0 : HorizontalLayout {
+                                        spacing: 6px; alignment: start;
+                                        Text { text: "Modifiers"; color: Palette.foreground.transparentize(30%); font-size: 11px; font-weight: 600; vertical-alignment: center; }
+                                    }
+                                    for mitem[i] in root.modifier-items : Rectangle {
+                                        height: 24px;
+                                        HorizontalLayout {
+                                            spacing: 6px; alignment: start; padding-left: 4px;
+                                            Rectangle { width: 6px; height: 6px; border-radius: 3px; background: Palette.accent-background; y: 5px; }
+                                            Text { text: mitem.label; color: Palette.foreground.transparentize(20%); font-size: 11px; vertical-alignment: center; }
+                                        }
+                                    }
+
+                                    // ── Signals ───────────────────
+                                    if root.signal-items.length > 0 : Rectangle { height: 8px; }
+                                    if root.signal-items.length > 0 : Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
+                                    if root.signal-items.length > 0 : Rectangle { height: 4px; }
+                                    if root.signal-items.length > 0 : HorizontalLayout {
+                                        spacing: 6px; alignment: start;
+                                        Text { text: "Signals"; color: Palette.foreground.transparentize(30%); font-size: 11px; font-weight: 600; vertical-alignment: center; }
+                                        if root.connection-count > 0 : Text {
+                                            text: root.connection-count == 1 ? "1 connection" : "\{root.connection-count} connections";
+                                            color: Palette.accent-background; font-size: 10px; vertical-alignment: center;
+                                        }
+                                    }
+                                    for sitem[i] in root.signal-items : Rectangle {
+                                        height: 24px;
+                                        HorizontalLayout {
+                                            spacing: 6px; alignment: start; padding-left: 4px;
+                                            Text { text: "⚡"; font-size: 10px; vertical-alignment: center; }
+                                            Text { text: sitem.name; color: Palette.foreground.transparentize(20%); font-size: 11px; font-weight: 500; vertical-alignment: center; }
+                                            Text { text: sitem.description; color: Palette.foreground.transparentize(50%); font-size: 10px; vertical-alignment: center; }
+                                        }
+                                    }
+
+                                    // ── Document summary ──────────
+                                    if root.resource-count > 0 || root.prefab-count > 0 : Rectangle { height: 8px; }
+                                    if root.resource-count > 0 || root.prefab-count > 0 : Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
+                                    if root.resource-count > 0 || root.prefab-count > 0 : Rectangle { height: 4px; }
+                                    if root.resource-count > 0 : Text {
+                                        text: root.resource-count == 1 ? "1 resource" : "\{root.resource-count} resources";
+                                        color: Palette.foreground.transparentize(50%); font-size: 10px;
+                                    }
+                                    if root.prefab-count > 0 : Text {
+                                        text: root.prefab-count == 1 ? "1 prefab" : "\{root.prefab-count} prefabs";
+                                        color: Palette.foreground.transparentize(50%); font-size: 10px;
                                     }
                                 }
                             }

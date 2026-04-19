@@ -13,9 +13,9 @@ property-panel field factories.
   path (`compile_slint_source` / `instantiate_document`) is
   available. `prism-shell` and `prism-studio` flip this on; the
   relay leaves it off so its dep graph stays Slint-free.
-- `cargo test -p prism-builder` — 80 unit tests (baseline).
+- `cargo test -p prism-builder` — 109 unit tests (baseline).
 - `cargo test -p prism-builder --features interpreter` — adds one
-  interpreter round-trip (81 tests total).
+  interpreter round-trip (110 tests total).
 
 ## Public surface
 From `src/lib.rs`:
@@ -59,16 +59,43 @@ From `src/lib.rs`:
   `transform: Transform2D` (from `prism-core::foundation::spatial`).
 - `BuilderDocument` now carries `page_layout: PageLayout`.
 
+### Game engine patterns (ADR-004)
+- `Modifier`, `ModifierKind`, `modifier_schema(kind)` — attachable
+  behaviors (ScrollOverflow, HoverEffect, EnterAnimation,
+  ResponsiveVisibility, Tooltip, AccessibilityOverride). Nodes carry
+  `modifiers: Vec<Modifier>`; render walkers chain them as wrappers.
+- `PrefabDef`, `PrefabComponent`, `ExposedSlot` — user-authored
+  compound components. `PrefabComponent` implements `Component`;
+  exposed slots pin inner-node props as instance-editable fields.
+- `ResourceDef`, `ResourceId`, `ResourceKind`,
+  `resolve_resource_refs(props, resources)` — typed shareable data
+  objects referenced via `{ "$ref": "resource:<id>" }`. Render walker
+  resolves refs transparently before component render.
+- `SignalDef`, `Connection`, `ConnectionId`, `ActionKind` — event
+  wiring. Components declare signals; documents store connections
+  (source signal → target action: SetProperty, ToggleVisibility,
+  NavigateTo, PlayAnimation, EmitSignal, Custom).
+- `VariantAxis`, `VariantOption`, `apply_variant_overrides`,
+  `apply_variant_defaults` — named bundles of prop overrides per axis.
+  Render walker applies variant defaults before component render.
+- Both `Component` and `HtmlBlock` traits gained `signals()` and
+  `variants()` default methods (backward-compatible, return `vec![]`).
+- `RenderSlintContext` and `HtmlRenderContext` `render_child()` now
+  pipeline: resolve resource refs → apply variant defaults → chain
+  modifier wrappers → call component render.
+
 ### Shared
 - `BuilderDocument`, `Node`, `NodeId` — the serializable document
-  tree (extended with layout + transform fields per ADR-003).
+  tree (extended with layout + transform fields per ADR-003, modifiers
+  per ADR-004). `BuilderDocument` also carries `resources`, `connections`,
+  and `prefabs`.
 - `FieldSpec`, `FieldKind`, `NumericBounds`, `SelectOption`,
   `FieldValue` — the property-panel field factories.
 - `Html`, `escape_text`, `escape_attr` — HTML builder.
 - `SlintEmitter`, `SlintIdent` — `.slint` DSL emitter.
 
 ## Architecture
-Ten modules in `src/`:
+Fifteen modules in `src/`:
 
 - `component.rs` — the `Component` trait (Slint-only) + `RenderError`
   + `RenderSlintContext` / `RenderContext`.
@@ -86,7 +113,18 @@ Ten modules in `src/`:
   (uses `HtmlRegistry`), `render_document_slint_source` (uses
   `ComponentRegistry`), plus `compile_slint_source` /
   `instantiate_document` behind `interpreter`.
+- `modifier.rs` — `ModifierKind` enum, `Modifier` struct,
+  `modifier_schema(kind)`. 6 unit tests.
+- `prefab.rs` — `PrefabDef`, `ExposedSlot`, `PrefabComponent`
+  (implements `Component`), `apply_prop_to_node`. 5 unit tests.
+- `resource.rs` — `ResourceDef`, `ResourceKind`, `resolve_resource_refs`.
+  7 unit tests.
+- `signal.rs` — `SignalDef`, `Connection`, `ActionKind`. 5 unit tests.
+- `variant.rs` — `VariantAxis`, `VariantOption`, `apply_variant_overrides`,
+  `apply_variant_defaults`. 6 unit tests.
 - `starter.rs` — 17 built-in Slint components + `register_builtins`.
+  Button, Form, Input, Link, Tabs, Accordion declare signals; Button
+  declares a variant axis.
 
 ## Adding a new block type
 
@@ -97,8 +135,10 @@ Ten modules in `src/`:
 3. Implement `schema` using `FieldSpec` builders.
 4. Implement `render_slint` and `render_html` on their respective
    traits.
-5. Register in both `register_builtins` and `register_html_builtins`.
-6. Add unit tests — Slint tests in `starter.rs`, HTML tests in
+5. Optionally implement `signals()` and `variants()` if the component
+   emits events or has named style/size axes.
+6. Register in both `register_builtins` and `register_html_builtins`.
+7. Add unit tests — Slint tests in `starter.rs`, HTML tests in
    `html_starter.rs`.
 
 ## Dependencies

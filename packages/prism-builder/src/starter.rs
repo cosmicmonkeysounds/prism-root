@@ -19,7 +19,9 @@ use crate::component::{Component, ComponentId, RenderError, RenderSlintContext};
 use crate::document::Node;
 use crate::registry::{prop_f64, prop_str, prop_u64, ComponentRegistry, FieldSpec, RegistryError};
 use crate::schemas;
+use crate::signal::SignalDef;
 use crate::slint_source::SlintEmitter;
+use crate::variant::{VariantAxis, VariantOption};
 
 /// Register the starter catalog into `reg`. Call this once at boot
 /// to get a registry with seventeen ready-to-render components.
@@ -163,6 +165,9 @@ impl Component for LinkComponent {
             "Anchor hyperlink with text label and URL. Opens in a new tab by default.",
         ))
     }
+    fn signals(&self) -> Vec<SignalDef> {
+        vec![SignalDef::new("clicked", "Fires when the link is clicked")]
+    }
     fn render_slint(
         &self,
         _ctx: &RenderSlintContext<'_>,
@@ -283,6 +288,12 @@ impl Component for FormComponent {
             "HTML form wrapper. Nest input and button components inside to build forms.",
         ))
     }
+    fn signals(&self) -> Vec<SignalDef> {
+        vec![SignalDef::new(
+            "submitted",
+            "Fires when the form is submitted",
+        )]
+    }
     fn render_slint(
         &self,
         ctx: &RenderSlintContext<'_>,
@@ -317,6 +328,13 @@ impl Component for InputComponent {
             "Input",
             "Text, email, or password field with placeholder and name binding.",
         ))
+    }
+    fn signals(&self) -> Vec<SignalDef> {
+        vec![
+            SignalDef::new("changed", "Fires when the input value changes"),
+            SignalDef::new("focused", "Fires when the input gains focus"),
+            SignalDef::new("blurred", "Fires when the input loses focus"),
+        ]
     }
     fn render_slint(
         &self,
@@ -679,6 +697,12 @@ impl Component for TabsComponent {
             "Tabbed content panels with comma-separated labels. Each child renders as one tab panel.",
         ))
     }
+    fn signals(&self) -> Vec<SignalDef> {
+        vec![SignalDef::new(
+            "tab-changed",
+            "Fires when the active tab changes",
+        )]
+    }
     fn render_slint(
         &self,
         ctx: &RenderSlintContext<'_>,
@@ -742,6 +766,12 @@ impl Component for AccordionComponent {
             "Collapsible content section with a title bar. Toggle open state to expand or collapse.",
         ))
     }
+    fn signals(&self) -> Vec<SignalDef> {
+        vec![SignalDef::new(
+            "toggled",
+            "Fires when the section is expanded or collapsed",
+        )]
+    }
     fn render_slint(
         &self,
         ctx: &RenderSlintContext<'_>,
@@ -792,6 +822,40 @@ impl Component for ButtonComponent {
             "Button",
             "Submit or action button with configurable text and disabled state.",
         ))
+    }
+    fn signals(&self) -> Vec<SignalDef> {
+        vec![SignalDef::new(
+            "clicked",
+            "Fires when the button is pressed",
+        )]
+    }
+    fn variants(&self) -> Vec<VariantAxis> {
+        vec![VariantAxis {
+            key: "variant".into(),
+            label: "Variant".into(),
+            options: vec![
+                VariantOption {
+                    value: "primary".into(),
+                    label: "Primary".into(),
+                    overrides: serde_json::json!({ "bg": "#3b82f6", "color": "#ffffff" }),
+                },
+                VariantOption {
+                    value: "secondary".into(),
+                    label: "Secondary".into(),
+                    overrides: serde_json::json!({ "bg": "#4b5563", "color": "#ffffff" }),
+                },
+                VariantOption {
+                    value: "danger".into(),
+                    label: "Danger".into(),
+                    overrides: serde_json::json!({ "bg": "#ef4444", "color": "#ffffff" }),
+                },
+                VariantOption {
+                    value: "ghost".into(),
+                    label: "Ghost".into(),
+                    overrides: serde_json::json!({ "bg": "transparent", "color": "#d8dee9" }),
+                },
+            ],
+        }]
     }
     fn render_slint(
         &self,

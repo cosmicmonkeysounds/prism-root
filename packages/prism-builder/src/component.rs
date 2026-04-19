@@ -20,7 +20,9 @@ use thiserror::Error;
 
 use crate::document::Node;
 use crate::registry::{ComponentRegistry, FieldSpec};
+use crate::signal::SignalDef;
 use crate::slint_source::SlintEmitter;
+use crate::variant::VariantAxis;
 
 /// Stable identifier for a component *type* (e.g. `"card"`, `"button"`).
 ///
@@ -66,23 +68,34 @@ pub struct RenderContext<'a> {
 pub struct RenderSlintContext<'a> {
     pub tokens: &'a prism_core::design_tokens::DesignTokens,
     pub registry: &'a ComponentRegistry,
+    pub resources:
+        &'a indexmap::IndexMap<crate::resource::ResourceId, crate::resource::ResourceDef>,
 }
 
 impl<'a> RenderSlintContext<'a> {
-    /// Render one child node into `out`. Components with slots call
-    /// this for each child they want to emit — the context owns the
-    /// registry lookup so components don't have to.
     pub fn render_child(&self, child: &Node, out: &mut SlintEmitter) -> Result<(), RenderError> {
         let component = self
             .registry
             .get(&child.component)
             .ok_or_else(|| RenderError::UnknownComponent(child.component.clone()))?;
-        component.render_slint(self, &child.props, &child.children, out)
+
+        let props = crate::resource::resolve_resource_refs(&child.props, self.resources);
+        let props = crate::variant::apply_variant_defaults(&props, &component.variants());
+
+        if child.modifiers.is_empty() {
+            component.render_slint(self, &props, &child.children, out)
+        } else {
+            self.apply_slint_modifiers(
+                &child.modifiers,
+                0,
+                &props,
+                &child.children,
+                &*component,
+                out,
+            )
+        }
     }
 
-    /// Render every child in order. The common case for layout-only
-    /// wrappers (rows, columns, sections) that don't need to reorder
-    /// or decorate their slots.
     pub fn render_children(
         &self,
         children: &[Node],
@@ -92,6 +105,27 @@ impl<'a> RenderSlintContext<'a> {
             self.render_child(child, out)?;
         }
         Ok(())
+    }
+
+    fn apply_slint_modifiers(
+        &self,
+        modifiers: &[crate::modifier::Modifier],
+        index: usize,
+        props: &serde_json::Value,
+        children: &[Node],
+        component: &dyn Component,
+        out: &mut SlintEmitter,
+    ) -> Result<(), RenderError> {
+        if index >= modifiers.len() {
+            return component.render_slint(self, props, children, out);
+        }
+        let modifier = &modifiers[index];
+        match modifier.kind {
+            crate::modifier::ModifierKind::ScrollOverflow => out.block("Flickable", |out| {
+                self.apply_slint_modifiers(modifiers, index + 1, props, children, component, out)
+            }),
+            _ => self.apply_slint_modifiers(modifiers, index + 1, props, children, component, out),
+        }
     }
 }
 
@@ -107,13 +141,16 @@ pub trait Component: Send + Sync {
     /// [`crate::registry`].
     fn schema(&self) -> Vec<FieldSpec>;
 
-    /// Optional help entry for this component. Override to provide
-    /// context-sensitive tooltip content in the Studio builder.
-    /// Default returns `None`; the monolithic fallback in
-    /// `prism-shell/src/help.rs` covers components that don't
-    /// override this yet.
     fn help_entry(&self) -> Option<HelpEntry> {
         None
+    }
+
+    fn signals(&self) -> Vec<SignalDef> {
+        vec![]
+    }
+
+    fn variants(&self) -> Vec<VariantAxis> {
+        vec![]
     }
 
     /// Paint the component as `.slint` DSL into a shared

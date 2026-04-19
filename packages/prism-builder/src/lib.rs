@@ -24,11 +24,16 @@ pub mod html;
 pub mod html_block;
 pub mod html_starter;
 pub mod layout;
+pub mod modifier;
+pub mod prefab;
 pub mod registry;
 pub mod render;
+pub mod resource;
 pub mod schemas;
+pub mod signal;
 pub mod slint_source;
 pub mod starter;
+pub mod variant;
 
 pub use component::{Component, ComponentId, RenderContext, RenderError, RenderSlintContext};
 pub use document::{BuilderDocument, Node, NodeId};
@@ -38,12 +43,17 @@ pub use html_starter::register_html_builtins;
 pub use layout::{
     compute_layout, ComputedLayout, FlowProps, LayoutMode, NodeLayout, PageLayout, PageSize,
 };
+pub use modifier::{Modifier, ModifierKind};
+pub use prefab::{ExposedSlot, PrefabComponent, PrefabDef};
 pub use registry::{
     ComponentRegistry, FieldKind, FieldSpec, FieldValue, NumericBounds, RegistryError, SelectOption,
 };
 pub use render::{render_document_html, render_document_slint_source};
+pub use resource::{ResourceDef, ResourceId, ResourceKind};
+pub use signal::{ActionKind, Connection, ConnectionId, SignalDef};
 pub use slint_source::{SlintEmitter, SlintIdent};
 pub use starter::register_builtins;
+pub use variant::{VariantAxis, VariantOption};
 
 #[cfg(feature = "interpreter")]
 pub use render::{compile_slint_source, instantiate_document, InstantiateError};

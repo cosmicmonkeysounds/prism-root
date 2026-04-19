@@ -8,6 +8,9 @@
 //! mutate-prop action in Phase 4. Read-only for now is fine — the
 //! important thing for Phase 3 is that the schema walks end-to-end.
 
+use prism_builder::layout::{
+    AlignOption, Dimension, FlexDirection, FlowDisplay, GridPlacement, JustifyOption, LayoutMode,
+};
 use prism_builder::{BuilderDocument, ComponentRegistry, FieldKind, FieldSpec, FieldValue, NodeId};
 use prism_core::help::HelpEntry;
 use serde_json::Value;
@@ -25,6 +28,10 @@ pub struct FieldRowData {
     pub kind: String,
     pub value: String,
     pub required: bool,
+    pub min: f32,
+    pub max: f32,
+    pub has_bounds: bool,
+    pub options: Vec<String>,
 }
 
 impl PropertiesPanel {
@@ -41,6 +48,154 @@ impl PropertiesPanel {
             .and_then(|id| doc.root.as_ref().and_then(|n| n.find(id)))
             .map(|n| n.component.clone())
             .unwrap_or_default()
+    }
+
+    /// Produce layout-specific [`FieldRowData`] items for the
+    /// selected node's `LayoutMode` / `FlowProps`.
+    pub fn layout_rows(doc: &BuilderDocument, selected: &Option<NodeId>) -> Vec<FieldRowData> {
+        let Some(selected_id) = selected else {
+            return vec![];
+        };
+        let Some(node) = doc.root.as_ref().and_then(|n| n.find(selected_id)) else {
+            return vec![];
+        };
+        match &node.layout_mode {
+            LayoutMode::Flow(flow) => {
+                let mut rows = vec![
+                    layout_select(
+                        "layout.display",
+                        "Display",
+                        format_display(flow.display),
+                        vec!["block", "flex", "grid", "none"],
+                    ),
+                    layout_row(
+                        "layout.width",
+                        "Width",
+                        "text",
+                        format_dimension(flow.width),
+                    ),
+                    layout_row(
+                        "layout.height",
+                        "Height",
+                        "text",
+                        format_dimension(flow.height),
+                    ),
+                ];
+
+                if flow.padding != prism_core::foundation::geometry::Edges::ZERO {
+                    rows.push(layout_row(
+                        "layout.padding",
+                        "Padding",
+                        "text",
+                        format_edges(&flow.padding),
+                    ));
+                }
+
+                if flow.margin != prism_core::foundation::geometry::Edges::ZERO {
+                    rows.push(layout_row(
+                        "layout.margin",
+                        "Margin",
+                        "text",
+                        format_edges(&flow.margin),
+                    ));
+                }
+
+                if flow.gap > 0.0 {
+                    rows.push(layout_number(
+                        "layout.gap",
+                        "Gap",
+                        format_f32(flow.gap),
+                        0.0,
+                        128.0,
+                    ));
+                }
+
+                if flow.display == FlowDisplay::Flex {
+                    rows.push(layout_select(
+                        "layout.flex_direction",
+                        "Direction",
+                        format_flex_direction(flow.flex_direction),
+                        vec!["row", "column", "row-reverse", "column-reverse"],
+                    ));
+                    if flow.flex_grow != 0.0 {
+                        rows.push(layout_number(
+                            "layout.flex_grow",
+                            "Flex Grow",
+                            format_f32(flow.flex_grow),
+                            0.0,
+                            10.0,
+                        ));
+                    }
+                    if flow.flex_shrink != 1.0 {
+                        rows.push(layout_number(
+                            "layout.flex_shrink",
+                            "Flex Shrink",
+                            format_f32(flow.flex_shrink),
+                            0.0,
+                            10.0,
+                        ));
+                    }
+                }
+
+                if flow.align_items != AlignOption::Auto {
+                    rows.push(layout_select(
+                        "layout.align_items",
+                        "Align Items",
+                        format_align(flow.align_items),
+                        vec!["auto", "start", "end", "center", "stretch", "baseline"],
+                    ));
+                }
+
+                if flow.justify_content != JustifyOption::Start {
+                    rows.push(layout_select(
+                        "layout.justify_content",
+                        "Justify",
+                        format_justify(flow.justify_content),
+                        vec![
+                            "start",
+                            "end",
+                            "center",
+                            "space-between",
+                            "space-around",
+                            "space-evenly",
+                            "stretch",
+                        ],
+                    ));
+                }
+
+                if flow.display == FlowDisplay::Grid
+                    || !matches!(flow.grid_column, GridPlacement::Auto)
+                {
+                    rows.push(layout_row(
+                        "layout.grid_column",
+                        "Grid Column",
+                        "text",
+                        format_grid_placement(flow.grid_column),
+                    ));
+                }
+
+                if flow.display == FlowDisplay::Grid
+                    || !matches!(flow.grid_row, GridPlacement::Auto)
+                {
+                    rows.push(layout_row(
+                        "layout.grid_row",
+                        "Grid Row",
+                        "text",
+                        format_grid_placement(flow.grid_row),
+                    ));
+                }
+
+                rows
+            }
+            LayoutMode::Free => {
+                vec![layout_row(
+                    "layout.display",
+                    "Display",
+                    "text",
+                    "free".into(),
+                )]
+            }
+        }
     }
 
     /// Produce one [`FieldRowData`] per entry in the selected
@@ -69,46 +224,205 @@ impl PropertiesPanel {
 }
 
 fn row_from_spec(spec: &FieldSpec, props: &Value) -> FieldRowData {
-    let (kind_label, value) = match &spec.kind {
+    let (kind_label, value, min, max, has_bounds, options) = match &spec.kind {
         FieldKind::Text => (
-            "text".to_string(),
+            "text",
             FieldValue::read_string(props, spec).to_string(),
+            0.0,
+            0.0,
+            false,
+            vec![],
         ),
         FieldKind::TextArea => (
-            "textarea".to_string(),
+            "textarea",
             FieldValue::read_string(props, spec).to_string(),
+            0.0,
+            0.0,
+            false,
+            vec![],
         ),
-        FieldKind::Number(_) => (
-            "number".to_string(),
+        FieldKind::Number(bounds) => (
+            "number",
             format_number(FieldValue::read_number(props, spec)),
+            bounds.min.unwrap_or(0.0) as f32,
+            bounds.max.unwrap_or(100.0) as f32,
+            bounds.min.is_some() && bounds.max.is_some(),
+            vec![],
         ),
-        FieldKind::Integer(_) => (
-            "integer".to_string(),
+        FieldKind::Integer(bounds) => (
+            "integer",
             FieldValue::read_integer(props, spec).to_string(),
+            bounds.min.unwrap_or(0.0) as f32,
+            bounds.max.unwrap_or(100.0) as f32,
+            bounds.min.is_some() && bounds.max.is_some(),
+            vec![],
         ),
         FieldKind::Boolean => (
-            "boolean".to_string(),
+            "boolean",
             FieldValue::read_boolean(props, spec).to_string(),
+            0.0,
+            0.0,
+            false,
+            vec![],
         ),
-        FieldKind::Select(_) => (
-            "select".to_string(),
+        FieldKind::Select(opts) => (
+            "select",
             FieldValue::read_string(props, spec).to_string(),
+            0.0,
+            0.0,
+            false,
+            opts.iter().map(|o| o.value.clone()).collect(),
         ),
         FieldKind::Color => (
-            "color".to_string(),
+            "color",
             FieldValue::read_string(props, spec).to_string(),
+            0.0,
+            0.0,
+            false,
+            vec![],
         ),
     };
     FieldRowData {
         key: spec.key.clone(),
         label: spec.label.clone(),
-        kind: kind_label,
+        kind: kind_label.into(),
         value,
         required: spec.required,
+        min,
+        max,
+        has_bounds,
+        options,
+    }
+}
+
+fn layout_row(key: &str, label: &str, kind: &str, value: String) -> FieldRowData {
+    FieldRowData {
+        key: key.into(),
+        label: label.into(),
+        kind: kind.into(),
+        value,
+        required: false,
+        min: 0.0,
+        max: 0.0,
+        has_bounds: false,
+        options: vec![],
+    }
+}
+
+fn layout_number(key: &str, label: &str, value: String, min: f32, max: f32) -> FieldRowData {
+    FieldRowData {
+        key: key.into(),
+        label: label.into(),
+        kind: "number".into(),
+        value,
+        required: false,
+        min,
+        max,
+        has_bounds: true,
+        options: vec![],
+    }
+}
+
+fn layout_select(key: &str, label: &str, value: String, options: Vec<&str>) -> FieldRowData {
+    FieldRowData {
+        key: key.into(),
+        label: label.into(),
+        kind: "select".into(),
+        value,
+        required: false,
+        min: 0.0,
+        max: 0.0,
+        has_bounds: false,
+        options: options.into_iter().map(String::from).collect(),
     }
 }
 
 fn format_number(v: f64) -> String {
+    if v.fract() == 0.0 && v.is_finite() {
+        format!("{}", v as i64)
+    } else {
+        format!("{v}")
+    }
+}
+
+fn format_display(d: FlowDisplay) -> String {
+    match d {
+        FlowDisplay::Block => "block",
+        FlowDisplay::Flex => "flex",
+        FlowDisplay::Grid => "grid",
+        FlowDisplay::None => "none",
+    }
+    .into()
+}
+
+fn format_dimension(d: Dimension) -> String {
+    match d {
+        Dimension::Auto => "auto".into(),
+        Dimension::Px { value } => format!("{}px", format_f32(value)),
+        Dimension::Percent { value } => format!("{}%", format_f32(value)),
+    }
+}
+
+fn format_flex_direction(d: FlexDirection) -> String {
+    match d {
+        FlexDirection::Row => "row",
+        FlexDirection::Column => "column",
+        FlexDirection::RowReverse => "row-reverse",
+        FlexDirection::ColumnReverse => "column-reverse",
+    }
+    .into()
+}
+
+fn format_align(a: AlignOption) -> String {
+    match a {
+        AlignOption::Auto => "auto",
+        AlignOption::Start => "start",
+        AlignOption::End => "end",
+        AlignOption::Center => "center",
+        AlignOption::Stretch => "stretch",
+        AlignOption::Baseline => "baseline",
+    }
+    .into()
+}
+
+fn format_justify(j: JustifyOption) -> String {
+    match j {
+        JustifyOption::Start => "start",
+        JustifyOption::End => "end",
+        JustifyOption::Center => "center",
+        JustifyOption::SpaceBetween => "space-between",
+        JustifyOption::SpaceAround => "space-around",
+        JustifyOption::SpaceEvenly => "space-evenly",
+        JustifyOption::Stretch => "stretch",
+    }
+    .into()
+}
+
+fn format_grid_placement(p: GridPlacement) -> String {
+    match p {
+        GridPlacement::Auto => "auto".into(),
+        GridPlacement::Line { index } => format!("line {index}"),
+        GridPlacement::Span { count } => format!("span {count}"),
+    }
+}
+
+fn format_edges(e: &prism_core::foundation::geometry::Edges<f32>) -> String {
+    if e.top == e.right && e.right == e.bottom && e.bottom == e.left {
+        format_f32(e.top)
+    } else if e.top == e.bottom && e.left == e.right {
+        format!("{} {}", format_f32(e.top), format_f32(e.left))
+    } else {
+        format!(
+            "{} {} {} {}",
+            format_f32(e.top),
+            format_f32(e.right),
+            format_f32(e.bottom),
+            format_f32(e.left)
+        )
+    }
+}
+
+fn format_f32(v: f32) -> String {
     if v.fract() == 0.0 && v.is_finite() {
         format!("{}", v as i64)
     } else {

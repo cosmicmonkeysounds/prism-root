@@ -8,6 +8,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::layout::{LayoutMode, PageLayout};
+use crate::modifier::Modifier;
+use crate::prefab::PrefabDef;
+use crate::resource::{ResourceDef, ResourceId};
+use crate::signal::Connection;
 
 pub type NodeId = String;
 
@@ -23,6 +27,8 @@ pub struct Node {
     pub layout_mode: LayoutMode,
     #[serde(default)]
     pub transform: Transform2D,
+    #[serde(default)]
+    pub modifiers: Vec<Modifier>,
 }
 
 impl Node {
@@ -48,6 +54,7 @@ impl Default for Node {
             children: Vec::new(),
             layout_mode: LayoutMode::default(),
             transform: Transform2D::default(),
+            modifiers: Vec::new(),
         }
     }
 }
@@ -59,4 +66,10 @@ pub struct BuilderDocument {
     pub zones: IndexMap<String, Vec<Node>>,
     #[serde(default)]
     pub page_layout: PageLayout,
+    #[serde(default)]
+    pub resources: IndexMap<ResourceId, ResourceDef>,
+    #[serde(default)]
+    pub connections: Vec<Connection>,
+    #[serde(default)]
+    pub prefabs: IndexMap<String, PrefabDef>,
 }
