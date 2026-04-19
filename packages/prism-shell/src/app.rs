@@ -39,8 +39,8 @@ use crate::selection::SelectionModel;
 use crate::telemetry::FirstPaint;
 use crate::{
     AppWindow, BreadcrumbItem, BuilderNode, ButtonSpec, CommandItem, ComponentPaletteItem,
-    DocsPanelData, FieldRow, GutterRect, HelpTooltipData, InspectorNode, ModifierItem,
-    PageLayoutData, SearchResultItem, SignalItem, TabItem, ToastItem, VariantItem,
+    DocsPanelData, EditorLine, EditorToken, FieldRow, GutterRect, HelpTooltipData, InspectorNode,
+    ModifierItem, PageLayoutData, SearchResultItem, SignalItem, TabItem, ToastItem, VariantItem,
 };
 
 // ── Reloadable state ───────────────────────────────────────────────
@@ -122,7 +122,13 @@ impl Default for AppState {
             command_palette_open: false,
             command_palette_query: String::new(),
             search_query: String::new(),
-            editor_state: EditorState::with_text("// Welcome to Prism Code Editor\n// Start typing to edit\n\nfn main() {\n    println!(\"Hello, Prism!\");\n}\n"),
+            editor_state: {
+                let mut es = EditorState::with_text(
+                    "// Welcome to Prism Code Editor\n// Start typing to edit\n\nfn main() {\n    let greeting = \"Hello, Prism!\";\n    println!(\"{}\", greeting);\n}\n",
+                );
+                es.language = "rust".into();
+                es
+            },
             toasts: Vec::new(),
             show_grid_overlay: true,
             next_toast_id: 0,
@@ -1098,13 +1104,69 @@ impl Shell {
             }
         });
 
-        // Code editor text changed
-        self.window.on_editor_text_changed({
+        // Code editor action (special keys)
+        self.window.on_editor_action({
             let inner = Rc::clone(&inner);
-            move |text| {
+            let weak = weak.clone();
+            move |action| {
+                let action = action.to_string();
                 inner.borrow_mut().store.mutate(|state| {
-                    state.editor_state.set_text(&text);
+                    state.editor_state.handle_action(&action);
                 });
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Code editor character typed
+        self.window.on_editor_char_typed({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |ch| {
+                let ch = ch.to_string();
+                if let Some(c) = ch.chars().next() {
+                    if !c.is_control() {
+                        inner.borrow_mut().store.mutate(|state| {
+                            state.editor_state.insert_char(c);
+                        });
+                        if let Some(w) = weak.upgrade() {
+                            sync_ui_from_shared(&inner, &w);
+                        }
+                    }
+                }
+            }
+        });
+
+        // Code editor mouse click
+        self.window.on_editor_click({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |line, col| {
+                inner.borrow_mut().store.mutate(|state| {
+                    state
+                        .editor_state
+                        .set_cursor_position(line as usize, col as usize);
+                });
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Code editor mouse drag (selection)
+        self.window.on_editor_drag({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |line, col| {
+                inner.borrow_mut().store.mutate(|state| {
+                    state
+                        .editor_state
+                        .extend_selection_to(line as usize, col as usize);
+                });
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
             }
         });
 
@@ -1248,7 +1310,7 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
             );
         }
         ActivePanel::CodeEditor => {
-            window.set_editor_text(SharedString::from(state.editor_state.text()));
+            push_editor_data(window, &state.editor_state);
         }
     }
 
@@ -2284,9 +2346,127 @@ fn apply_layout_to_node(node: &mut Node, key: &str, value: &str) {
             let vals = parse_edge_values(value);
             flow.padding = vals;
         }
+        "layout.padding_top" => flow.padding.top = parse_f32(value),
+        "layout.padding_right" => flow.padding.right = parse_f32(value),
+        "layout.padding_bottom" => flow.padding.bottom = parse_f32(value),
+        "layout.padding_left" => flow.padding.left = parse_f32(value),
         "layout.margin" => {
             let vals = parse_edge_values(value);
             flow.margin = vals;
+        }
+        "layout.margin_top" => flow.margin.top = parse_f32(value),
+        "layout.margin_right" => flow.margin.right = parse_f32(value),
+        "layout.margin_bottom" => flow.margin.bottom = parse_f32(value),
+        "layout.margin_left" => flow.margin.left = parse_f32(value),
+        "layout.width_unit" => {
+            let current_value = match flow.width {
+                Dimension::Px { value } => value,
+                Dimension::Percent { value } => value,
+                Dimension::Auto => 0.0,
+            };
+            flow.width = match value {
+                "auto" => Dimension::Auto,
+                "px" => Dimension::Px {
+                    value: current_value,
+                },
+                "%" => Dimension::Percent {
+                    value: current_value.min(100.0),
+                },
+                _ => flow.width,
+            };
+        }
+        "layout.width_value" => {
+            let v = parse_f32(value);
+            flow.width = match flow.width {
+                Dimension::Px { .. } => Dimension::Px { value: v },
+                Dimension::Percent { .. } => Dimension::Percent { value: v },
+                Dimension::Auto => Dimension::Px { value: v },
+            };
+        }
+        "layout.height_unit" => {
+            let current_value = match flow.height {
+                Dimension::Px { value } => value,
+                Dimension::Percent { value } => value,
+                Dimension::Auto => 0.0,
+            };
+            flow.height = match value {
+                "auto" => Dimension::Auto,
+                "px" => Dimension::Px {
+                    value: current_value,
+                },
+                "%" => Dimension::Percent {
+                    value: current_value.min(100.0),
+                },
+                _ => flow.height,
+            };
+        }
+        "layout.height_value" => {
+            let v = parse_f32(value);
+            flow.height = match flow.height {
+                Dimension::Px { .. } => Dimension::Px { value: v },
+                Dimension::Percent { .. } => Dimension::Percent { value: v },
+                Dimension::Auto => Dimension::Px { value: v },
+            };
+        }
+        "layout.grid_column_type" => {
+            flow.grid_column = match value {
+                "auto" => GridPlacement::Auto,
+                "line" => GridPlacement::Line {
+                    index: match flow.grid_column {
+                        GridPlacement::Line { index } => index,
+                        GridPlacement::Span { count } => count as i16,
+                        GridPlacement::Auto => 1,
+                    },
+                },
+                "span" => GridPlacement::Span {
+                    count: match flow.grid_column {
+                        GridPlacement::Span { count } => count,
+                        GridPlacement::Line { index } => index.max(1) as u16,
+                        GridPlacement::Auto => 1,
+                    },
+                },
+                _ => flow.grid_column,
+            };
+        }
+        "layout.grid_column_value" => {
+            let v = parse_f32(value);
+            flow.grid_column = match flow.grid_column {
+                GridPlacement::Line { .. } => GridPlacement::Line { index: v as i16 },
+                GridPlacement::Span { .. } => GridPlacement::Span {
+                    count: (v as u16).max(1),
+                },
+                GridPlacement::Auto => GridPlacement::Line { index: v as i16 },
+            };
+        }
+        "layout.grid_row_type" => {
+            flow.grid_row = match value {
+                "auto" => GridPlacement::Auto,
+                "line" => GridPlacement::Line {
+                    index: match flow.grid_row {
+                        GridPlacement::Line { index } => index,
+                        GridPlacement::Span { count } => count as i16,
+                        GridPlacement::Auto => 1,
+                    },
+                },
+                "span" => GridPlacement::Span {
+                    count: match flow.grid_row {
+                        GridPlacement::Span { count } => count,
+                        GridPlacement::Line { index } => index.max(1) as u16,
+                        GridPlacement::Auto => 1,
+                    },
+                },
+                _ => flow.grid_row,
+            };
+        }
+        "layout.grid_row_value" => {
+            let v = parse_f32(value);
+            flow.grid_row = match flow.grid_row {
+                GridPlacement::Line { .. } => GridPlacement::Line { index: v as i16 },
+                GridPlacement::Span { .. } => GridPlacement::Span {
+                    count: (v as u16).max(1),
+                },
+                GridPlacement::Auto => GridPlacement::Line { index: v as i16 },
+            };
         }
         _ => {}
     }
@@ -2456,6 +2636,102 @@ fn push_game_engine_data(
     window.set_connection_count(conn_count as i32);
     window.set_resource_count(doc.resources.len() as i32);
     window.set_prefab_count(doc.prefabs.len() as i32);
+}
+
+fn push_editor_data(window: &AppWindow, es: &EditorState) {
+    use prism_core::editor::{highlight_line, TokenKind};
+
+    let line_count = es.buffer.line_count();
+    let cursor_line = es.cursor.position.line;
+    let cursor_col = es.cursor.position.col;
+
+    let (sel_start, sel_end) = es
+        .selection
+        .as_ref()
+        .map(|s| s.ordered_positions(&es.buffer))
+        .unzip();
+
+    let mut lines: Vec<EditorLine> = Vec::with_capacity(line_count);
+    for i in 0..line_count {
+        let raw = es.buffer.line(i).unwrap_or_default();
+        let trimmed = raw.trim_end_matches('\n');
+        let tokens_raw = highlight_line(trimmed, &es.language);
+
+        let mut col = 0i32;
+        let tokens: Vec<EditorToken> = tokens_raw
+            .into_iter()
+            .filter_map(|t| {
+                let token_col = col;
+                col += t.text.chars().count() as i32;
+                if t.kind == TokenKind::Whitespace {
+                    return None;
+                }
+                let c = match t.kind {
+                    TokenKind::Keyword => slint::Color::from_rgb_u8(0xc6, 0x78, 0xdd),
+                    TokenKind::String => slint::Color::from_rgb_u8(0x98, 0xc3, 0x79),
+                    TokenKind::Comment => slint::Color::from_rgb_u8(0x5c, 0x63, 0x70),
+                    TokenKind::Number => slint::Color::from_rgb_u8(0xd1, 0x9a, 0x66),
+                    TokenKind::Operator => slint::Color::from_rgb_u8(0x56, 0xb6, 0xc2),
+                    TokenKind::Punctuation => slint::Color::from_rgb_u8(0xab, 0xb2, 0xbf),
+                    TokenKind::Identifier => slint::Color::from_rgb_u8(0xe0, 0x6c, 0x75),
+                    TokenKind::Whitespace => unreachable!(),
+                    TokenKind::Plain => slint::Color::from_rgb_u8(0xab, 0xb2, 0xbf),
+                };
+                Some(EditorToken {
+                    text: SharedString::from(t.text),
+                    token_color: c,
+                    col_offset: token_col,
+                })
+            })
+            .collect();
+        let token_model = Rc::new(VecModel::from(tokens));
+
+        let is_current = i == cursor_line;
+
+        let (sf, st) = compute_line_selection(i, trimmed.len(), &sel_start, &sel_end);
+
+        lines.push(EditorLine {
+            number: (i + 1) as i32,
+            tokens: ModelRc::from(token_model as Rc<dyn Model<Data = EditorToken>>),
+            is_current,
+            sel_from: sf,
+            sel_to: st,
+        });
+    }
+
+    let model = Rc::new(VecModel::from(lines));
+    window.set_editor_lines(ModelRc::from(model as Rc<dyn Model<Data = EditorLine>>));
+    window.set_editor_cursor_line(cursor_line as i32);
+    window.set_editor_cursor_col(cursor_col as i32);
+    window.set_editor_cursor_visible(true);
+    window.set_editor_language(SharedString::from(&es.language));
+    window.set_editor_line_count(line_count as i32);
+    window.set_editor_char_count(es.buffer.len_chars() as i32);
+}
+
+fn compute_line_selection(
+    line: usize,
+    line_len: usize,
+    sel_start: &Option<prism_core::editor::Position>,
+    sel_end: &Option<prism_core::editor::Position>,
+) -> (i32, i32) {
+    let (start, end) = match (sel_start, sel_end) {
+        (Some(s), Some(e)) => (s, e),
+        _ => return (-1, -1),
+    };
+    if line < start.line || line > end.line {
+        return (-1, -1);
+    }
+    let from = if line == start.line { start.col } else { 0 };
+    let to = if line == end.line {
+        end.col
+    } else {
+        line_len + 1
+    };
+    if from == to {
+        return (-1, -1);
+    }
+    (from as i32, to as i32)
 }
 
 // ── Tests ──────────────────────────────────────────────────────────

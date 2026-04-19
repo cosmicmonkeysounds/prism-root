@@ -11,6 +11,7 @@ pub struct EditorState {
     pub selection: Option<Selection>,
     pub language: String,
     pub read_only: bool,
+    pub tab_width: usize,
 }
 
 impl Default for EditorState {
@@ -21,6 +22,7 @@ impl Default for EditorState {
             selection: None,
             language: String::new(),
             read_only: false,
+            tab_width: 4,
         }
     }
 }
@@ -70,8 +72,53 @@ impl EditorState {
         self.cursor.set_char_index(&self.buffer, idx + len);
     }
 
+    pub fn insert_tab(&mut self) {
+        if self.read_only {
+            return;
+        }
+        self.delete_selection_if_any();
+        let col = self.cursor.position.col;
+        let spaces_to_next = self.tab_width - (col % self.tab_width);
+        let spaces: String = " ".repeat(spaces_to_next);
+        let idx = self.cursor.char_index(&self.buffer);
+        self.buffer.insert(idx, &spaces);
+        self.cursor
+            .set_char_index(&self.buffer, idx + spaces_to_next);
+    }
+
+    pub fn dedent(&mut self) {
+        if self.read_only {
+            return;
+        }
+        let line = self.cursor.position.line;
+        if let Some(line_text) = self.buffer.line(line) {
+            let leading = line_text.chars().take_while(|c| *c == ' ').count();
+            let to_remove = leading.min(self.tab_width);
+            if to_remove > 0 {
+                let line_start = self.buffer.position_to_char(&Position { line, col: 0 });
+                self.buffer.delete(line_start, line_start + to_remove);
+                let new_col = self.cursor.position.col.saturating_sub(to_remove);
+                self.cursor.set_position(Position { line, col: new_col });
+            }
+        }
+    }
+
     pub fn insert_newline(&mut self) {
-        self.insert_char('\n');
+        if self.read_only {
+            return;
+        }
+        self.delete_selection_if_any();
+        let current_line = self.cursor.position.line;
+        let indent = self
+            .buffer
+            .line(current_line)
+            .map(|lt| lt.chars().take_while(|c| *c == ' ').collect::<String>())
+            .unwrap_or_default();
+        let idx = self.cursor.char_index(&self.buffer);
+        let insert = format!("\n{indent}");
+        let insert_len = insert.chars().count();
+        self.buffer.insert(idx, &insert);
+        self.cursor.set_char_index(&self.buffer, idx + insert_len);
     }
 
     pub fn backspace(&mut self) {
@@ -98,6 +145,97 @@ impl EditorState {
         let idx = self.cursor.char_index(&self.buffer);
         if idx < self.buffer.len_chars() {
             self.buffer.delete(idx, idx + 1);
+        }
+    }
+
+    pub fn delete_word_left(&mut self) {
+        if self.read_only {
+            return;
+        }
+        if self.delete_selection_if_any() {
+            return;
+        }
+        let idx = self.cursor.char_index(&self.buffer);
+        let target = word_boundary_left(&self.buffer.text(), idx);
+        if target < idx {
+            self.buffer.delete(target, idx);
+            self.cursor.set_char_index(&self.buffer, target);
+        }
+    }
+
+    pub fn delete_word_right(&mut self) {
+        if self.read_only {
+            return;
+        }
+        if self.delete_selection_if_any() {
+            return;
+        }
+        let idx = self.cursor.char_index(&self.buffer);
+        let target = word_boundary_right(&self.buffer.text(), idx);
+        if target > idx {
+            self.buffer.delete(idx, target);
+        }
+    }
+
+    pub fn delete_line(&mut self) {
+        if self.read_only {
+            return;
+        }
+        let line = self.cursor.position.line;
+        let line_count = self.buffer.line_count();
+        if line_count <= 1 && self.buffer.is_empty() {
+            return;
+        }
+        let line_start = self.buffer.position_to_char(&Position { line, col: 0 });
+        let line_end = if line + 1 < line_count {
+            self.buffer.position_to_char(&Position {
+                line: line + 1,
+                col: 0,
+            })
+        } else if line > 0 {
+            let prev_end = self.buffer.position_to_char(&Position { line, col: 0 });
+            let total = self.buffer.len_chars();
+            self.buffer.delete(prev_end.saturating_sub(1), total);
+            let new_line = line.saturating_sub(1);
+            let line_len = self.buffer.line_len_chars(new_line);
+            self.cursor.set_position(Position {
+                line: new_line,
+                col: self.cursor.position.col.min(line_len),
+            });
+            self.selection = None;
+            return;
+        } else {
+            self.buffer.len_chars()
+        };
+
+        self.buffer.delete(line_start, line_end);
+        self.selection = None;
+        let new_line = line.min(self.buffer.line_count().saturating_sub(1));
+        let line_len = self.buffer.line_len_chars(new_line);
+        self.cursor.set_position(Position {
+            line: new_line,
+            col: self.cursor.position.col.min(line_len),
+        });
+    }
+
+    pub fn duplicate_line(&mut self) {
+        if self.read_only {
+            return;
+        }
+        let line = self.cursor.position.line;
+        if let Some(line_text) = self.buffer.line(line) {
+            let trimmed = line_text.trim_end_matches('\n');
+            let insert = format!("\n{trimmed}");
+            let line_end_col = self.buffer.line_len_chars(line);
+            let insert_pos = self.buffer.position_to_char(&Position {
+                line,
+                col: line_end_col,
+            });
+            self.buffer.insert(insert_pos, &insert);
+            self.cursor.set_position(Position {
+                line: line + 1,
+                col: self.cursor.position.col,
+            });
         }
     }
 
@@ -163,6 +301,46 @@ impl EditorState {
         self.update_selection_head(extend_selection);
     }
 
+    pub fn move_word_left(&mut self, extend_selection: bool) {
+        self.update_selection(extend_selection);
+        if !extend_selection {
+            self.selection = None;
+        }
+        let idx = self.cursor.char_index(&self.buffer);
+        let target = word_boundary_left(&self.buffer.text(), idx);
+        self.cursor.set_char_index(&self.buffer, target);
+        self.update_selection_head(extend_selection);
+    }
+
+    pub fn move_word_right(&mut self, extend_selection: bool) {
+        self.update_selection(extend_selection);
+        if !extend_selection {
+            self.selection = None;
+        }
+        let idx = self.cursor.char_index(&self.buffer);
+        let target = word_boundary_right(&self.buffer.text(), idx);
+        self.cursor.set_char_index(&self.buffer, target);
+        self.update_selection_head(extend_selection);
+    }
+
+    pub fn move_to_buffer_start(&mut self, extend_selection: bool) {
+        self.update_selection(extend_selection);
+        if !extend_selection {
+            self.selection = None;
+        }
+        self.cursor.move_to_buffer_start();
+        self.update_selection_head(extend_selection);
+    }
+
+    pub fn move_to_buffer_end(&mut self, extend_selection: bool) {
+        self.update_selection(extend_selection);
+        if !extend_selection {
+            self.selection = None;
+        }
+        self.cursor.move_to_buffer_end(&self.buffer);
+        self.update_selection_head(extend_selection);
+    }
+
     pub fn select_all(&mut self) {
         let end = self.buffer.len_chars();
         self.selection = Some(Selection::new(
@@ -172,11 +350,64 @@ impl EditorState {
         self.cursor.move_to_buffer_end(&self.buffer);
     }
 
+    pub fn set_cursor_position(&mut self, line: usize, col: usize) {
+        let line = line.min(self.buffer.line_count().saturating_sub(1));
+        let col = col.min(self.buffer.line_len_chars(line));
+        self.cursor.set_position(Position { line, col });
+        self.selection = None;
+    }
+
+    pub fn extend_selection_to(&mut self, line: usize, col: usize) {
+        let line = line.min(self.buffer.line_count().saturating_sub(1));
+        let col = col.min(self.buffer.line_len_chars(line));
+        let pos = Position { line, col };
+        if self.selection.is_none() {
+            self.selection = Some(Selection::new(self.cursor.position, pos));
+        } else if let Some(sel) = &mut self.selection {
+            sel.head = pos;
+        }
+        self.cursor.set_position(pos);
+    }
+
+    pub fn handle_action(&mut self, action: &str) {
+        match action {
+            "enter" => self.insert_newline(),
+            "backspace" => self.backspace(),
+            "ctrl-backspace" => self.delete_word_left(),
+            "delete" => self.delete(),
+            "ctrl-delete" => self.delete_word_right(),
+            "tab" => self.insert_tab(),
+            "shift-tab" => self.dedent(),
+            "up" => self.move_up(false),
+            "shift-up" => self.move_up(true),
+            "down" => self.move_down(false),
+            "shift-down" => self.move_down(true),
+            "left" => self.move_left(false),
+            "shift-left" => self.move_left(true),
+            "ctrl-left" => self.move_word_left(false),
+            "ctrl-shift-left" => self.move_word_left(true),
+            "right" => self.move_right(false),
+            "shift-right" => self.move_right(true),
+            "ctrl-right" => self.move_word_right(false),
+            "ctrl-shift-right" => self.move_word_right(true),
+            "home" => self.move_to_line_start(false),
+            "shift-home" => self.move_to_line_start(true),
+            "ctrl-home" => self.move_to_buffer_start(false),
+            "ctrl-shift-home" => self.move_to_buffer_start(true),
+            "end" => self.move_to_line_end(false),
+            "shift-end" => self.move_to_line_end(true),
+            "ctrl-end" => self.move_to_buffer_end(false),
+            "ctrl-shift-end" => self.move_to_buffer_end(true),
+            "select-all" => self.select_all(),
+            "duplicate-line" => self.duplicate_line(),
+            "delete-line" => self.delete_line(),
+            _ => {}
+        }
+    }
+
     fn update_selection(&mut self, extend: bool) {
         if extend && self.selection.is_none() {
             self.selection = Some(Selection::caret(self.cursor.position));
-        } else if !extend {
-            // Cleared by the caller when appropriate.
         }
     }
 
@@ -205,6 +436,55 @@ impl EditorState {
     }
 }
 
+fn word_boundary_left(text: &str, from: usize) -> usize {
+    let chars: Vec<char> = text.chars().collect();
+    let mut i = from.min(chars.len());
+    if i == 0 {
+        return 0;
+    }
+    i -= 1;
+    while i > 0 && chars[i].is_whitespace() {
+        i -= 1;
+    }
+    if chars[i].is_alphanumeric() || chars[i] == '_' {
+        while i > 0 && (chars[i - 1].is_alphanumeric() || chars[i - 1] == '_') {
+            i -= 1;
+        }
+    } else if !chars[i].is_whitespace() {
+        while i > 0
+            && !chars[i - 1].is_alphanumeric()
+            && chars[i - 1] != '_'
+            && !chars[i - 1].is_whitespace()
+        {
+            i -= 1;
+        }
+    }
+    i
+}
+
+fn word_boundary_right(text: &str, from: usize) -> usize {
+    let chars: Vec<char> = text.chars().collect();
+    let len = chars.len();
+    let mut i = from;
+    if i >= len {
+        return len;
+    }
+    if chars[i].is_alphanumeric() || chars[i] == '_' {
+        while i < len && (chars[i].is_alphanumeric() || chars[i] == '_') {
+            i += 1;
+        }
+    } else if !chars[i].is_whitespace() {
+        while i < len && !chars[i].is_alphanumeric() && chars[i] != '_' && !chars[i].is_whitespace()
+        {
+            i += 1;
+        }
+    }
+    while i < len && chars[i].is_whitespace() {
+        i += 1;
+    }
+    i
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -228,12 +508,56 @@ mod tests {
     }
 
     #[test]
-    fn newline() {
-        let mut s = EditorState::with_text("ab");
-        s.cursor.set_position(Position { line: 0, col: 1 });
+    fn newline_auto_indent() {
+        let mut s = EditorState::with_text("    hello");
+        s.cursor.set_position(Position { line: 0, col: 9 });
         s.insert_newline();
-        assert_eq!(s.text(), "a\nb");
-        assert_eq!(s.cursor.position, Position { line: 1, col: 0 });
+        assert_eq!(s.text(), "    hello\n    ");
+        assert_eq!(s.cursor.position, Position { line: 1, col: 4 });
+    }
+
+    #[test]
+    fn newline_mid_line_preserves_indent() {
+        let mut s = EditorState::with_text("    ab");
+        s.cursor.set_position(Position { line: 0, col: 5 });
+        s.insert_newline();
+        assert_eq!(s.text(), "    a\n    b");
+        assert_eq!(s.cursor.position, Position { line: 1, col: 4 });
+    }
+
+    #[test]
+    fn tab_inserts_spaces() {
+        let mut s = EditorState::new();
+        s.insert_tab();
+        assert_eq!(s.text(), "    ");
+        assert_eq!(s.cursor.position.col, 4);
+    }
+
+    #[test]
+    fn tab_aligns_to_stop() {
+        let mut s = EditorState::new();
+        s.insert_char('a');
+        s.insert_tab();
+        assert_eq!(s.text(), "a   ");
+        assert_eq!(s.cursor.position.col, 4);
+    }
+
+    #[test]
+    fn dedent_removes_spaces() {
+        let mut s = EditorState::with_text("    hello");
+        s.cursor.set_position(Position { line: 0, col: 6 });
+        s.dedent();
+        assert_eq!(s.text(), "hello");
+        assert_eq!(s.cursor.position.col, 2);
+    }
+
+    #[test]
+    fn dedent_partial() {
+        let mut s = EditorState::with_text("  hi");
+        s.cursor.set_position(Position { line: 0, col: 3 });
+        s.dedent();
+        assert_eq!(s.text(), "hi");
+        assert_eq!(s.cursor.position.col, 1);
     }
 
     #[test]
@@ -314,5 +638,109 @@ mod tests {
         assert_eq!(s.text(), "new content");
         assert_eq!(s.cursor.position, Position::zero());
         assert!(s.selection.is_none());
+    }
+
+    #[test]
+    fn word_left() {
+        let mut s = EditorState::with_text("hello world");
+        s.cursor.set_position(Position { line: 0, col: 11 });
+        s.move_word_left(false);
+        assert_eq!(s.cursor.position.col, 6);
+        s.move_word_left(false);
+        assert_eq!(s.cursor.position.col, 0);
+    }
+
+    #[test]
+    fn word_right() {
+        let mut s = EditorState::with_text("hello world");
+        s.cursor.set_position(Position { line: 0, col: 0 });
+        s.move_word_right(false);
+        assert_eq!(s.cursor.position.col, 6);
+        s.move_word_right(false);
+        assert_eq!(s.cursor.position.col, 11);
+    }
+
+    #[test]
+    fn delete_word_left() {
+        let mut s = EditorState::with_text("hello world");
+        s.cursor.set_position(Position { line: 0, col: 11 });
+        s.delete_word_left();
+        assert_eq!(s.text(), "hello ");
+    }
+
+    #[test]
+    fn delete_word_right() {
+        let mut s = EditorState::with_text("hello world");
+        s.cursor.set_position(Position { line: 0, col: 0 });
+        s.delete_word_right();
+        assert_eq!(s.text(), "world");
+    }
+
+    #[test]
+    fn duplicate_line() {
+        let mut s = EditorState::with_text("hello\nworld");
+        s.cursor.set_position(Position { line: 0, col: 2 });
+        s.duplicate_line();
+        assert_eq!(s.text(), "hello\nhello\nworld");
+        assert_eq!(s.cursor.position, Position { line: 1, col: 2 });
+    }
+
+    #[test]
+    fn delete_line_middle() {
+        let mut s = EditorState::with_text("aaa\nbbb\nccc");
+        s.cursor.set_position(Position { line: 1, col: 1 });
+        s.delete_line();
+        assert_eq!(s.text(), "aaa\nccc");
+        assert_eq!(s.cursor.position.line, 1);
+    }
+
+    #[test]
+    fn handle_action_dispatch() {
+        let mut s = EditorState::with_text("abc");
+        s.cursor.set_position(Position { line: 0, col: 3 });
+        s.handle_action("enter");
+        assert_eq!(s.text(), "abc\n");
+        assert_eq!(s.cursor.position.line, 1);
+    }
+
+    #[test]
+    fn set_cursor_position_clamps() {
+        let mut s = EditorState::with_text("abc\ndef");
+        s.set_cursor_position(99, 99);
+        assert_eq!(s.cursor.position, Position { line: 1, col: 3 });
+    }
+
+    #[test]
+    fn drag_selection_workflow() {
+        let mut s = EditorState::with_text("hello world");
+        s.set_cursor_position(0, 2);
+        assert!(s.selection.is_none());
+        s.extend_selection_to(0, 7);
+        let sel = s.selection.unwrap();
+        assert_eq!(sel.anchor, Position { line: 0, col: 2 });
+        assert_eq!(sel.head, Position { line: 0, col: 7 });
+        assert_eq!(sel.selected_text(&s.buffer), "llo w");
+    }
+
+    #[test]
+    fn drag_selection_multiline() {
+        let mut s = EditorState::with_text("abc\ndef\nghi");
+        s.set_cursor_position(0, 1);
+        s.extend_selection_to(2, 2);
+        let sel = s.selection.unwrap();
+        assert_eq!(sel.selected_text(&s.buffer), "bc\ndef\ngh");
+        assert_eq!(s.cursor.position, Position { line: 2, col: 2 });
+    }
+
+    #[test]
+    fn extend_selection_continues_from_anchor() {
+        let mut s = EditorState::with_text("abcdef");
+        s.set_cursor_position(0, 1);
+        s.extend_selection_to(0, 3);
+        s.extend_selection_to(0, 5);
+        let sel = s.selection.unwrap();
+        assert_eq!(sel.anchor, Position { line: 0, col: 1 });
+        assert_eq!(sel.head, Position { line: 0, col: 5 });
+        assert_eq!(sel.selected_text(&s.buffer), "bcde");
     }
 }

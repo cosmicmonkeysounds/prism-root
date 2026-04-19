@@ -61,54 +61,118 @@ impl PropertiesPanel {
         };
         match &node.layout_mode {
             LayoutMode::Flow(flow) => {
-                let mut rows = vec![
-                    layout_select(
-                        "layout.display",
-                        "Display",
-                        format_display(flow.display),
-                        vec!["block", "flex", "grid", "none"],
-                    ),
-                    layout_row(
-                        "layout.width",
-                        "Width",
-                        "text",
-                        format_dimension(flow.width),
-                    ),
-                    layout_row(
-                        "layout.height",
-                        "Height",
-                        "text",
-                        format_dimension(flow.height),
-                    ),
-                ];
+                let mut rows = vec![layout_select(
+                    "layout.display",
+                    "Display",
+                    format_display(flow.display),
+                    vec!["block", "flex", "grid", "none"],
+                )];
 
-                if flow.padding != prism_core::foundation::geometry::Edges::ZERO {
-                    rows.push(layout_row(
-                        "layout.padding",
-                        "Padding",
-                        "text",
-                        format_edges(&flow.padding),
-                    ));
-                }
-
-                if flow.margin != prism_core::foundation::geometry::Edges::ZERO {
-                    rows.push(layout_row(
-                        "layout.margin",
-                        "Margin",
-                        "text",
-                        format_edges(&flow.margin),
-                    ));
-                }
-
-                if flow.gap > 0.0 {
+                // Width — select for unit + slider for value
+                rows.push(layout_select(
+                    "layout.width_unit",
+                    "Width Unit",
+                    dimension_unit(flow.width),
+                    vec!["auto", "px", "%"],
+                ));
+                if let Some((val, lo, hi)) = dimension_slider(flow.width) {
                     rows.push(layout_number(
-                        "layout.gap",
-                        "Gap",
-                        format_f32(flow.gap),
-                        0.0,
-                        128.0,
+                        "layout.width_value",
+                        "Width",
+                        format_f32(val),
+                        lo,
+                        hi,
                     ));
                 }
+
+                // Height — select for unit + slider for value
+                rows.push(layout_select(
+                    "layout.height_unit",
+                    "Height Unit",
+                    dimension_unit(flow.height),
+                    vec!["auto", "px", "%"],
+                ));
+                if let Some((val, lo, hi)) = dimension_slider(flow.height) {
+                    rows.push(layout_number(
+                        "layout.height_value",
+                        "Height",
+                        format_f32(val),
+                        lo,
+                        hi,
+                    ));
+                }
+
+                // Padding — 4 individual sliders
+                if flow.padding != prism_core::foundation::geometry::Edges::ZERO {
+                    rows.push(layout_number(
+                        "layout.padding_top",
+                        "Padding Top",
+                        format_f32(flow.padding.top),
+                        0.0,
+                        256.0,
+                    ));
+                    rows.push(layout_number(
+                        "layout.padding_right",
+                        "Padding Right",
+                        format_f32(flow.padding.right),
+                        0.0,
+                        256.0,
+                    ));
+                    rows.push(layout_number(
+                        "layout.padding_bottom",
+                        "Padding Bottom",
+                        format_f32(flow.padding.bottom),
+                        0.0,
+                        256.0,
+                    ));
+                    rows.push(layout_number(
+                        "layout.padding_left",
+                        "Padding Left",
+                        format_f32(flow.padding.left),
+                        0.0,
+                        256.0,
+                    ));
+                }
+
+                // Margin — 4 individual sliders
+                if flow.margin != prism_core::foundation::geometry::Edges::ZERO {
+                    rows.push(layout_number(
+                        "layout.margin_top",
+                        "Margin Top",
+                        format_f32(flow.margin.top),
+                        0.0,
+                        256.0,
+                    ));
+                    rows.push(layout_number(
+                        "layout.margin_right",
+                        "Margin Right",
+                        format_f32(flow.margin.right),
+                        0.0,
+                        256.0,
+                    ));
+                    rows.push(layout_number(
+                        "layout.margin_bottom",
+                        "Margin Bottom",
+                        format_f32(flow.margin.bottom),
+                        0.0,
+                        256.0,
+                    ));
+                    rows.push(layout_number(
+                        "layout.margin_left",
+                        "Margin Left",
+                        format_f32(flow.margin.left),
+                        0.0,
+                        256.0,
+                    ));
+                }
+
+                rows.push(layout_number(
+                    "layout.gap",
+                    "Gap",
+                    format_f32(flow.gap),
+                    0.0,
+                    128.0,
+                ));
 
                 if flow.display == FlowDisplay::Flex {
                     rows.push(layout_select(
@@ -117,82 +181,92 @@ impl PropertiesPanel {
                         format_flex_direction(flow.flex_direction),
                         vec!["row", "column", "row-reverse", "column-reverse"],
                     ));
-                    if flow.flex_grow != 0.0 {
-                        rows.push(layout_number(
-                            "layout.flex_grow",
-                            "Flex Grow",
-                            format_f32(flow.flex_grow),
-                            0.0,
-                            10.0,
-                        ));
-                    }
-                    if flow.flex_shrink != 1.0 {
-                        rows.push(layout_number(
-                            "layout.flex_shrink",
-                            "Flex Shrink",
-                            format_f32(flow.flex_shrink),
-                            0.0,
-                            10.0,
-                        ));
-                    }
-                }
-
-                if flow.align_items != AlignOption::Auto {
-                    rows.push(layout_select(
-                        "layout.align_items",
-                        "Align Items",
-                        format_align(flow.align_items),
-                        vec!["auto", "start", "end", "center", "stretch", "baseline"],
+                    rows.push(layout_number(
+                        "layout.flex_grow",
+                        "Flex Grow",
+                        format_f32(flow.flex_grow),
+                        0.0,
+                        10.0,
+                    ));
+                    rows.push(layout_number(
+                        "layout.flex_shrink",
+                        "Flex Shrink",
+                        format_f32(flow.flex_shrink),
+                        0.0,
+                        10.0,
                     ));
                 }
 
-                if flow.justify_content != JustifyOption::Start {
-                    rows.push(layout_select(
-                        "layout.justify_content",
-                        "Justify",
-                        format_justify(flow.justify_content),
-                        vec![
-                            "start",
-                            "end",
-                            "center",
-                            "space-between",
-                            "space-around",
-                            "space-evenly",
-                            "stretch",
-                        ],
-                    ));
-                }
+                rows.push(layout_select(
+                    "layout.align_items",
+                    "Align Items",
+                    format_align(flow.align_items),
+                    vec!["auto", "start", "end", "center", "stretch", "baseline"],
+                ));
+
+                rows.push(layout_select(
+                    "layout.justify_content",
+                    "Justify",
+                    format_justify(flow.justify_content),
+                    vec![
+                        "start",
+                        "end",
+                        "center",
+                        "space-between",
+                        "space-around",
+                        "space-evenly",
+                        "stretch",
+                    ],
+                ));
 
                 if flow.display == FlowDisplay::Grid
                     || !matches!(flow.grid_column, GridPlacement::Auto)
                 {
-                    rows.push(layout_row(
-                        "layout.grid_column",
-                        "Grid Column",
-                        "text",
-                        format_grid_placement(flow.grid_column),
+                    rows.push(layout_select(
+                        "layout.grid_column_type",
+                        "Grid Col Type",
+                        placement_type(flow.grid_column),
+                        vec!["auto", "line", "span"],
                     ));
+                    if let Some((val, hi)) = placement_slider(flow.grid_column) {
+                        rows.push(layout_number(
+                            "layout.grid_column_value",
+                            "Grid Col",
+                            format_f32(val),
+                            1.0,
+                            hi,
+                        ));
+                    }
                 }
 
                 if flow.display == FlowDisplay::Grid
                     || !matches!(flow.grid_row, GridPlacement::Auto)
                 {
-                    rows.push(layout_row(
-                        "layout.grid_row",
-                        "Grid Row",
-                        "text",
-                        format_grid_placement(flow.grid_row),
+                    rows.push(layout_select(
+                        "layout.grid_row_type",
+                        "Grid Row Type",
+                        placement_type(flow.grid_row),
+                        vec!["auto", "line", "span"],
                     ));
+                    if let Some((val, hi)) = placement_slider(flow.grid_row) {
+                        rows.push(layout_number(
+                            "layout.grid_row_value",
+                            "Grid Row",
+                            format_f32(val),
+                            1.0,
+                            hi,
+                        ));
+                    }
                 }
 
                 rows
             }
             LayoutMode::Free => {
-                vec![layout_row(
+                vec![layout_select(
                     "layout.display",
                     "Display",
-                    "text",
                     "free".into(),
+                    vec!["free", "block", "flex", "grid", "none"],
                 )]
             }
         }
@@ -295,20 +369,6 @@ fn row_from_spec(spec: &FieldSpec, props: &Value) -> FieldRowData {
     }
 }
 
-fn layout_row(key: &str, label: &str, kind: &str, value: String) -> FieldRowData {
-    FieldRowData {
-        key: key.into(),
-        label: label.into(),
-        kind: kind.into(),
-        value,
-        required: false,
-        min: 0.0,
-        max: 0.0,
-        has_bounds: false,
-        options: vec![],
-    }
-}
-
 fn layout_number(key: &str, label: &str, value: String, min: f32, max: f32) -> FieldRowData {
     FieldRowData {
         key: key.into(),
@@ -337,6 +397,40 @@ fn layout_select(key: &str, label: &str, value: String, options: Vec<&str>) -> F
     }
 }
 
+fn dimension_unit(d: Dimension) -> String {
+    match d {
+        Dimension::Auto => "auto",
+        Dimension::Px { .. } => "px",
+        Dimension::Percent { .. } => "%",
+    }
+    .into()
+}
+
+fn dimension_slider(d: Dimension) -> Option<(f32, f32, f32)> {
+    match d {
+        Dimension::Auto => None,
+        Dimension::Px { value } => Some((value, 0.0, 2000.0)),
+        Dimension::Percent { value } => Some((value, 0.0, 100.0)),
+    }
+}
+
+fn placement_type(p: GridPlacement) -> String {
+    match p {
+        GridPlacement::Auto => "auto",
+        GridPlacement::Line { .. } => "line",
+        GridPlacement::Span { .. } => "span",
+    }
+    .into()
+}
+
+fn placement_slider(p: GridPlacement) -> Option<(f32, f32)> {
+    match p {
+        GridPlacement::Auto => None,
+        GridPlacement::Line { index } => Some((index as f32, 24.0)),
+        GridPlacement::Span { count } => Some((count as f32, 24.0)),
+    }
+}
+
 fn format_number(v: f64) -> String {
     if v.fract() == 0.0 && v.is_finite() {
         format!("{}", v as i64)
@@ -353,14 +447,6 @@ fn format_display(d: FlowDisplay) -> String {
         FlowDisplay::None => "none",
     }
     .into()
-}
-
-fn format_dimension(d: Dimension) -> String {
-    match d {
-        Dimension::Auto => "auto".into(),
-        Dimension::Px { value } => format!("{}px", format_f32(value)),
-        Dimension::Percent { value } => format!("{}%", format_f32(value)),
-    }
 }
 
 fn format_flex_direction(d: FlexDirection) -> String {
@@ -396,30 +482,6 @@ fn format_justify(j: JustifyOption) -> String {
         JustifyOption::Stretch => "stretch",
     }
     .into()
-}
-
-fn format_grid_placement(p: GridPlacement) -> String {
-    match p {
-        GridPlacement::Auto => "auto".into(),
-        GridPlacement::Line { index } => format!("line {index}"),
-        GridPlacement::Span { count } => format!("span {count}"),
-    }
-}
-
-fn format_edges(e: &prism_core::foundation::geometry::Edges<f32>) -> String {
-    if e.top == e.right && e.right == e.bottom && e.bottom == e.left {
-        format_f32(e.top)
-    } else if e.top == e.bottom && e.left == e.right {
-        format!("{} {}", format_f32(e.top), format_f32(e.left))
-    } else {
-        format!(
-            "{} {} {} {}",
-            format_f32(e.top),
-            format_f32(e.right),
-            format_f32(e.bottom),
-            format_f32(e.left)
-        )
-    }
 }
 
 fn format_f32(v: f32) -> String {
@@ -512,6 +574,104 @@ mod tests {
         assert_eq!(rows[0].key, "spacing");
         assert_eq!(rows[0].kind, "integer");
         assert_eq!(rows[0].value, "16");
+        assert!(rows[0].has_bounds);
+        assert!((rows[0].min - 0.0).abs() < f32::EPSILON);
+        assert!((rows[0].max - 64.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn layout_rows_use_typed_controls() {
+        use prism_builder::layout::{FlowProps, LayoutMode};
+
+        let doc = BuilderDocument {
+            root: Some(Node {
+                id: "root".into(),
+                component: "container".into(),
+                props: json!({}),
+                layout_mode: LayoutMode::Flow(FlowProps::default()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let rows = PropertiesPanel::layout_rows(&doc, &Some("root".into()));
+        let kinds: Vec<(&str, &str)> = rows
+            .iter()
+            .map(|r| (r.key.as_str(), r.kind.as_str()))
+            .collect();
+        assert!(kinds.contains(&("layout.display", "select")));
+        assert!(kinds.contains(&("layout.width_unit", "select")));
+        assert!(kinds.contains(&("layout.height_unit", "select")));
+        assert!(kinds.contains(&("layout.gap", "number")));
+        assert!(kinds.contains(&("layout.align_items", "select")));
+        assert!(kinds.contains(&("layout.justify_content", "select")));
+        for row in &rows {
+            assert_ne!(
+                row.kind, "text",
+                "no layout row should use plain text kind (found key={})",
+                row.key
+            );
+        }
+    }
+
+    #[test]
+    fn layout_padding_splits_into_four_sliders() {
+        use prism_builder::layout::{FlowProps, LayoutMode};
+
+        let doc = BuilderDocument {
+            root: Some(Node {
+                id: "root".into(),
+                component: "container".into(),
+                props: json!({}),
+                layout_mode: LayoutMode::Flow(FlowProps {
+                    padding: prism_core::foundation::geometry::Edges::all(8.0),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let rows = PropertiesPanel::layout_rows(&doc, &Some("root".into()));
+        let pad_rows: Vec<_> = rows
+            .iter()
+            .filter(|r| r.key.starts_with("layout.padding_"))
+            .collect();
+        assert_eq!(pad_rows.len(), 4);
+        for r in &pad_rows {
+            assert_eq!(r.kind, "number");
+            assert!(r.has_bounds);
+            assert_eq!(r.value, "8");
+        }
+    }
+
+    #[test]
+    fn layout_width_px_shows_slider() {
+        use prism_builder::layout::{Dimension, FlowProps, LayoutMode};
+
+        let doc = BuilderDocument {
+            root: Some(Node {
+                id: "root".into(),
+                component: "container".into(),
+                props: json!({}),
+                layout_mode: LayoutMode::Flow(FlowProps {
+                    width: Dimension::Px { value: 200.0 },
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let rows = PropertiesPanel::layout_rows(&doc, &Some("root".into()));
+        let unit_row = rows.iter().find(|r| r.key == "layout.width_unit").unwrap();
+        assert_eq!(unit_row.kind, "select");
+        assert_eq!(unit_row.value, "px");
+
+        let val_row = rows.iter().find(|r| r.key == "layout.width_value").unwrap();
+        assert_eq!(val_row.kind, "number");
+        assert!(val_row.has_bounds);
+        assert_eq!(val_row.value, "200");
     }
 
     #[test]

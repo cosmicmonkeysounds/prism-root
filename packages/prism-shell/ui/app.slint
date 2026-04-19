@@ -136,6 +136,20 @@ struct VariantItem {
     options: [string],
 }
 
+struct EditorToken {
+    text: string,
+    token-color: color,
+    col-offset: int,
+}
+
+struct EditorLine {
+    number: int,
+    tokens: [EditorToken],
+    is-current: bool,
+    sel-from: int,
+    sel-to: int,
+}
+
 // ── Icon button ───────────────────────────────────────────────────
 
 component IconButton inherits Rectangle {
@@ -183,6 +197,34 @@ component ToolbarSeparator inherits Rectangle {
     width: 1px;
     height: 20px;
     background: Palette.foreground.transparentize(80%);
+}
+
+component SplitHandle inherits Rectangle {
+    width: 6px;
+    background: split-touch.has-hover || split-touch.pressed
+        ? Palette.accent-background.transparentize(60%)
+        : transparent;
+
+    callback dragged(length);
+
+    split-touch := TouchArea {
+        mouse-cursor: col-resize;
+        moved => {
+            if (self.pressed) {
+                root.dragged(self.mouse-x - self.pressed-x);
+            }
+        }
+    }
+
+    Rectangle {
+        x: 2px;
+        width: 2px;
+        height: parent.height;
+        border-radius: 1px;
+        background: split-touch.has-hover || split-touch.pressed
+            ? Palette.accent-background.transparentize(30%)
+            : transparent;
+    }
 }
 
 // ── Builder block components ──────────────────────────────────────
@@ -795,8 +837,17 @@ export component AppWindow inherits Window {
     callback help-entry-clicked;
 
     // Code editor
-    in property <string> editor-text: "";
-    callback editor-text-changed(string);
+    in property <[EditorLine]> editor-lines: [];
+    in property <int> editor-cursor-line: 0;
+    in property <int> editor-cursor-col: 0;
+    in property <bool> editor-cursor-visible: true;
+    in property <string> editor-language: "rust";
+    in property <int> editor-line-count: 0;
+    in property <int> editor-char-count: 0;
+    callback editor-action(string);
+    callback editor-char-typed(string);
+    callback editor-click(int, int);
+    callback editor-drag(int, int);
 
     // Page layout
     in property <PageLayoutData> page-layout: {
@@ -835,6 +886,11 @@ export component AppWindow inherits Window {
     callback docs-open-full;
     callback docs-panel-close;
     callback docs-view-close;
+
+    // Panel resize
+    property <length> identity-sidebar-width: 220px;
+    property <length> left-sidebar-width: 240px;
+    property <length> right-sidebar-width: 280px;
 
     background: Palette.background;
 
@@ -898,24 +954,32 @@ export component AppWindow inherits Window {
 
                 // ── Identity sidebar ─────────────────────────────
                 if root.active-panel-id == 0 : Rectangle {
-                    width: 220px;
+                    width: root.identity-sidebar-width;
                     background: Palette.alternate-background;
+                    clip: true;
                     Rectangle { x: parent.width - 1px; y: 0px; width: 1px; height: parent.height; background: Palette.foreground.transparentize(90%); }
-                    VerticalLayout {
-                        padding: 16px; spacing: 8px; alignment: start;
-                        Text { text: root.panel-title; color: Palette.foreground; font-size: 14px; font-weight: 700; letter-spacing: 0.3px; }
-                        Text { text: root.panel-hint; color: Palette.foreground.transparentize(40%); font-size: 11px; wrap: word-wrap; }
-                        if root.actions.length > 0 : VerticalLayout {
-                            spacing: 4px; padding-top: 8px;
-                            for action[i] in root.actions : Button { text: action.label; clicked => { root.clicked(i); } }
+                    ScrollView {
+                        VerticalLayout {
+                            min-width: 180px;
+                            padding: 16px; spacing: 8px; alignment: start;
+                            Text { text: root.panel-title; color: Palette.foreground; font-size: 14px; font-weight: 700; letter-spacing: 0.3px; }
+                            Text { text: root.panel-hint; color: Palette.foreground.transparentize(40%); font-size: 11px; wrap: word-wrap; }
+                            if root.actions.length > 0 : VerticalLayout {
+                                spacing: 4px; padding-top: 8px;
+                                for action[i] in root.actions : Button { text: action.label; clicked => { root.clicked(i); } }
+                            }
                         }
                     }
+                }
+                if root.active-panel-id == 0 : SplitHandle {
+                    dragged(delta) => { root.identity-sidebar-width = clamp(root.identity-sidebar-width + delta, 120px, 500px); }
                 }
 
                 // ── Edit mode: left sidebar ──────────────────────
                 if root.active-panel-id == 1 : Rectangle {
-                    width: 240px;
+                    width: root.left-sidebar-width;
                     background: Palette.alternate-background;
+                    clip: true;
                     Rectangle { x: parent.width - 1px; y: 0px; width: 1px; height: parent.height; background: Palette.foreground.transparentize(90%); }
 
                     VerticalLayout {
@@ -932,6 +996,7 @@ export component AppWindow inherits Window {
                         ScrollView {
                             vertical-stretch: 1;
                             VerticalLayout {
+                                min-width: 200px;
                                 spacing: 1px;
                                 for comp[i] in root.component-palette : Rectangle {
                                     height: 36px;
@@ -987,6 +1052,7 @@ export component AppWindow inherits Window {
                         ScrollView {
                             vertical-stretch: 1;
                             VerticalLayout {
+                                min-width: 200px;
                                 spacing: 1px;
                                 for node[i] in root.inspector-nodes : InspectorRow {
                                     node-id: node.id;
@@ -1116,6 +1182,9 @@ export component AppWindow inherits Window {
                             }
                         }
                     }
+                }
+                if root.active-panel-id == 1 : SplitHandle {
+                    dragged(delta) => { root.left-sidebar-width = clamp(root.left-sidebar-width + delta, 160px, 500px); }
                 }
 
                 // ── Docs sidebar (overlays panel sidebar) ──────
@@ -1502,41 +1571,205 @@ export component AppWindow inherits Window {
                         if root.active-panel-id == 2 && !root.docs-view.visible : Rectangle {
                             horizontal-stretch: 1;
                             vertical-stretch: 1;
-                            background: #1a1e28;
+                            background: #1e222a;
 
-                            HorizontalLayout {
-                                spacing: 0px;
+                            property <length> line-h: 18px;
+                            property <length> gutter-w: 44px;
+                            property <length> content-pad: 8px;
 
-                                // Gutter (line numbers)
-                                Rectangle {
-                                    width: 52px;
-                                    background: #151821;
-                                    Rectangle { x: parent.width - 1px; y: 0px; width: 1px; height: parent.height; background: #ffffff10; }
+                            // Character width measurement
+                            measure-char := Text {
+                                text: "0000000000";
+                                font-size: 13px;
+                                font-family: "monospace";
+                                opacity: 0;
+                            }
+                            property <length> char-w: max(1px, measure-char.preferred-width / 10);
+
+                            editor-focus := FocusScope {
+                                width: 100%;
+                                height: 100%;
+                                enabled: root.active-panel-id == 2;
+
+                                key-pressed(event) => {
+                                    if (event.text == Key.Return) { root.editor-action("enter"); return accept; }
+                                    if (event.text == Key.Backspace) {
+                                        if (event.modifiers.control) { root.editor-action("ctrl-backspace"); }
+                                        else { root.editor-action("backspace"); }
+                                        return accept;
+                                    }
+                                    if (event.text == Key.Delete) {
+                                        if (event.modifiers.control) { root.editor-action("ctrl-delete"); }
+                                        else { root.editor-action("delete"); }
+                                        return accept;
+                                    }
+                                    if (event.text == Key.Tab) {
+                                        if (event.modifiers.shift) { root.editor-action("shift-tab"); }
+                                        else { root.editor-action("tab"); }
+                                        return accept;
+                                    }
+                                    if (event.text == Key.UpArrow) {
+                                        if (event.modifiers.shift) { root.editor-action("shift-up"); }
+                                        else { root.editor-action("up"); }
+                                        return accept;
+                                    }
+                                    if (event.text == Key.DownArrow) {
+                                        if (event.modifiers.shift) { root.editor-action("shift-down"); }
+                                        else { root.editor-action("down"); }
+                                        return accept;
+                                    }
+                                    if (event.text == Key.LeftArrow) {
+                                        if (event.modifiers.control && event.modifiers.shift) { root.editor-action("ctrl-shift-left"); }
+                                        else if (event.modifiers.control) { root.editor-action("ctrl-left"); }
+                                        else if (event.modifiers.shift) { root.editor-action("shift-left"); }
+                                        else { root.editor-action("left"); }
+                                        return accept;
+                                    }
+                                    if (event.text == Key.RightArrow) {
+                                        if (event.modifiers.control && event.modifiers.shift) { root.editor-action("ctrl-shift-right"); }
+                                        else if (event.modifiers.control) { root.editor-action("ctrl-right"); }
+                                        else if (event.modifiers.shift) { root.editor-action("shift-right"); }
+                                        else { root.editor-action("right"); }
+                                        return accept;
+                                    }
+                                    if (event.text == Key.Home) {
+                                        if (event.modifiers.control && event.modifiers.shift) { root.editor-action("ctrl-shift-home"); }
+                                        else if (event.modifiers.control) { root.editor-action("ctrl-home"); }
+                                        else if (event.modifiers.shift) { root.editor-action("shift-home"); }
+                                        else { root.editor-action("home"); }
+                                        return accept;
+                                    }
+                                    if (event.text == Key.End) {
+                                        if (event.modifiers.control && event.modifiers.shift) { root.editor-action("ctrl-shift-end"); }
+                                        else if (event.modifiers.control) { root.editor-action("ctrl-end"); }
+                                        else if (event.modifiers.shift) { root.editor-action("shift-end"); }
+                                        else { root.editor-action("end"); }
+                                        return accept;
+                                    }
+                                    if (event.modifiers.control) {
+                                        if (event.text == "\u{0001}") { root.editor-action("select-all"); return accept; }
+                                        if (event.text == "\u{0004}") { root.editor-action("duplicate-line"); return accept; }
+                                        if (event.text == "\u{000b}") { root.editor-action("delete-line"); return accept; }
+                                        return reject;
+                                    }
+                                    if (event.text == Key.Escape) { root.escape-pressed(); return accept; }
+                                    root.editor-char-typed(event.text);
+                                    return accept;
+                                }
+
+                                editor-sv := ScrollView {
+                                    width: 100%;
+                                    height: 100%;
+
                                     VerticalLayout {
-                                        padding-top: 10px;
-                                        padding-right: 12px;
+                                        spacing: 0px;
                                         alignment: start;
-                                        Text {
-                                            text: {
-                                                // Generate line numbers from the editor text
-                                                @tr("1")
+
+                                        for line[idx] in root.editor-lines : Rectangle {
+                                            height: line-h;
+                                            background: line.is-current ? #ffffff06 : transparent;
+
+                                            // Selection highlight
+                                            if line.sel-from >= 0 : Rectangle {
+                                                x: gutter-w + content-pad + line.sel-from * char-w;
+                                                y: 0px;
+                                                width: line.sel-to > line.sel-from
+                                                    ? (line.sel-to - line.sel-from) * char-w
+                                                    : parent.width - gutter-w - content-pad - line.sel-from * char-w;
+                                                height: line-h;
+                                                background: #264f7880;
                                             }
-                                            color: #ffffff30;
-                                            font-size: 13px;
-                                            font-family: "monospace";
-                                            horizontal-alignment: right;
+
+                                            // Gutter
+                                            Rectangle {
+                                                x: 0px;
+                                                y: 0px;
+                                                width: gutter-w;
+                                                height: line-h;
+                                                background: #161a22;
+
+                                                Text {
+                                                    x: 0px;
+                                                    width: gutter-w - 8px;
+                                                    text: line.number;
+                                                    color: line.is-current ? #ffffff60 : #ffffff22;
+                                                    font-size: 13px;
+                                                    font-family: "monospace";
+                                                    horizontal-alignment: right;
+                                                    vertical-alignment: center;
+                                                }
+                                            }
+
+                                            // Gutter border
+                                            Rectangle {
+                                                x: gutter-w - 1px;
+                                                y: 0px;
+                                                width: 1px;
+                                                height: line-h;
+                                                background: #ffffff08;
+                                            }
+
+                                            // Tokens — absolute-positioned on the character grid
+                                            for token in line.tokens : Text {
+                                                x: gutter-w + content-pad + token.col-offset * char-w;
+                                                y: 0px;
+                                                text: token.text;
+                                                color: token.token-color;
+                                                font-size: 13px;
+                                                font-family: "monospace";
+                                                vertical-alignment: center;
+                                                height: line-h;
+                                            }
+
+                                            // Cursor
+                                            if line.is-current && root.editor-cursor-visible : Rectangle {
+                                                x: gutter-w + content-pad + root.editor-cursor-col * char-w;
+                                                y: 1px;
+                                                width: 2px;
+                                                height: line-h - 2px;
+                                                background: #528bff;
+                                            }
+
+                                        }
+
+                                        Rectangle {
+                                            vertical-stretch: 1;
+                                            min-height: 200px;
+                                            background: transparent;
                                         }
                                     }
                                 }
+                            }
 
-                                // Editor area
-                                editor-input := TextEdit {
-                                    horizontal-stretch: 1;
-                                    vertical-stretch: 1;
-                                    text: root.editor-text;
-                                    font-size: 13px;
-                                    font-family: "monospace";
-                                    edited(text) => { root.editor-text-changed(text); }
+                            editor-overlay := TouchArea {
+                                width: parent.width;
+                                height: parent.height;
+                                mouse-cursor: text;
+
+                                pointer-event(event) => {
+                                    if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                                        editor-focus.focus();
+                                        root.editor-click(
+                                            clamp(floor((self.mouse-y - editor-sv.viewport-y) / line-h), 0, root.editor-lines.length - 1),
+                                            max(0, round((self.mouse-x - gutter-w - content-pad) / char-w))
+                                        );
+                                    }
+                                }
+                                moved => {
+                                    if self.pressed {
+                                        root.editor-drag(
+                                            clamp(floor((self.mouse-y - editor-sv.viewport-y) / line-h), 0, root.editor-lines.length - 1),
+                                            max(0, round((self.mouse-x - gutter-w - content-pad) / char-w))
+                                        );
+                                    }
+                                }
+                                scroll-event(event) => {
+                                    editor-sv.viewport-y = clamp(
+                                        editor-sv.viewport-y + event.delta-y,
+                                        min(0px, editor-sv.height - editor-sv.viewport-height),
+                                        0px
+                                    );
+                                    return accept;
                                 }
                             }
                         }
@@ -1545,23 +1778,33 @@ export component AppWindow inherits Window {
                     // Status bar
                     Rectangle {
                         height: 26px;
-                        background: Palette.alternate-background;
+                        background: root.active-panel-id == 2 ? #1b1f27 : Palette.alternate-background;
                         Rectangle { x: 0px; y: 0px; width: parent.width; height: 1px; background: Palette.foreground.transparentize(90%); }
                         HorizontalLayout {
                             padding-left: 12px; padding-right: 12px; spacing: 12px; alignment: start;
                             Text { text: root.panel-title; color: Palette.foreground.transparentize(40%); font-size: 11px; vertical-alignment: center; }
-                            if root.has-selection : Text { text: "·"; color: Palette.foreground.transparentize(60%); font-size: 11px; vertical-alignment: center; }
-                            if root.has-selection : Text { text: "Selected"; color: Palette.accent-foreground; font-size: 11px; vertical-alignment: center; }
+                            if root.active-panel-id != 2 && root.has-selection : Text { text: "·"; color: Palette.foreground.transparentize(60%); font-size: 11px; vertical-alignment: center; }
+                            if root.active-panel-id != 2 && root.has-selection : Text { text: "Selected"; color: Palette.accent-foreground; font-size: 11px; vertical-alignment: center; }
+                            if root.active-panel-id == 2 : Text { text: "·"; color: Palette.foreground.transparentize(60%); font-size: 11px; vertical-alignment: center; }
+                            if root.active-panel-id == 2 : Text { text: "Ln " + (root.editor-cursor-line + 1) + ", Col " + (root.editor-cursor-col + 1); color: Palette.foreground.transparentize(30%); font-size: 11px; vertical-alignment: center; }
                             Rectangle { horizontal-stretch: 1; }
+                            if root.active-panel-id == 2 : Text { text: root.editor-line-count + " lines"; color: Palette.foreground.transparentize(50%); font-size: 11px; vertical-alignment: center; }
+                            if root.active-panel-id == 2 : Text { text: "·"; color: Palette.foreground.transparentize(60%); font-size: 11px; vertical-alignment: center; }
+                            if root.active-panel-id == 2 : Text { text: root.editor-language; color: Palette.foreground.transparentize(40%); font-size: 11px; vertical-alignment: center; }
+                            if root.active-panel-id == 2 : Text { text: "·"; color: Palette.foreground.transparentize(60%); font-size: 11px; vertical-alignment: center; }
                             Text { text: "Prism Studio"; color: Palette.foreground.transparentize(50%); font-size: 11px; vertical-alignment: center; }
                         }
                     }
                 }
 
                 // ── Edit mode: right sidebar (properties) ────────
+                if root.active-panel-id == 1 : SplitHandle {
+                    dragged(delta) => { root.right-sidebar-width = clamp(root.right-sidebar-width - delta, 180px, 500px); }
+                }
                 if root.active-panel-id == 1 : Rectangle {
-                    width: 280px;
+                    width: root.right-sidebar-width;
                     background: Palette.alternate-background;
+                    clip: true;
                     Rectangle { x: 0px; y: 0px; width: 1px; height: parent.height; background: Palette.foreground.transparentize(90%); }
 
                     VerticalLayout {
@@ -1579,6 +1822,7 @@ export component AppWindow inherits Window {
                             ScrollView {
                                 vertical-stretch: 1;
                                 VerticalLayout {
+                                    min-width: 220px;
                                     spacing: 4px;
 
                                     // Component properties

@@ -4,10 +4,12 @@
 
 mod buffer;
 mod cursor;
+pub mod highlight;
 mod selection;
 mod state;
 
 pub use buffer::Buffer;
 pub use cursor::{Cursor, Position};
+pub use highlight::{highlight_line, Token, TokenKind};
 pub use selection::Selection;
 pub use state::EditorState;
