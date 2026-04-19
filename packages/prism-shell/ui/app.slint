@@ -136,6 +136,15 @@ struct VariantItem {
     options: [string],
 }
 
+struct AppCardItem {
+    id: string,
+    name: string,
+    description: string,
+    icon: string,
+    accent-color: color,
+    page-count: int,
+}
+
 struct EditorToken {
     text: string,
     token-color: color,
@@ -741,6 +750,134 @@ component DocsContent inherits Rectangle {
     }
 }
 
+// ── App card (launchpad) ──────────────────────────────────────────
+
+component AppCard inherits Rectangle {
+    in property <string> app-id;
+    in property <string> name;
+    in property <string> description;
+    in property <string> icon;
+    in property <color> accent-color: Palette.accent-background;
+    in property <int> page-count: 1;
+    in property <bool> is-create: false;
+    callback clicked;
+
+    height: 160px;
+    border-radius: 12px;
+    border-width: 1px;
+    border-color: card-touch.has-hover
+        ? root.accent-color.transparentize(40%)
+        : Palette.foreground.transparentize(88%);
+    background: card-touch.has-hover
+        ? Palette.alternate-background
+        : Palette.background;
+    clip: true;
+
+    // Accent bar at top
+    Rectangle {
+        x: 0px; y: 0px;
+        width: parent.width;
+        height: 4px;
+        background: root.accent-color;
+    }
+
+    VerticalLayout {
+        padding: 20px;
+        padding-top: 20px;
+        spacing: 8px;
+        alignment: start;
+
+        if root.is-create : VerticalLayout {
+            alignment: center;
+            spacing: 8px;
+            padding-top: 24px;
+            Image {
+                source: @image-url("icons/plus.svg");
+                width: 32px;
+                height: 32px;
+                colorize: Palette.foreground.transparentize(40%);
+            }
+            Text {
+                text: "Create App";
+                color: Palette.foreground.transparentize(30%);
+                font-size: 14px;
+                font-weight: 600;
+                horizontal-alignment: center;
+            }
+        }
+
+        if !root.is-create : VerticalLayout {
+            spacing: 8px;
+            alignment: start;
+
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: start;
+
+                Rectangle {
+                    width: 36px;
+                    height: 36px;
+                    border-radius: 8px;
+                    background: root.accent-color.transparentize(85%);
+
+                    if root.icon == "globe" : Image { source: @image-url("icons/globe.svg"); width: 18px; height: 18px; colorize: root.accent-color; }
+                    if root.icon == "music" : Image { source: @image-url("icons/grip.svg"); width: 18px; height: 18px; colorize: root.accent-color; }
+                    if root.icon == "zap" : Image { source: @image-url("icons/zap.svg"); width: 18px; height: 18px; colorize: root.accent-color; }
+                    if root.icon == "code" : Image { source: @image-url("icons/code.svg"); width: 18px; height: 18px; colorize: root.accent-color; }
+                    if root.icon == "cube" : Image { source: @image-url("icons/box.svg"); width: 18px; height: 18px; colorize: root.accent-color; }
+                    if root.icon == "star" : Image { source: @image-url("icons/help-circle.svg"); width: 18px; height: 18px; colorize: root.accent-color; }
+                    if root.icon == "heart" : Image { source: @image-url("icons/user.svg"); width: 18px; height: 18px; colorize: root.accent-color; }
+                    if root.icon == "film" : Image { source: @image-url("icons/image.svg"); width: 18px; height: 18px; colorize: root.accent-color; }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    Text {
+                        text: root.name;
+                        color: Palette.foreground;
+                        font-size: 16px;
+                        font-weight: 700;
+                        overflow: elide;
+                    }
+                }
+            }
+
+            Text {
+                text: root.description;
+                color: Palette.foreground.transparentize(40%);
+                font-size: 12px;
+                wrap: word-wrap;
+                overflow: elide;
+            }
+
+            Rectangle { vertical-stretch: 1; }
+
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: start;
+                Rectangle {
+                    height: 20px;
+                    width: pages-text.preferred-width + 12px;
+                    border-radius: 4px;
+                    background: Palette.foreground.transparentize(92%);
+                    pages-text := Text {
+                        text: root.page-count == 1 ? "1 page" : "\{root.page-count} pages";
+                        color: Palette.foreground.transparentize(50%);
+                        font-size: 10px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+
+    card-touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
 // ── Root component ─────────────────────────────────────────────────
 
 export component AppWindow inherits Window {
@@ -877,7 +1014,7 @@ export component AppWindow inherits Window {
     callback layout-field-edited(string, string);
     callback layout-field-edited-number(string, float);
 
-    // Game engine systems
+    // Composition systems
     in property <[ModifierItem]> modifier-items: [];
     in property <[SignalItem]> signal-items: [];
     in property <[VariantItem]> variant-items: [];
@@ -895,6 +1032,16 @@ export component AppWindow inherits Window {
     callback docs-open-full;
     callback docs-panel-close;
     callback docs-view-close;
+
+    // Launchpad / App navigation
+    in property <bool> is-launchpad: true;
+    in property <[AppCardItem]> app-cards: [];
+    in property <string> active-app-name: "";
+    callback open-app(string);
+    callback create-app;
+    callback go-home;
+    callback add-page;
+    callback switch-page(int);
 
     // Panel resize
     property <length> identity-sidebar-width: 220px;
@@ -935,24 +1082,38 @@ export component AppWindow inherits Window {
                         spacing: 0px;
                         alignment: start;
                         NavButton {
+                            icon: @image-url("icons/home.svg");
+                            selected: root.is-launchpad;
+                            help-id: "shell.launchpad";
+                            clicked => { root.go-home(); }
+                            hover-start(id, x, y) => { root.help-hover(id, x, y); }
+                            hover-end => { root.help-leave(); }
+                        }
+                        if !root.is-launchpad : Rectangle {
+                            height: 1px;
+                            width: 28px;
+                            x: 10px;
+                            background: Palette.foreground.transparentize(85%);
+                        }
+                        if !root.is-launchpad : NavButton {
                             icon: @image-url("icons/user.svg");
-                            selected: root.active-panel-id == 0;
+                            selected: !root.is-launchpad && root.active-panel-id == 0;
                             help-id: "shell.panels.identity";
                             clicked => { root.select-panel(0); }
                             hover-start(id, x, y) => { root.help-hover(id, x, y); }
                             hover-end => { root.help-leave(); }
                         }
-                        NavButton {
+                        if !root.is-launchpad : NavButton {
                             icon: @image-url("icons/layout.svg");
-                            selected: root.active-panel-id == 1;
+                            selected: !root.is-launchpad && root.active-panel-id == 1;
                             help-id: "shell.panels.editor";
                             clicked => { root.select-panel(1); }
                             hover-start(id, x, y) => { root.help-hover(id, x, y); }
                             hover-end => { root.help-leave(); }
                         }
-                        NavButton {
+                        if !root.is-launchpad : NavButton {
                             icon: @image-url("icons/code.svg");
-                            selected: root.active-panel-id == 2;
+                            selected: !root.is-launchpad && root.active-panel-id == 2;
                             help-id: "shell.panels.code-editor";
                             clicked => { root.select-panel(2); }
                             hover-start(id, x, y) => { root.help-hover(id, x, y); }
@@ -962,7 +1123,7 @@ export component AppWindow inherits Window {
                 }
 
                 // ── Identity sidebar ─────────────────────────────
-                if root.active-panel-id == 0 : Rectangle {
+                if !root.is-launchpad && root.active-panel-id == 0 : Rectangle {
                     width: root.identity-sidebar-width;
                     background: Palette.alternate-background;
                     clip: true;
@@ -980,12 +1141,12 @@ export component AppWindow inherits Window {
                         }
                     }
                 }
-                if root.active-panel-id == 0 : SplitHandle {
+                if !root.is-launchpad && root.active-panel-id == 0 : SplitHandle {
                     dragged(delta) => { root.identity-sidebar-width = clamp(root.identity-sidebar-width + delta, 120px, 500px); }
                 }
 
                 // ── Edit mode: left sidebar ──────────────────────
-                if root.active-panel-id == 1 : Rectangle {
+                if !root.is-launchpad && root.active-panel-id == 1 : Rectangle {
                     width: root.left-sidebar-width;
                     background: Palette.alternate-background;
                     clip: true;
@@ -1324,12 +1485,12 @@ export component AppWindow inherits Window {
                         }
                     }
                 }
-                if root.active-panel-id == 1 : SplitHandle {
+                if !root.is-launchpad && root.active-panel-id == 1 : SplitHandle {
                     dragged(delta) => { root.left-sidebar-width = clamp(root.left-sidebar-width + delta, 160px, 500px); }
                 }
 
                 // ── Docs sidebar (overlays panel sidebar) ──────
-                if root.docs-panel.visible : Rectangle {
+                if !root.is-launchpad && root.docs-panel.visible : Rectangle {
                     width: 280px;
                     background: Palette.alternate-background;
                     Rectangle { x: parent.width - 1px; y: 0px; width: 1px; height: parent.height; background: Palette.foreground.transparentize(90%); }
@@ -1431,15 +1592,33 @@ export component AppWindow inherits Window {
                 VerticalLayout {
                     horizontal-stretch: 1;
 
-                    // Tab bar
-                    if root.tabs.length > 0 : Rectangle {
+                    // App header bar (inside an app — shows app name + page tabs)
+                    if !root.is-launchpad : Rectangle {
                         height: 36px;
                         background: Palette.alternate-background;
                         Rectangle { x: 0px; y: parent.height - 1px; width: parent.width; height: 1px; background: Palette.foreground.transparentize(90%); }
                         HorizontalLayout {
                             spacing: 0px; padding-left: 0px; alignment: start;
+
+                            // App name label
+                            Rectangle {
+                                height: 35px;
+                                width: app-name-label.preferred-width + 24px;
+                                background: Palette.alternate-background;
+                                Rectangle { x: parent.width - 1px; y: 4px; width: 1px; height: parent.height - 8px; background: Palette.foreground.transparentize(85%); }
+                                app-name-label := Text {
+                                    text: root.active-app-name;
+                                    color: Palette.accent-background;
+                                    font-size: 12px;
+                                    font-weight: 700;
+                                    vertical-alignment: center;
+                                    horizontal-alignment: center;
+                                }
+                            }
+
+                            // Page tabs
                             for tab[i] in root.tabs : Rectangle {
-                                height: 35px; min-width: 120px; max-width: 200px;
+                                height: 35px; min-width: 100px; max-width: 200px;
                                 background: tab.active ? Palette.background : Palette.alternate-background;
                                 Rectangle { x: 0px; y: parent.height - 2px; width: parent.width; height: 2px; background: tab.active ? Palette.accent-background : transparent; }
                                 HorizontalLayout {
@@ -1448,7 +1627,7 @@ export component AppWindow inherits Window {
                                     IconButton { icon: @image-url("icons/x.svg"); clicked => { root.tab-closed(tab.id); } }
                                 }
                                 tab-touch := TouchArea {
-                                    clicked => { root.tab-activated(tab.id); }
+                                    clicked => { root.switch-page(i); }
                                     changed has-hover => {
                                         if (self.has-hover) {
                                             root.help-hover("shell.tabs", parent.absolute-position.x + parent.width / 2, parent.absolute-position.y + parent.height + 4px);
@@ -1457,11 +1636,23 @@ export component AppWindow inherits Window {
                                     }
                                 }
                             }
+
+                            // Add page button
+                            Rectangle {
+                                height: 35px;
+                                width: 35px;
+                                background: add-page-touch.has-hover ? Palette.control-background : transparent;
+                                Image { source: @image-url("icons/plus.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(50%); }
+                                add-page-touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.add-page(); }
+                                }
+                            }
                         }
                     }
 
-                    // Toolbar (Edit mode)
-                    if root.active-panel-id == 1 : Rectangle {
+                    // Toolbar (Edit mode — not on launchpad)
+                    if !root.is-launchpad && root.active-panel-id == 1 : Rectangle {
                         height: 40px;
                         background: Palette.background;
                         Rectangle { x: 0px; y: parent.height - 1px; width: parent.width; height: 1px; background: Palette.foreground.transparentize(90%); }
@@ -1493,8 +1684,8 @@ export component AppWindow inherits Window {
                         }
                     }
 
-                    // Breadcrumbs (Edit mode + selection)
-                    if root.active-panel-id == 1 && root.breadcrumbs.length > 0 : Rectangle {
+                    // Breadcrumbs (Edit mode + selection — not on launchpad)
+                    if !root.is-launchpad && root.active-panel-id == 1 && root.breadcrumbs.length > 0 : Rectangle {
                         height: 28px;
                         background: Palette.background;
                         Rectangle { x: 0px; y: parent.height - 1px; width: parent.width; height: 1px; background: Palette.foreground.transparentize(90%); }
@@ -1517,6 +1708,109 @@ export component AppWindow inherits Window {
                     Rectangle {
                         background: Palette.background;
                         vertical-stretch: 1;
+
+                        // ── Launchpad ────────────────────────────
+                        if root.is-launchpad : ScrollView {
+                            VerticalLayout {
+                                padding: 48px;
+                                padding-top: 40px;
+                                spacing: 0px;
+                                alignment: start;
+                                max-width: 900px;
+
+                                Text {
+                                    text: "Prism Studio";
+                                    color: Palette.foreground;
+                                    font-size: 28px;
+                                    font-weight: 800;
+                                }
+
+                                Rectangle { height: 6px; }
+
+                                Text {
+                                    text: "Create, build, and ship rich multi-page apps.";
+                                    color: Palette.foreground.transparentize(40%);
+                                    font-size: 14px;
+                                }
+
+                                Rectangle { height: 32px; }
+
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    alignment: start;
+                                    Text {
+                                        text: "Your Apps";
+                                        color: Palette.foreground.transparentize(20%);
+                                        font-size: 13px;
+                                        font-weight: 600;
+                                        vertical-alignment: center;
+                                    }
+                                    Rectangle {
+                                        height: 20px;
+                                        width: app-count-text.preferred-width + 12px;
+                                        border-radius: 4px;
+                                        background: Palette.foreground.transparentize(92%);
+                                        app-count-text := Text {
+                                            text: root.app-cards.length;
+                                            color: Palette.foreground.transparentize(50%);
+                                            font-size: 10px;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                }
+
+                                Rectangle { height: 16px; }
+
+                                // App grid (wrapping via nested rows)
+                                VerticalLayout {
+                                    spacing: 16px;
+
+                                    // Row: app cards in groups of 3
+                                    HorizontalLayout {
+                                        spacing: 16px;
+
+                                        // Create card
+                                        AppCard {
+                                            horizontal-stretch: 1;
+                                            is-create: true;
+                                            accent-color: Palette.foreground.transparentize(70%);
+                                            clicked => { root.create-app(); }
+                                        }
+
+                                        for card[i] in root.app-cards : AppCard {
+                                            horizontal-stretch: 1;
+                                            app-id: card.id;
+                                            name: card.name;
+                                            description: card.description;
+                                            icon: card.icon;
+                                            accent-color: card.accent-color;
+                                            page-count: card.page-count;
+                                            clicked => { root.open-app(card.id); }
+                                        }
+
+                                        // Spacer to keep cards from stretching too wide
+                                        if root.app-cards.length == 1 : Rectangle { horizontal-stretch: 1; }
+                                    }
+                                }
+
+                                Rectangle { height: 32px; }
+
+                                Rectangle {
+                                    height: 1px;
+                                    background: Palette.foreground.transparentize(90%);
+                                }
+
+                                Rectangle { height: 16px; }
+
+                                Text {
+                                    text: "Each app is a collection of pages with its own navigation. Open an app to start editing, or create a new one.";
+                                    color: Palette.foreground.transparentize(60%);
+                                    font-size: 11px;
+                                    wrap: word-wrap;
+                                }
+                            }
+                        }
 
                         // ── Docs full view ───────────────────────
                         if root.docs-view.visible : ScrollView {
@@ -1570,7 +1864,7 @@ export component AppWindow inherits Window {
                         }
 
                         // ── Builder canvas ───────────────────────
-                        if !root.docs-view.visible && root.active-panel-id == 1 : Rectangle {
+                        if !root.is-launchpad && !root.docs-view.visible && root.active-panel-id == 1 : Rectangle {
                             horizontal-stretch: 1;
                             vertical-stretch: 1;
                             background: Palette.alternate-background.transparentize(40%);
@@ -1696,7 +1990,7 @@ export component AppWindow inherits Window {
                         }
 
                         // ── Non-builder panels ──────────────────────
-                        if !root.docs-view.visible && root.active-panel-id != 1 && root.active-panel-id != 2 : ScrollView {
+                        if !root.is-launchpad && !root.docs-view.visible && root.active-panel-id != 1 && root.active-panel-id != 2 : ScrollView {
                             VerticalLayout {
                                 padding: 24px; spacing: 4px; alignment: start;
 
@@ -1709,7 +2003,7 @@ export component AppWindow inherits Window {
                         }
 
                         // ── Code editor ─────────────────────────────
-                        if root.active-panel-id == 2 && !root.docs-view.visible : Rectangle {
+                        if !root.is-launchpad && root.active-panel-id == 2 && !root.docs-view.visible : Rectangle {
                             horizontal-stretch: 1;
                             vertical-stretch: 1;
                             background: #1e222a;
@@ -1878,7 +2172,7 @@ export component AppWindow inherits Window {
 
                                             // Cursor — positioned via actual text measurement
                                             if line.is-current && root.editor-cursor-visible : Rectangle {
-                                                x: gutter-w + content-pad + cursor-measure.preferred-width;
+                                                x: gutter-w + content-pad + (root.editor-cursor-col > 0 ? cursor-measure.preferred-width : 0px);
                                                 y: 1px;
                                                 width: 2px;
                                                 height: line-h - 2px;
@@ -1906,7 +2200,7 @@ export component AppWindow inherits Window {
                                         editor-focus.focus();
                                         root.editor-click(
                                             clamp(floor((self.mouse-y - editor-sv.viewport-y) / line-h), 0, root.editor-lines.length - 1),
-                                            max(0, floor((self.mouse-x - gutter-w - content-pad + char-w / 2) / char-w))
+                                            max(0, floor((self.mouse-x - gutter-w - content-pad) / char-w))
                                         );
                                     }
                                 }
@@ -1914,7 +2208,7 @@ export component AppWindow inherits Window {
                                     if self.pressed {
                                         root.editor-drag(
                                             clamp(floor((self.mouse-y - editor-sv.viewport-y) / line-h), 0, root.editor-lines.length - 1),
-                                            max(0, floor((self.mouse-x - gutter-w - content-pad + char-w / 2) / char-w))
+                                            max(0, floor((self.mouse-x - gutter-w - content-pad) / char-w))
                                         );
                                     }
                                 }
@@ -1953,10 +2247,10 @@ export component AppWindow inherits Window {
                 }
 
                 // ── Edit mode: right sidebar (properties) ────────
-                if root.active-panel-id == 1 : SplitHandle {
+                if !root.is-launchpad && root.active-panel-id == 1 : SplitHandle {
                     dragged(delta) => { root.right-sidebar-width = clamp(root.right-sidebar-width - delta, 180px, 500px); }
                 }
-                if root.active-panel-id == 1 : Rectangle {
+                if !root.is-launchpad && root.active-panel-id == 1 : Rectangle {
                     width: root.right-sidebar-width;
                     background: Palette.alternate-background;
                     clip: true;

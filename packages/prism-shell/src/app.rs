@@ -12,6 +12,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use prism_builder::{
+    app::{AppIcon, NavigationConfig, Page, PrismApp},
     layout::{
         AlignOption, Dimension, FlexDirection, FlowDisplay, FlowProps, GridPlacement,
         JustifyOption, LayoutMode, PageSize, TrackSize,
@@ -38,9 +39,10 @@ use crate::search::SearchIndex;
 use crate::selection::SelectionModel;
 use crate::telemetry::FirstPaint;
 use crate::{
-    AppWindow, BreadcrumbItem, BuilderNode, ButtonSpec, CommandItem, ComponentPaletteItem,
-    DocsPanelData, EditorLine, EditorToken, FieldRow, GutterRect, HelpTooltipData, InspectorNode,
-    ModifierItem, PageLayoutData, SearchResultItem, SignalItem, TabItem, ToastItem, VariantItem,
+    AppCardItem, AppWindow, BreadcrumbItem, BuilderNode, ButtonSpec, CommandItem,
+    ComponentPaletteItem, DocsPanelData, EditorLine, EditorToken, FieldRow, GutterRect,
+    HelpTooltipData, InspectorNode, ModifierItem, PageLayoutData, SearchResultItem, SignalItem,
+    TabItem, ToastItem, VariantItem,
 };
 
 // ── Reloadable state ───────────────────────────────────────────────
@@ -49,11 +51,11 @@ use crate::{
 pub struct AppState {
     pub tokens: DesignTokens,
     pub context: ShellModeContext,
+    pub shell_view: ShellView,
     pub active_panel: ActivePanel,
+    pub apps: Vec<PrismApp>,
     pub builder_document: BuilderDocument,
     pub selection: SelectionModel,
-    pub tabs: Vec<Tab>,
-    pub active_tab: i32,
     pub command_palette_open: bool,
     pub command_palette_query: String,
     pub search_query: String,
@@ -62,12 +64,58 @@ pub struct AppState {
     pub show_grid_overlay: bool,
     next_toast_id: u64,
     next_node_id: u64,
+    next_app_id: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Tab {
-    pub id: i32,
-    pub title: String,
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ShellView {
+    Launchpad,
+    App { app_id: String },
+}
+
+impl ShellView {
+    pub fn is_launchpad(&self) -> bool {
+        matches!(self, ShellView::Launchpad)
+    }
+
+    pub fn active_app_id(&self) -> Option<&str> {
+        match self {
+            ShellView::Launchpad => None,
+            ShellView::App { app_id } => Some(app_id),
+        }
+    }
+}
+
+impl AppState {
+    pub fn active_app(&self) -> Option<&PrismApp> {
+        let id = self.shell_view.active_app_id()?;
+        self.apps.iter().find(|a| a.id == id)
+    }
+
+    pub fn active_app_mut(&mut self) -> Option<&mut PrismApp> {
+        let id = match &self.shell_view {
+            ShellView::App { app_id } => app_id.clone(),
+            _ => return None,
+        };
+        self.apps.iter_mut().find(|a| a.id == id)
+    }
+
+    fn sync_document_from_app(&mut self) {
+        if let Some(app) = self.active_app() {
+            if let Some(doc) = app.active_document() {
+                self.builder_document = doc.clone();
+            }
+        }
+    }
+
+    fn sync_document_to_app(&mut self) {
+        let doc = self.builder_document.clone();
+        if let Some(app) = self.active_app_mut() {
+            if let Some(page_doc) = app.active_document_mut() {
+                *page_doc = doc;
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,20 +153,18 @@ impl ActivePanel {
 
 impl Default for AppState {
     fn default() -> Self {
+        let apps = sample_apps();
         Self {
             tokens: DEFAULT_TOKENS,
             context: ShellModeContext {
                 shell_mode: ShellMode::Build,
                 permission: Permission::Dev,
             },
-            active_panel: ActivePanel::CodeEditor,
-            builder_document: sample_document(),
-            selection: SelectionModel::single("hero".into()),
-            tabs: vec![Tab {
-                id: 0,
-                title: "Welcome".into(),
-            }],
-            active_tab: 0,
+            shell_view: ShellView::Launchpad,
+            active_panel: ActivePanel::Edit,
+            apps,
+            builder_document: BuilderDocument::default(),
+            selection: SelectionModel::default(),
             command_palette_open: false,
             command_palette_query: String::new(),
             search_query: String::new(),
@@ -133,7 +179,111 @@ impl Default for AppState {
             show_grid_overlay: true,
             next_toast_id: 0,
             next_node_id: 100,
+            next_app_id: 10,
         }
+    }
+}
+
+fn sample_apps() -> Vec<PrismApp> {
+    vec![
+        PrismApp {
+            id: "app-1".into(),
+            name: "Lattice".into(),
+            description: "Collaborative workspace with real-time CRDT sync.".into(),
+            icon: AppIcon::Globe,
+            pages: vec![
+                Page {
+                    id: "p1".into(),
+                    title: "Home".into(),
+                    route: "/".into(),
+                    document: sample_document(),
+                },
+                Page {
+                    id: "p2".into(),
+                    title: "Dashboard".into(),
+                    route: "/dashboard".into(),
+                    document: sample_dashboard_document(),
+                },
+            ],
+            active_page: 0,
+            navigation: NavigationConfig::default(),
+        },
+        PrismApp {
+            id: "app-2".into(),
+            name: "Musica".into(),
+            description: "Audio workstation with timeline and MIDI.".into(),
+            icon: AppIcon::Music,
+            pages: vec![Page {
+                id: "p1".into(),
+                title: "Studio".into(),
+                route: "/".into(),
+                document: BuilderDocument::default(),
+            }],
+            active_page: 0,
+            navigation: NavigationConfig::default(),
+        },
+        PrismApp {
+            id: "app-3".into(),
+            name: "Flux".into(),
+            description: "Visual dataflow editor for creative coding.".into(),
+            icon: AppIcon::Zap,
+            pages: vec![
+                Page {
+                    id: "p1".into(),
+                    title: "Canvas".into(),
+                    route: "/".into(),
+                    document: BuilderDocument::default(),
+                },
+                Page {
+                    id: "p2".into(),
+                    title: "Settings".into(),
+                    route: "/settings".into(),
+                    document: BuilderDocument::default(),
+                },
+                Page {
+                    id: "p3".into(),
+                    title: "Preview".into(),
+                    route: "/preview".into(),
+                    document: BuilderDocument::default(),
+                },
+            ],
+            active_page: 0,
+            navigation: NavigationConfig::default(),
+        },
+    ]
+}
+
+fn sample_dashboard_document() -> BuilderDocument {
+    BuilderDocument {
+        root: Some(Node {
+            id: "dash-root".into(),
+            component: "container".into(),
+            props: json!({ "spacing": 16 }),
+            layout_mode: LayoutMode::Flow(FlowProps {
+                display: FlowDisplay::Flex,
+                flex_direction: FlexDirection::Column,
+                gap: 16.0,
+                ..Default::default()
+            }),
+            children: vec![
+                Node {
+                    id: "dash-title".into(),
+                    component: "heading".into(),
+                    props: json!({ "text": "Dashboard", "level": 2 }),
+                    children: vec![],
+                    ..Default::default()
+                },
+                Node {
+                    id: "dash-text".into(),
+                    component: "text".into(),
+                    props: json!({ "body": "Overview of your workspace metrics and activity." }),
+                    children: vec![],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        }),
+        ..Default::default()
     }
 }
 
@@ -671,14 +821,139 @@ impl Shell {
             move |node_id| handle_node_move(&inner, &weak, &node_id, 1, "Move node down")
         });
 
-        // Tab management
+        // App navigation: open app from launchpad
+        self.window.on_open_app({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |app_id| {
+                let app_id = app_id.to_string();
+                inner.borrow_mut().store.mutate(|state| {
+                    state.shell_view = ShellView::App {
+                        app_id: app_id.clone(),
+                    };
+                    state.active_panel = ActivePanel::Edit;
+                    state.selection.clear();
+                    state.sync_document_from_app();
+                });
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // App navigation: go back to launchpad
+        self.window.on_go_home({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move || {
+                inner.borrow_mut().store.mutate(|state| {
+                    state.sync_document_to_app();
+                    state.shell_view = ShellView::Launchpad;
+                    state.selection.clear();
+                });
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // App navigation: create new app
+        self.window.on_create_app({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move || {
+                let new_app_id;
+                {
+                    let mut s = inner.borrow_mut();
+                    let id_num = s.store.state().next_app_id;
+                    new_app_id = format!("app-{id_num}");
+                    let naid = new_app_id.clone();
+                    s.store.mutate(|state| {
+                        state.next_app_id += 1;
+                        state.apps.push(PrismApp {
+                            id: naid.clone(),
+                            name: format!("App {id_num}"),
+                            description: "A new Prism app.".into(),
+                            icon: AppIcon::Cube,
+                            pages: vec![Page {
+                                id: "page-1".into(),
+                                title: "Home".into(),
+                                route: "/".into(),
+                                document: BuilderDocument::default(),
+                            }],
+                            active_page: 0,
+                            navigation: NavigationConfig::default(),
+                        });
+                        state.shell_view = ShellView::App { app_id: naid };
+                        state.active_panel = ActivePanel::Edit;
+                        state.selection.clear();
+                        state.sync_document_from_app();
+                    });
+                    s.add_toast(
+                        "App created",
+                        &format!("App {id_num} is ready to edit"),
+                        "success",
+                    );
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Page navigation: switch page within an app
+        self.window.on_switch_page({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |page_index| {
+                inner.borrow_mut().store.mutate(|state| {
+                    state.sync_document_to_app();
+                    if let Some(app) = state.active_app_mut() {
+                        app.active_page = page_index as usize;
+                    }
+                    state.selection.clear();
+                    state.sync_document_from_app();
+                });
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Page navigation: add new page to active app
+        self.window.on_add_page({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move || {
+                {
+                    let mut s = inner.borrow_mut();
+                    s.store.mutate(|state| {
+                        state.sync_document_to_app();
+                        if let Some(app) = state.active_app_mut() {
+                            let page_num = app.pages.len() + 1;
+                            app.pages.push(Page {
+                                id: format!("page-{page_num}"),
+                                title: format!("Page {page_num}"),
+                                route: format!("/page-{page_num}"),
+                                document: BuilderDocument::default(),
+                            });
+                            app.active_page = app.pages.len() - 1;
+                        }
+                        state.selection.clear();
+                        state.sync_document_from_app();
+                    });
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Tab management (close a page tab)
         self.window.on_tab_activated({
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
-            move |tab_id| {
-                inner.borrow_mut().store.mutate(|state| {
-                    state.active_tab = tab_id;
-                });
+            move |_tab_id| {
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
                 }
@@ -687,13 +962,7 @@ impl Shell {
         self.window.on_tab_closed({
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
-            move |tab_id| {
-                inner.borrow_mut().store.mutate(|state| {
-                    state.tabs.retain(|t| t.id != tab_id);
-                    if state.active_tab == tab_id {
-                        state.active_tab = state.tabs.first().map(|t| t.id).unwrap_or(0);
-                    }
-                });
+            move |_tab_id| {
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
                 }
@@ -1265,12 +1534,31 @@ impl Shell {
 // ── Sync UI ────────────────────────────────────────────────────────
 
 fn sync_ui_from_shared(shared: &Rc<RefCell<ShellInner>>, window: &AppWindow) {
+    {
+        let mut inner = shared.borrow_mut();
+        inner.store.mutate(|state| {
+            state.sync_document_to_app();
+        });
+    }
     let inner = shared.borrow();
     sync_ui_impl(&inner, window);
 }
 
 fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
     let state = inner.store.state();
+
+    // Launchpad vs App view
+    let is_launchpad = state.shell_view.is_launchpad();
+    window.set_is_launchpad(is_launchpad);
+
+    if is_launchpad {
+        push_app_cards(window, &state.apps);
+        window.set_active_app_name(SharedString::new());
+    } else {
+        window.set_active_app_name(SharedString::from(
+            state.active_app().map(|a| a.name.as_str()).unwrap_or(""),
+        ));
+    }
 
     // Activity bar panel selection
     window.set_active_panel_id(state.active_panel.as_id());
@@ -1287,43 +1575,49 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
     // Clear all panel slots
     clear_panel_slots(window);
 
-    // Fill active panel
-    match state.active_panel {
-        ActivePanel::Identity => push_identity_actions(window),
-        ActivePanel::Edit => {
-            push_builder_preview(window, &state.builder_document, &state.selection);
-            push_inspector_nodes(window, &state.builder_document, &state.selection);
-            push_property_rows(
-                window,
-                &state.builder_document,
-                &inner.registry,
-                &state.selection,
-            );
-            push_breadcrumbs(window, &state.builder_document, &state.selection);
-            push_page_layout_data(window, &state.builder_document, state.show_grid_overlay);
-            push_layout_rows(window, &state.builder_document, &state.selection);
-            push_game_engine_data(
-                window,
-                &state.builder_document,
-                &inner.registry,
-                &state.selection,
-            );
-        }
-        ActivePanel::CodeEditor => {
-            push_editor_data(window, &state.editor_state);
+    // Fill active panel (only when inside an app)
+    if !is_launchpad {
+        match state.active_panel {
+            ActivePanel::Identity => push_identity_actions(window),
+            ActivePanel::Edit => {
+                push_builder_preview(window, &state.builder_document, &state.selection);
+                push_inspector_nodes(window, &state.builder_document, &state.selection);
+                push_property_rows(
+                    window,
+                    &state.builder_document,
+                    &inner.registry,
+                    &state.selection,
+                );
+                push_breadcrumbs(window, &state.builder_document, &state.selection);
+                push_page_layout_data(window, &state.builder_document, state.show_grid_overlay);
+                push_layout_rows(window, &state.builder_document, &state.selection);
+                push_composition_data(
+                    window,
+                    &state.builder_document,
+                    &inner.registry,
+                    &state.selection,
+                );
+            }
+            ActivePanel::CodeEditor => {
+                push_editor_data(window, &state.editor_state);
+            }
         }
     }
 
-    // Tabs
-    let tab_items: Vec<TabItem> = state
-        .tabs
-        .iter()
-        .map(|t| TabItem {
-            id: t.id,
-            title: SharedString::from(&t.title),
-            active: t.id == state.active_tab,
-        })
-        .collect();
+    // Tabs — derived from the active app's pages
+    let tab_items: Vec<TabItem> = if let Some(app) = state.active_app() {
+        app.pages
+            .iter()
+            .enumerate()
+            .map(|(i, page)| TabItem {
+                id: i as i32,
+                title: SharedString::from(&page.title),
+                active: i == app.active_page,
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     let tab_rc = Rc::new(VecModel::from(tab_items));
     window.set_tabs(ModelRc::from(tab_rc as Rc<dyn Model<Data = TabItem>>));
 
@@ -1421,6 +1715,22 @@ fn clear_panel_slots(window: &AppWindow) {
     window.set_component_palette(ModelRc::from(
         empty_palette as Rc<dyn Model<Data = ComponentPaletteItem>>,
     ));
+}
+
+fn push_app_cards(window: &AppWindow, apps: &[PrismApp]) {
+    let items: Vec<AppCardItem> = apps
+        .iter()
+        .map(|app| AppCardItem {
+            id: SharedString::from(&app.id),
+            name: SharedString::from(&app.name),
+            description: SharedString::from(&app.description),
+            icon: SharedString::from(app.icon.label()),
+            accent_color: parse_hex_color(app.icon.accent_color()),
+            page_count: app.pages.len() as i32,
+        })
+        .collect();
+    let model = Rc::new(VecModel::from(items));
+    window.set_app_cards(ModelRc::from(model as Rc<dyn Model<Data = AppCardItem>>));
 }
 
 fn push_identity_actions(window: &AppWindow) {
@@ -2553,20 +2863,20 @@ fn push_layout_rows(window: &AppWindow, doc: &BuilderDocument, selection: &Selec
     window.set_layout_rows(ModelRc::from(model as Rc<dyn Model<Data = FieldRow>>));
 }
 
-fn push_game_engine_data(
+fn push_composition_data(
     window: &AppWindow,
     doc: &BuilderDocument,
     registry: &prism_builder::ComponentRegistry,
     selection: &SelectionModel,
 ) {
     let selected = selection.as_option();
-
-    // Modifiers on the selected node
-    let modifiers: Vec<ModifierItem> = selected
+    let node = selected
         .as_ref()
-        .and_then(|id| doc.root.as_ref().and_then(|r| r.find(id)))
-        .map(|node| {
-            node.modifiers
+        .and_then(|id| doc.root.as_ref().and_then(|r| r.find(id)));
+
+    let modifiers: Vec<ModifierItem> = node
+        .map(|n| {
+            n.modifiers
                 .iter()
                 .map(|m| ModifierItem {
                     kind: SharedString::from(
@@ -2582,13 +2892,12 @@ fn push_game_engine_data(
     let model = Rc::new(VecModel::from(modifiers));
     window.set_modifier_items(ModelRc::from(model as Rc<dyn Model<Data = ModifierItem>>));
 
-    // Signals declared by the selected component
-    let signals: Vec<SignalItem> = selected
+    let comp = node.and_then(|n| registry.get(&n.component));
+
+    let signals: Vec<SignalItem> = comp
         .as_ref()
-        .and_then(|id| doc.root.as_ref().and_then(|r| r.find(id)))
-        .and_then(|node| registry.get(&node.component))
-        .map(|comp| {
-            comp.signals()
+        .map(|c| {
+            c.signals()
                 .into_iter()
                 .map(|s| SignalItem {
                     name: SharedString::from(s.name.as_str()),
@@ -2600,20 +2909,17 @@ fn push_game_engine_data(
     let model = Rc::new(VecModel::from(signals));
     window.set_signal_items(ModelRc::from(model as Rc<dyn Model<Data = SignalItem>>));
 
-    // Variant axes declared by the selected component
-    let variants: Vec<VariantItem> = selected
-        .as_ref()
-        .and_then(|id| doc.root.as_ref().and_then(|r| r.find(id)))
-        .and_then(|node| {
-            let comp = registry.get(&node.component)?;
-            let axes = comp.variants();
+    let variants: Vec<VariantItem> = comp
+        .and_then(|c| {
+            let axes = c.variants();
             if axes.is_empty() {
                 return None;
             }
+            let n = node.unwrap();
             Some(
                 axes.into_iter()
                     .map(|axis| {
-                        let current = node
+                        let current = n
                             .props
                             .get(&axis.key)
                             .and_then(|v| v.as_str())
@@ -2639,7 +2945,6 @@ fn push_game_engine_data(
     let model = Rc::new(VecModel::from(variants));
     window.set_variant_items(ModelRc::from(model as Rc<dyn Model<Data = VariantItem>>));
 
-    // Document-level counts
     let conn_count = doc
         .connections
         .iter()
@@ -2761,16 +3066,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_app_state_starts_on_code_editor_panel() {
+    fn default_app_state_starts_on_launchpad() {
         let state = AppState::default();
-        assert!(matches!(state.active_panel, ActivePanel::CodeEditor));
+        assert!(state.shell_view.is_launchpad());
+        assert!(matches!(state.active_panel, ActivePanel::Edit));
     }
 
     #[test]
-    fn default_state_seeds_sample_document() {
+    fn default_state_has_apps_with_documents() {
         let state = AppState::default();
-        assert!(state.builder_document.root.is_some());
-        assert_eq!(state.selection.primary(), Some(&"hero".to_string()));
+        assert!(!state.apps.is_empty());
+        let first_app = &state.apps[0];
+        assert!(first_app.active_document().unwrap().root.is_some());
     }
 
     #[test]
@@ -2781,7 +3088,7 @@ mod tests {
         let mut fresh: Store<AppState> = Store::new(AppState::default());
         fresh.restore(&bytes).expect("restore");
         assert!(matches!(fresh.state().active_panel, ActivePanel::Identity));
-        assert!(fresh.state().builder_document.root.is_some());
+        assert!(!fresh.state().apps.is_empty());
     }
 
     #[test]
@@ -2805,17 +3112,26 @@ mod tests {
     }
 
     #[test]
-    fn selection_model_replaces_selected_node() {
+    fn selection_model_starts_empty_on_launchpad() {
         let state = AppState::default();
-        assert_eq!(state.selection.as_option(), Some("hero".to_string()));
+        assert!(state.selection.is_empty());
     }
 
     #[test]
-    fn tabs_default_to_one_welcome_tab() {
+    fn default_state_starts_on_launchpad_with_apps() {
         let state = AppState::default();
-        assert_eq!(state.tabs.len(), 1);
-        assert_eq!(state.tabs[0].title, "Welcome");
-        assert_eq!(state.active_tab, 0);
+        assert!(state.shell_view.is_launchpad());
+        assert!(state.apps.len() >= 2);
+        assert!(!state.apps[0].pages.is_empty());
+    }
+
+    #[test]
+    fn shell_view_app_exposes_app_id() {
+        let view = ShellView::App {
+            app_id: "test".into(),
+        };
+        assert_eq!(view.active_app_id(), Some("test"));
+        assert!(!view.is_launchpad());
     }
 
     #[test]

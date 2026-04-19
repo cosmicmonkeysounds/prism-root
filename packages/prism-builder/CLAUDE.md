@@ -59,7 +59,7 @@ From `src/lib.rs`:
   `transform: Transform2D` (from `prism-core::foundation::spatial`).
 - `BuilderDocument` now carries `page_layout: PageLayout`.
 
-### Game engine patterns (ADR-004)
+### Composition patterns (ADR-004)
 - `Modifier`, `ModifierKind`, `modifier_schema(kind)` — attachable
   behaviors (ScrollOverflow, HoverEffect, EnterAnimation,
   ResponsiveVisibility, Tooltip, AccessibilityOverride). Nodes carry

@@ -1,4 +1,4 @@
-# ADR-004: Game Engine Patterns
+# ADR-004: Composition Patterns
 
 **Status:** Accepted  
 **Date:** 2026-04-19
@@ -14,7 +14,7 @@ interaction, and augmentation.
 
 ## Decision
 
-Introduce five game-engine-inspired systems into `prism-builder`. All
+Introduce five composition systems into `prism-builder`. All
 five are data-model-first: they extend `Node` and `BuilderDocument`
 with serde-serializable fields, integrate into the existing render
 walkers, and keep the `Component` trait object-safe.

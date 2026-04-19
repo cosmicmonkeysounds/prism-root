@@ -18,6 +18,7 @@
 //! * [`starter`]      — 17 built-in Slint components.
 //! * [`html_starter`] — 17 built-in HTML blocks (same component IDs).
 
+pub mod app;
 pub mod component;
 pub mod document;
 pub mod html;
@@ -35,6 +36,7 @@ pub mod slint_source;
 pub mod starter;
 pub mod variant;
 
+pub use app::{AppIcon, AppId, NavigationConfig, NavigationStyle, Page, PrismApp};
 pub use component::{Component, ComponentId, RenderContext, RenderError, RenderSlintContext};
 pub use document::{BuilderDocument, Node, NodeId};
 pub use html::{escape_attr, escape_text, Html};
