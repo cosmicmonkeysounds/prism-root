@@ -44,7 +44,7 @@ required-features = ["native"]
 default = ["native"]
 native = ["dep:prism-daemon"]
 live-preview = ["slint/live-preview"]
-web = ["dep:wasm-bindgen", "dep:console_error_panic_hook", "dep:getrandom"]
+web = ["dep:wasm-bindgen", "dep:console_error_panic_hook", "dep:getrandom", "uuid/js"]
 
 [dependencies]
 # Shared Prism foundations.
@@ -77,6 +77,7 @@ getrandom = { workspace = true, optional = true, features = ["js"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+uuid = { workspace = true }
 
 [build-dependencies]
 # Compiles `ui/app.slint` into Rust code at build time. The generated

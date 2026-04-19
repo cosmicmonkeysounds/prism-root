@@ -2243,6 +2243,22 @@ fn apply_page_layout_edit(pl: &mut prism_builder::layout::PageLayout, key: &str,
     let parse_usize = |s: &str| s.parse::<usize>().unwrap_or(0);
 
     match key {
+        "page_size" => {
+            pl.size = match value {
+                "Responsive" => PageSize::Responsive,
+                "A4" => PageSize::A4,
+                "A3" => PageSize::A3,
+                "A5" => PageSize::A5,
+                "Letter" => PageSize::Letter,
+                "Legal" => PageSize::Legal,
+                "Tabloid" => PageSize::Tabloid,
+                "Custom" => PageSize::Custom {
+                    width: 1280.0,
+                    height: 800.0,
+                },
+                _ => pl.size,
+            };
+        }
         "columns" => {
             let count = parse_usize(value).max(1);
             pl.columns = (0..count).map(|_| TrackSize::Fr { value: 1.0 }).collect();

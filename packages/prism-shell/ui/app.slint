@@ -1082,81 +1082,153 @@ export component AppWindow inherits Window {
                             Text { text: "Show grid"; color: Palette.foreground; font-size: 12px; vertical-alignment: center; }
                         }
 
-                        // Page size
-                        HorizontalLayout {
-                            spacing: 4px; height: 28px; alignment: start;
-                            Text { text: "Size"; color: Palette.foreground.transparentize(40%); font-size: 11px; vertical-alignment: center; width: 52px; }
-                            Rectangle {
-                                height: 22px; border-radius: 4px; background: Palette.control-background; horizontal-stretch: 1;
-                                Text { text: root.page-layout.page-size-label; color: Palette.foreground; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
+                        // Page size — ComboBox
+                        VerticalLayout {
+                            spacing: 2px;
+                            Text { text: "Size"; color: Palette.foreground.transparentize(40%); font-size: 11px; }
+                            ComboBox {
+                                height: 28px;
+                                model: ["Responsive", "A4", "A3", "A5", "Letter", "Legal", "Tabloid", "Custom"];
+                                current-value: root.page-layout.page-size-label;
+                                selected(val) => { root.page-layout-edited("page_size", val); }
                             }
                         }
 
-                        // Columns + gap
-                        HorizontalLayout {
-                            spacing: 4px; height: 28px; alignment: start;
-                            Text { text: "Cols"; color: Palette.foreground.transparentize(40%); font-size: 11px; vertical-alignment: center; width: 52px; }
+                        // Columns — slider + text
+                        VerticalLayout {
+                            spacing: 2px;
+                            Text { text: "Columns"; color: Palette.foreground.transparentize(40%); font-size: 11px; }
                             LineEdit {
-                                height: 24px; horizontal-stretch: 1;
+                                height: 24px;
                                 text: root.page-layout.column-count;
                                 placeholder-text: "1";
                                 accepted(val) => { root.page-layout-edited("columns", val); }
                             }
-                            Text { text: "Gap"; color: Palette.foreground.transparentize(40%); font-size: 11px; vertical-alignment: center; }
+                            Slider {
+                                height: 20px;
+                                minimum: 1; maximum: 24;
+                                value: root.page-layout.column-count;
+                                changed(val) => { root.page-layout-edited("columns", round(val)); }
+                            }
+                        }
+
+                        // Column gap — slider + text
+                        VerticalLayout {
+                            spacing: 2px;
+                            Text { text: "Column Gap"; color: Palette.foreground.transparentize(40%); font-size: 11px; }
                             LineEdit {
-                                height: 24px; width: 48px;
+                                height: 24px;
                                 text: root.page-layout.column-gap;
                                 placeholder-text: "0";
                                 accepted(val) => { root.page-layout-edited("column_gap", val); }
                             }
+                            Slider {
+                                height: 20px;
+                                minimum: 0; maximum: 128;
+                                value: root.page-layout.column-gap;
+                                changed(val) => { root.page-layout-edited("column_gap", round(val)); }
+                            }
                         }
 
-                        // Rows + gap
-                        HorizontalLayout {
-                            spacing: 4px; height: 28px; alignment: start;
-                            Text { text: "Rows"; color: Palette.foreground.transparentize(40%); font-size: 11px; vertical-alignment: center; width: 52px; }
+                        // Rows — slider + text
+                        VerticalLayout {
+                            spacing: 2px;
+                            Text { text: "Rows"; color: Palette.foreground.transparentize(40%); font-size: 11px; }
                             LineEdit {
-                                height: 24px; horizontal-stretch: 1;
+                                height: 24px;
                                 text: root.page-layout.row-count;
                                 placeholder-text: "0";
                                 accepted(val) => { root.page-layout-edited("rows", val); }
                             }
-                            Text { text: "Gap"; color: Palette.foreground.transparentize(40%); font-size: 11px; vertical-alignment: center; }
+                            Slider {
+                                height: 20px;
+                                minimum: 0; maximum: 24;
+                                value: root.page-layout.row-count;
+                                changed(val) => { root.page-layout-edited("rows", round(val)); }
+                            }
+                        }
+
+                        // Row gap — slider + text
+                        VerticalLayout {
+                            spacing: 2px;
+                            Text { text: "Row Gap"; color: Palette.foreground.transparentize(40%); font-size: 11px; }
                             LineEdit {
-                                height: 24px; width: 48px;
+                                height: 24px;
                                 text: root.page-layout.row-gap;
                                 placeholder-text: "0";
                                 accepted(val) => { root.page-layout-edited("row_gap", val); }
                             }
+                            Slider {
+                                height: 20px;
+                                minimum: 0; maximum: 128;
+                                value: root.page-layout.row-gap;
+                                changed(val) => { root.page-layout-edited("row_gap", round(val)); }
+                            }
                         }
 
-                        // Margins (TRBL)
-                        HorizontalLayout {
-                            spacing: 4px; height: 28px; alignment: start;
-                            Text { text: "Margin"; color: Palette.foreground.transparentize(40%); font-size: 11px; vertical-alignment: center; width: 52px; }
+                        // Margins — individual sliders
+                        VerticalLayout {
+                            spacing: 2px;
+                            Text { text: "Margin Top"; color: Palette.foreground.transparentize(40%); font-size: 11px; }
                             LineEdit {
-                                height: 24px; horizontal-stretch: 1;
+                                height: 24px;
                                 text: root.page-layout.margin-top;
-                                placeholder-text: "T";
+                                placeholder-text: "0";
                                 accepted(val) => { root.page-layout-edited("margin_top", val); }
                             }
+                            Slider {
+                                height: 20px;
+                                minimum: 0; maximum: 256;
+                                value: root.page-layout.margin-top;
+                                changed(val) => { root.page-layout-edited("margin_top", round(val)); }
+                            }
+                        }
+                        VerticalLayout {
+                            spacing: 2px;
+                            Text { text: "Margin Right"; color: Palette.foreground.transparentize(40%); font-size: 11px; }
                             LineEdit {
-                                height: 24px; horizontal-stretch: 1;
+                                height: 24px;
                                 text: root.page-layout.margin-right;
-                                placeholder-text: "R";
+                                placeholder-text: "0";
                                 accepted(val) => { root.page-layout-edited("margin_right", val); }
                             }
+                            Slider {
+                                height: 20px;
+                                minimum: 0; maximum: 256;
+                                value: root.page-layout.margin-right;
+                                changed(val) => { root.page-layout-edited("margin_right", round(val)); }
+                            }
+                        }
+                        VerticalLayout {
+                            spacing: 2px;
+                            Text { text: "Margin Bottom"; color: Palette.foreground.transparentize(40%); font-size: 11px; }
                             LineEdit {
-                                height: 24px; horizontal-stretch: 1;
+                                height: 24px;
                                 text: root.page-layout.margin-bottom;
-                                placeholder-text: "B";
+                                placeholder-text: "0";
                                 accepted(val) => { root.page-layout-edited("margin_bottom", val); }
                             }
+                            Slider {
+                                height: 20px;
+                                minimum: 0; maximum: 256;
+                                value: root.page-layout.margin-bottom;
+                                changed(val) => { root.page-layout-edited("margin_bottom", round(val)); }
+                            }
+                        }
+                        VerticalLayout {
+                            spacing: 2px;
+                            Text { text: "Margin Left"; color: Palette.foreground.transparentize(40%); font-size: 11px; }
                             LineEdit {
-                                height: 24px; horizontal-stretch: 1;
+                                height: 24px;
                                 text: root.page-layout.margin-left;
-                                placeholder-text: "L";
+                                placeholder-text: "0";
                                 accepted(val) => { root.page-layout-edited("margin_left", val); }
+                            }
+                            Slider {
+                                height: 20px;
+                                minimum: 0; maximum: 256;
+                                value: root.page-layout.margin-left;
+                                changed(val) => { root.page-layout-edited("margin_left", round(val)); }
                             }
                         }
 

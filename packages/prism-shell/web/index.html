@@ -33,6 +33,24 @@
       this canvas.
     -->
     <canvas id="canvas"></canvas>
+    <script>
+      // Pre-size canvas to viewport and enable preserveDrawingBuffer
+      // so Playwright / toDataURL can capture WebGL content.
+      (function () {
+        const c = document.getElementById("canvas");
+        const dpr = window.devicePixelRatio || 1;
+        c.width = window.innerWidth * dpr;
+        c.height = window.innerHeight * dpr;
+
+        const origGetContext = c.getContext.bind(c);
+        c.getContext = function (type, attrs) {
+          if (type === "webgl" || type === "webgl2") {
+            attrs = Object.assign({}, attrs, { preserveDrawingBuffer: true });
+          }
+          return origGetContext(type, attrs);
+        };
+      })();
+    </script>
     <script type="module">
       import init from "./prism_shell.js";
       init();
