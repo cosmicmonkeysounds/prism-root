@@ -1,8 +1,7 @@
 //! Daemon sidecar lifecycle and IPC client.
 //!
-//! Per §4.5 of `docs/dev/slint-migration-plan.md` (resolved by
-//! Phase 0 spike #6 on 2026-04-14 and carried forward through the
-//! 2026-04-15 Clay → Slint pivot), Studio talks to `prism-daemon`
+//! Per §4.5 of `docs/dev/slint-migration-plan.md`, Studio talks to
+//! `prism-daemon`
 //! as a sibling process rather than linking it as a library. The wire protocol is length-prefixed `postcard` frames
 //! over `interprocess::local_socket` — unix domain sockets on Linux
 //! and macOS, named pipes on Windows, hidden behind one trait. The

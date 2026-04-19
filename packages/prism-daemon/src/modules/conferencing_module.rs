@@ -45,7 +45,7 @@
 //!
 //! WebRTC is the SPEC's chosen A/V transport (P2P data + audio + video, with
 //! an SFU fallback at the Relay layer). Putting it inside the daemon means
-//! every Prism surface — Tauri desktop, mobile FFI, browser WASM (eventually
+//! every Prism surface — desktop, mobile FFI, browser WASM (eventually
 //! via the C ABI), CLI — can join calls through one shared command surface
 //! without each shell having to embed its own WebRTC stack.
 //!
@@ -55,7 +55,7 @@
 //! [`ConferencingManager`] owns its own multi-threaded tokio runtime and
 //! every command handler does a single `runtime.block_on` to dispatch the
 //! corresponding async work. This keeps the existing transport layers
-//! untouched: a Tauri command, a CLI stdio frame, a UniFFI bridge, all hit
+//! untouched: an IPC call, a CLI stdio frame, a UniFFI bridge, all hit
 //! the same blocking entry point and the runtime is invisible to them.
 //!
 //! **Tracks** transport encoded media frames. The daemon does not

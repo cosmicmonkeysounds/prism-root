@@ -2,7 +2,7 @@
 //! sorting objects. Port of `foundation/object-model/query.ts`.
 //!
 //! A single query type travels through the Loro store, the relay
-//! REST endpoints, and Tauri IPC calls so the Rust shape must
+//! REST endpoints, and daemon IPC calls so the Rust shape must
 //! round-trip through serde exactly the same way the TS shape
 //! round-trips through JSON.
 

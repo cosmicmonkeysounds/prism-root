@@ -11,7 +11,7 @@
 //!   - Binary Forking Protocol: lock-based editing for non-mergeable files
 //!   - `import_file` / `export_file` for moving binaries in/out of
 //!     vault storage
-//!   - In-memory adapter for testing; local FS adapter via Tauri IPC
+//!   - In-memory adapter for testing; local FS adapter via daemon IPC
 //!     (future)
 
 use std::sync::Mutex;

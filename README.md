@@ -6,17 +6,19 @@ Local-first, file-over-app. Applications are **Lenses** — disposable views ove
 
 Every Prism app is an IDE. There is no wall between "using" and "building." The difference between a consumer app and a developer tool is a single toggle — the **"Glass Flip."**
 
-> Active migration plan: [`docs/dev/clay-migration-plan.md`](docs/dev/clay-migration-plan.md)
+> Active migration plan: [`docs/dev/slint-migration-plan.md`](docs/dev/slint-migration-plan.md)
 > Decisions: [`docs/adr/`](docs/adr/)
 > Per-package context: each package's `CLAUDE.md`
 
 ## Status
 
-Prism is mid-migration from a React/TypeScript client onto Clay (immediate-mode UI) + Rust. The plan, phases, and risk ledger live in [`docs/dev/clay-migration-plan.md`](docs/dev/clay-migration-plan.md).
+All-Rust Cargo monorepo on [Slint](https://github.com/slint-ui/slint). The Slint migration (from React/TypeScript) is tracked in [`docs/dev/slint-migration-plan.md`](docs/dev/slint-migration-plan.md). Phases 0–3 are closed; Phase 4+ is pending.
 
-- **Client** — Rust. Cargo workspace at the repo root. WASM for web, Tauri 2 (no-webview) for desktop, Tauri Mobile for iOS/Android.
-- **Daemon** — Rust. `prism-daemon` crate. Runs as a Tauri sidecar on desktop, an in-process tokio subsystem on mobile, and is accessed remotely over WebSocket on web.
-- **Relay** — Hono JSX SSR. Out of scope for the Clay migration; slated for its own rewrite, so don't over-invest in its current shape.
+- **Shell** — Rust. `prism-shell` crate. Slint UI compiled at build time (`ui/app.slint`). Native binary + WASM (`wasm32-unknown-unknown` + `wasm-bindgen`) for web.
+- **Builder** — Rust. `prism-builder` crate. Component registry + `BuilderDocument` tree with two render targets: Slint DSL (via `slint-interpreter`) and HTML SSR.
+- **Daemon** — Rust. `prism-daemon` crate. Transport-agnostic kernel. Runs as a sidecar on desktop (IPC via `interprocess` + `postcard`), in-process on mobile, remote over WebSocket on web.
+- **Relay** — Rust. `prism-relay` crate. Axum-based Sovereign Portal SSR server rendering `BuilderDocument` trees to semantic HTML.
+- **Studio** — Rust. `prism-studio/src-tauri`. Desktop shell: spawns daemon sidecar, hands control to `prism_shell::Shell`. Slint owns windowing end-to-end.
 
 ## Repo layout
 
@@ -24,17 +26,18 @@ Prism is mid-migration from a React/TypeScript client onto Clay (immediate-mode 
 prism/
 ├── Cargo.toml              # Workspace root
 ├── packages/
-│   ├── prism-core/         # (Rust) shared domain logic — mid-port from TS
-│   ├── prism-builder/      # (Rust) Puck replacement — component registry + Puck JSON reader
-│   ├── prism-shell/        # (Rust → WASM / native) the Clay-based client
-│   ├── prism-studio/       # Tauri 2 desktop shell (Rust, src-tauri/)
+│   ├── prism-core/         # (Rust) shared domain logic
+│   ├── prism-builder/      # (Rust) component registry + Slint/HTML render
+│   ├── prism-shell/        # (Rust → WASM / native) the Slint-based client
+│   ├── prism-studio/       # Desktop shell (Rust, src-tauri/)
 │   ├── prism-daemon/       # (Rust) local physics engine — Loro, Luau, VFS
-│   └── prism-relay/        # (Hono JSX SSR) federated relay — stays JS, pending rewrite
+│   ├── prism-relay/        # (Rust) Axum SSR — federated relay
+│   └── prism-cli/          # (Rust) unified `prism` CLI
 ├── docs/
 │   ├── adr/                # Architecture decision records
-│   └── dev/                # Active development plan (clay-migration-plan.md)
+│   └── dev/                # Active development plans
 ├── scripts/hooks/          # Claude Code dev hooks
-└── $legacy-inspiration-only/  # Reference material from the pre-Clay era
+└── $legacy-inspiration-only/  # Reference material from the pre-Slint era
 ```
 
 ## Quick start
@@ -42,60 +45,56 @@ prism/
 ### Prerequisites
 
 - **Rust** ≥ 1.75 (`rustup`)
-- **Tauri 2 CLI** — `cargo install tauri-cli --version "^2"`
-- **Trunk** — `cargo install trunk` (for the WASM dev server)
-- **Node.js** ≥ 20 + **pnpm** ≥ 9 (relay only)
+- **wasm-bindgen-cli** — `cargo install wasm-bindgen-cli` (version must match the `wasm-bindgen` crate in the workspace manifest)
+- **Node.js** ≥ 20 + **pnpm** ≥ 9 (optional — `pnpm` scripts are thin aliases over the `prism` CLI)
 
 ### Dev
 
 ```bash
-# Client (native, fastest iteration)
-pnpm dev            # → cargo run -p prism-shell
+# Build the prism CLI first
+cargo build -p prism-cli
 
-# Client (web, WASM via trunk)
-pnpm dev:web        # → trunk serve --config packages/prism-shell/Trunk.toml
+# Shell (native, fastest iteration)
+prism dev shell
 
-# Desktop shell (Tauri 2 no-webview)
-pnpm dev:studio     # → cargo tauri dev
+# Shell (web, WASM via wasm-bindgen)
+prism dev web
 
-# Relay
-pnpm dev:relay      # → pnpm --filter @prism/relay dev
+# Desktop shell (Studio)
+prism dev studio
+
+# Everything (process supervisor with colored logs)
+prism dev all
 ```
 
 ### Build
 
 ```bash
-pnpm build          # cargo build --workspace --release && relay build
-pnpm build:web      # trunk build --release
+prism build                   # all targets (release)
+prism build --target web      # WASM build only
+prism build --target desktop  # native binary only
+prism build --debug           # debug profile
 ```
 
 ### Test / lint / format
 
-Every command below goes through the unified `prism` CLI (see
-`packages/prism-cli/CLAUDE.md`); the `pnpm` form is a thin alias.
-
 ```bash
-prism test           # cargo test --workspace
-prism test --all     # Rust workspace + relay Playwright e2e
-prism test --e2e     # relay Playwright suite only
-prism lint           # cargo clippy --workspace --all-targets -- -D warnings
-prism fmt            # cargo fmt --all
-prism fmt --check    # cargo fmt --all -- --check
-prism --dry-run <…>  # print the expanded argv instead of executing
+prism test                    # cargo test --workspace
+prism lint                    # cargo clippy --workspace --all-targets -- -D warnings
+prism fmt                     # cargo fmt --all
+prism fmt --check             # cargo fmt --all -- --check
+prism --dry-run <...>         # print the expanded argv instead of executing
 ```
-
-Relay unit tests are currently unwired (vitest isn't installed) and
-will come back alongside the relay rewrite.
 
 ## Philosophy
 
 - **Local-First** — the user's disk is the source of truth.
 - **Every App Is an IDE** — consumer and developer share the same app (Glass Flip).
-- **Ownership Over Convenience** — MIT-only deps, no vendor lock-in.
+- **Ownership Over Convenience** — no vendor lock-in.
 - **Blockchain-Free** — W3C DIDs + E2EE CRDTs, not ledgers or tokens.
 - **Loro Is the Hidden Constant** — all state lives in Loro; editors are projections.
-- **One Toolchain** — post-migration, everything outside the relay is a single `cargo build`.
+- **One Toolchain** — everything is a single `cargo build`.
 
 ## License
 
-MIT
+GPL-3.0-or-later

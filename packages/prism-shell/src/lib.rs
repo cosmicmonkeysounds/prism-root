@@ -17,10 +17,7 @@
 //!
 //! Slint (1.8) owns layout, renderer, and windowing. The native
 //! build runs on winit + femtovg; the web build runs on winit's
-//! wasm32-unknown-unknown backend, also via femtovg over WebGL. The
-//! 2026-04-15 Clay → Slint pivot (see
-//! `docs/dev/slint-migration-plan.md`) retired the old clay-layout
-//! DSL + hand-vendored wgpu pipeline + tao windowing in one stroke.
+//! wasm32-unknown-unknown backend, also via femtovg over WebGL.
 
 pub mod app;
 pub mod command;

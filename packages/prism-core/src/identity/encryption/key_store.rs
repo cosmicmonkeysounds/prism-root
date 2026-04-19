@@ -3,8 +3,8 @@
 //! Implementations:
 //!
 //! - [`MemoryKeyStore`] — in-process `HashMap`, useful for tests.
-//! - A Tauri-keychain-backed impl will live in the shell/studio crate
-//!   and implement this trait.
+//! - A platform-keychain-backed impl will live in the shell/studio
+//!   crate and implement this trait.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

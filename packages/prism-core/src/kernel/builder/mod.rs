@@ -106,18 +106,23 @@ mod tests {
     // ── Build plan ─────────────────────────────────────────────────────────
 
     #[test]
-    fn web_plan_has_emit_file_then_pnpm_build() {
+    fn web_plan_has_emit_then_cargo_then_wasm_bindgen() {
         let profile = flux_profile();
         let plan = create_build_plan(CreateBuildPlanOptions::new(&profile, BuildTarget::Web));
         assert_eq!(plan.profile_id, "flux");
-        assert_eq!(plan.steps.len(), 2);
+        assert_eq!(plan.steps.len(), 3);
         assert!(matches!(plan.steps[0], BuildStep::EmitFile { .. }));
         match &plan.steps[1] {
-            BuildStep::RunCommand { command, args, .. } => {
-                assert_eq!(command, "pnpm");
-                assert_eq!(args, &vec!["--filter", "@prism/studio", "build"]);
+            BuildStep::RunCommand { command, .. } => {
+                assert_eq!(command, "cargo");
             }
-            _ => panic!("expected run-command"),
+            _ => panic!("expected cargo run-command"),
+        }
+        match &plan.steps[2] {
+            BuildStep::RunCommand { command, .. } => {
+                assert_eq!(command, "wasm-bindgen");
+            }
+            _ => panic!("expected wasm-bindgen run-command"),
         }
         assert_eq!(plan.artifacts.len(), 1);
         assert_eq!(plan.artifacts[0].kind, ArtifactKind::Directory);
@@ -125,16 +130,18 @@ mod tests {
     }
 
     #[test]
-    fn tauri_plan_emits_three_installer_artifacts() {
+    fn desktop_plan_emits_cargo_build() {
         let profile = studio_profile();
-        let plan = create_build_plan(CreateBuildPlanOptions::new(&profile, BuildTarget::Tauri));
-        assert_eq!(plan.steps.len(), 3);
-        assert_eq!(plan.artifacts.len(), 3);
-        assert!(plan
-            .artifacts
-            .iter()
-            .all(|a| a.kind == ArtifactKind::Installer));
-        assert!(plan.artifacts[0].path.contains("Prism Studio.dmg"));
+        let plan = create_build_plan(CreateBuildPlanOptions::new(&profile, BuildTarget::Desktop));
+        assert_eq!(plan.steps.len(), 2);
+        assert_eq!(plan.artifacts.len(), 1);
+        match &plan.steps[1] {
+            BuildStep::RunCommand { command, args, .. } => {
+                assert_eq!(command, "cargo");
+                assert!(args.contains(&"prism-studio".to_string()));
+            }
+            _ => panic!("expected cargo run-command"),
+        }
     }
 
     #[test]
@@ -161,7 +168,7 @@ mod tests {
             &profile,
             BuildTarget::RelayDocker,
         ));
-        // Emit profile + emit relay.config + pnpm build + docker build
+        // Emit profile + emit relay.config + cargo build + docker build
         assert_eq!(plan.steps.len(), 4);
         let last = plan.steps.last().unwrap();
         match last {
@@ -285,9 +292,10 @@ mod tests {
         let plan = mgr.plan_build("flux", BuildTarget::Web, true).unwrap();
         let run = mgr.run_plan(plan);
         assert_eq!(run.status, BuildStepStatus::Success);
-        assert_eq!(run.steps.len(), 2);
+        assert_eq!(run.steps.len(), 3);
         assert_eq!(run.steps[0].status, BuildStepStatus::Success);
         assert_eq!(run.steps[1].status, BuildStepStatus::Skipped);
+        assert_eq!(run.steps[2].status, BuildStepStatus::Skipped);
         // Dry-run still reports declared artifacts.
         assert_eq!(run.produced_artifacts.len(), 1);
     }
@@ -332,18 +340,18 @@ mod tests {
     fn manager_plan_builds_creates_one_per_target() {
         let mgr = BuilderManager::new(BuilderManagerOptions::default());
         let plans = mgr
-            .plan_builds("flux", &[BuildTarget::Web, BuildTarget::Tauri], true)
+            .plan_builds("flux", &[BuildTarget::Web, BuildTarget::Desktop], true)
             .unwrap();
         assert_eq!(plans.len(), 2);
         assert_eq!(plans[0].target, BuildTarget::Web);
-        assert_eq!(plans[1].target, BuildTarget::Tauri);
+        assert_eq!(plans[1].target, BuildTarget::Desktop);
     }
 
     #[test]
     fn manager_list_runs_is_sorted_newest_first() {
         let mgr = BuilderManager::new(BuilderManagerOptions::default());
         let p1 = mgr.plan_build("flux", BuildTarget::Web, true).unwrap();
-        let p2 = mgr.plan_build("flux", BuildTarget::Tauri, true).unwrap();
+        let p2 = mgr.plan_build("flux", BuildTarget::Desktop, true).unwrap();
         let _r1 = mgr.run_plan(p1);
         let _r2 = mgr.run_plan(p2);
         let runs = mgr.list_runs();

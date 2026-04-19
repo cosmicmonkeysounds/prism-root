@@ -10,7 +10,7 @@
 //!
 //! This is the same self-replicating paradigm Studio uses (bundle +
 //! initializer + kernel registry), ported to Rust so the exact same
-//! assembly works whether the kernel is embedded behind Tauri on desktop,
+//! assembly works whether the kernel runs as a desktop sidecar,
 //! compiled into a Capacitor native shell on iOS/Android, run as a
 //! headless daemon on a server, or wrapped by a UniFFI bridge for any
 //! other host.
@@ -82,8 +82,8 @@ pub mod doc_manager;
 // the single entry point used by every non-Rust host: the browser via
 // emscripten (`wasm` feature) AND the Capacitor native shells on iOS/Android
 // (`mobile` feature, consuming `libprism_daemon.a` as a staticlib through a
-// hand-written Swift/Kotlin plugin). Desktop (Tauri) speaks Rust directly
-// and doesn't need the C ABI. The module is still named `wasm` for
+// hand-written Swift/Kotlin plugin). Desktop speaks Rust directly via
+// IPC and doesn't need the C ABI. The module is still named `wasm` for
 // historical reasons — it was introduced for the browser build — but the
 // cfg reflects that both host families use it.
 #[cfg(any(feature = "wasm", feature = "mobile"))]
@@ -116,7 +116,7 @@ pub use modules::actors_module::{ActorKind, ActorMessage, ActorStatus, ActorsMan
 // ── Daemon-level error surface ─────────────────────────────────────────
 //
 // Kept at the crate root because the built-in CRDT service (and any host
-// that accesses `DocManager` directly, like the Tauri shell) speaks this
+// that accesses `DocManager` directly, like the Studio shell) speaks this
 // error shape.
 
 /// Daemon-level errors.

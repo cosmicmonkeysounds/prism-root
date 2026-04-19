@@ -3,10 +3,9 @@
 //! of `foundation/object-model/registry.ts`.
 //!
 //! Unlike the TS original the Rust port does not parameterize over
-//! an icon type. The legacy code used `TIcon` so consumers could
-//! pass a React icon component in; in the Rust world icons are
-//! just strings (icon name / SVG id) and any host that needs
-//! richer representations can keep a parallel table keyed by type.
+//! an icon type. Icons are just strings (icon name / SVG id) and
+//! any host that needs richer representations can keep a parallel
+//! table keyed by type.
 
 use std::collections::HashMap;
 

@@ -56,7 +56,7 @@ impl BuiltInProfileId {
 #[serde(rename_all = "kebab-case")]
 pub enum BuildTarget {
     Web,
-    Tauri,
+    Desktop,
     CapacitorIos,
     CapacitorAndroid,
     RelayNode,
@@ -65,7 +65,7 @@ pub enum BuildTarget {
 
 pub const ALL_BUILD_TARGETS: &[BuildTarget] = &[
     BuildTarget::Web,
-    BuildTarget::Tauri,
+    BuildTarget::Desktop,
     BuildTarget::CapacitorIos,
     BuildTarget::CapacitorAndroid,
     BuildTarget::RelayNode,

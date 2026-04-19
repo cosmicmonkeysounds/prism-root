@@ -170,7 +170,7 @@ mod tests {
     #[test]
     fn luau_pure_fn_still_usable() {
         // The free function remains the hot path for transport adapters
-        // that don't want JSON intermediation (e.g. Tauri).
+        // that don't want JSON intermediation (e.g. the Studio IPC bridge).
         let result = exec("return 2 * 3", None).unwrap();
         assert_eq!(result, JsonValue::Number(6.into()));
     }

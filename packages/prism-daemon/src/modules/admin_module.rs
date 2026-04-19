@@ -1,7 +1,7 @@
 //! Admin module — exposes `daemon.admin` returning a normalised admin
 //! snapshot matching the `AdminSnapshot` shape from `@prism/admin-kit`.
 //!
-//! This gives every transport adapter (HTTP, stdio, Tauri, WASM) a single
+//! This gives every transport adapter (HTTP, stdio, IPC, WASM) a single
 //! command that returns everything a dashboard needs: health, uptime,
 //! metrics, services, and activity.
 //!

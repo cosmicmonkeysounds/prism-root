@@ -143,7 +143,7 @@ impl VfsManager {
 
     /// For the on-disk backend, return the root directory. Returns
     /// `None` for any other backend. Kept as a convenience because the
-    /// Tauri shell used to call `.root()` directly on the manager.
+    /// Legacy host used to call `.root()` directly on the manager.
     pub fn root(&self) -> Option<PathBuf> {
         self.backend
             .as_any()

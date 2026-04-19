@@ -1,12 +1,10 @@
 //! `kernel::prism_kernel` — the canonical Layer-1 orchestration struct.
 //!
 //! Port of `packages/prism-studio/src/kernel/studio-kernel.ts` at 8426588,
-//! reduced to the parts that survived the Slint migration. The legacy TS
-//! kernel wired ObjectRegistry + CollectionStore + PrismBus + AtomStore +
-//! LiveView + Puck + React lens registries into a single 2431-line class.
-//! The Rust version is narrower by design: Slint owns the UI tree, so
-//! everything Puck / React-specific stays out of `prism-core` and lives
-//! in `prism-shell` or a host crate. What's left is the bag of
+//! reduced to the parts that survived the Slint migration. The Rust
+//! version is narrower by design: Slint owns the UI tree, so
+//! UI-specific registries stay out of `prism-core` and live in
+//! `prism-shell` or a host crate. What's left is the bag of
 //! framework-free primitives every app composes:
 //!
 //! - `object_registry` — entity + edge type definitions.

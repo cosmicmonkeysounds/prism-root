@@ -85,7 +85,7 @@ pub struct DaemonBuilder {
 
     /// Optional shared actors pool. Hosts rarely need to inject their
     /// own — it only matters if multiple transport adapters must share
-    /// the exact same pool (e.g. HTTP + Tauri pointed at the same
+    /// the exact same pool (e.g. HTTP + IPC pointed at the same
     /// kernel).
     #[cfg(feature = "actors")]
     pub(crate) actors_manager: Option<Arc<ActorsManager>>,

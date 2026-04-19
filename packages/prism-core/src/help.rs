@@ -4,9 +4,7 @@
 //! `HelpEntry` objects into a `HelpRegistry`; the shell crate looks them
 //! up at hover time to populate tooltips.
 //!
-//! Port of the React `HelpRegistry` from
-//! `packages/prism-core/src/bindings/react-shell/help/help-registry.ts`
-//! per ADR-005.
+//! Port of the legacy `HelpRegistry` per ADR-005.
 
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};

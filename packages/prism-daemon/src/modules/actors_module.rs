@@ -370,7 +370,7 @@ fn run_luau_actor(
     // Run the script once. Any error here prevents us from accepting
     // messages — but the actor stays registered so `actors.status` can
     // still observe that it died, matching the "loud failure" model
-    // the Tauri shell expects.
+    // the Studio shell expects.
     if let Err(err) = lua.load(script).exec() {
         outbox.push(json!({
             "kind": "error",

@@ -4,7 +4,7 @@
 //! var cargo sets for integration tests), spawns it as a subprocess,
 //! and drives a few commands through stdin/stdout. This is the
 //! equivalent of the WASM Playwright suite for the CLI transport — it
-//! proves the kernel runs detached from Tauri and that every built-in
+//! proves the kernel runs as a standalone process and that every built-in
 //! module survives a real JSON envelope round trip.
 //!
 //! The binary is gated on the `cli` feature, which is on by default.

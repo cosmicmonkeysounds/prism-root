@@ -1,7 +1,7 @@
 //! `prism-daemond` — the standalone Prism Daemon.
 //!
 //! A minimal stdio-JSON loop demonstrating that the same [`DaemonKernel`]
-//! Studio embeds over Tauri IPC can also run as a headless background
+//! Studio embeds over local IPC can also run as a headless background
 //! process on any device. Each line on stdin is a JSON envelope:
 //!
 //! ```json
@@ -50,7 +50,7 @@
 //! no `clap` dependency, just `std::env::args`.
 //!
 //! This binary is deliberately boring: it's a *proof* that the kernel is
-//! transport-agnostic. Real deployments will wrap the kernel in Tauri,
+//! transport-agnostic. Real deployments wrap the kernel in IPC,
 //! UniFFI, or an HTTP/gRPC adapter.
 
 use prism_daemon::{CommandError, DaemonBuilder, DaemonKernel, Permission};

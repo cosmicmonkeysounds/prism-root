@@ -1,4 +1,4 @@
-//! `prism-builder` — the Slint-native page builder that replaces Puck.
+//! `prism-builder` — the Slint-native page builder.
 //!
 //! Two independent render paths:
 //!

@@ -36,7 +36,7 @@ use crate::modules::conferencing_module::ConferencingManager;
 ///
 /// Cheaply cloneable — every field is either an `Arc` or lives behind one,
 /// so hosts can hand the same kernel out to multiple transport adapters
-/// (e.g. Tauri IPC + a debug stdio loop) without extra synchronization.
+/// (e.g. local IPC + a debug stdio loop) without extra synchronization.
 #[derive(Clone)]
 pub struct DaemonKernel {
     registry: Arc<CommandRegistry>,
@@ -57,7 +57,7 @@ pub struct DaemonKernel {
     initializer_handles: Arc<Mutex<Vec<InitializerHandle>>>,
 
     /// Optional direct handle to the CRDT service. Hot paths (like the
-    /// Tauri shell's managed state) can reach it without going through
+    /// Studio shell's managed state) can reach it without going through
     /// JSON (de)serialization — but they don't have to.
     #[cfg(feature = "crdt")]
     doc_manager: Option<Arc<DocManager>>,
@@ -134,7 +134,7 @@ impl DaemonKernel {
     /// Every call is gated by the kernel's boot-time [`Permission`]; a
     /// `user`-tier kernel can only reach commands registered with
     /// [`Permission::User`], a `dev`-tier kernel reaches everything.
-    /// Transport adapters (Tauri `#[command]`, HTTP handlers, FFI bridges)
+    /// Transport adapters (IPC handlers, HTTP handlers, FFI bridges)
     /// all funnel through this method.
     pub fn invoke(&self, name: &str, payload: JsonValue) -> Result<JsonValue, CommandError> {
         self.registry

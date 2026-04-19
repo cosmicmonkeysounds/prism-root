@@ -7,7 +7,7 @@
 //!   drains into a store on a pluggable timer.
 //!
 //! Persistence lives one layer up (`foundation::persistence`) — this
-//! module deliberately knows nothing about Loro, Tauri IPC, or disks.
+//! module deliberately knows nothing about Loro, daemon IPC, or disks.
 
 pub mod queue;
 pub mod store;

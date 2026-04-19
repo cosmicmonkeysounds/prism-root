@@ -10,7 +10,7 @@
 //! | [`http_axum`]     | `transport-http`     | Headless desktop / server / dev tooling             |
 //! | [`grpc_tonic`]    | `transport-grpc`     | Polyglot service mesh, language-agnostic clients    |
 //! | [`uniffi_bridge`] | `transport-uniffi`   | Direct Swift/Kotlin bindings on iOS/Android         |
-//! | [`ipc_local`]     | `transport-ipc`      | Tauri 2 no-webview desktop shell ↔ daemon sidecar   |
+//! | [`ipc_local`]     | `transport-ipc`      | Slint desktop shell ↔ daemon sidecar                |
 //!
 //! Each adapter is a single file and is *strictly* a wrapper: no business
 //! logic, no mutation of the registry, no tokio/grpc concepts leak through

@@ -4,8 +4,8 @@
 //! Port of `kernel/builder/starter-app.ts` at 8426588. Pure and
 //! kernel-agnostic: callers pass in a `StarterCreateObjectFn`
 //! closure mirroring `StudioKernel::create_object`, so tests can
-//! supply a minimal fake while the Puck playground hands through a
-//! real kernel. No Slint, no Puck, no studio imports.
+//! supply a minimal fake while real consumers hand through a live
+//! kernel. No Slint, no studio imports.
 
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use std::collections::{BTreeMap, HashMap};

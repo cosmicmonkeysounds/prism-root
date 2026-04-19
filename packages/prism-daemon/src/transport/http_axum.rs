@@ -22,7 +22,7 @@
 //! ### Why blocking inside async
 //!
 //! The kernel is intentionally synchronous so it can be embedded behind
-//! Tauri, FFI, stdio, and emscripten without dragging tokio along. axum
+//! IPC, FFI, stdio, and emscripten without dragging tokio along. axum
 //! is async, so every handler hops onto [`tokio::task::spawn_blocking`]
 //! before calling `kernel.invoke`. The kernel itself never sees a tokio
 //! reactor — it just runs a closure on a blocking-pool thread.

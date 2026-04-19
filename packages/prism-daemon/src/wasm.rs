@@ -16,7 +16,7 @@
 //!    plugin. Mobile does NOT go through emscripten — it links
 //!    `libprism_daemon.a` directly into the native shell.
 //!
-//! Desktop (Tauri) speaks Rust natively and bypasses this adapter
+//! Desktop speaks Rust natively via IPC and bypasses this adapter
 //! entirely — `tauri::command` functions hold an `Arc<DaemonKernel>` and
 //! call `kernel.invoke()` without ever crossing the C boundary.
 //!

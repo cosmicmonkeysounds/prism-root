@@ -9,7 +9,7 @@
 //!
 //! All byte arrays are transferred as JSON arrays of numbers for the
 //! registry's JSON-in/JSON-out contract. Transport adapters that have a
-//! better representation (e.g. Tauri's `Vec<u8>` → `number[]`) can bypass
+//! better representation (e.g. a host's `Vec<u8>` → `number[]`) can bypass
 //! the registry and call [`DaemonKernel::doc_manager`] directly for hot
 //! paths — the two entry points are deliberately symmetric.
 

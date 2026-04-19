@@ -2,7 +2,7 @@
 //!
 //! Every capability the daemon exposes (CRDT writes, Luau exec, build steps,
 //! filesystem watchers, …) is registered here as a named JSON-in / JSON-out
-//! handler. Transport adapters (Tauri IPC, mobile FFI, HTTP, stdio CLI, …)
+//! handler. Transport adapters (local IPC, mobile FFI, HTTP, stdio CLI, …)
 //! are all thin wrappers over [`CommandRegistry::invoke`], which is how the
 //! same kernel ends up running on every device.
 //!

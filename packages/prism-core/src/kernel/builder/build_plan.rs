@@ -56,63 +56,56 @@ fn web_target(profile: &AppProfile) -> (Vec<BuildStep>, Vec<ArtifactDescriptor>)
     let steps = vec![
         profile_emit_step(profile),
         run_command(
-            "pnpm",
-            &["--filter", "@prism/studio", "build"],
-            "Vite production build",
+            "cargo",
+            &[
+                "build",
+                "--release",
+                "--target",
+                "wasm32-unknown-unknown",
+                "-p",
+                "prism-shell",
+                "--no-default-features",
+                "--features",
+                "web",
+            ],
+            "Cargo WASM build",
+        ),
+        run_command(
+            "wasm-bindgen",
+            &[
+                "--target",
+                "web",
+                "--out-dir",
+                "packages/prism-shell/web",
+                "target/wasm32-unknown-unknown/release/prism_shell.wasm",
+            ],
+            "wasm-bindgen post-process",
         ),
     ];
     let artifacts = vec![ArtifactDescriptor {
         kind: ArtifactKind::Directory,
-        path: "packages/prism-studio/dist".into(),
+        path: "packages/prism-shell/web".into(),
         description: format!("Static web build for {}", profile.name),
         mime_type: None,
     }];
     (steps, artifacts)
 }
 
-fn tauri_target(profile: &AppProfile) -> (Vec<BuildStep>, Vec<ArtifactDescriptor>) {
+fn desktop_target(profile: &AppProfile) -> (Vec<BuildStep>, Vec<ArtifactDescriptor>) {
     let steps = vec![
         profile_emit_step(profile),
         run_command(
-            "pnpm",
-            &["--filter", "@prism/studio", "build"],
-            "Vite production build (Tauri frontend)",
-        ),
-        run_command(
-            "pnpm",
-            &["--filter", "@prism/studio", "tauri", "build"],
-            "Tauri 2.0 desktop bundle",
+            "cargo",
+            &["build", "--release", "-p", "prism-studio"],
+            "Cargo release build for desktop",
         ),
     ];
-    let artifacts = vec![
-        ArtifactDescriptor {
-            kind: ArtifactKind::Installer,
-            path: format!(
-                "packages/prism-studio/src-tauri/target/release/bundle/dmg/{}.dmg",
-                profile.name
-            ),
-            description: "macOS disk image".into(),
-            mime_type: Some("application/x-apple-diskimage".into()),
-        },
-        ArtifactDescriptor {
-            kind: ArtifactKind::Installer,
-            path: format!(
-                "packages/prism-studio/src-tauri/target/release/bundle/msi/{}.msi",
-                profile.name
-            ),
-            description: "Windows installer".into(),
-            mime_type: Some("application/x-msi".into()),
-        },
-        ArtifactDescriptor {
-            kind: ArtifactKind::Installer,
-            path: format!(
-                "packages/prism-studio/src-tauri/target/release/bundle/appimage/{}.AppImage",
-                profile.name
-            ),
-            description: "Linux AppImage".into(),
-            mime_type: None,
-        },
-    ];
+    let artifacts = vec![ArtifactDescriptor {
+        kind: ArtifactKind::File,
+        path: format!("target/release/{}", profile.id),
+        description: format!("Desktop binary for {}", profile.name),
+        mime_type: None,
+    }];
     (steps, artifacts)
 }
 
@@ -189,16 +182,16 @@ fn relay_node_target(profile: &AppProfile) -> (Vec<BuildStep>, Vec<ArtifactDescr
             description: "Emit relay.config.json from composed modules".into(),
         },
         run_command(
-            "pnpm",
-            &["--filter", "@prism/relay", "build"],
-            "Node/TypeScript build for Relay",
+            "cargo",
+            &["build", "--release", "-p", "prism-relay"],
+            "Cargo release build for Relay",
         ),
     ];
     let artifacts = vec![
         ArtifactDescriptor {
-            kind: ArtifactKind::Directory,
-            path: "packages/prism-relay/dist".into(),
-            description: "Compiled Relay Node bundle".into(),
+            kind: ArtifactKind::File,
+            path: "target/release/prism-relayd".into(),
+            description: "Compiled Relay binary".into(),
             mime_type: None,
         },
         ArtifactDescriptor {
@@ -247,7 +240,7 @@ pub fn create_build_plan(options: CreateBuildPlanOptions<'_>) -> BuildPlan {
 
     let (steps, artifacts) = match target {
         BuildTarget::Web => web_target(profile),
-        BuildTarget::Tauri => tauri_target(profile),
+        BuildTarget::Desktop => desktop_target(profile),
         BuildTarget::CapacitorIos => capacitor_target(profile, "ios"),
         BuildTarget::CapacitorAndroid => capacitor_target(profile, "android"),
         BuildTarget::RelayNode => relay_node_target(profile),

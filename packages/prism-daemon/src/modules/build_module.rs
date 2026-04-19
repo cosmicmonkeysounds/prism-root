@@ -91,7 +91,7 @@ struct RunStepArgs {
     env: Option<HashMap<String, String>>,
 }
 
-/// Execute a single [`BuildStep`]. Kept as a free function so the Tauri
+/// Execute a single [`BuildStep`]. Kept as a free function so the Studio
 /// shell can call it directly without re-serializing through JSON.
 pub fn run_build_step(
     step: &BuildStep,

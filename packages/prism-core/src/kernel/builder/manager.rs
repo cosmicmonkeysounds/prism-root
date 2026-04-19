@@ -5,8 +5,8 @@
 //! current pinned profile, plans and runs builds via an injected
 //! [`BuildExecutor`], and fans per-run state changes to subscribers.
 //!
-//! Architectural deviation: the TS manager is async because it's
-//! meant to dispatch through Tauri IPC. In the all-Rust stack the
+//! Architectural deviation: the TS manager is async because it was
+//! meant to dispatch through IPC. In the all-Rust stack the
 //! daemon interface is an in-process trait, so `run_plan` is
 //! synchronous. Async hosts wrap a `TokioBuildExecutor` around their
 //! daemon handle and block in the executor itself.

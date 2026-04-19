@@ -1,6 +1,5 @@
 //! Design tokens — the canonical color / spacing / typography palette
-//! the Slint UI tree reads from. Replaces what used to be Tailwind
-//! classes + CSS variables in the React Studio.
+//! the Slint UI tree reads from.
 
 use serde::{Deserialize, Serialize};
 
