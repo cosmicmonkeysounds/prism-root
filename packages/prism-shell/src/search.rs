@@ -178,6 +178,7 @@ mod tests {
                         component: "heading".into(),
                         props: json!({ "text": "Welcome to Prism", "level": 1 }),
                         children: vec![],
+                        ..Default::default()
                     },
                     Node {
                         id: "intro".into(),
@@ -186,10 +187,12 @@ mod tests {
                             "body": "The distributed visual operating system for creative work."
                         }),
                         children: vec![],
+                        ..Default::default()
                     },
                 ],
+                ..Default::default()
             }),
-            zones: Default::default(),
+            ..Default::default()
         }
     }
 

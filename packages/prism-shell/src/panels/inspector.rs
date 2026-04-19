@@ -98,16 +98,19 @@ mod tests {
                         component: "heading".into(),
                         props: json!({}),
                         children: vec![],
+                        ..Default::default()
                     },
                     Node {
                         id: "b".into(),
                         component: "text".into(),
                         props: json!({}),
                         children: vec![],
+                        ..Default::default()
                     },
                 ],
+                ..Default::default()
             }),
-            zones: Default::default(),
+            ..Default::default()
         };
         let tree = InspectorPanel::tree(&doc);
         assert!(tree.contains("root · container"));

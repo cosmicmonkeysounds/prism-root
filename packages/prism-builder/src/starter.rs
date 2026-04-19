@@ -934,7 +934,7 @@ mod tests {
     fn doc(node: Node) -> BuilderDocument {
         BuilderDocument {
             root: Some(node),
-            zones: Default::default(),
+            ..Default::default()
         }
     }
 
@@ -1000,6 +1000,7 @@ mod tests {
             component: "card".into(),
             props: json!({ "title": "My Card", "body": "details" }),
             children: vec![],
+            ..Default::default()
         });
         let source = render_document_slint_source(&d, &reg, &tokens).unwrap();
         assert!(source.contains(r#"text: "My Card";"#));
@@ -1014,6 +1015,7 @@ mod tests {
             component: "code".into(),
             props: json!({ "code": "fn main() {}" }),
             children: vec![],
+            ..Default::default()
         });
         let source = render_document_slint_source(&d, &reg, &tokens).unwrap();
         assert!(source.contains(r#"text: "fn main() {}";"#));
@@ -1028,6 +1030,7 @@ mod tests {
             component: "divider".into(),
             props: json!({}),
             children: vec![],
+            ..Default::default()
         });
         let source = render_document_slint_source(&d, &reg, &tokens).unwrap();
         assert!(source.contains("height: 1px;"));
@@ -1041,6 +1044,7 @@ mod tests {
             component: "spacer".into(),
             props: json!({ "height": 48 }),
             children: vec![],
+            ..Default::default()
         });
         let source = render_document_slint_source(&d, &reg, &tokens).unwrap();
         assert!(source.contains("height: 48px;"));
@@ -1058,7 +1062,9 @@ mod tests {
                 component: "text".into(),
                 props: json!({ "body": "left" }),
                 children: vec![],
+                ..Default::default()
             }],
+            ..Default::default()
         });
         let source = render_document_slint_source(&d, &reg, &tokens).unwrap();
         assert!(source.contains("HorizontalLayout {"));
@@ -1073,6 +1079,7 @@ mod tests {
             component: "table".into(),
             props: json!({ "headers": "Name, Age", "caption": "Users" }),
             children: vec![],
+            ..Default::default()
         });
         let source = render_document_slint_source(&d, &reg, &tokens).unwrap();
         assert!(source.contains(r#"text: "Name";"#));
@@ -1088,6 +1095,7 @@ mod tests {
             component: "tabs".into(),
             props: json!({ "labels": "Tab 1, Tab 2" }),
             children: vec![],
+            ..Default::default()
         });
         let source = render_document_slint_source(&d, &reg, &tokens).unwrap();
         assert!(source.contains(r#"text: "Tab 1";"#));
@@ -1106,7 +1114,9 @@ mod tests {
                 component: "text".into(),
                 props: json!({ "body": "answer" }),
                 children: vec![],
+                ..Default::default()
             }],
+            ..Default::default()
         });
         let source = render_document_slint_source(&d, &reg, &tokens).unwrap();
         assert!(source.contains("FAQ"));
@@ -1126,26 +1136,31 @@ mod tests {
                     component: "heading".into(),
                     props: json!({ "text": "Welcome", "level": 2 }),
                     children: vec![],
+                    ..Default::default()
                 },
                 Node {
                     id: "p".into(),
                     component: "text".into(),
                     props: json!({ "body": "intro body" }),
                     children: vec![],
+                    ..Default::default()
                 },
                 Node {
                     id: "l".into(),
                     component: "link".into(),
                     props: json!({ "href": "/x", "text": "Read" }),
                     children: vec![],
+                    ..Default::default()
                 },
                 Node {
                     id: "i".into(),
                     component: "image".into(),
                     props: json!({ "src": "/a.png", "alt": "hero" }),
                     children: vec![],
+                    ..Default::default()
                 },
             ],
+            ..Default::default()
         });
         let source = render_document_slint_source(&d, &reg, &tokens).unwrap();
         assert!(source.contains("VerticalLayout {"));

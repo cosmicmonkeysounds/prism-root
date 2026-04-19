@@ -15,6 +15,7 @@ use prism_builder::{
     starter::register_builtins, BuilderDocument, ComponentRegistry, FieldKind, Node, NodeId,
 };
 use prism_core::design_tokens::{DesignTokens, DEFAULT_TOKENS};
+use prism_core::editor::EditorState;
 use prism_core::help::HelpRegistry;
 use prism_core::shell_mode::{Permission, ShellMode, ShellModeContext};
 use prism_core::{Action, Store, Subscription};
@@ -26,7 +27,9 @@ use crate::command::CommandRegistry;
 use crate::help::register_help_entries;
 use crate::input::{self, InputEvent};
 use crate::keyboard::KeyboardModel;
-use crate::panels::{identity::IdentityPanel, properties::PropertiesPanel, Panel};
+use crate::panels::{
+    editor::CodeEditorPanel, identity::IdentityPanel, properties::PropertiesPanel, Panel,
+};
 use crate::search::SearchIndex;
 use crate::selection::SelectionModel;
 use crate::telemetry::FirstPaint;
@@ -49,6 +52,7 @@ pub struct AppState {
     pub command_palette_open: bool,
     pub command_palette_query: String,
     pub search_query: String,
+    pub editor_state: EditorState,
     pub toasts: Vec<ToastData>,
     next_toast_id: u64,
     next_node_id: u64,
@@ -72,6 +76,7 @@ pub struct ToastData {
 pub enum ActivePanel {
     Identity,
     Edit,
+    CodeEditor,
 }
 
 impl ActivePanel {
@@ -79,12 +84,14 @@ impl ActivePanel {
         match self {
             ActivePanel::Identity => 0,
             ActivePanel::Edit => 1,
+            ActivePanel::CodeEditor => 2,
         }
     }
 
     pub fn from_id(id: i32) -> Self {
         match id {
             0 => ActivePanel::Identity,
+            2 => ActivePanel::CodeEditor,
             _ => ActivePanel::Edit,
         }
     }
@@ -109,6 +116,7 @@ impl Default for AppState {
             command_palette_open: false,
             command_palette_query: String::new(),
             search_query: String::new(),
+            editor_state: EditorState::with_text("// Welcome to Prism Code Editor\n// Start typing to edit\n\nfn main() {\n    println!(\"Hello, Prism!\");\n}\n"),
             toasts: Vec::new(),
             next_toast_id: 0,
             next_node_id: 100,
@@ -128,6 +136,7 @@ fn sample_document() -> BuilderDocument {
                     component: "heading".into(),
                     props: json!({ "text": "Welcome to Prism", "level": 1 }),
                     children: vec![],
+                    ..Default::default()
                 },
                 Node {
                     id: "intro".into(),
@@ -136,10 +145,12 @@ fn sample_document() -> BuilderDocument {
                         "body": "The distributed visual operating system. Pick a panel to start editing."
                     }),
                     children: vec![],
+                    ..Default::default()
                 },
             ],
+            ..Default::default()
         }),
-        zones: Default::default(),
+        ..Default::default()
     }
 }
 
@@ -492,6 +503,7 @@ impl Shell {
                         component: ct,
                         props,
                         children: vec![],
+                        ..Default::default()
                     };
                     let parent_id = s.store.state().selection.primary().cloned();
                     s.store.mutate(|state| {
@@ -1032,6 +1044,16 @@ impl Shell {
                 execute_command(&inner, &weak, "edit.duplicate");
             }
         });
+
+        // Code editor text changed
+        self.window.on_editor_text_changed({
+            let inner = Rc::clone(&inner);
+            move |text| {
+                inner.borrow_mut().store.mutate(|state| {
+                    state.editor_state.set_text(&text);
+                });
+            }
+        });
     }
 }
 
@@ -1073,6 +1095,9 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
                 &state.selection,
             );
             push_breadcrumbs(window, &state.builder_document, &state.selection);
+        }
+        ActivePanel::CodeEditor => {
+            window.set_editor_text(SharedString::from(state.editor_state.text()));
         }
     }
 
@@ -1437,6 +1462,10 @@ fn panel_metadata(panel: ActivePanel) -> (&'static str, &'static str) {
     match panel {
         ActivePanel::Identity => (IdentityPanel::new().title(), IdentityPanel::new().hint()),
         ActivePanel::Edit => ("Editor", "Build your page visually."),
+        ActivePanel::CodeEditor => {
+            let p = CodeEditorPanel::new();
+            (p.title(), p.hint())
+        }
     }
 }
 
@@ -1734,6 +1763,8 @@ fn clone_node_with_new_ids(node: &Node, counter: &mut u64) -> Node {
             .iter()
             .map(|c| clone_node_with_new_ids(c, counter))
             .collect(),
+        layout_mode: node.layout_mode.clone(),
+        transform: node.transform.clone(),
     }
 }
 
@@ -1972,6 +2003,7 @@ mod tests {
             component: "heading".into(),
             props: json!({ "text": "Added", "level": 2 }),
             children: vec![],
+            ..Default::default()
         };
         add_node_to_document(&mut doc, Some("root"), new_node);
         assert_eq!(doc.root.as_ref().unwrap().children.len(), 3);
@@ -1986,6 +2018,7 @@ mod tests {
             component: "heading".into(),
             props: json!({ "text": "First" }),
             children: vec![],
+            ..Default::default()
         };
         add_node_to_document(&mut doc, None, new_node);
         assert_eq!(doc.root.as_ref().unwrap().id, "first");
@@ -2048,7 +2081,9 @@ mod tests {
                 component: "text".into(),
                 props: json!({ "body": "World" }),
                 children: vec![],
+                ..Default::default()
             }],
+            ..Default::default()
         };
         let mut counter = 50u64;
         let cloned = clone_node_with_new_ids(&node, &mut counter);
@@ -2087,6 +2122,7 @@ mod tests {
             component: "divider".into(),
             props: json!({}),
             children: vec![],
+            ..Default::default()
         };
         insert_after_sibling(&mut doc, "hero", new_node);
         let children = &doc.root.as_ref().unwrap().children;

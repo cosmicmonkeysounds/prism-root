@@ -67,6 +67,8 @@ Tracked in the per-module `//!` docstrings; canonical list:
 | `foundation::batch` | ✅ ported | |
 | `foundation::date` | ✅ ported | |
 | `foundation::object_model` | ✅ ported | `case_str`, `context_engine`, `edge_model`, `nsid`, `query`, `registry`, `tree_model`, `types`, `weak_ref`. |
+| `foundation::geometry` | ✅ new | `Point2`, `Size2`, `Rect`, `Edges<T>` — pure 2D geometry primitives built on `glam`. ADR-003. 13 unit tests. |
+| `foundation::spatial` | ✅ new | `Transform2D`, `ComputedTransform`, `Anchor`, `ZIndex`, `TransformModifier`, `snap_to_grid` — the builder's transform system (ADR-003). Uses `glam::Affine2` for local/global coordinate space composition. 12 unit tests. |
 | `foundation::undo` | ✅ ported | Borrows manager via `SharedUndoManager` in bridge. |
 | `foundation::vfs` | ✅ ported | |
 | `foundation::clipboard` | ✅ ported | `TreeClipboard` borrows tree/edges/undo per-call. |

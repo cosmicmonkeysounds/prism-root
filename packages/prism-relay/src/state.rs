@@ -67,6 +67,7 @@ impl AppState {
                             component: "heading".into(),
                             props: json!({ "text": "Welcome to Prism", "level": 1 }),
                             children: vec![],
+                            ..Default::default()
                         },
                         Node {
                             id: "t".into(),
@@ -75,16 +76,19 @@ impl AppState {
                                 "body": "You're viewing a Sovereign Portal — a server-rendered snapshot of a Prism document."
                             }),
                             children: vec![],
+                            ..Default::default()
                         },
                         Node {
                             id: "l".into(),
                             component: "link".into(),
                             props: json!({ "href": "/portals", "text": "See all portals" }),
                             children: vec![],
+                            ..Default::default()
                         },
                     ],
+                    ..Default::default()
                 }),
-                zones: Default::default(),
+                ..Default::default()
             },
         };
 
@@ -102,8 +106,9 @@ impl AppState {
                     component: "heading".into(),
                     props: json!({ "text": "This portal is private", "level": 2 }),
                     children: vec![],
+                    ..Default::default()
                 }),
-                zones: Default::default(),
+                ..Default::default()
             },
         };
 

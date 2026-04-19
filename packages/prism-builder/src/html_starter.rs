@@ -731,8 +731,9 @@ mod tests {
                 component: "heading".into(),
                 props: json!({ "text": "Prism", "level": 3 }),
                 children: vec![],
+                ..Default::default()
             }),
-            zones: Default::default(),
+            ..Default::default()
         };
         assert_eq!(
             render_document_html(&doc, &reg, &tokens).unwrap(),
@@ -754,16 +755,19 @@ mod tests {
                         component: "heading".into(),
                         props: json!({ "text": "A", "level": 2 }),
                         children: vec![],
+                        ..Default::default()
                     },
                     Node {
                         id: "n2".into(),
                         component: "text".into(),
                         props: json!({ "body": "B" }),
                         children: vec![],
+                        ..Default::default()
                     },
                 ],
+                ..Default::default()
             }),
-            zones: Default::default(),
+            ..Default::default()
         };
         assert_eq!(
             render_document_html(&doc, &reg, &tokens).unwrap(),
@@ -780,8 +784,9 @@ mod tests {
                 component: "heading".into(),
                 props: json!({ "text": "<script>alert(1)</script>" }),
                 children: vec![],
+                ..Default::default()
             }),
-            zones: Default::default(),
+            ..Default::default()
         };
         assert_eq!(
             render_document_html(&doc, &reg, &tokens).unwrap(),
@@ -824,8 +829,9 @@ mod tests {
                 component: "card".into(),
                 props: json!({ "title": "Title", "body": "Body" }),
                 children: vec![],
+                ..Default::default()
             }),
-            zones: Default::default(),
+            ..Default::default()
         };
         let html = render_document_html(&doc, &reg, &tokens).unwrap();
         assert!(html.starts_with("<article>"));
@@ -842,8 +848,9 @@ mod tests {
                 component: "code".into(),
                 props: json!({ "code": "let x = 1;", "language": "rust" }),
                 children: vec![],
+                ..Default::default()
             }),
-            zones: Default::default(),
+            ..Default::default()
         };
         let html = render_document_html(&doc, &reg, &tokens).unwrap();
         assert!(html.contains(r#"<code class="language-rust">"#));
@@ -859,8 +866,9 @@ mod tests {
                 component: "divider".into(),
                 props: json!({}),
                 children: vec![],
+                ..Default::default()
             }),
-            zones: Default::default(),
+            ..Default::default()
         };
         assert_eq!(render_document_html(&doc, &reg, &tokens).unwrap(), "<hr>");
     }
@@ -874,8 +882,9 @@ mod tests {
                 component: "spacer".into(),
                 props: json!({ "height": 48 }),
                 children: vec![],
+                ..Default::default()
             }),
-            zones: Default::default(),
+            ..Default::default()
         };
         let html = render_document_html(&doc, &reg, &tokens).unwrap();
         assert!(html.contains("height:48px"));
@@ -896,16 +905,19 @@ mod tests {
                         component: "text".into(),
                         props: json!({ "body": "left" }),
                         children: vec![],
+                        ..Default::default()
                     },
                     Node {
                         id: "c2".into(),
                         component: "text".into(),
                         props: json!({ "body": "right" }),
                         children: vec![],
+                        ..Default::default()
                     },
                 ],
+                ..Default::default()
             }),
-            zones: Default::default(),
+            ..Default::default()
         };
         let html = render_document_html(&doc, &reg, &tokens).unwrap();
         assert!(html.contains("display:flex;gap:24px"));
@@ -927,16 +939,19 @@ mod tests {
                         component: "text".into(),
                         props: json!({ "body": "item 1" }),
                         children: vec![],
+                        ..Default::default()
                     },
                     Node {
                         id: "i2".into(),
                         component: "text".into(),
                         props: json!({ "body": "item 2" }),
                         children: vec![],
+                        ..Default::default()
                     },
                 ],
+                ..Default::default()
             }),
-            zones: Default::default(),
+            ..Default::default()
         };
         let html = render_document_html(&doc, &reg, &tokens).unwrap();
         assert!(html.starts_with("<ul>"));
@@ -956,9 +971,11 @@ mod tests {
                     component: "text".into(),
                     props: json!({ "body": "first" }),
                     children: vec![],
+                    ..Default::default()
                 }],
+                ..Default::default()
             }),
-            zones: Default::default(),
+            ..Default::default()
         };
         let html = render_document_html(&doc, &reg, &tokens).unwrap();
         assert!(html.starts_with("<ol>"));
@@ -973,8 +990,9 @@ mod tests {
                 component: "table".into(),
                 props: json!({ "headers": "Name, Age", "caption": "Users" }),
                 children: vec![],
+                ..Default::default()
             }),
-            zones: Default::default(),
+            ..Default::default()
         };
         let html = render_document_html(&doc, &reg, &tokens).unwrap();
         assert!(html.contains("<caption>Users</caption>"));
@@ -995,9 +1013,11 @@ mod tests {
                     component: "text".into(),
                     props: json!({ "body": "panel" }),
                     children: vec![],
+                    ..Default::default()
                 }],
+                ..Default::default()
             }),
-            zones: Default::default(),
+            ..Default::default()
         };
         let html = render_document_html(&doc, &reg, &tokens).unwrap();
         assert!(html.contains(r#"role="tablist"#));
@@ -1018,9 +1038,11 @@ mod tests {
                     component: "text".into(),
                     props: json!({ "body": "answer" }),
                     children: vec![],
+                    ..Default::default()
                 }],
+                ..Default::default()
             }),
-            zones: Default::default(),
+            ..Default::default()
         };
         let html = render_document_html(&doc, &reg, &tokens).unwrap();
         assert!(html.contains(r#"<details open="open">"#));
@@ -1037,8 +1059,9 @@ mod tests {
                 component: "accordion".into(),
                 props: json!({ "title": "Closed" }),
                 children: vec![],
+                ..Default::default()
             }),
-            zones: Default::default(),
+            ..Default::default()
         };
         let html = render_document_html(&doc, &reg, &tokens).unwrap();
         assert!(html.starts_with("<details>"));
@@ -1059,16 +1082,19 @@ mod tests {
                         component: "input".into(),
                         props: json!({ "name": "email", "type": "email" }),
                         children: vec![],
+                        ..Default::default()
                     },
                     Node {
                         id: "b".into(),
                         component: "button".into(),
                         props: json!({ "text": "Send" }),
                         children: vec![],
+                        ..Default::default()
                     },
                 ],
+                ..Default::default()
             }),
-            zones: Default::default(),
+            ..Default::default()
         };
         let html = render_document_html(&doc, &reg, &tokens).unwrap();
         assert!(html.starts_with(r#"<form method="post">"#));

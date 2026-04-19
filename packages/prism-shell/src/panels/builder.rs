@@ -92,9 +92,11 @@ mod tests {
                     component: "heading".into(),
                     props: json!({ "text": "Hello", "level": 1 }),
                     children: vec![],
+                    ..Default::default()
                 }],
+                ..Default::default()
             }),
-            zones: Default::default(),
+            ..Default::default()
         }
     }
 

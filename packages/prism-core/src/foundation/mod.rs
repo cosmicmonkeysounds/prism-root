@@ -7,9 +7,11 @@
 pub mod batch;
 pub mod clipboard;
 pub mod date;
+pub mod geometry;
 pub mod object_model;
 #[cfg(feature = "crdt")]
 pub mod persistence;
+pub mod spatial;
 pub mod template;
 pub mod undo;
 pub mod vfs;

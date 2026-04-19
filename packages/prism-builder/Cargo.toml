@@ -26,6 +26,8 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 indexmap = { workspace = true }
 slotmap = { workspace = true }
+glam = { workspace = true }
+taffy = { workspace = true }
 prism-core = { path = "../prism-core" }
 
 # Optional — gated behind the `interpreter` feature so downstream crates

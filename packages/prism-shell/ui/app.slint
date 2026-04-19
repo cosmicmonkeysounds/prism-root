@@ -1,4 +1,4 @@
-import { Button, LineEdit, Switch, ComboBox, ListView, ScrollView,
+import { Button, LineEdit, TextEdit, Switch, ComboBox, ListView, ScrollView,
          VerticalBox, HorizontalBox, GroupBox, Palette, TabWidget } from "std-widgets.slint";
 
 // ── Data structs ───────────────────────────────────────────────────
@@ -121,14 +121,12 @@ component IconButton inherits Rectangle {
         clicked => {
             if root.enabled { root.clicked(); }
         }
-        moved => {
-            if (root.help-id != "") {
+        changed has-hover => {
+            if (self.has-hover && root.help-id != "") {
                 root.hover-start(root.help-id,
                     root.absolute-position.x + root.width + 8px,
                     root.absolute-position.y);
             }
-        }
-        changed has-hover => {
             if (!self.has-hover && root.help-id != "") {
                 root.hover-end();
             }
@@ -389,14 +387,12 @@ component NavButton inherits Rectangle {
     nav-touch := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
-        moved => {
-            if (root.help-id != "") {
+        changed has-hover => {
+            if (self.has-hover && root.help-id != "") {
                 root.hover-start(root.help-id,
                     root.absolute-position.x + root.width + 8px,
                     root.absolute-position.y);
             }
-        }
-        changed has-hover => {
             if (!self.has-hover && root.help-id != "") {
                 root.hover-end();
             }
@@ -569,7 +565,7 @@ export component AppWindow inherits Window {
     preferred-width: 1280px;
     preferred-height: 800px;
 
-    // Panel navigation (0 = Identity, 1 = Edit)
+    // Panel navigation (0 = Identity, 1 = Edit, 2 = Code Editor)
     in property <int> active-panel-id: 1;
     callback select-panel(int);
 
@@ -659,6 +655,10 @@ export component AppWindow inherits Window {
     callback help-docs-clicked;
     callback help-entry-clicked;
 
+    // Code editor
+    in property <string> editor-text: "";
+    callback editor-text-changed(string);
+
     // Docs panel (sidebar) and docs view (full)
     in property <DocsPanelData> docs-panel: {
         visible: false, help-id: "", title: "", summary: "", body: ""
@@ -716,6 +716,14 @@ export component AppWindow inherits Window {
                             selected: root.active-panel-id == 1;
                             help-id: "shell.panels.editor";
                             clicked => { root.select-panel(1); }
+                            hover-start(id, x, y) => { root.help-hover(id, x, y); }
+                            hover-end => { root.help-leave(); }
+                        }
+                        NavButton {
+                            icon: @image-url("icons/code.svg");
+                            selected: root.active-panel-id == 2;
+                            help-id: "shell.panels.code-editor";
+                            clicked => { root.select-panel(2); }
                             hover-start(id, x, y) => { root.help-hover(id, x, y); }
                             hover-end => { root.help-leave(); }
                         }
@@ -790,8 +798,12 @@ export component AppWindow inherits Window {
                                     palette-touch := TouchArea {
                                         mouse-cursor: pointer;
                                         clicked => { root.add-component(comp.component-type); }
-                                        moved => { root.help-hover("builder.components." + comp.component-type, parent.absolute-position.x + parent.width + 8px, parent.absolute-position.y); }
-                                        changed has-hover => { if (!self.has-hover) { root.help-leave(); } }
+                                        changed has-hover => {
+                                            if (self.has-hover) {
+                                                root.help-hover("builder.components." + comp.component-type, parent.absolute-position.x + parent.width + 8px, parent.absolute-position.y);
+                                            }
+                                            if (!self.has-hover) { root.help-leave(); }
+                                        }
                                     }
                                 }
                             }
@@ -967,8 +979,12 @@ export component AppWindow inherits Window {
                                 }
                                 tab-touch := TouchArea {
                                     clicked => { root.tab-activated(tab.id); }
-                                    moved => { root.help-hover("shell.tabs", parent.absolute-position.x + parent.width / 2, parent.absolute-position.y + parent.height + 4px); }
-                                    changed has-hover => { if (!self.has-hover) { root.help-leave(); } }
+                                    changed has-hover => {
+                                        if (self.has-hover) {
+                                            root.help-hover("shell.tabs", parent.absolute-position.x + parent.width / 2, parent.absolute-position.y + parent.height + 4px);
+                                        }
+                                        if (!self.has-hover) { root.help-leave(); }
+                                    }
                                 }
                             }
                         }
@@ -1104,6 +1120,49 @@ export component AppWindow inherits Window {
                                 }
                             }
                         }
+
+                        // ── Code editor ─────────────────────────────
+                        if root.active-panel-id == 2 && !root.docs-view.visible : Rectangle {
+                            horizontal-stretch: 1;
+                            vertical-stretch: 1;
+                            background: #1a1e28;
+
+                            HorizontalLayout {
+                                spacing: 0px;
+
+                                // Gutter (line numbers)
+                                Rectangle {
+                                    width: 52px;
+                                    background: #151821;
+                                    Rectangle { x: parent.width - 1px; y: 0px; width: 1px; height: parent.height; background: #ffffff10; }
+                                    VerticalLayout {
+                                        padding-top: 10px;
+                                        padding-right: 12px;
+                                        alignment: start;
+                                        Text {
+                                            text: {
+                                                // Generate line numbers from the editor text
+                                                @tr("1")
+                                            }
+                                            color: #ffffff30;
+                                            font-size: 13px;
+                                            font-family: "monospace";
+                                            horizontal-alignment: right;
+                                        }
+                                    }
+                                }
+
+                                // Editor area
+                                editor-input := TextEdit {
+                                    horizontal-stretch: 1;
+                                    vertical-stretch: 1;
+                                    text: root.editor-text;
+                                    font-size: 13px;
+                                    font-family: "monospace";
+                                    edited(text) => { root.editor-text-changed(text); }
+                                }
+                            }
+                        }
                     }
 
                     // Status bar
@@ -1216,6 +1275,14 @@ export component AppWindow inherits Window {
         border-color: Palette.foreground.transparentize(85%);
         background: Palette.alternate-background; clip: true;
 
+        // Behind everything: keeps tooltip alive on hover
+        help-tip-touch := TouchArea {
+            changed has-hover => {
+                if (self.has-hover) { root.help-hover("__tooltip__", 0px, 0px); }
+                if (!self.has-hover) { root.help-leave(); }
+            }
+        }
+
         tooltip-layout := VerticalLayout {
             Rectangle {
                 height: 32px;
@@ -1227,6 +1294,10 @@ export component AppWindow inherits Window {
                 tooltip-header-touch := TouchArea {
                     mouse-cursor: pointer;
                     clicked => { root.help-entry-clicked(); }
+                    changed has-hover => {
+                        if (self.has-hover) { root.help-hover("__tooltip__", 0px, 0px); }
+                        if (!self.has-hover) { root.help-leave(); }
+                    }
                 }
             }
             Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
@@ -1236,22 +1307,22 @@ export component AppWindow inherits Window {
                     Text { text: root.help-tooltip.summary; color: Palette.foreground.transparentize(30%); font-size: 12px; wrap: word-wrap; }
                 }
             }
-            if root.help-tooltip.has-docs : Rectangle {
+            if root.help-tooltip.has-docs && !root.docs-panel.visible && !root.docs-view.visible : Rectangle {
                 height: 32px;
                 Rectangle { y: 0px; height: 1px; width: parent.width; background: Palette.foreground.transparentize(85%); }
                 HorizontalLayout {
                     padding: 8px; padding-left: 12px; spacing: 6px; alignment: start;
                     Image { source: @image-url("icons/book.svg"); width: 11px; height: 11px; colorize: Palette.accent-background; }
-                    Text { text: "View full docs"; color: Palette.accent-background; font-size: 12px; }
+                    Text { text: "Open in Docs"; color: Palette.accent-background; font-size: 12px; }
                 }
-                TouchArea { mouse-cursor: pointer; clicked => { root.help-docs-clicked(); } }
-            }
-        }
-
-        help-tip-touch := TouchArea {
-            changed has-hover => {
-                if (self.has-hover) { root.help-hover("__tooltip__", 0px, 0px); }
-                if (!self.has-hover) { root.help-leave(); }
+                TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.help-docs-clicked(); }
+                    changed has-hover => {
+                        if (self.has-hover) { root.help-hover("__tooltip__", 0px, 0px); }
+                        if (!self.has-hover) { root.help-leave(); }
+                    }
+                }
             }
         }
     }

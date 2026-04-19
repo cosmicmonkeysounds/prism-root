@@ -352,8 +352,9 @@ mod tests {
                     component: "heading".into(),
                     props: json!({ "text": title }),
                     children: vec![],
+                    ..Default::default()
                 }),
-                zones: Default::default(),
+                ..Default::default()
             },
         }
     }

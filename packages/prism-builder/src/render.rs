@@ -305,8 +305,9 @@ mod tests {
                 component: "heading".into(),
                 props: json!({ "text": "Hello Prism" }),
                 children: vec![],
+                ..Default::default()
             }),
-            zones: Default::default(),
+            ..Default::default()
         };
         let registry = html_registry();
         let tokens = DesignTokens::default();
@@ -322,8 +323,9 @@ mod tests {
                 component: "heading".into(),
                 props: json!({ "text": "<script>alert('xss')</script>" }),
                 children: vec![],
+                ..Default::default()
             }),
-            zones: Default::default(),
+            ..Default::default()
         };
         let registry = html_registry();
         let tokens = DesignTokens::default();
@@ -347,16 +349,19 @@ mod tests {
                         component: "heading".into(),
                         props: json!({ "text": "A" }),
                         children: vec![],
+                        ..Default::default()
                     },
                     Node {
                         id: "n3".into(),
                         component: "heading".into(),
                         props: json!({ "text": "B" }),
                         children: vec![],
+                        ..Default::default()
                     },
                 ],
+                ..Default::default()
             }),
-            zones: Default::default(),
+            ..Default::default()
         };
         let registry = html_registry();
         let tokens = DesignTokens::default();
@@ -372,8 +377,9 @@ mod tests {
                 component: "not-registered".into(),
                 props: json!({}),
                 children: vec![],
+                ..Default::default()
             }),
-            zones: Default::default(),
+            ..Default::default()
         };
         let registry = html_registry();
         let tokens = DesignTokens::default();
@@ -413,9 +419,11 @@ mod tests {
                     component: "heading".into(),
                     props: json!({ "text": "Inside" }),
                     children: vec![],
+                    ..Default::default()
                 }],
+                ..Default::default()
             }),
-            zones: Default::default(),
+            ..Default::default()
         };
         let tokens = DesignTokens::default();
         let html = render_document_html(&doc, &reg, &tokens).unwrap();
@@ -432,8 +440,9 @@ mod tests {
                 component: "heading".into(),
                 props: json!({ "text": "Hi" }),
                 children: vec![],
+                ..Default::default()
             }),
-            zones: Default::default(),
+            ..Default::default()
         };
         let reg = slint_registry();
         let tokens = DesignTokens::default();
@@ -457,16 +466,19 @@ mod tests {
                         component: "heading".into(),
                         props: json!({ "text": "A" }),
                         children: vec![],
+                        ..Default::default()
                     },
                     Node {
                         id: "n3".into(),
                         component: "heading".into(),
                         props: json!({ "text": "B" }),
                         children: vec![],
+                        ..Default::default()
                     },
                 ],
+                ..Default::default()
             }),
-            zones: Default::default(),
+            ..Default::default()
         };
         let reg = slint_registry();
         let tokens = DesignTokens::default();
@@ -493,8 +505,9 @@ mod tests {
                 component: "heading".into(),
                 props: json!({ "text": "\"oops\"\nsecond" }),
                 children: vec![],
+                ..Default::default()
             }),
-            zones: Default::default(),
+            ..Default::default()
         };
         let reg = slint_registry();
         let tokens = DesignTokens::default();
@@ -510,8 +523,9 @@ mod tests {
                 component: "missing".into(),
                 props: json!({}),
                 children: vec![],
+                ..Default::default()
             }),
-            zones: Default::default(),
+            ..Default::default()
         };
         let reg = slint_registry();
         let tokens = DesignTokens::default();
@@ -528,8 +542,9 @@ mod tests {
                 component: "heading".into(),
                 props: json!({ "text": "Interpreter OK" }),
                 children: vec![],
+                ..Default::default()
             }),
-            zones: Default::default(),
+            ..Default::default()
         };
         let reg = slint_registry();
         let tokens = DesignTokens::default();

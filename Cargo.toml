@@ -73,6 +73,13 @@ slint-interpreter = { version = "1.8", default-features = false, features = ["st
 # feature and any future consumer track the same version.
 spin_on = "0.1"
 
+# 2D math — SIMD-accelerated Vec2/Affine2/Mat3 for the builder's
+# transform system (ADR-003). Works on native + WASM.
+glam = { version = "0.29", features = ["serde"] }
+# CSS Grid + Flexbox + Block layout engine (ADR-003). Trait-based —
+# composes with our own document tree. Used by Slint, Bevy, Dioxus.
+taffy = "0.7"
+
 # State + data structures.
 slotmap = "1"
 indexmap = { version = "2", features = ["serde"] }
@@ -80,6 +87,7 @@ imbl = "3"
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
 regex = "1"
+ropey = "1.6"
 full_moon = { version = "2", features = ["luau"] }
 sha2 = "0.10"
 hex = "0.4"

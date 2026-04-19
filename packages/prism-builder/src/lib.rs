@@ -11,17 +11,19 @@
 //!
 //! Supporting modules:
 //! * [`document`]     — the serializable document tree.
+//! * [`layout`]       — page grid, per-node layout mode, Taffy computation pass.
 //! * [`html`]         — allocation-light HTML builder for SSR.
 //! * [`slint_source`] — `.slint` DSL emitter.
 //! * [`render`]       — document-level walkers for both backends.
-//! * [`starter`]      — 8 built-in Slint components.
-//! * [`html_starter`] — 8 built-in HTML blocks (same component IDs).
+//! * [`starter`]      — 17 built-in Slint components.
+//! * [`html_starter`] — 17 built-in HTML blocks (same component IDs).
 
 pub mod component;
 pub mod document;
 pub mod html;
 pub mod html_block;
 pub mod html_starter;
+pub mod layout;
 pub mod registry;
 pub mod render;
 pub mod slint_source;
@@ -32,6 +34,9 @@ pub use document::{BuilderDocument, Node, NodeId};
 pub use html::{escape_attr, escape_text, Html};
 pub use html_block::{HtmlBlock, HtmlRegistry, HtmlRenderContext};
 pub use html_starter::register_html_builtins;
+pub use layout::{
+    compute_layout, ComputedLayout, FlowProps, LayoutMode, NodeLayout, PageLayout, PageSize,
+};
 pub use registry::{
     ComponentRegistry, FieldKind, FieldSpec, FieldValue, NumericBounds, RegistryError, SelectOption,
 };

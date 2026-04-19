@@ -157,9 +157,60 @@ React shipped 43 panels. Slint has 4.
 
 ---
 
-## Text & Code Editing
+## Text & Code Editor
 
-- [ ] Text editor — CodeMirror 6 equivalent in Slint (LoroText sync, language support, diagnostics, completions, hover)
+Decision: **custom editor core** built on Ropey (text buffer) + Syntect (syntax
+highlighting) + Loro (CRDT source of truth). No external editor fork — Helix/Xi/Zed
+are standalone apps, not embeddable; Rustpad uses OT not CRDTs.
+
+| Considered | License | Verdict |
+|---|---|---|
+| Helix | MPL-2.0 | `helix-core` partially extractable, but tree-sitter blocks WASM |
+| Xi | Apache-2.0 | Dead project, `xi-rope` superseded by ropey |
+| Zed | GPL-3.0 | License-compatible but completely non-extractable |
+| Lapce | Apache-2.0 | `floem-editor-core` viable but tied to xi-rope fork |
+| Rustpad | MIT | Uses OT not CRDTs — irrelevant since Prism uses Loro |
+
+### Phase 1 — Core editing primitives (`prism-core::editor`)
+- [x] `Buffer` — ropey-backed text buffer with line-aware ops
+- [x] `Position` / `Cursor` / `Selection` — cursor movement + text selection
+- [x] `EditorState` — buffer + cursor + selection + insert/delete/newline/backspace
+- [x] Unit tests
+- [x] `ropey` in workspace deps
+
+### Phase 2 — Shell integration
+- [x] `ActivePanel::CodeEditor` — new panel variant
+- [x] `CodeEditorPanel` data provider
+- [x] Activity bar NavButton with `code.svg` icon
+- [x] Slint `CodeEditorView` with `TextEdit` (monospace, dark)
+- [x] `editor-text` property + `editor-text-changed` callback wiring
+
+### Phase 3 — Line-based rendering
+- [ ] Replace `TextEdit` with `ListView`-based per-line rendering
+- [ ] Line number gutter
+- [ ] Visible cursor (blinking caret)
+- [ ] Text selection highlight rectangles
+- [ ] Viewport scroll synced to cursor
+- [ ] `FocusScope` keyboard capture
+
+### Phase 4 — Syntax highlighting (syntect)
+- [ ] `syntect` in workspace deps (`default-fancy` for WASM)
+- [ ] `Highlighter` struct + per-line token spans
+- [ ] Incremental re-highlight on edit
+- [ ] Language detection from extension
+- [ ] Nord / Prism dark theme
+
+### Phase 5 — Loro CRDT integration
+- [ ] `LoroText` as source of truth, ropey as local view
+- [ ] Edit flow: keyboard → EditorState → LoroText → sync rope
+- [ ] Undo/redo via Loro versioning
+- [ ] Remote cursor rendering
+
+### Phase 6 — Advanced
+- [ ] Find & replace, bracket matching, auto-indent, code folding
+- [ ] Multi-cursor, minimap
+- [ ] Tree-sitter (native-only feature flag)
+- [ ] LSP client for diagnostics/completions
 - [ ] Markdown live preview
 - [ ] Luau syntax highlighting
 - [ ] Spell-check integration

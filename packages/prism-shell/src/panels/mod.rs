@@ -13,6 +13,7 @@
 //! matching props into the Slint window.
 
 pub mod builder;
+pub mod editor;
 pub mod identity;
 pub mod inspector;
 pub mod properties;
