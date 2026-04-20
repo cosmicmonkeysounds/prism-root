@@ -24,5 +24,6 @@ pub mod forms;
 pub mod luau;
 pub mod markdown;
 pub mod registry;
+pub mod slint_lang;
 pub mod syntax;
 pub mod visual;

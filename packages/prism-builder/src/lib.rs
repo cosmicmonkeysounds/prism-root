@@ -33,6 +33,7 @@ pub mod resource;
 pub mod schemas;
 pub mod signal;
 pub mod slint_source;
+pub mod source_map;
 pub mod starter;
 pub mod style;
 pub mod variant;
@@ -52,13 +53,26 @@ pub use prefab::{ExposedSlot, PrefabComponent, PrefabDef};
 pub use registry::{
     ComponentRegistry, FieldKind, FieldSpec, FieldValue, NumericBounds, RegistryError, SelectOption,
 };
-pub use render::{render_document_html, render_document_slint_source};
+pub use render::{
+    build_source_map_from_markers, render_document_html, render_document_slint_source,
+    render_document_slint_source_mapped,
+};
 pub use resource::{ResourceDef, ResourceId, ResourceKind};
 pub use signal::{ActionKind, Connection, ConnectionId, SignalDef};
 pub use slint_source::{SlintEmitter, SlintIdent};
+pub use source_map::{MappedEmitter, PropSpan, SourceMap, SourceSpan};
 pub use starter::register_builtins;
 pub use style::{resolve_cascade, StyleProperties};
 pub use variant::{VariantAxis, VariantOption};
 
 #[cfg(feature = "interpreter")]
+pub mod live;
+#[cfg(feature = "interpreter")]
+pub mod syntax_provider;
+
+#[cfg(feature = "interpreter")]
+pub use live::{LiveDiagnostic, LiveDocument, SourceSelection};
+#[cfg(feature = "interpreter")]
 pub use render::{compile_slint_source, instantiate_document, InstantiateError};
+#[cfg(feature = "interpreter")]
+pub use syntax_provider::BuilderSyntaxProvider;

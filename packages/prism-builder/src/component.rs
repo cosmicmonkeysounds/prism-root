@@ -70,10 +70,17 @@ pub struct RenderSlintContext<'a> {
     pub registry: &'a ComponentRegistry,
     pub resources:
         &'a indexmap::IndexMap<crate::resource::ResourceId, crate::resource::ResourceDef>,
+    /// When true, emit `// @node-start` / `// @node-end` marker
+    /// comments around each node for source map construction (ADR-006).
+    pub emit_markers: bool,
 }
 
 impl<'a> RenderSlintContext<'a> {
     pub fn render_child(&self, child: &Node, out: &mut SlintEmitter) -> Result<(), RenderError> {
+        if self.emit_markers {
+            out.line(format!("// @node-start:{}:{}", child.id, child.component));
+        }
+
         let component = self
             .registry
             .get(&child.component)
@@ -83,7 +90,7 @@ impl<'a> RenderSlintContext<'a> {
         let props = crate::variant::apply_variant_defaults(&props, &component.variants());
 
         if child.modifiers.is_empty() {
-            component.render_slint(self, &props, &child.children, out)
+            component.render_slint(self, &props, &child.children, out)?;
         } else {
             self.apply_slint_modifiers(
                 &child.modifiers,
@@ -92,8 +99,14 @@ impl<'a> RenderSlintContext<'a> {
                 &child.children,
                 &*component,
                 out,
-            )
+            )?;
         }
+
+        if self.emit_markers {
+            out.line(format!("// @node-end:{}", child.id));
+        }
+
+        Ok(())
     }
 
     pub fn render_children(

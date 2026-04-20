@@ -22,10 +22,7 @@ impl WorkflowPage {
             DockNode::hsplit(
                 0.72,
                 DockNode::tab(PanelKind::Builder.id()),
-                DockNode::tabs(vec![
-                    PanelKind::Inspector.id(),
-                    PanelKind::Properties.id(),
-                ]),
+                DockNode::tabs(vec![PanelKind::Inspector.id(), PanelKind::Properties.id()]),
             ),
         ));
         Self {

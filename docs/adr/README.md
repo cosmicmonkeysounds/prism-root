@@ -15,3 +15,4 @@ Each ADR follows: **Context → Decision → Rationale → Consequences**.
 | [003](003-unified-builder-layout-model.md) | Unified builder layout model | Accepted |
 | [004](004-composition-patterns.md) | Composition patterns | Accepted |
 | [005](005-dockable-panel-system.md) | Dockable panel system | Accepted |
+| [006](006-live-bidirectional-slint-builder.md) | Live bidirectional Slint builder | Accepted |

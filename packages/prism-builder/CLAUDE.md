@@ -13,9 +13,10 @@ property-panel field factories.
   path (`compile_slint_source` / `instantiate_document`) is
   available. `prism-shell` and `prism-studio` flip this on; the
   relay leaves it off so its dep graph stays Slint-free.
-- `cargo test -p prism-builder` — 129 unit tests (baseline).
-- `cargo test -p prism-builder --features interpreter` — adds one
-  interpreter round-trip (130 tests total).
+- `cargo test -p prism-builder` — 138 unit tests (baseline).
+- `cargo test -p prism-builder --features interpreter` — adds
+  live document, syntax provider, and compile round-trip tests
+  (162 tests total).
 
 ## Public surface
 From `src/lib.rs`:
@@ -34,8 +35,19 @@ From `src/lib.rs`:
   17-component Slint catalog.
 - `render_document_slint_source(doc, registry, tokens)` — walks a
   document and returns a self-contained `.slint` source string.
+- `render_document_slint_source_mapped(doc, registry, tokens)` —
+  same walk but injects marker comments and returns `(source, SourceMap)`.
+- `build_source_map_from_markers(source)` — parses `// @node-start`
+  / `// @node-end` marker comments to build a `SourceMap`.
+- `SourceMap`, `SourceSpan`, `PropSpan`, `MappedEmitter` — bidirectional
+  source mapping types (ADR-006).
 - `compile_slint_source` / `instantiate_document` — gated behind
   `interpreter` feature.
+- `LiveDocument`, `LiveDiagnostic`, `SourceSelection` — gated behind
+  `interpreter`. Bidirectional compile loop with `EditorState`,
+  `SourceMap`, and selection bridge.
+- `BuilderSyntaxProvider` — gated behind `interpreter`. Compiler-backed
+  `SyntaxProvider` with context-aware completions and hover.
 
 ### HTML SSR side
 - `HtmlBlock`, `HtmlRegistry`, `HtmlRenderContext` — separate trait
@@ -146,6 +158,24 @@ Fifteen modules in `src/`:
 - `signal.rs` — `SignalDef`, `Connection`, `ActionKind`. 5 unit tests.
 - `variant.rs` — `VariantAxis`, `VariantOption`, `apply_variant_overrides`,
   `apply_variant_defaults`. 6 unit tests.
+- `source_map.rs` — `SourceMap`, `SourceSpan`, `PropSpan`,
+  `MappedEmitter`. Bidirectional node↔source byte-range mapping
+  (ADR-006). Forward: `span_for_node(id)`, reverse:
+  `node_at_offset(byte)`. `MappedEmitter` is an alternative emitter
+  that tracks property-level spans. 6 unit tests.
+- `live.rs` (behind `interpreter`) — `LiveDocument`, `LiveDiagnostic`,
+  `SourceSelection`. Unifies `BuilderDocument` + generated `.slint`
+  source + `SourceMap` + `EditorState` (ropey-backed) + compiled
+  `ComponentDefinition` + diagnostics. GUI→Source via `rebuild()`,
+  Source→Preview via `apply_source_edit()`. Selection bridge:
+  `select_node(id)` → editor line/col range, `node_at_cursor()` →
+  node ID. 13 unit tests.
+- `syntax_provider.rs` (behind `interpreter`) —
+  `BuilderSyntaxProvider`. Compiler-backed `SyntaxProvider` impl that
+  extends the lightweight `SlintSyntaxProvider` (prism-core) with real
+  `slint-interpreter::Compiler` diagnostics, `SourceMap`-aware
+  `ComponentRegistry` schema completions, and component `help_entry()`
+  hover. 9 unit tests.
 - `starter.rs` — 17 built-in Slint components + `register_builtins`.
   Button, Form, Input, Link, Tabs, Accordion declare signals; Button
   declares a variant axis.

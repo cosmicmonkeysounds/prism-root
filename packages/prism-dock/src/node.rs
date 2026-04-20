@@ -295,11 +295,7 @@ impl DockNode {
     }
 
     /// Move a panel from its current location to a target tab group.
-    pub fn move_panel_to_tab_group(
-        &mut self,
-        panel_id: &str,
-        target_addr: &NodeAddress,
-    ) -> bool {
+    pub fn move_panel_to_tab_group(&mut self, panel_id: &str, target_addr: &NodeAddress) -> bool {
         if let Some(removed) = self.remove_panel(panel_id) {
             let target = self.find_panel(
                 self.node_at(target_addr)
@@ -453,7 +449,12 @@ mod tests {
     fn split_at() {
         let mut tree = sample_tree();
         let addr = NodeAddress(vec![false]); // explorer
-        assert!(tree.split_at(&addr, Axis::Vertical, "console".into(), SplitPosition::After));
+        assert!(tree.split_at(
+            &addr,
+            Axis::Vertical,
+            "console".into(),
+            SplitPosition::After
+        ));
         let node = tree.node_at(&addr).unwrap();
         assert!(node.is_split());
         if let DockNode::Split {
@@ -471,11 +472,7 @@ mod tests {
 
     #[test]
     fn collapse_at() {
-        let mut tree = DockNode::hsplit(
-            0.5,
-            DockNode::tab("a".into()),
-            DockNode::tab("b".into()),
-        );
+        let mut tree = DockNode::hsplit(0.5, DockNode::tab("a".into()), DockNode::tab("b".into()));
         // Collapse the second child — "a" should become the root.
         assert!(tree.collapse_at(&NodeAddress(vec![true])));
         assert!(tree.is_tab_group());
@@ -494,11 +491,7 @@ mod tests {
 
     #[test]
     fn remove_panel_collapses_parent() {
-        let mut tree = DockNode::hsplit(
-            0.5,
-            DockNode::tab("a".into()),
-            DockNode::tab("b".into()),
-        );
+        let mut tree = DockNode::hsplit(0.5, DockNode::tab("a".into()), DockNode::tab("b".into()));
         let removed = tree.remove_panel("b");
         assert_eq!(removed.as_deref(), Some("b"));
         assert!(tree.is_tab_group());
