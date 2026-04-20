@@ -25,6 +25,14 @@ pub struct PrismApp {
 }
 
 impl PrismApp {
+    pub fn active_source(&self) -> Option<&str> {
+        self.pages.get(self.active_page).map(|p| p.source.as_str())
+    }
+
+    pub fn active_source_mut(&mut self) -> Option<&mut String> {
+        self.pages.get_mut(self.active_page).map(|p| &mut p.source)
+    }
+
     pub fn active_document(&self) -> Option<&BuilderDocument> {
         self.pages.get(self.active_page).map(|p| &p.document)
     }
@@ -45,9 +53,28 @@ pub struct Page {
     pub id: String,
     pub title: String,
     pub route: String,
+    #[serde(default)]
+    pub source: String,
+    #[serde(default, skip_serializing)]
     pub document: BuilderDocument,
     #[serde(default)]
     pub style: StyleProperties,
+}
+
+impl Page {
+    pub fn ensure_source(
+        &mut self,
+        registry: &crate::registry::ComponentRegistry,
+        tokens: &prism_core::design_tokens::DesignTokens,
+    ) {
+        if self.source.is_empty() && self.document.root.is_some() {
+            if let Ok((src, _)) =
+                crate::render::render_document_slint_source_mapped(&self.document, registry, tokens)
+            {
+                self.source = src;
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -128,6 +155,7 @@ mod tests {
                     id: "p1".into(),
                     title: "Home".into(),
                     route: "/".into(),
+                    source: "// page 1".into(),
                     document: BuilderDocument::default(),
                     style: StyleProperties::default(),
                 },
@@ -135,6 +163,7 @@ mod tests {
                     id: "p2".into(),
                     title: "About".into(),
                     route: "/about".into(),
+                    source: String::new(),
                     document: BuilderDocument::default(),
                     style: StyleProperties::default(),
                 },
@@ -144,6 +173,7 @@ mod tests {
             style: StyleProperties::default(),
         };
         assert!(app.active_document().is_some());
+        assert_eq!(app.active_source(), Some("// page 1"));
         assert_eq!(app.page_count(), 2);
     }
 

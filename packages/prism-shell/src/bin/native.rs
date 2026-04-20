@@ -82,16 +82,24 @@ fn main() -> Result<(), slint::PlatformError> {
             }
         }
         if let Some(panel_name) = &args.panel {
-            state.active_panel = match panel_name.as_str() {
-                "identity" => prism_shell::app::ActivePanel::Identity,
-                "builder" | "edit" => prism_shell::app::ActivePanel::Edit,
-                "code-editor" | "code" => prism_shell::app::ActivePanel::CodeEditor,
-                "explorer" => prism_shell::app::ActivePanel::Explorer,
-                _ => {
-                    eprintln!("Unknown panel: {panel_name}. Options: identity, builder, code-editor, explorer");
-                    std::process::exit(1);
-                }
-            };
+            let page_id = prism_shell::app::page_id_for_panel(panel_name);
+            if page_id == "edit"
+                && ![
+                    "identity",
+                    "builder",
+                    "edit",
+                    "code-editor",
+                    "code",
+                    "explorer",
+                    "design",
+                    "fusion",
+                ]
+                .contains(&panel_name.as_str())
+            {
+                eprintln!("Unknown panel: {panel_name}. Options: identity, builder, code-editor, explorer, design, fusion");
+                std::process::exit(1);
+            }
+            state.workspace.switch_page_by_id(page_id);
         }
         state
     };

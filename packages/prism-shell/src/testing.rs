@@ -26,7 +26,7 @@
 
 use slint::ComponentHandle;
 
-use crate::app::{ActivePanel, AppState, ShellView};
+use crate::app::{AppState, ShellView};
 use crate::Shell;
 
 // ── Built-in scenes ──────────────────────────────────────────────
@@ -97,33 +97,33 @@ pub fn apply_scene(scene: BuiltinScene) -> AppState {
 
         BuiltinScene::BuilderEmpty => {
             enter_first_app(&mut state);
-            state.active_panel = ActivePanel::Edit;
+            state.workspace.switch_page_by_id("edit");
             state.builder_document = prism_builder::BuilderDocument::page_shell();
         }
 
         BuiltinScene::BuilderGrid => {
             enter_first_app(&mut state);
-            state.active_panel = ActivePanel::Edit;
+            state.workspace.switch_page_by_id("edit");
             state.sync_document_from_app_pub();
         }
 
         BuiltinScene::BuilderTablet => {
             enter_first_app(&mut state);
-            state.active_panel = ActivePanel::Edit;
+            state.workspace.switch_page_by_id("edit");
             state.viewport_width = 768.0;
             state.sync_document_from_app_pub();
         }
 
         BuiltinScene::BuilderMobile => {
             enter_first_app(&mut state);
-            state.active_panel = ActivePanel::Edit;
+            state.workspace.switch_page_by_id("edit");
             state.viewport_width = 375.0;
             state.sync_document_from_app_pub();
         }
 
         BuiltinScene::Inspector => {
             enter_first_app(&mut state);
-            state.active_panel = ActivePanel::Edit;
+            state.workspace.switch_page_by_id("edit");
             state.sync_document_from_app_pub();
             if let Some(root) = &state.builder_document.root {
                 let first_id = root.id.clone();
@@ -133,12 +133,12 @@ pub fn apply_scene(scene: BuiltinScene) -> AppState {
 
         BuiltinScene::CodeEditor => {
             enter_first_app(&mut state);
-            state.active_panel = ActivePanel::CodeEditor;
+            state.workspace.switch_page_by_id("code");
         }
 
         BuiltinScene::Explorer => {
             enter_first_app(&mut state);
-            state.active_panel = ActivePanel::Explorer;
+            state.workspace.switch_page_by_id("edit");
         }
     }
 
@@ -367,7 +367,7 @@ mod tests {
     fn apply_scene_builder_enters_app() {
         let state = apply_scene(BuiltinScene::BuilderGrid);
         assert!(!state.shell_view.is_launchpad());
-        assert_eq!(state.active_panel, ActivePanel::Edit);
+        assert_eq!(state.workspace.active_page().id, "edit");
     }
 
     #[test]
@@ -391,13 +391,13 @@ mod tests {
     #[test]
     fn apply_scene_code_editor_panel() {
         let state = apply_scene(BuiltinScene::CodeEditor);
-        assert_eq!(state.active_panel, ActivePanel::CodeEditor);
+        assert_eq!(state.workspace.active_page().id, "code");
     }
 
     #[test]
     fn apply_scene_explorer_panel() {
         let state = apply_scene(BuiltinScene::Explorer);
-        assert_eq!(state.active_panel, ActivePanel::Explorer);
+        assert_eq!(state.workspace.active_page().id, "edit");
     }
 
     #[test]

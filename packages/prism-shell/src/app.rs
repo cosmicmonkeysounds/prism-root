@@ -19,7 +19,7 @@ use prism_builder::{
         JustifyOption, LayoutMode, PageSize, TrackSize,
     },
     starter::register_builtins,
-    BuilderDocument, ComponentRegistry, FieldKind, Node, NodeId, StyleProperties,
+    BuilderDocument, ComponentRegistry, FieldKind, LiveDocument, Node, NodeId, StyleProperties,
 };
 use prism_core::design_tokens::{DesignTokens, DEFAULT_TOKENS};
 use prism_core::editor::EditorState;
@@ -33,17 +33,16 @@ use slint::{ComponentHandle, Model, ModelRc, SharedString, Timer, TimerMode, Vec
 use crate::command::CommandRegistry;
 use crate::help::register_help_entries;
 use crate::input::{combo_from_slint, update_panel_schemes, FocusRegion, InputManager};
-use crate::panels::{
-    editor::CodeEditorPanel, identity::IdentityPanel, properties::PropertiesPanel, Panel,
-};
+use crate::panels::{editor::CodeEditorPanel, properties::PropertiesPanel, Panel};
 use crate::search::SearchIndex;
 use crate::selection::SelectionModel;
 use crate::telemetry::FirstPaint;
 use crate::{
     AppCardItem, AppWindow, BreadcrumbItem, BuilderNode, ButtonSpec, CommandItem,
-    ComponentPaletteItem, DocsPanelData, EditorLine, EditorToken, ExplorerNodeItem, FieldRow,
-    GridCellItem, GutterRect, HelpTooltipData, InspectorNode, MenuDef, MenuItem, ModifierItem,
-    PageLayoutData, SearchResultItem, SignalItem, TabItem, ToastItem, VariantItem,
+    ComponentPaletteItem, DocsPanelData, EditorIndentGuide, EditorLine, EditorToken,
+    ExplorerNodeItem, FieldRow, GridCellItem, GutterRect, HelpTooltipData, InspectorNode, MenuDef,
+    MenuItem, ModifierItem, PageLayoutData, SearchResultItem, SignalItem, TabItem, ToastItem,
+    VariantItem,
 };
 
 // ── Reloadable state ───────────────────────────────────────────────
@@ -53,7 +52,7 @@ pub struct AppState {
     pub tokens: DesignTokens,
     pub context: ShellModeContext,
     pub shell_view: ShellView,
-    pub active_panel: ActivePanel,
+    pub workspace: prism_dock::DockWorkspace,
     pub apps: Vec<PrismApp>,
     pub builder_document: BuilderDocument,
     pub selection: SelectionModel,
@@ -120,6 +119,14 @@ impl AppState {
         }
     }
 
+    fn sync_source_to_app(&mut self, source: &str) {
+        if let Some(app) = self.active_app_mut() {
+            if let Some(page_source) = app.active_source_mut() {
+                *page_source = source.to_string();
+            }
+        }
+    }
+
     fn sync_document_to_app(&mut self) {
         let doc = self.builder_document.clone();
         if let Some(app) = self.active_app_mut() {
@@ -142,31 +149,26 @@ pub struct ToastData {
     pub kind: String,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-pub enum ActivePanel {
-    Identity,
-    Edit,
-    CodeEditor,
-    Explorer,
+/// Derive the Slint `active_panel_id` from the dock workspace state.
+/// Maps workflow pages to the legacy panel IDs that `app.slint` expects:
+///   0 = Identity, 1 = Edit/Builder, 2 = CodeEditor, 3 = Explorer.
+pub fn panel_id_for_slint(workspace: &prism_dock::DockWorkspace) -> i32 {
+    match workspace.active_page().id.as_str() {
+        "code" => 2,
+        _ => 1,
+    }
 }
 
-impl ActivePanel {
-    pub fn as_id(self) -> i32 {
-        match self {
-            ActivePanel::Identity => 0,
-            ActivePanel::Edit => 1,
-            ActivePanel::CodeEditor => 2,
-            ActivePanel::Explorer => 3,
-        }
-    }
-
-    pub fn from_id(id: i32) -> Self {
-        match id {
-            0 => ActivePanel::Identity,
-            2 => ActivePanel::CodeEditor,
-            3 => ActivePanel::Explorer,
-            _ => ActivePanel::Edit,
-        }
+/// Map a legacy panel name to the corresponding workspace page id.
+pub fn page_id_for_panel(panel: &str) -> &str {
+    match panel {
+        "identity" => "edit",
+        "builder" | "edit" => "edit",
+        "code-editor" | "code" => "code",
+        "explorer" => "edit",
+        "design" => "design",
+        "fusion" => "fusion",
+        _ => "edit",
     }
 }
 
@@ -180,7 +182,7 @@ impl Default for AppState {
                 permission: Permission::Dev,
             },
             shell_view: ShellView::Launchpad,
-            active_panel: ActivePanel::Edit,
+            workspace: prism_dock::DockWorkspace::default(),
             apps,
             builder_document: BuilderDocument::page_shell(),
             selection: SelectionModel::default(),
@@ -221,6 +223,7 @@ fn sample_apps() -> Vec<PrismApp> {
                     id: "p1".into(),
                     title: "Home".into(),
                     route: "/".into(),
+                    source: String::new(),
                     document: sample_document(),
                     style: StyleProperties::default(),
                 },
@@ -228,6 +231,7 @@ fn sample_apps() -> Vec<PrismApp> {
                     id: "p2".into(),
                     title: "Dashboard".into(),
                     route: "/dashboard".into(),
+                    source: String::new(),
                     document: sample_dashboard_document(),
                     style: StyleProperties::default(),
                 },
@@ -245,6 +249,7 @@ fn sample_apps() -> Vec<PrismApp> {
                 id: "p1".into(),
                 title: "Studio".into(),
                 route: "/".into(),
+                source: String::new(),
                 document: BuilderDocument::page_shell(),
                 style: StyleProperties::default(),
             }],
@@ -262,6 +267,7 @@ fn sample_apps() -> Vec<PrismApp> {
                     id: "p1".into(),
                     title: "Canvas".into(),
                     route: "/".into(),
+                    source: String::new(),
                     document: BuilderDocument::page_shell(),
                     style: StyleProperties::default(),
                 },
@@ -269,6 +275,7 @@ fn sample_apps() -> Vec<PrismApp> {
                     id: "p2".into(),
                     title: "Settings".into(),
                     route: "/settings".into(),
+                    source: String::new(),
                     document: BuilderDocument::page_shell(),
                     style: StyleProperties::default(),
                 },
@@ -276,6 +283,7 @@ fn sample_apps() -> Vec<PrismApp> {
                     id: "p3".into(),
                     title: "Preview".into(),
                     route: "/preview".into(),
+                    source: String::new(),
                     document: BuilderDocument::page_shell(),
                     style: StyleProperties::default(),
                 },
@@ -409,20 +417,20 @@ fn sample_document() -> BuilderDocument {
 
 // ── Actions ────────────────────────────────────────────────────────
 
-pub struct SelectPanel(pub ActivePanel);
+pub struct SelectPage(pub String);
 
-impl Action<AppState> for SelectPanel {
+impl Action<AppState> for SelectPage {
     fn apply(self, state: &mut AppState) {
-        state.active_panel = self.0;
+        state.workspace.switch_page_by_id(&self.0);
     }
 }
 
 // ── Undo snapshots ─────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
-struct DocumentSnapshot {
+struct SourceSnapshot {
     description: String,
-    document: BuilderDocument,
+    source: String,
     selection: SelectionModel,
 }
 
@@ -431,12 +439,13 @@ struct DocumentSnapshot {
 struct ShellInner {
     store: Store<AppState>,
     registry: Arc<ComponentRegistry>,
+    live: Option<LiveDocument>,
     help: HelpRegistry,
     input: InputManager,
     commands: CommandRegistry,
     menus: crate::menu::MenuRegistry,
-    undo_past: Vec<DocumentSnapshot>,
-    undo_future: Vec<DocumentSnapshot>,
+    undo_past: Vec<SourceSnapshot>,
+    undo_future: Vec<SourceSnapshot>,
     clipboard: Option<Node>,
     help_pending_id: String,
     help_active_id: String,
@@ -444,11 +453,16 @@ struct ShellInner {
 
 impl ShellInner {
     fn push_undo(&mut self, description: &str) {
-        let state = self.store.state();
-        self.undo_past.push(DocumentSnapshot {
+        let source = self
+            .live
+            .as_ref()
+            .map(|l| l.source.clone())
+            .unwrap_or_default();
+        let selection = self.store.state().selection.clone();
+        self.undo_past.push(SourceSnapshot {
             description: description.into(),
-            document: state.builder_document.clone(),
-            selection: state.selection.clone(),
+            source,
+            selection,
         });
         self.undo_future.clear();
         if self.undo_past.len() > 100 {
@@ -460,36 +474,101 @@ impl ShellInner {
         let Some(snapshot) = self.undo_past.pop() else {
             return;
         };
-        let state = self.store.state();
-        self.undo_future.push(DocumentSnapshot {
+        let current_source = self
+            .live
+            .as_ref()
+            .map(|l| l.source.clone())
+            .unwrap_or_default();
+        let current_sel = self.store.state().selection.clone();
+        self.undo_future.push(SourceSnapshot {
             description: snapshot.description.clone(),
-            document: state.builder_document.clone(),
-            selection: state.selection.clone(),
+            source: current_source,
+            selection: current_sel,
         });
-        let doc = snapshot.document;
+        if let Some(ref mut live) = self.live {
+            let _ = live.set_source(snapshot.source);
+        }
         let sel = snapshot.selection;
         self.store.mutate(|state| {
-            state.builder_document = doc;
             state.selection = sel;
         });
+        self.sync_builder_document();
     }
 
     fn perform_redo(&mut self) {
         let Some(snapshot) = self.undo_future.pop() else {
             return;
         };
-        let state = self.store.state();
-        self.undo_past.push(DocumentSnapshot {
+        let current_source = self
+            .live
+            .as_ref()
+            .map(|l| l.source.clone())
+            .unwrap_or_default();
+        let current_sel = self.store.state().selection.clone();
+        self.undo_past.push(SourceSnapshot {
             description: snapshot.description.clone(),
-            document: state.builder_document.clone(),
-            selection: state.selection.clone(),
+            source: current_source,
+            selection: current_sel,
         });
-        let doc = snapshot.document;
+        if let Some(ref mut live) = self.live {
+            let _ = live.set_source(snapshot.source);
+        }
         let sel = snapshot.selection;
         self.store.mutate(|state| {
-            state.builder_document = doc;
             state.selection = sel;
         });
+        self.sync_builder_document();
+    }
+
+    fn load_active_page(&mut self) {
+        let state = self.store.state();
+        if let Some(app) = state.active_app() {
+            if let Some(page) = app.pages.get(app.active_page) {
+                let registry = Arc::clone(&self.registry);
+                let tokens = state.tokens.clone();
+                if page.source.is_empty() {
+                    let live = LiveDocument::from_document(
+                        page.document.clone(),
+                        registry,
+                        tokens,
+                    );
+                    self.live = Some(live);
+                } else {
+                    let live = LiveDocument::from_source(
+                        page.source.clone(),
+                        registry,
+                        tokens,
+                    );
+                    self.live = Some(live);
+                }
+                self.sync_builder_document();
+            }
+        }
+        self.undo_past.clear();
+        self.undo_future.clear();
+    }
+
+    fn save_to_active_page(&mut self) {
+        if let Some(ref mut live) = self.live {
+            let source = live.source.clone();
+            let mut doc = live.document().clone();
+            self.store.mutate(|state| {
+                state.sync_source_to_app(&source);
+                doc.page_layout = state.builder_document.page_layout.clone();
+                state.builder_document = doc;
+                state.sync_document_to_app();
+            });
+        }
+    }
+
+    fn sync_builder_document(&mut self) {
+        if let Some(ref mut live) = self.live {
+            let mut doc = live.document().clone();
+            self.store.mutate(|state| {
+                doc.page_layout = state.builder_document.page_layout.clone();
+                state.builder_document = doc;
+            });
+        }
     }
 
     fn add_toast(&mut self, title: &str, body: &str, kind: &str) {
@@ -532,6 +611,7 @@ impl Shell {
         let inner = Rc::new(RefCell::new(ShellInner {
             store: Store::new(state),
             registry: Arc::new(registry),
+            live: None,
             help,
             input: InputManager::with_defaults(),
             commands: CommandRegistry::with_builtins(),
@@ -544,10 +624,11 @@ impl Shell {
         }));
         {
             let mut s = inner.borrow_mut();
+            s.load_active_page();
             let state = s.store.state();
-            let panel = state.active_panel;
+            let panel_id = panel_id_for_slint(&state.workspace);
             let has_sel = !state.selection.is_empty();
-            update_panel_schemes(&mut s.input, panel.as_id());
+            update_panel_schemes(&mut s.input, panel_id);
             s.input.set_context("hasSelection", has_sel);
             s.input.set_context("hasClipboard", false);
         }
@@ -577,9 +658,10 @@ impl Shell {
         self.telemetry.clone()
     }
 
-    pub fn select_panel(&self, panel: ActivePanel) {
+    pub fn select_page(&self, page_id: &str) {
+        let pid = page_id.to_string();
         self.inner.borrow_mut().store.mutate(|state| {
-            state.active_panel = panel;
+            state.workspace.switch_page_by_id(&pid);
         });
         sync_ui_from_shared(&self.inner, &self.window);
     }
@@ -673,11 +755,19 @@ impl Shell {
             let weak = weak.clone();
             move |id| {
                 {
+                    let page_id = match id {
+                        0 => "edit",
+                        2 => "code",
+                        3 => "edit",
+                        _ => "edit",
+                    };
                     let mut s = inner.borrow_mut();
+                    let pid = page_id.to_string();
                     s.store.mutate(|state| {
-                        state.active_panel = ActivePanel::from_id(id);
+                        state.workspace.switch_page_by_id(&pid);
                     });
-                    update_panel_schemes(&mut s.input, id);
+                    let panel_id = panel_id_for_slint(&s.store.state().workspace);
+                    update_panel_schemes(&mut s.input, panel_id);
                 }
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
@@ -709,18 +799,25 @@ impl Shell {
                 {
                     let mut s = inner.borrow_mut();
                     s.push_undo("Edit text");
-                    s.store.mutate(|state| {
-                        if let Some(ref mut root) = state.builder_document.root {
-                            let node = root.find(&node_id);
-                            let key = match node.map(|n| n.component.as_str()) {
-                                Some("text") => "body",
-                                Some("card") | Some("accordion") => "title",
-                                Some("code") => "code",
-                                _ => "text",
-                            };
-                            mutate_node_prop(root, &node_id, key, &value, Some("text"));
+                    let key = {
+                        let component = s.live.as_mut().and_then(|l| {
+                            let doc = l.document();
+                            doc.root.as_ref().and_then(|r| {
+                                r.find(&node_id).map(|n| n.component.clone())
+                            })
+                        });
+                        match component.as_deref() {
+                            Some("text") => "body",
+                            Some("card") | Some("accordion") => "title",
+                            Some("code") => "code",
+                            _ => "text",
                         }
-                    });
+                    };
+                    let formatted = format!("\"{}\"", prism_builder::slint_source::escape_slint_string(&value));
+                    if let Some(ref mut live) = s.live {
+                        let _ = live.edit_prop_in_source(&node_id, key, &formatted);
+                    }
+                    s.sync_builder_document();
                 }
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
@@ -744,10 +841,13 @@ impl Shell {
                         node_id.to_string()
                     };
                     s.push_undo("Delete node");
+                    if let Some(ref mut live) = s.live {
+                        let _ = live.remove_node_from_source(&nid);
+                    }
                     s.store.mutate(|state| {
-                        delete_node(&mut state.builder_document, &nid);
                         state.selection.clear();
                     });
+                    s.sync_builder_document();
                 }
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
@@ -769,25 +869,21 @@ impl Shell {
                         format!("n{id}")
                     };
                     let props = default_props_for_component(&ct);
-                    let layout_mode = default_layout_for_component(&ct);
-                    let new_node = Node {
-                        id: node_id.clone(),
-                        component: ct,
-                        props,
-                        children: vec![],
-                        layout_mode,
-                        ..Default::default()
-                    };
                     let parent_id = s.store.state().selection.primary().cloned();
+                    if let Some(ref mut live) = s.live {
+                        let _ = live.insert_node_in_source(
+                            parent_id.as_deref(),
+                            &ct,
+                            &node_id,
+                            &props,
+                        );
+                    }
+                    let nid = node_id.clone();
                     s.store.mutate(|state| {
                         state.next_node_id += 1;
-                        add_node_to_document(
-                            &mut state.builder_document,
-                            parent_id.as_deref(),
-                            new_node,
-                        );
-                        state.selection.select(node_id);
+                        state.selection.select(nid);
                     });
+                    s.sync_builder_document();
                 }
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
@@ -807,12 +903,12 @@ impl Shell {
                     let selected_id = s.store.state().selection.primary().cloned();
                     if let Some(ref target_id) = selected_id {
                         let kind = field_kind_for_key(&s, &key);
+                        let formatted = format_value_for_source(&value, kind.as_deref());
                         s.push_undo(&format!("Edit {key}"));
-                        s.store.mutate(|state| {
-                            if let Some(ref mut root) = state.builder_document.root {
-                                mutate_node_prop(root, target_id, &key, &value, kind.as_deref());
-                            }
-                        });
+                        if let Some(ref mut live) = s.live {
+                            let _ = live.edit_prop_in_source(target_id, &key, &formatted);
+                        }
+                        s.sync_builder_document();
                     }
                 }
                 if let Some(w) = weak.upgrade() {
@@ -832,16 +928,16 @@ impl Shell {
                     let selected_id = s.store.state().selection.primary().cloned();
                     if let Some(ref target_id) = selected_id {
                         let kind = field_kind_for_key(&s, &key);
-                        let value = match kind.as_deref() {
+                        let formatted = match kind.as_deref() {
                             Some("integer") => format!("{}", val as i64),
+                            Some("number") => format!("{}px", format_slider_value(val)),
                             _ => format_slider_value(val),
                         };
                         s.push_undo(&format!("Edit {key}"));
-                        s.store.mutate(|state| {
-                            if let Some(ref mut root) = state.builder_document.root {
-                                mutate_node_prop(root, target_id, &key, &value, kind.as_deref());
-                            }
-                        });
+                        if let Some(ref mut live) = s.live {
+                            let _ = live.edit_prop_in_source(target_id, &key, &formatted);
+                        }
+                        s.sync_builder_document();
                     }
                 }
                 if let Some(w) = weak.upgrade() {
@@ -883,9 +979,10 @@ impl Shell {
                     node_id.to_string()
                 };
                 s.push_undo(label);
-                s.store.mutate(|state| {
-                    move_node_in_siblings(&mut state.builder_document, &nid, direction);
-                });
+                if let Some(ref mut live) = s.live {
+                    let _ = live.move_node_in_source(&nid, direction);
+                }
+                s.sync_builder_document();
             }
             if let Some(w) = weak.upgrade() {
                 sync_ui_from_shared(inner, &w);
@@ -908,14 +1005,18 @@ impl Shell {
             let weak = weak.clone();
             move |app_id| {
                 let app_id = app_id.to_string();
-                inner.borrow_mut().store.mutate(|state| {
-                    state.shell_view = ShellView::App {
-                        app_id: app_id.clone(),
-                    };
-                    state.active_panel = ActivePanel::Edit;
-                    state.selection.clear();
-                    state.sync_document_from_app();
-                });
+                {
+                    let mut s = inner.borrow_mut();
+                    s.store.mutate(|state| {
+                        state.shell_view = ShellView::App {
+                            app_id: app_id.clone(),
+                        };
+                        state.workspace.switch_page_by_id("edit");
+                        state.selection.clear();
+                        state.sync_document_from_app();
+                    });
+                    s.load_active_page();
+                }
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
                 }
@@ -927,11 +1028,15 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move || {
-                inner.borrow_mut().store.mutate(|state| {
-                    state.sync_document_to_app();
-                    state.shell_view = ShellView::Launchpad;
-                    state.selection.clear();
-                });
+                {
+                    let mut s = inner.borrow_mut();
+                    s.save_to_active_page();
+                    s.store.mutate(|state| {
+                        state.shell_view = ShellView::Launchpad;
+                        state.selection.clear();
+                    });
+                    s.live = None;
+                }
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
                 }
@@ -947,22 +1052,23 @@ impl Shell {
                 {
                     let mut s = inner.borrow_mut();
                     if let Some(app_id) = nid.strip_prefix("app:") {
+                        s.save_to_active_page();
                         s.store.mutate(|state| {
-                            state.sync_document_to_app();
                             state.shell_view = ShellView::App {
                                 app_id: app_id.into(),
                             };
-                            state.active_panel = ActivePanel::Explorer;
+                            state.workspace.switch_page_by_id("edit");
                             state.selection.clear();
                             state.sync_document_from_app();
                         });
+                        s.load_active_page();
                     } else if let Some(rest) = nid.strip_prefix("page:") {
                         let parts: Vec<&str> = rest.splitn(2, ':').collect();
                         if parts.len() == 2 {
                             let aid = parts[0].to_string();
                             let pid = parts[1].to_string();
+                            s.save_to_active_page();
                             s.store.mutate(|state| {
-                                state.sync_document_to_app();
                                 state.shell_view = ShellView::App { app_id: aid };
                                 if let Some(app) = state.active_app_mut() {
                                     if let Some(idx) = app.pages.iter().position(|p| p.id == pid) {
@@ -972,6 +1078,7 @@ impl Shell {
                                 state.selection.clear();
                                 state.sync_document_from_app();
                             });
+                            s.load_active_page();
                         }
                     }
                 }
@@ -1008,6 +1115,7 @@ impl Shell {
                 let new_app_id;
                 {
                     let mut s = inner.borrow_mut();
+                    s.save_to_active_page();
                     let id_num = s.store.state().next_app_id;
                     new_app_id = format!("app-{id_num}");
                     let naid = new_app_id.clone();
@@ -1022,6 +1130,7 @@ impl Shell {
                                 id: "page-1".into(),
                                 title: "Home".into(),
                                 route: "/".into(),
+                                source: String::new(),
                                 document: BuilderDocument::page_shell(),
                                 style: StyleProperties::default(),
                             }],
@@ -1030,10 +1139,11 @@ impl Shell {
                             style: StyleProperties::default(),
                         });
                         state.shell_view = ShellView::App { app_id: naid };
-                        state.active_panel = ActivePanel::Edit;
+                        state.workspace.switch_page_by_id("edit");
                         state.selection.clear();
                         state.sync_document_from_app();
                     });
+                    s.load_active_page();
                     s.add_toast(
                         "App created",
                         &format!("App {id_num} is ready to edit"),
@@ -1051,14 +1161,18 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |page_index| {
-                inner.borrow_mut().store.mutate(|state| {
-                    state.sync_document_to_app();
-                    if let Some(app) = state.active_app_mut() {
-                        app.active_page = page_index as usize;
-                    }
-                    state.selection.clear();
-                    state.sync_document_from_app();
-                });
+                {
+                    let mut s = inner.borrow_mut();
+                    s.save_to_active_page();
+                    s.store.mutate(|state| {
+                        if let Some(app) = state.active_app_mut() {
+                            app.active_page = page_index as usize;
+                        }
+                        state.selection.clear();
+                        state.sync_document_from_app();
+                    });
+                    s.load_active_page();
+                }
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
                 }
@@ -1072,14 +1186,15 @@ impl Shell {
             move || {
                 {
                     let mut s = inner.borrow_mut();
+                    s.save_to_active_page();
                     s.store.mutate(|state| {
-                        state.sync_document_to_app();
                         if let Some(app) = state.active_app_mut() {
                             let page_num = app.pages.len() + 1;
                             app.pages.push(Page {
                                 id: format!("page-{page_num}"),
                                 title: format!("Page {page_num}"),
                                 route: format!("/page-{page_num}"),
+                                source: String::new(),
                                 document: BuilderDocument::page_shell(),
                                 style: StyleProperties::default(),
                             });
@@ -1088,6 +1203,7 @@ impl Shell {
                         state.selection.clear();
                         state.sync_document_from_app();
                     });
+                    s.load_active_page();
                 }
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
@@ -1505,15 +1621,17 @@ impl Shell {
             }
         });
 
-        // Code editor mouse click
+        // Code editor mouse click (display row -> buffer line)
         self.window.on_editor_click({
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
-            move |line, col| {
+            move |display_row, col| {
                 inner.borrow_mut().store.mutate(|state| {
+                    let buf_line =
+                        display_row_to_buffer_line(&state.editor_state, display_row as usize);
                     state
                         .editor_state
-                        .set_cursor_position(line as usize, col as usize);
+                        .set_cursor_position(buf_line, col as usize);
                 });
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
@@ -1521,15 +1639,33 @@ impl Shell {
             }
         });
 
-        // Code editor mouse drag (selection)
+        // Code editor mouse drag (selection, display row -> buffer line)
         self.window.on_editor_drag({
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
-            move |line, col| {
+            move |display_row, col| {
                 inner.borrow_mut().store.mutate(|state| {
+                    let buf_line =
+                        display_row_to_buffer_line(&state.editor_state, display_row as usize);
                     state
                         .editor_state
-                        .extend_selection_to(line as usize, col as usize);
+                        .extend_selection_to(buf_line, col as usize);
+                });
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Code editor fold toggle (gutter click)
+        self.window.on_editor_fold_toggle({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |display_row| {
+                inner.borrow_mut().store.mutate(|state| {
+                    let buf_line =
+                        display_row_to_buffer_line(&state.editor_state, display_row as usize);
+                    state.editor_state.toggle_fold_at_line(buf_line);
                 });
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
@@ -1794,29 +1930,20 @@ impl Shell {
                         format!("n{id}")
                     };
                     let props = default_props_for_component(&ct);
-                    let mut layout_mode = default_layout_for_component(&ct);
-                    if let LayoutMode::Flow(ref mut flow) = layout_mode {
-                        flow.grid_column = GridPlacement::Line {
-                            index: (col + 1) as i16,
-                        };
-                        flow.grid_row = GridPlacement::Line {
-                            index: (row + 1) as i16,
-                        };
+                    if let Some(ref mut live) = s.live {
+                        let _ = live.insert_node_in_source(
+                            Some("root"),
+                            &ct,
+                            &node_id,
+                            &props,
+                        );
                     }
-                    let new_node = Node {
-                        id: node_id.clone(),
-                        component: ct,
-                        props,
-                        children: vec![],
-                        layout_mode,
-                        ..Default::default()
-                    };
                     let nid = node_id.clone();
                     s.store.mutate(|state| {
                         state.next_node_id += 1;
-                        add_node_to_document(&mut state.builder_document, Some("root"), new_node);
                         state.selection.select(nid);
                     });
+                    s.sync_builder_document();
                 }
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
@@ -1930,9 +2057,7 @@ impl Shell {
 
 fn sync_ui_from_shared(shared: &Rc<RefCell<ShellInner>>, window: &AppWindow) {
     let mut inner = shared.borrow_mut();
-    inner.store.mutate(|state| {
-        state.sync_document_to_app();
-    });
+    inner.save_to_active_page();
     let has_sel = !inner.store.state().selection.is_empty();
     let has_clip = inner.clipboard.is_some();
     let palette_open = inner.store.state().command_palette_open;
@@ -1976,15 +2101,16 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
     // Menu bar
     push_menu_defs(window, &inner.menus, &inner.commands);
 
-    // Activity bar panel selection
-    window.set_active_panel_id(state.active_panel.as_id());
+    // Activity bar panel selection — derived from dock workspace
+    let slint_panel_id = panel_id_for_slint(&state.workspace);
+    window.set_active_panel_id(slint_panel_id);
 
     // Toolbar state
     window.set_has_selection(!state.selection.is_empty());
     window.set_has_clipboard(inner.clipboard.is_some());
 
     // Panel title + hint
-    let (title, hint) = panel_metadata(state.active_panel);
+    let (title, hint) = panel_metadata_from_workspace(&state.workspace);
     window.set_panel_title(SharedString::from(title));
     window.set_panel_hint(SharedString::from(hint));
 
@@ -1993,9 +2119,11 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
 
     // Fill active panel (only when inside an app)
     if !is_launchpad {
-        match state.active_panel {
-            ActivePanel::Identity => push_identity_actions(window),
-            ActivePanel::Edit => {
+        match slint_panel_id {
+            2 => {
+                push_editor_data(window, &state.editor_state);
+            }
+            _ => {
                 push_builder_preview(window, &state.builder_document, &state.selection);
                 push_inspector_nodes(window, &state.builder_document, &state.selection);
                 push_property_rows(
@@ -2021,11 +2149,6 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
                     &state.selection,
                     &state.builder_document,
                 );
-            }
-            ActivePanel::CodeEditor => {
-                push_editor_data(window, &state.editor_state);
-            }
-            ActivePanel::Explorer => {
                 push_explorer_nodes(
                     window,
                     &state.apps,
@@ -2220,19 +2343,6 @@ fn push_app_cards(window: &AppWindow, apps: &[PrismApp]) {
     window.set_app_cards(ModelRc::from(model as Rc<dyn Model<Data = AppCardItem>>));
 }
 
-fn push_identity_actions(window: &AppWindow) {
-    let panel = IdentityPanel::new();
-    let actions: Vec<ButtonSpec> = panel
-        .actions()
-        .iter()
-        .map(|label| ButtonSpec {
-            label: SharedString::from(*label),
-        })
-        .collect();
-    let model = Rc::new(VecModel::from(actions));
-    window.set_actions(ModelRc::from(model as Rc<dyn Model<Data = ButtonSpec>>));
-}
-
 fn push_builder_preview(window: &AppWindow, doc: &BuilderDocument, selection: &SelectionModel) {
     let items = flatten_builder_nodes(doc.root.as_ref(), selection);
     let count = items.len() as i32;
@@ -2418,40 +2528,42 @@ fn execute_command(
                 }
             }
         }
-        "panel.identity" => {
+        "panel.identity" | "panel.edit" | "panel.builder" | "panel.inspector"
+        | "panel.properties" | "panel.explorer" | "view.file_explorer" => {
+            let page_id = page_id_for_panel(
+                command_id
+                    .strip_prefix("panel.")
+                    .or_else(|| command_id.strip_prefix("view.file_"))
+                    .unwrap_or("edit"),
+            );
             let mut s = shared.borrow_mut();
-            s.store
-                .mutate(|state| state.active_panel = ActivePanel::Identity);
-            update_panel_schemes(&mut s.input, ActivePanel::Identity.as_id());
-        }
-        "panel.edit" | "panel.builder" | "panel.inspector" | "panel.properties" => {
-            let mut s = shared.borrow_mut();
-            s.store
-                .mutate(|state| state.active_panel = ActivePanel::Edit);
-            update_panel_schemes(&mut s.input, ActivePanel::Edit.as_id());
+            let pid = page_id.to_string();
+            s.store.mutate(|state| {
+                state.workspace.switch_page_by_id(&pid);
+            });
+            let panel_id = panel_id_for_slint(&s.store.state().workspace);
+            update_panel_schemes(&mut s.input, panel_id);
         }
         "panel.code_editor" => {
             let mut s = shared.borrow_mut();
-            s.store
-                .mutate(|state| state.active_panel = ActivePanel::CodeEditor);
-            update_panel_schemes(&mut s.input, ActivePanel::CodeEditor.as_id());
-        }
-        "panel.explorer" | "view.file_explorer" => {
-            let mut s = shared.borrow_mut();
-            s.store
-                .mutate(|state| state.active_panel = ActivePanel::Explorer);
-            update_panel_schemes(&mut s.input, ActivePanel::Explorer.as_id());
+            s.store.mutate(|state| {
+                state.workspace.switch_page_by_id("code");
+            });
+            let panel_id = panel_id_for_slint(&s.store.state().workspace);
+            update_panel_schemes(&mut s.input, panel_id);
         }
         "selection.delete" => {
             let mut s = shared.borrow_mut();
             let selected_id = s.store.state().selection.primary().cloned();
             if let Some(ref target_id) = selected_id {
                 s.push_undo("Delete node");
-                let tid = target_id.clone();
+                if let Some(ref mut live) = s.live {
+                    let _ = live.remove_node_from_source(target_id);
+                }
                 s.store.mutate(|state| {
-                    delete_node(&mut state.builder_document, &tid);
                     state.selection.clear();
                 });
+                s.sync_builder_document();
             }
         }
         "selection.all" => {
@@ -2466,19 +2578,17 @@ fn execute_command(
         }
         "edit.copy" => {
             let mut s = shared.borrow_mut();
-            let state = s.store.state();
-            if let Some(target_id) = state.selection.primary() {
-                if let Some(node) = state
-                    .builder_document
-                    .root
-                    .as_ref()
-                    .and_then(|n| n.find(target_id))
-                {
-                    let node = node.clone();
-                    let comp = node.component.clone();
-                    s.clipboard = Some(node);
-                    s.add_toast("Copied", &format!("{comp} copied"), "info");
-                }
+            let target_id = s.store.state().selection.primary().cloned();
+            let node = target_id.and_then(|tid| {
+                s.live.as_mut().and_then(|l| {
+                    let doc = l.document();
+                    doc.root.as_ref().and_then(|n| n.find(&tid)).cloned()
+                })
+            });
+            if let Some(node) = node {
+                let comp = node.component.clone();
+                s.clipboard = Some(node);
+                s.add_toast("Copied", &format!("{comp} copied"), "info");
             }
         }
         "edit.paste" => {
@@ -2489,64 +2599,72 @@ fn execute_command(
                 let mut next_id = s.store.state().next_node_id;
                 let new_node = clone_node_with_new_ids(clip, &mut next_id);
                 let new_id = new_node.id.clone();
+                let parent_id = s.store.state().selection.primary().cloned();
+                if let Some(ref mut live) = s.live {
+                    let _ = live.insert_node_in_source(
+                        parent_id.as_deref(),
+                        &new_node.component,
+                        &new_node.id,
+                        &new_node.props,
+                    );
+                }
                 s.store.mutate(|state| {
                     state.next_node_id = next_id;
-                    let parent_id = state.selection.primary().cloned();
-                    add_node_to_document(
-                        &mut state.builder_document,
-                        parent_id.as_deref(),
-                        new_node,
-                    );
                     state.selection.select(new_id);
                 });
+                s.sync_builder_document();
             }
         }
         "edit.cut" => {
             let mut s = shared.borrow_mut();
-            let target_and_node = {
-                let state = s.store.state();
-                state.selection.primary().and_then(|id| {
-                    let node = state
-                        .builder_document
-                        .root
-                        .as_ref()
-                        .and_then(|n| n.find(id))?
-                        .clone();
-                    Some((id.clone(), node))
+            let target_id = s.store.state().selection.primary().cloned();
+            let target_and_node = target_id.and_then(|tid| {
+                s.live.as_mut().and_then(|l| {
+                    let doc = l.document();
+                    let node = doc.root.as_ref().and_then(|n| n.find(&tid))?.clone();
+                    Some((tid, node))
                 })
-            };
+            });
             if let Some((target_id, node)) = target_and_node {
                 s.clipboard = Some(node);
                 s.push_undo("Cut");
+                if let Some(ref mut live) = s.live {
+                    let _ = live.remove_node_from_source(&target_id);
+                }
                 s.store.mutate(|state| {
-                    delete_node(&mut state.builder_document, &target_id);
                     state.selection.clear();
                 });
+                s.sync_builder_document();
             }
         }
         "edit.duplicate" => {
             let mut s = shared.borrow_mut();
-            let target_and_node = {
-                let state = s.store.state();
-                state.selection.primary().and_then(|id| {
-                    let node = state
-                        .builder_document
-                        .root
-                        .as_ref()
-                        .and_then(|n| n.find(id))?
-                        .clone();
-                    Some((id.clone(), node, state.next_node_id))
+            let sel_id = s.store.state().selection.primary().cloned();
+            let next_id_start = s.store.state().next_node_id;
+            let target_and_node = sel_id.and_then(|tid| {
+                s.live.as_mut().and_then(|l| {
+                    let doc = l.document();
+                    let node = doc.root.as_ref().and_then(|n| n.find(&tid))?.clone();
+                    Some((tid, node, next_id_start))
                 })
-            };
+            });
             if let Some((target_id, node, mut next_id)) = target_and_node {
                 s.push_undo("Duplicate");
                 let new_node = clone_node_with_new_ids(&node, &mut next_id);
                 let new_id = new_node.id.clone();
+                if let Some(ref mut live) = s.live {
+                    let _ = live.insert_node_in_source(
+                        Some(&target_id),
+                        &new_node.component,
+                        &new_node.id,
+                        &new_node.props,
+                    );
+                }
                 s.store.mutate(|state| {
                     state.next_node_id = next_id;
-                    insert_after_sibling(&mut state.builder_document, &target_id, new_node);
                     state.selection.select(new_id);
                 });
+                s.sync_builder_document();
             }
         }
         "notification.dismiss_all" => {
@@ -2564,14 +2682,15 @@ fn execute_command(
                 .map(|a| a.pages.len())
                 .unwrap_or(0);
             if page_count > 1 {
+                s.save_to_active_page();
                 s.store.mutate(|state| {
-                    state.sync_document_to_app();
                     if let Some(app) = state.active_app_mut() {
                         app.active_page = (app.active_page + 1) % app.pages.len();
                     }
                     state.selection.clear();
                     state.sync_document_from_app();
                 });
+                s.load_active_page();
             }
         }
         "navigate.prev_tab" => {
@@ -2583,8 +2702,8 @@ fn execute_command(
                 .map(|a| a.pages.len())
                 .unwrap_or(0);
             if page_count > 1 {
+                s.save_to_active_page();
                 s.store.mutate(|state| {
-                    state.sync_document_to_app();
                     if let Some(app) = state.active_app_mut() {
                         let len = app.pages.len();
                         app.active_page = if app.active_page == 0 {
@@ -2596,6 +2715,7 @@ fn execute_command(
                     state.selection.clear();
                     state.sync_document_from_app();
                 });
+                s.load_active_page();
             }
         }
         "navigate.inspector_prev" => {
@@ -2630,10 +2750,12 @@ fn execute_command(
         }
         "search.focus" => {
             let mut s = shared.borrow_mut();
-            if s.store.state().active_panel != ActivePanel::Edit {
-                s.store
-                    .mutate(|state| state.active_panel = ActivePanel::Edit);
-                update_panel_schemes(&mut s.input, ActivePanel::Edit.as_id());
+            if s.store.state().workspace.active_page().id != "edit" {
+                s.store.mutate(|state| {
+                    state.workspace.switch_page_by_id("edit");
+                });
+                let panel_id = panel_id_for_slint(&s.store.state().workspace);
+                update_panel_schemes(&mut s.input, panel_id);
             }
             s.input.set_focus(FocusRegion::Search);
         }
@@ -2688,14 +2810,15 @@ fn execute_command(
                     .map(|a| a.pages.len())
                     .unwrap_or(0);
                 if n >= 1 && n <= page_count {
+                    s.save_to_active_page();
                     s.store.mutate(|state| {
-                        state.sync_document_to_app();
                         if let Some(app) = state.active_app_mut() {
                             app.active_page = n - 1;
                         }
                         state.selection.clear();
                         state.sync_document_from_app();
                     });
+                    s.load_active_page();
                 }
             } else {
                 eprintln!("prism-shell: unknown command {other}");
@@ -2723,15 +2846,17 @@ fn execute_command(
 
 // ── Helpers ────────────────────────────────────────────────────────
 
-fn panel_metadata(panel: ActivePanel) -> (&'static str, &'static str) {
-    match panel {
-        ActivePanel::Identity => (IdentityPanel::new().title(), IdentityPanel::new().hint()),
-        ActivePanel::Edit => ("Editor", "Build your page visually."),
-        ActivePanel::CodeEditor => {
+fn panel_metadata_from_workspace(
+    workspace: &prism_dock::DockWorkspace,
+) -> (&'static str, &'static str) {
+    match workspace.active_page().id.as_str() {
+        "code" => {
             let p = CodeEditorPanel::new();
             (p.title(), p.hint())
         }
-        ActivePanel::Explorer => ("Explorer", "Browse apps, pages, and documents."),
+        "design" => ("Design", "Design components and layouts."),
+        "fusion" => ("Fusion", "Node-based creative composition."),
+        _ => ("Editor", "Build your page visually."),
     }
 }
 
@@ -2870,112 +2995,14 @@ fn format_slider_value(val: f32) -> String {
     }
 }
 
-fn mutate_node_prop(
-    root: &mut Node,
-    target: &str,
-    key: &str,
-    value: &str,
-    kind: Option<&str>,
-) -> bool {
-    if root.id == target {
-        if let Some(obj) = root.props.as_object_mut() {
-            let json_value = match kind {
-                Some("number") => value
-                    .parse::<f64>()
-                    .ok()
-                    .and_then(|n| serde_json::Number::from_f64(n).map(serde_json::Value::Number))
-                    .unwrap_or_else(|| serde_json::Value::String(value.to_string())),
-                Some("integer") => value
-                    .parse::<i64>()
-                    .map(serde_json::Value::from)
-                    .unwrap_or_else(|_| serde_json::Value::String(value.to_string())),
-                Some("boolean") => serde_json::Value::Bool(value == "true"),
-                _ => serde_json::Value::String(value.to_string()),
-            };
-            obj.insert(key.to_string(), json_value);
-        }
-        return true;
+fn format_value_for_source(value: &str, kind: Option<&str>) -> String {
+    match kind {
+        Some("number") => format!("{value}px"),
+        Some("integer") => value.to_string(),
+        Some("boolean") => value.to_string(),
+        Some("color") => value.to_string(),
+        _ => format!("\"{}\"", prism_builder::slint_source::escape_slint_string(value)),
     }
-    for child in &mut root.children {
-        if mutate_node_prop(child, target, key, value, kind) {
-            return true;
-        }
-    }
-    false
-}
-
-fn move_node_in_siblings(doc: &mut BuilderDocument, node_id: &str, direction: i32) {
-    if let Some(ref mut root) = doc.root {
-        move_in_children(&mut root.children, node_id, direction);
-    }
-}
-
-fn move_in_children(children: &mut [Node], target: &str, direction: i32) -> bool {
-    if let Some(pos) = children.iter().position(|n| n.id == target) {
-        let new_pos = pos as i32 + direction;
-        if new_pos >= 0 && (new_pos as usize) < children.len() {
-            children.swap(pos, new_pos as usize);
-            return true;
-        }
-    }
-    for child in children.iter_mut() {
-        if move_in_children(&mut child.children, target, direction) {
-            return true;
-        }
-    }
-    false
-}
-
-fn delete_node(doc: &mut BuilderDocument, target: &str) {
-    if let Some(ref mut root) = doc.root {
-        if root.id == target {
-            doc.root = None;
-            return;
-        }
-        delete_from_children(&mut root.children, target);
-    }
-}
-
-fn delete_from_children(children: &mut Vec<Node>, target: &str) {
-    if let Some(pos) = children.iter().position(|n| n.id == target) {
-        children.remove(pos);
-        return;
-    }
-    for child in children.iter_mut() {
-        delete_from_children(&mut child.children, target);
-    }
-}
-
-fn add_node_to_document(doc: &mut BuilderDocument, parent_id: Option<&str>, new_node: Node) {
-    match parent_id {
-        Some(pid) => {
-            if let Some(ref mut root) = doc.root {
-                insert_child(root, pid, new_node);
-            }
-        }
-        None => {
-            if let Some(ref mut root) = doc.root {
-                root.children.push(new_node);
-            } else {
-                doc.root = Some(new_node);
-            }
-        }
-    }
-}
-
-fn insert_child(node: &mut Node, parent_id: &str, child: Node) -> Option<Node> {
-    if node.id == parent_id {
-        node.children.push(child);
-        return None;
-    }
-    let mut remaining = child;
-    for c in &mut node.children {
-        match insert_child(c, parent_id, remaining) {
-            None => return None,
-            Some(returned) => remaining = returned,
-        }
-    }
-    Some(remaining)
 }
 
 fn default_props_for_component(component: &str) -> serde_json::Value {
@@ -2998,36 +3025,6 @@ fn default_props_for_component(component: &str) -> serde_json::Value {
         "tabs" => json!({ "labels": "Tab 1, Tab 2" }),
         "accordion" => json!({ "title": "Section", "open": true }),
         _ => json!({}),
-    }
-}
-
-fn default_layout_for_component(component: &str) -> LayoutMode {
-    match component {
-        "container" => LayoutMode::Flow(FlowProps {
-            display: FlowDisplay::Flex,
-            flex_direction: FlexDirection::Column,
-            gap: 12.0,
-            ..Default::default()
-        }),
-        "columns" => LayoutMode::Flow(FlowProps {
-            display: FlowDisplay::Flex,
-            flex_direction: FlexDirection::Row,
-            gap: 16.0,
-            ..Default::default()
-        }),
-        "form" => LayoutMode::Flow(FlowProps {
-            display: FlowDisplay::Flex,
-            flex_direction: FlexDirection::Column,
-            gap: 8.0,
-            ..Default::default()
-        }),
-        "list" => LayoutMode::Flow(FlowProps {
-            display: FlowDisplay::Flex,
-            flex_direction: FlexDirection::Column,
-            gap: 4.0,
-            ..Default::default()
-        }),
-        _ => LayoutMode::default(),
     }
 }
 
@@ -3077,35 +3074,6 @@ fn clone_node_with_new_ids(node: &Node, counter: &mut u64) -> Node {
         modifiers: node.modifiers.clone(),
         style: node.style.clone(),
     }
-}
-
-fn insert_after_sibling(doc: &mut BuilderDocument, sibling_id: &str, new_node: Node) {
-    if let Some(ref mut root) = doc.root {
-        if let Some(node) = insert_after_in_children(&mut root.children, sibling_id, new_node) {
-            root.children.push(node);
-        }
-    }
-}
-
-/// Try to insert `new_node` after `sibling_id` in the tree. Returns
-/// `None` on success (node consumed) or `Some(node)` if not found.
-fn insert_after_in_children(
-    children: &mut Vec<Node>,
-    sibling_id: &str,
-    new_node: Node,
-) -> Option<Node> {
-    if let Some(pos) = children.iter().position(|n| n.id == sibling_id) {
-        children.insert(pos + 1, new_node);
-        return None;
-    }
-    let mut node = new_node;
-    for child in children.iter_mut() {
-        match insert_after_in_children(&mut child.children, sibling_id, node) {
-            None => return None,
-            Some(returned) => node = returned,
-        }
-    }
-    Some(node)
 }
 
 fn push_breadcrumbs(window: &AppWindow, doc: &BuilderDocument, selection: &SelectionModel) {
@@ -4001,11 +3969,14 @@ fn push_style_rows(
 }
 
 fn push_editor_data(window: &AppWindow, es: &EditorState) {
-    use prism_core::editor::{highlight_line, TokenKind};
+    use prism_core::editor::{
+        active_indent_depth, compute_line_indent_guides, highlight_line, is_foldable, TokenKind,
+    };
 
     let line_count = es.buffer.line_count();
     let cursor_line = es.cursor.position.line;
     let cursor_col = es.cursor.position.col;
+    let active_depth = active_indent_depth(&es.buffer, cursor_line, es.tab_width);
 
     let (sel_start, sel_end) = es
         .selection
@@ -4014,7 +3985,14 @@ fn push_editor_data(window: &AppWindow, es: &EditorState) {
         .unzip();
 
     let mut lines: Vec<EditorLine> = Vec::with_capacity(line_count);
-    for i in 0..line_count {
+
+    let mut i = 0;
+    while i < line_count {
+        if es.fold_state.is_hidden(i) {
+            i += 1;
+            continue;
+        }
+
         let raw = es.buffer.line(i).unwrap_or_default();
         let trimmed = raw.trim_end_matches('\n');
         let tokens_raw = highlight_line(trimmed, &es.language);
@@ -4043,16 +4021,43 @@ fn push_editor_data(window: &AppWindow, es: &EditorState) {
         let token_model = Rc::new(VecModel::from(tokens));
 
         let is_current = i == cursor_line;
-
         let (sf, st) = compute_line_selection(i, trimmed.len(), &sel_start, &sel_end);
+
+        let guides_raw = compute_line_indent_guides(&es.buffer, i, es.tab_width, active_depth);
+        let guides: Vec<EditorIndentGuide> = guides_raw
+            .into_iter()
+            .map(|g| EditorIndentGuide {
+                depth: g.depth as i32,
+                active: g.active,
+            })
+            .collect();
+        let guide_model = Rc::new(VecModel::from(guides));
+
+        let folded = es.fold_state.is_fold_start(i);
+        let foldable = folded || is_foldable(&es.buffer, i, es.tab_width);
+        let fold_preview = if folded {
+            es.fold_state
+                .get_fold(i)
+                .map(|f| SharedString::from(&f.preview))
+                .unwrap_or_default()
+        } else {
+            SharedString::default()
+        };
 
         lines.push(EditorLine {
             number: (i + 1) as i32,
+            buffer_line: i as i32,
             tokens: ModelRc::from(token_model as Rc<dyn Model<Data = EditorToken>>),
+            indent_guides: ModelRc::from(guide_model as Rc<dyn Model<Data = EditorIndentGuide>>),
             is_current,
             sel_from: sf,
             sel_to: st,
+            is_foldable: foldable,
+            is_folded: folded,
+            fold_preview,
         });
+
+        i += 1;
     }
 
     let model = Rc::new(VecModel::from(lines));
@@ -4073,6 +4078,20 @@ fn push_editor_data(window: &AppWindow, es: &EditorState) {
     window.set_editor_language(SharedString::from(&es.language));
     window.set_editor_line_count(line_count as i32);
     window.set_editor_char_count(es.buffer.len_chars() as i32);
+}
+
+fn display_row_to_buffer_line(es: &EditorState, display_row: usize) -> usize {
+    let mut display = 0;
+    for i in 0..es.buffer.line_count() {
+        if es.fold_state.is_hidden(i) {
+            continue;
+        }
+        if display == display_row {
+            return i;
+        }
+        display += 1;
+    }
+    es.buffer.line_count().saturating_sub(1)
 }
 
 fn compute_line_selection(
@@ -4110,7 +4129,7 @@ mod tests {
     fn default_app_state_starts_on_launchpad() {
         let state = AppState::default();
         assert!(state.shell_view.is_launchpad());
-        assert!(matches!(state.active_panel, ActivePanel::Edit));
+        assert_eq!(state.workspace.active_page().id, "edit");
     }
 
     #[test]
@@ -4124,32 +4143,44 @@ mod tests {
     #[test]
     fn store_snapshot_restore_round_trips_app_state() {
         let mut store: Store<AppState> = Store::new(AppState::default());
-        store.mutate(|s| s.active_panel = ActivePanel::Identity);
+        store.mutate(|s| {
+            s.workspace.switch_page_by_id("code");
+        });
         let bytes = store.snapshot().expect("snapshot");
         let mut fresh: Store<AppState> = Store::new(AppState::default());
         fresh.restore(&bytes).expect("restore");
-        assert!(matches!(fresh.state().active_panel, ActivePanel::Identity));
+        assert_eq!(fresh.state().workspace.active_page().id, "code");
         assert!(!fresh.state().apps.is_empty());
     }
 
     #[test]
-    fn active_panel_roundtrips_through_id() {
-        for panel in [ActivePanel::Identity, ActivePanel::Edit] {
-            assert_eq!(ActivePanel::from_id(panel.as_id()), panel);
-        }
+    fn workspace_pages_available() {
+        let state = AppState::default();
+        assert_eq!(state.workspace.pages().len(), 4);
+        let ids: Vec<&str> = state
+            .workspace
+            .pages()
+            .iter()
+            .map(|p| p.id.as_str())
+            .collect();
+        assert_eq!(ids, &["edit", "design", "code", "fusion"]);
     }
 
     #[test]
-    fn unknown_panel_id_falls_back_to_edit() {
-        assert_eq!(ActivePanel::from_id(999), ActivePanel::Edit);
-        assert_eq!(ActivePanel::from_id(-1), ActivePanel::Edit);
+    fn panel_id_for_slint_maps_pages() {
+        let mut state = AppState::default();
+        assert_eq!(panel_id_for_slint(&state.workspace), 1);
+        state.workspace.switch_page_by_id("code");
+        assert_eq!(panel_id_for_slint(&state.workspace), 2);
+        state.workspace.switch_page_by_id("fusion");
+        assert_eq!(panel_id_for_slint(&state.workspace), 1);
     }
 
     #[test]
-    fn select_panel_action_mutates_state() {
+    fn select_page_action_mutates_state() {
         let mut store: Store<AppState> = Store::new(AppState::default());
-        store.dispatch(SelectPanel(ActivePanel::Identity));
-        assert!(matches!(store.state().active_panel, ActivePanel::Identity));
+        store.dispatch(SelectPage("code".into()));
+        assert_eq!(store.state().workspace.active_page().id, "code");
     }
 
     #[test]
@@ -4173,77 +4204,6 @@ mod tests {
         };
         assert_eq!(view.active_app_id(), Some("test"));
         assert!(!view.is_launchpad());
-    }
-
-    #[test]
-    fn mutate_node_prop_updates_text_value() {
-        let mut doc = sample_document();
-        let root = doc.root.as_mut().unwrap();
-        assert!(mutate_node_prop(
-            root,
-            "hero",
-            "text",
-            "Hello",
-            Some("text")
-        ));
-        let hero = doc.root.as_ref().unwrap().find("hero").unwrap();
-        assert_eq!(hero.props["text"], "Hello");
-    }
-
-    #[test]
-    fn mutate_node_prop_updates_integer_value() {
-        let mut doc = sample_document();
-        let root = doc.root.as_mut().unwrap();
-        assert!(mutate_node_prop(
-            root,
-            "hero",
-            "level",
-            "3",
-            Some("integer")
-        ));
-        let hero = doc.root.as_ref().unwrap().find("hero").unwrap();
-        assert_eq!(hero.props["level"], 3);
-    }
-
-    #[test]
-    fn mutate_node_prop_returns_false_for_unknown_node() {
-        let mut doc = sample_document();
-        let root = doc.root.as_mut().unwrap();
-        assert!(!mutate_node_prop(root, "nonexistent", "x", "y", None));
-    }
-
-    #[test]
-    fn move_node_swaps_siblings() {
-        let mut doc = sample_document();
-        let children_before: Vec<String> = doc
-            .root
-            .as_ref()
-            .unwrap()
-            .children
-            .iter()
-            .map(|n| n.id.clone())
-            .collect();
-        assert_eq!(children_before, vec!["hero", "intro", "cols"]);
-
-        move_node_in_siblings(&mut doc, "hero", 1);
-        let children_after: Vec<String> = doc
-            .root
-            .as_ref()
-            .unwrap()
-            .children
-            .iter()
-            .map(|n| n.id.clone())
-            .collect();
-        assert_eq!(children_after, vec!["intro", "hero", "cols"]);
-    }
-
-    #[test]
-    fn delete_node_removes_child() {
-        let mut doc = sample_document();
-        delete_node(&mut doc, "hero");
-        assert_eq!(doc.root.as_ref().unwrap().children.len(), 2);
-        assert_eq!(doc.root.as_ref().unwrap().children[0].id, "intro");
-        assert_eq!(doc.root.as_ref().unwrap().children[1].id, "cols");
     }
 
     #[test]
@@ -4273,35 +4233,6 @@ mod tests {
         let doc = sample_document();
         let ids = collect_node_ids(doc.root.as_ref());
         assert_eq!(ids, vec!["root", "hero", "intro", "cols", "col1", "col2"]);
-    }
-
-    #[test]
-    fn add_node_to_selected_parent() {
-        let mut doc = sample_document();
-        let new_node = Node {
-            id: "n100".into(),
-            component: "heading".into(),
-            props: json!({ "text": "Added", "level": 2 }),
-            children: vec![],
-            ..Default::default()
-        };
-        add_node_to_document(&mut doc, Some("root"), new_node);
-        assert_eq!(doc.root.as_ref().unwrap().children.len(), 4);
-        assert_eq!(doc.root.as_ref().unwrap().children[3].id, "n100");
-    }
-
-    #[test]
-    fn add_node_to_empty_document() {
-        let mut doc = BuilderDocument::default();
-        let new_node = Node {
-            id: "first".into(),
-            component: "heading".into(),
-            props: json!({ "text": "First" }),
-            children: vec![],
-            ..Default::default()
-        };
-        add_node_to_document(&mut doc, None, new_node);
-        assert_eq!(doc.root.as_ref().unwrap().id, "first");
     }
 
     #[test]
@@ -4394,22 +4325,4 @@ mod tests {
         assert!(path.is_empty());
     }
 
-    #[test]
-    fn insert_after_sibling_places_correctly() {
-        let mut doc = sample_document();
-        let new_node = Node {
-            id: "between".into(),
-            component: "divider".into(),
-            props: json!({}),
-            children: vec![],
-            ..Default::default()
-        };
-        insert_after_sibling(&mut doc, "hero", new_node);
-        let children = &doc.root.as_ref().unwrap().children;
-        assert_eq!(children.len(), 4);
-        assert_eq!(children[0].id, "hero");
-        assert_eq!(children[1].id, "between");
-        assert_eq!(children[2].id, "intro");
-        assert_eq!(children[3].id, "cols");
-    }
 }

@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::node::{Axis, DockNode, NodeAddress, SplitPosition};
+use crate::node::{Axis, DockNode, MoveTarget, NodeAddress, SplitPosition};
 use crate::panel::PanelId;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DockState {
     pub root: DockNode,
 }
@@ -59,6 +59,10 @@ impl DockState {
 
     pub fn remove_panel(&mut self, panel_id: &str) -> Option<PanelId> {
         self.root.remove_panel(panel_id)
+    }
+
+    pub fn move_panel(&mut self, panel_id: &str, target: &MoveTarget) -> bool {
+        self.root.move_panel(panel_id, target)
     }
 
     pub fn tab_count(&self) -> usize {

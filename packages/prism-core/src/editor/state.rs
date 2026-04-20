@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::buffer::Buffer;
 use super::cursor::{Cursor, Position};
+use super::fold::FoldState;
 use super::selection::Selection;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -12,6 +13,7 @@ pub struct EditorState {
     pub language: String,
     pub read_only: bool,
     pub tab_width: usize,
+    pub fold_state: FoldState,
 }
 
 impl Default for EditorState {
@@ -23,6 +25,7 @@ impl Default for EditorState {
             language: String::new(),
             read_only: false,
             tab_width: 4,
+            fold_state: FoldState::new(),
         }
     }
 }
@@ -47,6 +50,23 @@ impl EditorState {
         self.buffer = Buffer::from_text(text);
         self.cursor = Cursor::new();
         self.selection = None;
+        self.fold_state = FoldState::new();
+    }
+
+    pub fn toggle_fold_at_cursor(&mut self) {
+        let line = self.cursor.position.line;
+        self.fold_state
+            .toggle_fold(line, &self.buffer, self.tab_width);
+    }
+
+    pub fn toggle_fold_at_line(&mut self, line: usize) {
+        self.fold_state
+            .toggle_fold(line, &self.buffer, self.tab_width);
+    }
+
+    fn invalidate_folds(&mut self) {
+        let line = self.cursor.position.line;
+        self.fold_state.invalidate_from(line);
     }
 
     pub fn insert_char(&mut self, ch: char) {
@@ -59,6 +79,7 @@ impl EditorState {
         s.push(ch);
         self.buffer.insert(idx, &s);
         self.cursor.set_char_index(&self.buffer, idx + 1);
+        self.invalidate_folds();
     }
 
     pub fn insert_text(&mut self, text: &str) {
@@ -70,6 +91,7 @@ impl EditorState {
         let len = text.chars().count();
         self.buffer.insert(idx, text);
         self.cursor.set_char_index(&self.buffer, idx + len);
+        self.invalidate_folds();
     }
 
     pub fn insert_tab(&mut self) {
@@ -84,6 +106,7 @@ impl EditorState {
         self.buffer.insert(idx, &spaces);
         self.cursor
             .set_char_index(&self.buffer, idx + spaces_to_next);
+        self.invalidate_folds();
     }
 
     pub fn dedent(&mut self) {
@@ -99,6 +122,7 @@ impl EditorState {
                 self.buffer.delete(line_start, line_start + to_remove);
                 let new_col = self.cursor.position.col.saturating_sub(to_remove);
                 self.cursor.set_position(Position { line, col: new_col });
+                self.invalidate_folds();
             }
         }
     }
@@ -119,6 +143,7 @@ impl EditorState {
         let insert_len = insert.chars().count();
         self.buffer.insert(idx, &insert);
         self.cursor.set_char_index(&self.buffer, idx + insert_len);
+        self.invalidate_folds();
     }
 
     pub fn backspace(&mut self) {
@@ -132,6 +157,7 @@ impl EditorState {
         if idx > 0 {
             self.buffer.delete(idx - 1, idx);
             self.cursor.set_char_index(&self.buffer, idx - 1);
+            self.invalidate_folds();
         }
     }
 
@@ -145,6 +171,7 @@ impl EditorState {
         let idx = self.cursor.char_index(&self.buffer);
         if idx < self.buffer.len_chars() {
             self.buffer.delete(idx, idx + 1);
+            self.invalidate_folds();
         }
     }
 
@@ -160,6 +187,7 @@ impl EditorState {
         if target < idx {
             self.buffer.delete(target, idx);
             self.cursor.set_char_index(&self.buffer, target);
+            self.invalidate_folds();
         }
     }
 
@@ -174,6 +202,7 @@ impl EditorState {
         let target = word_boundary_right(&self.buffer.text(), idx);
         if target > idx {
             self.buffer.delete(idx, target);
+            self.invalidate_folds();
         }
     }
 
@@ -203,6 +232,7 @@ impl EditorState {
                 col: self.cursor.position.col.min(line_len),
             });
             self.selection = None;
+            self.invalidate_folds();
             return;
         } else {
             self.buffer.len_chars()
@@ -216,6 +246,7 @@ impl EditorState {
             line: new_line,
             col: self.cursor.position.col.min(line_len),
         });
+        self.invalidate_folds();
     }
 
     pub fn duplicate_line(&mut self) {
@@ -236,6 +267,7 @@ impl EditorState {
                 line: line + 1,
                 col: self.cursor.position.col,
             });
+            self.invalidate_folds();
         }
     }
 
@@ -401,6 +433,7 @@ impl EditorState {
             "select-all" => self.select_all(),
             "duplicate-line" => self.duplicate_line(),
             "delete-line" => self.delete_line(),
+            "toggle-fold" => self.toggle_fold_at_cursor(),
             _ => {}
         }
     }
@@ -429,6 +462,7 @@ impl EditorState {
                 let end = sel.end(&self.buffer);
                 self.buffer.delete(start, end);
                 self.cursor.set_char_index(&self.buffer, start);
+                self.invalidate_folds();
                 return true;
             }
         }

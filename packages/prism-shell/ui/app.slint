@@ -165,12 +165,22 @@ struct EditorToken {
     col-offset: int,
 }
 
+struct EditorIndentGuide {
+    depth: int,
+    active: bool,
+}
+
 struct EditorLine {
     number: int,
+    buffer-line: int,
     tokens: [EditorToken],
+    indent-guides: [EditorIndentGuide],
     is-current: bool,
     sel-from: int,
     sel-to: int,
+    is-foldable: bool,
+    is-folded: bool,
+    fold-preview: string,
 }
 
 struct ExplorerNodeItem {
@@ -1186,6 +1196,7 @@ export component AppWindow inherits Window {
     callback editor-char-typed(string);
     callback editor-click(int, int);
     callback editor-drag(int, int);
+    callback editor-fold-toggle(int);
 
     // Page layout
     in property <PageLayoutData> page-layout: {
@@ -2489,25 +2500,26 @@ export component AppWindow inherits Window {
                             background: #1e222a;
 
                             property <length> line-h: 18px;
-                            property <length> gutter-w: 44px;
+                            property <length> gutter-w: 56px;
                             property <length> content-pad: 8px;
+                            property <string> ed-font: "Menlo";
+                            property <length> ed-font-size: 13px;
 
-                            // Cursor position measurement — uses actual font rendering width
                             cursor-measure := Text {
                                 text: root.editor-cursor-prefix;
-                                font-size: 13px;
-                                font-family: "monospace";
+                                font-size: ed-font-size;
+                                font-family: ed-font;
                                 opacity: 0;
                             }
 
-                            // Approximate char-w for click mapping and selection
                             measure-char := Text {
                                 text: "0000000000";
-                                font-size: 13px;
-                                font-family: "monospace";
+                                font-size: ed-font-size;
+                                font-family: ed-font;
                                 opacity: 0;
                             }
                             property <length> char-w: max(1px, measure-char.preferred-width / 10);
+                            property <length> tab-indent: 4 * char-w;
 
                             editor-focus := FocusScope {
                                 width: 100%;
@@ -2603,7 +2615,16 @@ export component AppWindow inherits Window {
                                                 background: #264f7880;
                                             }
 
-                                            // Gutter
+                                            // Indent guide vertical lines
+                                            for guide in line.indent-guides : Rectangle {
+                                                x: gutter-w + content-pad + (guide.depth - 1) * tab-indent;
+                                                y: 0px;
+                                                width: 1px;
+                                                height: line-h;
+                                                background: guide.active ? #528bff40 : #ffffff12;
+                                            }
+
+                                            // Gutter background
                                             Rectangle {
                                                 x: 0px;
                                                 y: 0px;
@@ -2611,14 +2632,27 @@ export component AppWindow inherits Window {
                                                 height: line-h;
                                                 background: #161a22;
 
+                                                // Line number
                                                 Text {
                                                     x: 0px;
-                                                    width: gutter-w - 8px;
+                                                    width: 36px;
                                                     text: line.number;
                                                     color: line.is-current ? #ffffff60 : #ffffff22;
-                                                    font-size: 13px;
-                                                    font-family: "monospace";
+                                                    font-size: ed-font-size;
+                                                    font-family: ed-font;
                                                     horizontal-alignment: right;
+                                                    vertical-alignment: center;
+                                                }
+
+                                                // Fold toggle indicator
+                                                if line.is-foldable || line.is-folded : Text {
+                                                    x: 38px;
+                                                    width: 14px;
+                                                    height: line-h;
+                                                    text: line.is-folded ? "\u{25B6}" : "\u{25BC}";
+                                                    color: line.is-folded ? #528bff60 : #ffffff20;
+                                                    font-size: 8px;
+                                                    horizontal-alignment: center;
                                                     vertical-alignment: center;
                                                 }
                                             }
@@ -2643,8 +2677,18 @@ export component AppWindow inherits Window {
                                                 for token in line.tokens : Text {
                                                     text: token.text;
                                                     color: token.token-color;
-                                                    font-size: 13px;
-                                                    font-family: "monospace";
+                                                    font-size: ed-font-size;
+                                                    font-family: ed-font;
+                                                    vertical-alignment: center;
+                                                    horizontal-stretch: 0;
+                                                }
+
+                                                // Fold preview inline
+                                                if line.is-folded : Text {
+                                                    text: line.fold-preview;
+                                                    color: #ffffff30;
+                                                    font-size: ed-font-size;
+                                                    font-family: ed-font;
                                                     vertical-alignment: center;
                                                     horizontal-stretch: 0;
                                                 }
@@ -2678,10 +2722,16 @@ export component AppWindow inherits Window {
                                 pointer-event(event) => {
                                     if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
                                         editor-focus.focus();
-                                        root.editor-click(
-                                            clamp(floor((self.mouse-y - editor-sv.viewport-y) / line-h), 0, root.editor-lines.length - 1),
-                                            max(0, floor((self.mouse-x - gutter-w - content-pad) / char-w))
-                                        );
+                                        if self.mouse-x < gutter-w {
+                                            root.editor-fold-toggle(
+                                                clamp(floor((self.mouse-y - editor-sv.viewport-y) / line-h), 0, root.editor-lines.length - 1)
+                                            );
+                                        } else {
+                                            root.editor-click(
+                                                clamp(floor((self.mouse-y - editor-sv.viewport-y) / line-h), 0, root.editor-lines.length - 1),
+                                                max(0, floor((self.mouse-x - gutter-w - content-pad) / char-w))
+                                            );
+                                        }
                                     }
                                 }
                                 moved => {

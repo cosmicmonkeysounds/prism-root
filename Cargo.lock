@@ -5584,6 +5584,7 @@ dependencies = [
  "prism-builder",
  "prism-core",
  "prism-daemon",
+ "prism-dock",
  "serde",
  "serde_json",
  "slint",

@@ -18,6 +18,26 @@ pub enum PanelKind {
     Console,
 }
 
+impl PanelKind {
+    pub const ALL: &[PanelKind] = &[
+        Self::Builder,
+        Self::Inspector,
+        Self::Properties,
+        Self::Explorer,
+        Self::CodeEditor,
+        Self::Identity,
+        Self::Timeline,
+        Self::NodeGraph,
+        Self::AssetBrowser,
+        Self::ComponentPalette,
+        Self::Console,
+    ];
+
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.iter().find(|k| k.id() == id).copied()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PanelMeta {
     pub kind: PanelKind,
@@ -150,23 +170,29 @@ mod tests {
 
     #[test]
     fn all_kinds_have_meta() {
-        let kinds = [
-            PanelKind::Builder,
-            PanelKind::Inspector,
-            PanelKind::Properties,
-            PanelKind::Explorer,
-            PanelKind::CodeEditor,
-            PanelKind::Identity,
-            PanelKind::Timeline,
-            PanelKind::NodeGraph,
-            PanelKind::AssetBrowser,
-            PanelKind::ComponentPalette,
-            PanelKind::Console,
-        ];
-        for k in kinds {
+        for k in PanelKind::ALL {
             let meta = k.meta();
             assert!(!meta.label.is_empty());
             assert!(meta.min_width > 0.0);
         }
+    }
+
+    #[test]
+    fn all_constant_matches_variant_count() {
+        assert_eq!(PanelKind::ALL.len(), 11);
+    }
+
+    #[test]
+    fn from_id_roundtrip() {
+        for k in PanelKind::ALL {
+            let id = k.id();
+            let recovered = PanelKind::from_id(&id).unwrap();
+            assert_eq!(*k, recovered);
+        }
+    }
+
+    #[test]
+    fn from_id_unknown() {
+        assert!(PanelKind::from_id("nonexistent").is_none());
     }
 }

@@ -15,6 +15,16 @@ pub enum SplitPosition {
     After,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MoveTarget {
+    TabGroup(NodeAddress),
+    SplitEdge {
+        addr: NodeAddress,
+        axis: Axis,
+        position: SplitPosition,
+    },
+}
+
 /// Address of a node in the binary tree. Empty = root, then each
 /// `false` = first child, `true` = second child.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -52,7 +62,7 @@ impl NodeAddress {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum DockNode {
     Split {
@@ -294,24 +304,35 @@ impl DockNode {
         None
     }
 
-    /// Move a panel from its current location to a target tab group.
-    pub fn move_panel_to_tab_group(&mut self, panel_id: &str, target_addr: &NodeAddress) -> bool {
-        if let Some(removed) = self.remove_panel(panel_id) {
-            let target = self.find_panel(
-                self.node_at(target_addr)
-                    .and_then(|n| match n {
-                        DockNode::TabGroup { tabs, .. } => tabs.first().map(|s| s.as_str()),
-                        _ => None,
-                    })
-                    .unwrap_or(""),
-            );
-            if let Some(actual_addr) = target {
-                return self.add_tab(&actual_addr, removed);
+    /// Move a panel to a target: either into an existing tab group or
+    /// to the edge of a tab group (creating a new split).
+    pub fn move_panel(&mut self, panel_id: &str, target: &MoveTarget) -> bool {
+        let anchor_panel = match target {
+            MoveTarget::TabGroup(addr) | MoveTarget::SplitEdge { addr, .. } => {
+                self.node_at(addr).and_then(|n| match n {
+                    DockNode::TabGroup { tabs, .. } => tabs.first().cloned(),
+                    _ => None,
+                })
             }
-            // Target moved during remove; try the original address.
-            return self.add_tab(target_addr, removed);
+        };
+
+        let Some(removed) = self.remove_panel(panel_id) else {
+            return false;
+        };
+
+        let resolved = anchor_panel
+            .as_deref()
+            .and_then(|id| self.find_panel(id))
+            .unwrap_or_else(|| match target {
+                MoveTarget::TabGroup(a) | MoveTarget::SplitEdge { addr: a, .. } => a.clone(),
+            });
+
+        match target {
+            MoveTarget::TabGroup(_) => self.add_tab(&resolved, removed),
+            MoveTarget::SplitEdge { axis, position, .. } => {
+                self.split_at(&resolved, *axis, removed, *position)
+            }
         }
-        false
     }
 
     pub fn tab_count(&self) -> usize {
@@ -531,5 +552,77 @@ mod tests {
         assert_eq!(grandchild.0, vec![false, true]);
         let back = grandchild.parent().unwrap();
         assert_eq!(back, child);
+    }
+
+    #[test]
+    fn move_panel_to_tab_group() {
+        let mut tree = sample_tree();
+        let target = MoveTarget::TabGroup(NodeAddress(vec![false]));
+        assert!(tree.move_panel("inspector", &target));
+        assert!(tree.contains_panel("inspector"));
+        let addr = tree.find_panel("inspector").unwrap();
+        let node = tree.node_at(&addr).unwrap();
+        if let DockNode::TabGroup { tabs, .. } = node {
+            assert!(tabs.contains(&"inspector".to_string()));
+            assert!(tabs.contains(&"explorer".to_string()));
+        }
+    }
+
+    #[test]
+    fn move_panel_to_split_edge() {
+        let mut tree = DockNode::hsplit(
+            0.5,
+            DockNode::tab("a".into()),
+            DockNode::tabs(vec!["b".into(), "c".into()]),
+        );
+        let target = MoveTarget::SplitEdge {
+            addr: NodeAddress(vec![false]),
+            axis: Axis::Vertical,
+            position: SplitPosition::After,
+        };
+        assert!(tree.move_panel("c", &target));
+        assert!(tree.contains_panel("c"));
+        // "a" should now be a vsplit with c below it
+        let left = tree.node_at(&NodeAddress(vec![false])).unwrap();
+        assert!(left.is_split());
+        if let DockNode::Split { axis, .. } = left {
+            assert_eq!(*axis, Axis::Vertical);
+        }
+    }
+
+    #[test]
+    fn move_panel_nonexistent_fails() {
+        let mut tree = sample_tree();
+        let target = MoveTarget::TabGroup(NodeAddress(vec![false]));
+        assert!(!tree.move_panel("nonexistent", &target));
+    }
+
+    #[test]
+    fn move_panel_preserves_tree_integrity() {
+        let mut tree = DockNode::hsplit(
+            0.3,
+            DockNode::tab("explorer".into()),
+            DockNode::hsplit(
+                0.7,
+                DockNode::tab("builder".into()),
+                DockNode::tab("inspector".into()),
+            ),
+        );
+        let original_count = tree.tab_count();
+        let target = MoveTarget::TabGroup(NodeAddress(vec![true, false]));
+        assert!(tree.move_panel("explorer", &target));
+        assert_eq!(tree.tab_count(), original_count);
+        assert!(tree.contains_panel("explorer"));
+        assert!(tree.contains_panel("builder"));
+        assert!(tree.contains_panel("inspector"));
+    }
+
+    #[test]
+    fn partial_eq_works() {
+        let a = DockNode::tab("builder".into());
+        let b = DockNode::tab("builder".into());
+        assert_eq!(a, b);
+        let c = DockNode::tab("inspector".into());
+        assert_ne!(a, c);
     }
 }

@@ -34,6 +34,7 @@ pub mod schemas;
 pub mod signal;
 pub mod slint_source;
 pub mod source_map;
+pub mod source_parse;
 pub mod starter;
 pub mod style;
 pub mod variant;
@@ -61,6 +62,7 @@ pub use resource::{ResourceDef, ResourceId, ResourceKind};
 pub use signal::{ActionKind, Connection, ConnectionId, SignalDef};
 pub use slint_source::{SlintEmitter, SlintIdent};
 pub use source_map::{MappedEmitter, PropSpan, SourceMap, SourceSpan};
+pub use source_parse::{derive_document_from_source, format_slint_value, parse_slint_value};
 pub use starter::register_builtins;
 pub use style::{resolve_cascade, StyleProperties};
 pub use variant::{VariantAxis, VariantOption};
@@ -71,7 +73,7 @@ pub mod live;
 pub mod syntax_provider;
 
 #[cfg(feature = "interpreter")]
-pub use live::{LiveDiagnostic, LiveDocument, SourceSelection};
+pub use live::{LiveDiagnostic, LiveDocument, SourceEditError, SourceSelection};
 #[cfg(feature = "interpreter")]
 pub use render::{compile_slint_source, instantiate_document, InstantiateError};
 #[cfg(feature = "interpreter")]

@@ -11,7 +11,7 @@
 //! Phase 0 ships one hard-coded panel (`panels::identity`) with a
 //! sidebar of three buttons. Panels grow fan-out-style in Phase 1;
 //! adding one means: register its data in `panels/<name>.rs`, wire
-//! it into `ActivePanel`, and add a branch in `Shell::sync_ui`.
+//! it into the dock workspace, and add a branch in `Shell::sync_ui`.
 //!
 //! ## Backend choice
 //!

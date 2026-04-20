@@ -49,7 +49,8 @@ web = ["dep:wasm-bindgen", "dep:console_error_panic_hook", "dep:getrandom", "uui
 [dependencies]
 # Shared Prism foundations.
 prism-core = { path = "../prism-core" }
-prism-builder = { path = "../prism-builder" }
+prism-builder = { path = "../prism-builder", features = ["interpreter"] }
+prism-dock = { path = "../prism-dock" }
 
 # Daemon is a native-only dep — the browser build talks to a remote
 # relay, not a local daemon. Feature-gated so the WASM target stays

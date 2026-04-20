@@ -22,7 +22,7 @@ use crate::html::Html;
 use crate::html_block::{HtmlRegistry, HtmlRenderContext};
 use crate::registry::ComponentRegistry;
 use crate::slint_source::{rgba_to_slint_literal, SlintEmitter};
-use crate::source_map::{SourceMap, SourceSpan};
+use crate::source_map::{PropSpan, SourceMap, SourceSpan};
 
 /// Render a document to an HTML fragment via the [`HtmlRegistry`].
 /// Emits the root node's markup and every descendant in order.
@@ -173,12 +173,13 @@ pub fn build_source_map_from_markers(source: &str) -> SourceMap {
             let line_end = line_start + line.len();
             if let Some(idx) = pending.iter().rposition(|(id, _, _)| id == node_id) {
                 let (id, component, start) = pending.remove(idx);
+                let props = extract_prop_spans(source, start, line_end);
                 map.insert(SourceSpan {
                     node_id: id,
                     component,
                     start,
                     end: line_end,
-                    props: vec![],
+                    props,
                 });
             }
         }
@@ -186,7 +187,82 @@ pub fn build_source_map_from_markers(source: &str) -> SourceMap {
     map
 }
 
-fn line_byte_offsets(source: &str) -> Vec<(usize, &str)> {
+/// Extract property spans from a node's source region, skipping child
+/// nodes (identified by nested `@node-start`/`@node-end` markers).
+fn extract_prop_spans(source: &str, node_start: usize, node_end: usize) -> Vec<PropSpan> {
+    let mut props = Vec::new();
+    let mut child_depth: usize = 0;
+    let mut seen_own_start = false;
+    let clamped_end = node_end.min(source.len());
+
+    for (line_start, line) in line_byte_offsets(source) {
+        if line_start >= clamped_end {
+            break;
+        }
+        if line_start + line.len() <= node_start {
+            continue;
+        }
+
+        let trimmed = line.trim();
+
+        if trimmed.starts_with("// @node-start:") {
+            if !seen_own_start {
+                seen_own_start = true;
+            } else {
+                child_depth += 1;
+            }
+            continue;
+        }
+        if trimmed.starts_with("// @node-end:") {
+            child_depth = child_depth.saturating_sub(1);
+            continue;
+        }
+
+        if child_depth > 0 {
+            continue;
+        }
+
+        // Skip comments, block openers, block closers, empty lines.
+        if trimmed.is_empty()
+            || trimmed.starts_with("//")
+            || trimmed.ends_with('{')
+            || trimmed == "}"
+        {
+            continue;
+        }
+
+        // Match `key: value;` — the colon separates key from value,
+        // the trailing semicolon terminates the binding.
+        if let Some(colon_in_trimmed) = trimmed.find(':') {
+            if let Some(semi_in_trimmed) = trimmed.rfind(';') {
+                if semi_in_trimmed > colon_in_trimmed {
+                    let key = trimmed[..colon_in_trimmed].trim();
+                    // Locate the value within the full source line.
+                    let leading_ws = line.len() - line.trim_start().len();
+                    let colon_abs = line_start + leading_ws + colon_in_trimmed;
+                    // Value starts after ": " (colon + space).
+                    let value_start = colon_abs + 1;
+                    let value_start = value_start
+                        + source[value_start..clamped_end]
+                            .bytes()
+                            .take_while(|b| *b == b' ')
+                            .count();
+                    let semi_abs = line_start + leading_ws + semi_in_trimmed;
+                    if value_start < semi_abs && semi_abs <= clamped_end {
+                        props.push(PropSpan {
+                            key: key.to_string(),
+                            value_start,
+                            value_end: semi_abs,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    props
+}
+
+pub fn line_byte_offsets(source: &str) -> Vec<(usize, &str)> {
     let mut result = Vec::new();
     let mut offset = 0;
     for line in source.split('\n') {
@@ -772,5 +848,98 @@ mod tests {
         let tokens = DesignTokens::default();
         let (source, _) = render_document_slint_source_mapped(&doc, &reg, &tokens).unwrap();
         let _def = compile_slint_source(&source).expect("mapped source should compile");
+    }
+
+    // ── PropSpan extraction tests ────────────────────────────────
+
+    #[test]
+    fn prop_spans_extracted_for_leaf_node() {
+        let doc = BuilderDocument {
+            root: Some(Node {
+                id: "n1".into(),
+                component: "heading".into(),
+                props: json!({ "text": "Hello" }),
+                children: vec![],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let reg = slint_registry();
+        let tokens = DesignTokens::default();
+        let (source, map) = render_document_slint_source_mapped(&doc, &reg, &tokens).unwrap();
+
+        let span = map.span_for_node("n1").unwrap();
+        assert!(!span.props.is_empty(), "should have prop spans");
+
+        let text_prop = span.props.iter().find(|p| p.key == "text");
+        assert!(text_prop.is_some(), "should have 'text' prop span");
+        let tp = text_prop.unwrap();
+        let value_slice = &source[tp.value_start..tp.value_end];
+        assert_eq!(value_slice, r#""Hello""#);
+    }
+
+    #[test]
+    fn prop_spans_skip_child_properties() {
+        let doc = BuilderDocument {
+            root: Some(Node {
+                id: "s1".into(),
+                component: "section".into(),
+                props: json!({}),
+                children: vec![Node {
+                    id: "h1".into(),
+                    component: "heading".into(),
+                    props: json!({ "text": "Child" }),
+                    children: vec![],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let reg = slint_registry();
+        let tokens = DesignTokens::default();
+        let (source, map) = render_document_slint_source_mapped(&doc, &reg, &tokens).unwrap();
+
+        let s1_span = map.span_for_node("s1").unwrap();
+        let s1_text_prop = s1_span.props.iter().find(|p| p.key == "text");
+        assert!(
+            s1_text_prop.is_none(),
+            "section should not capture child's 'text' prop; got props: {:?}",
+            s1_span.props
+        );
+
+        let h1_span = map.span_for_node("h1").unwrap();
+        let h1_text_prop = h1_span.props.iter().find(|p| p.key == "text");
+        assert!(h1_text_prop.is_some(), "child should have 'text' prop");
+        let tp = h1_text_prop.unwrap();
+        assert_eq!(&source[tp.value_start..tp.value_end], r#""Child""#);
+    }
+
+    #[test]
+    fn prop_span_value_replacement_works() {
+        let doc = BuilderDocument {
+            root: Some(Node {
+                id: "n1".into(),
+                component: "heading".into(),
+                props: json!({ "text": "Before" }),
+                children: vec![],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let reg = slint_registry();
+        let tokens = DesignTokens::default();
+        let (source, map) = render_document_slint_source_mapped(&doc, &reg, &tokens).unwrap();
+
+        let span = map.span_for_node("n1").unwrap();
+        let tp = span.props.iter().find(|p| p.key == "text").unwrap();
+
+        let mut new_source = String::new();
+        new_source.push_str(&source[..tp.value_start]);
+        new_source.push_str(r#""After""#);
+        new_source.push_str(&source[tp.value_end..]);
+
+        assert!(new_source.contains(r#"text: "After";"#));
+        assert!(!new_source.contains("Before"));
     }
 }

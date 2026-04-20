@@ -111,13 +111,19 @@ From `src/lib.rs`:
   `restore` keep the §7 hot-reload story alive.
   `Shell::add_notification` pushes toast notifications.
 - `FirstPaint` — boot telemetry slot (`src/telemetry.rs`).
-- `AppState`, `ActivePanel` — the reloadable root state. Phase 4
-  replaced `selected_node: Option<NodeId>` with `SelectionModel`
-  (multi-select with focus depth). Added `tabs`, `toasts`,
-  `command_palette_open`, `command_palette_query`, `search_query`.
-  The component registry is **not** part of `AppState` — it's an
-  `Arc<ComponentRegistry>` on `ShellInner`, rebuilt from scratch on
-  every boot via `prism_builder::register_builtins`.
+- `AppState` — the reloadable root state. `ActivePanel` was removed
+  in the ADR-005 dock integration; panel/page state now lives in
+  `workspace: prism_dock::DockWorkspace` on `AppState`.
+  `panel_id_for_slint(&DockWorkspace) -> i32` derives the legacy
+  Slint panel ID from the active workspace page.
+  `page_id_for_panel(&str) -> &str` maps panel names to page IDs.
+  Phase 4 replaced `selected_node: Option<NodeId>` with
+  `SelectionModel` (multi-select with focus depth). Added `tabs`,
+  `toasts`, `command_palette_open`, `command_palette_query`,
+  `search_query`. The component registry is **not** part of
+  `AppState` — it's an `Arc<ComponentRegistry>` on `ShellInner`,
+  rebuilt from scratch on every boot via
+  `prism_builder::register_builtins`.
 - `SelectionModel` (`src/selection.rs`) — multi-select with focus
   index and depth. Methods: `select`, `toggle`, `extend`, `clear`,
   `primary`, `contains`, `is_multi`, `deepen`, `shallow`.
@@ -145,8 +151,8 @@ From `src/lib.rs`:
   `BuilderDocument` node properties. `SearchIndex::build(doc)` indexes
   all text/number/boolean fields; `query(str)` returns ranked
   `SearchResult` items (node_id, component, field, snippet, score).
-- `SelectPanel(ActivePanel)` — reducer-side action for switching
-  panels.
+- `SelectPage(String)` — reducer-side action for switching workflow
+  pages via `workspace.switch_page_by_id()`.
 - `InputAction` — serialisable `Action<AppState>` wrapper around
   `InputEvent`.
 - `panels` — data-provider structs (one per panel) that feed Slint
