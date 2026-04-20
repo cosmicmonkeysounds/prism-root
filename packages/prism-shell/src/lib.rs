@@ -30,6 +30,7 @@ pub mod panels;
 pub mod search;
 pub mod selection;
 pub mod telemetry;
+pub mod testing;
 
 pub use app::{AppState, Shell};
 pub use command::{CommandEntry, CommandRegistry};

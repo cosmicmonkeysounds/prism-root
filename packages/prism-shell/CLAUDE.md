@@ -23,11 +23,21 @@ licence requires.
   after the cargo step to emit the JS loader next to
   `web/index.html`. `prism build --target web` wires this up as
   one command.
-- `cargo test -p prism-shell` — unit + insta snapshot tests. Slint
-  tests that need a platform backend gracefully skip if none is
+- `cargo test -p prism-shell` — unit + insta snapshot tests (155+).
+  Slint tests that need a platform backend gracefully skip if none is
   available (CI-friendly).
-- `prism dev shell` — native bin at `src/bin/native.rs`. One-line
-  `main` that builds a `Shell` and runs Slint's event loop.
+- `prism dev shell` — native bin at `src/bin/native.rs`. Supports CLI
+  flags for direct scene/app navigation:
+  - `--app lattice --panel builder` — skip launchpad, open Lattice builder
+  - `--scene builder-grid` — load a predefined test scene
+  - `--scene list` — list all available scenes
+  - `--viewport tablet` — set viewport to 768px
+  - `--zoom 0.5` — set initial canvas zoom
+  - `--screenshot /tmp/test.png` — capture screenshot and exit
+- `prism visual` — automated visual test suite. Runs all predefined
+  scenes through the shell binary, captures screenshots to
+  `screenshots/`. Use `prism visual --scene builder-grid` for a
+  single scene, `prism visual --list` to list scenes.
 - `prism dev web` — builds the `wasm32-unknown-unknown` target,
   runs `wasm-bindgen` into `web/`, then serves that directory via
   `python3 -m http.server 1420`. Load `http://127.0.0.1:1420/`
@@ -156,6 +166,35 @@ From `src/lib.rs`:
   their `moved` handler; the Rust side looks up the entry in the
   `HelpRegistry` on `ShellInner` and pushes `HelpTooltipData` to
   the Slint overlay. Escape dismisses the tooltip.
+- `testing` (`src/testing.rs`) — visual testing harness. `BuiltinScene`
+  enum (8 scenes: launchpad, builder-empty, builder-grid, builder-tablet,
+  builder-mobile, inspector, code-editor, explorer). `apply_scene(scene)`
+  builds an `AppState` for a scene. `TestHarness` wraps a `Shell` with
+  scene loading, input simulation, and state assertions. `TestInput`
+  provides `send_command`, `send_key`, `click_grid_cell`, `click_node`,
+  `select_panel`, `set_viewport`. `ShellScreenshot` captures screenshots
+  via platform tools. 11 unit tests.
+
+## Testing
+When implementing UI features, use the testing harness to verify your
+changes visually:
+```bash
+# Quick visual check — opens builder directly (no click-through)
+cargo run -p prism-shell -- --app lattice --panel builder
+
+# Check at different viewports
+cargo run -p prism-shell -- --scene builder-tablet
+cargo run -p prism-shell -- --scene builder-mobile
+
+# Capture screenshots for review
+prism visual --scene builder-grid
+
+# Run the full visual suite
+prism visual
+```
+New scenes should be added to `BuiltinScene` in `src/testing.rs` when
+adding major visual features. Each scene should be self-contained and
+deterministic.
 
 ## Phase 4 status
 The shell is now an interactive editor. All MVP and Should Ship
@@ -228,6 +267,19 @@ shell framework features are implemented:
   resolved style properties with app → page → node inheritance. When
   nothing is selected, shows page-level styles. Edits dispatch through
   `apply_style_edit` to node or page `StyleProperties`.
+- **Viewport presets**: Desktop (1280px) / Tablet (768px) / Mobile (375px)
+  toggle buttons in the builder toolbar. `viewport_width` on `AppState`
+  drives page layout computation. `on_viewport_preset_changed` callback
+  syncs the preset to state and Slint properties.
+- **Canvas zoom**: `canvas-zoom` in-out property on AppWindow (0.25–3.0).
+  Toolbar zoom controls (−, %, +) and keyboard shortcuts (Ctrl+=/−/0).
+  Page surface, margins, grid overlays, and gutters all scale by zoom.
+  Flickable-based pan with explicit viewport dimensions.
+- **Visual testing harness**: `src/testing.rs` — 8 predefined scenes,
+  `TestHarness` for state assertions + input simulation,
+  `ShellScreenshot` for platform screenshot capture. CLI flags
+  `--app`, `--panel`, `--scene`, `--viewport`, `--zoom`, `--screenshot`
+  on the native binary. `prism visual` runs automated screenshot suite.
 
 ## Downstream
 - `prism-studio/src-tauri` embeds this crate as a library with

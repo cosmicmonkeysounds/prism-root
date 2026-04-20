@@ -203,6 +203,10 @@ impl InputManager {
                 // Sidebar visibility
                 .bind("ctrl+b", "view.toggle_left_sidebar")
                 .bind("ctrl+shift+b", "view.toggle_right_sidebar")
+                // Zoom
+                .bind("ctrl+=", "view.zoom_in")
+                .bind("ctrl+-", "view.zoom_out")
+                .bind("ctrl+0", "view.zoom_reset")
                 // Escape: palette first, then general
                 .bind_when("escape", "command_palette.close", "commandPaletteOpen")
                 .bind_when("escape", "navigate.escape", "!commandPaletteOpen")

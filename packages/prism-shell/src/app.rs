@@ -68,9 +68,15 @@ pub struct AppState {
     pub show_right_sidebar: bool,
     pub explorer_expanded: HashSet<String>,
     pub explorer_view_mode: crate::explorer::ExplorerViewMode,
+    #[serde(default = "default_viewport_width")]
+    pub viewport_width: f32,
     next_toast_id: u64,
     next_node_id: u64,
     next_app_id: u64,
+}
+
+fn default_viewport_width() -> f32 {
+    1280.0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -121,6 +127,10 @@ impl AppState {
                 *page_doc = doc;
             }
         }
+    }
+
+    pub fn sync_document_from_app_pub(&mut self) {
+        self.sync_document_from_app();
     }
 }
 
@@ -191,6 +201,7 @@ impl Default for AppState {
             show_right_sidebar: true,
             explorer_expanded: HashSet::new(),
             explorer_view_mode: crate::explorer::ExplorerViewMode::default(),
+            viewport_width: 1280.0,
             next_toast_id: 0,
             next_node_id: 100,
             next_app_id: 10,
@@ -1888,6 +1899,30 @@ impl Shell {
                 }
             }
         });
+
+        // Viewport preset changed
+        self.window.on_viewport_preset_changed({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |preset| {
+                let width = match preset.as_str() {
+                    "Tablet" => 768.0,
+                    "Mobile" => 375.0,
+                    _ => 1280.0,
+                };
+                {
+                    let mut s = inner.borrow_mut();
+                    s.store.mutate(|state| {
+                        state.viewport_width = width;
+                    });
+                }
+                if let Some(w) = weak.upgrade() {
+                    w.set_viewport_width(width);
+                    w.set_viewport_preset(SharedString::from(preset.as_str()));
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
     }
 }
 
@@ -1935,6 +1970,9 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
     window.set_show_left_sidebar(state.show_left_sidebar);
     window.set_show_right_sidebar(state.show_right_sidebar);
 
+    // Viewport
+    window.set_viewport_width(state.viewport_width);
+
     // Menu bar
     push_menu_defs(window, &inner.menus, &inner.commands);
 
@@ -1967,7 +2005,8 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
                     &state.selection,
                 );
                 push_breadcrumbs(window, &state.builder_document, &state.selection);
-                push_page_layout_data(window, &state.builder_document, state.show_grid_overlay);
+                let vw = state.viewport_width;
+                push_page_layout_data(window, &state.builder_document, state.show_grid_overlay, vw);
                 push_layout_rows(window, &state.builder_document, &state.selection);
                 push_composition_data(
                     window,
@@ -1975,7 +2014,7 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
                     &inner.registry,
                     &state.selection,
                 );
-                push_grid_cells(window, &state.builder_document, &state.selection);
+                push_grid_cells(window, &state.builder_document, &state.selection, vw);
                 push_style_rows(
                     window,
                     state.active_app(),
@@ -2618,6 +2657,23 @@ fn execute_command(
                 state.show_grid_overlay = !state.show_grid_overlay;
             });
         }
+        "view.zoom_in" => {
+            if let Some(w) = weak.upgrade() {
+                let cur = w.get_canvas_zoom();
+                w.set_canvas_zoom((cur + 0.1).min(3.0));
+            }
+        }
+        "view.zoom_out" => {
+            if let Some(w) = weak.upgrade() {
+                let cur = w.get_canvas_zoom();
+                w.set_canvas_zoom((cur - 0.1).max(0.25));
+            }
+        }
+        "view.zoom_reset" => {
+            if let Some(w) = weak.upgrade() {
+                w.set_canvas_zoom(1.0);
+            }
+        }
         "file.save" => {}
         other => {
             if let Some(n) = other
@@ -3103,13 +3159,18 @@ fn collect_ids_walk(node: &Node, ids: &mut Vec<NodeId>) {
 
 // ── Page layout data ──────────────────────────────────────────────
 
-fn push_page_layout_data(window: &AppWindow, doc: &BuilderDocument, show_grid: bool) {
+fn push_page_layout_data(
+    window: &AppWindow,
+    doc: &BuilderDocument,
+    show_grid: bool,
+    viewport_width: f32,
+) {
     let pl = &doc.page_layout;
     let resolved = pl.resolved_size();
     let is_responsive = resolved.is_none();
     let (pw, ph) = resolved
         .map(|s| (s.width, s.height))
-        .unwrap_or((1280.0, 800.0));
+        .unwrap_or((viewport_width, viewport_width * 0.625));
 
     let size_label = match pl.size {
         PageSize::Responsive => "Responsive",
@@ -3654,7 +3715,12 @@ fn push_composition_data(
     window.set_prefab_count(doc.prefabs.len() as i32);
 }
 
-fn push_grid_cells(window: &AppWindow, doc: &BuilderDocument, selection: &SelectionModel) {
+fn push_grid_cells(
+    window: &AppWindow,
+    doc: &BuilderDocument,
+    selection: &SelectionModel,
+    viewport_width: f32,
+) {
     let pl = &doc.page_layout;
     let cols = pl.columns.len().max(1);
     let rows = pl.rows.len().max(1);
@@ -3667,7 +3733,7 @@ fn push_grid_cells(window: &AppWindow, doc: &BuilderDocument, selection: &Select
     let resolved = pl.resolved_size();
     let (pw, ph) = resolved
         .map(|s| (s.width, s.height))
-        .unwrap_or((1280.0, 800.0));
+        .unwrap_or((viewport_width, viewport_width * 0.625));
     let content_w = pw - pl.margins.left - pl.margins.right;
     let content_h = ph - pl.margins.top - pl.margins.bottom;
 

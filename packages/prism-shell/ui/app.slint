@@ -971,16 +971,17 @@ component GridCanvas inherits Rectangle {
     in property <[GridCellItem]> cells: [];
     in property <float> margin-left: 0;
     in property <float> margin-top: 0;
+    in property <float> zoom: 1.0;
     in property <string> drop-component-type: "";
     callback cell-clicked(int /* col */, int /* row */);
     callback cell-add-clicked(int /* col */, int /* row */, float /* x */, float /* y */);
     callback cell-drop(string /* component-type */, int /* col */, int /* row */);
 
     for cell in root.cells : Rectangle {
-        x: cell.x * 1px + root.margin-left * 1px;
-        y: cell.y * 1px + root.margin-top * 1px;
-        width: cell.width * 1px;
-        height: max(cell.height * 1px, 60px);
+        x: cell.x * root.zoom * 1px;
+        y: cell.y * root.zoom * 1px;
+        width: cell.width * root.zoom * 1px;
+        height: max(cell.height * root.zoom * 1px, 40px * root.zoom);
         border-width: 1px;
         border-color: cell.selected
             ? Palette.accent-background.transparentize(40%)
@@ -1004,7 +1005,7 @@ component GridCanvas inherits Rectangle {
                     color: cell-touch.has-hover
                         ? Palette.accent-background.transparentize(20%)
                         : Palette.foreground.transparentize(70%);
-                    font-size: root.drop-component-type != "" ? 18px : 24px;
+                    font-size: max(10px, (root.drop-component-type != "" ? 18px : 24px) * root.zoom);
                     font-weight: 300;
                     horizontal-alignment: center;
                     vertical-alignment: center;
@@ -1017,13 +1018,13 @@ component GridCanvas inherits Rectangle {
                 color: root.drop-component-type != ""
                     ? Palette.accent-background
                     : Palette.foreground.transparentize(50%);
-                font-size: 10px;
+                font-size: max(8px, 10px * root.zoom);
                 horizontal-alignment: center;
             }
         }
 
         if !cell.is-empty : VerticalLayout {
-            padding: 8px;
+            padding: max(4px, 8px * root.zoom);
             spacing: 4px;
             alignment: center;
             Text {
@@ -1031,14 +1032,14 @@ component GridCanvas inherits Rectangle {
                 color: cell.selected
                     ? Palette.foreground
                     : Palette.foreground.transparentize(30%);
-                font-size: 11px;
+                font-size: max(8px, 11px * root.zoom);
                 font-weight: 600;
                 horizontal-alignment: center;
             }
-            if cell.preview-text != "" : Text {
+            if cell.preview-text != "" && root.zoom >= 0.5 : Text {
                 text: cell.preview-text;
                 color: Palette.foreground.transparentize(50%);
-                font-size: 11px;
+                font-size: max(8px, 11px * root.zoom);
                 horizontal-alignment: center;
                 overflow: elide;
             }
@@ -1076,6 +1077,12 @@ export component AppWindow inherits Window {
     // Identity panel
     in property <[ButtonSpec]> actions: [];
     callback clicked(int);
+
+    // Viewport / responsive preview
+    in property <float> viewport-width: 1280.0;
+    in property <string> viewport-preset: "Desktop";
+    in-out property <float> canvas-zoom: 1.0;
+    callback viewport-preset-changed(string);
 
     // Builder canvas
     in property <[BuilderNode]> builder-nodes: [];
@@ -2032,6 +2039,72 @@ export component AppWindow inherits Window {
                                 grid-toggle-touch := TouchArea { mouse-cursor: pointer; clicked => { root.toggle-grid-overlay(); } }
                             }
                             Rectangle { horizontal-stretch: 1; }
+
+                            // Viewport preset selector
+                            Rectangle {
+                                height: 24px;
+                                border-radius: 4px;
+                                background: Palette.foreground.transparentize(95%);
+                                HorizontalLayout {
+                                    spacing: 0px;
+                                    Rectangle {
+                                        width: vp-desk-t.preferred-width + 12px; height: 24px; border-radius: 4px;
+                                        background: root.viewport-preset == "Desktop" ? Palette.accent-background.transparentize(80%) : (vp-desk-ta.has-hover ? Palette.control-background : transparent);
+                                        vp-desk-t := Text { text: "Desktop"; font-size: 10px; vertical-alignment: center; horizontal-alignment: center;
+                                            color: root.viewport-preset == "Desktop" ? Palette.accent-foreground : Palette.foreground.transparentize(40%); }
+                                        vp-desk-ta := TouchArea { mouse-cursor: pointer; clicked => { root.viewport-preset-changed("Desktop"); } }
+                                    }
+                                    Rectangle {
+                                        width: vp-tab-t.preferred-width + 12px; height: 24px; border-radius: 4px;
+                                        background: root.viewport-preset == "Tablet" ? Palette.accent-background.transparentize(80%) : (vp-tab-ta.has-hover ? Palette.control-background : transparent);
+                                        vp-tab-t := Text { text: "Tablet"; font-size: 10px; vertical-alignment: center; horizontal-alignment: center;
+                                            color: root.viewport-preset == "Tablet" ? Palette.accent-foreground : Palette.foreground.transparentize(40%); }
+                                        vp-tab-ta := TouchArea { mouse-cursor: pointer; clicked => { root.viewport-preset-changed("Tablet"); } }
+                                    }
+                                    Rectangle {
+                                        width: vp-mob-t.preferred-width + 12px; height: 24px; border-radius: 4px;
+                                        background: root.viewport-preset == "Mobile" ? Palette.accent-background.transparentize(80%) : (vp-mob-ta.has-hover ? Palette.control-background : transparent);
+                                        vp-mob-t := Text { text: "Mobile"; font-size: 10px; vertical-alignment: center; horizontal-alignment: center;
+                                            color: root.viewport-preset == "Mobile" ? Palette.accent-foreground : Palette.foreground.transparentize(40%); }
+                                        vp-mob-ta := TouchArea { mouse-cursor: pointer; clicked => { root.viewport-preset-changed("Mobile"); } }
+                                    }
+                                }
+                            }
+                            ToolbarSeparator { }
+
+                            // Zoom controls
+                            Rectangle {
+                                height: 24px;
+                                HorizontalLayout {
+                                    spacing: 2px;
+                                    Rectangle {
+                                        width: 22px; height: 24px; border-radius: 4px;
+                                        background: zoom-out-ta.has-hover ? Palette.control-background : transparent;
+                                        Text { text: "−"; font-size: 14px; color: Palette.foreground.transparentize(30%); vertical-alignment: center; horizontal-alignment: center; }
+                                        zoom-out-ta := TouchArea { mouse-cursor: pointer; clicked => {
+                                            root.canvas-zoom = max(0.25, root.canvas-zoom - 0.1);
+                                        } }
+                                    }
+                                    Rectangle {
+                                        width: zoom-pct-t.preferred-width + 8px; height: 24px; border-radius: 4px;
+                                        background: zoom-fit-ta.has-hover ? Palette.control-background : transparent;
+                                        zoom-pct-t := Text { text: round(root.canvas-zoom * 100) + "%"; font-size: 10px; color: Palette.foreground.transparentize(30%); vertical-alignment: center; horizontal-alignment: center; }
+                                        zoom-fit-ta := TouchArea { mouse-cursor: pointer; clicked => {
+                                            root.canvas-zoom = 1.0;
+                                        } }
+                                    }
+                                    Rectangle {
+                                        width: 22px; height: 24px; border-radius: 4px;
+                                        background: zoom-in-ta.has-hover ? Palette.control-background : transparent;
+                                        Text { text: "+"; font-size: 14px; color: Palette.foreground.transparentize(30%); vertical-alignment: center; horizontal-alignment: center; }
+                                        zoom-in-ta := TouchArea { mouse-cursor: pointer; clicked => {
+                                            root.canvas-zoom = min(3.0, root.canvas-zoom + 0.1);
+                                        } }
+                                    }
+                                }
+                            }
+                            ToolbarSeparator { }
+
                             if root.page-layout.column-count > 1 : Text { text: root.page-layout.column-count + " cols"; color: Palette.foreground.transparentize(50%); font-size: 11px; vertical-alignment: center; }
                             if root.page-layout.column-count > 1 : Text { text: "·"; color: Palette.foreground.transparentize(60%); font-size: 11px; vertical-alignment: center; }
                             Text { text: root.builder-node-count + " nodes"; color: Palette.foreground.transparentize(50%); font-size: 11px; vertical-alignment: center; }
@@ -2223,45 +2296,50 @@ export component AppWindow inherits Window {
                             vertical-stretch: 1;
                             background: Palette.alternate-background.transparentize(40%);
 
-                            ScrollView {
+                            Flickable {
+                                viewport-width: max(self.width, root.page-layout.page-width * root.canvas-zoom * 1px + 48px);
+                                viewport-height: max(self.height, root.page-layout.page-height * root.canvas-zoom * 1px + 48px);
+
                                 VerticalLayout {
-                                    alignment: start;
-                                    padding: root.page-layout.is-responsive ? 0px : 24px;
+                                    alignment: center;
+                                    padding: 24px;
+                                    width: parent.viewport-width;
+                                    height: parent.viewport-height;
 
                                     // Page surface
                                     Rectangle {
-                                        horizontal-stretch: 1;
-                                        min-height: root.page-layout.is-responsive ? 400px : root.page-layout.page-height * 1px;
+                                        width: root.page-layout.page-width * root.canvas-zoom * 1px;
+                                        min-height: root.page-layout.page-height * root.canvas-zoom * 1px;
                                         background: Palette.background;
-                                        border-width: root.page-layout.is-responsive ? 0px : 1px;
+                                        border-width: 1px;
                                         border-color: Palette.foreground.transparentize(85%);
-                                        border-radius: root.page-layout.is-responsive ? 0px : 2px;
-                                        drop-shadow-blur: root.page-layout.is-responsive ? 0px : 6px;
+                                        border-radius: 2px;
+                                        drop-shadow-blur: 6px;
                                         drop-shadow-color: #00000008;
 
                                         // Margin tint overlays
                                         if root.page-layout.margin-top > 0.0 : Rectangle {
                                             x: 0px; y: 0px; width: parent.width;
-                                            height: root.page-layout.margin-top * 1px;
+                                            height: root.page-layout.margin-top * root.canvas-zoom * 1px;
                                             background: Palette.accent-background.transparentize(95%);
                                         }
                                         if root.page-layout.margin-bottom > 0.0 : Rectangle {
                                             x: 0px; width: parent.width;
-                                            y: parent.height - root.page-layout.margin-bottom * 1px;
-                                            height: root.page-layout.margin-bottom * 1px;
+                                            y: parent.height - root.page-layout.margin-bottom * root.canvas-zoom * 1px;
+                                            height: root.page-layout.margin-bottom * root.canvas-zoom * 1px;
                                             background: Palette.accent-background.transparentize(95%);
                                         }
                                         if root.page-layout.margin-left > 0.0 : Rectangle {
-                                            x: 0px; y: root.page-layout.margin-top * 1px;
-                                            width: root.page-layout.margin-left * 1px;
-                                            height: parent.height - root.page-layout.margin-top * 1px - root.page-layout.margin-bottom * 1px;
+                                            x: 0px; y: root.page-layout.margin-top * root.canvas-zoom * 1px;
+                                            width: root.page-layout.margin-left * root.canvas-zoom * 1px;
+                                            height: parent.height - root.page-layout.margin-top * root.canvas-zoom * 1px - root.page-layout.margin-bottom * root.canvas-zoom * 1px;
                                             background: Palette.accent-background.transparentize(95%);
                                         }
                                         if root.page-layout.margin-right > 0.0 : Rectangle {
-                                            y: root.page-layout.margin-top * 1px;
-                                            x: parent.width - root.page-layout.margin-right * 1px;
-                                            width: root.page-layout.margin-right * 1px;
-                                            height: parent.height - root.page-layout.margin-top * 1px - root.page-layout.margin-bottom * 1px;
+                                            y: root.page-layout.margin-top * root.canvas-zoom * 1px;
+                                            x: parent.width - root.page-layout.margin-right * root.canvas-zoom * 1px;
+                                            width: root.page-layout.margin-right * root.canvas-zoom * 1px;
+                                            height: parent.height - root.page-layout.margin-top * root.canvas-zoom * 1px - root.page-layout.margin-bottom * root.canvas-zoom * 1px;
                                             background: Palette.accent-background.transparentize(95%);
                                         }
 
@@ -2271,28 +2349,28 @@ export component AppWindow inherits Window {
 
                                             // Margin boundary lines
                                             if root.page-layout.margin-left > 0.0 : Rectangle {
-                                                x: root.page-layout.margin-left * 1px; y: 0px; width: 1px; height: parent.height;
+                                                x: root.page-layout.margin-left * root.canvas-zoom * 1px; y: 0px; width: 1px; height: parent.height;
                                                 background: Palette.accent-background.transparentize(82%);
                                             }
                                             if root.page-layout.margin-right > 0.0 : Rectangle {
-                                                x: parent.width - root.page-layout.margin-right * 1px; y: 0px; width: 1px; height: parent.height;
+                                                x: parent.width - root.page-layout.margin-right * root.canvas-zoom * 1px; y: 0px; width: 1px; height: parent.height;
                                                 background: Palette.accent-background.transparentize(82%);
                                             }
                                             if root.page-layout.margin-top > 0.0 : Rectangle {
-                                                x: 0px; y: root.page-layout.margin-top * 1px; width: parent.width; height: 1px;
+                                                x: 0px; y: root.page-layout.margin-top * root.canvas-zoom * 1px; width: parent.width; height: 1px;
                                                 background: Palette.accent-background.transparentize(82%);
                                             }
                                             if root.page-layout.margin-bottom > 0.0 : Rectangle {
-                                                x: 0px; y: parent.height - root.page-layout.margin-bottom * 1px; width: parent.width; height: 1px;
+                                                x: 0px; y: parent.height - root.page-layout.margin-bottom * root.canvas-zoom * 1px; width: parent.width; height: 1px;
                                                 background: Palette.accent-background.transparentize(82%);
                                             }
 
                                             // Column gutters
                                             for cg[i] in root.column-gutters : Rectangle {
-                                                x: cg.offset * 1px + root.page-layout.margin-left * 1px;
-                                                y: root.page-layout.margin-top * 1px;
-                                                width: cg.size * 1px;
-                                                height: parent.height - root.page-layout.margin-top * 1px - root.page-layout.margin-bottom * 1px;
+                                                x: cg.offset * root.canvas-zoom * 1px + root.page-layout.margin-left * root.canvas-zoom * 1px;
+                                                y: root.page-layout.margin-top * root.canvas-zoom * 1px;
+                                                width: cg.size * root.canvas-zoom * 1px;
+                                                height: parent.height - root.page-layout.margin-top * root.canvas-zoom * 1px - root.page-layout.margin-bottom * root.canvas-zoom * 1px;
                                                 background: Palette.accent-background.transparentize(92%);
                                                 Rectangle { x: 0px; y: 0px; width: 1px; height: parent.height; background: Palette.accent-background.transparentize(78%); }
                                                 Rectangle { x: parent.width - 1px; y: 0px; width: 1px; height: parent.height; background: Palette.accent-background.transparentize(78%); }
@@ -2300,10 +2378,10 @@ export component AppWindow inherits Window {
 
                                             // Row gutters
                                             for rg[i] in root.row-gutters : Rectangle {
-                                                x: root.page-layout.margin-left * 1px;
-                                                y: rg.offset * 1px + root.page-layout.margin-top * 1px;
-                                                width: parent.width - root.page-layout.margin-left * 1px - root.page-layout.margin-right * 1px;
-                                                height: rg.size * 1px;
+                                                x: root.page-layout.margin-left * root.canvas-zoom * 1px;
+                                                y: rg.offset * root.canvas-zoom * 1px + root.page-layout.margin-top * root.canvas-zoom * 1px;
+                                                width: parent.width - root.page-layout.margin-left * root.canvas-zoom * 1px - root.page-layout.margin-right * root.canvas-zoom * 1px;
+                                                height: rg.size * root.canvas-zoom * 1px;
                                                 background: Palette.accent-background.transparentize(92%);
                                                 Rectangle { x: 0px; y: 0px; width: parent.width; height: 1px; background: Palette.accent-background.transparentize(78%); }
                                                 Rectangle { x: 0px; y: parent.height - 1px; width: parent.width; height: 1px; background: Palette.accent-background.transparentize(78%); }
@@ -2312,10 +2390,10 @@ export component AppWindow inherits Window {
 
                                         // Content area (inside margins)
                                         VerticalLayout {
-                                            padding-left: root.page-layout.margin-left * 1px;
-                                            padding-right: root.page-layout.margin-right * 1px;
-                                            padding-top: root.page-layout.margin-top * 1px;
-                                            padding-bottom: root.page-layout.margin-bottom * 1px;
+                                            padding-left: root.page-layout.margin-left * root.canvas-zoom * 1px;
+                                            padding-right: root.page-layout.margin-right * root.canvas-zoom * 1px;
+                                            padding-top: root.page-layout.margin-top * root.canvas-zoom * 1px;
+                                            padding-bottom: root.page-layout.margin-bottom * root.canvas-zoom * 1px;
                                             spacing: 4px;
                                             alignment: start;
 
@@ -2348,6 +2426,7 @@ export component AppWindow inherits Window {
                                                     cells: root.grid-cells;
                                                     margin-left: 0;
                                                     margin-top: 0;
+                                                    zoom: root.canvas-zoom;
                                                     drop-component-type: root.drag-component-type;
                                                     cell-clicked(col, row) => { root.grid-cell-clicked(col, row); }
                                                     cell-add-clicked(col, row, cx, cy) => {

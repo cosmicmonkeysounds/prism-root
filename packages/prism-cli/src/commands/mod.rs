@@ -17,6 +17,7 @@ pub mod dev;
 pub mod fmt;
 pub mod lint;
 pub mod test;
+pub mod visual;
 
 /// Top-level argument parser for `prism`.
 #[derive(Debug, Parser)]
@@ -52,6 +53,9 @@ pub enum Command {
         #[arg(long)]
         check: bool,
     },
+    /// Run visual regression tests — capture screenshots of predefined
+    /// shell scenes for visual diff review.
+    Visual(visual::VisualArgs),
 }
 
 /// Dispatch a parsed [`Cli`] to the right subcommand.
@@ -64,6 +68,7 @@ pub fn run(cli: &Cli, workspace: &Workspace) -> Result<u8> {
         Command::Dev(args) => dev::run(args, workspace, cli.dry_run),
         Command::Lint => lint::run(workspace, cli.dry_run),
         Command::Fmt { check } => fmt::run(*check, workspace, cli.dry_run),
+        Command::Visual(args) => visual::run(args, workspace, cli.dry_run),
     }
 }
 

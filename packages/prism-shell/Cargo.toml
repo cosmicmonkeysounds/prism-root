@@ -73,6 +73,9 @@ wasm-bindgen = { workspace = true, optional = true }
 console_error_panic_hook = { workspace = true, optional = true }
 getrandom = { workspace = true, optional = true, features = ["js"] }
 
+# CLI argument parsing for the native dev binary and test harness.
+clap = { version = "4", features = ["derive"] }
+
 # Shared.
 serde = { workspace = true }
 serde_json = { workspace = true }

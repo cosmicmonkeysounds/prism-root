@@ -50,6 +50,11 @@ After every implementation:
 2. Run `cargo test --workspace` (and `cargo clippy` if you touched anything non-trivial).
 3. Update the affected package's `CLAUDE.md` if the public API changed.
 4. Update `docs/dev/slint-migration-plan.md` if phasing or decisions moved.
+5. **For UI/Slint changes**: use the visual testing harness to verify.
+   - `cargo run -p prism-shell -- --app lattice --panel builder` — quick visual check.
+   - `cargo run -p prism-shell -- --scene builder-tablet` — check at different viewports.
+   - `prism visual --scene <name>` — capture screenshot for review.
+   - Add new scenes to `BuiltinScene` in `prism-shell/src/testing.rs` when adding major visual features.
 
 ## Navigation
 - Migration plan: `docs/dev/slint-migration-plan.md`

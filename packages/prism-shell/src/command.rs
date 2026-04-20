@@ -91,6 +91,13 @@ impl CommandRegistry {
             "Toggle Grid Overlay",
             "View",
         ));
+        reg.register(CommandEntry::new("view.zoom_in", "Zoom In", "View").with_shortcut("Ctrl+="));
+        reg.register(
+            CommandEntry::new("view.zoom_out", "Zoom Out", "View").with_shortcut("Ctrl+-"),
+        );
+        reg.register(
+            CommandEntry::new("view.zoom_reset", "Reset Zoom", "View").with_shortcut("Ctrl+0"),
+        );
         reg.register(CommandEntry::new(
             "panel.identity",
             "Go to Identity",

@@ -28,6 +28,20 @@ expanded argv without executing anything.
   tests in `packages/prism-relay/tests/routes.rs` run under the
   default `cargo test --workspace` path.
 
+### `prism visual [--scene <name>] [--list] [--output <dir>]`
+- Automated visual regression suite. Runs predefined test scenes
+  through the `prism-shell` binary with `--screenshot`, capturing
+  PNGs to `screenshots/` (or `--output <dir>`).
+- `--scene builder-grid` — run a single scene.
+- `--list` — list available scenes and exit.
+- No flags → runs all 8 built-in scenes (launchpad, builder-empty,
+  builder-grid, builder-tablet, builder-mobile, inspector,
+  code-editor, explorer).
+- Each scene spawns the shell binary with `--scene <name>
+  --screenshot <path>`, which auto-exits after capturing. No
+  manual interaction needed.
+- Screenshot capture uses `screencapture` on macOS.
+
 ### `prism build [--target desktop|studio|web|relay|all] [--debug]`
 - Defaults to `--target all` + release builds.
 - `desktop` → `cargo build -p prism-shell`.
