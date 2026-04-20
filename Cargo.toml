@@ -8,6 +8,7 @@ members = [
     "packages/prism-studio/src-tauri",
     "packages/prism-cli",
     "packages/prism-relay",
+    "packages/prism-dock",
 ]
 
 # Shared package metadata — every crate opts in to `license` via

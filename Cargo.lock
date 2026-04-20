@@ -5541,6 +5541,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "prism-dock"
+version = "0.1.0"
+dependencies = [
+ "insta",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "prism-relay"
 version = "0.1.0"
 dependencies = [
