@@ -117,7 +117,7 @@ impl BuilderDocument {
                 size: crate::layout::PageSize::Responsive,
                 margins: Edges::new(24.0, 32.0, 24.0, 32.0),
                 columns: vec![TrackSize::Fr { value: 1.0 }],
-                rows: vec![TrackSize::Auto, TrackSize::Fr { value: 1.0 }],
+                rows: vec![TrackSize::Fr { value: 1.0 }],
                 column_gap: 16.0,
                 row_gap: 16.0,
                 ..Default::default()

@@ -3659,7 +3659,7 @@ fn push_grid_cells(window: &AppWindow, doc: &BuilderDocument, selection: &Select
     let cols = pl.columns.len().max(1);
     let rows = pl.rows.len().max(1);
 
-    if cols <= 1 && pl.rows.is_empty() {
+    if pl.columns.is_empty() && pl.rows.is_empty() {
         window.set_grid_cells(ModelRc::default());
         return;
     }

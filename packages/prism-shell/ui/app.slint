@@ -971,8 +971,10 @@ component GridCanvas inherits Rectangle {
     in property <[GridCellItem]> cells: [];
     in property <float> margin-left: 0;
     in property <float> margin-top: 0;
+    in property <string> drop-component-type: "";
     callback cell-clicked(int /* col */, int /* row */);
-    callback cell-add-clicked(int /* col */, int /* row */);
+    callback cell-add-clicked(int /* col */, int /* row */, float /* x */, float /* y */);
+    callback cell-drop(string /* component-type */, int /* col */, int /* row */);
 
     for cell in root.cells : Rectangle {
         x: cell.x * 1px + root.margin-left * 1px;
@@ -985,7 +987,9 @@ component GridCanvas inherits Rectangle {
             : Palette.foreground.transparentize(88%);
         border-radius: 4px;
         background: cell.is-empty
-            ? (cell-touch.has-hover ? Palette.accent-background.transparentize(94%) : transparent)
+            ? (cell-touch.has-hover && root.drop-component-type != ""
+                ? Palette.accent-background.transparentize(85%)
+                : (cell-touch.has-hover ? Palette.accent-background.transparentize(94%) : transparent))
             : (cell.selected
                 ? Palette.accent-background.transparentize(92%)
                 : transparent);
@@ -996,19 +1000,23 @@ component GridCanvas inherits Rectangle {
                 alignment: center;
                 spacing: 6px;
                 Text {
-                    text: "+";
+                    text: root.drop-component-type != "" ? "⬇" : "+";
                     color: cell-touch.has-hover
                         ? Palette.accent-background.transparentize(20%)
                         : Palette.foreground.transparentize(70%);
-                    font-size: 24px;
+                    font-size: root.drop-component-type != "" ? 18px : 24px;
                     font-weight: 300;
                     horizontal-alignment: center;
                     vertical-alignment: center;
                 }
             }
             if cell-touch.has-hover : Text {
-                text: "Add component";
-                color: Palette.foreground.transparentize(50%);
+                text: root.drop-component-type != ""
+                    ? ("Place " + root.drop-component-type)
+                    : "Add component";
+                color: root.drop-component-type != ""
+                    ? Palette.accent-background
+                    : Palette.foreground.transparentize(50%);
                 font-size: 10px;
                 horizontal-alignment: center;
             }
@@ -1039,11 +1047,16 @@ component GridCanvas inherits Rectangle {
         cell-touch := TouchArea {
             mouse-cursor: pointer;
             clicked => {
-                if cell.is-empty {
-                    root.cell-add-clicked(cell.col, cell.row);
+                if root.drop-component-type != "" {
+                    root.cell-drop(root.drop-component-type, cell.col, cell.row);
+                } else if cell.is-empty {
+                    root.cell-add-clicked(cell.col, cell.row, parent.absolute-position.x / 1px, parent.absolute-position.y / 1px);
                 } else {
                     root.cell-clicked(cell.col, cell.row);
                 }
+            }
+            scroll-event(e) => {
+                return reject;
             }
         }
     }
@@ -1207,6 +1220,11 @@ export component AppWindow inherits Window {
 
     // Grid cells (interactive page grid)
     in property <[GridCellItem]> grid-cells: [];
+    property <int> pending-add-col: -1;
+    property <int> pending-add-row: -1;
+    property <float> pending-add-x: 0;
+    property <float> pending-add-y: 0;
+    property <string> drag-component-type: "";
     callback grid-cell-clicked(int /* col */, int /* row */);
     callback grid-cell-add-component(string /* component-type */, int /* col */, int /* row */);
     callback grid-add-column(int /* index */);
@@ -1397,8 +1415,12 @@ export component AppWindow inherits Window {
                                 spacing: 1px;
                                 for comp[i] in root.component-palette : Rectangle {
                                     height: 36px;
-                                    background: palette-touch.has-hover ? Palette.control-background : transparent;
+                                    background: root.drag-component-type == comp.component-type
+                                        ? Palette.accent-background.transparentize(80%)
+                                        : (palette-touch.has-hover ? Palette.control-background : transparent);
                                     border-radius: 4px;
+                                    border-width: root.drag-component-type == comp.component-type ? 1px : 0px;
+                                    border-color: Palette.accent-background.transparentize(50%);
                                     HorizontalLayout {
                                         padding-left: 10px; padding-right: 10px; spacing: 8px; alignment: start;
                                         VerticalLayout {
@@ -1425,7 +1447,17 @@ export component AppWindow inherits Window {
                                     }
                                     palette-touch := TouchArea {
                                         mouse-cursor: pointer;
-                                        clicked => { root.add-component(comp.component-type); }
+                                        clicked => {
+                                            if root.grid-cells.length > 0 {
+                                                if root.drag-component-type == comp.component-type {
+                                                    root.drag-component-type = "";
+                                                } else {
+                                                    root.drag-component-type = comp.component-type;
+                                                }
+                                            } else {
+                                                root.add-component(comp.component-type);
+                                            }
+                                        }
                                         changed has-hover => {
                                             if (self.has-hover) {
                                                 root.help-hover("builder.components." + comp.component-type, parent.absolute-position.x + parent.width + 8px, parent.absolute-position.y);
@@ -2287,8 +2319,8 @@ export component AppWindow inherits Window {
                                             spacing: 4px;
                                             alignment: start;
 
-                                            // Grid canvas: show when multiple grid cells exist
-                                            if root.grid-cells.length > 1 : Rectangle {
+                                            // Grid canvas: show when page has a grid layout
+                                            if root.grid-cells.length > 0 : Rectangle {
                                                 vertical-stretch: 1;
                                                 // Grid track controls (add column/row)
                                                 HorizontalLayout {
@@ -2316,13 +2348,24 @@ export component AppWindow inherits Window {
                                                     cells: root.grid-cells;
                                                     margin-left: 0;
                                                     margin-top: 0;
+                                                    drop-component-type: root.drag-component-type;
                                                     cell-clicked(col, row) => { root.grid-cell-clicked(col, row); }
-                                                    cell-add-clicked(col, row) => { root.grid-cell-clicked(col, row); }
+                                                    cell-add-clicked(col, row, cx, cy) => {
+                                                        root.pending-add-col = col;
+                                                        root.pending-add-row = row;
+                                                        root.pending-add-x = cx;
+                                                        root.pending-add-y = cy;
+                                                        component-picker.show();
+                                                    }
+                                                    cell-drop(ct, col, row) => {
+                                                        root.grid-cell-add-component(ct, col, row);
+                                                        root.drag-component-type = "";
+                                                    }
                                                 }
                                             }
 
                                             // Flat list: show when single cell or no grid
-                                            if root.grid-cells.length <= 1 && root.builder-nodes.length > 0 : VerticalLayout {
+                                            if root.grid-cells.length == 0 && root.builder-nodes.length > 0 : VerticalLayout {
                                                 spacing: 2px;
                                                 for bnode[i] in root.builder-nodes : BuilderBlock {
                                                     node-id: bnode.id; component-type: bnode.component-type; selected: bnode.selected; depth: bnode.depth;
@@ -2335,7 +2378,7 @@ export component AppWindow inherits Window {
                                                 }
                                             }
 
-                                            if root.grid-cells.length <= 1 && root.builder-nodes.length == 0 : VerticalLayout {
+                                            if root.grid-cells.length == 0 && root.builder-nodes.length == 0 : VerticalLayout {
                                                 alignment: center; spacing: 8px; padding-top: 80px;
                                                 Text { text: "Empty document"; color: Palette.foreground.transparentize(50%); font-size: 16px; horizontal-alignment: center; }
                                                 Text { text: "Add a component from the palette to get started."; color: Palette.foreground.transparentize(60%); font-size: 12px; horizontal-alignment: center; }
@@ -2988,6 +3031,88 @@ export component AppWindow inherits Window {
                     changed has-hover => {
                         if (self.has-hover) { root.help-hover("__tooltip__", 0px, 0px); }
                         if (!self.has-hover) { root.help-leave(); }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Component picker popup (shown on empty grid cell click) ────
+    component-picker := PopupWindow {
+        x: root.pending-add-x * 1px;
+        y: root.pending-add-y * 1px;
+        width: 200px;
+
+        Rectangle {
+            background: Palette.alternate-background;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Palette.foreground.transparentize(75%);
+            drop-shadow-blur: 12px;
+            drop-shadow-color: #00000030;
+            clip: true;
+
+            VerticalLayout {
+                padding: 4px;
+                spacing: 0px;
+
+                Rectangle {
+                    height: 28px;
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        alignment: start;
+                        Text {
+                            text: "Add component";
+                            color: Palette.foreground.transparentize(40%);
+                            font-size: 10px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                for comp in root.component-palette : Rectangle {
+                    height: 30px;
+                    border-radius: 4px;
+                    background: picker-item-touch.has-hover ? Palette.control-background : transparent;
+
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        spacing: 8px;
+                        alignment: start;
+
+                        VerticalLayout {
+                            alignment: center;
+                            if comp.component-type == "heading" || comp.component-type == "text" : Image { source: @image-url("icons/type.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
+                            if comp.component-type == "link" : Image { source: @image-url("icons/link.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
+                            if comp.component-type == "image" : Image { source: @image-url("icons/image.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
+                            if comp.component-type == "container" || comp.component-type == "form" || comp.component-type == "button" : Image { source: @image-url("icons/box.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
+                            if comp.component-type == "card" : Image { source: @image-url("icons/box.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
+                            if comp.component-type == "columns" : Image { source: @image-url("icons/columns.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
+                            if comp.component-type == "list" : Image { source: @image-url("icons/list.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
+                            if comp.component-type == "table" : Image { source: @image-url("icons/table.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
+                            if comp.component-type == "tabs" : Image { source: @image-url("icons/layout.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
+                            if comp.component-type == "accordion" : Image { source: @image-url("icons/chevron-down.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
+                            if comp.component-type == "divider" : Image { source: @image-url("icons/minus.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
+                            if comp.component-type == "spacer" : Image { source: @image-url("icons/grip.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
+                            if comp.component-type == "code" : Image { source: @image-url("icons/code.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
+                            if comp.component-type == "input" : Image { source: @image-url("icons/type.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            Text {
+                                text: comp.label;
+                                color: Palette.foreground;
+                                font-size: 12px;
+                            }
+                        }
+                    }
+                    picker-item-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            root.grid-cell-add-component(comp.component-type, root.pending-add-col, root.pending-add-row);
+                        }
                     }
                 }
             }

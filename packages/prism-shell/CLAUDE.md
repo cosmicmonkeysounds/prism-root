@@ -209,13 +209,21 @@ shell framework features are implemented:
   Grid callbacks: `grid-cell-clicked`, `grid-add-column/row`,
   `grid-remove-column/row`, `grid-track-resize`, `grid-cell-add-component`.
 - **Page shells**: New pages come with a basic grid layout shell
-  (`BuilderDocument::page_shell()`) — single-column responsive grid
-  with header + content rows, margins, and a root container. Users
-  add components by dragging into the grid cells.
+  (`BuilderDocument::page_shell()`) — single-section responsive grid
+  (1 col × 1 row), margins, and a root container. The grid canvas
+  always renders when the page has tracks defined (even a 1×1 grid).
+  Users add components via the picker popup (clicking "+" in empty
+  cells) or by selecting a palette item and clicking a cell.
 - **Layout-aware components**: Container, Columns, Form, and List
   components carry correct default `FlowProps` (display, direction,
   gap) via `default_layout_for_component()`, so the Taffy layout
   engine handles them consistently within the grid system.
+- **Palette → grid placement**: When a page has grid cells, clicking
+  a component in the left palette enters "place mode" — the item
+  highlights and grid cells show "Place [type]" on hover. Clicking
+  a cell places the component there. Clicking the same palette item
+  again cancels. When no grid exists, palette click adds directly
+  (flat list behavior preserved).
 - **Style cascade UI**: Right sidebar "Style (cascading)" section showing
   resolved style properties with app → page → node inheritance. When
   nothing is selected, shows page-level styles. Edits dispatch through

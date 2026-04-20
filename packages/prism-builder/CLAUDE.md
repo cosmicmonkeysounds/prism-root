@@ -69,9 +69,9 @@ From `src/lib.rs`:
 - `BuilderDocument::place_in_cell(node_id, col, row)` and
   `move_to_cell` — set a node's grid_column/grid_row placement.
 - `BuilderDocument::page_shell()` — factory for new pages: returns
-  a document with a single-column responsive grid (header + content
-  rows), root container, and 24/32px margins. Every new page starts
-  from this shell rather than an empty document.
+  a document with a single-section responsive grid (1 col × 1 row),
+  root container, and 24/32px margins. Every new page starts from
+  this shell rather than an empty document.
 
 ### Style cascade
 - `StyleProperties` — 10-field all-`Option` struct (font_family,
