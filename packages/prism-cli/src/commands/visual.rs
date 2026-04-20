@@ -66,10 +66,13 @@ pub fn plan(args: &VisualArgs, workspace: &Workspace) -> Vec<CommandBuilder> {
             .label("visual-list")];
     }
 
-    let output_dir = args
-        .output
-        .clone()
-        .unwrap_or_else(|| workspace.root().join("screenshots").to_string_lossy().into());
+    let output_dir = args.output.clone().unwrap_or_else(|| {
+        workspace
+            .root()
+            .join("screenshots")
+            .to_string_lossy()
+            .into()
+    });
 
     let scenes: Vec<&str> = if let Some(ref s) = args.scene {
         vec![s.as_str()]
@@ -83,7 +86,9 @@ pub fn plan(args: &VisualArgs, workspace: &Workspace) -> Vec<CommandBuilder> {
     commands.push(
         CommandBuilder::new(crate::builder::Program::Python3)
             .arg("-c")
-            .arg(format!("import os; os.makedirs('{output_dir}', exist_ok=True)"))
+            .arg(format!(
+                "import os; os.makedirs('{output_dir}', exist_ok=True)"
+            ))
             .cwd(workspace.root())
             .label("mkdir-screenshots"),
     );
@@ -112,10 +117,13 @@ pub fn run(args: &VisualArgs, workspace: &Workspace, dry_run: bool) -> Result<u8
     let result = super::execute_plan(&plan, dry_run)?;
 
     if !dry_run && result == 0 {
-        let output_dir = args
-            .output
-            .clone()
-            .unwrap_or_else(|| workspace.root().join("screenshots").to_string_lossy().into());
+        let output_dir = args.output.clone().unwrap_or_else(|| {
+            workspace
+                .root()
+                .join("screenshots")
+                .to_string_lossy()
+                .into()
+        });
         println!("\nScreenshots saved to: {output_dir}/");
         println!("Review them visually or diff against a baseline.");
     }

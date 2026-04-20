@@ -165,15 +165,26 @@ impl ShellScreenshot {
     /// `screencapture`; on other platforms it falls back to
     /// window-level capture if available.
     pub fn schedule_and_exit(shell: &Shell, path: &str) {
-        use slint::Timer;
+        use slint::{Timer, TimerMode};
         let path = path.to_string();
         let weak = shell.window().as_weak();
-        Timer::single_shot(std::time::Duration::from_millis(1500), move || {
-            if let Some(_w) = weak.upgrade() {
-                capture_screenshot(&path);
-            }
-            slint::quit_event_loop().ok();
-        });
+        let timer = Timer::default();
+        timer.start(
+            TimerMode::SingleShot,
+            std::time::Duration::from_millis(2000),
+            move || {
+                if let Some(_w) = weak.upgrade() {
+                    let ok = capture_screenshot(&path);
+                    if ok {
+                        eprintln!("Screenshot saved: {path}");
+                    } else {
+                        eprintln!("Screenshot capture failed: {path}");
+                    }
+                }
+                slint::quit_event_loop().ok();
+            },
+        );
+        std::mem::forget(timer);
     }
 
     /// Take a screenshot of the current screen to the given path.
@@ -186,7 +197,7 @@ impl ShellScreenshot {
 #[cfg(target_os = "macos")]
 fn capture_screenshot(path: &str) -> bool {
     std::process::Command::new("screencapture")
-        .args(["-x", "-o", path])
+        .args(["-x", path])
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
@@ -238,9 +249,7 @@ impl TestInput {
     /// Simulate clicking a builder node by invoking the
     /// builder-node-clicked callback.
     pub fn click_node(shell: &Shell, node_id: &str) {
-        shell
-            .window()
-            .invoke_builder_node_clicked(node_id.into());
+        shell.window().invoke_builder_node_clicked(node_id.into());
     }
 
     /// Simulate selecting a panel by invoking the select-panel callback.
@@ -250,9 +259,7 @@ impl TestInput {
 
     /// Simulate changing the viewport preset.
     pub fn set_viewport(shell: &Shell, preset: &str) {
-        shell
-            .window()
-            .invoke_viewport_preset_changed(preset.into());
+        shell.window().invoke_viewport_preset_changed(preset.into());
     }
 }
 

@@ -71,8 +71,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let lower = app_name.to_lowercase();
             if let Some(app) = state.apps.iter().find(|a| a.name.to_lowercase() == lower) {
                 let app_id = app.id.clone();
-                state.shell_view =
-                    prism_shell::app::ShellView::App { app_id };
+                state.shell_view = prism_shell::app::ShellView::App { app_id };
                 state.sync_document_from_app_pub();
             } else {
                 eprintln!("No app named '{app_name}'. Available:");
