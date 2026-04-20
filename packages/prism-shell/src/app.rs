@@ -39,10 +39,10 @@ use crate::selection::SelectionModel;
 use crate::telemetry::FirstPaint;
 use crate::{
     AppCardItem, AppWindow, BreadcrumbItem, BuilderNode, ButtonSpec, CommandItem,
-    ComponentPaletteItem, DocsPanelData, EditorIndentGuide, EditorLine, EditorToken,
-    ExplorerNodeItem, FieldRow, GridCellItem, GutterRect, HelpTooltipData, InspectorNode, MenuDef,
-    MenuItem, ModifierItem, PageLayoutData, SearchResultItem, SignalItem, TabItem, ToastItem,
-    VariantItem,
+    ComponentPaletteItem, DockDividerRect, DockPanelRect, DockTabItem, DocsPanelData,
+    EditorIndentGuide, EditorLine, EditorToken, ExplorerNodeItem, FieldRow, GridCellItem,
+    GutterRect, HelpTooltipData, InspectorNode, MenuDef, MenuItem, ModifierItem, PageLayoutData,
+    SearchResultItem, SignalItem, TabItem, ToastItem, VariantItem, WorkflowPageItem,
 };
 
 // ── Reloadable state ───────────────────────────────────────────────
@@ -525,20 +525,12 @@ impl ShellInner {
         if let Some(app) = state.active_app() {
             if let Some(page) = app.pages.get(app.active_page) {
                 let registry = Arc::clone(&self.registry);
-                let tokens = state.tokens.clone();
+                let tokens = state.tokens;
                 if page.source.is_empty() {
-                    let live = LiveDocument::from_document(
-                        page.document.clone(),
-                        registry,
-                        tokens,
-                    );
+                    let live = LiveDocument::from_document(page.document.clone(), registry, tokens);
                     self.live = Some(live);
                 } else {
-                    let live = LiveDocument::from_source(
-                        page.source.clone(),
-                        registry,
-                        tokens,
-                    );
+                    let live = LiveDocument::from_source(page.source.clone(), registry, tokens);
                     self.live = Some(live);
                 }
                 self.sync_builder_document();
@@ -639,6 +631,22 @@ impl Shell {
         };
         sync_ui_from_shared(&shell.inner, &shell.window);
         shell.wire_callbacks();
+
+        // Re-sync after first frame so dock-area dimensions are available
+        let deferred_inner = Rc::clone(&shell.inner);
+        let deferred_weak = shell.window.as_weak();
+        let dock_init_timer = Timer::default();
+        dock_init_timer.start(
+            TimerMode::SingleShot,
+            std::time::Duration::from_millis(0),
+            move || {
+                if let Some(w) = deferred_weak.upgrade() {
+                    sync_ui_from_shared(&deferred_inner, &w);
+                }
+            },
+        );
+        std::mem::forget(dock_init_timer);
+
         Ok(shell)
     }
 
@@ -775,6 +783,68 @@ impl Shell {
             }
         });
 
+        // Dock: workflow page clicked
+        self.window.on_workflow_page_clicked({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |page_id| {
+                {
+                    let mut s = inner.borrow_mut();
+                    let pid = page_id.to_string();
+                    s.store.mutate(|state| {
+                        state.workspace.switch_page_by_id(&pid);
+                    });
+                    let panel_id = panel_id_for_slint(&s.store.state().workspace);
+                    update_panel_schemes(&mut s.input, panel_id);
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Dock: tab clicked within a panel group
+        self.window.on_dock_tab_clicked({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |addr_key, tab_index| {
+                {
+                    let addr = deserialize_addr(&addr_key);
+                    let mut s = inner.borrow_mut();
+                    s.store.mutate(|state| {
+                        state
+                            .workspace
+                            .active_dock_mut()
+                            .activate_tab(&addr, tab_index as usize);
+                    });
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Dock: divider dragged (ratio update)
+        self.window.on_dock_divider_dragged({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |addr_key, new_ratio| {
+                {
+                    let addr = deserialize_addr(&addr_key);
+                    let mut s = inner.borrow_mut();
+                    s.store.mutate(|state| {
+                        state
+                            .workspace
+                            .active_dock_mut()
+                            .set_ratio(&addr, new_ratio);
+                    });
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
         // Builder node selection
         self.window.on_builder_node_clicked({
             let inner = Rc::clone(&inner);
@@ -802,9 +872,9 @@ impl Shell {
                     let key = {
                         let component = s.live.as_mut().and_then(|l| {
                             let doc = l.document();
-                            doc.root.as_ref().and_then(|r| {
-                                r.find(&node_id).map(|n| n.component.clone())
-                            })
+                            doc.root
+                                .as_ref()
+                                .and_then(|r| r.find(&node_id).map(|n| n.component.clone()))
                         });
                         match component.as_deref() {
                             Some("text") => "body",
@@ -813,7 +883,10 @@ impl Shell {
                             _ => "text",
                         }
                     };
-                    let formatted = format!("\"{}\"", prism_builder::slint_source::escape_slint_string(&value));
+                    let formatted = format!(
+                        "\"{}\"",
+                        prism_builder::slint_source::escape_slint_string(&value)
+                    );
                     if let Some(ref mut live) = s.live {
                         let _ = live.edit_prop_in_source(&node_id, key, &formatted);
                     }
@@ -871,12 +944,8 @@ impl Shell {
                     let props = default_props_for_component(&ct);
                     let parent_id = s.store.state().selection.primary().cloned();
                     if let Some(ref mut live) = s.live {
-                        let _ = live.insert_node_in_source(
-                            parent_id.as_deref(),
-                            &ct,
-                            &node_id,
-                            &props,
-                        );
+                        let _ =
+                            live.insert_node_in_source(parent_id.as_deref(), &ct, &node_id, &props);
                     }
                     let nid = node_id.clone();
                     s.store.mutate(|state| {
@@ -1931,12 +2000,7 @@ impl Shell {
                     };
                     let props = default_props_for_component(&ct);
                     if let Some(ref mut live) = s.live {
-                        let _ = live.insert_node_in_source(
-                            Some("root"),
-                            &ct,
-                            &node_id,
-                            &props,
-                        );
+                        let _ = live.insert_node_in_source(Some("root"), &ct, &node_id, &props);
                     }
                     let nid = node_id.clone();
                     s.store.mutate(|state| {
@@ -2113,6 +2177,9 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
     let (title, hint) = panel_metadata_from_workspace(&state.workspace);
     window.set_panel_title(SharedString::from(title));
     window.set_panel_hint(SharedString::from(hint));
+
+    // Dock layout — push panel rects, dividers, and workflow pages
+    push_dock_layout(window, &state.workspace);
 
     // Clear all panel slots
     clear_panel_slots(window);
@@ -2860,6 +2927,193 @@ fn panel_metadata_from_workspace(
     }
 }
 
+fn serialize_addr(addr: &prism_dock::NodeAddress) -> String {
+    addr.0
+        .iter()
+        .map(|&b| if b { "1" } else { "0" })
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
+fn deserialize_addr(s: &str) -> prism_dock::NodeAddress {
+    if s.is_empty() {
+        return prism_dock::NodeAddress::root();
+    }
+    prism_dock::NodeAddress(
+        s.split('.')
+            .filter(|p| !p.is_empty())
+            .map(|p| p == "1")
+            .collect(),
+    )
+}
+
+fn collect_split_bounds(
+    node: &prism_dock::DockNode,
+    bounds: &prism_dock::Rect,
+    addr: &prism_dock::NodeAddress,
+    out: &mut std::collections::HashMap<String, (f32, f32)>,
+) {
+    if let prism_dock::DockNode::Split {
+        axis,
+        ratio,
+        first,
+        second,
+        ..
+    } = node
+    {
+        let (origin, size) = match axis {
+            prism_dock::Axis::Horizontal => (bounds.x, bounds.width),
+            prism_dock::Axis::Vertical => (bounds.y, bounds.height),
+        };
+        out.insert(serialize_addr(addr), (origin, size));
+
+        let half_div = prism_dock::layout::DIVIDER_THICKNESS / 2.0;
+        match axis {
+            prism_dock::Axis::Horizontal => {
+                let split_x = bounds.x + ratio * bounds.width;
+                let fb = prism_dock::Rect::new(
+                    bounds.x,
+                    bounds.y,
+                    (split_x - half_div - bounds.x).max(0.0),
+                    bounds.height,
+                );
+                let sb = prism_dock::Rect::new(
+                    split_x + half_div,
+                    bounds.y,
+                    (bounds.x + bounds.width - split_x - half_div).max(0.0),
+                    bounds.height,
+                );
+                collect_split_bounds(first, &fb, &addr.first(), out);
+                collect_split_bounds(second, &sb, &addr.second(), out);
+            }
+            prism_dock::Axis::Vertical => {
+                let split_y = bounds.y + ratio * bounds.height;
+                let fb = prism_dock::Rect::new(
+                    bounds.x,
+                    bounds.y,
+                    bounds.width,
+                    (split_y - half_div - bounds.y).max(0.0),
+                );
+                let sb = prism_dock::Rect::new(
+                    bounds.x,
+                    split_y + half_div,
+                    bounds.width,
+                    (bounds.y + bounds.height - split_y - half_div).max(0.0),
+                );
+                collect_split_bounds(first, &fb, &addr.first(), out);
+                collect_split_bounds(second, &sb, &addr.second(), out);
+            }
+        }
+    }
+}
+
+fn push_dock_layout(window: &AppWindow, workspace: &prism_dock::DockWorkspace) {
+    let w = window.get_dock_area_width();
+    let h = window.get_dock_area_height();
+    if w <= 0.0 || h <= 0.0 {
+        return;
+    }
+
+    let dock = workspace.active_dock();
+    let bounds = prism_dock::Rect::new(0.0, 0.0, w, h);
+    let layout = prism_dock::compute_layout(&dock.root, bounds.clone());
+
+    let mut split_bounds = std::collections::HashMap::new();
+    collect_split_bounds(
+        &dock.root,
+        &bounds,
+        &prism_dock::NodeAddress::root(),
+        &mut split_bounds,
+    );
+
+    let mut panels: Vec<DockPanelRect> = Vec::new();
+    let mut dividers: Vec<DockDividerRect> = Vec::new();
+
+    for lr in &layout {
+        let addr_str = serialize_addr(&lr.addr);
+        let addr_key = SharedString::from(addr_str.as_str());
+        match &lr.kind {
+            prism_dock::LayoutNodeKind::TabGroup { tabs, active } => {
+                let active_id = tabs.get(*active).cloned().unwrap_or_default();
+                let label = prism_dock::PanelKind::from_id(&active_id)
+                    .map(|k| k.meta().label)
+                    .unwrap_or("Panel");
+                let tab_items: Vec<DockTabItem> = tabs
+                    .iter()
+                    .enumerate()
+                    .map(|(i, pid)| {
+                        let tab_label = prism_dock::PanelKind::from_id(pid)
+                            .map(|k| k.meta().label)
+                            .unwrap_or("Panel");
+                        DockTabItem {
+                            panel_id: SharedString::from(pid.as_str()),
+                            label: SharedString::from(tab_label),
+                            active: i == *active,
+                        }
+                    })
+                    .collect();
+                let tab_model = Rc::new(VecModel::from(tab_items));
+                panels.push(DockPanelRect {
+                    addr_key,
+                    x: lr.rect.x,
+                    y: lr.rect.y,
+                    width: lr.rect.width,
+                    height: lr.rect.height,
+                    panel_id: SharedString::from(active_id.as_str()),
+                    panel_label: SharedString::from(label),
+                    tabs: ModelRc::from(tab_model as Rc<dyn Model<Data = DockTabItem>>),
+                });
+            }
+            prism_dock::LayoutNodeKind::SplitDivider { axis, .. } => {
+                let (parent_origin, parent_size) =
+                    split_bounds.get(&addr_str).copied().unwrap_or((
+                        0.0,
+                        if *axis == prism_dock::Axis::Horizontal {
+                            w
+                        } else {
+                            h
+                        },
+                    ));
+                dividers.push(DockDividerRect {
+                    addr_key,
+                    x: lr.rect.x,
+                    y: lr.rect.y,
+                    width: lr.rect.width,
+                    height: lr.rect.height,
+                    is_horizontal: *axis == prism_dock::Axis::Horizontal,
+                    parent_origin,
+                    parent_size,
+                });
+            }
+        }
+    }
+
+    let panel_model = Rc::new(VecModel::from(panels));
+    window.set_dock_panels(ModelRc::from(
+        panel_model as Rc<dyn Model<Data = DockPanelRect>>,
+    ));
+    let divider_model = Rc::new(VecModel::from(dividers));
+    window.set_dock_dividers(ModelRc::from(
+        divider_model as Rc<dyn Model<Data = DockDividerRect>>,
+    ));
+
+    // Workflow pages
+    let active_page_id = workspace.active_page().id.as_str();
+    let page_items: Vec<WorkflowPageItem> = workspace
+        .pages()
+        .iter()
+        .map(|p| WorkflowPageItem {
+            id: SharedString::from(p.id.as_str()),
+            label: SharedString::from(p.label.as_str()),
+            active: p.id == active_page_id,
+        })
+        .collect();
+    let page_model = Rc::new(VecModel::from(page_items));
+    window.set_workflow_pages(ModelRc::from(
+        page_model as Rc<dyn Model<Data = WorkflowPageItem>>,
+    ));
+}
+
 fn flatten_inspector_nodes(root: Option<&Node>, selection: &SelectionModel) -> Vec<InspectorNode> {
     let mut items = Vec::new();
     if let Some(node) = root {
@@ -3001,7 +3255,10 @@ fn format_value_for_source(value: &str, kind: Option<&str>) -> String {
         Some("integer") => value.to_string(),
         Some("boolean") => value.to_string(),
         Some("color") => value.to_string(),
-        _ => format!("\"{}\"", prism_builder::slint_source::escape_slint_string(value)),
+        _ => format!(
+            "\"{}\"",
+            prism_builder::slint_source::escape_slint_string(value)
+        ),
     }
 }
 
@@ -4324,5 +4581,4 @@ mod tests {
         assert!(!find_path_to_node(root, "nonexistent", &mut path));
         assert!(path.is_empty());
     }
-
 }

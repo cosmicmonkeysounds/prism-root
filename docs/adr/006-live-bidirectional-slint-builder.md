@@ -1,21 +1,21 @@
 # ADR-006: Live Bidirectional Slint Builder
 
-**Status:** Accepted  
+**Status:** Implemented  
 **Date:** 2026-04-20
 
 ## Context
 
-Prism Builder's current flow is one-directional:
+Prism Builder originally used a one-directional flow:
 
 ```
 BuilderDocument → SlintEmitter → .slint source → slint-interpreter → canvas
 ```
 
-The user edits a structured `Node` tree through property panels and a
-WYSIWYG canvas. Changes update `BuilderDocument`, which regenerates
-`.slint` source and recompiles. The generated source is opaque — the
-user never sees it, can't hand-edit it, and there's no mapping between
-canvas elements and source positions.
+The user edited a structured `Node` tree through property panels and a
+WYSIWYG canvas. Changes updated `BuilderDocument`, which regenerated
+`.slint` source and recompiled. The generated source was opaque — the
+user never saw it, couldn't hand-edit it, and there was no mapping
+between canvas elements and source positions.
 
 Slintpad (Slint's own editor at `tools/slintpad/` + `tools/lsp/`)
 demonstrates a superior architecture: a **bidirectional** loop where
@@ -29,7 +29,7 @@ native (VS Code extension, standalone LSP). Key modules:
 - `properties.rs` — converts property edits into source text changes
 - `drop_location.rs` — computes insertion text for drag-and-drop
 
-Prism already has substantial infrastructure that maps to these
+Prism already had substantial infrastructure that maps to these
 concerns:
 
 | Slintpad concern | Prism equivalent |
@@ -45,15 +45,18 @@ concerns:
 
 ## Decision
 
-Make the builder **bidirectional**: GUI manipulations write `.slint`
-source; hand-edited `.slint` source updates the canvas. Three new
-types enable this.
+Make `.slint` source the **canonical format**. The builder is fully
+bidirectional: GUI manipulations perform surgical text edits on
+`.slint` source; hand-edited `.slint` source recompiles and derives
+the structured document on demand. Three types enable this.
 
-### 1. SourceMap on SlintEmitter
+### 1. SourceMap (marker-based)
 
-Extend `SlintEmitter` to track the byte ranges it emits for each
-`BuilderDocument` node. When a component calls `out.block(...)`, the
-emitter records the start/end byte offset keyed by `NodeId`.
+Marker comments (`// @node-start:id:component` / `// @node-end:id`)
+embedded in the generated `.slint` source enable bidirectional mapping
+between node IDs and byte ranges. These are valid Slint comments —
+the compiler ignores them, but the builder uses them to locate nodes
+for surgical text edits.
 
 ```rust
 pub struct SourceMap {
@@ -63,9 +66,9 @@ pub struct SourceMap {
 pub struct SourceSpan {
     pub node_id: NodeId,
     pub component: ComponentId,
-    pub start: usize,   // byte offset in generated source
+    pub start: usize,   // byte offset in source
     pub end: usize,
-    pub props: Vec<PropSpan>,  // per-property spans
+    pub props: Vec<PropSpan>,
 }
 
 pub struct PropSpan {
@@ -75,71 +78,108 @@ pub struct PropSpan {
 }
 ```
 
-This is Prism's equivalent of Slintpad's `element_selection.rs` —
-the bridge between canvas geometry and source code positions.
-
 Forward mapping: `source_map.span_for_node(node_id)` → `SourceSpan`
 Reverse mapping: `source_map.node_at_offset(byte_offset)` → `NodeId`
 
+`PropSpan`s are extracted by scanning `key: value;` lines within each
+node's byte range, enabling property-level surgical replacement.
+
 ### 2. Slint SyntaxProvider
 
-Register a `SyntaxProvider` for `.slint` source in `prism-builder`
-(behind the `interpreter` feature, since diagnostics come from the
-compiler):
+`BuilderSyntaxProvider` in `prism-builder` (behind the `interpreter`
+feature) provides compiler-backed language services:
 
 - `diagnose()` — compile source via `slint-interpreter::Compiler`,
   map diagnostics to `prism_core::Diagnostic`.
 - `complete()` — at a given offset, use the `SourceMap` to determine
   context (inside which component? which property?), then offer
   completions from `ComponentRegistry::get(id).schema()`.
-- `hover()` — use `SourceMap` + `HelpRegistry` to return
+- `hover()` — use `SourceMap` + `Component::help_entry()` to return
   `HelpEntry` content for the element/property under the cursor.
 
 This unifies the code editor panel and the builder canvas: both
 consume the same `SyntaxProvider` for the same `.slint` source.
 
-### 3. LiveDocument
+### 3. LiveDocument (source-first)
 
-The type that holds the bidirectional state:
+The type that holds the canonical source and all derived state:
 
 ```rust
 pub struct LiveDocument {
-    pub document: BuilderDocument,
+    // Canonical
     pub source: String,
     pub source_map: SourceMap,
-    pub editor: EditorState,         // ropey-backed, for the code side
-    // Behind `interpreter` feature:
-    pub compiled: Option<ComponentDefinition>,
-    pub diagnostics: Vec<Diagnostic>,
+    pub editor: EditorState,
+    pub diagnostics: Vec<LiveDiagnostic>,
+    compiled: Option<ComponentDefinition>,
+    // Owned context
+    registry: Arc<ComponentRegistry>,
+    tokens: DesignTokens,
+    // Derived cache
+    derived_document: Option<BuilderDocument>,
 }
 ```
 
-Mutation flows:
+**Source is truth.** `BuilderDocument` is derived on demand via
+`derive_document_from_source()` and cached. The cache is invalidated
+after every source mutation.
 
-**GUI → Source** (property panel edit, drag-and-drop, canvas
-interaction):
-1. Mutate `document.root` (update node props, add/remove nodes)
-2. Re-render: `render_document_slint_source_mapped()` → new
-   `(source, source_map)`
-3. Update `editor` buffer to match new source
-4. Recompile via `compile_slint_source()` → update `compiled` +
-   `diagnostics`
+**Constructors:**
+- `from_source(source, registry, tokens)` — primary path. Compiles,
+  builds source map, caches nothing until `document()` is called.
+- `from_document(doc, registry, tokens)` — migration/import path.
+  Generates marked source via `render_document_slint_source_mapped()`,
+  then proceeds as source-first.
 
-**Source → GUI** (hand-editing in the code panel):
-1. `editor` buffer changes via `EditorState::insert_char()` etc.
-2. Attempt recompile — if it succeeds, the source is valid
-3. Parse the source to extract structure (future: roundtrip parser)
-4. Update canvas preview from the compiled `ComponentInstance`
+**Source mutation methods** (all perform surgical text edits):
+- `edit_prop_in_source(node_id, key, value_text)` — replaces a
+  `PropSpan`'s value bytes.
+- `insert_node_in_source(parent_id, component, node_id, props)` —
+  inserts a marked block at the end of the parent's children.
+- `remove_node_from_source(node_id)` — excises the full span.
+- `move_node_in_source(node_id, direction)` — cuts and re-inserts
+  the span to reorder siblings.
 
-In Phase 1 (this ADR), only the GUI→Source direction is fully
-implemented. The Source→GUI direction shows the live preview but
-does not roundtrip back to `BuilderDocument` — that requires a
-`.slint` → `BuilderDocument` parser, which is Phase 2.
+After every mutation: rebuild source map, invalidate derived cache,
+sync editor buffer, recompile.
+
+**Selection bridge:**
+- `select_node(id)` → editor line/col range for highlighting.
+- `node_at_cursor()` → node ID at the current editor cursor.
+
+### Source parsing (roundtrip)
+
+`source_parse.rs` implements the inverse of the render walker:
+- `derive_document_from_source(source, source_map)` — reconstructs
+  a `BuilderDocument` from marker-annotated `.slint` source by
+  walking `@node-start`/`@node-end` markers, extracting `key: value;`
+  properties, and parsing Slint value literals.
+- `parse_slint_value(val)` → `serde_json::Value` — parses string
+  literals, booleans, numbers (with `px` suffix), colors.
+- `format_slint_value(value, kind)` → `String` — the inverse,
+  for source-based property edits.
+
+### Persistence
+
+`Page` stores `.slint` source as the canonical field:
+
+```rust
+pub struct Page {
+    pub source: String,              // canonical .slint source
+    #[serde(default, skip_serializing)]
+    pub document: BuilderDocument,   // derived, not persisted
+    // ...
+}
+```
+
+The shell's `LiveDocument` syncs to/from `Page.source` on page
+switches. Undo/redo snapshots source text (`SourceSnapshot`), not
+`BuilderDocument`.
 
 ### Integration with existing Prism infrastructure
 
 - **`SourceBuilder`** — `SlintEmitter` already wraps it; the
-  source map extends it with byte-offset tracking.
+  `MappedEmitter` extends it with marker injection.
 - **`Scanner` / `TokenStream`** — the Slint `SyntaxProvider` uses
   the shared scanning infrastructure from `prism-core::language::syntax`
   for tokenization, not a hand-rolled tokenizer.
@@ -178,6 +218,11 @@ Slint ships several tools (`tools/lsp/`, `tools/viewer/`,
   creative tool (Unity, Godot, Figma, DaVinci Resolve, Slintpad
   itself) treats the visual editor and the code/data as two views
   of the same truth. One-directional GUI→data limits power users.
+- **Source-first simplifies the architecture.** With `.slint` source
+  as the single canonical format, there is no synchronization
+  problem between document model and source — the document is
+  always derived. GUI mutations are text edits, same as code editor
+  mutations.
 - **Reuse over reinvent.** Prism already has a scanner, token
   stream, AST types, syntax provider trait, editor state, help
   registry, component registry, and codegen emitter. The
@@ -188,25 +233,36 @@ Slint ships several tools (`tools/lsp/`, `tools/viewer/`,
   as the single source of truth. The `SourceMap` provides the
   structural mapping; the compiler provides the correctness
   guarantee.
-- **Phased delivery.** GUI→Source in Phase 1 gives immediate value
-  (see and edit the generated code). Source→GUI roundtrip in Phase 2
-  enables full power-user workflows.
+- **Marker comments are invisible to the compiler.** The
+  `// @node-start` / `// @node-end` annotations are valid Slint
+  comments. They enable the builder's structural mapping without
+  affecting compilation or runtime behavior.
 
 ## Consequences
 
-- `SlintEmitter` gains source-map tracking. A new
-  `render_document_slint_source_mapped()` function returns
-  `(String, SourceMap)` alongside the existing
-  `render_document_slint_source()` (unchanged, backward-compatible).
-- New `SourceMap`, `SourceSpan`, `PropSpan` types in
-  `prism-builder::slint_source`.
-- New `LiveDocument` type in `prism-builder` (behind `interpreter`
-  feature).
-- `prism-builder` gains an optional dependency on
-  `prism-core`'s syntax types for the `SyntaxProvider` impl.
-- The code editor panel in `prism-shell` will show the live
-  `.slint` source for the active page, updated in real time as
-  the user manipulates the GUI. Edits in the code panel trigger
-  recompile + preview update.
-- The builder canvas and the code editor become two views of the
+- `render_document_slint_source_mapped()` returns `(String, SourceMap)`
+  with marker comments injected. The unmarked
+  `render_document_slint_source()` remains for clean export.
+- `SourceMap`, `SourceSpan`, `PropSpan` types in
+  `prism-builder::source_map`.
+- `MappedEmitter` in `prism-builder::source_map` — alternative
+  emitter that injects marker comments during rendering.
+- `derive_document_from_source()` and value parsing/formatting
+  helpers in `prism-builder::source_parse`.
+- `LiveDocument` in `prism-builder::live` (behind `interpreter`
+  feature) — source-first type owning `Arc<ComponentRegistry>` and
+  `DesignTokens`. All mutations are source text edits; document
+  is derived on demand.
+- `SourceEditError` — error type for source mutations
+  (`NodeNotFound`, `PropNotFound`, `CompileError`).
+- `BuilderSyntaxProvider` in `prism-builder::syntax_provider`
+  (behind `interpreter`) — compiler-backed completions and hover.
+- `Page.source` is the persisted field; `Page.document` is derived
+  and `skip_serializing`.
+- Shell undo/redo snapshots `.slint` source text, not
+  `BuilderDocument`.
+- The code editor panel shows the live `.slint` source for the
+  active page, updated in real time as the user manipulates the
+  GUI. Edits in the code panel trigger recompile + preview update.
+- The builder canvas and the code editor are two views of the
   same `LiveDocument` — selection in one highlights in the other.

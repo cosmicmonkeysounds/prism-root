@@ -68,9 +68,17 @@ licence requires.
   click-to-select and click-to-add). All color references use `Palette.*` for native
   Slint theming. Activity bar uses hardcoded `NavButton` instances
   with `@image-url("icons/*.svg")` instead of a dynamic model.
-  Four-panel switcher layout unchanged. Builder panel conditionally
-  renders `GridCanvas` (when page has multiple grid cells) or falls
-  back to the flat `BuilderBlock` list.
+  Dock-driven layout (ADR-005): the main content area uses
+  `prism_dock::compute_layout()` to flatten the dock tree into
+  absolutely-positioned `DockPanelRect` and `DockDividerRect`
+  models. Each panel is routed by `panel.panel-id` to its content
+  (builder, component-palette, inspector, explorer, properties,
+  code-editor, console, etc.). Dividers are draggable with ratio
+  updates flowing through `dock-divider-dragged`. Workflow pages
+  (Edit, Design, Code, Fusion) switch the active `DockState` via
+  `workflow-page-clicked`. Builder panel conditionally renders
+  `GridCanvas` (when page has multiple grid cells) or falls back
+  to the flat `BuilderBlock` list.
 
 ## Features
 - `native` (default) — on-desktop stack. Pulls in `slint` (with the
@@ -102,21 +110,27 @@ licence requires.
 From `src/lib.rs`:
 - `Shell` — owning wrapper around `Rc<RefCell<ShellInner>>` +
   the root Slint `AppWindow`. `ShellInner` holds the `Store<AppState>`,
-  `ComponentRegistry`, `InputManager`, `CommandRegistry`, and undo
-  stacks. Callbacks capture `Rc::clone` of the inner state so Slint
-  closures can mutate the store directly. Build one with `Shell::new()`,
-  call `Shell::run()` to hand control to Slint's event loop.
-  `sync_ui_from_shared` pushes current state into Slint properties
-  after every mutation; `subscribe` / `unsubscribe`, and `snapshot` /
-  `restore` keep the §7 hot-reload story alive.
+  `ComponentRegistry`, `LiveDocument` (source-first builder state),
+  `InputManager`, `CommandRegistry`, and source-text undo stacks.
+  Callbacks capture `Rc::clone` of the inner state so Slint closures
+  can mutate the store directly. Builder mutations go through
+  `LiveDocument` source-editing methods; `sync_builder_document()`
+  derives `BuilderDocument` from the live source for panel display.
+  Build one with `Shell::new()`, call `Shell::run()` to hand
+  control to Slint's event loop. `sync_ui_from_shared` saves source
+  to the active page and pushes current state into Slint properties.
   `Shell::add_notification` pushes toast notifications.
 - `FirstPaint` — boot telemetry slot (`src/telemetry.rs`).
-- `AppState` — the reloadable root state. `ActivePanel` was removed
-  in the ADR-005 dock integration; panel/page state now lives in
+- `AppState` — the reloadable root state. Panel/page state lives in
   `workspace: prism_dock::DockWorkspace` on `AppState`.
   `panel_id_for_slint(&DockWorkspace) -> i32` derives the legacy
   Slint panel ID from the active workspace page.
   `page_id_for_panel(&str) -> &str` maps panel names to page IDs.
+  `push_dock_layout(&AppWindow, &DockWorkspace)` computes pixel-level
+  layout from the dock tree and pushes `DockPanelRect`, `DockDividerRect`,
+  and `WorkflowPageItem` models to Slint. `serialize_addr`/`deserialize_addr`
+  convert `NodeAddress` to/from dot-separated "0"/"1" strings for
+  Slint callback round-tripping.
   Phase 4 replaced `selected_node: Option<NodeId>` with
   `SelectionModel` (multi-select with focus depth). Added `tabs`,
   `toasts`, `command_palette_open`, `command_palette_query`,

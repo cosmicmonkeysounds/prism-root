@@ -43,9 +43,15 @@ From `src/lib.rs`:
   source mapping types (ADR-006).
 - `compile_slint_source` / `instantiate_document` — gated behind
   `interpreter` feature.
-- `LiveDocument`, `LiveDiagnostic`, `SourceSelection` — gated behind
-  `interpreter`. Bidirectional compile loop with `EditorState`,
-  `SourceMap`, and selection bridge.
+- `LiveDocument`, `LiveDiagnostic`, `SourceSelection`,
+  `SourceEditError` — gated behind `interpreter`. Source-first
+  compile loop: `.slint` source is canonical, `BuilderDocument`
+  derived on demand. Source mutations via `edit_prop_in_source`,
+  `insert_node_in_source`, `remove_node_from_source`,
+  `move_node_in_source`.
+- `derive_document_from_source`, `parse_slint_value`,
+  `format_slint_value` — parse marker-annotated `.slint` source
+  back into structured types.
 - `BuilderSyntaxProvider` — gated behind `interpreter`. Compiler-backed
   `SyntaxProvider` with context-aware completions and hover.
 
@@ -163,13 +169,18 @@ Fifteen modules in `src/`:
   (ADR-006). Forward: `span_for_node(id)`, reverse:
   `node_at_offset(byte)`. `MappedEmitter` is an alternative emitter
   that tracks property-level spans. 6 unit tests.
+- `source_parse.rs` — `derive_document_from_source`, `parse_slint_value`,
+  `format_slint_value`. Reconstructs a `BuilderDocument` from
+  marker-annotated `.slint` source. Inverse of the render walker.
+  15 unit tests.
 - `live.rs` (behind `interpreter`) — `LiveDocument`, `LiveDiagnostic`,
-  `SourceSelection`. Unifies `BuilderDocument` + generated `.slint`
-  source + `SourceMap` + `EditorState` (ropey-backed) + compiled
-  `ComponentDefinition` + diagnostics. GUI→Source via `rebuild()`,
-  Source→Preview via `apply_source_edit()`. Selection bridge:
-  `select_node(id)` → editor line/col range, `node_at_cursor()` →
-  node ID. 13 unit tests.
+  `SourceSelection`, `SourceEditError`. **Source-first**: `.slint`
+  source is canonical; `BuilderDocument` is derived on demand.
+  Constructors: `from_source` (primary), `from_document` (import).
+  Source mutations: `edit_prop_in_source`, `insert_node_in_source`,
+  `remove_node_from_source`, `move_node_in_source`. Editor sync via
+  `apply_editor_changes`. Selection bridge: `select_node(id)` →
+  editor line/col range, `node_at_cursor()` → node ID. 19 unit tests.
 - `syntax_provider.rs` (behind `interpreter`) —
   `BuilderSyntaxProvider`. Compiler-backed `SyntaxProvider` impl that
   extends the lightweight `SlintSyntaxProvider` (prism-core) with real

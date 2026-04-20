@@ -14,15 +14,19 @@ pub struct WorkflowPage {
 
 impl WorkflowPage {
     pub fn edit() -> Self {
-        // 3-column: Explorer | Builder | Inspector+Properties (tabbed)
-        // Like Unity's default layout.
+        // 3-column: left tabs | Builder | Properties
+        // Left has Component Palette, Inspector, and Explorer as tabs.
         let dock = DockState::new(DockNode::hsplit(
             0.18,
-            DockNode::tab(PanelKind::Explorer.id()),
+            DockNode::tabs(vec![
+                PanelKind::ComponentPalette.id(),
+                PanelKind::Inspector.id(),
+                PanelKind::Explorer.id(),
+            ]),
             DockNode::hsplit(
                 0.72,
                 DockNode::tab(PanelKind::Builder.id()),
-                DockNode::tabs(vec![PanelKind::Inspector.id(), PanelKind::Properties.id()]),
+                DockNode::tab(PanelKind::Properties.id()),
             ),
         ));
         Self {
@@ -119,11 +123,12 @@ mod tests {
     #[test]
     fn edit_preset_has_expected_panels() {
         let page = WorkflowPage::edit();
+        assert!(page.dock.contains_panel("component-palette"));
+        assert!(page.dock.contains_panel("inspector"));
         assert!(page.dock.contains_panel("explorer"));
         assert!(page.dock.contains_panel("builder"));
-        assert!(page.dock.contains_panel("inspector"));
         assert!(page.dock.contains_panel("properties"));
-        assert_eq!(page.dock.tab_count(), 4);
+        assert_eq!(page.dock.tab_count(), 5);
     }
 
     #[test]

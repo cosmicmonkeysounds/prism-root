@@ -127,7 +127,7 @@ impl LiveDocument {
         registry: Arc<ComponentRegistry>,
         tokens: &DesignTokens,
     ) -> Self {
-        Self::from_document(document, registry, tokens.clone())
+        Self::from_document(document, registry, *tokens)
     }
 
     // ── Derived document ───────────────────────────────────────────
@@ -367,7 +367,7 @@ impl LiveDocument {
 
     pub fn rebuild(&mut self) -> Result<(), InstantiateError> {
         let registry = Arc::clone(&self.registry);
-        let tokens = self.tokens.clone();
+        let tokens = self.tokens;
         self.rebuild_with(&registry, &tokens)
     }
 

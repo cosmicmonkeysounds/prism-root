@@ -692,3 +692,17 @@ cdylibs) are re-added as Phase 0 spike tasks when the
   29 `prism-relay` tests (21 unit + 8 integration), zero clippy warnings.
   Phase 2b marked closed (residual stubs: `network::{discovery, session,
   server}` — not consumed by `prism-relay`).
+- **2026-04-20** — **ADR-006 source-first architecture implemented.** The
+  builder flipped from `BuilderDocument`-as-truth to `.slint`-source-as-truth
+  (ADR-006). `LiveDocument` in `prism-builder::live` is now source-first:
+  constructors `from_source` (primary) and `from_document` (migration/import),
+  `BuilderDocument` derived on demand via `derive_document_from_source`.
+  GUI mutations are surgical source text edits (`edit_prop_in_source`,
+  `insert_node_in_source`, `remove_node_from_source`, `move_node_in_source`)
+  located via `SourceMap` + `PropSpan`. New `source_parse.rs` module
+  implements the roundtrip: `derive_document_from_source` + `parse_slint_value`
+  / `format_slint_value`. `Page.source` is the persisted field;
+  `Page.document` is derived and `skip_serializing`. Shell undo/redo
+  snapshots source text (`SourceSnapshot`). All 15+ mutation callbacks in
+  `prism-shell/src/app.rs` rewritten; 10 dead document-manipulation helpers
+  and 8 dead tests removed. 1975+ workspace tests green, zero clippy warnings.
