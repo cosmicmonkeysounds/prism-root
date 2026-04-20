@@ -142,16 +142,19 @@ mod tests {
                         title: "Home".into(),
                         route: "/".into(),
                         document: BuilderDocument::default(),
+                        style: Default::default(),
                     },
                     Page {
                         id: "p2".into(),
                         title: "About".into(),
                         route: "/about".into(),
                         document: BuilderDocument::default(),
+                        style: Default::default(),
                     },
                 ],
                 active_page: 0,
                 navigation: NavigationConfig::default(),
+                style: Default::default(),
             },
             PrismApp {
                 id: "a2".into(),
@@ -163,9 +166,11 @@ mod tests {
                     title: "Main".into(),
                     route: "/".into(),
                     document: BuilderDocument::default(),
+                    style: Default::default(),
                 }],
                 active_page: 0,
                 navigation: NavigationConfig::default(),
+                style: Default::default(),
             },
         ]
     }

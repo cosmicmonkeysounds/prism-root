@@ -11,13 +11,22 @@
 //! - [`ComputedLayout`] — the output of the layout pass: a per-node
 //!   map of resolved rectangles + composed transforms.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use glam::{Affine2, Vec2};
 use prism_core::foundation::geometry::{Edges, Point2, Rect, Size2};
 use prism_core::foundation::spatial::ComputedTransform;
 use serde::{Deserialize, Serialize};
 use taffy::prelude::*;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum GridEditError {
+    #[error("index out of bounds: {0}")]
+    IndexOutOfBounds(usize),
+    #[error("cannot remove last track")]
+    CannotRemoveLastTrack,
+}
 
 use crate::document::{BuilderDocument, Node, NodeId};
 
@@ -121,6 +130,85 @@ pub struct PageLayout {
 }
 
 impl PageLayout {
+    pub fn insert_column(&mut self, index: usize, track: TrackSize) -> usize {
+        if index >= self.columns.len() {
+            self.columns.push(track);
+        } else {
+            self.columns.insert(index, track);
+        }
+        self.columns.len()
+    }
+
+    pub fn remove_column(&mut self, index: usize) -> Result<(), GridEditError> {
+        if self.columns.len() <= 1 {
+            return Err(GridEditError::CannotRemoveLastTrack);
+        }
+        if index >= self.columns.len() {
+            return Err(GridEditError::IndexOutOfBounds(index));
+        }
+        self.columns.remove(index);
+        Ok(())
+    }
+
+    pub fn resize_column(&mut self, index: usize, track: TrackSize) -> Result<(), GridEditError> {
+        if index >= self.columns.len() {
+            return Err(GridEditError::IndexOutOfBounds(index));
+        }
+        self.columns[index] = track;
+        Ok(())
+    }
+
+    pub fn insert_row(&mut self, index: usize, track: TrackSize) -> usize {
+        if index >= self.rows.len() {
+            self.rows.push(track);
+        } else {
+            self.rows.insert(index, track);
+        }
+        self.rows.len()
+    }
+
+    pub fn remove_row(&mut self, index: usize) -> Result<(), GridEditError> {
+        if self.rows.len() <= 1 {
+            return Err(GridEditError::CannotRemoveLastTrack);
+        }
+        if index >= self.rows.len() {
+            return Err(GridEditError::IndexOutOfBounds(index));
+        }
+        self.rows.remove(index);
+        Ok(())
+    }
+
+    pub fn resize_row(&mut self, index: usize, track: TrackSize) -> Result<(), GridEditError> {
+        if index >= self.rows.len() {
+            return Err(GridEditError::IndexOutOfBounds(index));
+        }
+        self.rows[index] = track;
+        Ok(())
+    }
+
+    pub fn cell_positions(&self) -> Vec<(usize, usize)> {
+        let cols = self.columns.len().max(1);
+        let rows = self.rows.len().max(1);
+        let mut cells = Vec::with_capacity(cols * rows);
+        for r in 0..rows {
+            for c in 0..cols {
+                cells.push((c, r));
+            }
+        }
+        cells
+    }
+
+    pub fn empty_cells(&self, occupied: &[(GridPlacement, GridPlacement)]) -> Vec<(usize, usize)> {
+        let all = self.cell_positions();
+        let mut taken = HashSet::new();
+        for (col_p, row_p) in occupied {
+            let col = col_p.resolved_index().unwrap_or(0);
+            let row = row_p.resolved_index().unwrap_or(0);
+            taken.insert((col, row));
+        }
+        all.into_iter().filter(|c| !taken.contains(c)).collect()
+    }
+
     /// Resolve the page dimensions, applying orientation. Returns
     /// `None` for `Responsive` pages.
     pub fn resolved_size(&self) -> Option<Size2> {
@@ -483,6 +571,13 @@ impl GridPlacement {
             Self::Auto => taffy::style::GridPlacement::AUTO,
             Self::Line { index } => taffy::style::GridPlacement::from_line_index(index),
             Self::Span { count } => taffy::style::GridPlacement::from_span(count),
+        }
+    }
+
+    pub fn resolved_index(&self) -> Option<usize> {
+        match self {
+            Self::Line { index } => Some((*index - 1).max(0) as usize),
+            _ => None,
         }
     }
 }
@@ -877,5 +972,126 @@ mod tests {
             let t2: TrackSize = serde_json::from_str(&json).unwrap();
             assert_eq!(*t, t2);
         }
+    }
+
+    // ── Grid manipulation tests ─────────────────────────────────────
+
+    #[test]
+    fn insert_column_appends() {
+        let mut layout = PageLayout::default();
+        layout.insert_column(0, TrackSize::Fr { value: 1.0 });
+        layout.insert_column(100, TrackSize::Fr { value: 2.0 });
+        assert_eq!(layout.columns.len(), 2);
+    }
+
+    #[test]
+    fn insert_column_at_index() {
+        let mut layout = PageLayout {
+            columns: vec![TrackSize::Fr { value: 1.0 }, TrackSize::Fr { value: 3.0 }],
+            ..Default::default()
+        };
+        layout.insert_column(1, TrackSize::Fr { value: 2.0 });
+        assert_eq!(layout.columns.len(), 3);
+        assert_eq!(layout.columns[1], TrackSize::Fr { value: 2.0 });
+    }
+
+    #[test]
+    fn remove_column_last_errors() {
+        let mut layout = PageLayout {
+            columns: vec![TrackSize::Fr { value: 1.0 }],
+            ..Default::default()
+        };
+        assert!(layout.remove_column(0).is_err());
+    }
+
+    #[test]
+    fn remove_column_valid() {
+        let mut layout = PageLayout {
+            columns: vec![TrackSize::Fr { value: 1.0 }, TrackSize::Fr { value: 2.0 }],
+            ..Default::default()
+        };
+        layout.remove_column(0).unwrap();
+        assert_eq!(layout.columns.len(), 1);
+        assert_eq!(layout.columns[0], TrackSize::Fr { value: 2.0 });
+    }
+
+    #[test]
+    fn resize_column_valid() {
+        let mut layout = PageLayout {
+            columns: vec![TrackSize::Fr { value: 1.0 }],
+            ..Default::default()
+        };
+        layout
+            .resize_column(0, TrackSize::Fixed { value: 300.0 })
+            .unwrap();
+        assert_eq!(layout.columns[0], TrackSize::Fixed { value: 300.0 });
+    }
+
+    #[test]
+    fn resize_column_oob() {
+        let mut layout = PageLayout::default();
+        assert!(layout
+            .resize_column(5, TrackSize::Fr { value: 1.0 })
+            .is_err());
+    }
+
+    #[test]
+    fn insert_remove_row() {
+        let mut layout = PageLayout::default();
+        layout.insert_row(0, TrackSize::Auto);
+        layout.insert_row(1, TrackSize::Fr { value: 1.0 });
+        assert_eq!(layout.rows.len(), 2);
+        layout.remove_row(0).unwrap();
+        assert_eq!(layout.rows.len(), 1);
+    }
+
+    #[test]
+    fn cell_positions_2x3() {
+        let layout = PageLayout {
+            columns: vec![TrackSize::Fr { value: 1.0 }, TrackSize::Fr { value: 1.0 }],
+            rows: vec![TrackSize::Auto, TrackSize::Auto, TrackSize::Auto],
+            ..Default::default()
+        };
+        let cells = layout.cell_positions();
+        assert_eq!(cells.len(), 6);
+        assert_eq!(cells[0], (0, 0));
+        assert_eq!(cells[1], (1, 0));
+        assert_eq!(cells[2], (0, 1));
+        assert_eq!(cells[5], (1, 2));
+    }
+
+    #[test]
+    fn cell_positions_empty_layout() {
+        let layout = PageLayout::default();
+        let cells = layout.cell_positions();
+        assert_eq!(cells.len(), 1);
+        assert_eq!(cells[0], (0, 0));
+    }
+
+    #[test]
+    fn empty_cells_computation() {
+        let layout = PageLayout {
+            columns: vec![TrackSize::Fr { value: 1.0 }, TrackSize::Fr { value: 1.0 }],
+            rows: vec![TrackSize::Auto, TrackSize::Auto],
+            ..Default::default()
+        };
+        let occupied = vec![(
+            GridPlacement::Line { index: 1 },
+            GridPlacement::Line { index: 1 },
+        )];
+        let empty = layout.empty_cells(&occupied);
+        assert_eq!(empty.len(), 3);
+        assert!(!empty.contains(&(0, 0)));
+        assert!(empty.contains(&(1, 0)));
+        assert!(empty.contains(&(0, 1)));
+        assert!(empty.contains(&(1, 1)));
+    }
+
+    #[test]
+    fn grid_placement_resolved_index() {
+        assert_eq!(GridPlacement::Auto.resolved_index(), None);
+        assert_eq!(GridPlacement::Line { index: 1 }.resolved_index(), Some(0));
+        assert_eq!(GridPlacement::Line { index: 3 }.resolved_index(), Some(2));
+        assert_eq!(GridPlacement::Span { count: 2 }.resolved_index(), None);
     }
 }

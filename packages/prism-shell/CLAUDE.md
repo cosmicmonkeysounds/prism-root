@@ -47,16 +47,20 @@ licence requires.
   `std-widgets.slint` (`Button`, `LineEdit`, `Switch`, `ComboBox`,
   `ListView`, `ScrollView`, `GroupBox`, `Palette`, etc.) instead of
   hand-rolling every widget from `Rectangle` + `Text` + `TouchArea`.
-  Six custom components: `NavButton` (activity bar icon with
+  Seven custom components: `NavButton` (activity bar icon with
   selection indicator, uses `Image` + `colorize`), `IconButton`
   (28px icon-only button for toolbars/actions), `ToolbarSeparator`,
   `FieldEditor` (property row using `LineEdit` / `Switch` per kind),
-  `InspectorRow` (indented tree node with icon move buttons), and
-  `BuilderBlock` (WYSIWYG component preview with inline editing).
-  All color references use `Palette.*` for native Slint theming.
-  Activity bar uses hardcoded `NavButton` instances with
-  `@image-url("icons/*.svg")` instead of a dynamic model.
-  Four-panel switcher layout unchanged.
+  `InspectorRow` (indented tree node with icon move buttons),
+  `BuilderBlock` (WYSIWYG component preview with inline editing),
+  and `GridCanvas` (interactive page grid editor with cell rectangles,
+  "+" icons in empty cells, component previews in occupied cells,
+  click-to-select and click-to-add). All color references use `Palette.*` for native
+  Slint theming. Activity bar uses hardcoded `NavButton` instances
+  with `@image-url("icons/*.svg")` instead of a dynamic model.
+  Four-panel switcher layout unchanged. Builder panel conditionally
+  renders `GridCanvas` (when page has multiple grid cells) or falls
+  back to the flat `BuilderBlock` list.
 
 ## Features
 - `native` (default) — on-desktop stack. Pulls in `slint` (with the
@@ -198,6 +202,24 @@ shell framework features are implemented:
   React help system per ADR-005. `HelpRegistry` in `prism-core` +
   `register_help_entries` in `prism-shell/src/help.rs` + Slint tooltip
   overlay with 380ms show delay and 8s auto-hide.
+- **Grid canvas editor**: Interactive page grid with `GridCanvas` Slint
+  component. Empty cells show "+" icons with hover highlights; occupied
+  cells show component type labels. Click empty cell to add component,
+  click occupied to select. "+ Col" / "+ Row" buttons for adding tracks.
+  Grid callbacks: `grid-cell-clicked`, `grid-add-column/row`,
+  `grid-remove-column/row`, `grid-track-resize`, `grid-cell-add-component`.
+- **Page shells**: New pages come with a basic grid layout shell
+  (`BuilderDocument::page_shell()`) — single-column responsive grid
+  with header + content rows, margins, and a root container. Users
+  add components by dragging into the grid cells.
+- **Layout-aware components**: Container, Columns, Form, and List
+  components carry correct default `FlowProps` (display, direction,
+  gap) via `default_layout_for_component()`, so the Taffy layout
+  engine handles them consistently within the grid system.
+- **Style cascade UI**: Right sidebar "Style (cascading)" section showing
+  resolved style properties with app → page → node inheritance. When
+  nothing is selected, shows page-level styles. Edits dispatch through
+  `apply_style_edit` to node or page `StyleProperties`.
 
 ## Downstream
 - `prism-studio/src-tauri` embeds this crate as a library with

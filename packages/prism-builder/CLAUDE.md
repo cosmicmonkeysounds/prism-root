@@ -13,9 +13,9 @@ property-panel field factories.
   path (`compile_slint_source` / `instantiate_document`) is
   available. `prism-shell` and `prism-studio` flip this on; the
   relay leaves it off so its dep graph stays Slint-free.
-- `cargo test -p prism-builder` — 109 unit tests (baseline).
+- `cargo test -p prism-builder` — 129 unit tests (baseline).
 - `cargo test -p prism-builder --features interpreter` — adds one
-  interpreter round-trip (110 tests total).
+  interpreter round-trip (130 tests total).
 
 ## Public surface
 From `src/lib.rs`:
@@ -58,6 +58,30 @@ From `src/lib.rs`:
 - `Node` now carries `layout_mode: LayoutMode` and
   `transform: Transform2D` (from `prism-core::foundation::spatial`).
 - `BuilderDocument` now carries `page_layout: PageLayout`.
+- `GridEditError` — error enum for grid track operations
+  (IndexOutOfBounds, CannotRemoveLastTrack).
+- `PageLayout::insert_column/row`, `remove_column/row`,
+  `resize_column/row` — interactive grid manipulation methods.
+- `PageLayout::cell_positions()` — all (col, row) pairs, row-major.
+- `PageLayout::empty_cells(occupied)` — unoccupied cells.
+- `GridPlacement::resolved_index()` — converts 1-based line index
+  to 0-based cell index.
+- `BuilderDocument::place_in_cell(node_id, col, row)` and
+  `move_to_cell` — set a node's grid_column/grid_row placement.
+- `BuilderDocument::page_shell()` — factory for new pages: returns
+  a document with a single-column responsive grid (header + content
+  rows), root container, and 24/32px margins. Every new page starts
+  from this shell rather than an empty document.
+
+### Style cascade
+- `StyleProperties` — 10-field all-`Option` struct (font_family,
+  font_size, font_weight, line_height, letter_spacing, color,
+  background, accent, base_spacing, border_radius). Serde-friendly
+  with `skip_serializing_if = "Option::is_none"` on every field.
+- `resolve_cascade(app, page, node) -> StyleProperties` — merges
+  three levels; most-specific non-None wins.
+- `PrismApp`, `Page`, and `Node` all carry
+  `#[serde(default)] style: StyleProperties`.
 
 ### Composition patterns (ADR-004)
 - `Modifier`, `ModifierKind`, `modifier_schema(kind)` — attachable

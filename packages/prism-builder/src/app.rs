@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::document::BuilderDocument;
+use crate::style::StyleProperties;
 
 pub type AppId = String;
 
@@ -19,6 +20,8 @@ pub struct PrismApp {
     pub pages: Vec<Page>,
     pub active_page: usize,
     pub navigation: NavigationConfig,
+    #[serde(default)]
+    pub style: StyleProperties,
 }
 
 impl PrismApp {
@@ -43,6 +46,8 @@ pub struct Page {
     pub title: String,
     pub route: String,
     pub document: BuilderDocument,
+    #[serde(default)]
+    pub style: StyleProperties,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -124,16 +129,19 @@ mod tests {
                     title: "Home".into(),
                     route: "/".into(),
                     document: BuilderDocument::default(),
+                    style: StyleProperties::default(),
                 },
                 Page {
                     id: "p2".into(),
                     title: "About".into(),
                     route: "/about".into(),
                     document: BuilderDocument::default(),
+                    style: StyleProperties::default(),
                 },
             ],
             active_page: 0,
             navigation: NavigationConfig::default(),
+            style: StyleProperties::default(),
         };
         assert!(app.active_document().is_some());
         assert_eq!(app.page_count(), 2);

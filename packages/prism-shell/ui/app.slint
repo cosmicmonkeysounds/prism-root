@@ -98,6 +98,20 @@ struct DocsPanelData {
     body: string,
 }
 
+struct GridCellItem {
+    col: int,
+    row: int,
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+    is-empty: bool,
+    node-id: string,
+    component-type: string,
+    selected: bool,
+    preview-text: string,
+}
+
 struct PageLayoutData {
     page-width: float,
     page-height: float,
@@ -951,6 +965,90 @@ component AppCard inherits Rectangle {
     }
 }
 
+// ── Grid canvas ───────────────────────────────────────────────────
+
+component GridCanvas inherits Rectangle {
+    in property <[GridCellItem]> cells: [];
+    in property <float> margin-left: 0;
+    in property <float> margin-top: 0;
+    callback cell-clicked(int /* col */, int /* row */);
+    callback cell-add-clicked(int /* col */, int /* row */);
+
+    for cell in root.cells : Rectangle {
+        x: cell.x * 1px + root.margin-left * 1px;
+        y: cell.y * 1px + root.margin-top * 1px;
+        width: cell.width * 1px;
+        height: max(cell.height * 1px, 60px);
+        border-width: 1px;
+        border-color: cell.selected
+            ? Palette.accent-background.transparentize(40%)
+            : Palette.foreground.transparentize(88%);
+        border-radius: 4px;
+        background: cell.is-empty
+            ? (cell-touch.has-hover ? Palette.accent-background.transparentize(94%) : transparent)
+            : (cell.selected
+                ? Palette.accent-background.transparentize(92%)
+                : transparent);
+
+        if cell.is-empty : VerticalLayout {
+            alignment: center;
+            HorizontalLayout {
+                alignment: center;
+                spacing: 6px;
+                Text {
+                    text: "+";
+                    color: cell-touch.has-hover
+                        ? Palette.accent-background.transparentize(20%)
+                        : Palette.foreground.transparentize(70%);
+                    font-size: 24px;
+                    font-weight: 300;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+            if cell-touch.has-hover : Text {
+                text: "Add component";
+                color: Palette.foreground.transparentize(50%);
+                font-size: 10px;
+                horizontal-alignment: center;
+            }
+        }
+
+        if !cell.is-empty : VerticalLayout {
+            padding: 8px;
+            spacing: 4px;
+            alignment: center;
+            Text {
+                text: cell.component-type;
+                color: cell.selected
+                    ? Palette.foreground
+                    : Palette.foreground.transparentize(30%);
+                font-size: 11px;
+                font-weight: 600;
+                horizontal-alignment: center;
+            }
+            if cell.preview-text != "" : Text {
+                text: cell.preview-text;
+                color: Palette.foreground.transparentize(50%);
+                font-size: 11px;
+                horizontal-alignment: center;
+                overflow: elide;
+            }
+        }
+
+        cell-touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => {
+                if cell.is-empty {
+                    root.cell-add-clicked(cell.col, cell.row);
+                } else {
+                    root.cell-clicked(cell.col, cell.row);
+                }
+            }
+        }
+    }
+}
+
 // ── Root component ─────────────────────────────────────────────────
 
 export component AppWindow inherits Window {
@@ -1106,6 +1204,21 @@ export component AppWindow inherits Window {
     callback docs-open-full;
     callback docs-panel-close;
     callback docs-view-close;
+
+    // Grid cells (interactive page grid)
+    in property <[GridCellItem]> grid-cells: [];
+    callback grid-cell-clicked(int /* col */, int /* row */);
+    callback grid-cell-add-component(string /* component-type */, int /* col */, int /* row */);
+    callback grid-add-column(int /* index */);
+    callback grid-add-row(int /* index */);
+    callback grid-remove-column(int /* index */);
+    callback grid-remove-row(int /* index */);
+    callback grid-track-resize(string /* "col" | "row" */, int /* index */, float /* new-size-px */);
+
+    // Style cascade (app/page/node)
+    in property <[FieldRow]> style-rows: [];
+    callback style-field-edited(string /* key */, string /* value */);
+    callback style-field-edited-number(string /* key */, float /* value */);
 
     // Launchpad / App navigation
     in property <bool> is-launchpad: true;
@@ -2174,7 +2287,42 @@ export component AppWindow inherits Window {
                                             spacing: 4px;
                                             alignment: start;
 
-                                            if root.builder-nodes.length > 0 : VerticalLayout {
+                                            // Grid canvas: show when multiple grid cells exist
+                                            if root.grid-cells.length > 1 : Rectangle {
+                                                vertical-stretch: 1;
+                                                // Grid track controls (add column/row)
+                                                HorizontalLayout {
+                                                    alignment: end;
+                                                    spacing: 4px;
+                                                    height: 24px;
+                                                    Rectangle {
+                                                        width: grid-add-col-text.preferred-width + 12px;
+                                                        height: 20px;
+                                                        border-radius: 4px;
+                                                        background: grid-add-col-touch.has-hover ? Palette.control-background : Palette.foreground.transparentize(94%);
+                                                        grid-add-col-text := Text { text: "+ Col"; color: Palette.foreground.transparentize(40%); font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+                                                        grid-add-col-touch := TouchArea { mouse-cursor: pointer; clicked => { root.grid-add-column(root.page-layout.column-count); } }
+                                                    }
+                                                    Rectangle {
+                                                        width: grid-add-row-text.preferred-width + 12px;
+                                                        height: 20px;
+                                                        border-radius: 4px;
+                                                        background: grid-add-row-touch.has-hover ? Palette.control-background : Palette.foreground.transparentize(94%);
+                                                        grid-add-row-text := Text { text: "+ Row"; color: Palette.foreground.transparentize(40%); font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+                                                        grid-add-row-touch := TouchArea { mouse-cursor: pointer; clicked => { root.grid-add-row(root.page-layout.row-count); } }
+                                                    }
+                                                }
+                                                GridCanvas {
+                                                    cells: root.grid-cells;
+                                                    margin-left: 0;
+                                                    margin-top: 0;
+                                                    cell-clicked(col, row) => { root.grid-cell-clicked(col, row); }
+                                                    cell-add-clicked(col, row) => { root.grid-cell-clicked(col, row); }
+                                                }
+                                            }
+
+                                            // Flat list: show when single cell or no grid
+                                            if root.grid-cells.length <= 1 && root.builder-nodes.length > 0 : VerticalLayout {
                                                 spacing: 2px;
                                                 for bnode[i] in root.builder-nodes : BuilderBlock {
                                                     node-id: bnode.id; component-type: bnode.component-type; selected: bnode.selected; depth: bnode.depth;
@@ -2187,12 +2335,13 @@ export component AppWindow inherits Window {
                                                 }
                                             }
 
-                                            if root.builder-nodes.length == 0 : VerticalLayout {
+                                            if root.grid-cells.length <= 1 && root.builder-nodes.length == 0 : VerticalLayout {
                                                 alignment: center; spacing: 8px; padding-top: 80px;
                                                 Text { text: "Empty document"; color: Palette.foreground.transparentize(50%); font-size: 16px; horizontal-alignment: center; }
                                                 Text { text: "Add a component from the palette to get started."; color: Palette.foreground.transparentize(60%); font-size: 12px; horizontal-alignment: center; }
                                             }
                                         }
+
                                     }
                                 }
                             }
@@ -2527,6 +2676,22 @@ export component AppWindow inherits Window {
                                     field-edited-number(key, val) => { root.field-edited-number(key, val); }
                                 }
 
+                                // Style cascade section
+                                if root.style-rows.length > 0 : Rectangle { height: 8px; }
+                                if root.style-rows.length > 0 : Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
+                                if root.style-rows.length > 0 : Rectangle { height: 4px; }
+                                if root.style-rows.length > 0 : HorizontalLayout {
+                                    spacing: 6px; alignment: start;
+                                    Text { text: "Style"; color: Palette.foreground.transparentize(30%); font-size: 11px; font-weight: 600; vertical-alignment: center; }
+                                    Text { text: "(cascading)"; color: Palette.foreground.transparentize(60%); font-size: 10px; vertical-alignment: center; }
+                                }
+                                for sfield[i] in root.style-rows : FieldEditor {
+                                    key: sfield.key; label: sfield.label; kind: sfield.kind; value: sfield.value; required: sfield.required;
+                                    min: sfield.min; max: sfield.max; has-bounds: sfield.has-bounds; options: sfield.options; swatch: sfield.swatch;
+                                    field-edited(key, val) => { root.style-field-edited(key, val); }
+                                    field-edited-number(key, val) => { root.style-field-edited-number(key, val); }
+                                }
+
                                 // Layout section separator
                                 if root.layout-rows.length > 0 : Rectangle { height: 8px; }
                                 if root.layout-rows.length > 0 : Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
@@ -2620,8 +2785,22 @@ export component AppWindow inherits Window {
 
                         if !root.has-selection : VerticalLayout {
                             spacing: 8px; padding-top: 24px;
-                            Text { text: "No selection"; color: Palette.foreground.transparentize(40%); font-size: 13px; font-weight: 500; horizontal-alignment: center; }
-                            Text { text: "Select an element on the canvas or in the layers panel to edit its properties."; color: Palette.foreground.transparentize(60%); font-size: 11px; wrap: word-wrap; horizontal-alignment: center; }
+                            Text { text: "Page styles"; color: Palette.foreground.transparentize(30%); font-size: 13px; font-weight: 600; horizontal-alignment: center; }
+                            Text { text: "Set global styles that cascade to all components on this page."; color: Palette.foreground.transparentize(50%); font-size: 11px; wrap: word-wrap; horizontal-alignment: center; }
+                            if root.style-rows.length > 0 : ScrollView {
+                                vertical-stretch: 1;
+                                VerticalLayout {
+                                    min-width: 200px;
+                                    spacing: 4px;
+                                    padding-top: 8px;
+                                    for sfield[i] in root.style-rows : FieldEditor {
+                                        key: sfield.key; label: sfield.label; kind: sfield.kind; value: sfield.value; required: sfield.required;
+                                        min: sfield.min; max: sfield.max; has-bounds: sfield.has-bounds; options: sfield.options; swatch: sfield.swatch;
+                                        field-edited(key, val) => { root.style-field-edited(key, val); }
+                                        field-edited-number(key, val) => { root.style-field-edited-number(key, val); }
+                                    }
+                                }
+                            }
                         }
                     }
                 }

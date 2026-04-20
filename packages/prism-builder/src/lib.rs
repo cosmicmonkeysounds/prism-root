@@ -34,6 +34,7 @@ pub mod schemas;
 pub mod signal;
 pub mod slint_source;
 pub mod starter;
+pub mod style;
 pub mod variant;
 
 pub use app::{AppIcon, AppId, NavigationConfig, NavigationStyle, Page, PrismApp};
@@ -43,7 +44,8 @@ pub use html::{escape_attr, escape_text, Html};
 pub use html_block::{HtmlBlock, HtmlRegistry, HtmlRenderContext};
 pub use html_starter::register_html_builtins;
 pub use layout::{
-    compute_layout, ComputedLayout, FlowProps, LayoutMode, NodeLayout, PageLayout, PageSize,
+    compute_layout, ComputedLayout, FlowProps, GridEditError, GridPlacement, LayoutMode,
+    NodeLayout, PageLayout, PageSize,
 };
 pub use modifier::{Modifier, ModifierKind};
 pub use prefab::{ExposedSlot, PrefabComponent, PrefabDef};
@@ -55,6 +57,7 @@ pub use resource::{ResourceDef, ResourceId, ResourceKind};
 pub use signal::{ActionKind, Connection, ConnectionId, SignalDef};
 pub use slint_source::{SlintEmitter, SlintIdent};
 pub use starter::register_builtins;
+pub use style::{resolve_cascade, StyleProperties};
 pub use variant::{VariantAxis, VariantOption};
 
 #[cfg(feature = "interpreter")]

@@ -19,7 +19,7 @@ use prism_builder::{
         JustifyOption, LayoutMode, PageSize, TrackSize,
     },
     starter::register_builtins,
-    BuilderDocument, ComponentRegistry, FieldKind, Node, NodeId,
+    BuilderDocument, ComponentRegistry, FieldKind, Node, NodeId, StyleProperties,
 };
 use prism_core::design_tokens::{DesignTokens, DEFAULT_TOKENS};
 use prism_core::editor::EditorState;
@@ -42,8 +42,8 @@ use crate::telemetry::FirstPaint;
 use crate::{
     AppCardItem, AppWindow, BreadcrumbItem, BuilderNode, ButtonSpec, CommandItem,
     ComponentPaletteItem, DocsPanelData, EditorLine, EditorToken, ExplorerNodeItem, FieldRow,
-    GutterRect, HelpTooltipData, InspectorNode, MenuDef, MenuItem, ModifierItem, PageLayoutData,
-    SearchResultItem, SignalItem, TabItem, ToastItem, VariantItem,
+    GridCellItem, GutterRect, HelpTooltipData, InspectorNode, MenuDef, MenuItem, ModifierItem,
+    PageLayoutData, SearchResultItem, SignalItem, TabItem, ToastItem, VariantItem,
 };
 
 // ── Reloadable state ───────────────────────────────────────────────
@@ -172,7 +172,7 @@ impl Default for AppState {
             shell_view: ShellView::Launchpad,
             active_panel: ActivePanel::Edit,
             apps,
-            builder_document: BuilderDocument::default(),
+            builder_document: BuilderDocument::page_shell(),
             selection: SelectionModel::default(),
             command_palette_open: false,
             command_palette_query: String::new(),
@@ -211,16 +211,19 @@ fn sample_apps() -> Vec<PrismApp> {
                     title: "Home".into(),
                     route: "/".into(),
                     document: sample_document(),
+                    style: StyleProperties::default(),
                 },
                 Page {
                     id: "p2".into(),
                     title: "Dashboard".into(),
                     route: "/dashboard".into(),
                     document: sample_dashboard_document(),
+                    style: StyleProperties::default(),
                 },
             ],
             active_page: 0,
             navigation: NavigationConfig::default(),
+            style: StyleProperties::default(),
         },
         PrismApp {
             id: "app-2".into(),
@@ -231,10 +234,12 @@ fn sample_apps() -> Vec<PrismApp> {
                 id: "p1".into(),
                 title: "Studio".into(),
                 route: "/".into(),
-                document: BuilderDocument::default(),
+                document: BuilderDocument::page_shell(),
+                style: StyleProperties::default(),
             }],
             active_page: 0,
             navigation: NavigationConfig::default(),
+            style: StyleProperties::default(),
         },
         PrismApp {
             id: "app-3".into(),
@@ -246,23 +251,27 @@ fn sample_apps() -> Vec<PrismApp> {
                     id: "p1".into(),
                     title: "Canvas".into(),
                     route: "/".into(),
-                    document: BuilderDocument::default(),
+                    document: BuilderDocument::page_shell(),
+                    style: StyleProperties::default(),
                 },
                 Page {
                     id: "p2".into(),
                     title: "Settings".into(),
                     route: "/settings".into(),
-                    document: BuilderDocument::default(),
+                    document: BuilderDocument::page_shell(),
+                    style: StyleProperties::default(),
                 },
                 Page {
                     id: "p3".into(),
                     title: "Preview".into(),
                     route: "/preview".into(),
-                    document: BuilderDocument::default(),
+                    document: BuilderDocument::page_shell(),
+                    style: StyleProperties::default(),
                 },
             ],
             active_page: 0,
             navigation: NavigationConfig::default(),
+            style: StyleProperties::default(),
         },
     ]
 }
@@ -749,11 +758,13 @@ impl Shell {
                         format!("n{id}")
                     };
                     let props = default_props_for_component(&ct);
+                    let layout_mode = default_layout_for_component(&ct);
                     let new_node = Node {
                         id: node_id.clone(),
                         component: ct,
                         props,
                         children: vec![],
+                        layout_mode,
                         ..Default::default()
                     };
                     let parent_id = s.store.state().selection.primary().cloned();
@@ -1000,10 +1011,12 @@ impl Shell {
                                 id: "page-1".into(),
                                 title: "Home".into(),
                                 route: "/".into(),
-                                document: BuilderDocument::default(),
+                                document: BuilderDocument::page_shell(),
+                                style: StyleProperties::default(),
                             }],
                             active_page: 0,
                             navigation: NavigationConfig::default(),
+                            style: StyleProperties::default(),
                         });
                         state.shell_view = ShellView::App { app_id: naid };
                         state.active_panel = ActivePanel::Edit;
@@ -1056,7 +1069,8 @@ impl Shell {
                                 id: format!("page-{page_num}"),
                                 title: format!("Page {page_num}"),
                                 route: format!("/page-{page_num}"),
-                                document: BuilderDocument::default(),
+                                document: BuilderDocument::page_shell(),
+                                style: StyleProperties::default(),
                             });
                             app.active_page = app.pages.len() - 1;
                         }
@@ -1601,6 +1615,279 @@ impl Shell {
                 }
             }
         });
+        // Grid cell clicked (select node or open palette for empty cell)
+        self.window.on_grid_cell_clicked({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |col, row| {
+                {
+                    let mut s = inner.borrow_mut();
+                    let occupant_id = {
+                        let doc = &s.store.state().builder_document;
+                        let children_placements: Vec<(String, Option<usize>, Option<usize>)> = doc
+                            .root
+                            .as_ref()
+                            .map(|r| {
+                                r.children
+                                    .iter()
+                                    .map(|c| {
+                                        let (gc, gr) = match &c.layout_mode {
+                                            LayoutMode::Flow(f) => (
+                                                f.grid_column.resolved_index(),
+                                                f.grid_row.resolved_index(),
+                                            ),
+                                            _ => (None, None),
+                                        };
+                                        (c.id.clone(), gc, gr)
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        children_placements
+                            .iter()
+                            .find(|(_, gc, gr)| {
+                                gc.unwrap_or(0) == col as usize && gr.unwrap_or(0) == row as usize
+                            })
+                            .map(|(id, _, _)| id.clone())
+                    };
+                    if let Some(id) = occupant_id {
+                        s.store.mutate(|state| {
+                            state.selection.select(id);
+                        });
+                    }
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Grid add column
+        self.window.on_grid_add_column({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |index| {
+                {
+                    let mut s = inner.borrow_mut();
+                    s.push_undo("Add column");
+                    let idx = index as usize;
+                    s.store.mutate(|state| {
+                        state
+                            .builder_document
+                            .page_layout
+                            .insert_column(idx, TrackSize::Fr { value: 1.0 });
+                    });
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Grid add row
+        self.window.on_grid_add_row({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |index| {
+                {
+                    let mut s = inner.borrow_mut();
+                    s.push_undo("Add row");
+                    let idx = index as usize;
+                    s.store.mutate(|state| {
+                        state
+                            .builder_document
+                            .page_layout
+                            .insert_row(idx, TrackSize::Auto);
+                    });
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Grid remove column
+        self.window.on_grid_remove_column({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |index| {
+                {
+                    let mut s = inner.borrow_mut();
+                    s.push_undo("Remove column");
+                    let idx = index as usize;
+                    s.store.mutate(|state| {
+                        let _ = state.builder_document.page_layout.remove_column(idx);
+                    });
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Grid remove row
+        self.window.on_grid_remove_row({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |index| {
+                {
+                    let mut s = inner.borrow_mut();
+                    s.push_undo("Remove row");
+                    let idx = index as usize;
+                    s.store.mutate(|state| {
+                        let _ = state.builder_document.page_layout.remove_row(idx);
+                    });
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Grid track resize
+        self.window.on_grid_track_resize({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |direction, index, new_size| {
+                {
+                    let mut s = inner.borrow_mut();
+                    s.push_undo("Resize track");
+                    let idx = index as usize;
+                    let track = TrackSize::Fixed { value: new_size };
+                    s.store.mutate(|state| {
+                        let pl = &mut state.builder_document.page_layout;
+                        if direction == "col" {
+                            let _ = pl.resize_column(idx, track);
+                        } else {
+                            let _ = pl.resize_row(idx, track);
+                        }
+                    });
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Grid cell add component
+        self.window.on_grid_cell_add_component({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |component_type, col, row| {
+                let ct = component_type.to_string();
+                {
+                    let mut s = inner.borrow_mut();
+                    s.push_undo(&format!("Add {ct} at ({col},{row})"));
+                    let node_id = {
+                        let id = s.store.state().next_node_id;
+                        format!("n{id}")
+                    };
+                    let props = default_props_for_component(&ct);
+                    let mut layout_mode = default_layout_for_component(&ct);
+                    if let LayoutMode::Flow(ref mut flow) = layout_mode {
+                        flow.grid_column = GridPlacement::Line {
+                            index: (col + 1) as i16,
+                        };
+                        flow.grid_row = GridPlacement::Line {
+                            index: (row + 1) as i16,
+                        };
+                    }
+                    let new_node = Node {
+                        id: node_id.clone(),
+                        component: ct,
+                        props,
+                        children: vec![],
+                        layout_mode,
+                        ..Default::default()
+                    };
+                    let nid = node_id.clone();
+                    s.store.mutate(|state| {
+                        state.next_node_id += 1;
+                        add_node_to_document(&mut state.builder_document, Some("root"), new_node);
+                        state.selection.select(nid);
+                    });
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Style field edits (from properties panel)
+        self.window.on_style_field_edited({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |key, value| {
+                let key = key.to_string();
+                let value = value.to_string();
+                {
+                    let mut s = inner.borrow_mut();
+                    s.push_undo(&format!("Edit style {key}"));
+                    let selected_id = s.store.state().selection.primary().cloned();
+                    let style_key = key.strip_prefix("style.").unwrap_or(&key);
+                    let sk = style_key.to_string();
+                    if let Some(ref target_id) = selected_id {
+                        let tid = target_id.clone();
+                        s.store.mutate(|state| {
+                            if let Some(ref mut root) = state.builder_document.root {
+                                if let Some(node) = root.find_mut(&tid) {
+                                    apply_style_edit(&mut node.style, &sk, &value);
+                                }
+                            }
+                        });
+                    } else {
+                        s.store.mutate(|state| {
+                            if let Some(app) = state.active_app_mut() {
+                                if let Some(page) = app.pages.get_mut(app.active_page) {
+                                    apply_style_edit(&mut page.style, &sk, &value);
+                                }
+                            }
+                        });
+                    }
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Style numeric field edits
+        self.window.on_style_field_edited_number({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |key, val| {
+                let key = key.to_string();
+                let value = format_slider_value(val);
+                {
+                    let mut s = inner.borrow_mut();
+                    s.push_undo(&format!("Edit style {key}"));
+                    let selected_id = s.store.state().selection.primary().cloned();
+                    let style_key = key.strip_prefix("style.").unwrap_or(&key);
+                    let sk = style_key.to_string();
+                    if let Some(ref target_id) = selected_id {
+                        let tid = target_id.clone();
+                        s.store.mutate(|state| {
+                            if let Some(ref mut root) = state.builder_document.root {
+                                if let Some(node) = root.find_mut(&tid) {
+                                    apply_style_edit(&mut node.style, &sk, &value);
+                                }
+                            }
+                        });
+                    } else {
+                        s.store.mutate(|state| {
+                            if let Some(app) = state.active_app_mut() {
+                                if let Some(page) = app.pages.get_mut(app.active_page) {
+                                    apply_style_edit(&mut page.style, &sk, &value);
+                                }
+                            }
+                        });
+                    }
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
     }
 }
 
@@ -1687,6 +1974,13 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
                     &state.builder_document,
                     &inner.registry,
                     &state.selection,
+                );
+                push_grid_cells(window, &state.builder_document, &state.selection);
+                push_style_rows(
+                    window,
+                    state.active_app(),
+                    &state.selection,
+                    &state.builder_document,
                 );
             }
             ActivePanel::CodeEditor => {
@@ -2651,6 +2945,36 @@ fn default_props_for_component(component: &str) -> serde_json::Value {
     }
 }
 
+fn default_layout_for_component(component: &str) -> LayoutMode {
+    match component {
+        "container" => LayoutMode::Flow(FlowProps {
+            display: FlowDisplay::Flex,
+            flex_direction: FlexDirection::Column,
+            gap: 12.0,
+            ..Default::default()
+        }),
+        "columns" => LayoutMode::Flow(FlowProps {
+            display: FlowDisplay::Flex,
+            flex_direction: FlexDirection::Row,
+            gap: 16.0,
+            ..Default::default()
+        }),
+        "form" => LayoutMode::Flow(FlowProps {
+            display: FlowDisplay::Flex,
+            flex_direction: FlexDirection::Column,
+            gap: 8.0,
+            ..Default::default()
+        }),
+        "list" => LayoutMode::Flow(FlowProps {
+            display: FlowDisplay::Flex,
+            flex_direction: FlexDirection::Column,
+            gap: 4.0,
+            ..Default::default()
+        }),
+        _ => LayoutMode::default(),
+    }
+}
+
 fn component_palette_items() -> Vec<ComponentPaletteItem> {
     [
         ("heading", "Heading", "h1–h6 text heading"),
@@ -2695,6 +3019,7 @@ fn clone_node_with_new_ids(node: &Node, counter: &mut u64) -> Node {
         layout_mode: node.layout_mode.clone(),
         transform: node.transform.clone(),
         modifiers: node.modifiers.clone(),
+        style: node.style.clone(),
     }
 }
 
@@ -2890,6 +3215,32 @@ fn compute_gutter_rects(tracks: &[TrackSize], gap: f32, available: f32) -> Vec<G
         }
     }
     gutters
+}
+
+fn apply_style_edit(style: &mut StyleProperties, key: &str, value: &str) {
+    let parse_f32 = |s: &str| s.parse::<f32>().ok();
+    let parse_u16 = |s: &str| s.parse::<u16>().ok();
+    let opt_string = |s: &str| {
+        if s.is_empty() {
+            None
+        } else {
+            Some(s.to_string())
+        }
+    };
+
+    match key {
+        "font_family" => style.font_family = opt_string(value),
+        "font_size" => style.font_size = parse_f32(value),
+        "font_weight" => style.font_weight = parse_u16(value),
+        "line_height" => style.line_height = parse_f32(value),
+        "letter_spacing" => style.letter_spacing = parse_f32(value),
+        "color" => style.color = opt_string(value),
+        "background" => style.background = opt_string(value),
+        "accent" => style.accent = opt_string(value),
+        "base_spacing" => style.base_spacing = parse_f32(value),
+        "border_radius" => style.border_radius = parse_f32(value),
+        _ => {}
+    }
 }
 
 fn apply_page_layout_edit(pl: &mut prism_builder::layout::PageLayout, key: &str, value: &str) {
@@ -3301,6 +3652,286 @@ fn push_composition_data(
     window.set_connection_count(conn_count as i32);
     window.set_resource_count(doc.resources.len() as i32);
     window.set_prefab_count(doc.prefabs.len() as i32);
+}
+
+fn push_grid_cells(window: &AppWindow, doc: &BuilderDocument, selection: &SelectionModel) {
+    let pl = &doc.page_layout;
+    let cols = pl.columns.len().max(1);
+    let rows = pl.rows.len().max(1);
+
+    if cols <= 1 && pl.rows.is_empty() {
+        window.set_grid_cells(ModelRc::default());
+        return;
+    }
+
+    let resolved = pl.resolved_size();
+    let (pw, ph) = resolved
+        .map(|s| (s.width, s.height))
+        .unwrap_or((1280.0, 800.0));
+    let content_w = pw - pl.margins.left - pl.margins.right;
+    let content_h = ph - pl.margins.top - pl.margins.bottom;
+
+    let col_sizes = compute_track_sizes(&pl.columns, pl.column_gap, content_w);
+    let row_sizes = compute_track_sizes(&pl.rows, pl.row_gap, content_h);
+
+    let children: Vec<(&str, Option<usize>, Option<usize>, &str)> = doc
+        .root
+        .as_ref()
+        .map(|r| {
+            r.children
+                .iter()
+                .map(|c| {
+                    let (gc, gr) = match &c.layout_mode {
+                        LayoutMode::Flow(f) => {
+                            (f.grid_column.resolved_index(), f.grid_row.resolved_index())
+                        }
+                        _ => (None, None),
+                    };
+                    let preview = c
+                        .props
+                        .get("text")
+                        .or_else(|| c.props.get("body"))
+                        .or_else(|| c.props.get("title"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    (c.id.as_str(), gc, gr, preview)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let mut cells: Vec<GridCellItem> = Vec::with_capacity(cols * rows);
+    let mut y_off = 0.0_f32;
+    for r in 0..rows {
+        let rh = row_sizes.get(r).copied().unwrap_or(80.0);
+        let mut x_off = 0.0_f32;
+        for c in 0..cols {
+            let cw = col_sizes.get(c).copied().unwrap_or(content_w / cols as f32);
+            let occupant = children
+                .iter()
+                .find(|(_, gc, gr, _)| gc.unwrap_or(0) == c && gr.unwrap_or(0) == r);
+            let (is_empty, node_id, component_type, selected, preview_text) = match occupant {
+                Some((id, _, _, preview)) => {
+                    let node = doc.root.as_ref().and_then(|root| root.find(id));
+                    let ct = node.map(|n| n.component.as_str()).unwrap_or("");
+                    (false, *id, ct, selection.contains(id), *preview)
+                }
+                None => (true, "", "", false, ""),
+            };
+            cells.push(GridCellItem {
+                col: c as i32,
+                row: r as i32,
+                x: x_off,
+                y: y_off,
+                width: cw,
+                height: rh.max(60.0),
+                is_empty,
+                node_id: SharedString::from(node_id),
+                component_type: SharedString::from(component_type),
+                selected,
+                preview_text: SharedString::from(preview_text),
+            });
+            x_off += cw + pl.column_gap;
+        }
+        y_off += rh.max(60.0) + pl.row_gap;
+    }
+
+    let model = Rc::new(VecModel::from(cells));
+    window.set_grid_cells(ModelRc::from(model as Rc<dyn Model<Data = GridCellItem>>));
+}
+
+fn compute_track_sizes(tracks: &[TrackSize], gap: f32, available: f32) -> Vec<f32> {
+    if tracks.is_empty() {
+        return vec![available];
+    }
+    let num_gaps = if tracks.len() > 1 {
+        tracks.len() - 1
+    } else {
+        0
+    };
+    let total_gap = gap * num_gaps as f32;
+    let track_space = (available - total_gap).max(0.0);
+
+    let total_fr: f32 = tracks
+        .iter()
+        .map(|t| match t {
+            TrackSize::Fr { value } => *value,
+            _ => 0.0,
+        })
+        .sum();
+
+    let fixed_space: f32 = tracks
+        .iter()
+        .map(|t| match t {
+            TrackSize::Fixed { value } => *value,
+            TrackSize::Percent { value } => available * value / 100.0,
+            TrackSize::MinMax { min, .. } => *min,
+            _ => 0.0,
+        })
+        .sum();
+
+    let fr_available = (track_space - fixed_space).max(0.0);
+    let fr_unit = if total_fr > 0.0 {
+        fr_available / total_fr
+    } else {
+        0.0
+    };
+
+    tracks
+        .iter()
+        .map(|t| match t {
+            TrackSize::Fixed { value } => *value,
+            TrackSize::Fr { value } => fr_unit * value,
+            TrackSize::Auto => {
+                if total_fr > 0.0 {
+                    0.0
+                } else {
+                    track_space / tracks.len() as f32
+                }
+            }
+            TrackSize::MinMax { min, max } => fr_unit.clamp(*min, *max),
+            TrackSize::Percent { value } => available * value / 100.0,
+        })
+        .collect()
+}
+
+fn push_style_rows(
+    window: &AppWindow,
+    app: Option<&PrismApp>,
+    selection: &SelectionModel,
+    doc: &BuilderDocument,
+) {
+    let default_style = StyleProperties::default();
+    let app_style = app.map(|a| &a.style).unwrap_or(&default_style);
+    let page_style = app
+        .and_then(|a| a.pages.get(a.active_page))
+        .map(|p| &p.style)
+        .unwrap_or(&default_style);
+    let node_style = selection
+        .as_option()
+        .and_then(|id| doc.root.as_ref().and_then(|r| r.find(&id)))
+        .map(|n| &n.style);
+    let resolved = if let Some(ns) = node_style {
+        prism_builder::resolve_cascade(app_style, page_style, ns)
+    } else {
+        prism_builder::resolve_cascade(app_style, page_style, &default_style)
+    };
+
+    let mut rows: Vec<FieldRow> = Vec::new();
+    let empty_opts: Vec<SharedString> = Vec::new();
+
+    let push_text = |rows: &mut Vec<FieldRow>, key: &str, label: &str, val: &Option<String>| {
+        rows.push(FieldRow {
+            key: SharedString::from(key),
+            label: SharedString::from(label),
+            kind: SharedString::from("text"),
+            value: SharedString::from(val.as_deref().unwrap_or("")),
+            required: false,
+            min: 0.0,
+            max: 0.0,
+            has_bounds: false,
+            options: ModelRc::from(
+                Rc::new(VecModel::from(empty_opts.clone())) as Rc<dyn Model<Data = SharedString>>
+            ),
+            swatch: slint::Color::from_argb_u8(0, 0, 0, 0),
+        });
+    };
+    let push_number = |rows: &mut Vec<FieldRow>,
+                       key: &str,
+                       label: &str,
+                       val: &Option<f32>,
+                       min: f32,
+                       max: f32| {
+        rows.push(FieldRow {
+            key: SharedString::from(key),
+            label: SharedString::from(label),
+            kind: SharedString::from("number"),
+            value: SharedString::from(val.map(|v| format!("{v}")).unwrap_or_default()),
+            required: false,
+            min,
+            max,
+            has_bounds: true,
+            options: ModelRc::from(
+                Rc::new(VecModel::from(empty_opts.clone())) as Rc<dyn Model<Data = SharedString>>
+            ),
+            swatch: slint::Color::from_argb_u8(0, 0, 0, 0),
+        });
+    };
+    let push_color = |rows: &mut Vec<FieldRow>, key: &str, label: &str, val: &Option<String>| {
+        let hex = val.as_deref().unwrap_or("#000000");
+        rows.push(FieldRow {
+            key: SharedString::from(key),
+            label: SharedString::from(label),
+            kind: SharedString::from("color"),
+            value: SharedString::from(hex),
+            required: false,
+            min: 0.0,
+            max: 0.0,
+            has_bounds: false,
+            options: ModelRc::from(
+                Rc::new(VecModel::from(empty_opts.clone())) as Rc<dyn Model<Data = SharedString>>
+            ),
+            swatch: parse_hex_color(hex),
+        });
+    };
+
+    push_text(
+        &mut rows,
+        "style.font_family",
+        "Font family",
+        &resolved.font_family,
+    );
+    push_number(
+        &mut rows,
+        "style.font_size",
+        "Font size",
+        &resolved.font_size,
+        6.0,
+        120.0,
+    );
+    push_number(
+        &mut rows,
+        "style.font_weight",
+        "Font weight",
+        &resolved.font_weight.map(|w| w as f32),
+        100.0,
+        900.0,
+    );
+    push_number(
+        &mut rows,
+        "style.line_height",
+        "Line height",
+        &resolved.line_height,
+        0.5,
+        4.0,
+    );
+    push_color(&mut rows, "style.color", "Text color", &resolved.color);
+    push_color(
+        &mut rows,
+        "style.background",
+        "Background",
+        &resolved.background,
+    );
+    push_color(&mut rows, "style.accent", "Accent", &resolved.accent);
+    push_number(
+        &mut rows,
+        "style.base_spacing",
+        "Spacing",
+        &resolved.base_spacing,
+        0.0,
+        64.0,
+    );
+    push_number(
+        &mut rows,
+        "style.border_radius",
+        "Radius",
+        &resolved.border_radius,
+        0.0,
+        64.0,
+    );
+
+    let model = Rc::new(VecModel::from(rows));
+    window.set_style_rows(ModelRc::from(model as Rc<dyn Model<Data = FieldRow>>));
 }
 
 fn push_editor_data(window: &AppWindow, es: &EditorState) {
