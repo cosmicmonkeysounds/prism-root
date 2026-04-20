@@ -1259,9 +1259,10 @@ export component AppWindow inherits Window {
     property <int> pending-add-row: -1;
     property <float> pending-add-x: 0;
     property <float> pending-add-y: 0;
-    property <string> drag-component-type: "";
+    in property <string> drag-component-type: "";
     callback grid-cell-clicked(int /* col */, int /* row */);
     callback grid-cell-add-component(string /* component-type */, int /* col */, int /* row */);
+    callback palette-drag-toggle(string /* component-type */);
     callback grid-add-column(int /* index */);
     callback grid-add-row(int /* index */);
     callback grid-remove-column(int /* index */);
@@ -1796,7 +1797,7 @@ export component AppWindow inherits Window {
                                                                             root.pending-add-x = cx; root.pending-add-y = cy;
                                                                             component-picker.show();
                                                                         }
-                                                                        cell-drop(ct, col, row) => { root.grid-cell-add-component(ct, col, row); root.drag-component-type = ""; }
+                                                                        cell-drop(ct, col, row) => { root.grid-cell-add-component(ct, col, row); }
                                                                     }
                                                                 }
 
@@ -1882,8 +1883,7 @@ export component AppWindow inherits Window {
                                                                 mouse-cursor: pointer;
                                                                 clicked => {
                                                                     if root.grid-cells.length > 0 {
-                                                                        if root.drag-component-type == comp.component-type { root.drag-component-type = ""; }
-                                                                        else { root.drag-component-type = comp.component-type; }
+                                                                        root.palette-drag-toggle(comp.component-type);
                                                                     } else { root.add-component(comp.component-type); }
                                                                 }
                                                                 changed has-hover => {

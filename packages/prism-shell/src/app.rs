@@ -449,6 +449,9 @@ struct ShellInner {
     clipboard: Option<Node>,
     help_pending_id: String,
     help_active_id: String,
+    dock_area_dims: (f32, f32),
+    sync_timer: Timer,
+    drag_component_type: String,
 }
 
 impl ShellInner {
@@ -613,6 +616,9 @@ impl Shell {
             clipboard: None,
             help_pending_id: String::new(),
             help_active_id: String::new(),
+            dock_area_dims: (0.0, 0.0),
+            sync_timer: Timer::default(),
+            drag_component_type: String::new(),
         }));
         {
             let mut s = inner.borrow_mut();
@@ -641,11 +647,19 @@ impl Shell {
             std::time::Duration::from_millis(0),
             move || {
                 if let Some(w) = deferred_weak.upgrade() {
+                    let new_w = w.get_dock_area_width();
+                    let new_h = w.get_dock_area_height();
+                    deferred_inner.borrow_mut().dock_area_dims = (new_w, new_h);
                     sync_ui_from_shared(&deferred_inner, &w);
                 }
             },
         );
         std::mem::forget(dock_init_timer);
+
+        // Update dock-area dimensions on window resize via deferred reads.
+        // We re-read dims inside the sync timer callback (which fires after
+        // each sync) so that resize is picked up without a polling timer that
+        // could conflict with in-flight event processing.
 
         Ok(shell)
     }
@@ -2008,6 +2022,26 @@ impl Shell {
                         state.selection.select(nid);
                     });
                     s.sync_builder_document();
+                    s.drag_component_type.clear();
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Palette drag toggle (place mode)
+        self.window.on_palette_drag_toggle({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |component_type| {
+                {
+                    let mut s = inner.borrow_mut();
+                    if s.drag_component_type == component_type.as_str() {
+                        s.drag_component_type.clear();
+                    } else {
+                        s.drag_component_type = component_type.to_string();
+                    }
                 }
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
@@ -2108,8 +2142,6 @@ impl Shell {
                     });
                 }
                 if let Some(w) = weak.upgrade() {
-                    w.set_viewport_width(width);
-                    w.set_viewport_preset(SharedString::from(preset.as_str()));
                     sync_ui_from_shared(&inner, &w);
                 }
             }
@@ -2120,15 +2152,40 @@ impl Shell {
 // ── Sync UI ────────────────────────────────────────────────────────
 
 fn sync_ui_from_shared(shared: &Rc<RefCell<ShellInner>>, window: &AppWindow) {
-    let mut inner = shared.borrow_mut();
-    inner.save_to_active_page();
-    let has_sel = !inner.store.state().selection.is_empty();
-    let has_clip = inner.clipboard.is_some();
-    let palette_open = inner.store.state().command_palette_open;
-    inner.input.set_context("hasSelection", has_sel);
-    inner.input.set_context("hasClipboard", has_clip);
-    inner.input.set_context("commandPaletteOpen", palette_open);
-    sync_ui_impl(&inner, window);
+    {
+        let mut inner = shared.borrow_mut();
+        inner.save_to_active_page();
+        let has_sel = !inner.store.state().selection.is_empty();
+        let has_clip = inner.clipboard.is_some();
+        let palette_open = inner.store.state().command_palette_open;
+        inner.input.set_context("hasSelection", has_sel);
+        inner.input.set_context("hasClipboard", has_clip);
+        inner.input.set_context("commandPaletteOpen", palette_open);
+    }
+    // Defer Slint property writes to the next event loop tick to avoid
+    // recursion when a callback sets properties that the triggering
+    // element depends on (e.g. grid-cells set from within GridCanvas click).
+    let shared_clone = Rc::clone(shared);
+    let weak = window.as_weak();
+    shared.borrow().sync_timer.start(
+        TimerMode::SingleShot,
+        std::time::Duration::from_millis(0),
+        move || {
+            if let Some(w) = weak.upgrade() {
+                {
+                    let inner = shared_clone.borrow();
+                    sync_ui_impl(&inner, &w);
+                }
+                // Re-read dock-area dims now that layout has settled (safe
+                // because we're in our own timer context, not a UI callback).
+                let new_w = w.get_dock_area_width();
+                let new_h = w.get_dock_area_height();
+                if new_w > 0.0 && new_h > 0.0 {
+                    shared_clone.borrow_mut().dock_area_dims = (new_w, new_h);
+                }
+            }
+        },
+    );
 }
 
 fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
@@ -2161,6 +2218,12 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
 
     // Viewport
     window.set_viewport_width(state.viewport_width);
+    let preset = match state.viewport_width as u32 {
+        768 => "Tablet",
+        375 => "Mobile",
+        _ => "Desktop",
+    };
+    window.set_viewport_preset(SharedString::from(preset));
 
     // Menu bar
     push_menu_defs(window, &inner.menus, &inner.commands);
@@ -2168,6 +2231,9 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
     // Activity bar panel selection — derived from dock workspace
     let slint_panel_id = panel_id_for_slint(&state.workspace);
     window.set_active_panel_id(slint_panel_id);
+
+    // Drag/place mode
+    window.set_drag_component_type(SharedString::from(inner.drag_component_type.as_str()));
 
     // Toolbar state
     window.set_has_selection(!state.selection.is_empty());
@@ -2179,7 +2245,7 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
     window.set_panel_hint(SharedString::from(hint));
 
     // Dock layout — push panel rects, dividers, and workflow pages
-    push_dock_layout(window, &state.workspace);
+    push_dock_layout(window, &state.workspace, inner.dock_area_dims);
 
     // Clear all panel slots
     clear_panel_slots(window);
@@ -3007,9 +3073,8 @@ fn collect_split_bounds(
     }
 }
 
-fn push_dock_layout(window: &AppWindow, workspace: &prism_dock::DockWorkspace) {
-    let w = window.get_dock_area_width();
-    let h = window.get_dock_area_height();
+fn push_dock_layout(window: &AppWindow, workspace: &prism_dock::DockWorkspace, dims: (f32, f32)) {
+    let (w, h) = dims;
     if w <= 0.0 || h <= 0.0 {
         return;
     }
