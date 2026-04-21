@@ -25,6 +25,7 @@ pub mod e2e;
 pub mod explorer;
 pub mod help;
 pub mod input;
+pub mod keybindings;
 pub mod keyboard;
 pub mod menu;
 pub mod panels;

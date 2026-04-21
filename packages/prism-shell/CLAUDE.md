@@ -44,7 +44,7 @@ licence requires.
   command dispatches, mouse clicks, viewport changes) interlaced with
   `StateCheck` assertions.
   - `prism e2e --test viewport-switching` — run one test.
-  - `prism e2e --list` — list available tests (12 built-in).
+  - `prism e2e --list` — list available tests (14 built-in).
   - `prism e2e --record` — capture baseline screenshots.
   - Build with `--features e2e` for screenshot diffing (`image`)
     and OS-level input injection (`enigo`).
@@ -228,9 +228,10 @@ From `src/lib.rs`:
   bar buttons, grid cells, and content area from `AppState`.
   `ScreenDiff` compares screenshots pixel-by-pixel and generates
   visual diff images (requires `e2e` feature + `image` crate).
-  12 built-in test scripts exercising launchpad, scenes, viewport,
+  14 built-in test scripts exercising launchpad, scenes, viewport,
   keyboard dispatch, command palette, panels, selection, undo/redo,
-  grid, sidebars, zoom, and document structure. 14 unit tests.
+  grid, sidebars, zoom, document structure, bidirectional editor,
+  and workflow page switching. 14 unit tests.
 
 ## Testing
 When implementing UI features, use the testing harness to verify your

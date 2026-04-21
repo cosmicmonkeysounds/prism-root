@@ -452,6 +452,7 @@ struct ShellInner {
     dock_area_dims: (f32, f32),
     sync_timer: Timer,
     drag_component_type: String,
+    pending_picker: Option<(i32, i32, f32, f32)>,
 }
 
 impl ShellInner {
@@ -628,6 +629,7 @@ impl Shell {
             dock_area_dims: (0.0, 0.0),
             sync_timer: Timer::default(),
             drag_component_type: String::new(),
+            pending_picker: None,
         }));
         {
             let mut s = inner.borrow_mut();
@@ -664,11 +666,6 @@ impl Shell {
             },
         );
         std::mem::forget(dock_init_timer);
-
-        // Update dock-area dimensions on window resize via deferred reads.
-        // We re-read dims inside the sync timer callback (which fires after
-        // each sync) so that resize is picked up without a polling timer that
-        // could conflict with in-flight event processing.
 
         Ok(shell)
     }
@@ -2077,6 +2074,36 @@ impl Shell {
                     });
                     s.sync_builder_document();
                     s.drag_component_type.clear();
+                    s.pending_picker = None;
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Picker show — sets position + visibility via deferred sync
+        self.window.on_picker_show({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |col, row, x, y| {
+                {
+                    let mut s = inner.borrow_mut();
+                    s.pending_picker = Some((col, row, x, y));
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Picker dismiss
+        self.window.on_picker_dismiss({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move || {
+                {
+                    inner.borrow_mut().pending_picker = None;
                 }
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
@@ -2230,12 +2257,20 @@ fn sync_ui_from_shared(shared: &Rc<RefCell<ShellInner>>, window: &AppWindow) {
                     let inner = shared_clone.borrow();
                     sync_ui_impl(&inner, &w);
                 }
-                // Re-read dock-area dims now that layout has settled (safe
-                // because we're in our own timer context, not a UI callback).
                 let new_w = w.get_dock_area_width();
                 let new_h = w.get_dock_area_height();
                 if new_w > 0.0 && new_h > 0.0 {
-                    shared_clone.borrow_mut().dock_area_dims = (new_w, new_h);
+                    let needs_relayout = {
+                        let mut s = shared_clone.borrow_mut();
+                        let (old_w, old_h) = s.dock_area_dims;
+                        let changed = (old_w - new_w).abs() > 0.5 || (old_h - new_h).abs() > 0.5;
+                        s.dock_area_dims = (new_w, new_h);
+                        changed
+                    };
+                    if needs_relayout {
+                        let inner = shared_clone.borrow();
+                        push_dock_layout(&w, &inner.store.state().workspace, (new_w, new_h));
+                    }
                 }
             }
         },
@@ -2288,6 +2323,17 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
 
     // Drag/place mode
     window.set_drag_component_type(SharedString::from(inner.drag_component_type.as_str()));
+
+    // Component picker overlay
+    if let Some((col, row, x, y)) = inner.pending_picker {
+        window.set_pending_add_col(col);
+        window.set_pending_add_row(row);
+        window.set_pending_add_x(x);
+        window.set_pending_add_y(y);
+        window.set_show_component_picker(true);
+    } else {
+        window.set_show_component_picker(false);
+    }
 
     // Toolbar state
     window.set_has_selection(!state.selection.is_empty());
@@ -2975,6 +3021,22 @@ fn execute_command(
         "view.zoom_reset" => {
             if let Some(w) = weak.upgrade() {
                 w.set_canvas_zoom(1.0);
+            }
+        }
+        "view.zoom_to_fit" => {
+            if let Some(w) = weak.upgrade() {
+                let pl = w.get_page_layout();
+                let pw = pl.page_width;
+                let ph = pl.page_height;
+                if pw > 0.0 && ph > 0.0 {
+                    let s = shared.borrow();
+                    let (dock_w, dock_h) = s.dock_area_dims;
+                    let canvas_w = (dock_w * 0.5).max(200.0);
+                    let canvas_h = (dock_h * 0.85).max(200.0);
+                    let fit = (canvas_w / pw).min(canvas_h / ph).clamp(0.25, 3.0);
+                    drop(s);
+                    w.set_canvas_zoom(fit);
+                }
             }
         }
         "file.save" => {}

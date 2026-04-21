@@ -1047,6 +1047,7 @@ component GridCanvas inherits Rectangle {
     callback cell-clicked(int /* col */, int /* row */);
     callback cell-add-clicked(int /* col */, int /* row */, float /* x */, float /* y */);
     callback cell-drop(string /* component-type */, int /* col */, int /* row */);
+    callback zoom-by-scroll(float /* delta-y-px */);
 
     for cell in root.cells : Rectangle {
         x: cell.x * root.zoom * 1px;
@@ -1128,6 +1129,10 @@ component GridCanvas inherits Rectangle {
                 }
             }
             scroll-event(e) => {
+                if (e.modifiers.control || e.modifiers.meta) {
+                    root.zoom-by-scroll(e.delta-y / 1px);
+                    return accept;
+                }
                 return reject;
             }
         }
@@ -1299,10 +1304,10 @@ export component AppWindow inherits Window {
 
     // Grid cells (interactive page grid)
     in property <[GridCellItem]> grid-cells: [];
-    property <int> pending-add-col: -1;
-    property <int> pending-add-row: -1;
-    property <float> pending-add-x: 0;
-    property <float> pending-add-y: 0;
+    in property <int> pending-add-col: -1;
+    in property <int> pending-add-row: -1;
+    in property <float> pending-add-x: 0;
+    in property <float> pending-add-y: 0;
     in property <bool> show-component-picker: false;
     in property <string> drag-component-type: "";
     callback grid-cell-clicked(int /* col */, int /* row */);
@@ -1741,11 +1746,12 @@ export component AppWindow inherits Window {
                                                                         zoom: root.canvas-zoom; drop-component-type: root.drag-component-type;
                                                                         cell-clicked(col, row) => { root.grid-cell-clicked(col, row); }
                                                                         cell-add-clicked(col, row, cx, cy) => {
-                                                                            root.pending-add-col = col; root.pending-add-row = row;
-                                                                            root.pending-add-x = cx; root.pending-add-y = cy;
-                                                                            root.show-component-picker = true;
+                                                                            root.picker-show(col, row, cx, cy);
                                                                         }
                                                                         cell-drop(ct, col, row) => { root.grid-cell-add-component(ct, col, row); }
+                                                                        zoom-by-scroll(delta) => {
+                                                                            root.canvas-zoom = clamp(root.canvas-zoom + delta / 400.0, 0.25, 3.0);
+                                                                        }
                                                                     }
                                                                 }
 
@@ -1770,11 +1776,23 @@ export component AppWindow inherits Window {
                                                             }
                                                         }
                                                     }
+
+                                                    // Ctrl/Cmd+scroll zooms; unmodified scroll rejects to Flickable for panning
+                                                    canvas-zoom-area := TouchArea {
+                                                        width: parent.viewport-width;
+                                                        height: parent.viewport-height;
+                                                        mouse-cursor: default;
+                                                        scroll-event(e) => {
+                                                            if (e.modifiers.control || e.modifiers.meta) {
+                                                                root.canvas-zoom = clamp(root.canvas-zoom + (e.delta-y / 1px) / 400.0, 0.25, 3.0);
+                                                                return accept;
+                                                            }
+                                                            return reject;
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
-
-                                        // ═════���══════════════════════════════
                                         // COMPONENT PALETTE
                                         // ════════════════════════════════════
                                         if panel.panel-id == "component-palette" : Rectangle {

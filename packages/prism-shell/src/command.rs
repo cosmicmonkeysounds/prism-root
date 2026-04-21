@@ -98,6 +98,10 @@ impl CommandRegistry {
         reg.register(
             CommandEntry::new("view.zoom_reset", "Reset Zoom", "View").with_shortcut("Ctrl+0"),
         );
+        reg.register(
+            CommandEntry::new("view.zoom_to_fit", "Zoom to Fit", "View")
+                .with_shortcut("Ctrl+Shift+0"),
+        );
         reg.register(CommandEntry::new(
             "panel.identity",
             "Go to Identity",

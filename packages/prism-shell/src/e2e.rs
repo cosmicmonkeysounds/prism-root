@@ -117,6 +117,9 @@ pub enum StateCheck {
     PanelHidden { panel: String },
     DocumentHasRoot,
     DocumentNodeCount { min: usize },
+    DockContainsPanel { panel_id: String },
+    EditorHasText,
+    EditorLanguage { language: String },
 }
 
 // ── Test Script ─────────────────────────────────────────────────────
@@ -890,6 +893,28 @@ impl E2eDriver {
                     return Err(format!("Expected >= {min} nodes, got {count}"));
                 }
             }
+            StateCheck::DockContainsPanel { panel_id } => {
+                let page = state.workspace.active_page();
+                if !page.dock.contains_panel(panel_id) {
+                    return Err(format!(
+                        "Active page '{}' dock does not contain panel '{panel_id}'",
+                        page.id
+                    ));
+                }
+            }
+            StateCheck::EditorHasText => {
+                if state.editor_state.text().is_empty() {
+                    return Err("Expected editor to have text content".into());
+                }
+            }
+            StateCheck::EditorLanguage { language } => {
+                if state.editor_state.language != *language {
+                    return Err(format!(
+                        "Expected editor language '{}', got '{}'",
+                        language, state.editor_state.language
+                    ));
+                }
+            }
         }
         Ok(())
     }
@@ -1095,6 +1120,20 @@ pub fn builtin_scripts() -> Vec<TestScript> {
         test_sidebar_toggles(),
         test_zoom_controls(),
         test_document_structure(),
+        test_bidirectional_editor(),
+        test_workflow_page_switching(),
+        test_search_focus(),
+        test_all_panel_toggles(),
+        test_select_all_nodes(),
+        test_clipboard_copy_paste(),
+        test_selection_delete(),
+        test_inspector_arrow_navigation(),
+        test_tab_cycling(),
+        test_escape_context_cascade(),
+        test_editor_state(),
+        test_node_click_selection(),
+        test_command_palette_auto_close(),
+        test_duplicate_node(),
     ]
 }
 
@@ -1261,6 +1300,72 @@ fn test_zoom_controls() -> TestScript {
         .send_command("view.zoom_reset")
 }
 
+fn test_bidirectional_editor() -> TestScript {
+    TestScript::new(
+        "bidirectional-editor",
+        "Verify Edit page has code editor and bidirectional selection wiring",
+    )
+    .scene("builder-grid")
+    .assert(StateCheck::OnPage {
+        page_id: "edit".into(),
+    })
+    .assert(StateCheck::DockContainsPanel {
+        panel_id: "code-editor".into(),
+    })
+    .assert(StateCheck::DockContainsPanel {
+        panel_id: "properties".into(),
+    })
+    .assert(StateCheck::DocumentHasRoot)
+    .assert(StateCheck::DocumentNodeCount { min: 3 })
+    .step(TestAction::SetScene {
+        scene: "inspector".into(),
+    })
+    .assert(StateCheck::HasSelection)
+    .assert(StateCheck::DockContainsPanel {
+        panel_id: "code-editor".into(),
+    })
+    .step(TestAction::SetScene {
+        scene: "code-editor".into(),
+    })
+    .assert(StateCheck::OnPage {
+        page_id: "code".into(),
+    })
+    .assert(StateCheck::DockContainsPanel {
+        panel_id: "code-editor".into(),
+    })
+}
+
+fn test_workflow_page_switching() -> TestScript {
+    TestScript::new(
+        "workflow-page-switching",
+        "Switch between workflow pages and verify dock layouts",
+    )
+    .scene("builder-grid")
+    .assert(StateCheck::OnPage {
+        page_id: "edit".into(),
+    })
+    .assert(StateCheck::DockContainsPanel {
+        panel_id: "builder".into(),
+    })
+    .assert(StateCheck::DockContainsPanel {
+        panel_id: "code-editor".into(),
+    })
+    .step(TestAction::SelectPanel { panel_id: 2 })
+    .assert(StateCheck::OnPage {
+        page_id: "code".into(),
+    })
+    .assert(StateCheck::DockContainsPanel {
+        panel_id: "code-editor".into(),
+    })
+    .step(TestAction::SelectPanel { panel_id: 1 })
+    .assert(StateCheck::OnPage {
+        page_id: "edit".into(),
+    })
+    .assert(StateCheck::DockContainsPanel {
+        panel_id: "code-editor".into(),
+    })
+}
+
 fn test_document_structure() -> TestScript {
     TestScript::new("document-structure", "Verify document tree across scenes")
         .step(TestAction::SetScene {
@@ -1272,6 +1377,193 @@ fn test_document_structure() -> TestScript {
             scene: "builder-empty".into(),
         })
         .assert(StateCheck::DocumentHasRoot)
+}
+
+fn test_search_focus() -> TestScript {
+    TestScript::new(
+        "search-focus",
+        "Focus search switches to edit page and sets focus region",
+    )
+    .scene("code-editor")
+    .assert(StateCheck::OnPage {
+        page_id: "code".into(),
+    })
+    .send_command("search.focus")
+    .assert(StateCheck::OnPage {
+        page_id: "edit".into(),
+    })
+}
+
+fn test_all_panel_toggles() -> TestScript {
+    TestScript::new(
+        "all-panel-toggles",
+        "Toggle right sidebar and activity bar visibility",
+    )
+    .scene("builder-grid")
+    .assert(StateCheck::PanelVisible {
+        panel: "right".into(),
+    })
+    .send_command("view.toggle_right_sidebar")
+    .assert(StateCheck::PanelHidden {
+        panel: "right".into(),
+    })
+    .send_command("view.toggle_right_sidebar")
+    .assert(StateCheck::PanelVisible {
+        panel: "right".into(),
+    })
+    .assert(StateCheck::PanelVisible {
+        panel: "activity_bar".into(),
+    })
+    .send_command("view.toggle_activity_bar")
+    .assert(StateCheck::PanelHidden {
+        panel: "activity_bar".into(),
+    })
+    .send_command("view.toggle_activity_bar")
+    .assert(StateCheck::PanelVisible {
+        panel: "activity_bar".into(),
+    })
+}
+
+fn test_select_all_nodes() -> TestScript {
+    TestScript::new(
+        "select-all-nodes",
+        "Select all document nodes and verify count",
+    )
+    .scene("builder-grid")
+    .assert(StateCheck::NoSelection)
+    .assert(StateCheck::DocumentNodeCount { min: 3 })
+    .send_command("selection.all")
+    .assert(StateCheck::HasSelection)
+    .assert(StateCheck::SelectionCount { n: 6 })
+    .send_command("navigate.escape")
+    .assert(StateCheck::NoSelection)
+}
+
+fn test_clipboard_copy_paste() -> TestScript {
+    TestScript::new(
+        "clipboard-copy-paste",
+        "Copy a selected node and paste it, growing the document",
+    )
+    .scene("inspector")
+    .assert(StateCheck::HasSelection)
+    .assert(StateCheck::DocumentNodeCount { min: 3 })
+    .send_command("edit.copy")
+    .send_command("edit.paste")
+    .assert(StateCheck::HasSelection)
+    .assert(StateCheck::DocumentNodeCount { min: 4 })
+}
+
+fn test_selection_delete() -> TestScript {
+    TestScript::new(
+        "selection-delete",
+        "Delete a selected node and verify selection clears",
+    )
+    .scene("inspector")
+    .assert(StateCheck::HasSelection)
+    .assert(StateCheck::DocumentNodeCount { min: 3 })
+    .send_command("selection.delete")
+    .assert(StateCheck::NoSelection)
+}
+
+fn test_inspector_arrow_navigation() -> TestScript {
+    TestScript::new(
+        "inspector-arrow-navigation",
+        "Navigate between nodes with inspector prev/next commands",
+    )
+    .scene("inspector")
+    .assert(StateCheck::HasSelection)
+    .send_command("navigate.inspector_next")
+    .assert(StateCheck::HasSelection)
+    .send_command("navigate.inspector_next")
+    .assert(StateCheck::HasSelection)
+    .send_command("navigate.inspector_prev")
+    .assert(StateCheck::HasSelection)
+}
+
+fn test_tab_cycling() -> TestScript {
+    TestScript::new(
+        "tab-cycling",
+        "Cycle through app tabs with next/prev commands",
+    )
+    .scene("builder-grid")
+    .assert(StateCheck::InApp {
+        app_name: "Lattice".into(),
+    })
+    .send_command("navigate.next_tab")
+    .assert(StateCheck::NoSelection)
+    .send_command("navigate.prev_tab")
+    .assert(StateCheck::NoSelection)
+}
+
+fn test_escape_context_cascade() -> TestScript {
+    TestScript::new(
+        "escape-context-cascade",
+        "Escape closes command palette first, then clears selection",
+    )
+    .scene("inspector")
+    .assert(StateCheck::HasSelection)
+    .send_command("command_palette.toggle")
+    .assert(StateCheck::CommandPaletteOpen { open: true })
+    .assert(StateCheck::HasSelection)
+    .send_command("command_palette.toggle")
+    .assert(StateCheck::CommandPaletteOpen { open: false })
+    .assert(StateCheck::HasSelection)
+    .send_command("navigate.escape")
+    .assert(StateCheck::NoSelection)
+}
+
+fn test_editor_state() -> TestScript {
+    TestScript::new(
+        "editor-state",
+        "Verify code editor scene has text content and language set",
+    )
+    .scene("code-editor")
+    .assert(StateCheck::OnPage {
+        page_id: "code".into(),
+    })
+    .assert(StateCheck::EditorHasText)
+    .assert(StateCheck::EditorLanguage {
+        language: "rust".into(),
+    })
+}
+
+fn test_node_click_selection() -> TestScript {
+    TestScript::new(
+        "node-click-selection",
+        "Click a builder node by ID to select it",
+    )
+    .scene("builder-grid")
+    .assert(StateCheck::NoSelection)
+    .assert(StateCheck::DocumentHasRoot)
+    .click_node("root")
+    .assert(StateCheck::HasSelection)
+    .assert(StateCheck::SelectionCount { n: 1 })
+}
+
+fn test_command_palette_auto_close() -> TestScript {
+    TestScript::new(
+        "command-palette-auto-close",
+        "Command palette closes automatically when a non-palette command runs",
+    )
+    .scene("builder-grid")
+    .send_command("command_palette.toggle")
+    .assert(StateCheck::CommandPaletteOpen { open: true })
+    .send_command("view.toggle_left_sidebar")
+    .assert(StateCheck::CommandPaletteOpen { open: false })
+    .send_command("view.toggle_left_sidebar")
+}
+
+fn test_duplicate_node() -> TestScript {
+    TestScript::new(
+        "duplicate-node",
+        "Duplicate a selected node and verify document grows",
+    )
+    .scene("inspector")
+    .assert(StateCheck::HasSelection)
+    .assert(StateCheck::DocumentNodeCount { min: 3 })
+    .send_command("edit.duplicate")
+    .assert(StateCheck::HasSelection)
+    .assert(StateCheck::DocumentNodeCount { min: 4 })
 }
 
 // ── Tests ───────────────────────────────────────────────────────────

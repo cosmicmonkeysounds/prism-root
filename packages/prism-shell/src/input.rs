@@ -207,6 +207,7 @@ impl InputManager {
                 .bind("ctrl+=", "view.zoom_in")
                 .bind("ctrl+-", "view.zoom_out")
                 .bind("ctrl+0", "view.zoom_reset")
+                .bind("ctrl+shift+0", "view.zoom_to_fit")
                 // Escape: palette first, then general
                 .bind_when("escape", "command_palette.close", "commandPaletteOpen")
                 .bind_when("escape", "navigate.escape", "!commandPaletteOpen")
