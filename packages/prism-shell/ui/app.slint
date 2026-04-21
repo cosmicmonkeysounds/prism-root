@@ -1303,13 +1303,15 @@ export component AppWindow inherits Window {
                                             }
 
                                             // Builder canvas
-                                            Rectangle {
+                                            canvas-bounds := Rectangle {
                                                 horizontal-stretch: 1; vertical-stretch: 1;
                                                 background: Palette.alternate-background.transparentize(40%);
 
                                                 Flickable {
-                                                    viewport-width: max(self.width, root.page-layout.page-width * root.canvas-zoom * 1px + 48px);
-                                                    viewport-height: max(self.height, root.page-layout.page-height * root.canvas-zoom * 1px + 48px);
+                                                    property <length> page-w: root.page-layout.page-width * root.canvas-zoom * 1px + 48px;
+                                                    property <length> page-h: root.page-layout.page-height * root.canvas-zoom * 1px + 48px;
+                                                    viewport-width: max(canvas-bounds.width, page-w);
+                                                    viewport-height: max(canvas-bounds.height, page-h);
 
                                                     VerticalLayout {
                                                         alignment: center; padding: 24px;

@@ -453,6 +453,7 @@ struct ShellInner {
     help_active_id: String,
     dock_area_dims: (f32, f32),
     sync_timer: Timer,
+    dock_check_timer: Timer,
     drag_component_type: String,
     pending_picker: Option<(i32, i32, f32, f32)>,
 }
@@ -633,6 +634,7 @@ impl Shell {
             help_active_id: String::new(),
             dock_area_dims: (0.0, 0.0),
             sync_timer: Timer::default(),
+            dock_check_timer: Timer::default(),
             drag_component_type: String::new(),
             pending_picker: None,
         }));
@@ -2276,21 +2278,41 @@ fn sync_ui_from_shared(shared: &Rc<RefCell<ShellInner>>, window: &AppWindow) {
                     let inner = shared_clone.borrow();
                     sync_ui_impl(&inner, &w);
                 }
-                let new_w = w.get_dock_area_width();
-                let new_h = w.get_dock_area_height();
-                if new_w > 0.0 && new_h > 0.0 {
-                    let needs_relayout = {
-                        let mut s = shared_clone.borrow_mut();
-                        let (old_w, old_h) = s.dock_area_dims;
-                        let changed = (old_w - new_w).abs() > 0.5 || (old_h - new_h).abs() > 0.5;
-                        s.dock_area_dims = (new_w, new_h);
-                        changed
-                    };
-                    if needs_relayout {
-                        let inner = shared_clone.borrow();
-                        push_dock_layout(&w, &inner.store.state().workspace, (new_w, new_h));
-                    }
-                }
+                // Schedule a SEPARATE tick to check dock-area dimensions.
+                // Reading layout-dependent out-properties (dock-area.width)
+                // forces Slint to evaluate all dirty bindings. Doing that in
+                // the same tick that set those properties can trigger
+                // property-evaluation recursion in Slint's core.
+                let sc2 = Rc::clone(&shared_clone);
+                let weak2 = w.as_weak();
+                shared_clone.borrow().dock_check_timer.start(
+                    TimerMode::SingleShot,
+                    std::time::Duration::from_millis(0),
+                    move || {
+                        if let Some(w2) = weak2.upgrade() {
+                            let new_w = w2.get_dock_area_width();
+                            let new_h = w2.get_dock_area_height();
+                            if new_w > 0.0 && new_h > 0.0 {
+                                let needs_relayout = {
+                                    let mut s = sc2.borrow_mut();
+                                    let (old_w, old_h) = s.dock_area_dims;
+                                    let changed =
+                                        (old_w - new_w).abs() > 0.5 || (old_h - new_h).abs() > 0.5;
+                                    s.dock_area_dims = (new_w, new_h);
+                                    changed
+                                };
+                                if needs_relayout {
+                                    let inner = sc2.borrow();
+                                    push_dock_layout(
+                                        &w2,
+                                        &inner.store.state().workspace,
+                                        (new_w, new_h),
+                                    );
+                                }
+                            }
+                        }
+                    },
+                );
             }
         },
     );
