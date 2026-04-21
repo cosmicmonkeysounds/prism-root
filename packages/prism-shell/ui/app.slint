@@ -1698,9 +1698,7 @@ export component AppWindow inherits Window {
                                                             palette-touch := TouchArea {
                                                                 mouse-cursor: pointer;
                                                                 clicked => {
-                                                                    if root.grid-cells.length > 0 {
-                                                                        root.palette-drag-toggle(comp.component-type);
-                                                                    } else { root.add-component(comp.component-type); }
+                                                                    root.add-component(comp.component-type);
                                                                 }
                                                                 changed has-hover => {
                                                                     if (self.has-hover) { root.help-hover("builder.components." + comp.component-type, parent.absolute-position.x + parent.width + 8px, parent.absolute-position.y); }
