@@ -120,6 +120,7 @@ pub enum StateCheck {
     DockContainsPanel { panel_id: String },
     EditorHasText,
     EditorLanguage { language: String },
+    ZoomLevel { min: f32, max: f32 },
 }
 
 // ── Test Script ─────────────────────────────────────────────────────
@@ -181,6 +182,10 @@ impl TestScript {
         self.step(TestAction::SetViewport {
             preset: preset.into(),
         })
+    }
+
+    pub fn set_zoom(self, level: f32) -> Self {
+        self.step(TestAction::SetZoom { level })
     }
 
     pub fn wait(self, ms: u64) -> Self {
@@ -915,6 +920,12 @@ impl E2eDriver {
                     ));
                 }
             }
+            StateCheck::ZoomLevel { min, max } => {
+                let zoom = self.shell.window().get_canvas_zoom();
+                if zoom < *min || zoom > *max {
+                    return Err(format!("Expected zoom in [{min}..{max}], got {zoom}"));
+                }
+            }
         }
         Ok(())
     }
@@ -1293,11 +1304,28 @@ fn test_sidebar_toggles() -> TestScript {
 }
 
 fn test_zoom_controls() -> TestScript {
-    TestScript::new("zoom-controls", "Zoom in/out/reset via commands")
-        .scene("builder-grid")
-        .send_command("view.zoom_in")
-        .send_command("view.zoom_out")
-        .send_command("view.zoom_reset")
+    TestScript::new(
+        "zoom-controls",
+        "Zoom in/out/reset/fit via commands and direct set",
+    )
+    .scene("builder-grid")
+    .send_command("view.zoom_in")
+    .assert(StateCheck::ZoomLevel {
+        min: 1.05,
+        max: 1.15,
+    })
+    .send_command("view.zoom_out")
+    .assert(StateCheck::ZoomLevel {
+        min: 0.95,
+        max: 1.05,
+    })
+    .send_command("view.zoom_reset")
+    .assert(StateCheck::ZoomLevel { min: 1.0, max: 1.0 })
+    .set_zoom(2.0)
+    .assert(StateCheck::ZoomLevel { min: 2.0, max: 2.0 })
+    .send_command("view.zoom_to_fit")
+    .send_command("view.zoom_reset")
+    .assert(StateCheck::ZoomLevel { min: 1.0, max: 1.0 })
 }
 
 fn test_bidirectional_editor() -> TestScript {

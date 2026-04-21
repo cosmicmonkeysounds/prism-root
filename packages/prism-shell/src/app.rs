@@ -33,6 +33,7 @@ use slint::{ComponentHandle, Model, ModelRc, SharedString, Timer, TimerMode, Vec
 use crate::command::CommandRegistry;
 use crate::help::register_help_entries;
 use crate::input::{combo_from_slint, update_panel_schemes, FocusRegion, InputManager};
+use crate::keybindings::UserKeybindings;
 use crate::panels::{editor::CodeEditorPanel, properties::PropertiesPanel, Panel};
 use crate::search::SearchIndex;
 use crate::selection::SelectionModel;
@@ -613,12 +614,15 @@ impl Shell {
         register_builtins(&mut registry).expect("starter components must register");
         let mut help = HelpRegistry::new();
         register_help_entries(&mut help, &registry);
+        let mut input = InputManager::with_defaults();
+        let user_kb = UserKeybindings::load(&UserKeybindings::default_path());
+        user_kb.apply_to(&mut input);
         let inner = Rc::new(RefCell::new(ShellInner {
             store: Store::new(state),
             registry: Arc::new(registry),
             live: None,
             help,
-            input: InputManager::with_defaults(),
+            input,
             commands: CommandRegistry::with_builtins(),
             menus: crate::menu::MenuRegistry::with_builtins(),
             undo_past: Vec::new(),
@@ -1978,7 +1982,7 @@ impl Shell {
                         state
                             .builder_document
                             .page_layout
-                            .insert_row(idx, TrackSize::Auto);
+                            .insert_row(idx, TrackSize::Fr { value: 1.0 });
                     });
                 }
                 if let Some(w) = weak.upgrade() {
@@ -4190,7 +4194,7 @@ fn push_grid_cells(
                 x: x_off,
                 y: y_off,
                 width: cw,
-                height: rh.max(60.0),
+                height: rh,
                 is_empty,
                 node_id: SharedString::from(node_id),
                 component_type: SharedString::from(component_type),
@@ -4199,7 +4203,7 @@ fn push_grid_cells(
             });
             x_off += cw + pl.column_gap;
         }
-        y_off += rh.max(60.0) + pl.row_gap;
+        y_off += rh + pl.row_gap;
     }
 
     let model = Rc::new(VecModel::from(cells));

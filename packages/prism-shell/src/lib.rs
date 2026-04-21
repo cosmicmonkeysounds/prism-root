@@ -37,6 +37,7 @@ pub mod testing;
 pub use app::{AppState, Shell};
 pub use command::{CommandEntry, CommandRegistry};
 pub use input::{combo_from_slint, FocusRegion, InputManager, InputScheme, InputSchemeBuilder};
+pub use keybindings::UserKeybindings;
 pub use keyboard::{KeyBinding, KeyCombo, KeyboardModel, Modifiers};
 pub use search::{SearchIndex, SearchResult};
 pub use selection::SelectionModel;

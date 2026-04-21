@@ -35,7 +35,10 @@ impl UserKeybindings {
     pub fn load(path: &Path) -> Self {
         match std::fs::read_to_string(path) {
             Ok(content) => serde_json::from_str(&content).unwrap_or_else(|e| {
-                eprintln!("prism-shell: failed to parse keybindings at {}: {e}", path.display());
+                eprintln!(
+                    "prism-shell: failed to parse keybindings at {}: {e}",
+                    path.display()
+                );
                 Self::empty()
             }),
             Err(_) => Self::empty(),
@@ -43,10 +46,11 @@ impl UserKeybindings {
     }
 
     pub fn default_path() -> PathBuf {
-        dirs_next::config_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("prism")
-            .join("keybindings.json")
+        if let Ok(home) = std::env::var("HOME") {
+            PathBuf::from(home).join(".prism").join("keybindings.json")
+        } else {
+            PathBuf::from(".prism").join("keybindings.json")
+        }
     }
 
     pub fn apply_to(&self, input: &mut InputManager) {
@@ -56,7 +60,10 @@ impl UserKeybindings {
         let mut builder = InputScheme::builder("user.overrides").label("User Overrides");
         for ov in &self.overrides {
             if KeyCombo::parse(&ov.key).is_none() {
-                eprintln!("prism-shell: invalid key combo in user keybindings: {:?}", ov.key);
+                eprintln!(
+                    "prism-shell: invalid key combo in user keybindings: {:?}",
+                    ov.key
+                );
                 continue;
             }
             if let Some(ref when) = ov.when {
@@ -73,9 +80,8 @@ impl UserKeybindings {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let json = serde_json::to_string_pretty(self).map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, e)
-        })?;
+        let json = serde_json::to_string_pretty(self)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         std::fs::write(path, json)
     }
 }
@@ -114,7 +120,8 @@ mod tests {
 
     #[test]
     fn invalid_key_combo_skipped() {
-        let json = r#"{"overrides":[{"key":"","command":"noop"},{"key":"ctrl+z","command":"edit.undo"}]}"#;
+        let json =
+            r#"{"overrides":[{"key":"","command":"noop"},{"key":"ctrl+z","command":"edit.undo"}]}"#;
         let kb: UserKeybindings = serde_json::from_str(json).unwrap();
         let mut input = InputManager::new();
         kb.apply_to(&mut input);

@@ -133,6 +133,13 @@ fn sync_interval_validator(v: &JsonValue) -> Option<String> {
     }
 }
 
+fn zoom_sensitivity_validator(v: &JsonValue) -> Option<String> {
+    match v.as_f64() {
+        Some(n) if (0.1..=5.0).contains(&n) => None,
+        _ => Some("Must be between 0.1 and 5.0".into()),
+    }
+}
+
 fn select(
     key: &str,
     default: &str,
@@ -313,6 +320,23 @@ pub(crate) fn built_in_settings() -> Vec<SettingDefinition> {
             "notifications",
             vec![User],
         ),
+        // ── Canvas / Builder ─────────────────────────────────────
+        boolean(
+            "canvas.scrollZoom",
+            true,
+            "Ctrl/Cmd+scroll to zoom canvas",
+            "canvas",
+            vec![Workspace, User],
+        ),
+        number(
+            "canvas.zoomSensitivity",
+            1.0,
+            "Zoom sensitivity multiplier",
+            "canvas",
+            vec![User],
+            Some(zoom_sensitivity_validator),
+        )
+        .with_description("Multiplier for scroll-to-zoom speed (0.1–5.0)."),
     ]
 }
 

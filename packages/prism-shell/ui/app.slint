@@ -1039,6 +1039,7 @@ component AppCard inherits Rectangle {
 // ── Grid canvas ───────────────────────────────────────────────────
 
 component GridCanvas inherits Rectangle {
+    clip: true;
     in property <[GridCellItem]> cells: [];
     in property <float> margin-left: 0;
     in property <float> margin-top: 0;
