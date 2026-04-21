@@ -45,6 +45,7 @@ default = ["native"]
 native = ["dep:prism-daemon"]
 live-preview = ["slint/live-preview"]
 web = ["dep:wasm-bindgen", "dep:console_error_panic_hook", "dep:getrandom", "uuid/js"]
+e2e = ["dep:image", "dep:enigo"]
 
 [dependencies]
 # Shared Prism foundations.
@@ -76,6 +77,12 @@ getrandom = { workspace = true, optional = true, features = ["js"] }
 
 # CLI argument parsing for the native dev binary and test harness.
 clap = { version = "4", features = ["derive"] }
+
+# Screenshot comparison + visual diff generation for the e2e harness.
+image = { workspace = true, optional = true }
+
+# OS-level keyboard/mouse injection for full end-to-end testing.
+enigo = { workspace = true, optional = true }
 
 # Shared.
 serde = { workspace = true }

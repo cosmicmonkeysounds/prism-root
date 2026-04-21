@@ -106,6 +106,20 @@ expanded argv without executing anything.
     Users who want the full loop should run `prism dev shell`
     alone.
 
+### `prism e2e [--test <name>] [--list] [--record] [--output <dir>]`
+- End-to-end test suite. Runs built-in test scripts through the
+  `prism-shell` binary in `--e2e` mode. Each script drives the shell
+  through the same Slint callback paths a human uses — key combos,
+  command dispatch, grid cell clicks, viewport switches — then
+  asserts expected `AppState` outcomes.
+- `--test viewport-switching` — run a single test.
+- `--list` — list available tests (12 built-in).
+- `--record` — capture baseline screenshots for visual diff.
+- `--output /tmp/e2e` — custom screenshot directory.
+- `--os-input` — inject real OS keyboard/mouse events via `enigo`
+  (requires `prism-shell/e2e` feature + display + accessibility).
+- No flags → runs all 12 built-in tests. Exit code 1 if any fail.
+
 ### `prism lint`
 `cargo clippy --workspace --all-targets -- -D warnings`.
 

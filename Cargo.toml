@@ -114,6 +114,17 @@ js-sys = "0.3"
 console_error_panic_hook = "0.1"
 getrandom = "0.2"
 
+# Image processing — screenshot comparison in `prism-shell`'s e2e test
+# framework. Loads PNG screenshots, compares pixel-by-pixel, generates
+# visual diff images highlighting regressions.
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+# OS-level input simulation — injects real keyboard/mouse events
+# through the platform's accessibility layer so e2e tests exercise the
+# full input pipeline (winit → Slint → InputManager). Optional:
+# callback-level testing works without it.
+enigo = { version = "0.2", default-features = false }
+
 # Dev-only.
 insta = "1"
 proptest = "1"

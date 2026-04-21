@@ -38,6 +38,17 @@ licence requires.
   scenes through the shell binary, captures screenshots to
   `screenshots/`. Use `prism visual --scene builder-grid` for a
   single scene, `prism visual --list` to list scenes.
+- `prism e2e` — end-to-end test suite. Runs built-in test scripts
+  that drive the shell through the same Slint callback paths a human
+  uses. Each script is a sequence of `TestAction` steps (key presses,
+  command dispatches, mouse clicks, viewport changes) interlaced with
+  `StateCheck` assertions.
+  - `prism e2e --test viewport-switching` — run one test.
+  - `prism e2e --list` — list available tests (12 built-in).
+  - `prism e2e --record` — capture baseline screenshots.
+  - Build with `--features e2e` for screenshot diffing (`image`)
+    and OS-level input injection (`enigo`).
+  - Direct: `cargo run -p prism-shell -- --e2e [--e2e-test <name>]`.
 - `prism dev web` — builds the `wasm32-unknown-unknown` target,
   runs `wasm-bindgen` into `web/`, then serves that directory via
   `python3 -m http.server 1420`. Load `http://127.0.0.1:1420/`
@@ -66,19 +77,26 @@ licence requires.
   and `GridCanvas` (interactive page grid editor with cell rectangles,
   "+" icons in empty cells, component previews in occupied cells,
   click-to-select and click-to-add). All color references use `Palette.*` for native
-  Slint theming. Activity bar uses hardcoded `NavButton` instances
-  with `@image-url("icons/*.svg")` instead of a dynamic model.
+  Slint theming. Activity bar (40px, Home button only) uses
+  `NavButton` with `@image-url("icons/*.svg")`.
   Dock-driven layout (ADR-005): the main content area uses
   `prism_dock::compute_layout()` to flatten the dock tree into
   absolutely-positioned `DockPanelRect` and `DockDividerRect`
   models. Each panel is routed by `panel.panel-id` to its content
   (builder, component-palette, inspector, explorer, properties,
   code-editor, console, etc.). Dividers are draggable with ratio
-  updates flowing through `dock-divider-dragged`. Workflow pages
-  (Edit, Design, Code, Fusion) switch the active `DockState` via
-  `workflow-page-clicked`. Builder panel conditionally renders
-  `GridCanvas` (when page has multiple grid cells) or falls back
-  to the flat `BuilderBlock` list.
+  updates flowing through `dock-divider-dragged`.
+  **Chrome layout** (DaVinci Resolve / UE5 style): unified top bar
+  (28px `MenuBarRow` with menu labels + page tabs + app name),
+  slim activity bar (40px, Home only), DaVinci-style bottom
+  workflow page bar (32px, centered Edit/Design/Code/Fusion mode
+  buttons), and status bar (26px). The builder toolbar (28px) is
+  inside the builder panel with breadcrumbs merged inline. No
+  separate app header bar — tabs live in the menu row.
+  Builder panel conditionally renders `GridCanvas` (when page has
+  multiple grid cells) or falls back to the flat `BuilderBlock`
+  list. The Edit workflow page includes CodeEditor tabbed alongside
+  Properties for bidirectional visual+source editing.
 
 ## Features
 - `native` (default) — on-desktop stack. Pulls in `slint` (with the
@@ -105,6 +123,11 @@ licence requires.
   `.rs` respawn half in `prism-cli::dev_loop` to get a full
   rebuild + reload loop. Pass `prism dev shell --no-hot-reload` to
   opt out.
+- `e2e` — enables screenshot comparison (`image` crate) and
+  OS-level input injection (`enigo` crate) for the e2e test
+  framework in `src/e2e.rs`. Without this feature, the e2e driver
+  still works in `Callback` mode (Slint callbacks) — only the
+  `OsInput` mode and `ScreenDiff::compare` require the feature.
 
 ## Public surface
 From `src/lib.rs`:
@@ -194,6 +217,20 @@ From `src/lib.rs`:
   provides `send_command`, `send_key`, `click_grid_cell`, `click_node`,
   `select_panel`, `set_viewport`. `ShellScreenshot` captures screenshots
   via platform tools. 11 unit tests.
+- `e2e` (`src/e2e.rs`) — end-to-end testing framework. Two execution
+  modes: `Callback` (Slint callbacks, fast/deterministic) and `OsInput`
+  (real OS events via `enigo`, requires `e2e` feature). Core types:
+  `E2eDriver` (drives shell through test scripts), `TestAction` (12
+  action types: keyboard, mouse, navigation, assertions), `StateCheck`
+  (12 assertion types: app state, selection, viewport, document),
+  `TestScript` (fluent builder API), `TestResult`/`SuiteResult`
+  (diagnostics). `LayoutOracle` computes pixel positions for activity
+  bar buttons, grid cells, and content area from `AppState`.
+  `ScreenDiff` compares screenshots pixel-by-pixel and generates
+  visual diff images (requires `e2e` feature + `image` crate).
+  12 built-in test scripts exercising launchpad, scenes, viewport,
+  keyboard dispatch, command palette, panels, selection, undo/redo,
+  grid, sidebars, zoom, and document structure. 14 unit tests.
 
 ## Testing
 When implementing UI features, use the testing harness to verify your
@@ -215,6 +252,41 @@ prism visual
 New scenes should be added to `BuiltinScene` in `src/testing.rs` when
 adding major visual features. Each scene should be self-contained and
 deterministic.
+
+### E2E tests
+End-to-end tests drive the shell through complete workflows using the
+same input paths a human uses:
+```bash
+# Run all e2e tests (callback mode, no display needed)
+cargo run -p prism-cli -- e2e
+
+# Run a single test
+cargo run -p prism-cli -- e2e --test viewport-switching
+
+# List tests
+cargo run -p prism-cli -- e2e --list
+
+# Direct via shell binary
+cargo run -p prism-shell -- --e2e
+cargo run -p prism-shell -- --e2e --e2e-test keyboard-dispatch
+
+# Record screenshot baselines
+cargo run -p prism-shell -- --e2e --e2e-record
+```
+New tests should be added as functions returning `TestScript` in
+`src/e2e.rs` and registered in `builtin_scripts()`. Use the fluent
+builder API:
+```rust
+fn test_my_feature() -> TestScript {
+    TestScript::new("my-feature", "Verify my feature works")
+        .scene("builder-grid")
+        .send_command("my.command")
+        .assert(StateCheck::HasSelection)
+        .send_key("ctrl+z")
+        .assert(StateCheck::NoSelection)
+        .screenshot("after-undo")
+}
+```
 
 ## Phase 4 status
 The shell is now an interactive editor. All MVP and Should Ship

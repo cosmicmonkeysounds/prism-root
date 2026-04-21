@@ -559,9 +559,18 @@ impl ShellInner {
     fn sync_builder_document(&mut self) {
         if let Some(ref mut live) = self.live {
             let mut doc = live.document().clone();
+            let source = live.source.clone();
             self.store.mutate(|state| {
                 doc.page_layout = state.builder_document.page_layout.clone();
                 state.builder_document = doc;
+                if state.editor_state.text() != source {
+                    let cursor = state.editor_state.cursor.position;
+                    state.editor_state.set_text(&source);
+                    state.editor_state.language = "slint".into();
+                    state
+                        .editor_state
+                        .set_cursor_position(cursor.line, cursor.col);
+                }
             });
         }
     }
@@ -859,14 +868,30 @@ impl Shell {
             }
         });
 
-        // Builder node selection
+        // Builder node selection (+ highlight source in code editor)
         self.window.on_builder_node_clicked({
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |node_id| {
-                inner.borrow_mut().store.mutate(|state| {
-                    state.selection.select(node_id.to_string());
-                });
+                {
+                    let mut s = inner.borrow_mut();
+                    let nid = node_id.to_string();
+                    s.store.mutate(|state| {
+                        state.selection.select(nid.clone());
+                    });
+                    if let Some(ref live) = s.live {
+                        if let Some(sel) = live.select_node(&nid) {
+                            s.store.mutate(|state| {
+                                state
+                                    .editor_state
+                                    .set_cursor_position(sel.start_line, sel.start_col);
+                                state
+                                    .editor_state
+                                    .extend_selection_to(sel.end_line, sel.end_col);
+                            });
+                        }
+                    }
+                }
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
                 }
@@ -1676,9 +1701,17 @@ impl Shell {
             let weak = weak.clone();
             move |action| {
                 let action = action.to_string();
-                inner.borrow_mut().store.mutate(|state| {
-                    state.editor_state.handle_action(&action);
-                });
+                {
+                    let mut s = inner.borrow_mut();
+                    s.store.mutate(|state| {
+                        state.editor_state.handle_action(&action);
+                    });
+                    let text = s.store.state().editor_state.text();
+                    if let Some(ref mut live) = s.live {
+                        let _ = live.set_source(text);
+                    }
+                    s.sync_builder_document();
+                }
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
                 }
@@ -1693,9 +1726,17 @@ impl Shell {
                 let ch = ch.to_string();
                 if let Some(c) = ch.chars().next() {
                     if !c.is_control() {
-                        inner.borrow_mut().store.mutate(|state| {
-                            state.editor_state.insert_char(c);
-                        });
+                        {
+                            let mut s = inner.borrow_mut();
+                            s.store.mutate(|state| {
+                                state.editor_state.insert_char(c);
+                            });
+                            let text = s.store.state().editor_state.text();
+                            if let Some(ref mut live) = s.live {
+                                let _ = live.set_source(text);
+                            }
+                            s.sync_builder_document();
+                        }
                         if let Some(w) = weak.upgrade() {
                             sync_ui_from_shared(&inner, &w);
                         }
@@ -1704,18 +1745,31 @@ impl Shell {
             }
         });
 
-        // Code editor mouse click (display row -> buffer line)
+        // Code editor mouse click (display row -> buffer line + select builder node)
         self.window.on_editor_click({
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |display_row, col| {
-                inner.borrow_mut().store.mutate(|state| {
-                    let buf_line =
-                        display_row_to_buffer_line(&state.editor_state, display_row as usize);
-                    state
-                        .editor_state
-                        .set_cursor_position(buf_line, col as usize);
-                });
+                {
+                    let mut s = inner.borrow_mut();
+                    let buf_line = {
+                        let state = s.store.state();
+                        display_row_to_buffer_line(&state.editor_state, display_row as usize)
+                    };
+                    let col = col as usize;
+                    s.store.mutate(|state| {
+                        state.editor_state.set_cursor_position(buf_line, col);
+                    });
+                    if let Some(ref mut live) = s.live {
+                        live.editor.set_cursor_position(buf_line, col);
+                        if let Some(node_id) = live.node_at_cursor() {
+                            let nid = node_id.to_string();
+                            s.store.mutate(|state| {
+                                state.selection.select(nid);
+                            });
+                        }
+                    }
+                }
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
                 }
@@ -2250,46 +2304,40 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
     // Clear all panel slots
     clear_panel_slots(window);
 
-    // Fill active panel (only when inside an app)
+    // Fill all panel data (code editor + builder can coexist on any page)
     if !is_launchpad {
-        match slint_panel_id {
-            2 => {
-                push_editor_data(window, &state.editor_state);
-            }
-            _ => {
-                push_builder_preview(window, &state.builder_document, &state.selection);
-                push_inspector_nodes(window, &state.builder_document, &state.selection);
-                push_property_rows(
-                    window,
-                    &state.builder_document,
-                    &inner.registry,
-                    &state.selection,
-                );
-                push_breadcrumbs(window, &state.builder_document, &state.selection);
-                let vw = state.viewport_width;
-                push_page_layout_data(window, &state.builder_document, state.show_grid_overlay, vw);
-                push_layout_rows(window, &state.builder_document, &state.selection);
-                push_composition_data(
-                    window,
-                    &state.builder_document,
-                    &inner.registry,
-                    &state.selection,
-                );
-                push_grid_cells(window, &state.builder_document, &state.selection, vw);
-                push_style_rows(
-                    window,
-                    state.active_app(),
-                    &state.selection,
-                    &state.builder_document,
-                );
-                push_explorer_nodes(
-                    window,
-                    &state.apps,
-                    &state.shell_view,
-                    &state.explorer_expanded,
-                );
-            }
-        }
+        push_editor_data(window, &state.editor_state);
+        push_builder_preview(window, &state.builder_document, &state.selection);
+        push_inspector_nodes(window, &state.builder_document, &state.selection);
+        push_property_rows(
+            window,
+            &state.builder_document,
+            &inner.registry,
+            &state.selection,
+        );
+        push_breadcrumbs(window, &state.builder_document, &state.selection);
+        let vw = state.viewport_width;
+        push_page_layout_data(window, &state.builder_document, state.show_grid_overlay, vw);
+        push_layout_rows(window, &state.builder_document, &state.selection);
+        push_composition_data(
+            window,
+            &state.builder_document,
+            &inner.registry,
+            &state.selection,
+        );
+        push_grid_cells(window, &state.builder_document, &state.selection, vw);
+        push_style_rows(
+            window,
+            state.active_app(),
+            &state.selection,
+            &state.builder_document,
+        );
+        push_explorer_nodes(
+            window,
+            &state.apps,
+            &state.shell_view,
+            &state.explorer_expanded,
+        );
     }
 
     // Tabs — derived from the active app's pages

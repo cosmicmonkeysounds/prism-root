@@ -55,6 +55,12 @@ After every implementation:
    - `cargo run -p prism-shell -- --scene builder-tablet` — check at different viewports.
    - `prism visual --scene <name>` — capture screenshot for review.
    - Add new scenes to `BuiltinScene` in `prism-shell/src/testing.rs` when adding major visual features.
+6. **For input/interaction changes**: run the e2e test suite.
+   - `cargo run -p prism-cli -- e2e` — run all e2e tests (callback-level, no display needed).
+   - `cargo run -p prism-cli -- e2e --test <name>` — run a single test.
+   - `cargo run -p prism-cli -- e2e --list` — list all available tests.
+   - `cargo run -p prism-shell -- --e2e` — run directly via the shell binary.
+   - Add new test scripts in `prism-shell/src/e2e.rs` via the `TestScript` builder API.
 
 ## Navigation
 - Migration plan: `docs/dev/slint-migration-plan.md`

@@ -21,6 +21,7 @@
 
 pub mod app;
 pub mod command;
+pub mod e2e;
 pub mod explorer;
 pub mod help;
 pub mod input;

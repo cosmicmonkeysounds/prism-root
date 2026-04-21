@@ -266,3 +266,18 @@ Slint ships several tools (`tools/lsp/`, `tools/viewer/`,
   GUI. Edits in the code panel trigger recompile + preview update.
 - The builder canvas and the code editor are two views of the
   same `LiveDocument` — selection in one highlights in the other.
+- The Edit workflow page includes CodeEditor as a tab alongside
+  Properties in the right column, enabling side-by-side visual
+  editing and source editing (like Slint's own editor / SlintPad).
+- Source sync is bidirectional: builder mutations (property edits,
+  node add/remove) update the code editor text via
+  `sync_builder_document()`; code editor keystrokes propagate back
+  through `LiveDocument::set_source()` to recompile and update the
+  builder canvas.
+- Builder node click → code highlight: `on_builder_node_clicked`
+  calls `LiveDocument::select_node(id)` to get the `SourceSelection`
+  range, then sets `EditorState` cursor + selection to highlight the
+  node's source span.
+- Code editor click → builder select: `on_editor_click` syncs the
+  cursor to `LiveDocument.editor`, calls `node_at_cursor()`, and
+  updates `SelectionModel` to select the corresponding canvas element.

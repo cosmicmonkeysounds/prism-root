@@ -14,8 +14,9 @@ pub struct WorkflowPage {
 
 impl WorkflowPage {
     pub fn edit() -> Self {
-        // 3-column: left tabs | Builder | Properties
+        // 3-column: left tabs | Builder | Properties+CodeEditor
         // Left has Component Palette, Inspector, and Explorer as tabs.
+        // Right has Properties and CodeEditor as tabs (bidirectional editing).
         let dock = DockState::new(DockNode::hsplit(
             0.18,
             DockNode::tabs(vec![
@@ -26,7 +27,7 @@ impl WorkflowPage {
             DockNode::hsplit(
                 0.72,
                 DockNode::tab(PanelKind::Builder.id()),
-                DockNode::tab(PanelKind::Properties.id()),
+                DockNode::tabs(vec![PanelKind::Properties.id(), PanelKind::CodeEditor.id()]),
             ),
         ));
         Self {
@@ -128,7 +129,8 @@ mod tests {
         assert!(page.dock.contains_panel("explorer"));
         assert!(page.dock.contains_panel("builder"));
         assert!(page.dock.contains_panel("properties"));
-        assert_eq!(page.dock.tab_count(), 5);
+        assert!(page.dock.contains_panel("code-editor"));
+        assert_eq!(page.dock.tab_count(), 6);
     }
 
     #[test]

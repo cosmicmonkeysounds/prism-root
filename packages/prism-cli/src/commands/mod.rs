@@ -14,6 +14,7 @@ use crate::workspace::Workspace;
 
 pub mod build;
 pub mod dev;
+pub mod e2e;
 pub mod fmt;
 pub mod lint;
 pub mod test;
@@ -56,6 +57,9 @@ pub enum Command {
     /// Run visual regression tests — capture screenshots of predefined
     /// shell scenes for visual diff review.
     Visual(visual::VisualArgs),
+    /// Run end-to-end tests — automated input sequences + state
+    /// assertions through the same code paths a human uses.
+    E2e(e2e::E2eArgs),
 }
 
 /// Dispatch a parsed [`Cli`] to the right subcommand.
@@ -69,6 +73,7 @@ pub fn run(cli: &Cli, workspace: &Workspace) -> Result<u8> {
         Command::Lint => lint::run(workspace, cli.dry_run),
         Command::Fmt { check } => fmt::run(*check, workspace, cli.dry_run),
         Command::Visual(args) => visual::run(args, workspace, cli.dry_run),
+        Command::E2e(args) => e2e::run(args, workspace, cli.dry_run),
     }
 }
 
