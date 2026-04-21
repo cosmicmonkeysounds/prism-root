@@ -453,6 +453,7 @@ struct ShellInner {
     help_active_id: String,
     dock_area_dims: (f32, f32),
     dock_dirty: Cell<bool>,
+    syncing: Cell<bool>,
     sync_timer: Timer,
     dock_check_timer: Timer,
     drag_component_type: String,
@@ -635,6 +636,7 @@ impl Shell {
             help_active_id: String::new(),
             dock_area_dims: (0.0, 0.0),
             dock_dirty: Cell::new(true),
+            syncing: Cell::new(false),
             sync_timer: Timer::default(),
             dock_check_timer: Timer::default(),
             drag_component_type: String::new(),
@@ -1014,6 +1016,9 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |key, value| {
+                if inner.borrow().syncing.get() {
+                    return;
+                }
                 let key = key.to_string();
                 let value = value.to_string();
                 {
@@ -1040,6 +1045,9 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |key, val| {
+                if inner.borrow().syncing.get() {
+                    return;
+                }
                 let key = key.to_string();
                 {
                     let mut s = inner.borrow_mut();
@@ -1825,6 +1833,9 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move || {
+                if inner.borrow().syncing.get() {
+                    return;
+                }
                 inner.borrow_mut().store.mutate(|state| {
                     state.show_grid_overlay = !state.show_grid_overlay;
                 });
@@ -1839,6 +1850,9 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |key, value| {
+                if inner.borrow().syncing.get() {
+                    return;
+                }
                 let key = key.to_string();
                 let value = value.to_string();
                 {
@@ -1864,6 +1878,9 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |key, value| {
+                if inner.borrow().syncing.get() {
+                    return;
+                }
                 let key = key.to_string();
                 let value = value.to_string();
                 {
@@ -1893,6 +1910,9 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |key, val| {
+                if inner.borrow().syncing.get() {
+                    return;
+                }
                 let key = key.to_string();
                 let value = format_slider_value(val);
                 {
@@ -2156,6 +2176,9 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |key, value| {
+                if inner.borrow().syncing.get() {
+                    return;
+                }
                 let key = key.to_string();
                 let value = value.to_string();
                 {
@@ -2197,6 +2220,9 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |key, val| {
+                if inner.borrow().syncing.get() {
+                    return;
+                }
                 let key = key.to_string();
                 let value = format_slider_value(val);
                 {
@@ -2260,6 +2286,9 @@ impl Shell {
 // ── Sync UI ────────────────────────────────────────────────────────
 
 fn sync_ui_from_shared(shared: &Rc<RefCell<ShellInner>>, window: &AppWindow) {
+    if shared.borrow().syncing.get() {
+        return;
+    }
     {
         let mut inner = shared.borrow_mut();
         inner.save_to_active_page();
@@ -2283,19 +2312,21 @@ fn sync_ui_from_shared(shared: &Rc<RefCell<ShellInner>>, window: &AppWindow) {
             if let Some(w) = weak.upgrade() {
                 {
                     let inner = shared_clone.borrow();
+                    inner.syncing.set(true);
                     sync_ui_impl(&inner, &w);
                 }
-                // Schedule a SEPARATE tick to check dock-area dimensions.
-                // Reading layout-dependent out-properties (dock-area.width)
-                // forces Slint to evaluate all dirty bindings. Doing that in
-                // the same tick that set those properties can trigger
-                // property-evaluation recursion in Slint's core.
+                // Keep syncing=true through the render frame. Slint evaluates
+                // dirty bindings between timer ticks, so Slider `changed` /
+                // ComboBox `selected` callbacks that fire during the render
+                // phase will see syncing=true and skip. The dock_check_timer
+                // (next event-loop tick) clears the flag.
                 let sc2 = Rc::clone(&shared_clone);
                 let weak2 = w.as_weak();
                 shared_clone.borrow().dock_check_timer.start(
                     TimerMode::SingleShot,
                     std::time::Duration::from_millis(0),
                     move || {
+                        sc2.borrow().syncing.set(false);
                         if let Some(w2) = weak2.upgrade() {
                             let new_w = w2.get_dock_area_width();
                             let new_h = w2.get_dock_area_height();
@@ -2399,10 +2430,16 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
     // model in the same tick as content property updates causes Slint to
     // tear down and recreate all panel views mid-evaluation.
 
-    // Clear all panel slots
-    clear_panel_slots(window);
-
-    // Fill all panel data (code editor + builder can coexist on any page)
+    // Fill all panel data (code editor + builder can coexist on any page).
+    // NOTE: each push function replaces its model outright — no need to
+    // clear first.  The old clear_panel_slots() call blanked every model
+    // to empty before the pushes refilled them, which caused every
+    // `if model.length > 0` conditional in Slint to toggle false→true on
+    // every sync, destroying and recreating subtrees mid-evaluation and
+    // triggering Slint's "Recursion detected" panic.
+    if is_launchpad {
+        clear_panel_slots(window);
+    }
     if !is_launchpad {
         push_editor_data(window, &state.editor_state);
         push_builder_preview(window, &state.builder_document);

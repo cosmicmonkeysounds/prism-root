@@ -1307,11 +1307,11 @@ export component AppWindow inherits Window {
                                                 horizontal-stretch: 1; vertical-stretch: 1;
                                                 background: Palette.alternate-background.transparentize(40%);
 
-                                                canvas-scroll := Flickable {
+                                                Flickable {
                                                     property <length> page-w: root.page-layout.page-width * root.canvas-zoom * 1px + 48px;
                                                     property <length> page-h: root.page-layout.page-height * root.canvas-zoom * 1px + 48px;
-                                                    viewport-width: max(canvas-scroll.width, page-w);
-                                                    viewport-height: max(canvas-scroll.height, page-h);
+                                                    viewport-width: max(canvas-bounds.width, page-w);
+                                                    viewport-height: max(canvas-bounds.height, page-h);
 
                                                     // Ctrl/Cmd+scroll zooms; wraps page so children receive clicks first
                                                     canvas-zoom-area := TouchArea {
