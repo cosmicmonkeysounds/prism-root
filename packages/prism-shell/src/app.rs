@@ -7,7 +7,7 @@
 //! handle. Shell state that callbacks need to mutate lives behind
 //! `Rc<RefCell<ShellInner>>` so Slint closures can borrow it.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -452,6 +452,7 @@ struct ShellInner {
     help_pending_id: String,
     help_active_id: String,
     dock_area_dims: (f32, f32),
+    dock_dirty: Cell<bool>,
     sync_timer: Timer,
     dock_check_timer: Timer,
     drag_component_type: String,
@@ -633,6 +634,7 @@ impl Shell {
             help_pending_id: String::new(),
             help_active_id: String::new(),
             dock_area_dims: (0.0, 0.0),
+            dock_dirty: Cell::new(true),
             sync_timer: Timer::default(),
             dock_check_timer: Timer::default(),
             drag_component_type: String::new(),
@@ -2261,6 +2263,7 @@ fn sync_ui_from_shared(shared: &Rc<RefCell<ShellInner>>, window: &AppWindow) {
     {
         let mut inner = shared.borrow_mut();
         inner.save_to_active_page();
+        inner.dock_dirty.set(true);
         let has_sel = !inner.store.state().selection.is_empty();
         let has_clip = inner.clipboard.is_some();
         let palette_open = inner.store.state().command_palette_open;
@@ -2294,22 +2297,20 @@ fn sync_ui_from_shared(shared: &Rc<RefCell<ShellInner>>, window: &AppWindow) {
                     std::time::Duration::from_millis(0),
                     move || {
                         if let Some(w2) = weak2.upgrade() {
-                            eprintln!("[dock_check_timer] reading dock dims");
                             let new_w = w2.get_dock_area_width();
                             let new_h = w2.get_dock_area_height();
                             if new_w > 0.0 && new_h > 0.0 {
                                 let needs_relayout = {
                                     let mut s = sc2.borrow_mut();
+                                    let dirty = s.dock_dirty.get();
                                     let (old_w, old_h) = s.dock_area_dims;
-                                    let changed =
+                                    let dims_changed =
                                         (old_w - new_w).abs() > 0.5 || (old_h - new_h).abs() > 0.5;
                                     s.dock_area_dims = (new_w, new_h);
-                                    changed
+                                    s.dock_dirty.set(false);
+                                    dirty || dims_changed
                                 };
                                 if needs_relayout {
-                                    eprintln!(
-                                        "[dock_check_timer] relayout needed, pushing dock layout"
-                                    );
                                     let inner = sc2.borrow();
                                     push_dock_layout(
                                         &w2,
@@ -2328,8 +2329,6 @@ fn sync_ui_from_shared(shared: &Rc<RefCell<ShellInner>>, window: &AppWindow) {
 
 fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
     let state = inner.store.state();
-
-    eprintln!("[sync_ui_impl] START");
 
     // Launchpad vs App view
     let is_launchpad = state.shell_view.is_launchpad();
@@ -2395,60 +2394,48 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
     window.set_panel_title(SharedString::from(title));
     window.set_panel_hint(SharedString::from(hint));
 
-    // Dock layout — push panel rects, dividers, and workflow pages
-    eprintln!("[sync_ui_impl] push_dock_layout");
-    push_dock_layout(window, &state.workspace, inner.dock_area_dims);
+    // Dock layout is pushed on a SEPARATE event-loop tick (dock_check_timer)
+    // to avoid Slint property-evaluation recursion. Replacing the dock-panels
+    // model in the same tick as content property updates causes Slint to
+    // tear down and recreate all panel views mid-evaluation.
 
     // Clear all panel slots
-    eprintln!("[sync_ui_impl] clear_panel_slots");
     clear_panel_slots(window);
 
     // Fill all panel data (code editor + builder can coexist on any page)
     if !is_launchpad {
-        eprintln!("[sync_ui_impl] push_editor_data");
         push_editor_data(window, &state.editor_state);
-        eprintln!("[sync_ui_impl] push_builder_preview");
         push_builder_preview(window, &state.builder_document);
-        eprintln!("[sync_ui_impl] push_live_preview");
         push_live_preview(
             window,
             &state.builder_document,
             &state.selection,
             state.viewport_width,
         );
-        eprintln!("[sync_ui_impl] push_inspector_nodes");
         push_inspector_nodes(window, &state.builder_document, &state.selection);
-        eprintln!("[sync_ui_impl] push_property_rows");
         push_property_rows(
             window,
             &state.builder_document,
             &inner.registry,
             &state.selection,
         );
-        eprintln!("[sync_ui_impl] push_breadcrumbs");
         push_breadcrumbs(window, &state.builder_document, &state.selection);
         let vw = state.viewport_width;
-        eprintln!("[sync_ui_impl] push_page_layout_data");
         push_page_layout_data(window, &state.builder_document, state.show_grid_overlay, vw);
-        eprintln!("[sync_ui_impl] push_layout_rows");
         push_layout_rows(window, &state.builder_document, &state.selection);
-        eprintln!("[sync_ui_impl] push_composition_data");
         push_composition_data(
             window,
             &state.builder_document,
             &inner.registry,
             &state.selection,
         );
-        eprintln!("[sync_ui_impl] push_grid_cells");
         push_grid_cells(window, &state.builder_document, &state.selection, vw);
-        eprintln!("[sync_ui_impl] push_style_rows");
         push_style_rows(
             window,
             state.active_app(),
             &state.selection,
             &state.builder_document,
         );
-        eprintln!("[sync_ui_impl] push_explorer_nodes");
         push_explorer_nodes(
             window,
             &state.apps,
