@@ -717,7 +717,11 @@ impl Shell {
     }
 
     pub fn restore(&self, bytes: &[u8]) -> Result<(), serde_json::Error> {
-        self.inner.borrow_mut().store.restore(bytes)?;
+        {
+            let mut inner = self.inner.borrow_mut();
+            inner.store.restore(bytes)?;
+            inner.live = None;
+        }
         sync_ui_from_shared(&self.inner, &self.window);
         Ok(())
     }
@@ -2290,6 +2294,7 @@ fn sync_ui_from_shared(shared: &Rc<RefCell<ShellInner>>, window: &AppWindow) {
                     std::time::Duration::from_millis(0),
                     move || {
                         if let Some(w2) = weak2.upgrade() {
+                            eprintln!("[dock_check_timer] reading dock dims");
                             let new_w = w2.get_dock_area_width();
                             let new_h = w2.get_dock_area_height();
                             if new_w > 0.0 && new_h > 0.0 {
@@ -2302,6 +2307,9 @@ fn sync_ui_from_shared(shared: &Rc<RefCell<ShellInner>>, window: &AppWindow) {
                                     changed
                                 };
                                 if needs_relayout {
+                                    eprintln!(
+                                        "[dock_check_timer] relayout needed, pushing dock layout"
+                                    );
                                     let inner = sc2.borrow();
                                     push_dock_layout(
                                         &w2,
@@ -2320,6 +2328,8 @@ fn sync_ui_from_shared(shared: &Rc<RefCell<ShellInner>>, window: &AppWindow) {
 
 fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
     let state = inner.store.state();
+
+    eprintln!("[sync_ui_impl] START");
 
     // Launchpad vs App view
     let is_launchpad = state.shell_view.is_launchpad();
@@ -2386,45 +2396,59 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
     window.set_panel_hint(SharedString::from(hint));
 
     // Dock layout — push panel rects, dividers, and workflow pages
+    eprintln!("[sync_ui_impl] push_dock_layout");
     push_dock_layout(window, &state.workspace, inner.dock_area_dims);
 
     // Clear all panel slots
+    eprintln!("[sync_ui_impl] clear_panel_slots");
     clear_panel_slots(window);
 
     // Fill all panel data (code editor + builder can coexist on any page)
     if !is_launchpad {
+        eprintln!("[sync_ui_impl] push_editor_data");
         push_editor_data(window, &state.editor_state);
+        eprintln!("[sync_ui_impl] push_builder_preview");
         push_builder_preview(window, &state.builder_document);
+        eprintln!("[sync_ui_impl] push_live_preview");
         push_live_preview(
             window,
             &state.builder_document,
             &state.selection,
             state.viewport_width,
         );
+        eprintln!("[sync_ui_impl] push_inspector_nodes");
         push_inspector_nodes(window, &state.builder_document, &state.selection);
+        eprintln!("[sync_ui_impl] push_property_rows");
         push_property_rows(
             window,
             &state.builder_document,
             &inner.registry,
             &state.selection,
         );
+        eprintln!("[sync_ui_impl] push_breadcrumbs");
         push_breadcrumbs(window, &state.builder_document, &state.selection);
         let vw = state.viewport_width;
+        eprintln!("[sync_ui_impl] push_page_layout_data");
         push_page_layout_data(window, &state.builder_document, state.show_grid_overlay, vw);
+        eprintln!("[sync_ui_impl] push_layout_rows");
         push_layout_rows(window, &state.builder_document, &state.selection);
+        eprintln!("[sync_ui_impl] push_composition_data");
         push_composition_data(
             window,
             &state.builder_document,
             &inner.registry,
             &state.selection,
         );
+        eprintln!("[sync_ui_impl] push_grid_cells");
         push_grid_cells(window, &state.builder_document, &state.selection, vw);
+        eprintln!("[sync_ui_impl] push_style_rows");
         push_style_rows(
             window,
             state.active_app(),
             &state.selection,
             &state.builder_document,
         );
+        eprintln!("[sync_ui_impl] push_explorer_nodes");
         push_explorer_nodes(
             window,
             &state.apps,

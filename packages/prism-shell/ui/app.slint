@@ -1313,9 +1313,21 @@ export component AppWindow inherits Window {
                                                     viewport-width: max(canvas-bounds.width, page-w);
                                                     viewport-height: max(canvas-bounds.height, page-h);
 
+                                                    // Ctrl/Cmd+scroll zooms; wraps page so children receive clicks first
+                                                    canvas-zoom-area := TouchArea {
+                                                        width: parent.viewport-width;
+                                                        height: parent.viewport-height;
+                                                        scroll-event(e) => {
+                                                            if (e.modifiers.control || e.modifiers.meta) {
+                                                                root.canvas-zoom = clamp(root.canvas-zoom + (e.delta-y / 1px) / 400.0, 0.25, 3.0);
+                                                                return accept;
+                                                            }
+                                                            return reject;
+                                                        }
+
                                                     VerticalLayout {
                                                         alignment: center; padding: 24px;
-                                                        width: parent.viewport-width; height: parent.viewport-height;
+                                                        width: parent.width; height: parent.height;
 
                                                         Rectangle {
                                                             width: root.page-layout.page-width * root.canvas-zoom * 1px;
@@ -1396,6 +1408,88 @@ export component AppWindow inherits Window {
                                                                         background: grid-add-row-touch.has-hover ? Palette.control-background : Palette.foreground.transparentize(94%);
                                                                         grid-add-row-text := Text { text: "+ Row"; color: Palette.foreground.transparentize(40%); font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
                                                                         grid-add-row-touch := TouchArea { mouse-cursor: pointer; clicked => { root.grid-add-row(root.page-layout.row-count); } }
+                                                                    }
+                                                                }
+
+                                                                // Grid cells (interactive page grid — inline to avoid component recursion)
+                                                                for cell in root.grid-cells : Rectangle {
+                                                                    x: (root.page-layout.margin-left + cell.x) * root.canvas-zoom * 1px;
+                                                                    y: (root.page-layout.margin-top + cell.y) * root.canvas-zoom * 1px;
+                                                                    width: cell.width * root.canvas-zoom * 1px;
+                                                                    height: max(cell.height * root.canvas-zoom * 1px, 40px * root.canvas-zoom);
+                                                                    border-width: 1px;
+                                                                    border-color: cell.selected
+                                                                        ? Palette.accent-background.transparentize(40%)
+                                                                        : Palette.foreground.transparentize(88%);
+                                                                    border-radius: 4px;
+                                                                    background: cell.is-empty
+                                                                        ? (grid-cell-touch.has-hover && root.drag-component-type != ""
+                                                                            ? Palette.accent-background.transparentize(85%)
+                                                                            : (grid-cell-touch.has-hover ? Palette.accent-background.transparentize(94%) : transparent))
+                                                                        : (cell.selected
+                                                                            ? Palette.accent-background.transparentize(92%)
+                                                                            : transparent);
+
+                                                                    if cell.is-empty : VerticalLayout {
+                                                                        alignment: center;
+                                                                        HorizontalLayout {
+                                                                            alignment: center;
+                                                                            Text {
+                                                                                text: root.drag-component-type != "" ? "\u{2B07}" : "+";
+                                                                                color: grid-cell-touch.has-hover
+                                                                                    ? Palette.accent-background.transparentize(20%)
+                                                                                    : Palette.foreground.transparentize(70%);
+                                                                                font-size: max(10px, (root.drag-component-type != "" ? 18px : 24px) * root.canvas-zoom);
+                                                                                font-weight: 300;
+                                                                                horizontal-alignment: center;
+                                                                                vertical-alignment: center;
+                                                                            }
+                                                                        }
+                                                                        if grid-cell-touch.has-hover : Text {
+                                                                            text: root.drag-component-type != ""
+                                                                                ? ("Place " + root.drag-component-type)
+                                                                                : "Click to add component";
+                                                                            color: root.drag-component-type != ""
+                                                                                ? Palette.accent-background
+                                                                                : Palette.foreground.transparentize(50%);
+                                                                            font-size: max(8px, 10px * root.canvas-zoom);
+                                                                            horizontal-alignment: center;
+                                                                        }
+                                                                    }
+
+                                                                    if !cell.is-empty : VerticalLayout {
+                                                                        padding: max(4px, 8px * root.canvas-zoom);
+                                                                        spacing: 4px;
+                                                                        alignment: center;
+                                                                        Text {
+                                                                            text: cell.component-type;
+                                                                            color: cell.selected
+                                                                                ? Palette.foreground
+                                                                                : Palette.foreground.transparentize(30%);
+                                                                            font-size: max(8px, 11px * root.canvas-zoom);
+                                                                            font-weight: 600;
+                                                                            horizontal-alignment: center;
+                                                                        }
+                                                                        if cell.preview-text != "" && root.canvas-zoom >= 0.5 : Text {
+                                                                            text: cell.preview-text;
+                                                                            color: Palette.foreground.transparentize(50%);
+                                                                            font-size: max(8px, 11px * root.canvas-zoom);
+                                                                            horizontal-alignment: center;
+                                                                            overflow: elide;
+                                                                        }
+                                                                    }
+
+                                                                    grid-cell-touch := TouchArea {
+                                                                        mouse-cursor: pointer;
+                                                                        clicked => {
+                                                                            if root.drag-component-type != "" {
+                                                                                root.grid-cell-add-component(root.drag-component-type, cell.col, cell.row);
+                                                                            } else if cell.is-empty {
+                                                                                root.picker-show(cell.col, cell.row, parent.absolute-position.x / 1px, parent.absolute-position.y / 1px);
+                                                                            } else {
+                                                                                root.grid-cell-clicked(cell.col, cell.row);
+                                                                            }
+                                                                        }
                                                                     }
                                                                 }
 
@@ -1515,7 +1609,7 @@ export component AppWindow inherits Window {
                                                                                 height: 32px * root.canvas-zoom;
                                                                                 background: #2e3440;
                                                                                 border-radius: 4px * root.canvas-zoom;
-                                                                                Text { text: "▸ " + pn.text; color: pn.fg; font-size: 14px * root.canvas-zoom; font-weight: 600; vertical-alignment: center; x: 8px * root.canvas-zoom; }
+                                                                                Text { text: "\u{25B8} " + pn.text; color: pn.fg; font-size: 14px * root.canvas-zoom; font-weight: 600; vertical-alignment: center; x: 8px * root.canvas-zoom; }
                                                                             }
                                                                         }
                                                                         if pn.component-type == "tabs" : VerticalLayout {
@@ -1537,7 +1631,7 @@ export component AppWindow inherits Window {
                                                                     }
                                                                 }
 
-                                                                if root.preview-nodes.length == 0 : VerticalLayout {
+                                                                if root.preview-nodes.length == 0 && root.grid-cells.length == 0 : VerticalLayout {
                                                                     alignment: center; spacing: 8px; padding-top: 80px;
                                                                     Text { text: "Empty document"; color: Palette.foreground.transparentize(50%); font-size: 16px; horizontal-alignment: center; }
                                                                     Text { text: "Add a component from the palette to get started."; color: Palette.foreground.transparentize(60%); font-size: 12px; horizontal-alignment: center; }
@@ -1545,20 +1639,7 @@ export component AppWindow inherits Window {
                                                             }
                                                         }
                                                     }
-
-                                                    // Ctrl/Cmd+scroll zooms; unmodified scroll rejects to Flickable for panning
-                                                    canvas-zoom-area := TouchArea {
-                                                        width: parent.viewport-width;
-                                                        height: parent.viewport-height;
-                                                        mouse-cursor: default;
-                                                        scroll-event(e) => {
-                                                            if (e.modifiers.control || e.modifiers.meta) {
-                                                                root.canvas-zoom = clamp(root.canvas-zoom + (e.delta-y / 1px) / 400.0, 0.25, 3.0);
-                                                                return accept;
-                                                            }
-                                                            return reject;
-                                                        }
-                                                    }
+                                                    } // canvas-zoom-area TouchArea
                                                 }
                                             }
                                         }
