@@ -59,20 +59,22 @@ struct ComponentPaletteItem {
     description: string,
 }
 
-struct BuilderNode {
+struct PreviewNode {
     id: string,
     component-type: string,
     selected: bool,
-    depth: int,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
     text: string,
-    level: int,
-    href: string,
+    label: string,
     alt: string,
     placeholder: string,
-    label: string,
-    disabled: bool,
-    display-mode: string,
-    has-children: bool,
+    font-size: float,
+    border-radius: float,
+    fg: color,
+    bg: color,
 }
 
 struct HelpTooltipData {
@@ -395,246 +397,6 @@ component MenuBarRow inherits Rectangle {
 }
 
 // ── Builder block components ──────────────────────────────────────
-
-component BuilderBlock inherits Rectangle {
-    in property <string> node-id;
-    in property <string> component-type;
-    in property <bool> selected;
-    in property <int> depth;
-    in property <string> text;
-    in property <int> level;
-    in property <string> href;
-    in property <string> alt;
-    in property <string> placeholder;
-    in property <string> label;
-    in property <bool> disabled;
-    in property <string> display-mode: "block";
-    in property <bool> has-children: false;
-    callback clicked(string);
-    callback text-edited(string, string);
-    callback delete-clicked(string);
-
-    border-radius: 6px;
-    border-width: root.selected ? 2px : 0px;
-    border-color: Palette.accent-background;
-    background: root.selected ? Palette.accent-background.transparentize(90%) : transparent;
-
-    HorizontalLayout {
-        VerticalLayout {
-            horizontal-stretch: 1;
-            padding-left: root.depth * 16px + 12px;
-            padding-right: 8px;
-            padding-top: 6px;
-            padding-bottom: 6px;
-
-            if root.component-type == "heading" && !root.selected : Text {
-                text: root.text;
-                color: Palette.foreground;
-                font-size: root.level <= 1 ? 32px :
-                           root.level == 2 ? 26px :
-                           root.level == 3 ? 22px :
-                           root.level == 4 ? 18px :
-                           root.level == 5 ? 16px : 14px;
-                font-weight: 700;
-                wrap: word-wrap;
-            }
-            if root.component-type == "heading" && root.selected : LineEdit {
-                height: root.level <= 1 ? 40px :
-                        root.level == 2 ? 34px :
-                        root.level == 3 ? 30px : 28px;
-                text: root.text;
-                accepted(val) => { root.text-edited(root.node-id, val); }
-            }
-
-            if root.component-type == "text" && !root.selected : Text {
-                text: root.text;
-                color: Palette.foreground;
-                font-size: 14px;
-                wrap: word-wrap;
-            }
-            if root.component-type == "text" && root.selected : LineEdit {
-                height: 28px;
-                text: root.text;
-                accepted(val) => { root.text-edited(root.node-id, val); }
-            }
-
-            if root.component-type == "link" && !root.selected : HorizontalLayout {
-                spacing: 6px;
-                alignment: start;
-                Image {
-                    source: @image-url("icons/link.svg");
-                    width: 14px; height: 14px;
-                    colorize: Palette.accent-background;
-                    y: 2px;
-                }
-                Text {
-                    text: root.text != "" ? root.text : root.href;
-                    color: Palette.accent-foreground;
-                    font-size: 14px;
-                }
-            }
-            if root.component-type == "link" && root.selected : VerticalLayout {
-                spacing: 4px;
-                LineEdit {
-                    height: 28px;
-                    text: root.text;
-                    placeholder-text: "Link text";
-                    accepted(val) => { root.text-edited(root.node-id, val); }
-                }
-            }
-
-            if root.component-type == "image" : Rectangle {
-                min-height: 80px;
-                background: Palette.control-background;
-                border-radius: 6px;
-                HorizontalLayout {
-                    alignment: center;
-                    spacing: 6px;
-                    Image {
-                        source: @image-url("icons/image.svg");
-                        width: 16px; height: 16px;
-                        colorize: Palette.foreground.transparentize(40%);
-                    }
-                    Text {
-                        text: root.alt != "" ? root.alt : "Image";
-                        color: Palette.foreground.transparentize(40%);
-                        font-size: 12px;
-                        vertical-alignment: center;
-                    }
-                }
-            }
-
-            if root.component-type == "container" : HorizontalLayout {
-                spacing: 6px; alignment: start; height: 24px;
-                Image { source: @image-url("icons/box.svg"); width: 12px; height: 12px; colorize: Palette.foreground.transparentize(40%); }
-                Text { text: "Container"; color: Palette.foreground.transparentize(40%); font-size: 11px; font-weight: 600; vertical-alignment: center; }
-                if root.display-mode == "flex" : Rectangle {
-                    width: 42px; height: 16px; border-radius: 3px; background: Palette.accent-background.transparentize(85%);
-                    Text { text: "Flex"; color: Palette.accent-background; font-size: 9px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
-                }
-                if root.display-mode == "grid" : Rectangle {
-                    width: 42px; height: 16px; border-radius: 3px; background: Palette.accent-background.transparentize(85%);
-                    Text { text: "Grid"; color: Palette.accent-background; font-size: 9px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
-                }
-                if root.display-mode == "block" : Rectangle {
-                    width: 42px; height: 16px; border-radius: 3px; background: Palette.foreground.transparentize(90%);
-                    Text { text: "Block"; color: Palette.foreground.transparentize(40%); font-size: 9px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
-                }
-                if root.has-children : Text { text: "▸ nested"; color: Palette.foreground.transparentize(60%); font-size: 10px; vertical-alignment: center; }
-            }
-
-            if root.component-type == "form" : HorizontalLayout {
-                spacing: 4px; alignment: start;
-                Image { source: @image-url("icons/box.svg"); width: 12px; height: 12px; colorize: Palette.foreground.transparentize(40%); }
-                Text { text: "Form"; color: Palette.foreground.transparentize(40%); font-size: 11px; font-weight: 600; vertical-alignment: center; }
-            }
-
-            if root.component-type == "input" : VerticalLayout {
-                spacing: 4px;
-                if root.label != "" : Text { text: root.label; color: Palette.foreground; font-size: 12px; }
-                LineEdit { height: 28px; placeholder-text: root.placeholder != "" ? root.placeholder : root.text; enabled: false; }
-            }
-
-            if root.component-type == "button" && !root.selected : HorizontalLayout {
-                alignment: start;
-                Button { text: root.text != "" ? root.text : "Button"; enabled: !root.disabled; }
-            }
-            if root.component-type == "button" && root.selected : LineEdit {
-                height: 28px;
-                text: root.text != "" ? root.text : "Button";
-                placeholder-text: "Button text";
-                accepted(val) => { root.text-edited(root.node-id, val); }
-            }
-
-            if root.component-type == "card" : Rectangle {
-                border-width: 1px; border-color: Palette.control-background; border-radius: 8px;
-                background: Palette.alternate-background; min-height: 48px;
-                VerticalLayout {
-                    padding: 12px; spacing: 4px;
-                    if !root.selected : Text { text: root.text != "" ? root.text : "Card"; color: Palette.foreground; font-size: 16px; font-weight: 600; }
-                    if root.selected : LineEdit { height: 28px; text: root.text != "" ? root.text : "Card"; placeholder-text: "Card title"; accepted(val) => { root.text-edited(root.node-id, val); } }
-                    if root.label != "" : Text { text: root.label; color: Palette.foreground.transparentize(30%); font-size: 13px; wrap: word-wrap; }
-                }
-            }
-
-            if root.component-type == "code" : Rectangle {
-                background: Palette.control-background; border-radius: 6px; min-height: 36px;
-                VerticalLayout {
-                    padding: 10px;
-                    if !root.selected : Text { text: root.text != "" ? root.text : "// code"; color: Palette.foreground.transparentize(20%); font-size: 13px; font-family: "monospace"; wrap: word-wrap; }
-                    if root.selected : LineEdit { height: 28px; text: root.text != "" ? root.text : "// code"; accepted(val) => { root.text-edited(root.node-id, val); } }
-                }
-            }
-
-            if root.component-type == "divider" : Rectangle { height: 1px; background: Palette.foreground.transparentize(70%); }
-
-            if root.component-type == "spacer" : Rectangle {
-                height: root.level > 0 ? root.level * 1px : 24px;
-                border-width: 1px; border-color: Palette.foreground.transparentize(85%); border-radius: 2px;
-            }
-
-            if root.component-type == "columns" : HorizontalLayout {
-                spacing: 6px; alignment: start;
-                Image { source: @image-url("icons/columns.svg"); width: 12px; height: 12px; colorize: Palette.foreground.transparentize(40%); }
-                Text { text: "Columns"; color: Palette.foreground.transparentize(40%); font-size: 11px; font-weight: 600; vertical-alignment: center; }
-                Rectangle {
-                    width: 42px; height: 16px; border-radius: 3px; background: Palette.accent-background.transparentize(85%);
-                    Text { text: "Flex →"; color: Palette.accent-background; font-size: 9px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
-                }
-                Text { text: "gap: " + (root.level > 0 ? root.level : 16) + "px"; color: Palette.foreground.transparentize(60%); font-size: 10px; vertical-alignment: center; }
-            }
-
-            if root.component-type == "list" : HorizontalLayout {
-                spacing: 6px; alignment: start;
-                Image { source: @image-url("icons/list.svg"); width: 12px; height: 12px; colorize: Palette.foreground.transparentize(40%); }
-                Text { text: root.disabled ? "Ordered List (ol)" : "Unordered List (ul)"; color: Palette.foreground.transparentize(40%); font-size: 11px; font-weight: 600; vertical-alignment: center; }
-            }
-
-            if root.component-type == "table" : Rectangle {
-                border-width: 1px; border-color: Palette.control-background; border-radius: 4px; min-height: 32px;
-                VerticalLayout {
-                    padding: 8px; spacing: 4px;
-                    if root.label != "" : Text { text: root.label; color: Palette.foreground.transparentize(40%); font-size: 11px; }
-                    HorizontalLayout {
-                        spacing: 6px; alignment: start;
-                        Image { source: @image-url("icons/table.svg"); width: 14px; height: 14px; colorize: Palette.foreground; }
-                        Text { text: root.text != "" ? root.text : "Table"; color: Palette.foreground; font-size: 12px; font-weight: 600; vertical-alignment: center; }
-                    }
-                }
-            }
-
-            if root.component-type == "tabs" : HorizontalLayout {
-                spacing: 6px; alignment: start;
-                Image { source: @image-url("icons/layout.svg"); width: 12px; height: 12px; colorize: Palette.foreground.transparentize(30%); }
-                Text { text: root.text != "" ? root.text : "Tabs"; color: Palette.foreground.transparentize(30%); font-size: 12px; font-weight: 500; vertical-alignment: center; }
-            }
-
-            if root.component-type == "accordion" : Rectangle {
-                background: Palette.alternate-background; border-radius: 4px; min-height: 32px;
-                HorizontalLayout {
-                    padding-left: 8px; padding-right: 8px; spacing: 6px; alignment: start;
-                    Image { source: @image-url("icons/chevron-down.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); vertical-alignment: center; }
-                    if !root.selected : Text { text: root.text != "" ? root.text : "Accordion"; color: Palette.foreground; font-size: 13px; font-weight: 600; vertical-alignment: center; }
-                    if root.selected : LineEdit { height: 28px; text: root.text != "" ? root.text : "Accordion"; placeholder-text: "Section title"; horizontal-stretch: 1; accepted(val) => { root.text-edited(root.node-id, val); } }
-                }
-            }
-        }
-
-        if root.selected : VerticalLayout {
-            alignment: start;
-            padding-top: 6px;
-            padding-right: 4px;
-            IconButton {
-                icon: @image-url("icons/x.svg");
-                clicked => { root.delete-clicked(root.node-id); }
-            }
-        }
-    }
-
-    TouchArea {
-        clicked => { root.clicked(root.node-id); }
-    }
-}
 
 // ── Reusable components ────────────────────────────────────────────
 
@@ -1036,110 +798,6 @@ component AppCard inherits Rectangle {
     }
 }
 
-// ── Grid canvas ───────────────────────────────────────────────────
-
-component GridCanvas inherits Rectangle {
-    clip: true;
-    in property <[GridCellItem]> cells: [];
-    in property <float> margin-left: 0;
-    in property <float> margin-top: 0;
-    in property <float> zoom: 1.0;
-    in property <string> drop-component-type: "";
-    callback cell-clicked(int /* col */, int /* row */);
-    callback cell-add-clicked(int /* col */, int /* row */, float /* x */, float /* y */);
-    callback cell-drop(string /* component-type */, int /* col */, int /* row */);
-    callback zoom-by-scroll(float /* delta-y-px */);
-
-    for cell in root.cells : Rectangle {
-        x: cell.x * root.zoom * 1px;
-        y: cell.y * root.zoom * 1px;
-        width: cell.width * root.zoom * 1px;
-        height: max(cell.height * root.zoom * 1px, 40px * root.zoom);
-        border-width: 1px;
-        border-color: cell.selected
-            ? Palette.accent-background.transparentize(40%)
-            : Palette.foreground.transparentize(88%);
-        border-radius: 4px;
-        background: cell.is-empty
-            ? (cell-touch.has-hover && root.drop-component-type != ""
-                ? Palette.accent-background.transparentize(85%)
-                : (cell-touch.has-hover ? Palette.accent-background.transparentize(94%) : transparent))
-            : (cell.selected
-                ? Palette.accent-background.transparentize(92%)
-                : transparent);
-
-        if cell.is-empty : VerticalLayout {
-            alignment: center;
-            HorizontalLayout {
-                alignment: center;
-                spacing: 6px;
-                Text {
-                    text: root.drop-component-type != "" ? "⬇" : "+";
-                    color: cell-touch.has-hover
-                        ? Palette.accent-background.transparentize(20%)
-                        : Palette.foreground.transparentize(70%);
-                    font-size: max(10px, (root.drop-component-type != "" ? 18px : 24px) * root.zoom);
-                    font-weight: 300;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                }
-            }
-            if cell-touch.has-hover : Text {
-                text: root.drop-component-type != ""
-                    ? ("Place " + root.drop-component-type)
-                    : "Add component";
-                color: root.drop-component-type != ""
-                    ? Palette.accent-background
-                    : Palette.foreground.transparentize(50%);
-                font-size: max(8px, 10px * root.zoom);
-                horizontal-alignment: center;
-            }
-        }
-
-        if !cell.is-empty : VerticalLayout {
-            padding: max(4px, 8px * root.zoom);
-            spacing: 4px;
-            alignment: center;
-            Text {
-                text: cell.component-type;
-                color: cell.selected
-                    ? Palette.foreground
-                    : Palette.foreground.transparentize(30%);
-                font-size: max(8px, 11px * root.zoom);
-                font-weight: 600;
-                horizontal-alignment: center;
-            }
-            if cell.preview-text != "" && root.zoom >= 0.5 : Text {
-                text: cell.preview-text;
-                color: Palette.foreground.transparentize(50%);
-                font-size: max(8px, 11px * root.zoom);
-                horizontal-alignment: center;
-                overflow: elide;
-            }
-        }
-
-        cell-touch := TouchArea {
-            mouse-cursor: pointer;
-            clicked => {
-                if root.drop-component-type != "" {
-                    root.cell-drop(root.drop-component-type, cell.col, cell.row);
-                } else if cell.is-empty {
-                    root.cell-add-clicked(cell.col, cell.row, parent.absolute-position.x / 1px, parent.absolute-position.y / 1px);
-                } else {
-                    root.cell-clicked(cell.col, cell.row);
-                }
-            }
-            scroll-event(e) => {
-                if (e.modifiers.control || e.modifiers.meta) {
-                    root.zoom-by-scroll(e.delta-y / 1px);
-                    return accept;
-                }
-                return reject;
-            }
-        }
-    }
-}
-
 // ── Root component ─────────────────────────────────────────────────
 
 export component AppWindow inherits Window {
@@ -1162,8 +820,8 @@ export component AppWindow inherits Window {
     callback viewport-preset-changed(string);
 
     // Builder canvas
-    in property <[BuilderNode]> builder-nodes: [];
     in property <int> builder-node-count: 0;
+    in property <[PreviewNode]> preview-nodes: [];
     callback builder-node-clicked(string);
     callback builder-text-edited(string, string);
     callback builder-delete-node(string);
@@ -1717,59 +1375,167 @@ export component AppWindow inherits Window {
                                                                 }
                                                             }
 
-                                                            // Content area (inside margins)
-                                                            VerticalLayout {
-                                                                padding-left: root.page-layout.margin-left * root.canvas-zoom * 1px;
-                                                                padding-right: root.page-layout.margin-right * root.canvas-zoom * 1px;
-                                                                padding-top: root.page-layout.margin-top * root.canvas-zoom * 1px;
-                                                                padding-bottom: root.page-layout.margin-bottom * root.canvas-zoom * 1px;
-                                                                spacing: 4px; alignment: start;
+                                                            // Content area
+                                                            Rectangle {
+                                                                // Grid editing controls overlay
+                                                                if root.grid-cells.length > 0 : HorizontalLayout {
+                                                                    alignment: end; spacing: 4px; height: 24px;
+                                                                    x: root.page-layout.margin-left * root.canvas-zoom * 1px;
+                                                                    y: root.page-layout.margin-top * root.canvas-zoom * 1px - 28px;
+                                                                    width: parent.width - root.page-layout.margin-left * root.canvas-zoom * 1px - root.page-layout.margin-right * root.canvas-zoom * 1px;
+                                                                    Rectangle {
+                                                                        width: grid-add-col-text.preferred-width + 12px; height: 20px; border-radius: 4px;
+                                                                        background: grid-add-col-touch.has-hover ? Palette.control-background : Palette.foreground.transparentize(94%);
+                                                                        grid-add-col-text := Text { text: "+ Col"; color: Palette.foreground.transparentize(40%); font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+                                                                        grid-add-col-touch := TouchArea { mouse-cursor: pointer; clicked => { root.grid-add-column(root.page-layout.column-count); } }
+                                                                    }
+                                                                    Rectangle {
+                                                                        width: grid-add-row-text.preferred-width + 12px; height: 20px; border-radius: 4px;
+                                                                        background: grid-add-row-touch.has-hover ? Palette.control-background : Palette.foreground.transparentize(94%);
+                                                                        grid-add-row-text := Text { text: "+ Row"; color: Palette.foreground.transparentize(40%); font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+                                                                        grid-add-row-touch := TouchArea { mouse-cursor: pointer; clicked => { root.grid-add-row(root.page-layout.row-count); } }
+                                                                    }
+                                                                }
 
-                                                                if root.grid-cells.length > 0 : Rectangle {
+                                                                // Live preview: absolutely-positioned nodes from layout engine
+                                                                if root.preview-nodes.length > 0 : Rectangle {
                                                                     vertical-stretch: 1;
-                                                                    HorizontalLayout {
-                                                                        alignment: end; spacing: 4px; height: 24px;
-                                                                        Rectangle {
-                                                                            width: grid-add-col-text.preferred-width + 12px; height: 20px; border-radius: 4px;
-                                                                            background: grid-add-col-touch.has-hover ? Palette.control-background : Palette.foreground.transparentize(94%);
-                                                                            grid-add-col-text := Text { text: "+ Col"; color: Palette.foreground.transparentize(40%); font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
-                                                                            grid-add-col-touch := TouchArea { mouse-cursor: pointer; clicked => { root.grid-add-column(root.page-layout.column-count); } }
+                                                                    for pn[i] in root.preview-nodes : Rectangle {
+                                                                        x: pn.x * root.canvas-zoom * 1px;
+                                                                        y: pn.y * root.canvas-zoom * 1px;
+                                                                        width: pn.w * root.canvas-zoom * 1px;
+                                                                        height: pn.h * root.canvas-zoom * 1px;
+                                                                        border-width: pn.selected ? 2px : 0px;
+                                                                        border-color: Palette.accent-background;
+                                                                        border-radius: pn.border-radius * 1px;
+                                                                        background: pn.bg;
+
+                                                                        if pn.component-type == "heading" : Text {
+                                                                            text: pn.text;
+                                                                            color: pn.fg;
+                                                                            font-size: pn.font-size * root.canvas-zoom * 1px;
+                                                                            font-weight: 700;
+                                                                            wrap: word-wrap;
+                                                                            horizontal-alignment: left;
+                                                                            vertical-alignment: top;
                                                                         }
-                                                                        Rectangle {
-                                                                            width: grid-add-row-text.preferred-width + 12px; height: 20px; border-radius: 4px;
-                                                                            background: grid-add-row-touch.has-hover ? Palette.control-background : Palette.foreground.transparentize(94%);
-                                                                            grid-add-row-text := Text { text: "+ Row"; color: Palette.foreground.transparentize(40%); font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
-                                                                            grid-add-row-touch := TouchArea { mouse-cursor: pointer; clicked => { root.grid-add-row(root.page-layout.row-count); } }
+                                                                        if pn.component-type == "text" : Text {
+                                                                            text: pn.text;
+                                                                            color: pn.fg;
+                                                                            font-size: pn.font-size * root.canvas-zoom * 1px;
+                                                                            wrap: word-wrap;
+                                                                            horizontal-alignment: left;
+                                                                            vertical-alignment: top;
                                                                         }
-                                                                    }
-                                                                    GridCanvas {
-                                                                        cells: root.grid-cells; margin-left: 0; margin-top: 0;
-                                                                        zoom: root.canvas-zoom; drop-component-type: root.drag-component-type;
-                                                                        cell-clicked(col, row) => { root.grid-cell-clicked(col, row); }
-                                                                        cell-add-clicked(col, row, cx, cy) => {
-                                                                            root.picker-show(col, row, cx, cy);
+                                                                        if pn.component-type == "button" : Rectangle {
+                                                                            width: 100%; height: 100%;
+                                                                            background: #3b82f6;
+                                                                            border-radius: 6px * root.canvas-zoom;
+                                                                            Text {
+                                                                                text: pn.text;
+                                                                                color: #ffffff;
+                                                                                font-size: pn.font-size * root.canvas-zoom * 1px;
+                                                                                font-weight: 600;
+                                                                                horizontal-alignment: center;
+                                                                                vertical-alignment: center;
+                                                                            }
                                                                         }
-                                                                        cell-drop(ct, col, row) => { root.grid-cell-add-component(ct, col, row); }
-                                                                        zoom-by-scroll(delta) => {
-                                                                            root.canvas-zoom = clamp(root.canvas-zoom + delta / 400.0, 0.25, 3.0);
+                                                                        if pn.component-type == "link" : Text {
+                                                                            text: pn.text;
+                                                                            color: #5aa0ff;
+                                                                            font-size: pn.font-size * root.canvas-zoom * 1px;
+                                                                            horizontal-alignment: left;
+                                                                            vertical-alignment: top;
+                                                                        }
+                                                                        if pn.component-type == "card" : Rectangle {
+                                                                            width: 100%; height: 100%;
+                                                                            border-width: 1px;
+                                                                            border-color: #3b4252;
+                                                                            border-radius: 8px * root.canvas-zoom;
+                                                                            background: #2e3440;
+                                                                            VerticalLayout {
+                                                                                padding: 16px * root.canvas-zoom;
+                                                                                spacing: 8px * root.canvas-zoom;
+                                                                                Text { text: pn.text; color: pn.fg; font-size: 18px * root.canvas-zoom; font-weight: 600; }
+                                                                                if pn.label != "" : Text { text: pn.label; color: #9ca4b4; font-size: 14px * root.canvas-zoom; wrap: word-wrap; }
+                                                                            }
+                                                                        }
+                                                                        if pn.component-type == "image" : Rectangle {
+                                                                            width: 100%; height: 100%;
+                                                                            background: #2a3140;
+                                                                            border-radius: 6px * root.canvas-zoom;
+                                                                            Text { text: pn.alt != "" ? pn.alt : "Image"; color: #9ca4b4; font-size: 12px * root.canvas-zoom; horizontal-alignment: center; vertical-alignment: center; }
+                                                                        }
+                                                                        if pn.component-type == "input" : VerticalLayout {
+                                                                            spacing: 4px * root.canvas-zoom;
+                                                                            if pn.label != "" : Text { text: pn.label; color: pn.fg; font-size: 12px * root.canvas-zoom; }
+                                                                            Rectangle {
+                                                                                height: 32px * root.canvas-zoom;
+                                                                                background: #1e2533;
+                                                                                border-radius: 4px * root.canvas-zoom;
+                                                                                Text {
+                                                                                    text: pn.placeholder != "" ? pn.placeholder : "...";
+                                                                                    color: #6b7280;
+                                                                                    font-size: 14px * root.canvas-zoom;
+                                                                                    vertical-alignment: center;
+                                                                                    x: 8px * root.canvas-zoom;
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                        if pn.component-type == "code" : Rectangle {
+                                                                            width: 100%; height: 100%;
+                                                                            background: #1a1e28;
+                                                                            border-radius: 6px * root.canvas-zoom;
+                                                                            VerticalLayout {
+                                                                                padding: 12px * root.canvas-zoom;
+                                                                                Text { text: pn.text; color: #a3be8c; font-size: 13px * root.canvas-zoom; font-family: "monospace"; wrap: word-wrap; }
+                                                                            }
+                                                                        }
+                                                                        if pn.component-type == "divider" : Rectangle {
+                                                                            width: 100%; height: 1px;
+                                                                            background: #3b4252;
+                                                                        }
+                                                                        if pn.component-type == "table" : Rectangle {
+                                                                            width: 100%; height: 100%;
+                                                                            border-width: 1px;
+                                                                            border-color: #3b4252;
+                                                                            border-radius: 4px * root.canvas-zoom;
+                                                                            VerticalLayout {
+                                                                                padding: 8px * root.canvas-zoom;
+                                                                                spacing: 4px * root.canvas-zoom;
+                                                                                if pn.label != "" : Text { text: pn.label; color: #9ca4b4; font-size: 12px * root.canvas-zoom; }
+                                                                                Text { text: pn.text != "" ? pn.text : "Table"; color: pn.fg; font-size: 13px * root.canvas-zoom; font-weight: 600; }
+                                                                            }
+                                                                        }
+                                                                        if pn.component-type == "accordion" : VerticalLayout {
+                                                                            spacing: 4px * root.canvas-zoom;
+                                                                            Rectangle {
+                                                                                height: 32px * root.canvas-zoom;
+                                                                                background: #2e3440;
+                                                                                border-radius: 4px * root.canvas-zoom;
+                                                                                Text { text: "▸ " + pn.text; color: pn.fg; font-size: 14px * root.canvas-zoom; font-weight: 600; vertical-alignment: center; x: 8px * root.canvas-zoom; }
+                                                                            }
+                                                                        }
+                                                                        if pn.component-type == "tabs" : VerticalLayout {
+                                                                            spacing: 0px;
+                                                                            Rectangle {
+                                                                                height: 32px * root.canvas-zoom;
+                                                                                background: #2e3440;
+                                                                                HorizontalLayout {
+                                                                                    Text { text: pn.text != "" ? pn.text : "Tab 1"; color: pn.fg; font-size: 13px * root.canvas-zoom; horizontal-alignment: center; vertical-alignment: center; }
+                                                                                }
+                                                                            }
+                                                                        }
+
+                                                                        // Click overlay for selection
+                                                                        TouchArea {
+                                                                            mouse-cursor: pointer;
+                                                                            clicked => { root.builder-node-clicked(pn.id); }
                                                                         }
                                                                     }
                                                                 }
 
-                                                                if root.grid-cells.length == 0 && root.builder-nodes.length > 0 : VerticalLayout {
-                                                                    spacing: 2px;
-                                                                    for bnode[i] in root.builder-nodes : BuilderBlock {
-                                                                        node-id: bnode.id; component-type: bnode.component-type; selected: bnode.selected; depth: bnode.depth;
-                                                                        text: bnode.text; level: bnode.level; href: bnode.href; alt: bnode.alt;
-                                                                        placeholder: bnode.placeholder; label: bnode.label; disabled: bnode.disabled;
-                                                                        display-mode: bnode.display-mode; has-children: bnode.has-children;
-                                                                        clicked(id) => { root.builder-node-clicked(id); }
-                                                                        text-edited(id, val) => { root.builder-text-edited(id, val); }
-                                                                        delete-clicked(id) => { root.builder-delete-node(id); }
-                                                                    }
-                                                                }
-
-                                                                if root.grid-cells.length == 0 && root.builder-nodes.length == 0 : VerticalLayout {
+                                                                if root.preview-nodes.length == 0 : VerticalLayout {
                                                                     alignment: center; spacing: 8px; padding-top: 80px;
                                                                     Text { text: "Empty document"; color: Palette.foreground.transparentize(50%); font-size: 16px; horizontal-alignment: center; }
                                                                     Text { text: "Add a component from the palette to get started."; color: Palette.foreground.transparentize(60%); font-size: 12px; horizontal-alignment: center; }
@@ -2017,6 +1783,7 @@ export component AppWindow inherits Window {
                                         if panel.panel-id == "properties" : Rectangle {
                                             background: Palette.alternate-background;
                                             VerticalLayout {
+                                                width: 100%; height: 100%;
                                                 padding: 16px; spacing: 8px;
 
                                                 if root.has-selection && root.selected-component != "" : HorizontalLayout {
@@ -2025,9 +1792,8 @@ export component AppWindow inherits Window {
                                                     Text { text: root.selected-component; color: Palette.foreground.transparentize(30%); font-size: 11px; font-weight: 600; vertical-alignment: center; }
                                                 }
 
-                                                ScrollView {
+                                                if root.has-selection && root.selected-component != "" : ScrollView {
                                                     vertical-stretch: 1;
-                                                    visible: root.has-selection && root.selected-component != "";
                                                     VerticalLayout {
                                                         min-width: 220px; spacing: 4px;
                                                         for field[i] in root.field-rows : FieldEditor {
@@ -2112,6 +1878,7 @@ export component AppWindow inherits Window {
                                                 }
 
                                                 if !root.has-selection : VerticalLayout {
+                                                    vertical-stretch: 1;
                                                     spacing: 8px; padding-top: 24px;
                                                     Text { text: "Page styles"; color: Palette.foreground.transparentize(30%); font-size: 13px; font-weight: 600; horizontal-alignment: center; }
                                                     Text { text: "Set global styles that cascade to all components on this page."; color: Palette.foreground.transparentize(50%); font-size: 11px; wrap: word-wrap; horizontal-alignment: center; }

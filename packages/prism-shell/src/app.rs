@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 use prism_builder::{
     app::{AppIcon, NavigationConfig, Page, PrismApp},
+    compute_layout,
     layout::{
         AlignOption, Dimension, FlexDirection, FlowDisplay, FlowProps, GridPlacement,
         JustifyOption, LayoutMode, PageSize, TrackSize,
@@ -39,11 +40,11 @@ use crate::search::SearchIndex;
 use crate::selection::SelectionModel;
 use crate::telemetry::FirstPaint;
 use crate::{
-    AppCardItem, AppWindow, BreadcrumbItem, BuilderNode, ButtonSpec, CommandItem,
-    ComponentPaletteItem, DockDividerRect, DockPanelRect, DockTabItem, DocsPanelData,
-    EditorIndentGuide, EditorLine, EditorToken, ExplorerNodeItem, FieldRow, GridCellItem,
-    GutterRect, HelpTooltipData, InspectorNode, MenuDef, MenuItem, ModifierItem, PageLayoutData,
-    SearchResultItem, SignalItem, TabItem, ToastItem, VariantItem, WorkflowPageItem,
+    AppCardItem, AppWindow, BreadcrumbItem, ButtonSpec, CommandItem, ComponentPaletteItem,
+    DockDividerRect, DockPanelRect, DockTabItem, DocsPanelData, EditorIndentGuide, EditorLine,
+    EditorToken, ExplorerNodeItem, FieldRow, GridCellItem, GutterRect, HelpTooltipData,
+    InspectorNode, MenuDef, MenuItem, ModifierItem, PageLayoutData, PreviewNode, SearchResultItem,
+    SignalItem, TabItem, ToastItem, VariantItem, WorkflowPageItem,
 };
 
 // ── Reloadable state ───────────────────────────────────────────────
@@ -1849,7 +1850,8 @@ impl Shell {
             }
         });
 
-        // Layout field editing (per-node)
+        // Layout field editing (per-node) — routes through LiveDocument
+        // so the Slint source stays in sync (unified system).
         self.window.on_layout_field_edited({
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
@@ -1862,11 +1864,14 @@ impl Shell {
                     if let Some(ref target_id) = selected_id {
                         s.push_undo(&format!("Edit layout {key}"));
                         let tid = target_id.clone();
-                        s.store.mutate(|state| {
-                            if let Some(ref mut root) = state.builder_document.root {
-                                apply_node_layout_edit(root, &tid, &key, &value);
-                            }
-                        });
+                        if let Some(ref mut live) = s.live {
+                            let _ = live.mutate_document(|doc| {
+                                if let Some(ref mut root) = doc.root {
+                                    apply_node_layout_edit(root, &tid, &key, &value);
+                                }
+                            });
+                        }
+                        s.sync_builder_document();
                     }
                 }
                 if let Some(w) = weak.upgrade() {
@@ -1888,11 +1893,14 @@ impl Shell {
                     if let Some(ref target_id) = selected_id {
                         s.push_undo(&format!("Edit layout {key}"));
                         let tid = target_id.clone();
-                        s.store.mutate(|state| {
-                            if let Some(ref mut root) = state.builder_document.root {
-                                apply_node_layout_edit(root, &tid, &key, &value);
-                            }
-                        });
+                        if let Some(ref mut live) = s.live {
+                            let _ = live.mutate_document(|doc| {
+                                if let Some(ref mut root) = doc.root {
+                                    apply_node_layout_edit(root, &tid, &key, &value);
+                                }
+                            });
+                        }
+                        s.sync_builder_document();
                     }
                 }
                 if let Some(w) = weak.upgrade() {
@@ -2134,7 +2142,8 @@ impl Shell {
             }
         });
 
-        // Style field edits (from properties panel)
+        // Style field edits (from properties panel) — routes through
+        // LiveDocument for node-level styles so Slint source stays in sync.
         self.window.on_style_field_edited({
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
@@ -2147,15 +2156,18 @@ impl Shell {
                     let selected_id = s.store.state().selection.primary().cloned();
                     let style_key = key.strip_prefix("style.").unwrap_or(&key);
                     let sk = style_key.to_string();
-                    if let Some(ref target_id) = selected_id {
-                        let tid = target_id.clone();
-                        s.store.mutate(|state| {
-                            if let Some(ref mut root) = state.builder_document.root {
-                                if let Some(node) = root.find_mut(&tid) {
-                                    apply_style_edit(&mut node.style, &sk, &value);
+                    if let Some(ref _target_id) = selected_id {
+                        let tid = _target_id.clone();
+                        if let Some(ref mut live) = s.live {
+                            let _ = live.mutate_document(|doc| {
+                                if let Some(ref mut root) = doc.root {
+                                    if let Some(node) = root.find_mut(&tid) {
+                                        apply_style_edit(&mut node.style, &sk, &value);
+                                    }
                                 }
-                            }
-                        });
+                            });
+                        }
+                        s.sync_builder_document();
                     } else {
                         s.store.mutate(|state| {
                             if let Some(app) = state.active_app_mut() {
@@ -2185,15 +2197,18 @@ impl Shell {
                     let selected_id = s.store.state().selection.primary().cloned();
                     let style_key = key.strip_prefix("style.").unwrap_or(&key);
                     let sk = style_key.to_string();
-                    if let Some(ref target_id) = selected_id {
-                        let tid = target_id.clone();
-                        s.store.mutate(|state| {
-                            if let Some(ref mut root) = state.builder_document.root {
-                                if let Some(node) = root.find_mut(&tid) {
-                                    apply_style_edit(&mut node.style, &sk, &value);
+                    if let Some(ref _target_id) = selected_id {
+                        let tid = _target_id.clone();
+                        if let Some(ref mut live) = s.live {
+                            let _ = live.mutate_document(|doc| {
+                                if let Some(ref mut root) = doc.root {
+                                    if let Some(node) = root.find_mut(&tid) {
+                                        apply_style_edit(&mut node.style, &sk, &value);
+                                    }
                                 }
-                            }
-                        });
+                            });
+                        }
+                        s.sync_builder_document();
                     } else {
                         s.store.mutate(|state| {
                             if let Some(app) = state.active_app_mut() {
@@ -2357,7 +2372,13 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
     // Fill all panel data (code editor + builder can coexist on any page)
     if !is_launchpad {
         push_editor_data(window, &state.editor_state);
-        push_builder_preview(window, &state.builder_document, &state.selection);
+        push_builder_preview(window, &state.builder_document);
+        push_live_preview(
+            window,
+            &state.builder_document,
+            &state.selection,
+            state.viewport_width,
+        );
         push_inspector_nodes(window, &state.builder_document, &state.selection);
         push_property_rows(
             window,
@@ -2480,11 +2501,6 @@ fn clear_panel_slots(window: &AppWindow) {
     window.set_actions(ModelRc::from(
         empty_actions as Rc<dyn Model<Data = ButtonSpec>>,
     ));
-    let empty_builder: Rc<VecModel<BuilderNode>> =
-        Rc::new(VecModel::from(Vec::<BuilderNode>::new()));
-    window.set_builder_nodes(ModelRc::from(
-        empty_builder as Rc<dyn Model<Data = BuilderNode>>,
-    ));
     window.set_builder_node_count(0);
     window.set_builder_source(SharedString::new());
     window.set_inspector_tree(SharedString::new());
@@ -2574,17 +2590,173 @@ fn push_app_cards(window: &AppWindow, apps: &[PrismApp]) {
     window.set_app_cards(ModelRc::from(model as Rc<dyn Model<Data = AppCardItem>>));
 }
 
-fn push_builder_preview(window: &AppWindow, doc: &BuilderDocument, selection: &SelectionModel) {
-    let items = flatten_builder_nodes(doc.root.as_ref(), selection);
-    let count = items.len() as i32;
-    let model = Rc::new(VecModel::from(items));
-    window.set_builder_nodes(ModelRc::from(model as Rc<dyn Model<Data = BuilderNode>>));
+fn push_builder_preview(window: &AppWindow, doc: &BuilderDocument) {
+    let count = count_nodes(doc.root.as_ref());
     window.set_builder_node_count(count);
     let palette = component_palette_items();
     let palette_model = Rc::new(VecModel::from(palette));
     window.set_component_palette(ModelRc::from(
         palette_model as Rc<dyn Model<Data = ComponentPaletteItem>>,
     ));
+}
+
+fn count_nodes(root: Option<&Node>) -> i32 {
+    match root {
+        None => 0,
+        Some(node) => {
+            1 + node
+                .children
+                .iter()
+                .map(|c| count_nodes(Some(c)))
+                .sum::<i32>()
+        }
+    }
+}
+
+fn push_live_preview(
+    window: &AppWindow,
+    doc: &BuilderDocument,
+    selection: &SelectionModel,
+    viewport_width: f32,
+) {
+    use prism_core::foundation::geometry::Size2;
+
+    let root = match &doc.root {
+        Some(r) => r,
+        None => {
+            window.set_preview_nodes(ModelRc::default());
+            return;
+        }
+    };
+
+    let vp = Size2::new(viewport_width, 800.0);
+    let layout = compute_layout(doc, vp);
+    let mut items: Vec<PreviewNode> = Vec::new();
+
+    fn walk_preview(
+        node: &Node,
+        layout: &prism_builder::ComputedLayout,
+        selection: &SelectionModel,
+        items: &mut Vec<PreviewNode>,
+    ) {
+        if let Some(nl) = layout.nodes.get(&node.id) {
+            let r = &nl.rect;
+            let ct = node.component.as_str();
+            let props = &node.props;
+            let fg = slint::Color::from_argb_u8(255, 216, 222, 233); // #d8dee9
+            let transparent = slint::Color::from_argb_u8(0, 0, 0, 0);
+
+            let (text, label, alt, placeholder) = extract_preview_text(ct, props);
+            let font_size = match ct {
+                "heading" => {
+                    let level = props
+                        .get("level")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(1)
+                        .clamp(1, 6);
+                    match level {
+                        1 => 32.0,
+                        2 => 26.0,
+                        3 => 22.0,
+                        4 => 18.0,
+                        5 => 16.0,
+                        _ => 14.0,
+                    }
+                }
+                "button" => 14.0,
+                "code" => 13.0,
+                _ => 14.0,
+            };
+            let border_radius = match ct {
+                "card" => 8.0,
+                "button" | "code" | "image" => 6.0,
+                "table" | "accordion" => 4.0,
+                _ => 0.0,
+            };
+            let bg = match ct {
+                "card" => slint::Color::from_argb_u8(255, 46, 52, 64),
+                "code" => slint::Color::from_argb_u8(255, 26, 30, 40),
+                "image" => slint::Color::from_argb_u8(255, 42, 49, 64),
+                "input" => transparent,
+                "button" => transparent,
+                _ => transparent,
+            };
+
+            // Skip pure layout containers — they have no visual of their own,
+            // but their children carry the content.
+            let is_layout_only = matches!(ct, "container" | "columns" | "form" | "list" | "spacer");
+            if !is_layout_only {
+                items.push(PreviewNode {
+                    id: SharedString::from(&node.id),
+                    component_type: SharedString::from(ct),
+                    selected: selection.contains(&node.id),
+                    x: r.origin.x,
+                    y: r.origin.y,
+                    w: r.size.width,
+                    h: r.size.height,
+                    text: SharedString::from(&text),
+                    label: SharedString::from(&label),
+                    alt: SharedString::from(&alt),
+                    placeholder: SharedString::from(&placeholder),
+                    font_size: font_size as f32,
+                    border_radius: border_radius as f32,
+                    fg,
+                    bg,
+                });
+            }
+        }
+        for child in &node.children {
+            walk_preview(child, layout, selection, items);
+        }
+    }
+
+    walk_preview(root, &layout, selection, &mut items);
+    let model = Rc::new(VecModel::from(items));
+    window.set_preview_nodes(ModelRc::from(model as Rc<dyn Model<Data = PreviewNode>>));
+}
+
+fn extract_preview_text(
+    component_type: &str,
+    props: &serde_json::Value,
+) -> (String, String, String, String) {
+    let s = |key: &str| {
+        props
+            .get(key)
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    match component_type {
+        "heading" => (s("text"), String::new(), String::new(), String::new()),
+        "text" => (s("body"), String::new(), String::new(), String::new()),
+        "button" => {
+            let t = s("text");
+            (
+                if t.is_empty() { "Submit".into() } else { t },
+                String::new(),
+                String::new(),
+                String::new(),
+            )
+        }
+        "link" => {
+            let t = s("text");
+            let h = s("href");
+            (
+                if t.is_empty() { h } else { t },
+                String::new(),
+                String::new(),
+                String::new(),
+            )
+        }
+        "card" => (s("title"), s("body"), String::new(), String::new()),
+        "image" => (String::new(), String::new(), s("alt"), String::new()),
+        "input" => (String::new(), s("label"), String::new(), s("placeholder")),
+        "code" => (s("code"), String::new(), String::new(), String::new()),
+        "table" => (s("headers"), s("caption"), String::new(), String::new()),
+        "accordion" => (s("title"), String::new(), String::new(), String::new()),
+        "tabs" => (s("labels"), String::new(), String::new(), String::new()),
+        _ => (String::new(), String::new(), String::new(), String::new()),
+    }
 }
 
 fn push_inspector_nodes(window: &AppWindow, doc: &BuilderDocument, selection: &SelectionModel) {
@@ -3310,88 +3482,6 @@ fn flatten_walk(node: &Node, depth: i32, selection: &SelectionModel, out: &mut V
     });
     for child in &node.children {
         flatten_walk(child, depth + 1, selection, out);
-    }
-}
-
-fn flatten_builder_nodes(root: Option<&Node>, selection: &SelectionModel) -> Vec<BuilderNode> {
-    let mut items = Vec::new();
-    if let Some(node) = root {
-        flatten_builder_walk(node, 0, selection, &mut items);
-    }
-    items
-}
-
-fn flatten_builder_walk(
-    node: &Node,
-    depth: i32,
-    selection: &SelectionModel,
-    out: &mut Vec<BuilderNode>,
-) {
-    let props = &node.props;
-    let str_prop = |key| {
-        props
-            .get(key)
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string()
-    };
-    let int_prop =
-        |key, default: i64| props.get(key).and_then(|v| v.as_i64()).unwrap_or(default) as i32;
-    let bool_prop = |key| props.get(key).and_then(|v| v.as_bool()).unwrap_or(false);
-
-    let text = match node.component.as_str() {
-        "heading" | "link" | "button" => str_prop("text"),
-        "text" => str_prop("body"),
-        "input" => str_prop("name"),
-        "card" | "accordion" => str_prop("title"),
-        "code" => str_prop("code"),
-        "table" => str_prop("headers"),
-        "tabs" => str_prop("labels"),
-        _ => String::new(),
-    };
-
-    let label = match node.component.as_str() {
-        "card" => str_prop("body"),
-        "table" => str_prop("caption"),
-        _ => str_prop("label"),
-    };
-    let level = match node.component.as_str() {
-        "spacer" => int_prop("height", 24),
-        "columns" => int_prop("gap", 16),
-        _ => int_prop("level", 1),
-    };
-    let disabled = match node.component.as_str() {
-        "list" => bool_prop("ordered"),
-        _ => bool_prop("disabled"),
-    };
-
-    let display_mode = match &node.layout_mode {
-        LayoutMode::Flow(f) => match f.display {
-            FlowDisplay::Block => "block",
-            FlowDisplay::Flex => "flex",
-            FlowDisplay::Grid => "grid",
-            FlowDisplay::None => "none",
-        },
-        LayoutMode::Free => "free",
-    };
-
-    out.push(BuilderNode {
-        id: SharedString::from(&node.id),
-        component_type: SharedString::from(&node.component),
-        selected: selection.contains(&node.id),
-        depth,
-        text: SharedString::from(text),
-        level,
-        href: SharedString::from(str_prop("href")),
-        alt: SharedString::from(str_prop("alt")),
-        placeholder: SharedString::from(str_prop("placeholder")),
-        label: SharedString::from(label),
-        disabled,
-        display_mode: SharedString::from(display_mode),
-        has_children: !node.children.is_empty(),
-    });
-    for child in &node.children {
-        flatten_builder_walk(child, depth + 1, selection, out);
     }
 }
 

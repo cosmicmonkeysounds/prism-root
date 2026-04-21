@@ -32,6 +32,14 @@ pub struct StyleProperties {
     pub border_radius: Option<f32>,
 }
 
+impl StyleProperties {
+    /// True when the node carries a visual background or border that
+    /// needs a wrapper `Rectangle` in the Slint output.
+    pub fn has_background_or_border(&self) -> bool {
+        self.background.is_some() || self.border_radius.is_some()
+    }
+}
+
 pub fn resolve_cascade(
     app: &StyleProperties,
     page: &StyleProperties,

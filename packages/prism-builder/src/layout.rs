@@ -300,7 +300,7 @@ impl Default for LayoutMode {
 
 /// CSS-like properties for nodes in flow layout. Maps to `taffy::Style`
 /// fields.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FlowProps {
     #[serde(default = "FlowProps::default_display")]
     pub display: FlowDisplay,
@@ -349,6 +349,11 @@ pub struct FlowProps {
 }
 
 impl FlowProps {
+    /// True when all fields are at their defaults — no layout wrapper needed.
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
     fn default_display() -> FlowDisplay {
         FlowDisplay::Block
     }

@@ -21,6 +21,7 @@ use crate::registry::{prop_f64, prop_str, prop_u64, ComponentRegistry, FieldSpec
 use crate::schemas;
 use crate::signal::SignalDef;
 use crate::slint_source::SlintEmitter;
+use crate::style::StyleProperties;
 use crate::variant::{VariantAxis, VariantOption};
 
 /// Register the starter catalog into `reg`. Call this once at boot
@@ -71,6 +72,18 @@ fn heading_font_size(level: u64) -> f64 {
     }
 }
 
+fn emit_text_style(out: &mut SlintEmitter, style: &StyleProperties) {
+    if let Some(ref color) = style.color {
+        out.prop_color("color", color);
+    }
+    if let Some(ref family) = style.font_family {
+        out.prop_string("font-family", family);
+    }
+    if let Some(ls) = style.letter_spacing {
+        out.prop_px("letter-spacing", ls as f64);
+    }
+}
+
 /// `h1`–`h6` depending on `props.level` (clamped to 1..=6). Reads
 /// its label from `props.text` and escapes it.
 pub struct HeadingComponent {
@@ -93,17 +106,24 @@ impl Component for HeadingComponent {
     }
     fn render_slint(
         &self,
-        _ctx: &RenderSlintContext<'_>,
+        ctx: &RenderSlintContext<'_>,
         props: &Value,
         _children: &[Node],
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
         let level = prop_u64(props, "level", 1).clamp(1, 6);
         let text = prop_str(props, "text", "");
+        let style = ctx.style();
         out.block("Text", |out| {
             out.prop_string("text", text);
-            out.prop_px("font-size", heading_font_size(level));
-            out.line("font-weight: 700;");
+            let font_size = style
+                .font_size
+                .map(|s| s as f64)
+                .unwrap_or(heading_font_size(level));
+            out.prop_px("font-size", font_size);
+            let weight = style.font_weight.unwrap_or(700);
+            out.property("font-weight", weight.to_string());
+            emit_text_style(out, &style);
             Ok(())
         })
     }
@@ -130,16 +150,19 @@ impl Component for TextComponent {
     }
     fn render_slint(
         &self,
-        _ctx: &RenderSlintContext<'_>,
+        ctx: &RenderSlintContext<'_>,
         props: &Value,
         _children: &[Node],
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
         let body = prop_str(props, "body", "");
+        let style = ctx.style();
         out.block("Text", |out| {
             out.prop_string("text", body);
-            out.prop_px("font-size", 14.0);
+            let font_size = style.font_size.unwrap_or(14.0);
+            out.prop_px("font-size", font_size as f64);
             out.line("wrap: word-wrap;");
+            emit_text_style(out, &style);
             Ok(())
         })
     }
@@ -170,7 +193,7 @@ impl Component for LinkComponent {
     }
     fn render_slint(
         &self,
-        _ctx: &RenderSlintContext<'_>,
+        ctx: &RenderSlintContext<'_>,
         props: &Value,
         _children: &[Node],
         out: &mut SlintEmitter,
@@ -180,10 +203,14 @@ impl Component for LinkComponent {
             .and_then(|v| v.as_str())
             .or_else(|| props.get("href").and_then(|v| v.as_str()))
             .unwrap_or("");
+        let style = ctx.style();
         out.block("Text", |out| {
             out.prop_string("text", text);
-            out.prop_px("font-size", 14.0);
-            out.line("color: #5aa0ff;");
+            let font_size = style.font_size.unwrap_or(14.0);
+            out.prop_px("font-size", font_size as f64);
+            let color = style.color.as_deref().unwrap_or("#5aa0ff");
+            out.prop_color("color", color);
+            emit_text_style(out, &style);
             Ok(())
         })
     }
@@ -259,7 +286,11 @@ impl Component for ContainerComponent {
         children: &[Node],
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
-        let spacing = prop_f64(props, "spacing", 12.0);
+        let style = ctx.style();
+        let spacing = style
+            .base_spacing
+            .map(|s| s as f64)
+            .unwrap_or(prop_f64(props, "spacing", 12.0));
         out.block("VerticalLayout", |out| {
             out.prop_px("spacing", spacing);
             out.line("alignment: start;");
@@ -454,21 +485,26 @@ impl Component for CodeComponent {
     }
     fn render_slint(
         &self,
-        _ctx: &RenderSlintContext<'_>,
+        ctx: &RenderSlintContext<'_>,
         props: &Value,
         _children: &[Node],
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
         let code = prop_str(props, "code", "");
+        let style = ctx.style();
+        let bg = style.background.as_deref().unwrap_or("#1a1e28");
+        let radius = style.border_radius.unwrap_or(6.0);
         out.block("Rectangle", |out| {
-            out.line("background: #1a1e28;");
-            out.line("border-radius: 6px;");
+            out.prop_color("background", bg);
+            out.prop_px("border-radius", radius as f64);
             out.block("VerticalLayout", |out| {
                 out.prop_px("padding", 12.0);
                 out.block("Text", |out| {
                     out.prop_string("text", code);
-                    out.prop_px("font-size", 13.0);
-                    out.line("color: #a3be8c;");
+                    let font_size = style.font_size.unwrap_or(13.0);
+                    out.prop_px("font-size", font_size as f64);
+                    let color = style.color.as_deref().unwrap_or("#a3be8c");
+                    out.prop_color("color", color);
                     out.line("font-family: \"monospace\";");
                     out.line("wrap: word-wrap;");
                     Ok(())

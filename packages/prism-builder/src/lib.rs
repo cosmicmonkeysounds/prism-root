@@ -55,8 +55,8 @@ pub use registry::{
     ComponentRegistry, FieldKind, FieldSpec, FieldValue, NumericBounds, RegistryError, SelectOption,
 };
 pub use render::{
-    build_source_map_from_markers, render_document_html, render_document_slint_source,
-    render_document_slint_source_mapped,
+    build_source_map_from_markers, render_document_html, render_document_slint_preview,
+    render_document_slint_source, render_document_slint_source_mapped,
 };
 pub use resource::{ResourceDef, ResourceId, ResourceKind};
 pub use signal::{ActionKind, Connection, ConnectionId, SignalDef};
@@ -75,6 +75,8 @@ pub mod syntax_provider;
 #[cfg(feature = "interpreter")]
 pub use live::{LiveDiagnostic, LiveDocument, SourceEditError, SourceSelection};
 #[cfg(feature = "interpreter")]
-pub use render::{compile_slint_source, instantiate_document, InstantiateError};
+pub use render::{
+    compile_slint_preview, compile_slint_source, instantiate_document, InstantiateError,
+};
 #[cfg(feature = "interpreter")]
 pub use syntax_provider::BuilderSyntaxProvider;

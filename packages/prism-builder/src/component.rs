@@ -14,14 +14,18 @@
 //! live in the [`crate::registry::ComponentRegistry`] and be dispatched
 //! by `ComponentId` at walk time.
 
+use std::cell::RefCell;
+
 use prism_core::help::HelpEntry;
 use serde_json::Value;
 use thiserror::Error;
 
 use crate::document::Node;
+use crate::layout::{Dimension, FlexDirection, FlowDisplay, LayoutMode};
 use crate::registry::{ComponentRegistry, FieldSpec};
 use crate::signal::SignalDef;
 use crate::slint_source::SlintEmitter;
+use crate::style::StyleProperties;
 use crate::variant::VariantAxis;
 
 /// Stable identifier for a component *type* (e.g. `"card"`, `"button"`).
@@ -73,9 +77,40 @@ pub struct RenderSlintContext<'a> {
     /// When true, emit `// @node-start` / `// @node-end` marker
     /// comments around each node for source map construction (ADR-006).
     pub emit_markers: bool,
+    /// Style overrides for the node currently being rendered. Set by
+    /// `render_child` before calling `Component::render_slint` so
+    /// components can apply cascaded style properties (font-size,
+    /// color, etc.) into their Slint output.
+    current_style: RefCell<StyleProperties>,
 }
 
 impl<'a> RenderSlintContext<'a> {
+    pub fn new(
+        tokens: &'a prism_core::design_tokens::DesignTokens,
+        registry: &'a ComponentRegistry,
+        resources: &'a indexmap::IndexMap<
+            crate::resource::ResourceId,
+            crate::resource::ResourceDef,
+        >,
+        emit_markers: bool,
+    ) -> Self {
+        Self {
+            tokens,
+            registry,
+            resources,
+            emit_markers,
+            current_style: RefCell::new(StyleProperties::default()),
+        }
+    }
+
+    /// Read the style overrides for the node currently being rendered.
+    /// Components call this inside `render_slint` to apply cascaded
+    /// style properties (font-size, color, etc.) instead of hardcoded
+    /// defaults.
+    pub fn style(&self) -> StyleProperties {
+        self.current_style.borrow().clone()
+    }
+
     pub fn render_child(&self, child: &Node, out: &mut SlintEmitter) -> Result<(), RenderError> {
         if self.emit_markers {
             out.line(format!("// @node-start:{}:{}", child.id, child.component));
@@ -89,15 +124,54 @@ impl<'a> RenderSlintContext<'a> {
         let props = crate::resource::resolve_resource_refs(&child.props, self.resources);
         let props = crate::variant::apply_variant_defaults(&props, &component.variants());
 
-        if child.modifiers.is_empty() {
-            component.render_slint(self, &props, &child.children, out)?;
+        *self.current_style.borrow_mut() = child.style.clone();
+
+        let needs_layout_wrapper =
+            matches!(&child.layout_mode, LayoutMode::Flow(f) if !f.is_default());
+        let needs_style_wrapper = child.style.has_background_or_border();
+
+        if needs_layout_wrapper {
+            let wrapper_element = self.layout_wrapper_element(&child.layout_mode);
+            out.block(&wrapper_element, |out| {
+                self.emit_layout_props(&child.layout_mode, out);
+                if needs_style_wrapper {
+                    out.block("Rectangle", |out| {
+                        self.emit_style_wrapper_props(&child.style, out);
+                        self.render_component_inner(
+                            &*component,
+                            &props,
+                            &child.modifiers,
+                            &child.children,
+                            out,
+                        )
+                    })
+                } else {
+                    self.render_component_inner(
+                        &*component,
+                        &props,
+                        &child.modifiers,
+                        &child.children,
+                        out,
+                    )
+                }
+            })?;
+        } else if needs_style_wrapper {
+            out.block("Rectangle", |out| {
+                self.emit_style_wrapper_props(&child.style, out);
+                self.render_component_inner(
+                    &*component,
+                    &props,
+                    &child.modifiers,
+                    &child.children,
+                    out,
+                )
+            })?;
         } else {
-            self.apply_slint_modifiers(
-                &child.modifiers,
-                0,
-                &props,
-                &child.children,
+            self.render_component_inner(
                 &*component,
+                &props,
+                &child.modifiers,
+                &child.children,
                 out,
             )?;
         }
@@ -107,6 +181,82 @@ impl<'a> RenderSlintContext<'a> {
         }
 
         Ok(())
+    }
+
+    fn render_component_inner(
+        &self,
+        component: &dyn Component,
+        props: &Value,
+        modifiers: &[crate::modifier::Modifier],
+        children: &[Node],
+        out: &mut SlintEmitter,
+    ) -> Result<(), RenderError> {
+        if modifiers.is_empty() {
+            component.render_slint(self, props, children, out)
+        } else {
+            self.apply_slint_modifiers(modifiers, 0, props, children, component, out)
+        }
+    }
+
+    fn layout_wrapper_element(&self, layout_mode: &LayoutMode) -> String {
+        match layout_mode {
+            LayoutMode::Flow(f) => match f.display {
+                FlowDisplay::Flex => match f.flex_direction {
+                    FlexDirection::Row | FlexDirection::RowReverse => "HorizontalLayout".into(),
+                    FlexDirection::Column | FlexDirection::ColumnReverse => "VerticalLayout".into(),
+                },
+                FlowDisplay::Grid => "GridLayout".into(),
+                _ => "VerticalLayout".into(),
+            },
+            LayoutMode::Free => "Rectangle".into(),
+        }
+    }
+
+    fn emit_layout_props(&self, layout_mode: &LayoutMode, out: &mut SlintEmitter) {
+        let LayoutMode::Flow(f) = layout_mode else {
+            return;
+        };
+        if f.gap != 0.0 && f.display == FlowDisplay::Flex {
+            out.prop_px("spacing", f.gap as f64);
+        }
+        self.emit_dimension("preferred-width", f.width, out);
+        self.emit_dimension("preferred-height", f.height, out);
+        if f.padding.top != 0.0 {
+            out.prop_px("padding-top", f.padding.top as f64);
+        }
+        if f.padding.right != 0.0 {
+            out.prop_px("padding-right", f.padding.right as f64);
+        }
+        if f.padding.bottom != 0.0 {
+            out.prop_px("padding-bottom", f.padding.bottom as f64);
+        }
+        if f.padding.left != 0.0 {
+            out.prop_px("padding-left", f.padding.left as f64);
+        }
+        if f.display == FlowDisplay::Flex {
+            out.line("alignment: start;");
+        }
+    }
+
+    fn emit_dimension(&self, key: &str, dim: Dimension, out: &mut SlintEmitter) {
+        match dim {
+            Dimension::Auto => {}
+            Dimension::Px { value } => {
+                out.prop_px(key, value as f64);
+            }
+            Dimension::Percent { value } => {
+                out.property(key, format!("{value}%"));
+            }
+        }
+    }
+
+    fn emit_style_wrapper_props(&self, style: &StyleProperties, out: &mut SlintEmitter) {
+        if let Some(ref bg) = style.background {
+            out.prop_color("background", bg);
+        }
+        if let Some(radius) = style.border_radius {
+            out.prop_px("border-radius", radius as f64);
+        }
     }
 
     pub fn render_children(

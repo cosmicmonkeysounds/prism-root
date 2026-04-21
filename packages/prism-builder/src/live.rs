@@ -319,6 +319,22 @@ impl LiveDocument {
         self.recompile()
     }
 
+    // ── Document-level mutations ──────────────────────────────────
+
+    /// Apply a mutation to the derived document, then regenerate source.
+    /// Use for structural edits (layout, style, page layout) that touch
+    /// fields the source-map-based surgeons can't reach.
+    pub fn mutate_document<F>(&mut self, f: F) -> Result<(), InstantiateError>
+    where
+        F: FnOnce(&mut BuilderDocument),
+    {
+        let doc = self
+            .derived_document
+            .get_or_insert_with(|| derive_document_from_source(&self.source, &self.source_map));
+        f(doc);
+        self.rebuild()
+    }
+
     // ── Backward-compatible mutation methods ────────────────────────
     // These delegate to the old document-mutate-then-rebuild pattern
     // for callers that haven't migrated yet.
@@ -1038,5 +1054,71 @@ mod tests {
             root.props.get("text").and_then(|v| v.as_str()),
             Some("From Source")
         );
+    }
+
+    #[test]
+    fn mutate_document_rebuilds_and_preserves() {
+        let doc = BuilderDocument {
+            root: Some(Node {
+                id: "n1".into(),
+                component: "heading".into(),
+                props: json!({ "text": "Before" }),
+                children: vec![],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let reg = test_registry();
+        let tokens = DesignTokens::default();
+        let mut live = LiveDocument::new(doc, Arc::new(reg), &tokens);
+
+        let source_before = live.source.clone();
+        live.mutate_document(|doc| {
+            if let Some(ref mut root) = doc.root {
+                root.style.color = Some("#ff0000".into());
+                if let Some(obj) = root.props.as_object_mut() {
+                    obj.insert("text".into(), json!("After"));
+                }
+            }
+        })
+        .unwrap();
+        assert!(live.source.contains("After"));
+        assert!(!live.source.contains("Before"));
+        assert_ne!(live.source, source_before);
+        assert!(!live.has_errors());
+        let doc = live.document();
+        let root = doc.root.as_ref().unwrap();
+        assert_eq!(root.style.color.as_deref(), Some("#ff0000"));
+    }
+
+    #[test]
+    fn mutate_document_layout_rebuilds_source() {
+        use crate::layout::{FlowProps, LayoutMode};
+
+        let doc = BuilderDocument {
+            root: Some(Node {
+                id: "n1".into(),
+                component: "heading".into(),
+                props: json!({ "text": "Layout" }),
+                children: vec![],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let reg = test_registry();
+        let tokens = DesignTokens::default();
+        let mut live = LiveDocument::new(doc, Arc::new(reg), &tokens);
+
+        live.mutate_document(|doc| {
+            if let Some(ref mut root) = doc.root {
+                root.layout_mode = LayoutMode::Flow(FlowProps {
+                    gap: 24.0,
+                    ..FlowProps::default()
+                });
+            }
+        })
+        .unwrap();
+        assert!(live.source.contains("24px"));
+        assert!(!live.has_errors());
     }
 }
