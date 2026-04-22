@@ -273,7 +273,24 @@ pub fn render_document_slint_preview(
     registry: &ComponentRegistry,
     tokens: &DesignTokens,
 ) -> Result<String, RenderError> {
-    let ctx = RenderSlintContext::new(tokens, registry, &doc.resources, false);
+    render_document_slint_preview_with_assets(
+        doc,
+        registry,
+        tokens,
+        std::collections::HashMap::new(),
+    )
+}
+
+/// Like [`render_document_slint_preview`] but accepts pre-resolved
+/// asset paths so VFS-backed images can emit `@image-url()` references.
+pub fn render_document_slint_preview_with_assets(
+    doc: &BuilderDocument,
+    registry: &ComponentRegistry,
+    tokens: &DesignTokens,
+    asset_paths: std::collections::HashMap<String, std::path::PathBuf>,
+) -> Result<String, RenderError> {
+    let mut ctx = RenderSlintContext::new(tokens, registry, &doc.resources, false);
+    ctx.asset_paths = asset_paths;
     let mut out = SlintEmitter::new();
     out.line("// Auto-generated preview by prism_builder.");
     out.blank();

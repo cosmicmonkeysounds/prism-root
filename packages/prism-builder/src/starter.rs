@@ -21,7 +21,7 @@ use crate::document::Node;
 use crate::registry::{prop_f64, prop_str, prop_u64, ComponentRegistry, FieldSpec, RegistryError};
 use crate::schemas;
 use crate::signal::SignalDef;
-use crate::slint_source::SlintEmitter;
+use crate::slint_source::{escape_slint_string, SlintEmitter};
 use crate::style::StyleProperties;
 use crate::variant::{VariantAxis, VariantOption};
 
@@ -240,31 +240,60 @@ impl Component for ImageComponent {
     }
     fn render_slint(
         &self,
-        _ctx: &RenderSlintContext<'_>,
+        ctx: &RenderSlintContext<'_>,
         props: &Value,
         _children: &[Node],
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
         let alt = prop_str(props, "alt", "image");
+        let fit = prop_str(props, "fit", "cover");
         let source = props.get("src").and_then(AssetSource::from_prop);
-        let label = match &source {
-            Some(AssetSource::Vfs { filename, .. }) => filename.as_str(),
-            Some(AssetSource::Url { url }) => url.as_str(),
-            None => alt,
+
+        let slint_fit = match fit {
+            "contain" => "contain",
+            "fill" => "fill",
+            "none" => "none",
+            _ => "cover",
         };
-        out.block("Rectangle", |out| {
-            out.prop_px("min-height", 120.0);
-            out.line("background: #2a3140;");
-            out.line("border-radius: 6px;");
-            out.block("Text", |out| {
-                out.prop_string("text", label);
-                out.prop_px("font-size", 12.0);
-                out.line("color: #9ca4b4;");
-                out.line("horizontal-alignment: center;");
-                out.line("vertical-alignment: center;");
+
+        let resolved_path: Option<String> = match &source {
+            Some(AssetSource::Vfs { hash, .. }) => ctx
+                .asset_paths
+                .get(hash)
+                .map(|p| p.to_string_lossy().into_owned()),
+            Some(AssetSource::Url { url }) => Some(url.clone()),
+            None => None,
+        };
+
+        if let Some(path) = resolved_path {
+            out.block("Image", |out| {
+                out.line(format!(
+                    "source: @image-url(\"{}\");",
+                    escape_slint_string(&path)
+                ));
+                out.line(format!("image-fit: {slint_fit};"));
                 Ok(())
             })
-        })
+        } else {
+            let label = match &source {
+                Some(AssetSource::Vfs { filename, .. }) => filename.as_str(),
+                Some(AssetSource::Url { url }) => url.as_str(),
+                None => alt,
+            };
+            out.block("Rectangle", |out| {
+                out.prop_px("min-height", 120.0);
+                out.line("background: #2a3140;");
+                out.line("border-radius: 6px;");
+                out.block("Text", |out| {
+                    out.prop_string("text", label);
+                    out.prop_px("font-size", 12.0);
+                    out.line("color: #9ca4b4;");
+                    out.line("horizontal-alignment: center;");
+                    out.line("vertical-alignment: center;");
+                    Ok(())
+                })
+            })
+        }
     }
 }
 
@@ -1179,6 +1208,7 @@ mod tests {
         assert!(source.contains(r#"text: "Welcome";"#));
         assert!(source.contains(r#"text: "intro body";"#));
         assert!(source.contains(r#"text: "Read";"#));
-        assert!(source.contains(r#"text: "/a.png";"#));
+        assert!(source.contains(r#"@image-url("/a.png")"#));
+        assert!(source.contains("image-fit: cover;"));
     }
 }

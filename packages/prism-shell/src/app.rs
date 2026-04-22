@@ -21,7 +21,7 @@ use prism_builder::{
         AlignOption, Dimension, FlexDirection, FlowDisplay, FlowProps, GridPlacement,
         JustifyOption, LayoutMode, PageSize, TrackSize,
     },
-    preview_component_factory, render_document_slint_preview,
+    preview_component_factory, render_document_slint_preview_with_assets,
     starter::register_builtins,
     BuilderDocument, ComponentRegistry, FieldKind, LiveDocument, Node, NodeId, StyleProperties,
 };
@@ -2698,6 +2698,7 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
             &state.builder_document,
             &inner.registry,
             &state.tokens,
+            &inner.vfs,
         );
         push_live_preview(
             &inner.models,
@@ -3069,12 +3070,14 @@ fn push_wysiwyg_preview(
     doc: &BuilderDocument,
     registry: &ComponentRegistry,
     tokens: &DesignTokens,
+    vfs: &VfsManager,
 ) {
     if doc.root.is_none() {
         window.set_preview_factory_ready(false);
         return;
     }
-    match render_document_slint_preview(doc, registry, tokens) {
+    let asset_paths = materialize_vfs_assets(doc, vfs);
+    match render_document_slint_preview_with_assets(doc, registry, tokens, asset_paths) {
         Ok(source) => match compile_slint_preview(&source) {
             Ok(definition) => {
                 let factory = preview_component_factory(definition);
@@ -3090,6 +3093,55 @@ fn push_wysiwyg_preview(
             eprintln!("[preview] render error: {e}");
             window.set_preview_factory_ready(false);
         }
+    }
+}
+
+fn materialize_vfs_assets(
+    doc: &BuilderDocument,
+    vfs: &VfsManager,
+) -> std::collections::HashMap<String, std::path::PathBuf> {
+    use prism_builder::asset::collect_vfs_hashes;
+
+    let mut paths = std::collections::HashMap::new();
+    let root = match &doc.root {
+        Some(r) => r,
+        None => return paths,
+    };
+    let hashes = collect_vfs_hashes(root);
+    if hashes.is_empty() {
+        return paths;
+    }
+    let dir = std::env::temp_dir().join("prism-preview-assets");
+    let _ = std::fs::create_dir_all(&dir);
+    for hash in hashes {
+        if let Some(data) = vfs.adapter().read(&hash) {
+            let mime = vfs.stat(&hash).map(|s| s.mime_type.clone());
+            let ext = mime.as_deref().map(mime_to_extension).unwrap_or("");
+            let filename = if ext.is_empty() {
+                hash.clone()
+            } else {
+                format!("{hash}.{ext}")
+            };
+            let path = dir.join(&filename);
+            if !path.exists() {
+                let _ = std::fs::write(&path, &data);
+            }
+            paths.insert(hash, path);
+        }
+    }
+    paths
+}
+
+fn mime_to_extension(mime: &str) -> &'static str {
+    match mime {
+        "image/png" => "png",
+        "image/jpeg" | "image/jpg" => "jpg",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        "image/svg+xml" => "svg",
+        "image/bmp" => "bmp",
+        "image/tiff" => "tiff",
+        _ => "",
     }
 }
 
@@ -3891,6 +3943,7 @@ fn field_kind_for_key(inner: &ShellInner, key: &str) -> Option<String> {
                 FieldKind::Boolean => "boolean",
                 FieldKind::Color => "color",
                 FieldKind::File(_) => "file",
+                FieldKind::Select(_) => "select",
                 _ => "text",
             })
             .unwrap_or("text")

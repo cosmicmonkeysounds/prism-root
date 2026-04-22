@@ -466,6 +466,7 @@ component FieldEditor inherits Rectangle {
     property <bool> is-numeric: root.kind == "number" || root.kind == "integer";
     property <bool> color-picker-open: false;
     property <bool> file-url-mode: false;
+    property <bool> select-open: false;
 
     background: transparent;
 
@@ -489,12 +490,68 @@ component FieldEditor inherits Rectangle {
             }
         }
 
-        // Select → ComboBox
-        if root.kind == "select" : ComboBox {
-            height: 28px;
-            model: root.options;
-            current-value: root.value;
-            selected(val) => { root.field-edited(root.key, val); }
+        // Select → inline dropdown (ComboBox popup broken inside ScrollView)
+        if root.kind == "select" : VerticalLayout {
+            spacing: 0px;
+            Rectangle {
+                height: 28px;
+                border-radius: 4px;
+                border-width: 1px;
+                border-color: root.select-open ? Palette.accent-background : Palette.foreground.transparentize(75%);
+                background: Palette.control-background;
+                HorizontalLayout {
+                    padding-left: 8px; padding-right: 8px;
+                    Text {
+                        text: root.value;
+                        color: Palette.foreground;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                    Image {
+                        source: root.select-open
+                            ? @image-url("icons/chevron-down.svg")
+                            : @image-url("icons/chevron-left.svg");
+                        width: 10px; height: 10px;
+                        colorize: Palette.foreground.transparentize(40%);
+                        vertical-alignment: center;
+                    }
+                }
+                TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.select-open = !root.select-open; }
+                }
+            }
+            if root.select-open : VerticalLayout {
+                spacing: 0px;
+                Rectangle {
+                    height: 1px;
+                    background: Palette.foreground.transparentize(85%);
+                }
+                for opt in root.options : Rectangle {
+                    height: 28px;
+                    border-radius: 2px;
+                    background: opt == root.value
+                        ? Palette.accent-background.transparentize(85%)
+                        : (opt-touch.has-hover ? Palette.control-background : transparent);
+                    HorizontalLayout {
+                        padding-left: 8px; padding-right: 8px;
+                        Text {
+                            text: opt;
+                            color: opt == root.value ? Palette.accent-foreground : Palette.foreground;
+                            font-size: 12px;
+                            vertical-alignment: center;
+                        }
+                    }
+                    opt-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            root.field-edited(root.key, opt);
+                            root.select-open = false;
+                        }
+                    }
+                }
+            }
         }
 
         // Color → clickable swatch + hex input + expandable picker

@@ -15,6 +15,8 @@
 //! by `ComponentId` at walk time.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
+use std::path::PathBuf;
 
 use prism_core::help::HelpEntry;
 use serde_json::Value;
@@ -82,6 +84,10 @@ pub struct RenderSlintContext<'a> {
     /// components can apply cascaded style properties (font-size,
     /// color, etc.) into their Slint output.
     current_style: RefCell<StyleProperties>,
+    /// Pre-resolved asset paths: VFS hash → absolute filesystem path.
+    /// Set by the host before rendering so VFS-backed images can emit
+    /// `@image-url()` references the Slint interpreter can resolve.
+    pub asset_paths: HashMap<String, PathBuf>,
 }
 
 impl<'a> RenderSlintContext<'a> {
@@ -100,6 +106,7 @@ impl<'a> RenderSlintContext<'a> {
             resources,
             emit_markers,
             current_style: RefCell::new(StyleProperties::default()),
+            asset_paths: HashMap::new(),
         }
     }
 
