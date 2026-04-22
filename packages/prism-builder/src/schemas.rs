@@ -5,22 +5,24 @@ use serde_json::Value;
 
 use crate::registry::{FieldSpec, NumericBounds, SelectOption};
 
-pub fn heading() -> Vec<FieldSpec> {
-    vec![
-        FieldSpec::text("text", "Text").required(),
-        FieldSpec::integer("level", "Heading level", NumericBounds::min_max(1.0, 6.0))
-            .with_default(Value::from(1)),
-    ]
-}
-
 pub fn text() -> Vec<FieldSpec> {
-    vec![FieldSpec::textarea("body", "Body")]
-}
-
-pub fn link() -> Vec<FieldSpec> {
     vec![
-        FieldSpec::text("href", "URL").required(),
-        FieldSpec::text("text", "Label"),
+        FieldSpec::textarea("body", "Body"),
+        FieldSpec::select(
+            "level",
+            "Level",
+            vec![
+                SelectOption::new("paragraph", "Paragraph"),
+                SelectOption::new("h1", "H1"),
+                SelectOption::new("h2", "H2"),
+                SelectOption::new("h3", "H3"),
+                SelectOption::new("h4", "H4"),
+                SelectOption::new("h5", "H5"),
+                SelectOption::new("h6", "H6"),
+            ],
+        )
+        .with_default(Value::from("paragraph")),
+        FieldSpec::text("href", "Link URL"),
     ]
 }
 
@@ -43,12 +45,23 @@ pub fn image() -> Vec<FieldSpec> {
 }
 
 pub fn container() -> Vec<FieldSpec> {
-    vec![FieldSpec::integer(
-        "spacing",
-        "Child spacing (px)",
-        NumericBounds::min_max(0.0, 64.0),
-    )
-    .with_default(Value::from(12))]
+    vec![
+        FieldSpec::integer(
+            "spacing",
+            "Child spacing (px)",
+            NumericBounds::min_max(0.0, 64.0),
+        )
+        .with_default(Value::from(12)),
+        FieldSpec::integer("padding", "Padding (px)", NumericBounds::min_max(0.0, 64.0))
+            .with_default(Value::from(0)),
+        FieldSpec::integer(
+            "border_width",
+            "Border width (px)",
+            NumericBounds::min_max(0.0, 8.0),
+        )
+        .with_default(Value::from(0)),
+        FieldSpec::text("border_color", "Border color"),
+    ]
 }
 
 pub fn form() -> Vec<FieldSpec> {
@@ -102,22 +115,6 @@ pub fn button() -> Vec<FieldSpec> {
         )
         .with_default(Value::from("submit")),
         FieldSpec::boolean("disabled", "Disabled"),
-    ]
-}
-
-pub fn card() -> Vec<FieldSpec> {
-    vec![
-        FieldSpec::text("title", "Card title").required(),
-        FieldSpec::textarea("body", "Card body"),
-        FieldSpec::select(
-            "variant",
-            "Style variant",
-            vec![
-                SelectOption::new("default", "Default"),
-                SelectOption::new("outlined", "Outlined"),
-            ],
-        )
-        .with_default(Value::from("default")),
     ]
 }
 

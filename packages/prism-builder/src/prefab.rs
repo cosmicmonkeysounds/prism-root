@@ -9,8 +9,12 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use prism_core::help::HelpEntry;
+
 use crate::component::{Component, ComponentId, RenderError, RenderSlintContext};
 use crate::document::{Node, NodeId};
+use crate::html::Html;
+use crate::html_block::{HtmlBlock, HtmlRenderContext};
 use crate::registry::FieldSpec;
 use crate::signal::SignalDef;
 use crate::slint_source::SlintEmitter;
@@ -62,6 +66,17 @@ impl Component for PrefabComponent {
             .collect()
     }
 
+    fn help_entry(&self) -> Option<HelpEntry> {
+        if self.def.description.is_empty() {
+            return None;
+        }
+        Some(HelpEntry::new(
+            format!("builder.components.{}", self.def.id),
+            &self.def.label,
+            &self.def.description,
+        ))
+    }
+
     fn signals(&self) -> Vec<SignalDef> {
         vec![]
     }
@@ -87,7 +102,55 @@ impl Component for PrefabComponent {
     }
 }
 
-fn apply_prop_to_node(node: &mut Node, target_id: &str, prop_key: &str, value: Value) {
+pub struct PrefabHtmlBlock {
+    pub def: PrefabDef,
+}
+
+impl PrefabHtmlBlock {
+    pub fn new(def: PrefabDef) -> Self {
+        Self { def }
+    }
+}
+
+impl HtmlBlock for PrefabHtmlBlock {
+    fn id(&self) -> &ComponentId {
+        &self.def.id
+    }
+
+    fn schema(&self) -> Vec<FieldSpec> {
+        self.def
+            .exposed
+            .iter()
+            .map(|slot| slot.spec.clone())
+            .collect()
+    }
+
+    fn signals(&self) -> Vec<SignalDef> {
+        vec![]
+    }
+
+    fn variants(&self) -> Vec<VariantAxis> {
+        self.def.variants.clone()
+    }
+
+    fn render_html(
+        &self,
+        ctx: &HtmlRenderContext<'_>,
+        props: &Value,
+        _children: &[Node],
+        out: &mut Html,
+    ) -> Result<(), RenderError> {
+        let mut root = self.def.root.clone();
+        for slot in &self.def.exposed {
+            if let Some(val) = props.get(&slot.key) {
+                apply_prop_to_node(&mut root, &slot.target_node, &slot.target_prop, val.clone());
+            }
+        }
+        ctx.render_child(&root, out)
+    }
+}
+
+pub(crate) fn apply_prop_to_node(node: &mut Node, target_id: &str, prop_key: &str, value: Value) {
     if node.id == target_id {
         if let Value::Object(ref mut map) = node.props {
             map.insert(prop_key.to_string(), value);
@@ -120,8 +183,8 @@ mod tests {
                 children: vec![
                     Node {
                         id: "hero-heading".into(),
-                        component: "heading".into(),
-                        props: json!({ "text": "Welcome", "level": 1 }),
+                        component: "text".into(),
+                        props: json!({ "body": "Welcome", "level": "h1" }),
                         children: vec![],
                         ..Default::default()
                     },
@@ -139,7 +202,7 @@ mod tests {
                 ExposedSlot {
                     key: "title".into(),
                     target_node: "hero-heading".into(),
-                    target_prop: "text".into(),
+                    target_prop: "body".into(),
                     spec: FieldSpec::text("title", "Hero Title").required(),
                 },
                 ExposedSlot {
@@ -174,13 +237,13 @@ mod tests {
     fn apply_prop_to_node_updates_target() {
         let mut node = Node {
             id: "a".into(),
-            component: "heading".into(),
-            props: json!({ "text": "old" }),
+            component: "text".into(),
+            props: json!({ "body": "old" }),
             children: vec![],
             ..Default::default()
         };
-        apply_prop_to_node(&mut node, "a", "text", json!("new"));
-        assert_eq!(node.props["text"], "new");
+        apply_prop_to_node(&mut node, "a", "body", json!("new"));
+        assert_eq!(node.props["body"], "new");
     }
 
     #[test]
@@ -191,15 +254,15 @@ mod tests {
             props: json!({}),
             children: vec![Node {
                 id: "child".into(),
-                component: "heading".into(),
-                props: json!({ "text": "old" }),
+                component: "text".into(),
+                props: json!({ "body": "old" }),
                 children: vec![],
                 ..Default::default()
             }],
             ..Default::default()
         };
-        apply_prop_to_node(&mut node, "child", "text", json!("new"));
-        assert_eq!(node.children[0].props["text"], "new");
+        apply_prop_to_node(&mut node, "child", "body", json!("new"));
+        assert_eq!(node.children[0].props["body"], "new");
     }
 
     #[test]

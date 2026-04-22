@@ -64,8 +64,8 @@ impl AppState {
                     children: vec![
                         Node {
                             id: "h".into(),
-                            component: "heading".into(),
-                            props: json!({ "text": "Welcome to Prism", "level": 1 }),
+                            component: "text".into(),
+                            props: json!({ "body": "Welcome to Prism", "level": "h1" }),
                             children: vec![],
                             ..Default::default()
                         },
@@ -80,8 +80,8 @@ impl AppState {
                         },
                         Node {
                             id: "l".into(),
-                            component: "link".into(),
-                            props: json!({ "href": "/portals", "text": "See all portals" }),
+                            component: "text".into(),
+                            props: json!({ "body": "See all portals", "href": "/portals" }),
                             children: vec![],
                             ..Default::default()
                         },
@@ -103,8 +103,8 @@ impl AppState {
             document: BuilderDocument {
                 root: Some(Node {
                     id: "root".into(),
-                    component: "heading".into(),
-                    props: json!({ "text": "This portal is private", "level": 2 }),
+                    component: "text".into(),
+                    props: json!({ "body": "This portal is private", "level": "h2" }),
                     children: vec![],
                     ..Default::default()
                 }),
@@ -131,12 +131,10 @@ mod tests {
     #[test]
     fn new_registers_builtins() {
         let state = AppState::new();
-        assert_eq!(state.registry.len(), 17);
-        assert_eq!(state.html_registry.len(), 17);
+        assert_eq!(state.registry.len(), 15);
+        assert_eq!(state.html_registry.len(), 15);
         for id in [
-            "heading",
             "text",
-            "link",
             "image",
             "container",
             "form",

@@ -21,8 +21,8 @@ use prism_builder::{
         AlignOption, Dimension, FlexDirection, FlowDisplay, FlowProps, GridPlacement,
         JustifyOption, LayoutMode, PageSize, TrackSize,
     },
-    render_document_slint_preview_with_assets,
-    starter::register_builtins,
+    preview_component_factory, render_document_slint_preview_with_assets,
+    starter::{builtin_prefab, materialize_prefab, register_builtins},
     BuilderDocument, ComponentRegistry, FieldKind, LiveDocument, Node, NodeId, StyleProperties,
 };
 use prism_core::design_tokens::{DesignTokens, DEFAULT_TOKENS};
@@ -390,8 +390,8 @@ fn sample_dashboard_document() -> BuilderDocument {
             children: vec![
                 Node {
                     id: "dash-title".into(),
-                    component: "heading".into(),
-                    props: json!({ "text": "Dashboard", "level": 2 }),
+                    component: "text".into(),
+                    props: json!({ "body": "Dashboard", "level": "h2" }),
                     children: vec![],
                     ..Default::default()
                 },
@@ -427,8 +427,8 @@ fn sample_document() -> BuilderDocument {
             children: vec![
                 Node {
                     id: "hero".into(),
-                    component: "heading".into(),
-                    props: json!({ "text": "Welcome to Prism", "level": 1 }),
+                    component: "text".into(),
+                    props: json!({ "body": "Welcome to Prism", "level": "h1" }),
                     children: vec![],
                     ..Default::default()
                 },
@@ -1158,21 +1158,36 @@ impl Shell {
                 {
                     let mut s = inner.borrow_mut();
                     s.push_undo(&format!("Add {ct}"));
-                    let node_id = {
-                        let id = s.store.state().next_node_id;
-                        format!("n{id}")
-                    };
-                    let props = default_props_for_component(&ct);
                     let parent_id = s.store.state().selection.primary().cloned();
-                    if let Some(ref mut live) = s.live {
-                        let _ =
-                            live.insert_node_in_source(parent_id.as_deref(), &ct, &node_id, &props);
+
+                    if let Some(prefab_def) = builtin_prefab(&ct) {
+                        let mut counter = s.store.state().next_node_id;
+                        let tree = materialize_prefab(&prefab_def, &mut counter);
+                        let root_id = tree.id.clone();
+                        if let Some(ref mut live) = s.live {
+                            let _ = live.insert_tree_in_source(parent_id.as_deref(), &tree);
+                        }
+                        s.store.mutate(|state| {
+                            state.next_node_id = counter;
+                            state.selection.select(root_id);
+                        });
+                    } else {
+                        let node_id = format!("n{}", s.store.state().next_node_id);
+                        let props = default_props_for_component(&ct);
+                        if let Some(ref mut live) = s.live {
+                            let _ = live.insert_node_in_source(
+                                parent_id.as_deref(),
+                                &ct,
+                                &node_id,
+                                &props,
+                            );
+                        }
+                        let nid = node_id.clone();
+                        s.store.mutate(|state| {
+                            state.next_node_id += 1;
+                            state.selection.select(nid);
+                        });
                     }
-                    let nid = node_id.clone();
-                    s.store.mutate(|state| {
-                        state.next_node_id += 1;
-                        state.selection.select(nid);
-                    });
                     s.sync_builder_document();
                 }
                 if let Some(w) = weak.upgrade() {
@@ -2351,19 +2366,30 @@ impl Shell {
                 {
                     let mut s = inner.borrow_mut();
                     s.push_undo(&format!("Add {ct} at ({col},{row})"));
-                    let node_id = {
-                        let id = s.store.state().next_node_id;
-                        format!("n{id}")
-                    };
-                    let props = default_props_for_component(&ct);
-                    if let Some(ref mut live) = s.live {
-                        let _ = live.insert_node_in_source(Some("root"), &ct, &node_id, &props);
+
+                    if let Some(prefab_def) = builtin_prefab(&ct) {
+                        let mut counter = s.store.state().next_node_id;
+                        let tree = materialize_prefab(&prefab_def, &mut counter);
+                        let root_id = tree.id.clone();
+                        if let Some(ref mut live) = s.live {
+                            let _ = live.insert_tree_in_source(Some("root"), &tree);
+                        }
+                        s.store.mutate(|state| {
+                            state.next_node_id = counter;
+                            state.selection.select(root_id);
+                        });
+                    } else {
+                        let node_id = format!("n{}", s.store.state().next_node_id);
+                        let props = default_props_for_component(&ct);
+                        if let Some(ref mut live) = s.live {
+                            let _ = live.insert_node_in_source(Some("root"), &ct, &node_id, &props);
+                        }
+                        let nid = node_id.clone();
+                        s.store.mutate(|state| {
+                            state.next_node_id += 1;
+                            state.selection.select(nid);
+                        });
                     }
-                    let nid = node_id.clone();
-                    s.store.mutate(|state| {
-                        state.next_node_id += 1;
-                        state.selection.select(nid);
-                    });
                     s.sync_builder_document();
                     s.drag_component_type.clear();
                     s.pending_picker = None;
@@ -3055,18 +3081,18 @@ fn push_live_preview(
 
             let (text, label, alt, placeholder) = extract_preview_text(ct, props);
             let font_size = match ct {
-                "heading" => {
+                "text" => {
                     let level = props
                         .get("level")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(1)
-                        .clamp(1, 6);
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("paragraph");
                     match level {
-                        1 => 32.0,
-                        2 => 26.0,
-                        3 => 22.0,
-                        4 => 18.0,
-                        5 => 16.0,
+                        "h1" => 32.0,
+                        "h2" => 26.0,
+                        "h3" => 22.0,
+                        "h4" => 18.0,
+                        "h5" => 16.0,
+                        "h6" => 14.0,
                         _ => 14.0,
                     }
                 }
@@ -3131,21 +3157,25 @@ fn push_wysiwyg_preview(
 ) {
     if doc.root.is_none() {
         window.set_preview_factory_ready(false);
+        window.set_preview_factory(Default::default());
         return;
     }
     let asset_paths = materialize_vfs_assets(doc, vfs);
     match render_document_slint_preview_with_assets(doc, registry, tokens, asset_paths) {
         Ok(source) => match compile_slint_preview(&source) {
-            Ok(_definition) => {
+            Ok(definition) => {
+                window.set_preview_factory(preview_component_factory(definition));
                 window.set_preview_factory_ready(true);
             }
             Err(e) => {
                 eprintln!("[preview] compile error: {e}");
+                window.set_preview_factory(Default::default());
                 window.set_preview_factory_ready(false);
             }
         },
         Err(e) => {
             eprintln!("[preview] render error: {e}");
+            window.set_preview_factory(Default::default());
             window.set_preview_factory_ready(false);
         }
     }
@@ -3212,22 +3242,11 @@ fn extract_preview_text(
             .to_string()
     };
     match component_type {
-        "heading" => (s("text"), String::new(), String::new(), String::new()),
         "text" => (s("body"), String::new(), String::new(), String::new()),
         "button" => {
             let t = s("text");
             (
                 if t.is_empty() { "Submit".into() } else { t },
-                String::new(),
-                String::new(),
-                String::new(),
-            )
-        }
-        "link" => {
-            let t = s("text");
-            let h = s("href");
-            (
-                if t.is_empty() { h } else { t },
                 String::new(),
                 String::new(),
                 String::new(),
@@ -3497,12 +3516,7 @@ fn execute_command(
                 let new_id = new_node.id.clone();
                 let parent_id = s.store.state().selection.primary().cloned();
                 if let Some(ref mut live) = s.live {
-                    let _ = live.insert_node_in_source(
-                        parent_id.as_deref(),
-                        &new_node.component,
-                        &new_node.id,
-                        &new_node.props,
-                    );
+                    let _ = live.insert_tree_in_source(parent_id.as_deref(), &new_node);
                 }
                 s.store.mutate(|state| {
                     state.next_node_id = next_id;
@@ -3549,12 +3563,7 @@ fn execute_command(
                 let new_node = clone_node_with_new_ids(&node, &mut next_id);
                 let new_id = new_node.id.clone();
                 if let Some(ref mut live) = s.live {
-                    let _ = live.insert_node_in_source(
-                        Some(&target_id),
-                        &new_node.component,
-                        &new_node.id,
-                        &new_node.props,
-                    );
+                    let _ = live.insert_tree_in_source(Some(&target_id), &new_node);
                 }
                 s.store.mutate(|state| {
                     state.next_node_id = next_id;
@@ -4048,9 +4057,7 @@ fn format_value_for_source(value: &str, kind: Option<&str>) -> String {
 
 fn default_props_for_component(component: &str) -> serde_json::Value {
     match component {
-        "heading" => json!({ "text": "New heading", "level": 2 }),
-        "text" => json!({ "body": "New paragraph" }),
-        "link" => json!({ "href": "#", "text": "Link" }),
+        "text" => json!({ "body": "New paragraph", "level": "paragraph" }),
         "image" => json!({ "src": "", "alt": "Image", "fit": "cover" }),
         "container" => json!({ "spacing": 12 }),
         "form" => json!({ "method": "post" }),
@@ -4070,32 +4077,70 @@ fn default_props_for_component(component: &str) -> serde_json::Value {
 }
 
 fn component_palette_items() -> Vec<ComponentPaletteItem> {
-    [
-        ("heading", "Heading", "h1–h6 text heading"),
-        ("text", "Text", "Paragraph of body text"),
-        ("link", "Link", "Anchor / hyperlink"),
-        ("image", "Image", "Image placeholder"),
-        ("container", "Container", "Layout wrapper for children"),
-        ("card", "Card", "Bordered card with title and body"),
-        ("columns", "Columns", "Side-by-side horizontal layout"),
-        ("list", "List", "Ordered or unordered list"),
-        ("table", "Table", "Data table with column headers"),
-        ("tabs", "Tabs", "Tabbed content panels"),
-        ("accordion", "Accordion", "Collapsible content section"),
-        ("divider", "Divider", "Horizontal separator line"),
-        ("spacer", "Spacer", "Vertical spacing element"),
-        ("code", "Code", "Preformatted code block"),
-        ("form", "Form", "HTML form wrapper"),
-        ("input", "Input", "Text / email / password field"),
-        ("button", "Button", "Submit / action button"),
-    ]
-    .into_iter()
-    .map(|(ty, label, desc)| ComponentPaletteItem {
-        component_type: SharedString::from(ty),
-        label: SharedString::from(label),
-        description: SharedString::from(desc),
-    })
-    .collect()
+    let mut items = Vec::new();
+
+    #[allow(clippy::type_complexity)]
+    let categories: &[(&str, &[(&str, &str, &str)])] = &[
+        (
+            "CONTENT",
+            &[
+                ("text", "Text", "Paragraph, heading, or link"),
+                ("image", "Image", "Image placeholder"),
+                ("code", "Code", "Preformatted code block"),
+            ],
+        ),
+        (
+            "LAYOUT",
+            &[
+                ("container", "Container", "Layout wrapper for children"),
+                ("columns", "Columns", "Side-by-side horizontal layout"),
+                ("list", "List", "Ordered or unordered list"),
+                ("table", "Table", "Data table with column headers"),
+                ("tabs", "Tabs", "Tabbed content panels"),
+                ("accordion", "Accordion", "Collapsible content section"),
+            ],
+        ),
+        (
+            "FORM",
+            &[
+                ("button", "Button", "Submit / action button"),
+                ("input", "Input", "Text / email / password field"),
+                ("form", "Form", "HTML form wrapper"),
+            ],
+        ),
+        (
+            "DECORATION",
+            &[
+                ("divider", "Divider", "Horizontal separator line"),
+                ("spacer", "Spacer", "Vertical spacing element"),
+            ],
+        ),
+        (
+            "PREFABS",
+            &[("card", "Card", "Bordered card with title and body")],
+        ),
+    ];
+
+    for (category, components) in categories {
+        items.push(ComponentPaletteItem {
+            component_type: SharedString::default(),
+            label: SharedString::from(*category),
+            description: SharedString::default(),
+            category: SharedString::from(*category),
+            is_header: true,
+        });
+        for (ty, label, desc) in *components {
+            items.push(ComponentPaletteItem {
+                component_type: SharedString::from(*ty),
+                label: SharedString::from(*label),
+                description: SharedString::from(*desc),
+                category: SharedString::from(*category),
+                is_header: false,
+            });
+        }
+    }
+
+    items
 }
 
 fn clone_node_with_new_ids(node: &Node, counter: &mut u64) -> Node {
@@ -5294,9 +5339,7 @@ mod tests {
     #[test]
     fn default_props_are_non_empty() {
         for ct in [
-            "heading",
             "text",
-            "link",
             "image",
             "container",
             "form",
@@ -5319,9 +5362,18 @@ mod tests {
     }
 
     #[test]
-    fn component_palette_has_all_seventeen_types() {
+    fn component_palette_has_categorized_items() {
         let items = component_palette_items();
-        assert_eq!(items.len(), 17);
+        let headers: Vec<_> = items.iter().filter(|i| i.is_header).collect();
+        let components: Vec<_> = items.iter().filter(|i| !i.is_header).collect();
+        assert_eq!(headers.len(), 5);
+        assert_eq!(components.len(), 15);
+        assert_eq!(items.len(), 20);
+        assert_eq!(headers[0].label.as_str(), "CONTENT");
+        assert_eq!(headers[1].label.as_str(), "LAYOUT");
+        assert_eq!(headers[2].label.as_str(), "FORM");
+        assert_eq!(headers[3].label.as_str(), "DECORATION");
+        assert_eq!(headers[4].label.as_str(), "PREFABS");
     }
 
     #[test]
@@ -5342,8 +5394,8 @@ mod tests {
     fn clone_node_with_new_ids_generates_unique_ids() {
         let node = Node {
             id: "original".into(),
-            component: "heading".into(),
-            props: json!({ "text": "Hello" }),
+            component: "text".into(),
+            props: json!({ "body": "Hello", "level": "h1" }),
             children: vec![Node {
                 id: "child".into(),
                 component: "text".into(),
@@ -5358,8 +5410,8 @@ mod tests {
         assert_eq!(cloned.id, "n50");
         assert_eq!(cloned.children[0].id, "n51");
         assert_eq!(counter, 52);
-        assert_eq!(cloned.component, "heading");
-        assert_eq!(cloned.props["text"], "Hello");
+        assert_eq!(cloned.component, "text");
+        assert_eq!(cloned.props["body"], "Hello");
     }
 
     #[test]

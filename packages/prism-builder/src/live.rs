@@ -220,6 +220,42 @@ impl LiveDocument {
         self.after_source_change()
     }
 
+    /// Insert a full node tree (e.g. a materialized prefab) into source.
+    /// Each node in the tree gets its own markers so they appear
+    /// individually in the inspector.
+    pub fn insert_tree_in_source(
+        &mut self,
+        parent_id: Option<&str>,
+        root_node: &Node,
+    ) -> Result<(), SourceEditError> {
+        let snippet = generate_tree_snippet(root_node, &self.registry);
+
+        match parent_id {
+            Some(pid) => {
+                let end_marker = format!("// @node-end:{pid}");
+                if let Some(pos) = self.source.find(&end_marker) {
+                    let span = self
+                        .source_map
+                        .span_for_node(pid)
+                        .ok_or_else(|| SourceEditError::NodeNotFound(pid.to_string()))?;
+                    let indent = detect_indent(&self.source, span.start);
+                    let indented = indent_snippet(&snippet, &format!("{indent}    "));
+                    self.source.insert_str(pos, &indented);
+                } else {
+                    return Err(SourceEditError::NodeNotFound(pid.to_string()));
+                }
+            }
+            None => {
+                if let Some(insert_pos) = find_root_insert_point(&self.source) {
+                    let indented = indent_snippet(&snippet, "        ");
+                    self.source.insert_str(insert_pos, &indented);
+                }
+            }
+        }
+
+        self.after_source_change()
+    }
+
     /// Remove a node by excising its marker span.
     pub fn remove_node_from_source(&mut self, node_id: &str) -> Result<(), SourceEditError> {
         let span = self
@@ -593,20 +629,7 @@ fn generate_node_snippet(
     let mut out = String::new();
     out.push_str(&format!("// @node-start:{node_id}:{component}\n"));
 
-    let element_name = match component {
-        "heading" | "text" | "code" => "Text",
-        "link" => "Text",
-        "image" => "Image",
-        "button" => "Rectangle",
-        "input" => "Rectangle",
-        "container" | "section" | "columns" | "form" | "list" | "card" | "tabs" | "accordion" => {
-            "VerticalLayout"
-        }
-        "divider" => "Rectangle",
-        "spacer" => "Rectangle",
-        "table" => "VerticalLayout",
-        _ => "Rectangle",
-    };
+    let element_name = element_name_for_component(component);
 
     out.push_str(&format!("{element_name} {{\n"));
 
@@ -626,6 +649,56 @@ fn generate_node_snippet(
 
     out.push_str("}\n");
     out.push_str(&format!("// @node-end:{node_id}\n"));
+    out
+}
+
+fn element_name_for_component(component: &str) -> &'static str {
+    match component {
+        "text" | "code" => "Text",
+        "image" => "Image",
+        "button" | "input" | "divider" | "spacer" => "Rectangle",
+        "container" | "section" | "columns" | "form" | "list" | "tabs" | "accordion" | "table" => {
+            "VerticalLayout"
+        }
+        _ => "Rectangle",
+    }
+}
+
+fn generate_tree_snippet(node: &Node, registry: &ComponentRegistry) -> String {
+    generate_tree_snippet_inner(node, registry, 0)
+}
+
+fn generate_tree_snippet_inner(node: &Node, registry: &ComponentRegistry, depth: usize) -> String {
+    let mut out = String::new();
+    let indent = "    ".repeat(depth);
+    out.push_str(&format!(
+        "{indent}// @node-start:{}:{}\n",
+        node.id, node.component
+    ));
+
+    let element_name = element_name_for_component(&node.component);
+    out.push_str(&format!("{indent}{element_name} {{\n"));
+
+    if let Some(obj) = node.props.as_object() {
+        let schema = registry
+            .get(&node.component)
+            .map(|c| c.schema())
+            .unwrap_or_default();
+        for (key, value) in obj {
+            let is_px = schema
+                .iter()
+                .any(|f| f.key == *key && matches!(f.kind, crate::FieldKind::Number(..)));
+            let formatted = format_slint_value(value, is_px);
+            out.push_str(&format!("{indent}    {key}: {formatted};\n"));
+        }
+    }
+
+    for child in &node.children {
+        out.push_str(&generate_tree_snippet_inner(child, registry, depth + 1));
+    }
+
+    out.push_str(&format!("{indent}}}\n"));
+    out.push_str(&format!("{indent}// @node-end:{}\n", node.id));
     out
 }
 
@@ -661,15 +734,15 @@ mod tests {
     use serde_json::json;
     use std::sync::Arc;
 
-    struct TestHeading {
+    struct TestText {
         id: crate::component::ComponentId,
     }
-    impl crate::component::Component for TestHeading {
+    impl crate::component::Component for TestText {
         fn id(&self) -> &crate::component::ComponentId {
             &self.id
         }
         fn schema(&self) -> Vec<FieldSpec> {
-            vec![FieldSpec::text("text", "Text")]
+            vec![FieldSpec::text("body", "Body")]
         }
         fn render_slint(
             &self,
@@ -678,10 +751,23 @@ mod tests {
             _children: &[Node],
             out: &mut crate::slint_source::SlintEmitter,
         ) -> Result<(), crate::component::RenderError> {
-            let text = props.get("text").and_then(|v| v.as_str()).unwrap_or("");
+            let body = props.get("body").and_then(|v| v.as_str()).unwrap_or("");
+            let level = props
+                .get("level")
+                .and_then(|v| v.as_str())
+                .unwrap_or("paragraph");
+            let font_size = match level {
+                "h1" => 32.0,
+                "h2" => 28.0,
+                "h3" => 24.0,
+                "h4" => 20.0,
+                "h5" => 18.0,
+                "h6" => 16.0,
+                _ => 14.0,
+            };
             out.block("Text", |out| {
-                out.prop_string("text", text);
-                out.prop_px("font-size", 24.0);
+                out.prop_string("text", body);
+                out.prop_px("font-size", font_size);
                 Ok(())
             })
         }
@@ -689,10 +775,8 @@ mod tests {
 
     fn test_registry() -> ComponentRegistry {
         let mut reg = ComponentRegistry::new();
-        reg.register(Arc::new(TestHeading {
-            id: "heading".into(),
-        }))
-        .unwrap();
+        reg.register(Arc::new(TestText { id: "text".into() }))
+            .unwrap();
         reg
     }
 
@@ -701,8 +785,8 @@ mod tests {
         let doc = BuilderDocument {
             root: Some(Node {
                 id: "n1".into(),
-                component: "heading".into(),
-                props: json!({ "text": "Hello" }),
+                component: "text".into(),
+                props: json!({ "body": "Hello", "level": "h1" }),
                 children: vec![],
                 ..Default::default()
             }),
@@ -723,8 +807,8 @@ mod tests {
         let doc = BuilderDocument {
             root: Some(Node {
                 id: "n1".into(),
-                component: "heading".into(),
-                props: json!({ "text": "Synced" }),
+                component: "text".into(),
+                props: json!({ "body": "Synced", "level": "h1" }),
                 children: vec![],
                 ..Default::default()
             }),
@@ -744,8 +828,8 @@ mod tests {
         let doc = BuilderDocument {
             root: Some(Node {
                 id: "n1".into(),
-                component: "heading".into(),
-                props: json!({ "text": "Test" }),
+                component: "text".into(),
+                props: json!({ "body": "Test", "level": "h1" }),
                 children: vec![],
                 ..Default::default()
             }),
@@ -756,7 +840,7 @@ mod tests {
         let live = LiveDocument::new(doc, Arc::new(reg), &tokens);
 
         let slice = live.source_for_node("n1").unwrap();
-        assert!(slice.contains("heading"));
+        assert!(slice.contains("text"));
         assert!(slice.contains("Test"));
     }
 
@@ -765,8 +849,8 @@ mod tests {
         let doc = BuilderDocument {
             root: Some(Node {
                 id: "n1".into(),
-                component: "heading".into(),
-                props: json!({ "text": "Before" }),
+                component: "text".into(),
+                props: json!({ "body": "Before", "level": "h1" }),
                 children: vec![],
                 ..Default::default()
             }),
@@ -777,7 +861,7 @@ mod tests {
         let mut live = LiveDocument::new(doc, Arc::new(reg), &tokens);
 
         assert!(live.source.contains("Before"));
-        live.edit_prop("n1", "text", json!("After")).unwrap();
+        live.edit_prop("n1", "body", json!("After")).unwrap();
         assert!(live.source.contains("After"));
         assert!(!live.source.contains("Before"));
         assert_eq!(live.editor.text(), live.source);
@@ -788,8 +872,8 @@ mod tests {
         let doc = BuilderDocument {
             root: Some(Node {
                 id: "n1".into(),
-                component: "heading".into(),
-                props: json!({ "text": "Hi" }),
+                component: "text".into(),
+                props: json!({ "body": "Hi", "level": "h1" }),
                 children: vec![],
                 ..Default::default()
             }),
@@ -809,8 +893,8 @@ mod tests {
         let doc = BuilderDocument {
             root: Some(Node {
                 id: "n1".into(),
-                component: "heading".into(),
-                props: json!({ "text": "Select" }),
+                component: "text".into(),
+                props: json!({ "body": "Select", "level": "h1" }),
                 children: vec![],
                 ..Default::default()
             }),
@@ -830,8 +914,8 @@ mod tests {
         let doc = BuilderDocument {
             root: Some(Node {
                 id: "n1".into(),
-                component: "heading".into(),
-                props: json!({ "text": "X" }),
+                component: "text".into(),
+                props: json!({ "body": "X", "level": "h1" }),
                 children: vec![],
                 ..Default::default()
             }),
@@ -848,8 +932,8 @@ mod tests {
         let doc = BuilderDocument {
             root: Some(Node {
                 id: "n1".into(),
-                component: "heading".into(),
-                props: json!({ "text": "Cursor" }),
+                component: "text".into(),
+                props: json!({ "body": "Cursor", "level": "h1" }),
                 children: vec![],
                 ..Default::default()
             }),
@@ -870,8 +954,8 @@ mod tests {
         let doc = BuilderDocument {
             root: Some(Node {
                 id: "n1".into(),
-                component: "heading".into(),
-                props: json!({ "text": "Original" }),
+                component: "text".into(),
+                props: json!({ "body": "Original", "level": "h1" }),
                 children: vec![],
                 ..Default::default()
             }),
@@ -894,8 +978,8 @@ mod tests {
         let doc = BuilderDocument {
             root: Some(Node {
                 id: "n1".into(),
-                component: "heading".into(),
-                props: json!({ "text": "OK" }),
+                component: "text".into(),
+                props: json!({ "body": "OK", "level": "h1" }),
                 children: vec![],
                 ..Default::default()
             }),
@@ -941,8 +1025,8 @@ mod tests {
         let doc = BuilderDocument {
             root: Some(Node {
                 id: "n1".into(),
-                component: "heading".into(),
-                props: json!({ "text": "Before" }),
+                component: "text".into(),
+                props: json!({ "body": "Before", "level": "h1" }),
                 children: vec![],
                 ..Default::default()
             }),
@@ -964,8 +1048,8 @@ mod tests {
         let doc = BuilderDocument {
             root: Some(Node {
                 id: "n1".into(),
-                component: "heading".into(),
-                props: json!({ "text": "X" }),
+                component: "text".into(),
+                props: json!({ "body": "X", "level": "h1" }),
                 children: vec![],
                 ..Default::default()
             }),
@@ -984,8 +1068,8 @@ mod tests {
         let doc = BuilderDocument {
             root: Some(Node {
                 id: "n1".into(),
-                component: "heading".into(),
-                props: json!({ "text": "Original" }),
+                component: "text".into(),
+                props: json!({ "body": "Original", "level": "h1" }),
                 children: vec![],
                 ..Default::default()
             }),
@@ -1010,8 +1094,8 @@ mod tests {
         let doc = BuilderDocument {
             root: Some(Node {
                 id: "n1".into(),
-                component: "heading".into(),
-                props: json!({ "text": "Gone" }),
+                component: "text".into(),
+                props: json!({ "body": "Gone", "level": "h1" }),
                 children: vec![],
                 ..Default::default()
             }),
@@ -1033,10 +1117,10 @@ mod tests {
     preferred-width: 1280px;
     preferred-height: 800px;
     VerticalLayout {
-        // @node-start:n1:heading
+        // @node-start:n1:text
         Text {
             text: "From Source";
-            font-size: 24px;
+            font-size: 14px;
         }
         // @node-end:n1
     }
@@ -1061,8 +1145,8 @@ mod tests {
         let doc = BuilderDocument {
             root: Some(Node {
                 id: "n1".into(),
-                component: "heading".into(),
-                props: json!({ "text": "Before" }),
+                component: "text".into(),
+                props: json!({ "body": "Before", "level": "h1" }),
                 children: vec![],
                 ..Default::default()
             }),
@@ -1077,7 +1161,7 @@ mod tests {
             if let Some(ref mut root) = doc.root {
                 root.style.color = Some("#ff0000".into());
                 if let Some(obj) = root.props.as_object_mut() {
-                    obj.insert("text".into(), json!("After"));
+                    obj.insert("body".into(), json!("After"));
                 }
             }
         })
@@ -1098,8 +1182,8 @@ mod tests {
         let doc = BuilderDocument {
             root: Some(Node {
                 id: "n1".into(),
-                component: "heading".into(),
-                props: json!({ "text": "Layout" }),
+                component: "text".into(),
+                props: json!({ "body": "Layout", "level": "h1" }),
                 children: vec![],
                 ..Default::default()
             }),
@@ -1112,6 +1196,7 @@ mod tests {
         live.mutate_document(|doc| {
             if let Some(ref mut root) = doc.root {
                 root.layout_mode = LayoutMode::Flow(FlowProps {
+                    display: crate::layout::FlowDisplay::Flex,
                     gap: 24.0,
                     ..FlowProps::default()
                 });

@@ -544,8 +544,8 @@ mod tests {
                 props: json!({ "spacing": 16 }),
                 children: vec![Node {
                     id: "h".into(),
-                    component: "heading".into(),
-                    props: json!({ "text": "Hi", "level": 2 }),
+                    component: "text".into(),
+                    props: json!({ "body": "Hi", "level": "h2" }),
                     children: vec![],
                     ..Default::default()
                 }],
@@ -563,28 +563,32 @@ mod tests {
     }
 
     #[test]
-    fn heading_schema_produces_two_rows() {
+    fn text_schema_produces_three_rows() {
         let (doc, reg) = setup();
         let rows = PropertiesPanel::rows(&doc, &reg, &Some("h".into()));
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0].key, "text");
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].key, "body");
         assert_eq!(rows[0].value, "Hi");
-        assert!(rows[0].required);
         assert_eq!(rows[1].key, "level");
-        assert_eq!(rows[1].value, "2");
+        assert_eq!(rows[1].value, "h2");
+        assert_eq!(rows[2].key, "href");
+        assert_eq!(rows[2].value, "");
     }
 
     #[test]
     fn container_spacing_row_has_number_kind() {
         let (doc, reg) = setup();
         let rows = PropertiesPanel::rows(&doc, &reg, &Some("root".into()));
-        assert_eq!(rows.len(), 1);
+        assert_eq!(rows.len(), 4);
         assert_eq!(rows[0].key, "spacing");
         assert_eq!(rows[0].kind, "integer");
         assert_eq!(rows[0].value, "16");
         assert!(rows[0].has_bounds);
         assert!((rows[0].min - 0.0).abs() < f32::EPSILON);
         assert!((rows[0].max - 64.0).abs() < f32::EPSILON);
+        assert_eq!(rows[1].key, "padding");
+        assert_eq!(rows[2].key, "border_width");
+        assert_eq!(rows[3].key, "border_color");
     }
 
     #[test]
@@ -688,7 +692,7 @@ mod tests {
         let _ = reg;
         assert_eq!(
             PropertiesPanel::selected_component(&doc, &Some("h".into())),
-            "heading"
+            "text"
         );
         assert_eq!(
             PropertiesPanel::selected_component(&doc, &Some("root".into())),

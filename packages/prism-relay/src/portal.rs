@@ -141,8 +141,8 @@ mod tests {
             document: BuilderDocument {
                 root: Some(Node {
                     id: "root".into(),
-                    component: "heading".into(),
-                    props: json!({ "text": title }),
+                    component: "text".into(),
+                    props: json!({ "body": title, "level": "h1" }),
                     children: vec![],
                     ..Default::default()
                 }),

@@ -1,4 +1,4 @@
-//! HTML starter catalog — the 17 built-in blocks for Sovereign Portal SSR.
+//! HTML starter catalog — the 15 built-in blocks for Sovereign Portal SSR.
 //!
 //! Mirrors `starter.rs` but implements `HtmlBlock` instead of `Component`.
 //! The relay calls `register_html_builtins` on boot; the shell never
@@ -13,15 +13,13 @@ use crate::component::{ComponentId, RenderError};
 use crate::document::Node;
 use crate::html::Html;
 use crate::html_block::{HtmlBlock, HtmlRegistry, HtmlRenderContext};
+use crate::prefab::PrefabHtmlBlock;
 use crate::registry::{prop_bool, prop_str, prop_u64, FieldSpec, RegistryError};
 use crate::schemas;
+use crate::starter::card_prefab_def;
 
 pub fn register_html_builtins(reg: &mut HtmlRegistry) -> Result<(), RegistryError> {
-    reg.register(Arc::new(HtmlHeading {
-        id: "heading".into(),
-    }))?;
     reg.register(Arc::new(HtmlText { id: "text".into() }))?;
-    reg.register(Arc::new(HtmlLink { id: "link".into() }))?;
     reg.register(Arc::new(HtmlImage { id: "image".into() }))?;
     reg.register(Arc::new(HtmlContainer {
         id: "container".into(),
@@ -31,7 +29,7 @@ pub fn register_html_builtins(reg: &mut HtmlRegistry) -> Result<(), RegistryErro
     reg.register(Arc::new(HtmlButton {
         id: "button".into(),
     }))?;
-    reg.register(Arc::new(HtmlCard { id: "card".into() }))?;
+    reg.register(Arc::new(PrefabHtmlBlock::new(card_prefab_def())))?;
     reg.register(Arc::new(HtmlCode { id: "code".into() }))?;
     reg.register(Arc::new(HtmlDivider {
         id: "divider".into(),
@@ -49,41 +47,6 @@ pub fn register_html_builtins(reg: &mut HtmlRegistry) -> Result<(), RegistryErro
         id: "accordion".into(),
     }))?;
     Ok(())
-}
-
-struct HtmlHeading {
-    id: ComponentId,
-}
-
-impl HtmlBlock for HtmlHeading {
-    fn id(&self) -> &ComponentId {
-        &self.id
-    }
-    fn schema(&self) -> Vec<FieldSpec> {
-        schemas::heading()
-    }
-    fn render_html(
-        &self,
-        _ctx: &HtmlRenderContext<'_>,
-        props: &Value,
-        _children: &[Node],
-        out: &mut Html,
-    ) -> Result<(), RenderError> {
-        let level = prop_u64(props, "level", 1).clamp(1, 6);
-        let text = prop_str(props, "text", "");
-        let tag = match level {
-            1 => "h1",
-            2 => "h2",
-            3 => "h3",
-            4 => "h4",
-            5 => "h5",
-            _ => "h6",
-        };
-        out.open(tag);
-        out.text(text);
-        out.close(tag);
-        Ok(())
-    }
 }
 
 struct HtmlText {
@@ -105,38 +68,26 @@ impl HtmlBlock for HtmlText {
         out: &mut Html,
     ) -> Result<(), RenderError> {
         let body = prop_str(props, "body", "");
-        out.open("p");
-        out.text(body);
-        out.close("p");
-        Ok(())
-    }
-}
-
-struct HtmlLink {
-    id: ComponentId,
-}
-
-impl HtmlBlock for HtmlLink {
-    fn id(&self) -> &ComponentId {
-        &self.id
-    }
-    fn schema(&self) -> Vec<FieldSpec> {
-        schemas::link()
-    }
-    fn render_html(
-        &self,
-        ctx: &HtmlRenderContext<'_>,
-        props: &Value,
-        children: &[Node],
-        out: &mut Html,
-    ) -> Result<(), RenderError> {
-        let href = prop_str(props, "href", "#");
-        out.open_attrs("a", &[("href", href)]);
-        if let Some(text) = props.get("text").and_then(|v| v.as_str()) {
-            out.text(text);
+        let level = prop_str(props, "level", "paragraph");
+        let href = prop_str(props, "href", "");
+        let tag = match level {
+            "h1" => "h1",
+            "h2" => "h2",
+            "h3" => "h3",
+            "h4" => "h4",
+            "h5" => "h5",
+            "h6" => "h6",
+            _ => "p",
+        };
+        out.open(tag);
+        if !href.is_empty() {
+            out.open_attrs("a", &[("href", href)]);
+            out.text(body);
+            out.close("a");
+        } else {
+            out.text(body);
         }
-        ctx.render_children(children, out)?;
-        out.close("a");
+        out.close(tag);
         Ok(())
     }
 }
@@ -186,11 +137,31 @@ impl HtmlBlock for HtmlContainer {
     fn render_html(
         &self,
         ctx: &HtmlRenderContext<'_>,
-        _props: &Value,
+        props: &Value,
         children: &[Node],
         out: &mut Html,
     ) -> Result<(), RenderError> {
-        out.open("section");
+        let padding = prop_u64(props, "padding", 0);
+        let border_width = prop_u64(props, "border_width", 0);
+        let border_color = prop_str(props, "border_color", "");
+        let mut parts: Vec<String> = Vec::new();
+        if padding > 0 {
+            parts.push(format!("padding:{padding}px"));
+        }
+        if border_width > 0 {
+            let color = if border_color.is_empty() {
+                "#000"
+            } else {
+                border_color
+            };
+            parts.push(format!("border:{border_width}px solid {color}"));
+        }
+        if parts.is_empty() {
+            out.open("section");
+        } else {
+            let style = parts.join(";");
+            out.open_attrs("section", &[("style", &style)]);
+        }
         ctx.render_children(children, out)?;
         out.close("section");
         Ok(())
@@ -303,41 +274,6 @@ impl HtmlBlock for HtmlButton {
         out.open_attrs("button", &attrs);
         out.text(text);
         out.close("button");
-        Ok(())
-    }
-}
-
-struct HtmlCard {
-    id: ComponentId,
-}
-
-impl HtmlBlock for HtmlCard {
-    fn id(&self) -> &ComponentId {
-        &self.id
-    }
-    fn schema(&self) -> Vec<FieldSpec> {
-        schemas::card()
-    }
-    fn render_html(
-        &self,
-        ctx: &HtmlRenderContext<'_>,
-        props: &Value,
-        children: &[Node],
-        out: &mut Html,
-    ) -> Result<(), RenderError> {
-        let title = prop_str(props, "title", "");
-        let body = prop_str(props, "body", "");
-        out.open("article");
-        out.open("h3");
-        out.text(title);
-        out.close("h3");
-        if !body.is_empty() {
-            out.open("p");
-            out.text(body);
-            out.close("p");
-        }
-        ctx.render_children(children, out)?;
-        out.close("article");
         Ok(())
     }
 }
@@ -623,13 +559,13 @@ mod tests {
     }
 
     #[test]
-    fn heading_renders_correct_tag() {
+    fn text_heading_renders_correct_tag() {
         let (reg, tokens) = setup();
         let doc = BuilderDocument {
             root: Some(Node {
                 id: "n".into(),
-                component: "heading".into(),
-                props: json!({ "text": "Prism", "level": 3 }),
+                component: "text".into(),
+                props: json!({ "body": "Prism", "level": "h3" }),
                 children: vec![],
                 ..Default::default()
             }),
@@ -638,6 +574,25 @@ mod tests {
         assert_eq!(
             render_document_html(&doc, &reg, &tokens).unwrap(),
             "<h3>Prism</h3>"
+        );
+    }
+
+    #[test]
+    fn text_link_renders_anchor() {
+        let (reg, tokens) = setup();
+        let doc = BuilderDocument {
+            root: Some(Node {
+                id: "n".into(),
+                component: "text".into(),
+                props: json!({ "body": "Click", "href": "/foo" }),
+                children: vec![],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert_eq!(
+            render_document_html(&doc, &reg, &tokens).unwrap(),
+            "<p><a href=\"/foo\">Click</a></p>"
         );
     }
 
@@ -652,8 +607,8 @@ mod tests {
                 children: vec![
                     Node {
                         id: "n1".into(),
-                        component: "heading".into(),
-                        props: json!({ "text": "A", "level": 2 }),
+                        component: "text".into(),
+                        props: json!({ "body": "A", "level": "h2" }),
                         children: vec![],
                         ..Default::default()
                     },
@@ -681,8 +636,8 @@ mod tests {
         let doc = BuilderDocument {
             root: Some(Node {
                 id: "n".into(),
-                component: "heading".into(),
-                props: json!({ "text": "<script>alert(1)</script>" }),
+                component: "text".into(),
+                props: json!({ "body": "<script>alert(1)</script>", "level": "h1" }),
                 children: vec![],
                 ..Default::default()
             }),
@@ -695,12 +650,10 @@ mod tests {
     }
 
     #[test]
-    fn register_html_builtins_seeds_seventeen_blocks() {
+    fn register_html_builtins_seeds_fifteen_blocks() {
         let (reg, _) = setup();
         for id in [
-            "heading",
             "text",
-            "link",
             "image",
             "container",
             "form",
@@ -721,7 +674,7 @@ mod tests {
     }
 
     #[test]
-    fn card_renders_article() {
+    fn card_renders_via_prefab() {
         let (reg, tokens) = setup();
         let doc = BuilderDocument {
             root: Some(Node {
@@ -734,7 +687,7 @@ mod tests {
             ..Default::default()
         };
         let html = render_document_html(&doc, &reg, &tokens).unwrap();
-        assert!(html.starts_with("<article>"));
+        assert!(html.contains("<section"));
         assert!(html.contains("<h3>Title</h3>"));
         assert!(html.contains("<p>Body</p>"));
     }

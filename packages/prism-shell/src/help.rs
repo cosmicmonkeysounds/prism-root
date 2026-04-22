@@ -247,12 +247,10 @@ mod tests {
     }
 
     #[test]
-    fn all_seventeen_components_registered() {
+    fn all_fifteen_components_registered() {
         let (reg, _) = setup();
         let components = [
-            "heading",
             "text",
-            "link",
             "image",
             "container",
             "form",
@@ -280,7 +278,7 @@ mod tests {
         let mut help = HelpRegistry::new();
         register_help_entries(&mut help, &components);
         assert!(
-            help.get("builder.components.heading").is_none(),
+            help.get("builder.components.text").is_none(),
             "component help should come from ComponentRegistry, not hardcoded"
         );
     }
@@ -288,9 +286,9 @@ mod tests {
     #[test]
     fn search_finds_component_by_name() {
         let (reg, _) = setup();
-        let results = reg.search("heading");
+        let results = reg.search("text");
         let ids: Vec<&str> = results.iter().map(|e| e.id.as_str()).collect();
-        assert!(ids.contains(&"builder.components.heading"));
+        assert!(ids.contains(&"builder.components.text"));
     }
 
     #[test]

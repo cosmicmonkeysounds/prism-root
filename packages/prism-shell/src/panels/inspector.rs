@@ -95,7 +95,7 @@ mod tests {
                 children: vec![
                     Node {
                         id: "a".into(),
-                        component: "heading".into(),
+                        component: "text".into(),
                         props: json!({}),
                         children: vec![],
                         ..Default::default()
@@ -114,7 +114,7 @@ mod tests {
         };
         let tree = InspectorPanel::tree(&doc);
         assert!(tree.contains("root · container"));
-        assert!(tree.contains("  a · heading"));
+        assert!(tree.contains("  a · text"));
         assert!(tree.contains("  b · text"));
     }
 }

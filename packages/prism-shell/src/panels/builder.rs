@@ -89,8 +89,8 @@ mod tests {
                 props: json!({ "spacing": 12 }),
                 children: vec![Node {
                     id: "h".into(),
-                    component: "heading".into(),
-                    props: json!({ "text": "Hello", "level": 1 }),
+                    component: "text".into(),
+                    props: json!({ "body": "Hello", "level": "h1" }),
                     children: vec![],
                     ..Default::default()
                 }],
@@ -101,7 +101,7 @@ mod tests {
     }
 
     #[test]
-    fn builder_source_contains_heading_text() {
+    fn builder_source_contains_text_body() {
         let mut reg = ComponentRegistry::new();
         register_builtins(&mut reg).unwrap();
         let doc = sample_doc();

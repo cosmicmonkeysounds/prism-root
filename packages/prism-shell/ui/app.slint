@@ -62,6 +62,8 @@ struct ComponentPaletteItem {
     component-type: string,
     label: string,
     description: string,
+    category: string,
+    is-header: bool,
 }
 
 struct PreviewNode {
@@ -1092,6 +1094,7 @@ export component AppWindow inherits Window {
     in property <int> builder-node-count: 0;
     in property <[PreviewNode]> preview-nodes: [];
     in property <bool> preview-factory-ready: false;
+    in property <component-factory> preview-factory;
     callback builder-node-clicked(string);
     callback builder-text-edited(string, string);
     callback builder-delete-node(string);
@@ -1178,6 +1181,11 @@ export component AppWindow inherits Window {
     in-out property <bool> components-expanded: true;
     in-out property <bool> layers-expanded: true;
     in-out property <bool> page-layout-expanded: true;
+    in-out property <bool> cat-content-expanded: true;
+    in-out property <bool> cat-layout-expanded: true;
+    in-out property <bool> cat-form-expanded: true;
+    in-out property <bool> cat-decoration-expanded: true;
+    in-out property <bool> cat-prefabs-expanded: true;
 
     // Code editor
     in property <[EditorLine]> editor-lines: [];
@@ -1681,11 +1689,11 @@ export component AppWindow inherits Window {
                                                                 background: Palette.accent-background.transparentize(95%);
                                                             }
 
-                                                            // WYSIWYG preview — renders as page background so grid chrome stays on top
-                                                            Rectangle {
-                                                                visible: root.preview-factory-ready && root.builder-node-count > 0;
+                                                            // WYSIWYG live preview — ComponentContainer renders the compiled builder preview
+                                                            // behind the grid overlay and grid chrome so those stay fully visible.
+                                                            if root.builder-node-count > 0 : ComponentContainer {
                                                                 x: 0px; y: 0px; width: parent.width; height: parent.height;
-                                                                background: Palette.alternate-background;
+                                                                component-factory: root.preview-factory;
                                                             }
 
                                                             // Grid overlay
@@ -1885,43 +1893,73 @@ export component AppWindow inherits Window {
                                                     if root.components-expanded : VerticalLayout {
                                                         min-width: 200px; spacing: 1px;
                                                         for comp[i] in root.component-palette : Rectangle {
-                                                            visible: i < root.component-palette-count;
-                                                            height: 36px;
-                                                            background: root.drag-component-type == comp.component-type
-                                                                ? Palette.accent-background.transparentize(80%)
-                                                                : (palette-touch.has-hover ? Palette.control-background : transparent);
-                                                            border-radius: 4px;
-                                                            border-width: root.drag-component-type == comp.component-type ? 1px : 0px;
-                                                            border-color: Palette.accent-background.transparentize(50%);
-                                                            HorizontalLayout {
-                                                                padding-left: 10px; padding-right: 10px; spacing: 8px; alignment: start;
-                                                                VerticalLayout {
-                                                                    alignment: center;
-                                                                    if comp.component-type == "heading" || comp.component-type == "text" : Image { source: @image-url("icons/type.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
-                                                                    if comp.component-type == "link" : Image { source: @image-url("icons/link.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
-                                                                    if comp.component-type == "image" : Image { source: @image-url("icons/image.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
-                                                                    if comp.component-type == "container" || comp.component-type == "form" || comp.component-type == "button" : Image { source: @image-url("icons/box.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
-                                                                    if comp.component-type == "card" : Image { source: @image-url("icons/box.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
-                                                                    if comp.component-type == "columns" : Image { source: @image-url("icons/columns.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
-                                                                    if comp.component-type == "list" : Image { source: @image-url("icons/list.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
-                                                                    if comp.component-type == "table" : Image { source: @image-url("icons/table.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
-                                                                    if comp.component-type == "tabs" : Image { source: @image-url("icons/layout.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
-                                                                    if comp.component-type == "accordion" : Image { source: @image-url("icons/chevron-down.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
-                                                                    if comp.component-type == "divider" : Image { source: @image-url("icons/minus.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
-                                                                    if comp.component-type == "spacer" : Image { source: @image-url("icons/grip.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
-                                                                    if comp.component-type == "code" : Image { source: @image-url("icons/code.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
-                                                                    if comp.component-type == "input" : Image { source: @image-url("icons/type.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
+                                                            property <bool> cat-expanded:
+                                                                comp.category == "CONTENT" ? root.cat-content-expanded :
+                                                                comp.category == "LAYOUT" ? root.cat-layout-expanded :
+                                                                comp.category == "FORM" ? root.cat-form-expanded :
+                                                                comp.category == "DECORATION" ? root.cat-decoration-expanded :
+                                                                comp.category == "PREFABS" ? root.cat-prefabs-expanded : true;
+                                                            visible: i < root.component-palette-count && (comp.is-header || cat-expanded);
+                                                            height: comp.is-header ? 28px : (cat-expanded ? 36px : 0px);
+                                                            if comp.is-header : Rectangle {
+                                                                HorizontalLayout {
+                                                                    padding-left: 10px; padding-top: 8px; spacing: 4px; alignment: start;
+                                                                    VerticalLayout {
+                                                                        alignment: center; padding-top: 1px;
+                                                                        Image {
+                                                                            source: cat-expanded ? @image-url("icons/chevron-down.svg") : @image-url("icons/chevron-left.svg");
+                                                                            width: 8px; height: 8px;
+                                                                            colorize: Palette.foreground.transparentize(50%);
+                                                                        }
+                                                                    }
+                                                                    Text { text: comp.label; color: Palette.foreground.transparentize(40%); font-size: 10px; font-weight: 700; letter-spacing: 0.5px; }
                                                                 }
-                                                                VerticalLayout { alignment: center; Text { text: comp.label; color: Palette.foreground; font-size: 12px; font-weight: 500; } }
+                                                                TouchArea {
+                                                                    mouse-cursor: pointer;
+                                                                    clicked => {
+                                                                        if (comp.category == "CONTENT") { root.cat-content-expanded = !root.cat-content-expanded; }
+                                                                        if (comp.category == "LAYOUT") { root.cat-layout-expanded = !root.cat-layout-expanded; }
+                                                                        if (comp.category == "FORM") { root.cat-form-expanded = !root.cat-form-expanded; }
+                                                                        if (comp.category == "DECORATION") { root.cat-decoration-expanded = !root.cat-decoration-expanded; }
+                                                                        if (comp.category == "PREFABS") { root.cat-prefabs-expanded = !root.cat-prefabs-expanded; }
+                                                                    }
+                                                                }
                                                             }
-                                                            palette-touch := TouchArea {
-                                                                mouse-cursor: pointer;
-                                                                clicked => {
-                                                                    root.add-component(comp.component-type);
+                                                            if !comp.is-header && cat-expanded : Rectangle {
+                                                                background: root.drag-component-type == comp.component-type
+                                                                    ? Palette.accent-background.transparentize(80%)
+                                                                    : (palette-touch.has-hover ? Palette.control-background : transparent);
+                                                                border-radius: 4px;
+                                                                border-width: root.drag-component-type == comp.component-type ? 1px : 0px;
+                                                                border-color: Palette.accent-background.transparentize(50%);
+                                                                HorizontalLayout {
+                                                                    padding-left: 10px; padding-right: 10px; spacing: 8px; alignment: start;
+                                                                    VerticalLayout {
+                                                                        alignment: center;
+                                                                        if comp.component-type == "text" : Image { source: @image-url("icons/type.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
+                                                                        if comp.component-type == "image" : Image { source: @image-url("icons/image.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
+                                                                        if comp.component-type == "container" || comp.component-type == "form" || comp.component-type == "button" || comp.component-type == "card" : Image { source: @image-url("icons/box.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
+                                                                        if comp.component-type == "columns" : Image { source: @image-url("icons/columns.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
+                                                                        if comp.component-type == "list" : Image { source: @image-url("icons/list.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
+                                                                        if comp.component-type == "table" : Image { source: @image-url("icons/table.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
+                                                                        if comp.component-type == "tabs" : Image { source: @image-url("icons/layout.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
+                                                                        if comp.component-type == "accordion" : Image { source: @image-url("icons/chevron-down.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
+                                                                        if comp.component-type == "divider" : Image { source: @image-url("icons/minus.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
+                                                                        if comp.component-type == "spacer" : Image { source: @image-url("icons/grip.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
+                                                                        if comp.component-type == "code" : Image { source: @image-url("icons/code.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
+                                                                        if comp.component-type == "input" : Image { source: @image-url("icons/type.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
+                                                                    }
+                                                                    VerticalLayout { alignment: center; Text { text: comp.label; color: Palette.foreground; font-size: 12px; font-weight: 500; } }
                                                                 }
-                                                                changed has-hover => {
-                                                                    if (self.has-hover) { root.help-hover("builder.components." + comp.component-type, parent.absolute-position.x + parent.width + 8px, parent.absolute-position.y); }
-                                                                    if (!self.has-hover) { root.help-leave(); }
+                                                                palette-touch := TouchArea {
+                                                                    mouse-cursor: pointer;
+                                                                    clicked => {
+                                                                        root.add-component(comp.component-type);
+                                                                    }
+                                                                    changed has-hover => {
+                                                                        if (self.has-hover) { root.help-hover("builder.components." + comp.component-type, parent.absolute-position.x + parent.width + 8px, parent.absolute-position.y); }
+                                                                        if (!self.has-hover) { root.help-leave(); }
+                                                                    }
                                                                 }
                                                             }
                                                         }
@@ -2806,46 +2844,50 @@ export component AppWindow inherits Window {
                 }
 
                 for comp in root.component-palette : Rectangle {
-                    height: 30px;
-                    border-radius: 4px;
-                    background: picker-item-touch.has-hover ? Palette.control-background : transparent;
+                    height: comp.is-header ? 24px : 30px;
+                    if comp.is-header : HorizontalLayout {
+                        padding-left: 10px; padding-top: 6px;
+                        Text { text: comp.label; color: Palette.foreground.transparentize(40%); font-size: 10px; font-weight: 700; letter-spacing: 0.5px; }
+                    }
+                    if !comp.is-header : Rectangle {
+                        border-radius: 4px;
+                        background: picker-item-touch.has-hover ? Palette.control-background : transparent;
 
-                    HorizontalLayout {
-                        padding-left: 10px;
-                        padding-right: 10px;
-                        spacing: 8px;
-                        alignment: start;
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            spacing: 8px;
+                            alignment: start;
 
-                        VerticalLayout {
-                            alignment: center;
-                            if comp.component-type == "heading" || comp.component-type == "text" : Image { source: @image-url("icons/type.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
-                            if comp.component-type == "link" : Image { source: @image-url("icons/link.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
-                            if comp.component-type == "image" : Image { source: @image-url("icons/image.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
-                            if comp.component-type == "container" || comp.component-type == "form" || comp.component-type == "button" : Image { source: @image-url("icons/box.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
-                            if comp.component-type == "card" : Image { source: @image-url("icons/box.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
-                            if comp.component-type == "columns" : Image { source: @image-url("icons/columns.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
-                            if comp.component-type == "list" : Image { source: @image-url("icons/list.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
-                            if comp.component-type == "table" : Image { source: @image-url("icons/table.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
-                            if comp.component-type == "tabs" : Image { source: @image-url("icons/layout.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
-                            if comp.component-type == "accordion" : Image { source: @image-url("icons/chevron-down.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
-                            if comp.component-type == "divider" : Image { source: @image-url("icons/minus.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
-                            if comp.component-type == "spacer" : Image { source: @image-url("icons/grip.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
-                            if comp.component-type == "code" : Image { source: @image-url("icons/code.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
-                            if comp.component-type == "input" : Image { source: @image-url("icons/type.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
-                        }
-                        VerticalLayout {
-                            alignment: center;
-                            Text {
-                                text: comp.label;
-                                color: Palette.foreground;
-                                font-size: 12px;
+                            VerticalLayout {
+                                alignment: center;
+                                if comp.component-type == "text" : Image { source: @image-url("icons/type.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
+                                if comp.component-type == "image" : Image { source: @image-url("icons/image.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
+                                if comp.component-type == "container" || comp.component-type == "form" || comp.component-type == "button" || comp.component-type == "card" : Image { source: @image-url("icons/box.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
+                                if comp.component-type == "columns" : Image { source: @image-url("icons/columns.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
+                                if comp.component-type == "list" : Image { source: @image-url("icons/list.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
+                                if comp.component-type == "table" : Image { source: @image-url("icons/table.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
+                                if comp.component-type == "tabs" : Image { source: @image-url("icons/layout.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
+                                if comp.component-type == "accordion" : Image { source: @image-url("icons/chevron-down.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
+                                if comp.component-type == "divider" : Image { source: @image-url("icons/minus.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
+                                if comp.component-type == "spacer" : Image { source: @image-url("icons/grip.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
+                                if comp.component-type == "code" : Image { source: @image-url("icons/code.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
+                                if comp.component-type == "input" : Image { source: @image-url("icons/type.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(40%); }
+                            }
+                            VerticalLayout {
+                                alignment: center;
+                                Text {
+                                    text: comp.label;
+                                    color: Palette.foreground;
+                                    font-size: 12px;
+                                }
                             }
                         }
-                    }
-                    picker-item-touch := TouchArea {
-                        mouse-cursor: pointer;
-                        clicked => {
-                            root.grid-cell-add-component(comp.component-type, root.pending-add-col, root.pending-add-row);
+                        picker-item-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.grid-cell-add-component(comp.component-type, root.pending-add-col, root.pending-add-row);
+                            }
                         }
                     }
                 }

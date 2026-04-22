@@ -15,8 +15,8 @@
 //! * [`html`]         — allocation-light HTML builder for SSR.
 //! * [`slint_source`] — `.slint` DSL emitter.
 //! * [`render`]       — document-level walkers for both backends.
-//! * [`starter`]      — 17 built-in Slint components.
-//! * [`html_starter`] — 17 built-in HTML blocks (same component IDs).
+//! * [`starter`]      — 15 built-in Slint components (14 + card prefab).
+//! * [`html_starter`] — 15 built-in HTML blocks (14 + card prefab).
 
 pub mod app;
 pub mod asset;
@@ -52,7 +52,7 @@ pub use layout::{
     NodeLayout, PageLayout, PageSize,
 };
 pub use modifier::{Modifier, ModifierKind};
-pub use prefab::{ExposedSlot, PrefabComponent, PrefabDef};
+pub use prefab::{ExposedSlot, PrefabComponent, PrefabDef, PrefabHtmlBlock};
 pub use registry::{
     ComponentRegistry, FieldKind, FieldSpec, FieldValue, FileFieldConfig, NumericBounds,
     RegistryError, SelectOption,
@@ -67,7 +67,7 @@ pub use signal::{ActionKind, Connection, ConnectionId, SignalDef};
 pub use slint_source::{SlintEmitter, SlintIdent};
 pub use source_map::{MappedEmitter, PropSpan, SourceMap, SourceSpan};
 pub use source_parse::{derive_document_from_source, format_slint_value, parse_slint_value};
-pub use starter::register_builtins;
+pub use starter::{builtin_prefab, card_prefab_def, materialize_prefab, register_builtins};
 pub use style::{resolve_cascade, StyleProperties};
 pub use variant::{VariantAxis, VariantOption};
 

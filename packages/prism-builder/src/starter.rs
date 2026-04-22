@@ -1,8 +1,8 @@
 //! Starter component catalog — the default Slint-side registry.
 //!
-//! Seventeen blocks land here: `heading`, `text`, `link`, `image`,
-//! `container`, `form`, `input`, `button`, `card`, `code`, `divider`,
-//! `spacer`, `columns`, `list`, `table`, `tabs`, and `accordion`.
+//! Fifteen blocks land here: `text`, `image`, `container`, `form`,
+//! `input`, `button`, `card` (prefab), `code`, `divider`, `spacer`,
+//! `columns`, `list`, `table`, `tabs`, and `accordion`.
 //! Each implements [`Component`] with a `render_slint` method that
 //! emits `.slint` DSL via [`SlintEmitter`] for Studio's live builder
 //! panel.
@@ -15,10 +15,13 @@ use std::sync::Arc;
 use prism_core::help::HelpEntry;
 use serde_json::Value;
 
+use serde_json::json;
+
 use crate::asset::AssetSource;
 use crate::component::{Component, ComponentId, RenderError, RenderSlintContext};
 use crate::document::Node;
-use crate::registry::{prop_f64, prop_str, prop_u64, ComponentRegistry, FieldSpec, RegistryError};
+use crate::prefab::{ExposedSlot, PrefabComponent, PrefabDef};
+use crate::registry::{prop_f64, prop_str, ComponentRegistry, FieldSpec, RegistryError};
 use crate::schemas;
 use crate::signal::SignalDef;
 use crate::slint_source::{escape_slint_string, SlintEmitter};
@@ -26,13 +29,9 @@ use crate::style::StyleProperties;
 use crate::variant::{VariantAxis, VariantOption};
 
 /// Register the starter catalog into `reg`. Call this once at boot
-/// to get a registry with seventeen ready-to-render components.
+/// to get a registry with fifteen ready-to-render components.
 pub fn register_builtins(reg: &mut ComponentRegistry) -> Result<(), RegistryError> {
-    reg.register(Arc::new(HeadingComponent {
-        id: "heading".into(),
-    }))?;
     reg.register(Arc::new(TextComponent { id: "text".into() }))?;
-    reg.register(Arc::new(LinkComponent { id: "link".into() }))?;
     reg.register(Arc::new(ImageComponent { id: "image".into() }))?;
     reg.register(Arc::new(ContainerComponent {
         id: "container".into(),
@@ -42,7 +41,7 @@ pub fn register_builtins(reg: &mut ComponentRegistry) -> Result<(), RegistryErro
     reg.register(Arc::new(ButtonComponent {
         id: "button".into(),
     }))?;
-    reg.register(Arc::new(CardComponent { id: "card".into() }))?;
+    reg.register(Arc::new(PrefabComponent::new(card_prefab_def())))?;
     reg.register(Arc::new(CodeComponent { id: "code".into() }))?;
     reg.register(Arc::new(DividerComponent {
         id: "divider".into(),
@@ -62,14 +61,22 @@ pub fn register_builtins(reg: &mut ComponentRegistry) -> Result<(), RegistryErro
     Ok(())
 }
 
-fn heading_font_size(level: u64) -> f64 {
+fn level_font_size(level: &str) -> f64 {
     match level {
-        1 => 32.0,
-        2 => 26.0,
-        3 => 22.0,
-        4 => 18.0,
-        5 => 16.0,
+        "h1" => 32.0,
+        "h2" => 26.0,
+        "h3" => 22.0,
+        "h4" => 18.0,
+        "h5" => 16.0,
+        "h6" => 14.0,
         _ => 14.0,
+    }
+}
+
+fn level_font_weight(level: &str) -> u16 {
+    match level {
+        "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => 700,
+        _ => 400,
     }
 }
 
@@ -85,52 +92,8 @@ fn emit_text_style(out: &mut SlintEmitter, style: &StyleProperties) {
     }
 }
 
-/// `h1`–`h6` depending on `props.level` (clamped to 1..=6). Reads
-/// its label from `props.text` and escapes it.
-pub struct HeadingComponent {
-    pub id: ComponentId,
-}
-
-impl Component for HeadingComponent {
-    fn id(&self) -> &ComponentId {
-        &self.id
-    }
-    fn schema(&self) -> Vec<FieldSpec> {
-        schemas::heading()
-    }
-    fn help_entry(&self) -> Option<HelpEntry> {
-        Some(HelpEntry::new(
-            "builder.components.heading",
-            "Heading",
-            "Section heading (h1\u{2013}h6) with inline editing. Set the level to control size and document outline.",
-        ))
-    }
-    fn render_slint(
-        &self,
-        ctx: &RenderSlintContext<'_>,
-        props: &Value,
-        _children: &[Node],
-        out: &mut SlintEmitter,
-    ) -> Result<(), RenderError> {
-        let level = prop_u64(props, "level", 1).clamp(1, 6);
-        let text = prop_str(props, "text", "");
-        let style = ctx.style();
-        out.block("Text", |out| {
-            out.prop_string("text", text);
-            let font_size = style
-                .font_size
-                .map(|s| s as f64)
-                .unwrap_or(heading_font_size(level));
-            out.prop_px("font-size", font_size);
-            let weight = style.font_weight.unwrap_or(700);
-            out.property("font-weight", weight.to_string());
-            emit_text_style(out, &style);
-            Ok(())
-        })
-    }
-}
-
-/// Paragraph. Reads `props.body` as the text content.
+/// Unified text block — paragraph, heading (h1–h6), or link depending
+/// on the `level` and `href` props.
 pub struct TextComponent {
     pub id: ComponentId,
 }
@@ -146,8 +109,11 @@ impl Component for TextComponent {
         Some(HelpEntry::new(
             "builder.components.text",
             "Text",
-            "Paragraph of body text. Supports inline editing when selected in the builder canvas.",
+            "Text block — paragraph, heading, or link. Set level for heading sizes, href for hyperlinks.",
         ))
+    }
+    fn signals(&self) -> Vec<SignalDef> {
+        vec![SignalDef::new("clicked", "Fires when a link is clicked")]
     }
     fn render_slint(
         &self,
@@ -157,60 +123,26 @@ impl Component for TextComponent {
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
         let body = prop_str(props, "body", "");
+        let level = prop_str(props, "level", "paragraph");
+        let href = prop_str(props, "href", "");
         let style = ctx.style();
+
+        let default_size = level_font_size(level);
+        let default_weight = level_font_weight(level);
+
         out.block("Text", |out| {
             out.prop_string("text", body);
-            let font_size = style.font_size.unwrap_or(14.0);
-            out.prop_px("font-size", font_size as f64);
+            let font_size = style.font_size.map(|s| s as f64).unwrap_or(default_size);
+            out.prop_px("font-size", font_size);
+            let weight = style.font_weight.unwrap_or(default_weight);
+            if weight != 400 {
+                out.property("font-weight", weight.to_string());
+            }
+            if !href.is_empty() {
+                let color = style.color.as_deref().unwrap_or("#5aa0ff");
+                out.prop_color("color", color);
+            }
             out.line("wrap: word-wrap;");
-            emit_text_style(out, &style);
-            Ok(())
-        })
-    }
-}
-
-/// Anchor tag. Emits `<a href="…">text</a>`; children (if any) are
-/// rendered inside the anchor in addition to the `text` prop.
-pub struct LinkComponent {
-    pub id: ComponentId,
-}
-
-impl Component for LinkComponent {
-    fn id(&self) -> &ComponentId {
-        &self.id
-    }
-    fn schema(&self) -> Vec<FieldSpec> {
-        schemas::link()
-    }
-    fn help_entry(&self) -> Option<HelpEntry> {
-        Some(HelpEntry::new(
-            "builder.components.link",
-            "Link",
-            "Anchor hyperlink with text label and URL. Opens in a new tab by default.",
-        ))
-    }
-    fn signals(&self) -> Vec<SignalDef> {
-        vec![SignalDef::new("clicked", "Fires when the link is clicked")]
-    }
-    fn render_slint(
-        &self,
-        ctx: &RenderSlintContext<'_>,
-        props: &Value,
-        _children: &[Node],
-        out: &mut SlintEmitter,
-    ) -> Result<(), RenderError> {
-        let text = props
-            .get("text")
-            .and_then(|v| v.as_str())
-            .or_else(|| props.get("href").and_then(|v| v.as_str()))
-            .unwrap_or("");
-        let style = ctx.style();
-        out.block("Text", |out| {
-            out.prop_string("text", text);
-            let font_size = style.font_size.unwrap_or(14.0);
-            out.prop_px("font-size", font_size as f64);
-            let color = style.color.as_deref().unwrap_or("#5aa0ff");
-            out.prop_color("color", color);
             emit_text_style(out, &style);
             Ok(())
         })
@@ -333,13 +265,43 @@ impl Component for ContainerComponent {
             .base_spacing
             .map(|s| s as f64)
             .unwrap_or(prop_f64(props, "spacing", 12.0));
-        out.block("VerticalLayout", |out| {
-            out.prop_px("spacing", spacing);
-            out.line("alignment: start;");
-            out.line("horizontal-stretch: 1;");
-            out.line("vertical-stretch: 1;");
-            ctx.render_children(children, out)
-        })
+        let padding = prop_f64(props, "padding", 0.0);
+        let border_width = prop_f64(props, "border_width", 0.0);
+        let border_color = prop_str(props, "border_color", "#3b4252");
+
+        let has_visual =
+            style.background.is_some() || style.border_radius.is_some() || border_width > 0.0;
+
+        let render_inner = |out: &mut SlintEmitter| -> Result<(), RenderError> {
+            out.block("VerticalLayout", |out| {
+                out.prop_px("spacing", spacing);
+                if padding > 0.0 {
+                    out.prop_px("padding", padding);
+                }
+                out.line("alignment: start;");
+                out.line("horizontal-stretch: 1;");
+                out.line("vertical-stretch: 1;");
+                ctx.render_children(children, out)
+            })
+        };
+
+        if has_visual {
+            out.block("Rectangle", |out| {
+                if let Some(ref bg) = style.background {
+                    out.prop_color("background", bg);
+                }
+                if let Some(radius) = style.border_radius {
+                    out.prop_px("border-radius", radius as f64);
+                }
+                if border_width > 0.0 {
+                    out.prop_px("border-width", border_width);
+                    out.prop_color("border-color", border_color);
+                }
+                render_inner(out)
+            })
+        } else {
+            render_inner(out)
+        }
     }
 }
 
@@ -450,61 +412,94 @@ impl Component for InputComponent {
     }
 }
 
-/// Card with title, body, and optional children. Renders as a bordered
-/// rectangle in Slint, `<article>` in HTML.
-pub struct CardComponent {
-    pub id: ComponentId,
+/// Built-in card prefab: Container + title text + body text.
+pub fn card_prefab_def() -> PrefabDef {
+    PrefabDef {
+        id: "card".into(),
+        label: "Card".into(),
+        description: "Bordered content card with title and body text slots.".into(),
+        root: Node {
+            id: "card-root".into(),
+            component: "container".into(),
+            props: json!({
+                "spacing": 8,
+                "padding": 16,
+                "border_width": 1,
+                "border_color": "#3b4252"
+            }),
+            children: vec![
+                Node {
+                    id: "card-title".into(),
+                    component: "text".into(),
+                    props: json!({ "body": "", "level": "h3" }),
+                    children: vec![],
+                    ..Default::default()
+                },
+                Node {
+                    id: "card-body".into(),
+                    component: "text".into(),
+                    props: json!({ "body": "", "level": "paragraph" }),
+                    children: vec![],
+                    ..Default::default()
+                },
+            ],
+            style: StyleProperties {
+                background: Some("#2e3440".into()),
+                border_radius: Some(8.0),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        exposed: vec![
+            ExposedSlot {
+                key: "title".into(),
+                target_node: "card-title".into(),
+                target_prop: "body".into(),
+                spec: FieldSpec::text("title", "Card title").required(),
+            },
+            ExposedSlot {
+                key: "body".into(),
+                target_node: "card-body".into(),
+                target_prop: "body".into(),
+                spec: FieldSpec::textarea("body", "Card body"),
+            },
+        ],
+        variants: vec![],
+        thumbnail: None,
+    }
 }
 
-impl Component for CardComponent {
-    fn id(&self) -> &ComponentId {
-        &self.id
+/// Instantiate a prefab definition into a document node tree with
+/// fresh IDs. Each node in the returned tree is a regular built-in
+/// component that the inspector and property panel handle natively.
+pub fn materialize_prefab(def: &PrefabDef, counter: &mut u64) -> Node {
+    fn assign_ids(node: &Node, counter: &mut u64) -> Node {
+        let id = format!("n{}", *counter);
+        *counter += 1;
+        Node {
+            id,
+            component: node.component.clone(),
+            props: node.props.clone(),
+            children: node
+                .children
+                .iter()
+                .map(|c| assign_ids(c, counter))
+                .collect(),
+            style: node.style.clone(),
+            layout_mode: node.layout_mode.clone(),
+            transform: node.transform.clone(),
+            modifiers: node.modifiers.clone(),
+        }
     }
-    fn schema(&self) -> Vec<FieldSpec> {
-        schemas::card()
-    }
-    fn help_entry(&self) -> Option<HelpEntry> {
-        Some(HelpEntry::new(
-            "builder.components.card",
-            "Card",
-            "Bordered content card with title and body text slots.",
-        ))
-    }
-    fn render_slint(
-        &self,
-        ctx: &RenderSlintContext<'_>,
-        props: &Value,
-        children: &[Node],
-        out: &mut SlintEmitter,
-    ) -> Result<(), RenderError> {
-        let title = prop_str(props, "title", "");
-        let body = prop_str(props, "body", "");
-        out.block("Rectangle", |out| {
-            out.line("border-width: 1px;");
-            out.line("border-color: #3b4252;");
-            out.line("border-radius: 8px;");
-            out.line("background: #2e3440;");
-            out.block("VerticalLayout", |out| {
-                out.prop_px("padding", 16.0);
-                out.prop_px("spacing", 8.0);
-                out.block("Text", |out| {
-                    out.prop_string("text", title);
-                    out.prop_px("font-size", 18.0);
-                    out.line("font-weight: 600;");
-                    Ok(())
-                })?;
-                if !body.is_empty() {
-                    out.block("Text", |out| {
-                        out.prop_string("text", body);
-                        out.prop_px("font-size", 14.0);
-                        out.line("color: #9ca4b4;");
-                        out.line("wrap: word-wrap;");
-                        Ok(())
-                    })?;
-                }
-                ctx.render_children(children, out)
-            })
-        })
+    assign_ids(&def.root, counter)
+}
+
+/// Look up a built-in prefab by component type. Returns `None` for
+/// non-prefab component types.
+pub fn builtin_prefab(component_type: &str) -> Option<PrefabDef> {
+    match component_type {
+        "card" => Some(card_prefab_def()),
+        _ => None,
     }
 }
 
@@ -985,24 +980,20 @@ mod tests {
     }
 
     #[test]
-    fn heading_schema_has_required_text_field() {
-        let comp = HeadingComponent {
-            id: "heading".into(),
-        };
+    fn text_schema_has_body_level_href() {
+        let comp = TextComponent { id: "text".into() };
         let schema = comp.schema();
-        assert_eq!(schema.len(), 2);
-        assert_eq!(schema[0].key, "text");
-        assert!(schema[0].required);
+        assert_eq!(schema.len(), 3);
+        assert_eq!(schema[0].key, "body");
         assert_eq!(schema[1].key, "level");
+        assert_eq!(schema[2].key, "href");
     }
 
     #[test]
-    fn register_builtins_seeds_seventeen_components() {
+    fn register_builtins_seeds_fifteen_components() {
         let (reg, _) = setup();
         for id in [
-            "heading",
             "text",
-            "link",
             "image",
             "container",
             "form",
@@ -1020,14 +1011,6 @@ mod tests {
         ] {
             assert!(reg.get(id).is_some(), "missing component: {id}");
         }
-    }
-
-    #[test]
-    fn card_schema_has_required_title() {
-        let comp = CardComponent { id: "card".into() };
-        let schema = comp.schema();
-        assert_eq!(schema[0].key, "title");
-        assert!(schema[0].required);
     }
 
     #[test]
@@ -1179,8 +1162,8 @@ mod tests {
             children: vec![
                 Node {
                     id: "h".into(),
-                    component: "heading".into(),
-                    props: json!({ "text": "Welcome", "level": 2 }),
+                    component: "text".into(),
+                    props: json!({ "body": "Welcome", "level": "h2" }),
                     children: vec![],
                     ..Default::default()
                 },
@@ -1193,8 +1176,8 @@ mod tests {
                 },
                 Node {
                     id: "l".into(),
-                    component: "link".into(),
-                    props: json!({ "href": "/x", "text": "Read" }),
+                    component: "text".into(),
+                    props: json!({ "body": "Read", "href": "/x" }),
                     children: vec![],
                     ..Default::default()
                 },

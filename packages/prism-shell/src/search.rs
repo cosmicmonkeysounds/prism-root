@@ -175,8 +175,8 @@ mod tests {
                 children: vec![
                     Node {
                         id: "hero".into(),
-                        component: "heading".into(),
-                        props: json!({ "text": "Welcome to Prism", "level": 1 }),
+                        component: "text".into(),
+                        props: json!({ "body": "Welcome to Prism", "level": "h1" }),
                         children: vec![],
                         ..Default::default()
                     },
