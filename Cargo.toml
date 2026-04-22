@@ -119,6 +119,11 @@ getrandom = "0.2"
 # visual diff images highlighting regressions.
 image = { version = "0.25", default-features = false, features = ["png"] }
 
+# Native file dialog — opens the OS file picker so the shell can
+# browse for images, documents, and other binary assets without a
+# custom file-chooser widget. Native-only (no WASM support).
+rfd = "0.15"
+
 # OS-level input simulation — injects real keyboard/mouse events
 # through the platform's accessibility layer so e2e tests exercise the
 # full input pipeline (winit → Slint → InputManager). Optional:

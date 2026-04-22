@@ -11,7 +11,9 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Instant;
 
+use prism_builder::AssetSource;
 use prism_builder::{
     app::{AppIcon, NavigationConfig, Page, PrismApp},
     compute_layout,
@@ -24,6 +26,7 @@ use prism_builder::{
 };
 use prism_core::design_tokens::{DesignTokens, DEFAULT_TOKENS};
 use prism_core::editor::EditorState;
+use prism_core::foundation::vfs::VfsManager;
 use prism_core::help::HelpRegistry;
 use prism_core::shell_mode::{Permission, ShellMode, ShellModeContext};
 use prism_core::{Action, Store, Subscription};
@@ -221,6 +224,8 @@ pub struct ToastData {
     pub title: String,
     pub body: String,
     pub kind: String,
+    #[serde(skip)]
+    pub created_at: Option<Instant>,
 }
 
 /// Derive the Slint `active_panel_id` from the dock workspace state.
@@ -531,6 +536,8 @@ struct ShellInner {
     dock_check_timer: Timer,
     drag_component_type: String,
     pending_picker: Option<(i32, i32, f32, f32)>,
+    vfs: VfsManager,
+    toast_timer: Timer,
 }
 
 impl ShellInner {
@@ -663,6 +670,7 @@ impl ShellInner {
                 title: title.into(),
                 body: body.into(),
                 kind: kind.into(),
+                created_at: Some(Instant::now()),
             });
             if state.toasts.len() > 5 {
                 state.toasts.remove(0);
@@ -756,6 +764,8 @@ impl Shell {
             dock_check_timer: Timer::default(),
             drag_component_type: String::new(),
             pending_picker: None,
+            vfs: VfsManager::new(),
+            toast_timer: Timer::default(),
         }));
         {
             let mut s = inner.borrow_mut();
@@ -792,6 +802,40 @@ impl Shell {
             },
         );
         std::mem::forget(dock_init_timer);
+
+        // Toast auto-dismiss: every second, remove toasts older than 5s
+        {
+            let toast_inner = Rc::clone(&shell.inner);
+            let toast_weak = shell.window.as_weak();
+            shell.inner.borrow().toast_timer.start(
+                TimerMode::Repeated,
+                std::time::Duration::from_secs(1),
+                move || {
+                    let expired = {
+                        let s = toast_inner.borrow();
+                        let now = Instant::now();
+                        s.store.state().toasts.iter().any(|t| {
+                            t.created_at
+                                .is_some_and(|c| now.duration_since(c).as_secs() >= 5)
+                        })
+                    };
+                    if expired {
+                        {
+                            let now = Instant::now();
+                            toast_inner.borrow_mut().store.mutate(|state| {
+                                state.toasts.retain(|t| {
+                                    t.created_at
+                                        .is_none_or(|c| now.duration_since(c).as_secs() < 5)
+                                });
+                            });
+                        }
+                        if let Some(w) = toast_weak.upgrade() {
+                            sync_ui_from_shared(&toast_inner, &w);
+                        }
+                    }
+                },
+            );
+        }
 
         Ok(shell)
     }
@@ -1195,16 +1239,75 @@ impl Shell {
             }
         });
 
-        // File browse button
+        // File browse button — opens native file dialog, imports into VFS
         self.window.on_file_browse_requested({
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |key| {
                 let key = key.to_string();
-                {
-                    let mut s = inner.borrow_mut();
-                    s.add_toast("File picker", "Enter a URL using the URL toggle.", "info");
-                    let _ = key;
+                let picked = {
+                    #[cfg(feature = "native")]
+                    {
+                        rfd::FileDialog::new()
+                            .add_filter(
+                                "Images",
+                                &["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico"],
+                            )
+                            .add_filter("All files", &["*"])
+                            .pick_file()
+                    }
+                    #[cfg(not(feature = "native"))]
+                    {
+                        None::<std::path::PathBuf>
+                    }
+                };
+                if let Some(path) = picked {
+                    let bytes = match std::fs::read(&path) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            let mut s = inner.borrow_mut();
+                            s.add_toast("Import failed", &format!("{e}"), "error");
+                            if let Some(w) = weak.upgrade() {
+                                sync_ui_from_shared(&inner, &w);
+                            }
+                            return;
+                        }
+                    };
+                    let filename = path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string();
+                    let mime = mime_from_extension(
+                        path.extension().and_then(|e| e.to_str()).unwrap_or(""),
+                    );
+                    let bref = {
+                        let s = inner.borrow();
+                        s.vfs.import_file(&bytes, &filename, mime)
+                    };
+                    let asset = AssetSource::Vfs {
+                        hash: bref.hash,
+                        filename: bref.filename,
+                        mime_type: bref.mime_type,
+                        size: bref.size,
+                    };
+                    let json_str = serde_json::to_string(&asset.to_prop()).unwrap_or_default();
+                    let formatted = format!(
+                        "\"{}\"",
+                        prism_builder::slint_source::escape_slint_string(&json_str)
+                    );
+                    {
+                        let mut s = inner.borrow_mut();
+                        let selected_id = s.store.state().selection.primary().cloned();
+                        if let Some(ref target_id) = selected_id {
+                            s.push_undo(&format!("Set {key}"));
+                            if let Some(ref mut live) = s.live {
+                                let _ = live.edit_prop_in_source(target_id, &key, &formatted);
+                            }
+                            s.sync_builder_document();
+                        }
+                        s.add_toast("Imported", &filename, "success");
+                    }
                 }
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
@@ -3758,6 +3861,25 @@ fn field_kind_for_key(inner: &ShellInner, key: &str) -> Option<String> {
     )
 }
 
+fn mime_from_extension(ext: &str) -> &'static str {
+    match ext.to_ascii_lowercase().as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "bmp" => "image/bmp",
+        "ico" => "image/x-icon",
+        "pdf" => "application/pdf",
+        "mp4" => "video/mp4",
+        "webm" => "video/webm",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "ogg" => "audio/ogg",
+        _ => "application/octet-stream",
+    }
+}
+
 fn format_slider_value(val: f32) -> String {
     if val.fract() == 0.0 && val.is_finite() {
         format!("{}", val as i64)
@@ -5064,6 +5186,7 @@ mod tests {
             title: "Saved".into(),
             body: "Document saved.".into(),
             kind: "success".into(),
+            created_at: None,
         };
         let json = serde_json::to_string(&toast).unwrap();
         let restored: ToastData = serde_json::from_str(&json).unwrap();

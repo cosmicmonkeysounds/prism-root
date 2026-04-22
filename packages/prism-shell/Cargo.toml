@@ -42,7 +42,7 @@ required-features = ["native"]
 # default (env var + `--features live-preview`); `prism build` leaves
 # it off so release binaries don't pull in the interpreter.
 default = ["native"]
-native = ["dep:prism-daemon"]
+native = ["dep:prism-daemon", "dep:rfd"]
 live-preview = ["slint/live-preview"]
 web = ["dep:wasm-bindgen", "dep:console_error_panic_hook", "dep:getrandom", "uuid/js"]
 e2e = ["dep:image", "dep:enigo"]
@@ -80,6 +80,9 @@ clap = { version = "4", features = ["derive"] }
 
 # Screenshot comparison + visual diff generation for the e2e harness.
 image = { workspace = true, optional = true }
+
+# Native file dialog — OS file picker for image/asset imports.
+rfd = { workspace = true, optional = true }
 
 # OS-level keyboard/mouse injection for full end-to-end testing.
 enigo = { workspace = true, optional = true }

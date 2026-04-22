@@ -29,7 +29,14 @@ impl AssetSource {
     /// a `hash` field become VFS references.
     pub fn from_prop(val: &Value) -> Option<Self> {
         match val {
-            Value::String(s) if !s.is_empty() => Some(AssetSource::Url { url: s.clone() }),
+            Value::String(s) if !s.is_empty() => {
+                if s.starts_with('{') {
+                    if let Ok(obj) = serde_json::from_str::<Value>(s) {
+                        return Self::from_prop(&obj);
+                    }
+                }
+                Some(AssetSource::Url { url: s.clone() })
+            }
             Value::Object(map) => {
                 let hash = map.get("hash").and_then(|v| v.as_str())?;
                 Some(AssetSource::Vfs {
@@ -251,6 +258,16 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(collect_vfs_hashes(&tree), vec!["same"]);
+    }
+
+    #[test]
+    fn parse_json_encoded_string_as_vfs() {
+        let json_str =
+            r#"{"hash":"abc123","filename":"photo.png","mimeType":"image/png","size":1234}"#;
+        let val = Value::String(json_str.to_string());
+        let src = AssetSource::from_prop(&val).unwrap();
+        assert!(matches!(&src, AssetSource::Vfs { hash, .. } if hash == "abc123"));
+        assert_eq!(src.display_name(), "photo.png");
     }
 
     #[test]
