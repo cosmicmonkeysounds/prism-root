@@ -459,9 +459,12 @@ component FieldEditor inherits Rectangle {
     in property <bool> has-bounds;
     in property <[string]> options;
     in property <color> swatch;
+    in property <[ColorPreset]> user-swatches;
     callback field-edited(string, string);
     callback field-edited-number(string, float);
     callback file-browse-requested(string);
+    callback save-color-swatch(string);
+    callback remove-color-swatch(int);
 
     property <bool> is-numeric: root.kind == "number" || root.kind == "integer";
     property <bool> color-picker-open: false;
@@ -590,7 +593,37 @@ component FieldEditor inherits Rectangle {
                 VerticalLayout {
                     padding: 8px; spacing: 6px;
 
+                    // Hue strip — 24 pure hues at 15° intervals
+                    Text { text: "Hue"; font-size: 10px; color: Palette.foreground.transparentize(50%); }
+                    HorizontalLayout {
+                        spacing: 0px;
+                        for p in [
+                            { c: #ff0000, hex: "#ff0000" }, { c: #ff4000, hex: "#ff4000" },
+                            { c: #ff8000, hex: "#ff8000" }, { c: #ffbf00, hex: "#ffbf00" },
+                            { c: #ffff00, hex: "#ffff00" }, { c: #bfff00, hex: "#bfff00" },
+                            { c: #80ff00, hex: "#80ff00" }, { c: #40ff00, hex: "#40ff00" },
+                            { c: #00ff00, hex: "#00ff00" }, { c: #00ff40, hex: "#00ff40" },
+                            { c: #00ff80, hex: "#00ff80" }, { c: #00ffbf, hex: "#00ffbf" },
+                            { c: #00ffff, hex: "#00ffff" }, { c: #00bfff, hex: "#00bfff" },
+                            { c: #0080ff, hex: "#0080ff" }, { c: #0040ff, hex: "#0040ff" },
+                            { c: #0000ff, hex: "#0000ff" }, { c: #4000ff, hex: "#4000ff" },
+                            { c: #8000ff, hex: "#8000ff" }, { c: #bf00ff, hex: "#bf00ff" },
+                            { c: #ff00ff, hex: "#ff00ff" }, { c: #ff00bf, hex: "#ff00bf" },
+                            { c: #ff0080, hex: "#ff0080" }, { c: #ff0040, hex: "#ff0040" },
+                        ] : Rectangle {
+                            horizontal-stretch: 1;
+                            height: 16px;
+                            background: p.c;
+                            TouchArea {
+                                clicked => {
+                                    root.field-edited(root.key, p.hex);
+                                }
+                            }
+                        }
+                    }
+
                     // Preset swatches — core palette
+                    Text { text: "Presets"; font-size: 10px; color: Palette.foreground.transparentize(50%); }
                     HorizontalLayout {
                         spacing: 4px;
                         for p in [
@@ -632,6 +665,41 @@ component FieldEditor inherits Rectangle {
                             TouchArea {
                                 clicked => {
                                     root.field-edited(root.key, p.hex);
+                                    root.color-picker-open = false;
+                                }
+                            }
+                        }
+                    }
+
+                    // User swatches
+                    HorizontalLayout {
+                        spacing: 4px; alignment: start;
+                        Text { text: "Saved"; font-size: 10px; color: Palette.foreground.transparentize(50%); vertical-alignment: center; }
+                        // "+" button to save current color
+                        Rectangle {
+                            width: 20px; height: 20px;
+                            border-radius: 3px;
+                            border-width: 1px;
+                            border-color: Palette.foreground.transparentize(60%);
+                            background: Palette.background.darker(10%);
+                            Text { text: "+"; font-size: 14px; color: Palette.foreground.transparentize(40%);
+                                   horizontal-alignment: center; vertical-alignment: center; }
+                            TouchArea {
+                                clicked => { root.save-color-swatch(root.value); }
+                            }
+                        }
+                    }
+                    if root.user-swatches.length > 0 : HorizontalLayout {
+                        spacing: 4px;
+                        for us[idx] in root.user-swatches : Rectangle {
+                            width: 20px; height: 20px;
+                            border-radius: 3px;
+                            border-width: 1px;
+                            border-color: Palette.foreground.transparentize(80%);
+                            background: us.c;
+                            TouchArea {
+                                clicked => {
+                                    root.field-edited(root.key, us.hex);
                                     root.color-picker-open = false;
                                 }
                             }
@@ -1183,6 +1251,11 @@ export component AppWindow inherits Window {
     callback grid-remove-column(int /* index */);
     callback grid-remove-row(int /* index */);
     callback grid-track-resize(string /* "col" | "row" */, int /* index */, float /* new-size-px */);
+
+    // User color swatches
+    in property <[ColorPreset]> user-color-swatches: [];
+    callback save-color-swatch(string /* hex */);
+    callback remove-color-swatch(int /* index */);
 
     // Style cascade (app/page/node)
     in property <[FieldRow]> style-rows: [];
@@ -2037,9 +2110,11 @@ export component AppWindow inherits Window {
                                                             visible: i < root.field-rows-count;
                                                             key: field.key; label: field.label; kind: field.kind; value: field.value; required: field.required;
                                                             min: field.min; max: field.max; has-bounds: field.has-bounds; options: field.options; swatch: field.swatch;
+                                                            user-swatches: root.user-color-swatches;
                                                             field-edited(key, val) => { root.field-edited(key, val); }
                                                             field-edited-number(key, val) => { root.field-edited-number(key, val); }
                                                             file-browse-requested(key) => { root.file-browse-requested(key); }
+                                                            save-color-swatch(hex) => { root.save-color-swatch(hex); }
                                                         }
                                                         if root.style-rows-count > 0 : Rectangle { height: 8px; }
                                                         if root.style-rows-count > 0 : Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
@@ -2053,8 +2128,10 @@ export component AppWindow inherits Window {
                                                             visible: i < root.style-rows-count;
                                                             key: sfield.key; label: sfield.label; kind: sfield.kind; value: sfield.value; required: sfield.required;
                                                             min: sfield.min; max: sfield.max; has-bounds: sfield.has-bounds; options: sfield.options; swatch: sfield.swatch;
+                                                            user-swatches: root.user-color-swatches;
                                                             field-edited(key, val) => { root.style-field-edited(key, val); }
                                                             field-edited-number(key, val) => { root.style-field-edited-number(key, val); }
+                                                            save-color-swatch(hex) => { root.save-color-swatch(hex); }
                                                         }
                                                         if root.layout-rows-count > 0 : Rectangle { height: 8px; }
                                                         if root.layout-rows-count > 0 : Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
@@ -2068,8 +2145,10 @@ export component AppWindow inherits Window {
                                                             visible: i < root.layout-rows-count;
                                                             key: lfield.key; label: lfield.label; kind: lfield.kind; value: lfield.value; required: lfield.required;
                                                             min: lfield.min; max: lfield.max; has-bounds: lfield.has-bounds; options: lfield.options; swatch: lfield.swatch;
+                                                            user-swatches: root.user-color-swatches;
                                                             field-edited(key, val) => { root.layout-field-edited(key, val); }
                                                             field-edited-number(key, val) => { root.layout-field-edited-number(key, val); }
+                                                            save-color-swatch(hex) => { root.save-color-swatch(hex); }
                                                         }
                                                         if root.variant-items-count > 0 : Rectangle { height: 8px; }
                                                         if root.variant-items-count > 0 : Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
@@ -2134,8 +2213,10 @@ export component AppWindow inherits Window {
                                                                 visible: i < root.style-rows-count;
                                                                 key: sfield.key; label: sfield.label; kind: sfield.kind; value: sfield.value; required: sfield.required;
                                                                 min: sfield.min; max: sfield.max; has-bounds: sfield.has-bounds; options: sfield.options; swatch: sfield.swatch;
+                                                                user-swatches: root.user-color-swatches;
                                                                 field-edited(key, val) => { root.style-field-edited(key, val); }
                                                                 field-edited-number(key, val) => { root.style-field-edited-number(key, val); }
+                                                                save-color-swatch(hex) => { root.save-color-swatch(hex); }
                                                             }
                                                         }
                                                     }

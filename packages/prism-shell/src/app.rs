@@ -44,7 +44,7 @@ use crate::search::SearchIndex;
 use crate::selection::SelectionModel;
 use crate::telemetry::FirstPaint;
 use crate::{
-    AppCardItem, AppWindow, BreadcrumbItem, ButtonSpec, CommandItem, ComponentPaletteItem,
+    AppCardItem, AppWindow, BreadcrumbItem, ButtonSpec, ColorPreset, CommandItem, ComponentPaletteItem,
     DockDividerRect, DockPanelRect, DockTabItem, DocsPanelData, EditorIndentGuide, EditorLine,
     EditorToken, ExplorerNodeItem, FieldRow, GridCellItem, GutterRect, HelpTooltipData,
     InspectorNode, MenuDef, MenuItem, ModifierItem, PageLayoutData, PreviewNode, SearchResultItem,
@@ -539,6 +539,7 @@ struct ShellInner {
     pending_picker: Option<(i32, i32, f32, f32)>,
     vfs: VfsManager,
     toast_timer: Timer,
+    user_color_swatches: Vec<String>,
 }
 
 impl ShellInner {
@@ -767,6 +768,7 @@ impl Shell {
             pending_picker: None,
             vfs: VfsManager::new(),
             toast_timer: Timer::default(),
+            user_color_swatches: Vec::new(),
         }));
         {
             let mut s = inner.borrow_mut();
@@ -2509,6 +2511,45 @@ impl Shell {
             }
         });
 
+        // Save a user color swatch
+        self.window.on_save_color_swatch({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |hex| {
+                let hex = hex.to_string();
+                if hex.is_empty() {
+                    return;
+                }
+                {
+                    let mut s = inner.borrow_mut();
+                    if !s.user_color_swatches.contains(&hex) {
+                        s.user_color_swatches.push(hex);
+                    }
+                }
+                if let Some(w) = weak.upgrade() {
+                    push_user_swatches(&inner, &w);
+                }
+            }
+        });
+
+        // Remove a user color swatch by index
+        self.window.on_remove_color_swatch({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |index| {
+                {
+                    let mut s = inner.borrow_mut();
+                    let idx = index as usize;
+                    if idx < s.user_color_swatches.len() {
+                        s.user_color_swatches.remove(idx);
+                    }
+                }
+                if let Some(w) = weak.upgrade() {
+                    push_user_swatches(&inner, &w);
+                }
+            }
+        });
+
         // Viewport preset changed
         self.window.on_viewport_preset_changed({
             let inner = Rc::clone(&inner);
@@ -2531,6 +2572,23 @@ impl Shell {
             }
         });
     }
+}
+
+fn push_user_swatches(shared: &Rc<RefCell<ShellInner>>, window: &AppWindow) {
+    let inner = shared.borrow();
+    let items: Vec<ColorPreset> = inner
+        .user_color_swatches
+        .iter()
+        .map(|hex| {
+            let c = parse_hex_color(hex);
+            ColorPreset {
+                c,
+                hex: hex.clone().into(),
+            }
+        })
+        .collect();
+    let model = std::rc::Rc::new(slint::VecModel::from(items));
+    window.set_user_color_swatches(slint::ModelRc::from(model));
 }
 
 // ── Sync UI ────────────────────────────────────────────────────────

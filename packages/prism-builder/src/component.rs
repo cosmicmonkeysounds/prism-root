@@ -264,6 +264,8 @@ impl<'a> RenderSlintContext<'a> {
         if let Some(radius) = style.border_radius {
             out.prop_px("border-radius", radius as f64);
         }
+        out.line("horizontal-stretch: 1;");
+        out.line("vertical-stretch: 1;");
     }
 
     pub fn render_children(

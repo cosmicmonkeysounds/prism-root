@@ -272,6 +272,10 @@ impl Component for ImageComponent {
                     escape_slint_string(&path)
                 ));
                 out.line(format!("image-fit: {slint_fit};"));
+                out.prop_px("min-width", 0.0);
+                out.prop_px("min-height", 0.0);
+                out.line("horizontal-stretch: 1;");
+                out.line("vertical-stretch: 1;");
                 Ok(())
             })
         } else {
@@ -332,6 +336,8 @@ impl Component for ContainerComponent {
         out.block("VerticalLayout", |out| {
             out.prop_px("spacing", spacing);
             out.line("alignment: start;");
+            out.line("horizontal-stretch: 1;");
+            out.line("vertical-stretch: 1;");
             ctx.render_children(children, out)
         })
     }
