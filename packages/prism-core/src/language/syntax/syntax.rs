@@ -63,6 +63,7 @@ fn luau_type_name(field_type: EntityFieldType) -> &'static str {
         | EntityFieldType::Url => "string",
         EntityFieldType::Lookup => "any",
         EntityFieldType::Rollup => "number",
+        EntityFieldType::File => "string",
     }
 }
 

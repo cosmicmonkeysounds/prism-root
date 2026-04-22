@@ -13,7 +13,7 @@ property-panel field factories.
   path (`compile_slint_source` / `instantiate_document`) is
   available. `prism-shell` and `prism-studio` flip this on; the
   relay leaves it off so its dep graph stays Slint-free.
-- `cargo test -p prism-builder` — 138 unit tests (baseline).
+- `cargo test -p prism-builder` — 166 unit tests (baseline).
 - `cargo test -p prism-builder --features interpreter` — adds
   live document, syntax provider, and compile round-trip tests
   (162 tests total).
@@ -126,19 +126,32 @@ From `src/lib.rs`:
   pipeline: resolve resource refs → apply variant defaults → chain
   modifier wrappers → call component render.
 
+### Asset resolution
+- `AssetSource` — unified enum for component asset references: `Url`
+  (external string) or `Vfs` (content-addressed `BinaryRef`-shaped
+  object with hash/filename/mimeType/size). `from_prop(Value)` parses
+  either form; `to_html_src()` resolves VFS to `/asset/{hash}` for
+  relay SSR; `to_prop()` serializes back to `Value`.
+- `collect_vfs_hashes(node)` — walks a document tree and returns all
+  VFS hashes referenced in node props.
+- `FileFieldConfig` — MIME type filter for `FieldKind::File` fields.
+
 ### Shared
 - `BuilderDocument`, `Node`, `NodeId` — the serializable document
   tree (extended with layout + transform fields per ADR-003, modifiers
   per ADR-004). `BuilderDocument` also carries `resources`, `connections`,
   and `prefabs`.
 - `FieldSpec`, `FieldKind`, `NumericBounds`, `SelectOption`,
-  `FieldValue` — the property-panel field factories.
+  `FieldValue` — the property-panel field factories. `FieldKind::File`
+  enables file/asset picker UI with MIME filtering.
 - `Html`, `escape_text`, `escape_attr` — HTML builder.
 - `SlintEmitter`, `SlintIdent` — `.slint` DSL emitter.
 
 ## Architecture
-Fifteen modules in `src/`:
+Sixteen modules in `src/`:
 
+- `asset.rs` — `AssetSource` enum (URL vs VFS), prop parsing,
+  `collect_vfs_hashes`, `FileFieldConfig`. 10 unit tests.
 - `component.rs` — the `Component` trait (Slint-only) + `RenderError`
   + `RenderSlintContext` / `RenderContext`.
 - `document.rs` — `BuilderDocument` + `Node` + `NodeId`. Nodes now

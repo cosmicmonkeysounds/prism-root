@@ -701,7 +701,7 @@ impl Shell {
         macro_rules! bind_model {
             ($prop:ident, $field:ident, $T:ty) => {
                 window.$prop(ModelRc::from(
-                    models.$field.clone() as Rc<dyn Model<Data = $T>>,
+                    models.$field.clone() as Rc<dyn Model<Data = $T>>
                 ));
             };
         }
@@ -712,7 +712,11 @@ impl Shell {
         bind_model!(set_layout_rows, layout_rows, FieldRow);
         bind_model!(set_style_rows, style_rows, FieldRow);
         bind_model!(set_breadcrumbs, breadcrumbs, BreadcrumbItem);
-        bind_model!(set_component_palette, component_palette, ComponentPaletteItem);
+        bind_model!(
+            set_component_palette,
+            component_palette,
+            ComponentPaletteItem
+        );
         bind_model!(set_tabs, tabs, TabItem);
         bind_model!(set_command_results, command_results, CommandItem);
         bind_model!(set_notifications, notifications, ToastItem);
@@ -1184,6 +1188,23 @@ impl Shell {
                         }
                         s.sync_builder_document();
                     }
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // File browse button
+        self.window.on_file_browse_requested({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |key| {
+                let key = key.to_string();
+                {
+                    let mut s = inner.borrow_mut();
+                    s.add_toast("File picker", "Enter a URL using the URL toggle.", "info");
+                    let _ = key;
                 }
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
@@ -2575,7 +2596,12 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
             &state.selection,
             state.viewport_width,
         );
-        push_inspector_nodes(&inner.models, window, &state.builder_document, &state.selection);
+        push_inspector_nodes(
+            &inner.models,
+            window,
+            &state.builder_document,
+            &state.selection,
+        );
         push_property_rows(
             &inner.models,
             window,
@@ -2583,10 +2609,26 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
             &inner.registry,
             &state.selection,
         );
-        push_breadcrumbs(&inner.models, window, &state.builder_document, &state.selection);
+        push_breadcrumbs(
+            &inner.models,
+            window,
+            &state.builder_document,
+            &state.selection,
+        );
         let vw = state.viewport_width;
-        push_page_layout_data(&inner.models, window, &state.builder_document, state.show_grid_overlay, vw);
-        push_layout_rows(&inner.models, window, &state.builder_document, &state.selection);
+        push_page_layout_data(
+            &inner.models,
+            window,
+            &state.builder_document,
+            state.show_grid_overlay,
+            vw,
+        );
+        push_layout_rows(
+            &inner.models,
+            window,
+            &state.builder_document,
+            &state.selection,
+        );
         push_composition_data(
             &inner.models,
             window,
@@ -2594,7 +2636,13 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
             &inner.registry,
             &state.selection,
         );
-        push_grid_cells(&inner.models, window, &state.builder_document, &state.selection, vw);
+        push_grid_cells(
+            &inner.models,
+            window,
+            &state.builder_document,
+            &state.selection,
+            vw,
+        );
         push_style_rows(
             &inner.models,
             window,
@@ -2949,7 +2997,12 @@ fn extract_preview_text(
     }
 }
 
-fn push_inspector_nodes(models: &PersistentModels, window: &AppWindow, doc: &BuilderDocument, selection: &SelectionModel) {
+fn push_inspector_nodes(
+    models: &PersistentModels,
+    window: &AppWindow,
+    doc: &BuilderDocument,
+    selection: &SelectionModel,
+) {
     let items = flatten_inspector_nodes(doc.root.as_ref(), selection);
     let count = sync_model(&models.inspector_nodes, &items);
     window.set_inspector_nodes_count(count);
@@ -3553,7 +3606,12 @@ fn collect_split_bounds(
     }
 }
 
-fn push_dock_layout(models: &PersistentModels, window: &AppWindow, workspace: &prism_dock::DockWorkspace, dims: (f32, f32)) {
+fn push_dock_layout(
+    models: &PersistentModels,
+    window: &AppWindow,
+    workspace: &prism_dock::DockWorkspace,
+    dims: (f32, f32),
+) {
     let (w, h) = dims;
     if w <= 0.0 || h <= 0.0 {
         return;
@@ -3691,6 +3749,8 @@ fn field_kind_for_key(inner: &ShellInner, key: &str) -> Option<String> {
                 FieldKind::Number(_) => "number",
                 FieldKind::Integer(_) => "integer",
                 FieldKind::Boolean => "boolean",
+                FieldKind::Color => "color",
+                FieldKind::File(_) => "file",
                 _ => "text",
             })
             .unwrap_or("text")
@@ -3724,7 +3784,7 @@ fn default_props_for_component(component: &str) -> serde_json::Value {
         "heading" => json!({ "text": "New heading", "level": 2 }),
         "text" => json!({ "body": "New paragraph" }),
         "link" => json!({ "href": "#", "text": "Link" }),
-        "image" => json!({ "src": "", "alt": "Image" }),
+        "image" => json!({ "src": "", "alt": "Image", "fit": "cover" }),
         "container" => json!({ "spacing": 12 }),
         "form" => json!({ "method": "post" }),
         "input" => json!({ "name": "field", "type": "text", "placeholder": "Enter value" }),
@@ -3790,7 +3850,12 @@ fn clone_node_with_new_ids(node: &Node, counter: &mut u64) -> Node {
     }
 }
 
-fn push_breadcrumbs(models: &PersistentModels, window: &AppWindow, doc: &BuilderDocument, selection: &SelectionModel) {
+fn push_breadcrumbs(
+    models: &PersistentModels,
+    window: &AppWindow,
+    doc: &BuilderDocument,
+    selection: &SelectionModel,
+) {
     let selected = selection.primary();
     let items: Vec<BreadcrumbItem> = if let (Some(root), Some(target)) = (&doc.root, selected) {
         let mut path = Vec::new();
@@ -4292,7 +4357,12 @@ fn parse_edge_values(s: &str) -> prism_core::foundation::geometry::Edges<f32> {
     }
 }
 
-fn push_layout_rows(models: &PersistentModels, window: &AppWindow, doc: &BuilderDocument, selection: &SelectionModel) {
+fn push_layout_rows(
+    models: &PersistentModels,
+    window: &AppWindow,
+    doc: &BuilderDocument,
+    selection: &SelectionModel,
+) {
     let selected = selection.as_option();
     let rows: Vec<FieldRow> = PropertiesPanel::layout_rows(doc, &selected)
         .into_iter()

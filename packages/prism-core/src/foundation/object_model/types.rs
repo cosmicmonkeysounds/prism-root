@@ -105,6 +105,7 @@ pub enum EntityFieldType {
     Date,
     Datetime,
     Url,
+    File,
     Lookup,
     Rollup,
 }

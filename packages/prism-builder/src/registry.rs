@@ -196,6 +196,12 @@ impl FieldSpec {
     pub fn color(key: impl Into<String>, label: impl Into<String>) -> Self {
         Self::new(key, label, FieldKind::Color).with_default(Value::String("#000000".into()))
     }
+
+    /// File / binary asset picker. Default is `Null` (no file selected).
+    /// `accept` filters the picker by MIME pattern (e.g. `["image/*"]`).
+    pub fn file(key: impl Into<String>, label: impl Into<String>, accept: Vec<String>) -> Self {
+        Self::new(key, label, FieldKind::File(FileFieldConfig { accept }))
+    }
 }
 
 /// Discriminator telling the property panel which editor to render.
@@ -218,6 +224,19 @@ pub enum FieldKind {
     Select(Vec<SelectOption>),
     /// Hex color editor (`"#RRGGBB"` / `"#RRGGBBAA"`).
     Color,
+    /// File / binary asset picker. Prop value is either a URL string
+    /// or a VFS `BinaryRef`-shaped object (`{ hash, filename, mimeType, size }`).
+    File(FileFieldConfig),
+}
+
+/// Configuration for file/asset picker fields.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FileFieldConfig {
+    /// MIME type patterns the file picker accepts.
+    /// Examples: `["image/*"]`, `["image/png", "image/jpeg"]`.
+    /// Empty means accept any file.
+    #[serde(default)]
+    pub accept: Vec<String>,
 }
 
 /// Optional min/max bounds for numeric fields. `None` on either end

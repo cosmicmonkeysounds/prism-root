@@ -26,8 +26,19 @@ pub fn link() -> Vec<FieldSpec> {
 
 pub fn image() -> Vec<FieldSpec> {
     vec![
-        FieldSpec::text("src", "Image source").required(),
+        FieldSpec::file("src", "Image source", vec!["image/*".into()]).required(),
         FieldSpec::text("alt", "Alt text"),
+        FieldSpec::select(
+            "fit",
+            "Object fit",
+            vec![
+                SelectOption::new("cover", "Cover"),
+                SelectOption::new("contain", "Contain"),
+                SelectOption::new("fill", "Fill"),
+                SelectOption::new("none", "None"),
+            ],
+        )
+        .with_default(Value::from("cover")),
     ]
 }
 

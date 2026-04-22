@@ -19,6 +19,7 @@
 //! * [`html_starter`] — 17 built-in HTML blocks (same component IDs).
 
 pub mod app;
+pub mod asset;
 pub mod component;
 pub mod document;
 pub mod html;
@@ -40,6 +41,7 @@ pub mod style;
 pub mod variant;
 
 pub use app::{AppIcon, AppId, NavigationConfig, NavigationStyle, Page, PrismApp};
+pub use asset::{collect_vfs_hashes, AssetSource};
 pub use component::{Component, ComponentId, RenderContext, RenderError, RenderSlintContext};
 pub use document::{BuilderDocument, Node, NodeId};
 pub use html::{escape_attr, escape_text, Html};
@@ -52,7 +54,8 @@ pub use layout::{
 pub use modifier::{Modifier, ModifierKind};
 pub use prefab::{ExposedSlot, PrefabComponent, PrefabDef};
 pub use registry::{
-    ComponentRegistry, FieldKind, FieldSpec, FieldValue, NumericBounds, RegistryError, SelectOption,
+    ComponentRegistry, FieldKind, FieldSpec, FieldValue, FileFieldConfig, NumericBounds,
+    RegistryError, SelectOption,
 };
 pub use render::{
     build_source_map_from_markers, render_document_html, render_document_slint_preview,

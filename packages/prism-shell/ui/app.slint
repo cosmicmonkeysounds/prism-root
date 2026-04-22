@@ -7,6 +7,11 @@ struct ButtonSpec {
     label: string,
 }
 
+struct ColorPreset {
+    c: color,
+    hex: string,
+}
+
 struct FieldRow {
     key: string,
     label: string,
@@ -456,8 +461,11 @@ component FieldEditor inherits Rectangle {
     in property <color> swatch;
     callback field-edited(string, string);
     callback field-edited-number(string, float);
+    callback file-browse-requested(string);
 
     property <bool> is-numeric: root.kind == "number" || root.kind == "integer";
+    property <bool> color-picker-open: false;
+    property <bool> file-url-mode: false;
 
     background: transparent;
 
@@ -489,21 +497,153 @@ component FieldEditor inherits Rectangle {
             selected(val) => { root.field-edited(root.key, val); }
         }
 
-        // Color → swatch + hex input
-        if root.kind == "color" : HorizontalLayout {
-            spacing: 6px; height: 28px;
-            Rectangle {
-                width: 28px; height: 28px;
-                border-radius: 4px;
-                border-width: 1px;
-                border-color: Palette.foreground.transparentize(80%);
-                background: root.swatch;
+        // Color → clickable swatch + hex input + expandable picker
+        if root.kind == "color" : VerticalLayout {
+            spacing: 4px;
+
+            HorizontalLayout {
+                spacing: 6px; height: 28px;
+                Rectangle {
+                    width: 28px; height: 28px;
+                    border-radius: 4px;
+                    border-width: 1px;
+                    border-color: Palette.foreground.transparentize(80%);
+                    background: root.swatch;
+                    TouchArea {
+                        clicked => { root.color-picker-open = !root.color-picker-open; }
+                    }
+                }
+                LineEdit {
+                    horizontal-stretch: 1;
+                    text: root.value;
+                    placeholder-text: "#000000";
+                    accepted(text) => {
+                        root.field-edited(root.key, text);
+                        root.color-picker-open = false;
+                    }
+                }
             }
-            LineEdit {
-                horizontal-stretch: 1;
+
+            // Expandable color picker panel
+            if root.color-picker-open : Rectangle {
+                background: Palette.background.darker(5%);
+                border-radius: 6px;
+                border-width: 1px;
+                border-color: Palette.foreground.transparentize(85%);
+                VerticalLayout {
+                    padding: 8px; spacing: 6px;
+
+                    // Preset swatches — core palette
+                    HorizontalLayout {
+                        spacing: 4px;
+                        for p in [
+                            { c: #000000, hex: "#000000" }, { c: #ffffff, hex: "#ffffff" },
+                            { c: #ef4444, hex: "#ef4444" }, { c: #f97316, hex: "#f97316" },
+                            { c: #eab308, hex: "#eab308" }, { c: #22c55e, hex: "#22c55e" },
+                            { c: #06b6d4, hex: "#06b6d4" }, { c: #3b82f6, hex: "#3b82f6" },
+                            { c: #8b5cf6, hex: "#8b5cf6" }, { c: #ec4899, hex: "#ec4899" },
+                        ] : Rectangle {
+                            width: 20px; height: 20px;
+                            border-radius: 3px;
+                            border-width: 1px;
+                            border-color: Palette.foreground.transparentize(80%);
+                            background: p.c;
+                            TouchArea {
+                                clicked => {
+                                    root.field-edited(root.key, p.hex);
+                                    root.color-picker-open = false;
+                                }
+                            }
+                        }
+                    }
+
+                    // Lighter tints
+                    HorizontalLayout {
+                        spacing: 4px;
+                        for p in [
+                            { c: #1e293b, hex: "#1e293b" }, { c: #475569, hex: "#475569" },
+                            { c: #9ca3af, hex: "#9ca3af" }, { c: #fca5a5, hex: "#fca5a5" },
+                            { c: #fdba74, hex: "#fdba74" }, { c: #fde047, hex: "#fde047" },
+                            { c: #86efac, hex: "#86efac" }, { c: #67e8f9, hex: "#67e8f9" },
+                            { c: #93c5fd, hex: "#93c5fd" }, { c: #c4b5fd, hex: "#c4b5fd" },
+                        ] : Rectangle {
+                            width: 20px; height: 20px;
+                            border-radius: 3px;
+                            border-width: 1px;
+                            border-color: Palette.foreground.transparentize(80%);
+                            background: p.c;
+                            TouchArea {
+                                clicked => {
+                                    root.field-edited(root.key, p.hex);
+                                    root.color-picker-open = false;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // File → display + browse button + URL toggle
+        if root.kind == "file" : VerticalLayout {
+            spacing: 4px;
+
+            // Current file display + browse button
+            HorizontalLayout {
+                spacing: 4px; height: 28px;
+                Rectangle {
+                    horizontal-stretch: 1; height: 28px;
+                    border-radius: 4px;
+                    background: Palette.background.darker(5%);
+                    border-width: 1px;
+                    border-color: Palette.foreground.transparentize(85%);
+                    HorizontalLayout {
+                        padding-left: 8px; padding-right: 8px; alignment: start;
+                        Text {
+                            text: root.value == "" ? "No file selected" : root.value;
+                            color: root.value == "" ? Palette.foreground.transparentize(50%) : Palette.foreground;
+                            font-size: 12px;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                    }
+                }
+                Button {
+                    text: "Browse";
+                    clicked => { root.file-browse-requested(root.key); }
+                }
+            }
+
+            // URL input toggle row
+            HorizontalLayout {
+                spacing: 4px; height: 20px; alignment: start;
+                Rectangle {
+                    width: self.preferred-width; height: 18px;
+                    border-radius: 3px;
+                    background: root.file-url-mode ? Palette.accent-background.transparentize(80%) : transparent;
+                    HorizontalLayout {
+                        padding-left: 6px; padding-right: 6px;
+                        Text {
+                            text: "URL";
+                            color: root.file-url-mode ? Palette.accent-background : Palette.foreground.transparentize(40%);
+                            font-size: 10px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
+                    }
+                    TouchArea { clicked => { root.file-url-mode = !root.file-url-mode; } }
+                }
+            }
+
+            // URL input (when toggled)
+            if root.file-url-mode : LineEdit {
+                height: 28px;
                 text: root.value;
-                placeholder-text: "#000000";
-                accepted(text) => { root.field-edited(root.key, text); }
+                placeholder-text: "https://example.com/image.png";
+                accepted(text) => {
+                    root.field-edited(root.key, text);
+                    root.file-url-mode = false;
+                }
             }
         }
 
@@ -847,6 +987,7 @@ export component AppWindow inherits Window {
     in property <[FieldRow]> field-rows: [];
     callback field-edited(string, string);
     callback field-edited-number(string, float);
+    callback file-browse-requested(string);
 
     // Tabbed MDI
     in property <[TabItem]> tabs: [];
@@ -1958,6 +2099,7 @@ export component AppWindow inherits Window {
                                                             min: field.min; max: field.max; has-bounds: field.has-bounds; options: field.options; swatch: field.swatch;
                                                             field-edited(key, val) => { root.field-edited(key, val); }
                                                             field-edited-number(key, val) => { root.field-edited-number(key, val); }
+                                                            file-browse-requested(key) => { root.file-browse-requested(key); }
                                                         }
                                                         if root.style-rows-count > 0 : Rectangle { height: 8px; }
                                                         if root.style-rows-count > 0 : Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }

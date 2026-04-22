@@ -214,6 +214,7 @@ fn field_type_to_openapi(field_type: EntityFieldType) -> (&'static str, Option<&
         EntityFieldType::ObjectRef => ("string", None),
         EntityFieldType::Date | EntityFieldType::Datetime => ("string", Some("date-time")),
         EntityFieldType::Url => ("string", Some("uri")),
+        EntityFieldType::File => ("string", Some("binary")),
         EntityFieldType::Lookup | EntityFieldType::Rollup => ("string", None),
     }
 }

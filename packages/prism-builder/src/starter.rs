@@ -15,6 +15,7 @@ use std::sync::Arc;
 use prism_core::help::HelpEntry;
 use serde_json::Value;
 
+use crate::asset::AssetSource;
 use crate::component::{Component, ComponentId, RenderError, RenderSlintContext};
 use crate::document::Node;
 use crate::registry::{prop_f64, prop_str, prop_u64, ComponentRegistry, FieldSpec, RegistryError};
@@ -216,7 +217,9 @@ impl Component for LinkComponent {
     }
 }
 
-/// Void `img` element. Reads `props.src` and `props.alt`.
+/// Image block. Accepts a VFS binary ref or an external URL via
+/// the `src` prop and displays a builder placeholder. The HTML SSR
+/// path resolves VFS hashes to `/asset/{hash}`.
 pub struct ImageComponent {
     pub id: ComponentId,
 }
@@ -232,7 +235,7 @@ impl Component for ImageComponent {
         Some(HelpEntry::new(
             "builder.components.image",
             "Image",
-            "Embedded image with alt text, configurable fit and aspect ratio.",
+            "Embedded image. Upload from your device, pick from the current vault, or paste an external URL. Supports configurable object-fit.",
         ))
     }
     fn render_slint(
@@ -243,12 +246,18 @@ impl Component for ImageComponent {
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
         let alt = prop_str(props, "alt", "image");
+        let source = props.get("src").and_then(AssetSource::from_prop);
+        let label = match &source {
+            Some(AssetSource::Vfs { filename, .. }) => filename.as_str(),
+            Some(AssetSource::Url { url }) => url.as_str(),
+            None => alt,
+        };
         out.block("Rectangle", |out| {
             out.prop_px("min-height", 120.0);
             out.line("background: #2a3140;");
             out.line("border-radius: 6px;");
             out.block("Text", |out| {
-                out.prop_string("text", alt);
+                out.prop_string("text", label);
                 out.prop_px("font-size", 12.0);
                 out.line("color: #9ca4b4;");
                 out.line("horizontal-alignment: center;");
@@ -1170,6 +1179,6 @@ mod tests {
         assert!(source.contains(r#"text: "Welcome";"#));
         assert!(source.contains(r#"text: "intro body";"#));
         assert!(source.contains(r#"text: "Read";"#));
-        assert!(source.contains(r#"text: "hero";"#));
+        assert!(source.contains(r#"text: "/a.png";"#));
     }
 }

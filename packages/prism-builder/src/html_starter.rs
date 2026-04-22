@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+use crate::asset::AssetSource;
 use crate::component::{ComponentId, RenderError};
 use crate::document::Node;
 use crate::html::Html;
@@ -158,9 +159,15 @@ impl HtmlBlock for HtmlImage {
         _children: &[Node],
         out: &mut Html,
     ) -> Result<(), RenderError> {
-        let src = prop_str(props, "src", "");
         let alt = prop_str(props, "alt", "");
-        out.void("img", &[("src", src), ("alt", alt)]);
+        let fit = prop_str(props, "fit", "cover");
+        let src = props
+            .get("src")
+            .and_then(AssetSource::from_prop)
+            .map(|s| s.to_html_src())
+            .unwrap_or_default();
+        let style = format!("object-fit:{fit}");
+        out.void("img", &[("src", &src), ("alt", alt), ("style", &style)]);
         Ok(())
     }
 }

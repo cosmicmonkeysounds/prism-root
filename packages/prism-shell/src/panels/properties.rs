@@ -355,6 +355,14 @@ fn row_from_spec(spec: &FieldSpec, props: &Value) -> FieldRowData {
             false,
             vec![],
         ),
+        FieldKind::File(_) => {
+            let display = props
+                .get(&spec.key)
+                .and_then(prism_builder::AssetSource::from_prop)
+                .map(|s| s.display_name().to_string())
+                .unwrap_or_default();
+            ("file", display, 0.0, 0.0, false, vec![])
+        }
     };
     FieldRowData {
         key: spec.key.clone(),
