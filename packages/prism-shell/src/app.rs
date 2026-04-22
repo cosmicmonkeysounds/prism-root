@@ -21,7 +21,7 @@ use prism_builder::{
         AlignOption, Dimension, FlexDirection, FlowDisplay, FlowProps, GridPlacement,
         JustifyOption, LayoutMode, PageSize, TrackSize,
     },
-    preview_component_factory, render_document_slint_preview_with_assets,
+    render_document_slint_preview_with_assets,
     starter::register_builtins,
     BuilderDocument, ComponentRegistry, FieldKind, LiveDocument, Node, NodeId, StyleProperties,
 };
@@ -3122,7 +3122,6 @@ fn push_live_preview(
     window.set_preview_nodes_count(count);
 }
 
-#[allow(deprecated)]
 fn push_wysiwyg_preview(
     window: &AppWindow,
     doc: &BuilderDocument,
@@ -3137,9 +3136,7 @@ fn push_wysiwyg_preview(
     let asset_paths = materialize_vfs_assets(doc, vfs);
     match render_document_slint_preview_with_assets(doc, registry, tokens, asset_paths) {
         Ok(source) => match compile_slint_preview(&source) {
-            Ok(definition) => {
-                let factory = preview_component_factory(definition);
-                window.set_preview_factory(factory);
+            Ok(_definition) => {
                 window.set_preview_factory_ready(true);
             }
             Err(e) => {

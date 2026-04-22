@@ -1091,7 +1091,6 @@ export component AppWindow inherits Window {
     // Builder canvas
     in property <int> builder-node-count: 0;
     in property <[PreviewNode]> preview-nodes: [];
-    in property <component-factory> preview-factory;
     in property <bool> preview-factory-ready: false;
     callback builder-node-clicked(string);
     callback builder-text-edited(string, string);
@@ -1682,6 +1681,13 @@ export component AppWindow inherits Window {
                                                                 background: Palette.accent-background.transparentize(95%);
                                                             }
 
+                                                            // WYSIWYG preview — renders as page background so grid chrome stays on top
+                                                            Rectangle {
+                                                                visible: root.preview-factory-ready && root.builder-node-count > 0;
+                                                                x: 0px; y: 0px; width: parent.width; height: parent.height;
+                                                                background: Palette.alternate-background;
+                                                            }
+
                                                             // Grid overlay
                                                             Rectangle {
                                                                 visible: root.page-layout.show-grid;
@@ -1819,19 +1825,6 @@ export component AppWindow inherits Window {
                                                                                 root.grid-cell-clicked(cell.col, cell.row);
                                                                             }
                                                                         }
-                                                                    }
-                                                                }
-
-                                                                // WYSIWYG live preview via interpreter-compiled ComponentContainer
-                                                                Rectangle {
-                                                                    visible: root.preview-factory-ready && root.builder-node-count > 0;
-                                                                    vertical-stretch: 1;
-                                                                    width: root.viewport-width * root.canvas-zoom * 1px;
-                                                                    min-height: 400px * root.canvas-zoom;
-                                                                    ComponentContainer {
-                                                                        component-factory: root.preview-factory;
-                                                                        width: 100%;
-                                                                        height: 100%;
                                                                     }
                                                                 }
 
