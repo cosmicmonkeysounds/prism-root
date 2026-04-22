@@ -16,6 +16,15 @@ mod sidecar;
 use prism_shell::Shell;
 
 fn main() -> Result<(), slint::PlatformError> {
+    // Capture full backtrace on panic so we can diagnose Slint
+    // property recursion. Writes to /tmp/prism-panic.txt.
+    std::panic::set_hook(Box::new(|info| {
+        let bt = std::backtrace::Backtrace::force_capture();
+        let msg = format!("{info}\n\nBacktrace:\n{bt}");
+        eprintln!("{msg}");
+        let _ = std::fs::write("/tmp/prism-panic.txt", &msg);
+    }));
+
     // Spawn the daemon sidecar before the event loop takes over the
     // main thread. If it fails we log and continue — the shell is
     // still useful for UI iteration when the kernel is down. The

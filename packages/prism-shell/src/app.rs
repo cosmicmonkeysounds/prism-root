@@ -47,6 +47,78 @@ use crate::{
     SignalItem, TabItem, ToastItem, VariantItem, WorkflowPageItem,
 };
 
+// ── Persistent VecModels ───────────────────────────────────────────
+//
+// Slint's ChangeTracker (inside every Flickable / ScrollView) lazily
+// evaluates child bindings each frame. If a model property was replaced
+// wholesale (ModelRc::from(new_vec)), the for-repeater lazily rebuilds
+// its items during that evaluation — destroying old VRc<ItemTree>
+// instances mid-binding-eval, which triggers "Recursion detected" in
+// PropertyHandle::remove_binding.
+//
+// Fix: keep ONE VecModel per model property for the entire lifetime
+// of the window.  Set it on the AppWindow exactly once (in from_state),
+// then update it in-place via set_row_data / push.  Items are NEVER
+// removed; excess slots are hidden via a companion `*-count` property
+// and `visible: i < root.*-count` in the Slint for-repeater.
+
+/// Update a persistent VecModel in-place.  Returns the active count.
+fn sync_model<T: Clone + 'static>(model: &VecModel<T>, new_data: &[T]) -> i32 {
+    let old_len = model.row_count();
+    let new_len = new_data.len();
+    for (i, item) in new_data.iter().enumerate() {
+        if i < old_len {
+            model.set_row_data(i, item.clone());
+        } else {
+            model.push(item.clone());
+        }
+    }
+    new_len as i32
+}
+
+macro_rules! persistent_models {
+    ($($name:ident : $ty:ty),* $(,)?) => {
+        struct PersistentModels {
+            $( $name: Rc<VecModel<$ty>>, )*
+        }
+        impl PersistentModels {
+            fn new() -> Self {
+                Self {
+                    $( $name: Rc::new(VecModel::default()), )*
+                }
+            }
+        }
+    };
+}
+
+persistent_models! {
+    grid_cells: GridCellItem,
+    preview_nodes: PreviewNode,
+    inspector_nodes: InspectorNode,
+    field_rows: FieldRow,
+    layout_rows: FieldRow,
+    style_rows: FieldRow,
+    breadcrumbs: BreadcrumbItem,
+    component_palette: ComponentPaletteItem,
+    tabs: TabItem,
+    command_results: CommandItem,
+    notifications: ToastItem,
+    search_results: SearchResultItem,
+    column_gutters: GutterRect,
+    row_gutters: GutterRect,
+    app_cards: AppCardItem,
+    explorer_nodes: ExplorerNodeItem,
+    dock_panels: DockPanelRect,
+    dock_dividers: DockDividerRect,
+    workflow_pages: WorkflowPageItem,
+    actions: ButtonSpec,
+    menu_defs: MenuDef,
+    modifier_items: ModifierItem,
+    signal_items: SignalItem,
+    variant_items: VariantItem,
+    editor_lines: EditorLine,
+}
+
 // ── Reloadable state ───────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -446,6 +518,7 @@ struct ShellInner {
     input: InputManager,
     commands: CommandRegistry,
     menus: crate::menu::MenuRegistry,
+    models: PersistentModels,
     undo_past: Vec<SourceSnapshot>,
     undo_future: Vec<SourceSnapshot>,
     clipboard: Option<Node>,
@@ -621,6 +694,43 @@ impl Shell {
         let mut input = InputManager::with_defaults();
         let user_kb = UserKeybindings::load(&UserKeybindings::default_path());
         user_kb.apply_to(&mut input);
+        let models = PersistentModels::new();
+
+        // Bind each persistent VecModel to the AppWindow ONCE.
+        // From here on, push functions only call set_row_data / push.
+        macro_rules! bind_model {
+            ($prop:ident, $field:ident, $T:ty) => {
+                window.$prop(ModelRc::from(
+                    models.$field.clone() as Rc<dyn Model<Data = $T>>,
+                ));
+            };
+        }
+        bind_model!(set_grid_cells, grid_cells, GridCellItem);
+        bind_model!(set_preview_nodes, preview_nodes, PreviewNode);
+        bind_model!(set_inspector_nodes, inspector_nodes, InspectorNode);
+        bind_model!(set_field_rows, field_rows, FieldRow);
+        bind_model!(set_layout_rows, layout_rows, FieldRow);
+        bind_model!(set_style_rows, style_rows, FieldRow);
+        bind_model!(set_breadcrumbs, breadcrumbs, BreadcrumbItem);
+        bind_model!(set_component_palette, component_palette, ComponentPaletteItem);
+        bind_model!(set_tabs, tabs, TabItem);
+        bind_model!(set_command_results, command_results, CommandItem);
+        bind_model!(set_notifications, notifications, ToastItem);
+        bind_model!(set_search_results, search_results, SearchResultItem);
+        bind_model!(set_column_gutters, column_gutters, GutterRect);
+        bind_model!(set_row_gutters, row_gutters, GutterRect);
+        bind_model!(set_app_cards, app_cards, AppCardItem);
+        bind_model!(set_explorer_nodes, explorer_nodes, ExplorerNodeItem);
+        bind_model!(set_dock_panels, dock_panels, DockPanelRect);
+        bind_model!(set_dock_dividers, dock_dividers, DockDividerRect);
+        bind_model!(set_workflow_pages, workflow_pages, WorkflowPageItem);
+        bind_model!(set_actions, actions, ButtonSpec);
+        bind_model!(set_menu_defs, menu_defs, MenuDef);
+        bind_model!(set_modifier_items, modifier_items, ModifierItem);
+        bind_model!(set_signal_items, signal_items, SignalItem);
+        bind_model!(set_variant_items, variant_items, VariantItem);
+        bind_model!(set_editor_lines, editor_lines, EditorLine);
+
         let inner = Rc::new(RefCell::new(ShellInner {
             store: Store::new(state),
             registry: Arc::new(registry),
@@ -629,6 +739,7 @@ impl Shell {
             input,
             commands: CommandRegistry::with_builtins(),
             menus: crate::menu::MenuRegistry::with_builtins(),
+            models,
             undo_past: Vec::new(),
             undo_future: Vec::new(),
             clipboard: None,
@@ -699,9 +810,13 @@ impl Shell {
 
     pub fn select_page(&self, page_id: &str) {
         let pid = page_id.to_string();
-        self.inner.borrow_mut().store.mutate(|state| {
-            state.workspace.switch_page_by_id(&pid);
-        });
+        {
+            let mut s = self.inner.borrow_mut();
+            s.store.mutate(|state| {
+                state.workspace.switch_page_by_id(&pid);
+            });
+            s.dock_dirty.set(true);
+        }
         sync_ui_from_shared(&self.inner, &self.window);
     }
 
@@ -809,6 +924,7 @@ impl Shell {
                     s.store.mutate(|state| {
                         state.workspace.switch_page_by_id(&pid);
                     });
+                    s.dock_dirty.set(true);
                     let panel_id = panel_id_for_slint(&s.store.state().workspace);
                     update_panel_schemes(&mut s.input, panel_id);
                 }
@@ -829,6 +945,7 @@ impl Shell {
                     s.store.mutate(|state| {
                         state.workspace.switch_page_by_id(&pid);
                     });
+                    s.dock_dirty.set(true);
                     let panel_id = panel_id_for_slint(&s.store.state().workspace);
                     update_panel_schemes(&mut s.input, panel_id);
                 }
@@ -852,6 +969,7 @@ impl Shell {
                             .active_dock_mut()
                             .activate_tab(&addr, tab_index as usize);
                     });
+                    s.dock_dirty.set(true);
                 }
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
@@ -873,6 +991,7 @@ impl Shell {
                             .active_dock_mut()
                             .set_ratio(&addr, new_ratio);
                     });
+                    s.dock_dirty.set(true);
                 }
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
@@ -1142,6 +1261,7 @@ impl Shell {
                         state.sync_document_from_app();
                     });
                     s.load_active_page();
+                    s.dock_dirty.set(true);
                 }
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
@@ -1162,6 +1282,7 @@ impl Shell {
                         state.selection.clear();
                     });
                     s.live = None;
+                    s.dock_dirty.set(true);
                 }
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
@@ -1188,6 +1309,7 @@ impl Shell {
                             state.sync_document_from_app();
                         });
                         s.load_active_page();
+                        s.dock_dirty.set(true);
                     } else if let Some(rest) = nid.strip_prefix("page:") {
                         let parts: Vec<&str> = rest.splitn(2, ':').collect();
                         if parts.len() == 2 {
@@ -1205,6 +1327,7 @@ impl Shell {
                                 state.sync_document_from_app();
                             });
                             s.load_active_page();
+                            s.dock_dirty.set(true);
                         }
                     }
                 }
@@ -1270,6 +1393,7 @@ impl Shell {
                         state.sync_document_from_app();
                     });
                     s.load_active_page();
+                    s.dock_dirty.set(true);
                     s.add_toast(
                         "App created",
                         &format!("App {id_num} is ready to edit"),
@@ -1298,6 +1422,7 @@ impl Shell {
                         state.sync_document_from_app();
                     });
                     s.load_active_page();
+                    s.dock_dirty.set(true);
                 }
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
@@ -2292,7 +2417,6 @@ fn sync_ui_from_shared(shared: &Rc<RefCell<ShellInner>>, window: &AppWindow) {
     {
         let mut inner = shared.borrow_mut();
         inner.save_to_active_page();
-        inner.dock_dirty.set(true);
         let has_sel = !inner.store.state().selection.is_empty();
         let has_clip = inner.clipboard.is_some();
         let palette_open = inner.store.state().command_palette_open;
@@ -2344,6 +2468,7 @@ fn sync_ui_from_shared(shared: &Rc<RefCell<ShellInner>>, window: &AppWindow) {
                                 if needs_relayout {
                                     let inner = sc2.borrow();
                                     push_dock_layout(
+                                        &inner.models,
                                         &w2,
                                         &inner.store.state().workspace,
                                         (new_w, new_h),
@@ -2366,7 +2491,7 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
     window.set_is_launchpad(is_launchpad);
 
     if is_launchpad {
-        push_app_cards(window, &state.apps);
+        push_app_cards(&inner.models, window, &state.apps);
         window.set_active_app_name(SharedString::new());
         window.set_active_page_name(SharedString::new());
     } else {
@@ -2396,7 +2521,7 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
     window.set_viewport_preset(SharedString::from(preset));
 
     // Menu bar
-    push_menu_defs(window, &inner.menus, &inner.commands);
+    push_menu_defs(&inner.models, window, &inner.menus, &inner.commands);
 
     // Activity bar panel selection — derived from dock workspace
     let slint_panel_id = panel_id_for_slint(&state.workspace);
@@ -2438,42 +2563,47 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
     // every sync, destroying and recreating subtrees mid-evaluation and
     // triggering Slint's "Recursion detected" panic.
     if is_launchpad {
-        clear_panel_slots(window);
+        clear_panel_slots(&inner.models, window);
     }
     if !is_launchpad {
-        push_editor_data(window, &state.editor_state);
-        push_builder_preview(window, &state.builder_document);
+        push_editor_data(&inner.models, window, &state.editor_state);
+        push_builder_preview(&inner.models, window, &state.builder_document);
         push_live_preview(
+            &inner.models,
             window,
             &state.builder_document,
             &state.selection,
             state.viewport_width,
         );
-        push_inspector_nodes(window, &state.builder_document, &state.selection);
+        push_inspector_nodes(&inner.models, window, &state.builder_document, &state.selection);
         push_property_rows(
+            &inner.models,
             window,
             &state.builder_document,
             &inner.registry,
             &state.selection,
         );
-        push_breadcrumbs(window, &state.builder_document, &state.selection);
+        push_breadcrumbs(&inner.models, window, &state.builder_document, &state.selection);
         let vw = state.viewport_width;
-        push_page_layout_data(window, &state.builder_document, state.show_grid_overlay, vw);
-        push_layout_rows(window, &state.builder_document, &state.selection);
+        push_page_layout_data(&inner.models, window, &state.builder_document, state.show_grid_overlay, vw);
+        push_layout_rows(&inner.models, window, &state.builder_document, &state.selection);
         push_composition_data(
+            &inner.models,
             window,
             &state.builder_document,
             &inner.registry,
             &state.selection,
         );
-        push_grid_cells(window, &state.builder_document, &state.selection, vw);
+        push_grid_cells(&inner.models, window, &state.builder_document, &state.selection, vw);
         push_style_rows(
+            &inner.models,
             window,
             state.active_app(),
             &state.selection,
             &state.builder_document,
         );
         push_explorer_nodes(
+            &inner.models,
             window,
             &state.apps,
             &state.shell_view,
@@ -2495,8 +2625,8 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
     } else {
         Vec::new()
     };
-    let tab_rc = Rc::new(VecModel::from(tab_items));
-    window.set_tabs(ModelRc::from(tab_rc as Rc<dyn Model<Data = TabItem>>));
+    let count = sync_model(&inner.models.tabs, &tab_items);
+    window.set_tabs_count(count);
 
     // Command palette
     window.set_command_palette_visible(state.command_palette_open);
@@ -2509,8 +2639,8 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
             category: SharedString::from(&c.category),
         })
         .collect();
-    let cmd_rc = Rc::new(VecModel::from(cmd_items));
-    window.set_command_results(ModelRc::from(cmd_rc as Rc<dyn Model<Data = CommandItem>>));
+    let count = sync_model(&inner.models.command_results, &cmd_items);
+    window.set_command_results_count(count);
 
     // Notifications
     let toast_items: Vec<ToastItem> = state
@@ -2523,8 +2653,8 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
             kind: SharedString::from(&t.kind),
         })
         .collect();
-    let toast_rc = Rc::new(VecModel::from(toast_items));
-    window.set_notifications(ModelRc::from(toast_rc as Rc<dyn Model<Data = ToastItem>>));
+    let count = sync_model(&inner.models.notifications, &toast_items);
+    window.set_notifications_count(count);
 
     // Undo/redo state
     window.set_can_undo(!inner.undo_past.is_empty());
@@ -2560,36 +2690,27 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
             })
             .collect()
     };
-    let search_rc = Rc::new(VecModel::from(search_items));
-    window.set_search_results(ModelRc::from(
-        search_rc as Rc<dyn Model<Data = SearchResultItem>>,
-    ));
+    let count = sync_model(&inner.models.search_results, &search_items);
+    window.set_search_results_count(count);
 }
 
-fn clear_panel_slots(window: &AppWindow) {
-    let empty_actions: Rc<VecModel<ButtonSpec>> = Rc::new(VecModel::from(Vec::<ButtonSpec>::new()));
-    window.set_actions(ModelRc::from(
-        empty_actions as Rc<dyn Model<Data = ButtonSpec>>,
-    ));
+fn clear_panel_slots(models: &PersistentModels, window: &AppWindow) {
+    sync_model(&models.actions, &[]);
+    window.set_actions_count(0);
     window.set_builder_node_count(0);
     window.set_builder_source(SharedString::new());
     window.set_inspector_tree(SharedString::new());
-    let empty_nodes: Rc<VecModel<InspectorNode>> =
-        Rc::new(VecModel::from(Vec::<InspectorNode>::new()));
-    window.set_inspector_nodes(ModelRc::from(
-        empty_nodes as Rc<dyn Model<Data = InspectorNode>>,
-    ));
+    sync_model(&models.inspector_nodes, &[]);
+    window.set_inspector_nodes_count(0);
     window.set_selected_component(SharedString::new());
-    let empty_rows: Rc<VecModel<FieldRow>> = Rc::new(VecModel::from(Vec::<FieldRow>::new()));
-    window.set_field_rows(ModelRc::from(empty_rows as Rc<dyn Model<Data = FieldRow>>));
-    let empty_palette: Rc<VecModel<ComponentPaletteItem>> =
-        Rc::new(VecModel::from(Vec::<ComponentPaletteItem>::new()));
-    window.set_component_palette(ModelRc::from(
-        empty_palette as Rc<dyn Model<Data = ComponentPaletteItem>>,
-    ));
+    sync_model(&models.field_rows, &[]);
+    window.set_field_rows_count(0);
+    sync_model(&models.component_palette, &[]);
+    window.set_component_palette_count(0);
 }
 
 fn push_explorer_nodes(
+    models: &PersistentModels,
     window: &AppWindow,
     apps: &[PrismApp],
     shell_view: &ShellView,
@@ -2607,13 +2728,12 @@ fn push_explorer_nodes(
             is_active: n.is_active,
         })
         .collect();
-    let model = Rc::new(VecModel::from(items));
-    window.set_explorer_nodes(ModelRc::from(
-        model as Rc<dyn Model<Data = ExplorerNodeItem>>,
-    ));
+    let count = sync_model(&models.explorer_nodes, &items);
+    window.set_explorer_nodes_count(count);
 }
 
 fn push_menu_defs(
+    models: &PersistentModels,
     window: &AppWindow,
     menus: &crate::menu::MenuRegistry,
     commands: &CommandRegistry,
@@ -2640,11 +2760,11 @@ fn push_menu_defs(
             }
         })
         .collect();
-    let model = Rc::new(VecModel::from(defs));
-    window.set_menu_defs(ModelRc::from(model as Rc<dyn Model<Data = MenuDef>>));
+    let count = sync_model(&models.menu_defs, &defs);
+    window.set_menu_defs_count(count);
 }
 
-fn push_app_cards(window: &AppWindow, apps: &[PrismApp]) {
+fn push_app_cards(models: &PersistentModels, window: &AppWindow, apps: &[PrismApp]) {
     let items: Vec<AppCardItem> = apps
         .iter()
         .map(|app| AppCardItem {
@@ -2656,18 +2776,16 @@ fn push_app_cards(window: &AppWindow, apps: &[PrismApp]) {
             page_count: app.pages.len() as i32,
         })
         .collect();
-    let model = Rc::new(VecModel::from(items));
-    window.set_app_cards(ModelRc::from(model as Rc<dyn Model<Data = AppCardItem>>));
+    let count = sync_model(&models.app_cards, &items);
+    window.set_app_cards_count(count);
 }
 
-fn push_builder_preview(window: &AppWindow, doc: &BuilderDocument) {
-    let count = count_nodes(doc.root.as_ref());
-    window.set_builder_node_count(count);
+fn push_builder_preview(models: &PersistentModels, window: &AppWindow, doc: &BuilderDocument) {
+    let node_count = count_nodes(doc.root.as_ref());
+    window.set_builder_node_count(node_count);
     let palette = component_palette_items();
-    let palette_model = Rc::new(VecModel::from(palette));
-    window.set_component_palette(ModelRc::from(
-        palette_model as Rc<dyn Model<Data = ComponentPaletteItem>>,
-    ));
+    let count = sync_model(&models.component_palette, &palette);
+    window.set_component_palette_count(count);
 }
 
 fn count_nodes(root: Option<&Node>) -> i32 {
@@ -2684,6 +2802,7 @@ fn count_nodes(root: Option<&Node>) -> i32 {
 }
 
 fn push_live_preview(
+    models: &PersistentModels,
     window: &AppWindow,
     doc: &BuilderDocument,
     selection: &SelectionModel,
@@ -2694,7 +2813,8 @@ fn push_live_preview(
     let root = match &doc.root {
         Some(r) => r,
         None => {
-            window.set_preview_nodes(ModelRc::default());
+            sync_model(&models.preview_nodes, &[]);
+            window.set_preview_nodes_count(0);
             return;
         }
     };
@@ -2781,8 +2901,8 @@ fn push_live_preview(
     }
 
     walk_preview(root, &layout, selection, &mut items);
-    let model = Rc::new(VecModel::from(items));
-    window.set_preview_nodes(ModelRc::from(model as Rc<dyn Model<Data = PreviewNode>>));
+    let count = sync_model(&models.preview_nodes, &items);
+    window.set_preview_nodes_count(count);
 }
 
 fn extract_preview_text(
@@ -2829,10 +2949,10 @@ fn extract_preview_text(
     }
 }
 
-fn push_inspector_nodes(window: &AppWindow, doc: &BuilderDocument, selection: &SelectionModel) {
+fn push_inspector_nodes(models: &PersistentModels, window: &AppWindow, doc: &BuilderDocument, selection: &SelectionModel) {
     let items = flatten_inspector_nodes(doc.root.as_ref(), selection);
-    let model = Rc::new(VecModel::from(items));
-    window.set_inspector_nodes(ModelRc::from(model as Rc<dyn Model<Data = InspectorNode>>));
+    let count = sync_model(&models.inspector_nodes, &items);
+    window.set_inspector_nodes_count(count);
 }
 
 fn field_row_data_to_slint(r: &crate::panels::properties::FieldRowData) -> FieldRow {
@@ -2871,6 +2991,7 @@ fn parse_hex_color(hex: &str) -> slint::Color {
 }
 
 fn push_property_rows(
+    models: &PersistentModels,
     window: &AppWindow,
     doc: &BuilderDocument,
     registry: &ComponentRegistry,
@@ -2883,8 +3004,8 @@ fn push_property_rows(
         .into_iter()
         .map(|r| field_row_data_to_slint(&r))
         .collect();
-    let model = Rc::new(VecModel::from(rows));
-    window.set_field_rows(ModelRc::from(model as Rc<dyn Model<Data = FieldRow>>));
+    let count = sync_model(&models.field_rows, &rows);
+    window.set_field_rows_count(count);
 }
 
 // ── Docs panel ────────────────────────────────────────────────────
@@ -3014,6 +3135,7 @@ fn execute_command(
             s.store.mutate(|state| {
                 state.workspace.switch_page_by_id(&pid);
             });
+            s.dock_dirty.set(true);
             let panel_id = panel_id_for_slint(&s.store.state().workspace);
             update_panel_schemes(&mut s.input, panel_id);
         }
@@ -3022,6 +3144,7 @@ fn execute_command(
             s.store.mutate(|state| {
                 state.workspace.switch_page_by_id("code");
             });
+            s.dock_dirty.set(true);
             let panel_id = panel_id_for_slint(&s.store.state().workspace);
             update_panel_schemes(&mut s.input, panel_id);
         }
@@ -3227,6 +3350,7 @@ fn execute_command(
                 s.store.mutate(|state| {
                     state.workspace.switch_page_by_id("edit");
                 });
+                s.dock_dirty.set(true);
                 let panel_id = panel_id_for_slint(&s.store.state().workspace);
                 update_panel_schemes(&mut s.input, panel_id);
             }
@@ -3429,7 +3553,7 @@ fn collect_split_bounds(
     }
 }
 
-fn push_dock_layout(window: &AppWindow, workspace: &prism_dock::DockWorkspace, dims: (f32, f32)) {
+fn push_dock_layout(models: &PersistentModels, window: &AppWindow, workspace: &prism_dock::DockWorkspace, dims: (f32, f32)) {
     let (w, h) = dims;
     if w <= 0.0 || h <= 0.0 {
         return;
@@ -3509,14 +3633,10 @@ fn push_dock_layout(window: &AppWindow, workspace: &prism_dock::DockWorkspace, d
         }
     }
 
-    let panel_model = Rc::new(VecModel::from(panels));
-    window.set_dock_panels(ModelRc::from(
-        panel_model as Rc<dyn Model<Data = DockPanelRect>>,
-    ));
-    let divider_model = Rc::new(VecModel::from(dividers));
-    window.set_dock_dividers(ModelRc::from(
-        divider_model as Rc<dyn Model<Data = DockDividerRect>>,
-    ));
+    let count = sync_model(&models.dock_panels, &panels);
+    window.set_dock_panels_count(count);
+    let count = sync_model(&models.dock_dividers, &dividers);
+    window.set_dock_dividers_count(count);
 
     // Workflow pages
     let active_page_id = workspace.active_page().id.as_str();
@@ -3529,10 +3649,8 @@ fn push_dock_layout(window: &AppWindow, workspace: &prism_dock::DockWorkspace, d
             active: p.id == active_page_id,
         })
         .collect();
-    let page_model = Rc::new(VecModel::from(page_items));
-    window.set_workflow_pages(ModelRc::from(
-        page_model as Rc<dyn Model<Data = WorkflowPageItem>>,
-    ));
+    let count = sync_model(&models.workflow_pages, &page_items);
+    window.set_workflow_pages_count(count);
 }
 
 fn flatten_inspector_nodes(root: Option<&Node>, selection: &SelectionModel) -> Vec<InspectorNode> {
@@ -3672,7 +3790,7 @@ fn clone_node_with_new_ids(node: &Node, counter: &mut u64) -> Node {
     }
 }
 
-fn push_breadcrumbs(window: &AppWindow, doc: &BuilderDocument, selection: &SelectionModel) {
+fn push_breadcrumbs(models: &PersistentModels, window: &AppWindow, doc: &BuilderDocument, selection: &SelectionModel) {
     let selected = selection.primary();
     let items: Vec<BreadcrumbItem> = if let (Some(root), Some(target)) = (&doc.root, selected) {
         let mut path = Vec::new();
@@ -3688,8 +3806,8 @@ fn push_breadcrumbs(window: &AppWindow, doc: &BuilderDocument, selection: &Selec
     } else {
         Vec::new()
     };
-    let model = Rc::new(VecModel::from(items));
-    window.set_breadcrumbs(ModelRc::from(model as Rc<dyn Model<Data = BreadcrumbItem>>));
+    let count = sync_model(&models.breadcrumbs, &items);
+    window.set_breadcrumbs_count(count);
 }
 
 fn find_path_to_node(node: &Node, target: &str, path: &mut Vec<(String, String)>) -> bool {
@@ -3724,6 +3842,7 @@ fn collect_ids_walk(node: &Node, ids: &mut Vec<NodeId>) {
 // ── Page layout data ──────────────────────────────────────────────
 
 fn push_page_layout_data(
+    models: &PersistentModels,
     window: &AppWindow,
     doc: &BuilderDocument,
     show_grid: bool,
@@ -3769,11 +3888,11 @@ fn push_page_layout_data(
     let col_gutters = compute_gutter_rects(&pl.columns, pl.column_gap, content_width);
     let row_gutters = compute_gutter_rects(&pl.rows, pl.row_gap, content_height);
 
-    let col_model = Rc::new(VecModel::from(col_gutters));
-    window.set_column_gutters(ModelRc::from(col_model as Rc<dyn Model<Data = GutterRect>>));
+    let count = sync_model(&models.column_gutters, &col_gutters);
+    window.set_column_gutters_count(count);
 
-    let row_model = Rc::new(VecModel::from(row_gutters));
-    window.set_row_gutters(ModelRc::from(row_model as Rc<dyn Model<Data = GutterRect>>));
+    let count = sync_model(&models.row_gutters, &row_gutters);
+    window.set_row_gutters_count(count);
 }
 
 fn compute_gutter_rects(tracks: &[TrackSize], gap: f32, available: f32) -> Vec<GutterRect> {
@@ -4173,17 +4292,18 @@ fn parse_edge_values(s: &str) -> prism_core::foundation::geometry::Edges<f32> {
     }
 }
 
-fn push_layout_rows(window: &AppWindow, doc: &BuilderDocument, selection: &SelectionModel) {
+fn push_layout_rows(models: &PersistentModels, window: &AppWindow, doc: &BuilderDocument, selection: &SelectionModel) {
     let selected = selection.as_option();
     let rows: Vec<FieldRow> = PropertiesPanel::layout_rows(doc, &selected)
         .into_iter()
         .map(|r| field_row_data_to_slint(&r))
         .collect();
-    let model = Rc::new(VecModel::from(rows));
-    window.set_layout_rows(ModelRc::from(model as Rc<dyn Model<Data = FieldRow>>));
+    let count = sync_model(&models.layout_rows, &rows);
+    window.set_layout_rows_count(count);
 }
 
 fn push_composition_data(
+    models: &PersistentModels,
     window: &AppWindow,
     doc: &BuilderDocument,
     registry: &prism_builder::ComponentRegistry,
@@ -4209,8 +4329,8 @@ fn push_composition_data(
                 .collect()
         })
         .unwrap_or_default();
-    let model = Rc::new(VecModel::from(modifiers));
-    window.set_modifier_items(ModelRc::from(model as Rc<dyn Model<Data = ModifierItem>>));
+    let count = sync_model(&models.modifier_items, &modifiers);
+    window.set_modifier_items_count(count);
 
     let comp = node.and_then(|n| registry.get(&n.component));
 
@@ -4226,8 +4346,8 @@ fn push_composition_data(
                 .collect()
         })
         .unwrap_or_default();
-    let model = Rc::new(VecModel::from(signals));
-    window.set_signal_items(ModelRc::from(model as Rc<dyn Model<Data = SignalItem>>));
+    let count = sync_model(&models.signal_items, &signals);
+    window.set_signal_items_count(count);
 
     let variants: Vec<VariantItem> = comp
         .and_then(|c| {
@@ -4262,8 +4382,8 @@ fn push_composition_data(
             )
         })
         .unwrap_or_default();
-    let model = Rc::new(VecModel::from(variants));
-    window.set_variant_items(ModelRc::from(model as Rc<dyn Model<Data = VariantItem>>));
+    let count = sync_model(&models.variant_items, &variants);
+    window.set_variant_items_count(count);
 
     let conn_count = doc
         .connections
@@ -4280,6 +4400,7 @@ fn push_composition_data(
 }
 
 fn push_grid_cells(
+    models: &PersistentModels,
     window: &AppWindow,
     doc: &BuilderDocument,
     selection: &SelectionModel,
@@ -4290,7 +4411,8 @@ fn push_grid_cells(
     let rows = pl.rows.len().max(1);
 
     if pl.columns.is_empty() && pl.rows.is_empty() {
-        window.set_grid_cells(ModelRc::default());
+        sync_model(&models.grid_cells, &[]);
+        window.set_grid_cells_count(0);
         return;
     }
 
@@ -4366,8 +4488,8 @@ fn push_grid_cells(
         y_off += rh + pl.row_gap;
     }
 
-    let model = Rc::new(VecModel::from(cells));
-    window.set_grid_cells(ModelRc::from(model as Rc<dyn Model<Data = GridCellItem>>));
+    let count = sync_model(&models.grid_cells, &cells);
+    window.set_grid_cells_count(count);
 }
 
 fn compute_track_sizes(tracks: &[TrackSize], gap: f32, available: f32) -> Vec<f32> {
@@ -4426,6 +4548,7 @@ fn compute_track_sizes(tracks: &[TrackSize], gap: f32, available: f32) -> Vec<f3
 }
 
 fn push_style_rows(
+    models: &PersistentModels,
     window: &AppWindow,
     app: Option<&PrismApp>,
     selection: &SelectionModel,
@@ -4560,11 +4683,11 @@ fn push_style_rows(
         64.0,
     );
 
-    let model = Rc::new(VecModel::from(rows));
-    window.set_style_rows(ModelRc::from(model as Rc<dyn Model<Data = FieldRow>>));
+    let count = sync_model(&models.style_rows, &rows);
+    window.set_style_rows_count(count);
 }
 
-fn push_editor_data(window: &AppWindow, es: &EditorState) {
+fn push_editor_data(models: &PersistentModels, window: &AppWindow, es: &EditorState) {
     use prism_core::editor::{
         active_indent_depth, compute_line_indent_guides, highlight_line, is_foldable, TokenKind,
     };
@@ -4656,8 +4779,8 @@ fn push_editor_data(window: &AppWindow, es: &EditorState) {
         i += 1;
     }
 
-    let model = Rc::new(VecModel::from(lines));
-    window.set_editor_lines(ModelRc::from(model as Rc<dyn Model<Data = EditorLine>>));
+    let count = sync_model(&models.editor_lines, &lines);
+    window.set_editor_lines_count(count);
     window.set_editor_cursor_line(cursor_line as i32);
     window.set_editor_cursor_col(cursor_col as i32);
     window.set_editor_cursor_visible(true);

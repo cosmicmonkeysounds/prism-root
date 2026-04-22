@@ -309,6 +309,8 @@ component MenuBarRow inherits Rectangle {
     in property <string> app-name: "";
     in property <[TabItem]> page-tabs: [];
     in property <bool> show-tabs: false;
+    in property <int> menu-count: 0;
+    in property <int> tabs-count: 0;
     callback item-clicked(string);
     callback tab-activated(int);
     callback tab-closed(int);
@@ -325,6 +327,7 @@ component MenuBarRow inherits Rectangle {
         alignment: start;
 
         for menu[idx] in root.menus : Rectangle {
+            visible: idx < root.menu-count;
             height: 28px;
             width: menu-label.preferred-width + 20px;
             background: root.active-menu == idx
@@ -374,6 +377,7 @@ component MenuBarRow inherits Rectangle {
         if root.show-tabs : HorizontalLayout {
             spacing: 0px;
             for tab[i] in root.page-tabs : Rectangle {
+                visible: i < root.tabs-count;
                 height: 28px; min-width: 80px; max-width: 180px;
                 background: tab.active ? Palette.background : transparent;
                 Rectangle { x: 0px; y: parent.height - 2px; width: parent.width; height: 2px; background: tab.active ? Palette.accent-background : transparent; }
@@ -1023,6 +1027,33 @@ export component AppWindow inherits Window {
     callback dock-panel-drag-end(float, float);
     callback dock-panel-drag-move(float, float);
 
+    // Persistent model counts (hidden-excess visibility)
+    in property <int> preview-nodes-count: 0;
+    in property <int> inspector-nodes-count: 0;
+    in property <int> field-rows-count: 0;
+    in property <int> layout-rows-count: 0;
+    in property <int> style-rows-count: 0;
+    in property <int> breadcrumbs-count: 0;
+    in property <int> component-palette-count: 0;
+    in property <int> tabs-count: 0;
+    in property <int> command-results-count: 0;
+    in property <int> notifications-count: 0;
+    in property <int> search-results-count: 0;
+    in property <int> column-gutters-count: 0;
+    in property <int> row-gutters-count: 0;
+    in property <int> app-cards-count: 0;
+    in property <int> explorer-nodes-count: 0;
+    in property <int> dock-panels-count: 0;
+    in property <int> dock-dividers-count: 0;
+    in property <int> workflow-pages-count: 0;
+    in property <int> actions-count: 0;
+    in property <int> menu-defs-count: 0;
+    in property <int> modifier-items-count: 0;
+    in property <int> signal-items-count: 0;
+    in property <int> variant-items-count: 0;
+    in property <int> editor-lines-count: 0;
+    in property <int> grid-cells-count: 0;
+
     // Shell chrome visibility
     in property <bool> show-activity-bar: true;
     in property <bool> show-left-sidebar: true;
@@ -1046,8 +1077,10 @@ export component AppWindow inherits Window {
 
         VerticalLayout {
             // ── Menu bar ─────────────────────────────────────────
-            if root.menu-defs.length > 0 : MenuBarRow {
+            if root.menu-defs-count > 0 : MenuBarRow {
                 menus: root.menu-defs;
+                menu-count: root.menu-defs-count;
+                tabs-count: root.tabs-count;
                 active-menu <=> fs.menu-active-index;
                 app-name: root.active-app-name;
                 page-tabs: root.tabs;
@@ -1110,7 +1143,7 @@ export component AppWindow inherits Window {
                                     Rectangle {
                                         height: 20px; width: app-count-text.preferred-width + 12px; border-radius: 4px;
                                         background: Palette.foreground.transparentize(92%);
-                                        app-count-text := Text { text: root.app-cards.length; color: Palette.foreground.transparentize(50%); font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+                                        app-count-text := Text { text: root.app-cards-count; color: Palette.foreground.transparentize(50%); font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
                                     }
                                 }
                                 Rectangle { height: 16px; }
@@ -1121,11 +1154,12 @@ export component AppWindow inherits Window {
                                         spacing: 16px;
                                         AppCard { horizontal-stretch: 1; is-create: true; accent-color: Palette.foreground.transparentize(70%); clicked => { root.create-app(); } }
                                         for card[i] in root.app-cards : AppCard {
+                                            visible: i < root.app-cards-count;
                                             horizontal-stretch: 1; app-id: card.id; name: card.name; description: card.description;
                                             icon: card.icon; accent-color: card.accent-color; page-count: card.page-count;
                                             clicked => { root.open-app(card.id); }
                                         }
-                                        if root.app-cards.length == 1 : Rectangle { horizontal-stretch: 1; }
+                                        if root.app-cards-count == 1 : Rectangle { horizontal-stretch: 1; }
                                     }
                                 }
 
@@ -1159,7 +1193,8 @@ export component AppWindow inherits Window {
                         if !root.is-launchpad && !root.docs-view.visible : Rectangle {
                             width: 100%; height: 100%;
 
-                            for panel in root.dock-panels : Rectangle {
+                            for panel[i] in root.dock-panels : Rectangle {
+                                visible: i < root.dock-panels-count;
                                 x: panel.x * 1px;
                                 y: panel.y * 1px;
                                 width: panel.width * 1px;
@@ -1234,8 +1269,9 @@ export component AppWindow inherits Window {
                                                         grid-toggle-touch := TouchArea { mouse-cursor: pointer; clicked => { root.toggle-grid-overlay(); } }
                                                     }
                                                     // Breadcrumbs (inline)
-                                                    if root.breadcrumbs.length > 0 : ToolbarSeparator { }
-                                                    for bc in root.breadcrumbs : HorizontalLayout {
+                                                    if root.breadcrumbs-count > 0 : ToolbarSeparator { }
+                                                    for bc[i] in root.breadcrumbs : HorizontalLayout {
+                                                        visible: i < root.breadcrumbs-count;
                                                         spacing: 2px; alignment: start;
                                                         if bc.has-separator : Text { text: "\u{203A}"; color: Palette.foreground.transparentize(50%); font-size: 10px; vertical-alignment: center; }
                                                         Text { text: bc.label; color: Palette.foreground.transparentize(30%); font-size: 10px; vertical-alignment: center; }
@@ -1307,22 +1343,29 @@ export component AppWindow inherits Window {
                                                 horizontal-stretch: 1; vertical-stretch: 1;
                                                 background: Palette.alternate-background.transparentize(40%);
 
-                                                Flickable {
+                                                Rectangle {
+                                                    clip: true;
                                                     property <length> page-w: root.page-layout.page-width * root.canvas-zoom * 1px + 48px;
                                                     property <length> page-h: root.page-layout.page-height * root.canvas-zoom * 1px + 48px;
-                                                    viewport-width: max(canvas-bounds.width, page-w);
-                                                    viewport-height: max(canvas-bounds.height, page-h);
+                                                    property <length> vp-w: max(self.width, page-w);
+                                                    property <length> vp-h: max(self.height, page-h);
+                                                    property <length> scroll-x: 0px;
+                                                    property <length> scroll-y: 0px;
 
-                                                    // Ctrl/Cmd+scroll zooms; wraps page so children receive clicks first
+                                                    // Ctrl/Cmd+scroll zooms, plain scroll pans
                                                     canvas-zoom-area := TouchArea {
-                                                        width: parent.viewport-width;
-                                                        height: parent.viewport-height;
+                                                        width: parent.vp-w;
+                                                        height: parent.vp-h;
+                                                        x: parent.scroll-x;
+                                                        y: parent.scroll-y;
                                                         scroll-event(e) => {
                                                             if (e.modifiers.control || e.modifiers.meta) {
                                                                 root.canvas-zoom = clamp(root.canvas-zoom + (e.delta-y / 1px) / 400.0, 0.25, 3.0);
                                                                 return accept;
                                                             }
-                                                            return reject;
+                                                            parent.scroll-x = clamp(parent.scroll-x + e.delta-x, -(parent.vp-w - parent.width), 0px);
+                                                            parent.scroll-y = clamp(parent.scroll-y + e.delta-y, -(parent.vp-h - parent.height), 0px);
+                                                            return accept;
                                                         }
 
                                                     VerticalLayout {
@@ -1336,25 +1379,29 @@ export component AppWindow inherits Window {
                                                             border-width: 1px; border-color: Palette.foreground.transparentize(85%);
                                                             border-radius: 2px; drop-shadow-blur: 6px; drop-shadow-color: #00000008;
 
-                                                            // Margin overlays
-                                                            if root.page-layout.margin-top > 0.0 : Rectangle {
+                                                            // Margin overlays (use visible, not if, to avoid subtree create/destroy during Flickable property eval)
+                                                            Rectangle {
+                                                                visible: root.page-layout.margin-top > 0.0;
                                                                 x: 0px; y: 0px; width: parent.width;
                                                                 height: root.page-layout.margin-top * root.canvas-zoom * 1px;
                                                                 background: Palette.accent-background.transparentize(95%);
                                                             }
-                                                            if root.page-layout.margin-bottom > 0.0 : Rectangle {
+                                                            Rectangle {
+                                                                visible: root.page-layout.margin-bottom > 0.0;
                                                                 x: 0px; width: parent.width;
                                                                 y: parent.height - root.page-layout.margin-bottom * root.canvas-zoom * 1px;
                                                                 height: root.page-layout.margin-bottom * root.canvas-zoom * 1px;
                                                                 background: Palette.accent-background.transparentize(95%);
                                                             }
-                                                            if root.page-layout.margin-left > 0.0 : Rectangle {
+                                                            Rectangle {
+                                                                visible: root.page-layout.margin-left > 0.0;
                                                                 x: 0px; y: root.page-layout.margin-top * root.canvas-zoom * 1px;
                                                                 width: root.page-layout.margin-left * root.canvas-zoom * 1px;
                                                                 height: parent.height - root.page-layout.margin-top * root.canvas-zoom * 1px - root.page-layout.margin-bottom * root.canvas-zoom * 1px;
                                                                 background: Palette.accent-background.transparentize(95%);
                                                             }
-                                                            if root.page-layout.margin-right > 0.0 : Rectangle {
+                                                            Rectangle {
+                                                                visible: root.page-layout.margin-right > 0.0;
                                                                 y: root.page-layout.margin-top * root.canvas-zoom * 1px;
                                                                 x: parent.width - root.page-layout.margin-right * root.canvas-zoom * 1px;
                                                                 width: root.page-layout.margin-right * root.canvas-zoom * 1px;
@@ -1363,13 +1410,15 @@ export component AppWindow inherits Window {
                                                             }
 
                                                             // Grid overlay
-                                                            if root.page-layout.show-grid : Rectangle {
+                                                            Rectangle {
+                                                                visible: root.page-layout.show-grid;
                                                                 x: 0px; y: 0px; width: parent.width; height: parent.height;
-                                                                if root.page-layout.margin-left > 0.0 : Rectangle { x: root.page-layout.margin-left * root.canvas-zoom * 1px; y: 0px; width: 1px; height: parent.height; background: Palette.accent-background.transparentize(82%); }
-                                                                if root.page-layout.margin-right > 0.0 : Rectangle { x: parent.width - root.page-layout.margin-right * root.canvas-zoom * 1px; y: 0px; width: 1px; height: parent.height; background: Palette.accent-background.transparentize(82%); }
-                                                                if root.page-layout.margin-top > 0.0 : Rectangle { x: 0px; y: root.page-layout.margin-top * root.canvas-zoom * 1px; width: parent.width; height: 1px; background: Palette.accent-background.transparentize(82%); }
-                                                                if root.page-layout.margin-bottom > 0.0 : Rectangle { x: 0px; y: parent.height - root.page-layout.margin-bottom * root.canvas-zoom * 1px; width: parent.width; height: 1px; background: Palette.accent-background.transparentize(82%); }
+                                                                Rectangle { visible: root.page-layout.margin-left > 0.0; x: root.page-layout.margin-left * root.canvas-zoom * 1px; y: 0px; width: 1px; height: parent.height; background: Palette.accent-background.transparentize(82%); }
+                                                                Rectangle { visible: root.page-layout.margin-right > 0.0; x: parent.width - root.page-layout.margin-right * root.canvas-zoom * 1px; y: 0px; width: 1px; height: parent.height; background: Palette.accent-background.transparentize(82%); }
+                                                                Rectangle { visible: root.page-layout.margin-top > 0.0; x: 0px; y: root.page-layout.margin-top * root.canvas-zoom * 1px; width: parent.width; height: 1px; background: Palette.accent-background.transparentize(82%); }
+                                                                Rectangle { visible: root.page-layout.margin-bottom > 0.0; x: 0px; y: parent.height - root.page-layout.margin-bottom * root.canvas-zoom * 1px; width: parent.width; height: 1px; background: Palette.accent-background.transparentize(82%); }
                                                                 for cg[i] in root.column-gutters : Rectangle {
+                                                                    visible: i < root.column-gutters-count;
                                                                     x: cg.offset * root.canvas-zoom * 1px + root.page-layout.margin-left * root.canvas-zoom * 1px;
                                                                     y: root.page-layout.margin-top * root.canvas-zoom * 1px;
                                                                     width: cg.size * root.canvas-zoom * 1px;
@@ -1379,6 +1428,7 @@ export component AppWindow inherits Window {
                                                                     Rectangle { x: parent.width - 1px; y: 0px; width: 1px; height: parent.height; background: Palette.accent-background.transparentize(78%); }
                                                                 }
                                                                 for rg[i] in root.row-gutters : Rectangle {
+                                                                    visible: i < root.row-gutters-count;
                                                                     x: root.page-layout.margin-left * root.canvas-zoom * 1px;
                                                                     y: rg.offset * root.canvas-zoom * 1px + root.page-layout.margin-top * root.canvas-zoom * 1px;
                                                                     width: parent.width - root.page-layout.margin-left * root.canvas-zoom * 1px - root.page-layout.margin-right * root.canvas-zoom * 1px;
@@ -1392,7 +1442,8 @@ export component AppWindow inherits Window {
                                                             // Content area
                                                             Rectangle {
                                                                 // Grid editing controls overlay
-                                                                if root.grid-cells.length > 0 : HorizontalLayout {
+                                                                HorizontalLayout {
+                                                                    visible: root.grid-cells-count > 0;
                                                                     alignment: end; spacing: 4px; height: 24px;
                                                                     x: root.page-layout.margin-left * root.canvas-zoom * 1px;
                                                                     y: root.page-layout.margin-top * root.canvas-zoom * 1px - 28px;
@@ -1412,7 +1463,8 @@ export component AppWindow inherits Window {
                                                                 }
 
                                                                 // Grid cells (interactive page grid — inline to avoid component recursion)
-                                                                for cell in root.grid-cells : Rectangle {
+                                                                for cell[i] in root.grid-cells : Rectangle {
+                                                                    visible: i < root.grid-cells-count;
                                                                     x: (root.page-layout.margin-left + cell.x) * root.canvas-zoom * 1px;
                                                                     y: (root.page-layout.margin-top + cell.y) * root.canvas-zoom * 1px;
                                                                     width: cell.width * root.canvas-zoom * 1px;
@@ -1430,7 +1482,8 @@ export component AppWindow inherits Window {
                                                                             ? Palette.accent-background.transparentize(92%)
                                                                             : transparent);
 
-                                                                    if cell.is-empty : VerticalLayout {
+                                                                    VerticalLayout {
+                                                                        visible: cell.is-empty;
                                                                         alignment: center;
                                                                         HorizontalLayout {
                                                                             alignment: center;
@@ -1445,7 +1498,8 @@ export component AppWindow inherits Window {
                                                                                 vertical-alignment: center;
                                                                             }
                                                                         }
-                                                                        if grid-cell-touch.has-hover : Text {
+                                                                        Text {
+                                                                            visible: grid-cell-touch.has-hover;
                                                                             text: root.drag-component-type != ""
                                                                                 ? ("Place " + root.drag-component-type)
                                                                                 : "Click to add component";
@@ -1457,7 +1511,8 @@ export component AppWindow inherits Window {
                                                                         }
                                                                     }
 
-                                                                    if !cell.is-empty : VerticalLayout {
+                                                                    VerticalLayout {
+                                                                        visible: !cell.is-empty;
                                                                         padding: max(4px, 8px * root.canvas-zoom);
                                                                         spacing: 4px;
                                                                         alignment: center;
@@ -1470,7 +1525,8 @@ export component AppWindow inherits Window {
                                                                             font-weight: 600;
                                                                             horizontal-alignment: center;
                                                                         }
-                                                                        if cell.preview-text != "" && root.canvas-zoom >= 0.5 : Text {
+                                                                        Text {
+                                                                            visible: cell.preview-text != "" && root.canvas-zoom >= 0.5;
                                                                             text: cell.preview-text;
                                                                             color: Palette.foreground.transparentize(50%);
                                                                             font-size: max(8px, 11px * root.canvas-zoom);
@@ -1494,9 +1550,11 @@ export component AppWindow inherits Window {
                                                                 }
 
                                                                 // Live preview: absolutely-positioned nodes from layout engine
-                                                                if root.preview-nodes.length > 0 : Rectangle {
+                                                                Rectangle {
+                                                                    visible: root.preview-nodes-count > 0;
                                                                     vertical-stretch: 1;
                                                                     for pn[i] in root.preview-nodes : Rectangle {
+                                                                        visible: i < root.preview-nodes-count;
                                                                         x: pn.x * root.canvas-zoom * 1px;
                                                                         y: pn.y * root.canvas-zoom * 1px;
                                                                         width: pn.w * root.canvas-zoom * 1px;
@@ -1506,7 +1564,8 @@ export component AppWindow inherits Window {
                                                                         border-radius: pn.border-radius * 1px;
                                                                         background: pn.bg;
 
-                                                                        if pn.component-type == "heading" : Text {
+                                                                        Text {
+                                                                            visible: pn.component-type == "heading";
                                                                             text: pn.text;
                                                                             color: pn.fg;
                                                                             font-size: pn.font-size * root.canvas-zoom * 1px;
@@ -1515,7 +1574,8 @@ export component AppWindow inherits Window {
                                                                             horizontal-alignment: left;
                                                                             vertical-alignment: top;
                                                                         }
-                                                                        if pn.component-type == "text" : Text {
+                                                                        Text {
+                                                                            visible: pn.component-type == "text";
                                                                             text: pn.text;
                                                                             color: pn.fg;
                                                                             font-size: pn.font-size * root.canvas-zoom * 1px;
@@ -1523,7 +1583,8 @@ export component AppWindow inherits Window {
                                                                             horizontal-alignment: left;
                                                                             vertical-alignment: top;
                                                                         }
-                                                                        if pn.component-type == "button" : Rectangle {
+                                                                        Rectangle {
+                                                                            visible: pn.component-type == "button";
                                                                             width: 100%; height: 100%;
                                                                             background: #3b82f6;
                                                                             border-radius: 6px * root.canvas-zoom;
@@ -1536,14 +1597,16 @@ export component AppWindow inherits Window {
                                                                                 vertical-alignment: center;
                                                                             }
                                                                         }
-                                                                        if pn.component-type == "link" : Text {
+                                                                        Text {
+                                                                            visible: pn.component-type == "link";
                                                                             text: pn.text;
                                                                             color: #5aa0ff;
                                                                             font-size: pn.font-size * root.canvas-zoom * 1px;
                                                                             horizontal-alignment: left;
                                                                             vertical-alignment: top;
                                                                         }
-                                                                        if pn.component-type == "card" : Rectangle {
+                                                                        Rectangle {
+                                                                            visible: pn.component-type == "card";
                                                                             width: 100%; height: 100%;
                                                                             border-width: 1px;
                                                                             border-color: #3b4252;
@@ -1553,18 +1616,20 @@ export component AppWindow inherits Window {
                                                                                 padding: 16px * root.canvas-zoom;
                                                                                 spacing: 8px * root.canvas-zoom;
                                                                                 Text { text: pn.text; color: pn.fg; font-size: 18px * root.canvas-zoom; font-weight: 600; }
-                                                                                if pn.label != "" : Text { text: pn.label; color: #9ca4b4; font-size: 14px * root.canvas-zoom; wrap: word-wrap; }
+                                                                                Text { visible: pn.label != ""; text: pn.label; color: #9ca4b4; font-size: 14px * root.canvas-zoom; wrap: word-wrap; }
                                                                             }
                                                                         }
-                                                                        if pn.component-type == "image" : Rectangle {
+                                                                        Rectangle {
+                                                                            visible: pn.component-type == "image";
                                                                             width: 100%; height: 100%;
                                                                             background: #2a3140;
                                                                             border-radius: 6px * root.canvas-zoom;
                                                                             Text { text: pn.alt != "" ? pn.alt : "Image"; color: #9ca4b4; font-size: 12px * root.canvas-zoom; horizontal-alignment: center; vertical-alignment: center; }
                                                                         }
-                                                                        if pn.component-type == "input" : VerticalLayout {
+                                                                        VerticalLayout {
+                                                                            visible: pn.component-type == "input";
                                                                             spacing: 4px * root.canvas-zoom;
-                                                                            if pn.label != "" : Text { text: pn.label; color: pn.fg; font-size: 12px * root.canvas-zoom; }
+                                                                            Text { visible: pn.label != ""; text: pn.label; color: pn.fg; font-size: 12px * root.canvas-zoom; }
                                                                             Rectangle {
                                                                                 height: 32px * root.canvas-zoom;
                                                                                 background: #1e2533;
@@ -1578,7 +1643,8 @@ export component AppWindow inherits Window {
                                                                                 }
                                                                             }
                                                                         }
-                                                                        if pn.component-type == "code" : Rectangle {
+                                                                        Rectangle {
+                                                                            visible: pn.component-type == "code";
                                                                             width: 100%; height: 100%;
                                                                             background: #1a1e28;
                                                                             border-radius: 6px * root.canvas-zoom;
@@ -1587,11 +1653,13 @@ export component AppWindow inherits Window {
                                                                                 Text { text: pn.text; color: #a3be8c; font-size: 13px * root.canvas-zoom; font-family: "monospace"; wrap: word-wrap; }
                                                                             }
                                                                         }
-                                                                        if pn.component-type == "divider" : Rectangle {
+                                                                        Rectangle {
+                                                                            visible: pn.component-type == "divider";
                                                                             width: 100%; height: 1px;
                                                                             background: #3b4252;
                                                                         }
-                                                                        if pn.component-type == "table" : Rectangle {
+                                                                        Rectangle {
+                                                                            visible: pn.component-type == "table";
                                                                             width: 100%; height: 100%;
                                                                             border-width: 1px;
                                                                             border-color: #3b4252;
@@ -1599,11 +1667,12 @@ export component AppWindow inherits Window {
                                                                             VerticalLayout {
                                                                                 padding: 8px * root.canvas-zoom;
                                                                                 spacing: 4px * root.canvas-zoom;
-                                                                                if pn.label != "" : Text { text: pn.label; color: #9ca4b4; font-size: 12px * root.canvas-zoom; }
+                                                                                Text { visible: pn.label != ""; text: pn.label; color: #9ca4b4; font-size: 12px * root.canvas-zoom; }
                                                                                 Text { text: pn.text != "" ? pn.text : "Table"; color: pn.fg; font-size: 13px * root.canvas-zoom; font-weight: 600; }
                                                                             }
                                                                         }
-                                                                        if pn.component-type == "accordion" : VerticalLayout {
+                                                                        VerticalLayout {
+                                                                            visible: pn.component-type == "accordion";
                                                                             spacing: 4px * root.canvas-zoom;
                                                                             Rectangle {
                                                                                 height: 32px * root.canvas-zoom;
@@ -1612,7 +1681,8 @@ export component AppWindow inherits Window {
                                                                                 Text { text: "\u{25B8} " + pn.text; color: pn.fg; font-size: 14px * root.canvas-zoom; font-weight: 600; vertical-alignment: center; x: 8px * root.canvas-zoom; }
                                                                             }
                                                                         }
-                                                                        if pn.component-type == "tabs" : VerticalLayout {
+                                                                        VerticalLayout {
+                                                                            visible: pn.component-type == "tabs";
                                                                             spacing: 0px;
                                                                             Rectangle {
                                                                                 height: 32px * root.canvas-zoom;
@@ -1631,7 +1701,8 @@ export component AppWindow inherits Window {
                                                                     }
                                                                 }
 
-                                                                if root.preview-nodes.length == 0 && root.grid-cells.length == 0 : VerticalLayout {
+                                                                VerticalLayout {
+                                                                    visible: root.preview-nodes-count == 0 && root.grid-cells-count == 0;
                                                                     alignment: center; spacing: 8px; padding-top: 80px;
                                                                     Text { text: "Empty document"; color: Palette.foreground.transparentize(50%); font-size: 16px; horizontal-alignment: center; }
                                                                     Text { text: "Add a component from the palette to get started."; color: Palette.foreground.transparentize(60%); font-size: 12px; horizontal-alignment: center; }
@@ -1640,7 +1711,7 @@ export component AppWindow inherits Window {
                                                         }
                                                     }
                                                     } // canvas-zoom-area TouchArea
-                                                }
+                                                } // clip Rectangle (replaces Flickable)
                                             }
                                         }
                                         // COMPONENT PALETTE
@@ -1667,6 +1738,7 @@ export component AppWindow inherits Window {
                                                     if root.components-expanded : VerticalLayout {
                                                         min-width: 200px; spacing: 1px;
                                                         for comp[i] in root.component-palette : Rectangle {
+                                                            visible: i < root.component-palette-count;
                                                             height: 36px;
                                                             background: root.drag-component-type == comp.component-type
                                                                 ? Palette.accent-background.transparentize(80%)
@@ -1772,9 +1844,10 @@ export component AppWindow inherits Window {
                                                         Image { source: @image-url("icons/search.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(50%); y: 7px; }
                                                         LineEdit { height: 28px; horizontal-stretch: 1; text: root.search-query; placeholder-text: "Search nodes..."; edited(text) => { root.search-input(text); } }
                                                     }
-                                                    if root.search-results.length > 0 : VerticalLayout {
+                                                    if root.search-results-count > 0 : VerticalLayout {
                                                         spacing: 2px;
                                                         for result[i] in root.search-results : Rectangle {
+                                                            visible: i < root.search-results-count;
                                                             height: 44px; background: Palette.control-background; border-radius: 4px;
                                                             VerticalLayout { padding: 6px; spacing: 2px;
                                                                 Text { text: result.node-id + " \u{00B7} " + result.field; color: Palette.foreground; font-size: 11px; overflow: elide; }
@@ -1807,6 +1880,7 @@ export component AppWindow inherits Window {
                                                     VerticalLayout {
                                                         min-width: 200px; spacing: 1px;
                                                         for node[i] in root.inspector-nodes : InspectorRow {
+                                                            visible: i < root.inspector-nodes-count;
                                                             node-id: node.id; component-id: node.component-id; depth: node.depth; selected: node.selected;
                                                             clicked => { root.node-clicked(node.id); }
                                                             move-up => { root.node-move-up(node.id); }
@@ -1837,6 +1911,7 @@ export component AppWindow inherits Window {
                                                     }
                                                     Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
                                                     for enode[i] in root.explorer-nodes : Rectangle {
+                                                        visible: i < root.explorer-nodes-count;
                                                         height: 30px;
                                                         background: enode.is-active ? Palette.accent-background.transparentize(85%) : (exp-touch.has-hover ? Palette.control-background : transparent);
                                                         border-radius: 4px;
@@ -1878,63 +1953,68 @@ export component AppWindow inherits Window {
                                                     VerticalLayout {
                                                         min-width: 220px; spacing: 4px;
                                                         for field[i] in root.field-rows : FieldEditor {
+                                                            visible: i < root.field-rows-count;
                                                             key: field.key; label: field.label; kind: field.kind; value: field.value; required: field.required;
                                                             min: field.min; max: field.max; has-bounds: field.has-bounds; options: field.options; swatch: field.swatch;
                                                             field-edited(key, val) => { root.field-edited(key, val); }
                                                             field-edited-number(key, val) => { root.field-edited-number(key, val); }
                                                         }
-                                                        if root.style-rows.length > 0 : Rectangle { height: 8px; }
-                                                        if root.style-rows.length > 0 : Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
-                                                        if root.style-rows.length > 0 : Rectangle { height: 4px; }
-                                                        if root.style-rows.length > 0 : HorizontalLayout {
+                                                        if root.style-rows-count > 0 : Rectangle { height: 8px; }
+                                                        if root.style-rows-count > 0 : Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
+                                                        if root.style-rows-count > 0 : Rectangle { height: 4px; }
+                                                        if root.style-rows-count > 0 : HorizontalLayout {
                                                             spacing: 6px; alignment: start;
                                                             Text { text: "Style"; color: Palette.foreground.transparentize(30%); font-size: 11px; font-weight: 600; vertical-alignment: center; }
                                                             Text { text: "(cascading)"; color: Palette.foreground.transparentize(60%); font-size: 10px; vertical-alignment: center; }
                                                         }
                                                         for sfield[i] in root.style-rows : FieldEditor {
+                                                            visible: i < root.style-rows-count;
                                                             key: sfield.key; label: sfield.label; kind: sfield.kind; value: sfield.value; required: sfield.required;
                                                             min: sfield.min; max: sfield.max; has-bounds: sfield.has-bounds; options: sfield.options; swatch: sfield.swatch;
                                                             field-edited(key, val) => { root.style-field-edited(key, val); }
                                                             field-edited-number(key, val) => { root.style-field-edited-number(key, val); }
                                                         }
-                                                        if root.layout-rows.length > 0 : Rectangle { height: 8px; }
-                                                        if root.layout-rows.length > 0 : Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
-                                                        if root.layout-rows.length > 0 : Rectangle { height: 4px; }
-                                                        if root.layout-rows.length > 0 : HorizontalLayout {
+                                                        if root.layout-rows-count > 0 : Rectangle { height: 8px; }
+                                                        if root.layout-rows-count > 0 : Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
+                                                        if root.layout-rows-count > 0 : Rectangle { height: 4px; }
+                                                        if root.layout-rows-count > 0 : HorizontalLayout {
                                                             spacing: 6px; alignment: start;
                                                             Image { source: @image-url("icons/layout.svg"); width: 12px; height: 12px; colorize: Palette.foreground.transparentize(40%); y: 1px; }
                                                             Text { text: "Layout"; color: Palette.foreground.transparentize(30%); font-size: 11px; font-weight: 600; vertical-alignment: center; }
                                                         }
                                                         for lfield[i] in root.layout-rows : FieldEditor {
+                                                            visible: i < root.layout-rows-count;
                                                             key: lfield.key; label: lfield.label; kind: lfield.kind; value: lfield.value; required: lfield.required;
                                                             min: lfield.min; max: lfield.max; has-bounds: lfield.has-bounds; options: lfield.options; swatch: lfield.swatch;
                                                             field-edited(key, val) => { root.layout-field-edited(key, val); }
                                                             field-edited-number(key, val) => { root.layout-field-edited-number(key, val); }
                                                         }
-                                                        if root.variant-items.length > 0 : Rectangle { height: 8px; }
-                                                        if root.variant-items.length > 0 : Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
-                                                        if root.variant-items.length > 0 : Rectangle { height: 4px; }
-                                                        if root.variant-items.length > 0 : HorizontalLayout { spacing: 6px; alignment: start; Text { text: "Variants"; color: Palette.foreground.transparentize(30%); font-size: 11px; font-weight: 600; vertical-alignment: center; } }
+                                                        if root.variant-items-count > 0 : Rectangle { height: 8px; }
+                                                        if root.variant-items-count > 0 : Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
+                                                        if root.variant-items-count > 0 : Rectangle { height: 4px; }
+                                                        if root.variant-items-count > 0 : HorizontalLayout { spacing: 6px; alignment: start; Text { text: "Variants"; color: Palette.foreground.transparentize(30%); font-size: 11px; font-weight: 600; vertical-alignment: center; } }
                                                         for vitem[i] in root.variant-items : HorizontalLayout {
+                                                            visible: i < root.variant-items-count;
                                                             spacing: 8px; height: 28px;
                                                             Text { text: vitem.label; color: Palette.foreground.transparentize(40%); font-size: 11px; width: 80px; vertical-alignment: center; }
                                                             ComboBox { model: vitem.options; current-value: vitem.selected; horizontal-stretch: 1; }
                                                         }
-                                                        if root.modifier-items.length > 0 : Rectangle { height: 8px; }
-                                                        if root.modifier-items.length > 0 : Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
-                                                        if root.modifier-items.length > 0 : Rectangle { height: 4px; }
-                                                        if root.modifier-items.length > 0 : HorizontalLayout { spacing: 6px; alignment: start; Text { text: "Modifiers"; color: Palette.foreground.transparentize(30%); font-size: 11px; font-weight: 600; vertical-alignment: center; } }
+                                                        if root.modifier-items-count > 0 : Rectangle { height: 8px; }
+                                                        if root.modifier-items-count > 0 : Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
+                                                        if root.modifier-items-count > 0 : Rectangle { height: 4px; }
+                                                        if root.modifier-items-count > 0 : HorizontalLayout { spacing: 6px; alignment: start; Text { text: "Modifiers"; color: Palette.foreground.transparentize(30%); font-size: 11px; font-weight: 600; vertical-alignment: center; } }
                                                         for mitem[i] in root.modifier-items : Rectangle {
+                                                            visible: i < root.modifier-items-count;
                                                             height: 24px;
                                                             HorizontalLayout { spacing: 6px; alignment: start; padding-left: 4px;
                                                                 Rectangle { width: 6px; height: 6px; border-radius: 3px; background: Palette.accent-background; y: 5px; }
                                                                 Text { text: mitem.label; color: Palette.foreground.transparentize(20%); font-size: 11px; vertical-alignment: center; }
                                                             }
                                                         }
-                                                        if root.signal-items.length > 0 : Rectangle { height: 8px; }
-                                                        if root.signal-items.length > 0 : Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
-                                                        if root.signal-items.length > 0 : Rectangle { height: 4px; }
-                                                        if root.signal-items.length > 0 : HorizontalLayout {
+                                                        if root.signal-items-count > 0 : Rectangle { height: 8px; }
+                                                        if root.signal-items-count > 0 : Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
+                                                        if root.signal-items-count > 0 : Rectangle { height: 4px; }
+                                                        if root.signal-items-count > 0 : HorizontalLayout {
                                                             spacing: 6px; alignment: start;
                                                             Text { text: "Signals"; color: Palette.foreground.transparentize(30%); font-size: 11px; font-weight: 600; vertical-alignment: center; }
                                                             if root.connection-count > 0 : Text {
@@ -1943,6 +2023,7 @@ export component AppWindow inherits Window {
                                                             }
                                                         }
                                                         for sitem[i] in root.signal-items : Rectangle {
+                                                            visible: i < root.signal-items-count;
                                                             height: 24px;
                                                             HorizontalLayout { spacing: 6px; alignment: start; padding-left: 4px;
                                                                 Text { text: "\u{26A1}"; font-size: 10px; vertical-alignment: center; }
@@ -1963,11 +2044,12 @@ export component AppWindow inherits Window {
                                                     spacing: 8px; padding-top: 24px;
                                                     Text { text: "Page styles"; color: Palette.foreground.transparentize(30%); font-size: 13px; font-weight: 600; horizontal-alignment: center; }
                                                     Text { text: "Set global styles that cascade to all components on this page."; color: Palette.foreground.transparentize(50%); font-size: 11px; wrap: word-wrap; horizontal-alignment: center; }
-                                                    if root.style-rows.length > 0 : ScrollView {
+                                                    if root.style-rows-count > 0 : ScrollView {
                                                         vertical-stretch: 1;
                                                         VerticalLayout {
                                                             min-width: 200px; spacing: 4px; padding-top: 8px;
                                                             for sfield[i] in root.style-rows : FieldEditor {
+                                                                visible: i < root.style-rows-count;
                                                                 key: sfield.key; label: sfield.label; kind: sfield.kind; value: sfield.value; required: sfield.required;
                                                                 min: sfield.min; max: sfield.max; has-bounds: sfield.has-bounds; options: sfield.options; swatch: sfield.swatch;
                                                                 field-edited(key, val) => { root.style-field-edited(key, val); }
@@ -2071,6 +2153,7 @@ export component AppWindow inherits Window {
                                                     VerticalLayout {
                                                         spacing: 0px; alignment: start;
                                                         for line[idx] in root.editor-lines : Rectangle {
+                                                            visible: idx < root.editor-lines-count;
                                                             height: line-h;
                                                             background: line.is-current ? #ffffff06 : transparent;
                                                             if line.sel-from >= 0 : Rectangle {
@@ -2113,10 +2196,10 @@ export component AppWindow inherits Window {
                                                     if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
                                                         editor-focus.focus();
                                                         if self.mouse-x < gutter-w {
-                                                            root.editor-fold-toggle(clamp(floor((self.mouse-y - editor-sv.viewport-y) / line-h), 0, root.editor-lines.length - 1));
+                                                            root.editor-fold-toggle(clamp(floor((self.mouse-y - editor-sv.viewport-y) / line-h), 0, root.editor-lines-count - 1));
                                                         } else {
                                                             root.editor-click(
-                                                                clamp(floor((self.mouse-y - editor-sv.viewport-y) / line-h), 0, root.editor-lines.length - 1),
+                                                                clamp(floor((self.mouse-y - editor-sv.viewport-y) / line-h), 0, root.editor-lines-count - 1),
                                                                 max(0, floor((self.mouse-x - gutter-w - content-pad) / char-w))
                                                             );
                                                         }
@@ -2125,7 +2208,7 @@ export component AppWindow inherits Window {
                                                 moved => {
                                                     if self.pressed {
                                                         root.editor-drag(
-                                                            clamp(floor((self.mouse-y - editor-sv.viewport-y) / line-h), 0, root.editor-lines.length - 1),
+                                                            clamp(floor((self.mouse-y - editor-sv.viewport-y) / line-h), 0, root.editor-lines-count - 1),
                                                             max(0, floor((self.mouse-x - gutter-w - content-pad) / char-w))
                                                         );
                                                     }
@@ -2147,9 +2230,9 @@ export component AppWindow inherits Window {
                                                     min-width: 180px; padding: 16px; spacing: 8px; alignment: start;
                                                     Text { text: root.panel-title; color: Palette.foreground; font-size: 14px; font-weight: 700; letter-spacing: 0.3px; }
                                                     Text { text: root.panel-hint; color: Palette.foreground.transparentize(40%); font-size: 11px; wrap: word-wrap; }
-                                                    if root.actions.length > 0 : VerticalLayout {
+                                                    if root.actions-count > 0 : VerticalLayout {
                                                         spacing: 4px; padding-top: 8px;
-                                                        for action[i] in root.actions : Button { text: action.label; clicked => { root.clicked(i); } }
+                                                        for action[i] in root.actions : Button { visible: i < root.actions-count; text: action.label; clicked => { root.clicked(i); } }
                                                     }
                                                 }
                                             }
@@ -2207,7 +2290,8 @@ export component AppWindow inherits Window {
                             }
 
                             // ── Dock dividers ─────────────────────
-                            for div in root.dock-dividers : Rectangle {
+                            for div[i] in root.dock-dividers : Rectangle {
+                                visible: i < root.dock-dividers-count;
                                 x: div.x * 1px;
                                 y: div.y * 1px;
                                 width: div.width * 1px;
@@ -2281,7 +2365,8 @@ export component AppWindow inherits Window {
                         HorizontalLayout {
                             alignment: center;
                             spacing: 0px;
-                            for wp in root.workflow-pages : Rectangle {
+                            for wp[i] in root.workflow-pages : Rectangle {
+                                visible: i < root.workflow-pages-count;
                                 height: 32px;
                                 width: wp-bottom-label.preferred-width + 32px;
                                 background: wp.active ? Palette.accent-background.transparentize(90%) : (wp-bottom-touch.has-hover ? Palette.control-background.transparentize(50%) : transparent);
@@ -2336,19 +2421,20 @@ export component AppWindow inherits Window {
     if root.command-palette-visible : Rectangle { width: 100%; height: 100%; background: #00000060; TouchArea { clicked => { root.toggle-command-palette(); } } }
     if root.command-palette-visible : Rectangle {
         x: (root.width - 500px) / 2; y: 64px; width: 500px;
-        height: min(root.command-results.length * 36px + 48px, 420px);
+        height: min(root.command-results-count * 36px + 48px, 420px);
         background: Palette.alternate-background; border-radius: 8px; border-width: 1px; border-color: Palette.accent-background; clip: true;
         VerticalLayout {
             padding: 8px; spacing: 4px;
             HorizontalLayout {
                 spacing: 8px;
                 Image { source: @image-url("icons/search.svg"); width: 16px; height: 16px; colorize: Palette.foreground.transparentize(40%); y: 8px; }
-                LineEdit { height: 32px; horizontal-stretch: 1; placeholder-text: "Type a command..."; edited(text) => { root.command-palette-input(text); } accepted(text) => { if (root.command-results.length > 0) { root.command-selected(0); } } }
+                LineEdit { height: 32px; horizontal-stretch: 1; placeholder-text: "Type a command..."; edited(text) => { root.command-palette-input(text); } accepted(text) => { if (root.command-results-count > 0) { root.command-selected(0); } } }
             }
             ScrollView {
                 VerticalLayout {
                     spacing: 1px;
                     for cmd[i] in root.command-results : Rectangle {
+                        visible: i < root.command-results-count;
                         height: 32px; background: cmd-touch.has-hover ? Palette.control-background : transparent; border-radius: 4px;
                         HorizontalLayout {
                             padding-left: 12px; padding-right: 12px; alignment: space-between;
@@ -2370,9 +2456,9 @@ export component AppWindow inherits Window {
     }
 
     // ── Toasts ────────────────────────────────────────────────────
-    if root.notifications.length > 0 : VerticalLayout {
-        x: root.width - 340px; y: root.height - root.notifications.length * 100px - 20px; width: 320px; spacing: 8px;
-        for notif[i] in root.notifications : Toast { title: notif.title; body: notif.body; kind: notif.kind; dismissed => { root.dismiss-notification(notif.id); } }
+    if root.notifications-count > 0 : VerticalLayout {
+        x: root.width - 340px; y: root.height - root.notifications-count * 100px - 20px; width: 320px; spacing: 8px;
+        for notif[i] in root.notifications : Toast { visible: i < root.notifications-count; title: notif.title; body: notif.body; kind: notif.kind; dismissed => { root.dismiss-notification(notif.id); } }
     }
 
     // ── Menu dropdown ──────────────────────────────────────────────
@@ -2380,7 +2466,7 @@ export component AppWindow inherits Window {
         width: 100%; height: 100%; background: transparent;
         TouchArea { clicked => { fs.menu-active-index = -1; } }
     }
-    if fs.menu-active-index >= 0 && fs.menu-active-index < root.menu-defs.length : Rectangle {
+    if fs.menu-active-index >= 0 && fs.menu-active-index < root.menu-defs-count : Rectangle {
         property <int> mi: fs.menu-active-index;
 
         x: {
