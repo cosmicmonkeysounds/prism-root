@@ -64,9 +64,9 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["s
 # from each crate's `build.rs`. `slint-interpreter` is a Phase 3
 # dependency of `prism-builder`, used to materialise a
 # `BuilderDocument` into a runtime-compiled Slint component tree.
-slint = { version = "1.8", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-femtovg"] }
-slint-build = "1.8"
-slint-interpreter = { version = "1.8", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-femtovg", "internal"] }
+slint = { version = "1.16", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-femtovg"] }
+slint-build = "1.16"
+slint-interpreter = { version = "1.16", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-femtovg", "internal"] }
 # `slint-interpreter::Compiler::build_from_source` is `async` but only
 # genuinely so if a file loader is installed. `spin_on` is a zero-dep
 # blocking executor the upstream Slint examples use for exactly this

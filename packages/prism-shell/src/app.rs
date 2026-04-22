@@ -44,11 +44,11 @@ use crate::search::SearchIndex;
 use crate::selection::SelectionModel;
 use crate::telemetry::FirstPaint;
 use crate::{
-    AppCardItem, AppWindow, BreadcrumbItem, ButtonSpec, ColorPreset, CommandItem, ComponentPaletteItem,
-    DockDividerRect, DockPanelRect, DockTabItem, DocsPanelData, EditorIndentGuide, EditorLine,
-    EditorToken, ExplorerNodeItem, FieldRow, GridCellItem, GutterRect, HelpTooltipData,
-    InspectorNode, MenuDef, MenuItem, ModifierItem, PageLayoutData, PreviewNode, SearchResultItem,
-    SignalItem, TabItem, ToastItem, VariantItem, WorkflowPageItem,
+    AppCardItem, AppWindow, BreadcrumbItem, ButtonSpec, ColorPreset, CommandItem,
+    ComponentPaletteItem, DockDividerRect, DockPanelRect, DockTabItem, DocsPanelData,
+    EditorIndentGuide, EditorLine, EditorToken, ExplorerNodeItem, FieldRow, GridCellItem,
+    GutterRect, HelpTooltipData, InspectorNode, MenuDef, MenuItem, ModifierItem, PageLayoutData,
+    PreviewNode, SearchResultItem, SignalItem, TabItem, ToastItem, VariantItem, WorkflowPageItem,
 };
 
 // ── Persistent VecModels ───────────────────────────────────────────

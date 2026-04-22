@@ -19,20 +19,21 @@
 //!
 //! ## Hot-reload
 //!
+//! **`.slint` files** — Slint live-preview. The cargo command gets
+//! `--features prism-shell/live-preview` and a compile-time
+//! `SLINT_LIVE_PREVIEW=1` env var. `slint-build` swaps the baked
+//! codegen for a `LiveReloadingComponent` wrapper that parses
+//! `ui/app.slint` at runtime via `slint-interpreter` and reloads it
+//! whenever the file changes. In-process, zero CLI work.
+//!
 //! **`.rs` files** — single-target `prism dev shell` runs the
 //! cargo child inside a [`crate::dev_loop::DevLoop`] which watches
 //! `packages/prism-shell/src/` (plus any extra roots the supervisor
 //! adds) for `.rs` changes and kills + respawns the child when a
 //! batch lands. cargo's incremental compilation keeps iteration fast.
 //!
-//! **Slint live-preview is disabled.** The interpreter-mode
-//! `ChangeTracker` drops `VRc<ItemTree>` instances during binding
-//! evaluation, triggering "Recursion detected" panics in
-//! `PropertyHandle::remove_binding` on any model update. Compiled
-//! Slint mode handles persistent `VecModel` updates correctly.
-//! `.slint` file changes require a rebuild (`cargo run` respawn).
-//!
-//! `--no-hot-reload` additionally disables the `.rs` respawn loop.
+//! `--no-hot-reload` disables both the live-preview flags and the
+//! `.rs` respawn loop.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -90,10 +91,12 @@ impl DevArgs {
 /// server. The first two are synchronous preflight handled inside
 /// [`run`]; the static server is the long-running foreground child.
 ///
-/// Slint live-preview is permanently disabled (interpreter VRc
-/// panic). The `.rs` respawn half is wired up separately in [`run`]
-/// — only the single-target `prism dev shell` path dispatches
-/// through [`crate::dev_loop::DevLoop`].
+/// When `hot_reload` is true, the shell and studio builders include
+/// Slint's `live-preview` feature flag and the `SLINT_LIVE_PREVIEW=1`
+/// env var so `.slint` changes reload in-process via the interpreter.
+/// The `.rs` respawn half is wired up separately in [`run`] — only
+/// single-target `prism dev shell` dispatches through
+/// [`crate::dev_loop::DevLoop`].
 pub fn plan(args: &DevArgs, workspace: &Workspace) -> Vec<CommandBuilder> {
     let targets: Vec<DevTarget> = match args.target {
         DevTarget::All => vec![
@@ -146,18 +149,22 @@ fn cargo_run_dev_builder(
     package: &str,
     label: &str,
     workspace: &Workspace,
-    _hot_reload: bool,
+    hot_reload: bool,
 ) -> CommandBuilder {
-    // Slint live-preview (interpreter mode) is disabled: the
-    // interpreter's ChangeTracker drops VRc<ItemTree> during binding
-    // evaluation, triggering "Recursion detected" panics on any model
-    // update.  Compiled mode works correctly with persistent VecModels.
-    // The .rs respawn half of hot-reload still works (DevLoop).
-    CommandBuilder::cargo()
+    let mut cmd = CommandBuilder::cargo()
         .arg("run")
         .package(package)
         .cwd(workspace.root())
-        .label(label)
+        .label(label);
+
+    if hot_reload {
+        cmd = cmd
+            .arg("--features")
+            .arg(format!("{package}/live-preview"))
+            .env("SLINT_LIVE_PREVIEW", "1");
+    }
+
+    cmd
 }
 
 fn web_build_builder(workspace: &Workspace) -> CommandBuilder {
@@ -303,9 +310,9 @@ fn exec_foreground(cmd: &CommandBuilder) -> Result<u8> {
 
 /// Drive a cargo child through the `DevLoop` respawn supervisor.
 /// Watches the given source trees for `.rs` changes and kills +
-/// respawns the child on every debounced batch. `.slint` changes are
-/// already handled in-process by Slint's live-preview, so they are
-/// deliberately absent from the watched-extension set.
+/// respawns the child on every debounced batch. `.slint` changes
+/// are handled in-process by Slint's live-preview (interpreter mode)
+/// when hot-reload is active, so they don't need a respawn.
 fn exec_dev_loop(cmd: &CommandBuilder, watch_paths: Vec<PathBuf>) -> Result<u8> {
     println!("$ {} (hot-reload)", cmd.display());
     let dev_loop =
@@ -343,28 +350,26 @@ mod tests {
     }
 
     #[test]
-    fn shell_is_the_default_target() {
+    fn shell_default_enables_live_preview() {
         let a = args(DevTarget::Shell);
         let p = plan(&a, &ws());
         assert_eq!(p.len(), 1);
         assert_eq!(p[0].label_str(), Some("shell"));
         let argv = p[0].argv().1;
-        // Live-preview is disabled — interpreter drops VRcs during
-        // ChangeTracker binding evaluation. Plain compiled mode.
-        assert_eq!(argv, vec!["run", "--package", "prism-shell"]);
+        assert_eq!(
+            argv,
+            vec![
+                "run",
+                "--package",
+                "prism-shell",
+                "--features",
+                "prism-shell/live-preview"
+            ]
+        );
     }
 
     #[test]
-    fn shell_no_hot_reload_same_as_default() {
-        let a = args_no_reload(DevTarget::Shell);
-        let p = plan(&a, &ws());
-        assert_eq!(p.len(), 1);
-        let argv = p[0].argv().1;
-        assert_eq!(argv, vec!["run", "--package", "prism-shell"]);
-    }
-
-    #[test]
-    fn shell_never_sets_slint_live_preview_env() {
+    fn shell_default_sets_slint_live_preview_env() {
         let a = args(DevTarget::Shell);
         let p = plan(&a, &ws());
         let built = p[0].build();
@@ -373,23 +378,41 @@ mod tests {
             .filter_map(|(k, _)| k.to_str().map(|s| s.to_string()))
             .collect();
         assert!(
-            !envs.iter().any(|k| k == "SLINT_LIVE_PREVIEW"),
-            "live-preview disabled due to interpreter VRc panic"
+            envs.iter().any(|k| k == "SLINT_LIVE_PREVIEW"),
+            "live-preview should be enabled by default"
         );
     }
 
     #[test]
-    fn studio_runs_cargo_run_on_prism_studio_without_live_preview() {
+    fn shell_no_hot_reload_disables_live_preview() {
+        let a = args_no_reload(DevTarget::Shell);
+        let p = plan(&a, &ws());
+        assert_eq!(p.len(), 1);
+        let argv = p[0].argv().1;
+        assert_eq!(argv, vec!["run", "--package", "prism-shell"]);
+    }
+
+    #[test]
+    fn studio_default_enables_live_preview() {
         let a = args(DevTarget::Studio);
         let p = plan(&a, &ws());
         assert_eq!(p.len(), 1);
         assert_eq!(p[0].label_str(), Some("studio"));
         let argv = p[0].argv().1;
-        assert_eq!(argv, vec!["run", "--package", "prism-studio"]);
+        assert_eq!(
+            argv,
+            vec![
+                "run",
+                "--package",
+                "prism-studio",
+                "--features",
+                "prism-studio/live-preview"
+            ]
+        );
     }
 
     #[test]
-    fn studio_no_hot_reload_same_as_default() {
+    fn studio_no_hot_reload_disables_live_preview() {
         let a = args_no_reload(DevTarget::Studio);
         let p = plan(&a, &ws());
         assert_eq!(p.len(), 1);
@@ -460,7 +483,7 @@ mod tests {
     }
 
     #[test]
-    fn all_target_does_not_enable_live_preview() {
+    fn all_target_enables_live_preview_on_shell() {
         let a = args(DevTarget::All);
         let p = plan(&a, &ws());
         let shell = p
@@ -468,8 +491,11 @@ mod tests {
             .find(|c| c.label_str() == Some("shell"))
             .expect("shell slot in all plan");
         assert!(
-            !shell.argv().1.contains(&"live-preview".to_string()),
-            "live-preview disabled due to interpreter VRc panic"
+            shell
+                .argv()
+                .1
+                .contains(&"prism-shell/live-preview".to_string()),
+            "live-preview should be enabled on the shell slot"
         );
     }
 }
