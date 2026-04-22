@@ -327,6 +327,18 @@ pub fn compile_slint_preview(
         .ok_or_else(|| InstantiateError::Compile("missing BuilderPreview export".into()))
 }
 
+/// Build a [`slint::ComponentFactory`] that embeds the given preview
+/// definition inside a `ComponentContainer`. Call this after
+/// [`compile_slint_preview`] and set the returned factory on the
+/// `AppWindow`'s `preview-factory` property.
+#[cfg(feature = "interpreter")]
+#[allow(deprecated)]
+pub fn preview_component_factory(
+    definition: slint_interpreter::ComponentDefinition,
+) -> slint::ComponentFactory {
+    slint::ComponentFactory::new(move |ctx| definition.create_embedded(ctx).ok())
+}
+
 /// Error returned when the `slint-interpreter` round-trip fails.
 ///
 /// Only produced by [`compile_slint_source`] / [`instantiate_document`]

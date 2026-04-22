@@ -16,11 +16,12 @@ use std::time::Instant;
 use prism_builder::AssetSource;
 use prism_builder::{
     app::{AppIcon, NavigationConfig, Page, PrismApp},
-    compute_layout,
+    compile_slint_preview, compute_layout,
     layout::{
         AlignOption, Dimension, FlexDirection, FlowDisplay, FlowProps, GridPlacement,
         JustifyOption, LayoutMode, PageSize, TrackSize,
     },
+    preview_component_factory, render_document_slint_preview,
     starter::register_builtins,
     BuilderDocument, ComponentRegistry, FieldKind, LiveDocument, Node, NodeId, StyleProperties,
 };
@@ -2692,6 +2693,12 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
     if !is_launchpad {
         push_editor_data(&inner.models, window, &state.editor_state);
         push_builder_preview(&inner.models, window, &state.builder_document);
+        push_wysiwyg_preview(
+            window,
+            &state.builder_document,
+            &inner.registry,
+            &state.tokens,
+        );
         push_live_preview(
             &inner.models,
             window,
@@ -3054,6 +3061,36 @@ fn push_live_preview(
     walk_preview(root, &layout, selection, &mut items);
     let count = sync_model(&models.preview_nodes, &items);
     window.set_preview_nodes_count(count);
+}
+
+#[allow(deprecated)]
+fn push_wysiwyg_preview(
+    window: &AppWindow,
+    doc: &BuilderDocument,
+    registry: &ComponentRegistry,
+    tokens: &DesignTokens,
+) {
+    if doc.root.is_none() {
+        window.set_preview_factory_ready(false);
+        return;
+    }
+    match render_document_slint_preview(doc, registry, tokens) {
+        Ok(source) => match compile_slint_preview(&source) {
+            Ok(definition) => {
+                let factory = preview_component_factory(definition);
+                window.set_preview_factory(factory);
+                window.set_preview_factory_ready(true);
+            }
+            Err(e) => {
+                eprintln!("[preview] compile error: {e}");
+                window.set_preview_factory_ready(false);
+            }
+        },
+        Err(e) => {
+            eprintln!("[preview] render error: {e}");
+            window.set_preview_factory_ready(false);
+        }
+    }
 }
 
 fn extract_preview_text(

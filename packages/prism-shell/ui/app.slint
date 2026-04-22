@@ -966,6 +966,8 @@ export component AppWindow inherits Window {
     // Builder canvas
     in property <int> builder-node-count: 0;
     in property <[PreviewNode]> preview-nodes: [];
+    in property <component-factory> preview-factory;
+    in property <bool> preview-factory-ready: false;
     callback builder-node-clicked(string);
     callback builder-text-edited(string, string);
     callback builder-delete-node(string);
@@ -1690,151 +1692,32 @@ export component AppWindow inherits Window {
                                                                     }
                                                                 }
 
-                                                                // Live preview: absolutely-positioned nodes from layout engine
+                                                                // WYSIWYG live preview via interpreter-compiled ComponentContainer
                                                                 Rectangle {
-                                                                    visible: root.preview-nodes-count > 0;
+                                                                    visible: root.preview-factory-ready && root.builder-node-count > 0;
+                                                                    vertical-stretch: 1;
+                                                                    width: root.viewport-width * root.canvas-zoom * 1px;
+                                                                    min-height: 400px * root.canvas-zoom;
+                                                                    ComponentContainer {
+                                                                        component-factory: root.preview-factory;
+                                                                        width: 100%;
+                                                                        height: 100%;
+                                                                    }
+                                                                }
+
+                                                                // Selection overlays on top of the WYSIWYG preview
+                                                                if root.preview-factory-ready && root.preview-nodes-count > 0 : Rectangle {
                                                                     vertical-stretch: 1;
                                                                     for pn[i] in root.preview-nodes : Rectangle {
-                                                                        visible: i < root.preview-nodes-count;
+                                                                        visible: i < root.preview-nodes-count && pn.selected;
                                                                         x: pn.x * root.canvas-zoom * 1px;
                                                                         y: pn.y * root.canvas-zoom * 1px;
                                                                         width: pn.w * root.canvas-zoom * 1px;
                                                                         height: pn.h * root.canvas-zoom * 1px;
-                                                                        border-width: pn.selected ? 2px : 0px;
+                                                                        border-width: 2px;
                                                                         border-color: Palette.accent-background;
                                                                         border-radius: pn.border-radius * 1px;
-                                                                        background: pn.bg;
-
-                                                                        Text {
-                                                                            visible: pn.component-type == "heading";
-                                                                            text: pn.text;
-                                                                            color: pn.fg;
-                                                                            font-size: pn.font-size * root.canvas-zoom * 1px;
-                                                                            font-weight: 700;
-                                                                            wrap: word-wrap;
-                                                                            horizontal-alignment: left;
-                                                                            vertical-alignment: top;
-                                                                        }
-                                                                        Text {
-                                                                            visible: pn.component-type == "text";
-                                                                            text: pn.text;
-                                                                            color: pn.fg;
-                                                                            font-size: pn.font-size * root.canvas-zoom * 1px;
-                                                                            wrap: word-wrap;
-                                                                            horizontal-alignment: left;
-                                                                            vertical-alignment: top;
-                                                                        }
-                                                                        Rectangle {
-                                                                            visible: pn.component-type == "button";
-                                                                            width: 100%; height: 100%;
-                                                                            background: #3b82f6;
-                                                                            border-radius: 6px * root.canvas-zoom;
-                                                                            Text {
-                                                                                text: pn.text;
-                                                                                color: #ffffff;
-                                                                                font-size: pn.font-size * root.canvas-zoom * 1px;
-                                                                                font-weight: 600;
-                                                                                horizontal-alignment: center;
-                                                                                vertical-alignment: center;
-                                                                            }
-                                                                        }
-                                                                        Text {
-                                                                            visible: pn.component-type == "link";
-                                                                            text: pn.text;
-                                                                            color: #5aa0ff;
-                                                                            font-size: pn.font-size * root.canvas-zoom * 1px;
-                                                                            horizontal-alignment: left;
-                                                                            vertical-alignment: top;
-                                                                        }
-                                                                        Rectangle {
-                                                                            visible: pn.component-type == "card";
-                                                                            width: 100%; height: 100%;
-                                                                            border-width: 1px;
-                                                                            border-color: #3b4252;
-                                                                            border-radius: 8px * root.canvas-zoom;
-                                                                            background: #2e3440;
-                                                                            VerticalLayout {
-                                                                                padding: 16px * root.canvas-zoom;
-                                                                                spacing: 8px * root.canvas-zoom;
-                                                                                Text { text: pn.text; color: pn.fg; font-size: 18px * root.canvas-zoom; font-weight: 600; }
-                                                                                Text { visible: pn.label != ""; text: pn.label; color: #9ca4b4; font-size: 14px * root.canvas-zoom; wrap: word-wrap; }
-                                                                            }
-                                                                        }
-                                                                        Rectangle {
-                                                                            visible: pn.component-type == "image";
-                                                                            width: 100%; height: 100%;
-                                                                            background: #2a3140;
-                                                                            border-radius: 6px * root.canvas-zoom;
-                                                                            Text { text: pn.alt != "" ? pn.alt : "Image"; color: #9ca4b4; font-size: 12px * root.canvas-zoom; horizontal-alignment: center; vertical-alignment: center; }
-                                                                        }
-                                                                        VerticalLayout {
-                                                                            visible: pn.component-type == "input";
-                                                                            spacing: 4px * root.canvas-zoom;
-                                                                            Text { visible: pn.label != ""; text: pn.label; color: pn.fg; font-size: 12px * root.canvas-zoom; }
-                                                                            Rectangle {
-                                                                                height: 32px * root.canvas-zoom;
-                                                                                background: #1e2533;
-                                                                                border-radius: 4px * root.canvas-zoom;
-                                                                                Text {
-                                                                                    text: pn.placeholder != "" ? pn.placeholder : "...";
-                                                                                    color: #6b7280;
-                                                                                    font-size: 14px * root.canvas-zoom;
-                                                                                    vertical-alignment: center;
-                                                                                    x: 8px * root.canvas-zoom;
-                                                                                }
-                                                                            }
-                                                                        }
-                                                                        Rectangle {
-                                                                            visible: pn.component-type == "code";
-                                                                            width: 100%; height: 100%;
-                                                                            background: #1a1e28;
-                                                                            border-radius: 6px * root.canvas-zoom;
-                                                                            VerticalLayout {
-                                                                                padding: 12px * root.canvas-zoom;
-                                                                                Text { text: pn.text; color: #a3be8c; font-size: 13px * root.canvas-zoom; font-family: "monospace"; wrap: word-wrap; }
-                                                                            }
-                                                                        }
-                                                                        Rectangle {
-                                                                            visible: pn.component-type == "divider";
-                                                                            width: 100%; height: 1px;
-                                                                            background: #3b4252;
-                                                                        }
-                                                                        Rectangle {
-                                                                            visible: pn.component-type == "table";
-                                                                            width: 100%; height: 100%;
-                                                                            border-width: 1px;
-                                                                            border-color: #3b4252;
-                                                                            border-radius: 4px * root.canvas-zoom;
-                                                                            VerticalLayout {
-                                                                                padding: 8px * root.canvas-zoom;
-                                                                                spacing: 4px * root.canvas-zoom;
-                                                                                Text { visible: pn.label != ""; text: pn.label; color: #9ca4b4; font-size: 12px * root.canvas-zoom; }
-                                                                                Text { text: pn.text != "" ? pn.text : "Table"; color: pn.fg; font-size: 13px * root.canvas-zoom; font-weight: 600; }
-                                                                            }
-                                                                        }
-                                                                        VerticalLayout {
-                                                                            visible: pn.component-type == "accordion";
-                                                                            spacing: 4px * root.canvas-zoom;
-                                                                            Rectangle {
-                                                                                height: 32px * root.canvas-zoom;
-                                                                                background: #2e3440;
-                                                                                border-radius: 4px * root.canvas-zoom;
-                                                                                Text { text: "\u{25B8} " + pn.text; color: pn.fg; font-size: 14px * root.canvas-zoom; font-weight: 600; vertical-alignment: center; x: 8px * root.canvas-zoom; }
-                                                                            }
-                                                                        }
-                                                                        VerticalLayout {
-                                                                            visible: pn.component-type == "tabs";
-                                                                            spacing: 0px;
-                                                                            Rectangle {
-                                                                                height: 32px * root.canvas-zoom;
-                                                                                background: #2e3440;
-                                                                                HorizontalLayout {
-                                                                                    Text { text: pn.text != "" ? pn.text : "Tab 1"; color: pn.fg; font-size: 13px * root.canvas-zoom; horizontal-alignment: center; vertical-alignment: center; }
-                                                                                }
-                                                                            }
-                                                                        }
-
-                                                                        // Click overlay for selection
+                                                                        background: Palette.accent-background.transparentize(90%);
                                                                         TouchArea {
                                                                             mouse-cursor: pointer;
                                                                             clicked => { root.builder-node-clicked(pn.id); }
@@ -1843,7 +1726,7 @@ export component AppWindow inherits Window {
                                                                 }
 
                                                                 VerticalLayout {
-                                                                    visible: root.preview-nodes-count == 0 && root.grid-cells-count == 0;
+                                                                    visible: root.builder-node-count == 0 && root.grid-cells-count == 0;
                                                                     alignment: center; spacing: 8px; padding-top: 80px;
                                                                     Text { text: "Empty document"; color: Palette.foreground.transparentize(50%); font-size: 16px; horizontal-alignment: center; }
                                                                     Text { text: "Add a component from the palette to get started."; color: Palette.foreground.transparentize(60%); font-size: 12px; horizontal-alignment: center; }

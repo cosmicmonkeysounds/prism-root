@@ -79,7 +79,8 @@ pub mod syntax_provider;
 pub use live::{LiveDiagnostic, LiveDocument, SourceEditError, SourceSelection};
 #[cfg(feature = "interpreter")]
 pub use render::{
-    compile_slint_preview, compile_slint_source, instantiate_document, InstantiateError,
+    compile_slint_preview, compile_slint_source, instantiate_document, preview_component_factory,
+    InstantiateError,
 };
 #[cfg(feature = "interpreter")]
 pub use syntax_provider::BuilderSyntaxProvider;
