@@ -437,4 +437,75 @@ export component BuilderRoot inherits Window {
         let doc = derive_document_from_source(source, &map);
         assert!(doc.root.is_none());
     }
+
+    #[test]
+    fn derive_grid_placement_from_marker() {
+        let source = r#"export component BuilderRoot inherits Window {
+    VerticalLayout {
+        // @node-start:root:container
+        VerticalLayout {
+            // @node-start:n1:image
+            // @grid:0,0
+            Image {
+                source: "photo.png";
+            }
+            // @node-end:n1
+            // @node-start:n2:text
+            // @grid:1,0
+            Text {
+                text: "Hello";
+            }
+            // @node-end:n2
+        }
+        // @node-end:root
+    }
+}"#;
+        let map = build_source_map_from_markers(source);
+        let doc = derive_document_from_source(source, &map);
+
+        let root = doc.root.as_ref().expect("should have root node");
+        assert_eq!(root.id, "root");
+        assert_eq!(root.children.len(), 2);
+
+        let n1 = &root.children[0];
+        assert_eq!(n1.id, "n1");
+        if let LayoutMode::Flow(ref f) = n1.layout_mode {
+            assert_eq!(f.grid_column, GridPlacement::Line { index: 1 });
+            assert_eq!(f.grid_row, GridPlacement::Line { index: 1 });
+        } else {
+            panic!("expected Flow layout mode for n1");
+        }
+
+        let n2 = &root.children[1];
+        assert_eq!(n2.id, "n2");
+        if let LayoutMode::Flow(ref f) = n2.layout_mode {
+            assert_eq!(f.grid_column, GridPlacement::Line { index: 2 });
+            assert_eq!(f.grid_row, GridPlacement::Line { index: 1 });
+        } else {
+            panic!("expected Flow layout mode for n2");
+        }
+    }
+
+    #[test]
+    fn derive_auto_placement_without_grid_marker() {
+        let source = r#"export component BuilderRoot inherits Window {
+    VerticalLayout {
+        // @node-start:n1:image
+        Image {
+            source: "photo.png";
+        }
+        // @node-end:n1
+    }
+}"#;
+        let map = build_source_map_from_markers(source);
+        let doc = derive_document_from_source(source, &map);
+
+        let root = doc.root.as_ref().unwrap();
+        if let LayoutMode::Flow(ref f) = root.layout_mode {
+            assert_eq!(f.grid_column, GridPlacement::Auto);
+            assert_eq!(f.grid_row, GridPlacement::Auto);
+        } else {
+            panic!("expected Flow layout mode");
+        }
+    }
 }

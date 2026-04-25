@@ -23,7 +23,7 @@ use serde_json::Value;
 use thiserror::Error;
 
 use crate::document::Node;
-use crate::layout::{Dimension, FlexDirection, FlowDisplay, LayoutMode};
+use crate::layout::{Dimension, FlexDirection, FlowDisplay, GridPlacement, LayoutMode};
 use crate::registry::{ComponentRegistry, FieldSpec};
 use crate::signal::SignalDef;
 use crate::slint_source::SlintEmitter;
@@ -121,6 +121,13 @@ impl<'a> RenderSlintContext<'a> {
     pub fn render_child(&self, child: &Node, out: &mut SlintEmitter) -> Result<(), RenderError> {
         if self.emit_markers {
             out.line(format!("// @node-start:{}:{}", child.id, child.component));
+            if let LayoutMode::Flow(f) = &child.layout_mode {
+                if let (GridPlacement::Line { index: col }, GridPlacement::Line { index: row }) =
+                    (&f.grid_column, &f.grid_row)
+                {
+                    out.line(format!("// @grid:{},{}", col - 1, row - 1));
+                }
+            }
         }
 
         let component = self
