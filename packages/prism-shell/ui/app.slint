@@ -1275,6 +1275,17 @@ export component AppWindow inherits Window {
     callback layout-field-edited(string, string);
     callback layout-field-edited-number(string, float);
 
+    // Transform properties for selected node
+    in property <[FieldRow]> transform-rows: [];
+    callback transform-field-edited(string, string);
+    callback transform-field-edited-number(string, float);
+
+    // Node drag (positioned nodes)
+    // transform-tool: "move" | "rotate" | "scale"
+    in-out property <string> transform-tool: "move";
+    callback node-drag-moved(string /* node-id */, float /* new-x */, float /* new-y */);
+    callback node-drag-finished(string /* node-id */, float /* new-x */, float /* new-y */);
+
     // Composition systems
     in property <[ModifierItem]> modifier-items: [];
     in property <[SignalItem]> signal-items: [];
@@ -1373,6 +1384,7 @@ export component AppWindow inherits Window {
     in property <int> inspector-nodes-count: 0;
     in property <int> field-rows-count: 0;
     in property <int> layout-rows-count: 0;
+    in property <int> transform-rows-count: 0;
     in property <int> style-rows-count: 0;
     in property <int> breadcrumbs-count: 0;
     in property <int> component-palette-count: 0;
@@ -1604,6 +1616,26 @@ export component AppWindow inherits Window {
                                                     IconButton { icon: @image-url("icons/chevron-down.svg"); enabled: root.has-selection; help-id: "shell.toolbar.move-down"; clicked => { root.node-move-down(""); } hover-start(id, x, y) => { root.help-hover(id, x, y); } hover-end => { root.help-leave(); } }
                                                     ToolbarSeparator { }
                                                     IconButton { icon: @image-url("icons/trash.svg"); enabled: root.has-selection; help-id: "shell.toolbar.delete"; clicked => { root.builder-delete-node(""); } hover-start(id, x, y) => { root.help-hover(id, x, y); } hover-end => { root.help-leave(); } }
+                                                    ToolbarSeparator { }
+                                                    // Transform tool mode buttons (Move / Rotate / Scale)
+                                                    Rectangle {
+                                                        width: 28px; height: 28px; border-radius: 6px;
+                                                        background: root.transform-tool == "move" ? Palette.accent-background.transparentize(85%) : (tool-move-ta.has-hover ? Palette.control-background : transparent);
+                                                        Text { text: "\u{2725}"; font-size: 14px; horizontal-alignment: center; vertical-alignment: center; color: root.transform-tool == "move" ? Palette.accent-foreground : Palette.foreground.transparentize(20%); }
+                                                        tool-move-ta := TouchArea { mouse-cursor: pointer; clicked => { root.transform-tool = "move"; } }
+                                                    }
+                                                    Rectangle {
+                                                        width: 28px; height: 28px; border-radius: 6px;
+                                                        background: root.transform-tool == "rotate" ? Palette.accent-background.transparentize(85%) : (tool-rotate-ta.has-hover ? Palette.control-background : transparent);
+                                                        Text { text: "\u{21BB}"; font-size: 14px; horizontal-alignment: center; vertical-alignment: center; color: root.transform-tool == "rotate" ? Palette.accent-foreground : Palette.foreground.transparentize(20%); }
+                                                        tool-rotate-ta := TouchArea { mouse-cursor: pointer; clicked => { root.transform-tool = "rotate"; } }
+                                                    }
+                                                    Rectangle {
+                                                        width: 28px; height: 28px; border-radius: 6px;
+                                                        background: root.transform-tool == "scale" ? Palette.accent-background.transparentize(85%) : (tool-scale-ta.has-hover ? Palette.control-background : transparent);
+                                                        Text { text: "\u{2922}"; font-size: 14px; horizontal-alignment: center; vertical-alignment: center; color: root.transform-tool == "scale" ? Palette.accent-foreground : Palette.foreground.transparentize(20%); }
+                                                        tool-scale-ta := TouchArea { mouse-cursor: pointer; clicked => { root.transform-tool = "scale"; } }
+                                                    }
                                                     ToolbarSeparator { }
                                                     Rectangle {
                                                         width: 28px; height: 28px; border-radius: 6px;
@@ -2004,9 +2036,49 @@ export component AppWindow inherits Window {
                                                                             }
                                                                         }
 
-                                                                        TouchArea {
-                                                                            mouse-cursor: pointer;
+                                                                        // Tool mode indicator for positioned nodes
+                                                                        if pn.positioned : Rectangle {
+                                                                            x: parent.width - 20px; y: 2px;
+                                                                            width: 16px; height: 16px;
+                                                                            border-radius: 3px;
+                                                                            background: Palette.accent-background;
+                                                                            Text {
+                                                                                text: root.transform-tool == "move" ? "\u{2725}"
+                                                                                    : root.transform-tool == "rotate" ? "\u{21BB}"
+                                                                                    : "\u{2922}";
+                                                                                color: Palette.accent-foreground;
+                                                                                font-size: 10px;
+                                                                                horizontal-alignment: center;
+                                                                                vertical-alignment: center;
+                                                                            }
+                                                                            tool-cycle-touch := TouchArea {
+                                                                                mouse-cursor: pointer;
+                                                                                pointer-event(event) => {
+                                                                                    if event.kind == PointerEventKind.down && event.button == PointerEventButton.right {
+                                                                                        if root.transform-tool == "move" {
+                                                                                            root.transform-tool = "rotate";
+                                                                                        } else if root.transform-tool == "rotate" {
+                                                                                            root.transform-tool = "scale";
+                                                                                        } else {
+                                                                                            root.transform-tool = "move";
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                        }
+
+                                                                        sel-node-touch := TouchArea {
+                                                                            mouse-cursor: pn.positioned ? move : pointer;
                                                                             clicked => { root.builder-node-clicked(pn.id); }
+                                                                            moved => {
+                                                                                if pn.positioned && self.pressed {
+                                                                                    root.node-drag-moved(
+                                                                                        pn.id,
+                                                                                        pn.x + (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px),
+                                                                                        pn.y + (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px)
+                                                                                    );
+                                                                                }
+                                                                            }
                                                                             pointer-event(event) => {
                                                                                 if event.kind == PointerEventKind.down && event.button == PointerEventButton.right {
                                                                                     root.context-menu-show(
@@ -2014,6 +2086,13 @@ export component AppWindow inherits Window {
                                                                                         pn.id,
                                                                                         (self.absolute-position.x + self.mouse-x) / 1px,
                                                                                         (self.absolute-position.y + self.mouse-y) / 1px
+                                                                                    );
+                                                                                }
+                                                                                if pn.positioned && event.kind == PointerEventKind.up && event.button == PointerEventButton.left {
+                                                                                    root.node-drag-finished(
+                                                                                        pn.id,
+                                                                                        pn.x + (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px),
+                                                                                        pn.y + (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px)
                                                                                     );
                                                                                 }
                                                                             }
@@ -2345,6 +2424,23 @@ export component AppWindow inherits Window {
                                                             user-swatches: root.user-color-swatches;
                                                             field-edited(key, val) => { root.layout-field-edited(key, val); }
                                                             field-edited-number(key, val) => { root.layout-field-edited-number(key, val); }
+                                                            save-color-swatch(hex) => { root.save-color-swatch(hex); }
+                                                        }
+                                                        if root.transform-rows-count > 0 : Rectangle { height: 8px; }
+                                                        if root.transform-rows-count > 0 : Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
+                                                        if root.transform-rows-count > 0 : Rectangle { height: 4px; }
+                                                        if root.transform-rows-count > 0 : HorizontalLayout {
+                                                            spacing: 6px; alignment: start;
+                                                            Image { source: @image-url("icons/box.svg"); width: 12px; height: 12px; colorize: Palette.foreground.transparentize(40%); y: 1px; }
+                                                            Text { text: "Transform"; color: Palette.foreground.transparentize(30%); font-size: 11px; font-weight: 600; vertical-alignment: center; }
+                                                        }
+                                                        for tfield[i] in root.transform-rows : FieldEditor {
+                                                            visible: i < root.transform-rows-count;
+                                                            key: tfield.key; label: tfield.label; kind: tfield.kind; value: tfield.value; required: tfield.required;
+                                                            min: tfield.min; max: tfield.max; has-bounds: tfield.has-bounds; options: tfield.options; swatch: tfield.swatch;
+                                                            user-swatches: root.user-color-swatches;
+                                                            field-edited(key, val) => { root.transform-field-edited(key, val); }
+                                                            field-edited-number(key, val) => { root.transform-field-edited-number(key, val); }
                                                             save-color-swatch(hex) => { root.save-color-swatch(hex); }
                                                         }
                                                         if root.variant-items-count > 0 : Rectangle { height: 8px; }

@@ -365,6 +365,72 @@ impl PropertiesPanel {
         }
     }
 
+    /// Produce transform rows (position, rotation, scale, anchor) for
+    /// the selected node. Godot-style: every node has a transform.
+    pub fn transform_rows(doc: &BuilderDocument, selected: &Option<NodeId>) -> Vec<FieldRowData> {
+        let Some(selected_id) = selected else {
+            return vec![];
+        };
+        let Some(node) = doc.root.as_ref().and_then(|n| n.find(selected_id)) else {
+            return vec![];
+        };
+        let t = &node.transform;
+        vec![
+            layout_number(
+                "transform.x",
+                "Position X",
+                format_f32(t.position[0]),
+                -4000.0,
+                4000.0,
+            ),
+            layout_number(
+                "transform.y",
+                "Position Y",
+                format_f32(t.position[1]),
+                -4000.0,
+                4000.0,
+            ),
+            layout_number(
+                "transform.rotation",
+                "Rotation",
+                format_f32(t.rotation.to_degrees()),
+                -360.0,
+                360.0,
+            ),
+            layout_number(
+                "transform.scale_x",
+                "Scale X",
+                format_f32(t.scale[0]),
+                0.01,
+                10.0,
+            ),
+            layout_number(
+                "transform.scale_y",
+                "Scale Y",
+                format_f32(t.scale[1]),
+                0.01,
+                10.0,
+            ),
+            layout_select(
+                "transform.anchor",
+                "Anchor",
+                format_anchor(t.anchor),
+                vec![
+                    "top-left",
+                    "top-center",
+                    "top-right",
+                    "center-left",
+                    "center",
+                    "center-right",
+                    "bottom-left",
+                    "bottom-center",
+                    "bottom-right",
+                    "stretch",
+                ],
+            ),
+        ]
+    }
+
     /// Produce one [`FieldRowData`] per entry in the selected
     /// component's schema. Returns an empty list if nothing is
     /// selected or the component is missing from the registry.
@@ -585,6 +651,23 @@ fn format_justify(j: JustifyOption) -> String {
     .into()
 }
 
+fn format_anchor(a: prism_core::foundation::spatial::Anchor) -> String {
+    use prism_core::foundation::spatial::Anchor;
+    match a {
+        Anchor::TopLeft => "top-left",
+        Anchor::TopCenter => "top-center",
+        Anchor::TopRight => "top-right",
+        Anchor::CenterLeft => "center-left",
+        Anchor::Center => "center",
+        Anchor::CenterRight => "center-right",
+        Anchor::BottomLeft => "bottom-left",
+        Anchor::BottomCenter => "bottom-center",
+        Anchor::BottomRight => "bottom-right",
+        Anchor::Stretch => "stretch",
+    }
+    .into()
+}
+
 fn format_f32(v: f32) -> String {
     if v.fract() == 0.0 && v.is_finite() {
         format!("{}", v as i64)
@@ -777,6 +860,72 @@ mod tests {
         assert_eq!(val_row.kind, "number");
         assert!(val_row.has_bounds);
         assert_eq!(val_row.value, "200");
+    }
+
+    #[test]
+    fn transform_rows_default_identity() {
+        let doc = BuilderDocument {
+            root: Some(Node {
+                id: "root".into(),
+                component: "container".into(),
+                props: json!({}),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let rows = PropertiesPanel::transform_rows(&doc, &Some("root".into()));
+        assert_eq!(rows.len(), 6);
+        let keys: Vec<&str> = rows.iter().map(|r| r.key.as_str()).collect();
+        assert_eq!(
+            keys,
+            vec![
+                "transform.x",
+                "transform.y",
+                "transform.rotation",
+                "transform.scale_x",
+                "transform.scale_y",
+                "transform.anchor"
+            ]
+        );
+        assert_eq!(rows[0].value, "0");
+        assert_eq!(rows[1].value, "0");
+        assert_eq!(rows[2].value, "0");
+        assert_eq!(rows[3].value, "1");
+        assert_eq!(rows[4].value, "1");
+        assert_eq!(rows[5].value, "top-left");
+        assert_eq!(rows[5].kind, "select");
+    }
+
+    #[test]
+    fn transform_rows_with_offset() {
+        use prism_core::foundation::spatial::{Anchor, Transform2D};
+
+        let doc = BuilderDocument {
+            root: Some(Node {
+                id: "root".into(),
+                component: "container".into(),
+                props: json!({}),
+                transform: Transform2D {
+                    position: [120.0, 45.0],
+                    anchor: Anchor::Center,
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let rows = PropertiesPanel::transform_rows(&doc, &Some("root".into()));
+        assert_eq!(rows[0].value, "120");
+        assert_eq!(rows[1].value, "45");
+        assert_eq!(rows[5].value, "center");
+    }
+
+    #[test]
+    fn transform_rows_empty_on_no_selection() {
+        let (doc, _) = setup();
+        assert!(PropertiesPanel::transform_rows(&doc, &None).is_empty());
     }
 
     #[test]

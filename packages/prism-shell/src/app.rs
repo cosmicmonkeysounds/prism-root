@@ -104,6 +104,7 @@ persistent_models! {
     inspector_nodes: InspectorNode,
     field_rows: FieldRow,
     layout_rows: FieldRow,
+    transform_rows: FieldRow,
     style_rows: FieldRow,
     breadcrumbs: BreadcrumbItem,
     component_palette: ComponentPaletteItem,
@@ -739,6 +740,7 @@ impl Shell {
         bind_model!(set_inspector_nodes, inspector_nodes, InspectorNode);
         bind_model!(set_field_rows, field_rows, FieldRow);
         bind_model!(set_layout_rows, layout_rows, FieldRow);
+        bind_model!(set_transform_rows, transform_rows, FieldRow);
         bind_model!(set_style_rows, style_rows, FieldRow);
         bind_model!(set_breadcrumbs, breadcrumbs, BreadcrumbItem);
         bind_model!(
@@ -2225,6 +2227,146 @@ impl Shell {
                 }
             }
         });
+
+        // Transform field editing (text/select)
+        self.window.on_transform_field_edited({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |key, value| {
+                if inner.borrow().syncing.get() {
+                    return;
+                }
+                let key = key.to_string();
+                let value = value.to_string();
+                {
+                    let mut s = inner.borrow_mut();
+                    let selected_id = s.store.state().selection.primary().cloned();
+                    if let Some(ref target_id) = selected_id {
+                        s.push_undo(&format!("Edit transform {key}"));
+                        let tid = target_id.clone();
+                        if let Some(ref mut live) = s.live {
+                            let _ = live.mutate_document(|doc| {
+                                if let Some(ref mut root) = doc.root {
+                                    apply_node_transform_edit(root, &tid, &key, &value);
+                                }
+                            });
+                        }
+                        s.sync_builder_document();
+                    }
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Transform numeric field editing (from sliders)
+        self.window.on_transform_field_edited_number({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |key, val| {
+                if inner.borrow().syncing.get() {
+                    return;
+                }
+                let key = key.to_string();
+                let value = format_slider_value(val);
+                {
+                    let mut s = inner.borrow_mut();
+                    let selected_id = s.store.state().selection.primary().cloned();
+                    if let Some(ref target_id) = selected_id {
+                        s.push_undo(&format!("Edit transform {key}"));
+                        let tid = target_id.clone();
+                        if let Some(ref mut live) = s.live {
+                            let _ = live.mutate_document(|doc| {
+                                if let Some(ref mut root) = doc.root {
+                                    apply_node_transform_edit(root, &tid, &key, &value);
+                                }
+                            });
+                        }
+                        s.sync_builder_document();
+                    }
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Node drag — live position update while dragging
+        self.window.on_node_drag_moved({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |node_id, new_x, new_y| {
+                if inner.borrow().syncing.get() {
+                    return;
+                }
+                let nid = node_id.to_string();
+                {
+                    let mut s = inner.borrow_mut();
+                    if let Some(ref mut live) = s.live {
+                        let _ = live.mutate_document(|doc| {
+                            if let Some(ref mut root) = doc.root {
+                                apply_node_transform_edit(
+                                    root,
+                                    &nid,
+                                    "transform.x",
+                                    &format_slider_value(new_x),
+                                );
+                                apply_node_transform_edit(
+                                    root,
+                                    &nid,
+                                    "transform.y",
+                                    &format_slider_value(new_y),
+                                );
+                            }
+                        });
+                    }
+                    s.sync_builder_document();
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Node drag — commit final position with undo
+        self.window.on_node_drag_finished({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |node_id, new_x, new_y| {
+                if inner.borrow().syncing.get() {
+                    return;
+                }
+                let nid = node_id.to_string();
+                {
+                    let mut s = inner.borrow_mut();
+                    s.push_undo("Drag node position");
+                    if let Some(ref mut live) = s.live {
+                        let _ = live.mutate_document(|doc| {
+                            if let Some(ref mut root) = doc.root {
+                                apply_node_transform_edit(
+                                    root,
+                                    &nid,
+                                    "transform.x",
+                                    &format_slider_value(new_x),
+                                );
+                                apply_node_transform_edit(
+                                    root,
+                                    &nid,
+                                    "transform.y",
+                                    &format_slider_value(new_y),
+                                );
+                            }
+                        });
+                    }
+                    s.sync_builder_document();
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
         // Grid cell clicked (select node or open palette for empty cell)
         self.window.on_grid_cell_clicked({
             let inner = Rc::clone(&inner);
@@ -2868,6 +3010,12 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
             vw,
         );
         push_layout_rows(
+            &inner.models,
+            window,
+            &state.builder_document,
+            &state.selection,
+        );
+        push_transform_rows(
             &inner.models,
             window,
             &state.builder_document,
@@ -4616,6 +4764,48 @@ fn apply_node_layout_edit(root: &mut Node, target: &str, key: &str, value: &str)
     false
 }
 
+fn apply_node_transform_edit(root: &mut Node, target: &str, key: &str, value: &str) -> bool {
+    if root.id == target {
+        apply_transform_to_node(root, key, value);
+        return true;
+    }
+    for child in &mut root.children {
+        if apply_node_transform_edit(child, target, key, value) {
+            return true;
+        }
+    }
+    false
+}
+
+fn apply_transform_to_node(node: &mut Node, key: &str, value: &str) {
+    use prism_core::foundation::spatial::Anchor;
+    let parse_f32 = |s: &str| s.parse::<f32>().unwrap_or(0.0);
+    let t = &mut node.transform;
+    match key {
+        "transform.x" => t.position[0] = parse_f32(value),
+        "transform.y" => t.position[1] = parse_f32(value),
+        "transform.rotation" => t.rotation = parse_f32(value).to_radians(),
+        "transform.scale_x" => t.scale[0] = parse_f32(value),
+        "transform.scale_y" => t.scale[1] = parse_f32(value),
+        "transform.anchor" => {
+            t.anchor = match value {
+                "top-left" => Anchor::TopLeft,
+                "top-center" => Anchor::TopCenter,
+                "top-right" => Anchor::TopRight,
+                "center-left" => Anchor::CenterLeft,
+                "center" => Anchor::Center,
+                "center-right" => Anchor::CenterRight,
+                "bottom-left" => Anchor::BottomLeft,
+                "bottom-center" => Anchor::BottomCenter,
+                "bottom-right" => Anchor::BottomRight,
+                "stretch" => Anchor::Stretch,
+                _ => t.anchor,
+            };
+        }
+        _ => {}
+    }
+}
+
 fn apply_layout_to_node(node: &mut Node, key: &str, value: &str) {
     let parse_f32 = |s: &str| s.parse::<f32>().unwrap_or(0.0);
 
@@ -4970,6 +5160,21 @@ fn push_layout_rows(
         .collect();
     let count = sync_model(&models.layout_rows, &rows);
     window.set_layout_rows_count(count);
+}
+
+fn push_transform_rows(
+    models: &PersistentModels,
+    window: &AppWindow,
+    doc: &BuilderDocument,
+    selection: &SelectionModel,
+) {
+    let selected = selection.as_option();
+    let rows: Vec<FieldRow> = PropertiesPanel::transform_rows(doc, &selected)
+        .into_iter()
+        .map(|r| field_row_data_to_slint(&r))
+        .collect();
+    let count = sync_model(&models.transform_rows, &rows);
+    window.set_transform_rows_count(count);
 }
 
 fn push_composition_data(

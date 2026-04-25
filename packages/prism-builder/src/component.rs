@@ -29,6 +29,7 @@ use crate::signal::SignalDef;
 use crate::slint_source::SlintEmitter;
 use crate::style::StyleProperties;
 use crate::variant::VariantAxis;
+use prism_core::foundation::spatial::Transform2D;
 
 /// Stable identifier for a component *type* (e.g. `"card"`, `"button"`).
 ///
@@ -151,7 +152,7 @@ impl<'a> RenderSlintContext<'a> {
         if needs_layout_wrapper {
             let wrapper_element = self.layout_wrapper_element(&child.layout_mode);
             out.block(&wrapper_element, |out| {
-                self.emit_layout_props(&child.layout_mode, out);
+                self.emit_layout_props(&child.layout_mode, &child.transform, out);
                 if needs_style_wrapper {
                     out.block("Rectangle", |out| {
                         self.emit_style_wrapper_props(&child.style, out);
@@ -230,7 +231,12 @@ impl<'a> RenderSlintContext<'a> {
         }
     }
 
-    fn emit_layout_props(&self, layout_mode: &LayoutMode, out: &mut SlintEmitter) {
+    fn emit_layout_props(
+        &self,
+        layout_mode: &LayoutMode,
+        transform: &Transform2D,
+        out: &mut SlintEmitter,
+    ) {
         match layout_mode {
             LayoutMode::Flow(f) | LayoutMode::Relative(f) => {
                 if f.gap != 0.0 && f.display == FlowDisplay::Flex {
@@ -255,10 +261,15 @@ impl<'a> RenderSlintContext<'a> {
                 }
             }
             LayoutMode::Absolute(abs) => {
-                self.emit_dimension("preferred-width", abs.width, out);
-                self.emit_dimension("preferred-height", abs.height, out);
+                out.prop_px("x", transform.position[0] as f64);
+                out.prop_px("y", transform.position[1] as f64);
+                self.emit_dimension("width", abs.width, out);
+                self.emit_dimension("height", abs.height, out);
             }
-            LayoutMode::Free => {}
+            LayoutMode::Free => {
+                out.prop_px("x", transform.position[0] as f64);
+                out.prop_px("y", transform.position[1] as f64);
+            }
         }
     }
 
