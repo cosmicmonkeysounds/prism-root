@@ -48,7 +48,7 @@ pub use html::{escape_attr, escape_text, Html};
 pub use html_block::{HtmlBlock, HtmlRegistry, HtmlRenderContext};
 pub use html_starter::register_html_builtins;
 pub use layout::{
-    compute_layout, compute_track_sizes, path_from_string, path_to_string, CellEdge,
+    compute_layout, compute_track_sizes, path_from_string, path_to_string, AbsoluteProps, CellEdge,
     ComputedLayout, EdgeHandle, FlatCell, FlowProps, GridCell, GridEditError, GridPlacement,
     LayoutMode, NodeLayout, PageLayout, PageSize, SplitDirection,
 };

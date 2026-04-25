@@ -121,7 +121,7 @@ impl<'a> RenderSlintContext<'a> {
     pub fn render_child(&self, child: &Node, out: &mut SlintEmitter) -> Result<(), RenderError> {
         if self.emit_markers {
             out.line(format!("// @node-start:{}:{}", child.id, child.component));
-            if let LayoutMode::Flow(f) = &child.layout_mode {
+            if let Some(f) = child.layout_mode.flow_props() {
                 if let (GridPlacement::Line { index: col }, GridPlacement::Line { index: row }) =
                     (&f.grid_column, &f.grid_row)
                 {
@@ -140,8 +140,12 @@ impl<'a> RenderSlintContext<'a> {
 
         *self.current_style.borrow_mut() = child.style.clone();
 
-        let needs_layout_wrapper =
-            matches!(&child.layout_mode, LayoutMode::Flow(f) if !f.is_default());
+        let needs_layout_wrapper = match &child.layout_mode {
+            LayoutMode::Flow(f) => !f.is_default(),
+            LayoutMode::Free => true,
+            LayoutMode::Absolute(_) => true,
+            LayoutMode::Relative(f) => !f.is_default(),
+        };
         let needs_style_wrapper = child.style.has_background_or_border();
 
         if needs_layout_wrapper {
@@ -214,7 +218,7 @@ impl<'a> RenderSlintContext<'a> {
 
     fn layout_wrapper_element(&self, layout_mode: &LayoutMode) -> String {
         match layout_mode {
-            LayoutMode::Flow(f) => match f.display {
+            LayoutMode::Flow(f) | LayoutMode::Relative(f) => match f.display {
                 FlowDisplay::Flex => match f.flex_direction {
                     FlexDirection::Row | FlexDirection::RowReverse => "HorizontalLayout".into(),
                     FlexDirection::Column | FlexDirection::ColumnReverse => "VerticalLayout".into(),
@@ -222,33 +226,39 @@ impl<'a> RenderSlintContext<'a> {
                 FlowDisplay::Grid => "GridLayout".into(),
                 _ => "VerticalLayout".into(),
             },
-            LayoutMode::Free => "Rectangle".into(),
+            LayoutMode::Free | LayoutMode::Absolute(_) => "Rectangle".into(),
         }
     }
 
     fn emit_layout_props(&self, layout_mode: &LayoutMode, out: &mut SlintEmitter) {
-        let LayoutMode::Flow(f) = layout_mode else {
-            return;
-        };
-        if f.gap != 0.0 && f.display == FlowDisplay::Flex {
-            out.prop_px("spacing", f.gap as f64);
-        }
-        self.emit_dimension("preferred-width", f.width, out);
-        self.emit_dimension("preferred-height", f.height, out);
-        if f.padding.top != 0.0 {
-            out.prop_px("padding-top", f.padding.top as f64);
-        }
-        if f.padding.right != 0.0 {
-            out.prop_px("padding-right", f.padding.right as f64);
-        }
-        if f.padding.bottom != 0.0 {
-            out.prop_px("padding-bottom", f.padding.bottom as f64);
-        }
-        if f.padding.left != 0.0 {
-            out.prop_px("padding-left", f.padding.left as f64);
-        }
-        if f.display == FlowDisplay::Flex {
-            out.line("alignment: start;");
+        match layout_mode {
+            LayoutMode::Flow(f) | LayoutMode::Relative(f) => {
+                if f.gap != 0.0 && f.display == FlowDisplay::Flex {
+                    out.prop_px("spacing", f.gap as f64);
+                }
+                self.emit_dimension("preferred-width", f.width, out);
+                self.emit_dimension("preferred-height", f.height, out);
+                if f.padding.top != 0.0 {
+                    out.prop_px("padding-top", f.padding.top as f64);
+                }
+                if f.padding.right != 0.0 {
+                    out.prop_px("padding-right", f.padding.right as f64);
+                }
+                if f.padding.bottom != 0.0 {
+                    out.prop_px("padding-bottom", f.padding.bottom as f64);
+                }
+                if f.padding.left != 0.0 {
+                    out.prop_px("padding-left", f.padding.left as f64);
+                }
+                if f.display == FlowDisplay::Flex {
+                    out.line("alignment: start;");
+                }
+            }
+            LayoutMode::Absolute(abs) => {
+                self.emit_dimension("preferred-width", abs.width, out);
+                self.emit_dimension("preferred-height", abs.height, out);
+            }
+            LayoutMode::Free => {}
         }
     }
 

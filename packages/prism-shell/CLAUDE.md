@@ -350,6 +350,13 @@ shell framework features are implemented:
   components carry correct default `FlowProps` (display, direction,
   gap) via `default_layout_for_component()`, so the Taffy layout
   engine handles them consistently within the grid system.
+- **Absolute/Relative positioning**: Components can be placed off-grid
+  via `LayoutMode::Absolute` (anchored to parent rect via
+  `Transform2D.anchor` + `Transform2D.position`) or
+  `LayoutMode::Relative` (flow-positioned + offset). The properties
+  panel exposes display mode switching (block/flex/grid/none/absolute/
+  relative/free). Positioned nodes show a mode badge on hover and
+  have dashed-outline overlays on the builder canvas.
 - **Palette → grid placement**: When a page has grid cells, clicking
   a component in the left palette enters "place mode" — the item
   highlights and grid cells show "Place [type]" on hover. Clicking

@@ -18,8 +18,8 @@ use prism_builder::{
     app::{AppIcon, NavigationConfig, Page, PrismApp},
     compile_slint_preview, compute_layout,
     layout::{
-        AlignOption, Dimension, FlexDirection, FlowDisplay, FlowProps, GridPlacement,
-        JustifyOption, LayoutMode, PageSize, TrackSize,
+        AbsoluteProps, AlignOption, Dimension, FlexDirection, FlowDisplay, FlowProps,
+        GridPlacement, JustifyOption, LayoutMode, PageSize, TrackSize,
     },
     path_from_string, preview_component_factory, render_document_slint_preview_with_assets,
     starter::{builtin_prefab, materialize_prefab, register_builtins},
@@ -522,6 +522,15 @@ struct SourceSnapshot {
     selection: SelectionModel,
 }
 
+// ── Context menu ──────────────────────────────────────────────────
+
+struct ContextMenuState {
+    target_kind: String,
+    target_id: String,
+    x: f32,
+    y: f32,
+}
+
 // ── Shell inner state (shared with callbacks) ──────────────────────
 
 struct ShellInner {
@@ -545,6 +554,7 @@ struct ShellInner {
     dock_check_timer: Timer,
     drag_component_type: String,
     pending_picker: Option<(String, f32, f32)>,
+    pending_context_menu: Option<ContextMenuState>,
     vfs: VfsManager,
     toast_timer: Timer,
     user_color_swatches: Vec<String>,
@@ -775,6 +785,7 @@ impl Shell {
             dock_check_timer: Timer::default(),
             drag_component_type: String::new(),
             pending_picker: None,
+            pending_context_menu: None,
             vfs: VfsManager::new(),
             toast_timer: Timer::default(),
             user_color_swatches: Vec::new(),
@@ -2403,6 +2414,67 @@ impl Shell {
             }
         });
 
+        // Context menu show — select target and build context-sensitive items
+        self.window.on_context_menu_show({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |target_kind, target_id, x, y| {
+                {
+                    let mut s = inner.borrow_mut();
+                    let kind = target_kind.to_string();
+                    let id = target_id.to_string();
+                    // Select the right-clicked item so commands operate on it
+                    if matches!(
+                        kind.as_str(),
+                        "inspector-node" | "grid-cell" | "builder-node"
+                    ) {
+                        let id_clone = id.clone();
+                        if !s.store.state().selection.contains(&id_clone) {
+                            s.store.mutate(|state| {
+                                state.selection.select(id_clone);
+                            });
+                        }
+                    }
+                    s.pending_context_menu = Some(ContextMenuState {
+                        target_kind: kind,
+                        target_id: id,
+                        x,
+                        y,
+                    });
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Context menu dismiss
+        self.window.on_context_menu_dismiss({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move || {
+                inner.borrow_mut().pending_context_menu = None;
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Context menu command — dismiss menu and execute the command
+        self.window.on_context_menu_command({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |cmd_id| {
+                {
+                    inner.borrow_mut().pending_context_menu = None;
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+                execute_command(&inner, &weak, &cmd_id);
+            }
+        });
+
         // Style field edits (from properties panel) — routes through
         // LiveDocument for node-level styles so Slint source stays in sync.
         self.window.on_style_field_edited({
@@ -2702,6 +2774,29 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
         window.set_show_component_picker(true);
     } else {
         window.set_show_component_picker(false);
+    }
+
+    // Context menu overlay
+    if let Some(ref ctx) = inner.pending_context_menu {
+        let items = build_context_menu_items(inner, &ctx.target_kind, &ctx.target_id);
+        let slint_items: Vec<MenuItem> = items
+            .iter()
+            .map(|item| MenuItem {
+                label: SharedString::from(item.label.as_str()),
+                shortcut: SharedString::from(item.shortcut.as_str()),
+                command_id: SharedString::from(item.command_id.as_str()),
+                enabled: item.enabled,
+                is_separator: item.is_separator,
+            })
+            .collect();
+        let model = Rc::new(slint::VecModel::from(slint_items));
+        window.set_context_menu_items(model.into());
+        window.set_context_menu_items_count(items.len() as i32);
+        window.set_context_menu_x(ctx.x);
+        window.set_context_menu_y(ctx.y);
+        window.set_show_context_menu(true);
+    } else {
+        window.set_show_context_menu(false);
     }
 
     // Toolbar state
@@ -3075,6 +3170,13 @@ fn push_live_preview(
             // Skip pure layout containers — they have no visual of their own,
             // but their children carry the content.
             let is_layout_only = matches!(ct, "container" | "columns" | "form" | "list" | "spacer");
+            let positioned = node.layout_mode.is_positioned();
+            let layout_mode_str = match &node.layout_mode {
+                prism_builder::LayoutMode::Flow(_) => "flow",
+                prism_builder::LayoutMode::Free => "free",
+                prism_builder::LayoutMode::Absolute(_) => "absolute",
+                prism_builder::LayoutMode::Relative(_) => "relative",
+            };
             if !is_layout_only {
                 items.push(PreviewNode {
                     id: SharedString::from(&node.id),
@@ -3092,6 +3194,8 @@ fn push_live_preview(
                     border_radius: border_radius as f32,
                     fg,
                     bg,
+                    positioned,
+                    layout_mode: SharedString::from(layout_mode_str),
                 });
             }
         }
@@ -3294,6 +3398,92 @@ fn push_property_rows(
         .collect();
     let count = sync_model(&models.field_rows, &rows);
     window.set_field_rows_count(count);
+}
+
+// ── Context menu items ─────────────────────────────────────────────
+
+struct ContextMenuItemDef {
+    label: String,
+    shortcut: String,
+    command_id: String,
+    enabled: bool,
+    is_separator: bool,
+}
+
+impl ContextMenuItemDef {
+    fn action(label: &str, command_id: &str, shortcut: &str, enabled: bool) -> Self {
+        Self {
+            label: label.into(),
+            shortcut: shortcut.into(),
+            command_id: command_id.into(),
+            enabled,
+            is_separator: false,
+        }
+    }
+
+    fn separator() -> Self {
+        Self {
+            label: String::new(),
+            shortcut: String::new(),
+            command_id: String::new(),
+            enabled: false,
+            is_separator: true,
+        }
+    }
+}
+
+fn build_context_menu_items(
+    inner: &ShellInner,
+    target_kind: &str,
+    _target_id: &str,
+) -> Vec<ContextMenuItemDef> {
+    let has_selection = !inner.store.state().selection.is_empty();
+    let has_clipboard = inner.clipboard.is_some();
+
+    match target_kind {
+        "inspector-node" | "grid-cell" | "builder-node" => {
+            vec![
+                ContextMenuItemDef::action("Cut", "edit.cut", "Ctrl+X", has_selection),
+                ContextMenuItemDef::action("Copy", "edit.copy", "Ctrl+C", has_selection),
+                ContextMenuItemDef::action("Paste", "edit.paste", "Ctrl+V", has_clipboard),
+                ContextMenuItemDef::action("Duplicate", "edit.duplicate", "Ctrl+D", has_selection),
+                ContextMenuItemDef::separator(),
+                ContextMenuItemDef::action("Move Up", "navigate.inspector_prev", "", has_selection),
+                ContextMenuItemDef::action(
+                    "Move Down",
+                    "navigate.inspector_next",
+                    "",
+                    has_selection,
+                ),
+                ContextMenuItemDef::separator(),
+                ContextMenuItemDef::action("Delete", "selection.delete", "", has_selection),
+            ]
+        }
+        "inspector-row" => {
+            vec![ContextMenuItemDef::action(
+                "Delete Track",
+                "selection.delete",
+                "",
+                true,
+            )]
+        }
+        "grid-cell-empty" => {
+            vec![
+                ContextMenuItemDef::action("Paste", "edit.paste", "Ctrl+V", has_clipboard),
+                ContextMenuItemDef::separator(),
+                ContextMenuItemDef::action("Select All", "selection.all", "Ctrl+A", true),
+            ]
+        }
+        "explorer-app" | "explorer-page" | "explorer-node" => {
+            let mut items = vec![ContextMenuItemDef::action("Open", "panel.edit", "", true)];
+            if target_kind == "explorer-page" {
+                items.push(ContextMenuItemDef::separator());
+                items.push(ContextMenuItemDef::action("Add Page", "add_page", "", true));
+            }
+            items
+        }
+        _ => vec![],
+    }
 }
 
 // ── Docs panel ────────────────────────────────────────────────────
@@ -4429,11 +4619,92 @@ fn apply_node_layout_edit(root: &mut Node, target: &str, key: &str, value: &str)
 fn apply_layout_to_node(node: &mut Node, key: &str, value: &str) {
     let parse_f32 = |s: &str| s.parse::<f32>().unwrap_or(0.0);
 
+    // Handle Absolute mode width/height edits directly.
+    if let LayoutMode::Absolute(abs) = &mut node.layout_mode {
+        match key {
+            "layout.display" => match value {
+                "absolute" => return,
+                "free" => {
+                    node.layout_mode = LayoutMode::Free;
+                    return;
+                }
+                "relative" => {
+                    node.layout_mode = LayoutMode::Relative(FlowProps::default());
+                    return;
+                }
+                _ => {
+                    node.layout_mode = LayoutMode::Flow(FlowProps::default());
+                }
+            },
+            "layout.width_unit" => {
+                let cur = match abs.width {
+                    Dimension::Px { value } | Dimension::Percent { value } => value,
+                    Dimension::Auto => 0.0,
+                };
+                abs.width = match value {
+                    "auto" => Dimension::Auto,
+                    "px" => Dimension::Px { value: cur },
+                    "%" => Dimension::Percent {
+                        value: cur.min(100.0),
+                    },
+                    _ => abs.width,
+                };
+                return;
+            }
+            "layout.width_value" => {
+                let v = value.parse::<f32>().unwrap_or(0.0);
+                abs.width = match abs.width {
+                    Dimension::Px { .. } => Dimension::Px { value: v },
+                    Dimension::Percent { .. } => Dimension::Percent { value: v },
+                    Dimension::Auto => Dimension::Px { value: v },
+                };
+                return;
+            }
+            "layout.height_unit" => {
+                let cur = match abs.height {
+                    Dimension::Px { value } | Dimension::Percent { value } => value,
+                    Dimension::Auto => 0.0,
+                };
+                abs.height = match value {
+                    "auto" => Dimension::Auto,
+                    "px" => Dimension::Px { value: cur },
+                    "%" => Dimension::Percent {
+                        value: cur.min(100.0),
+                    },
+                    _ => abs.height,
+                };
+                return;
+            }
+            "layout.height_value" => {
+                let v = value.parse::<f32>().unwrap_or(0.0);
+                abs.height = match abs.height {
+                    Dimension::Px { .. } => Dimension::Px { value: v },
+                    Dimension::Percent { .. } => Dimension::Percent { value: v },
+                    Dimension::Auto => Dimension::Px { value: v },
+                };
+                return;
+            }
+            _ => return,
+        }
+    }
+
     let flow = match &mut node.layout_mode {
-        LayoutMode::Flow(f) => f,
+        LayoutMode::Flow(f) | LayoutMode::Relative(f) => f,
         LayoutMode::Free => {
             if key == "layout.display" && value != "free" {
-                node.layout_mode = LayoutMode::Flow(FlowProps::default());
+                match value {
+                    "absolute" => {
+                        node.layout_mode = LayoutMode::Absolute(AbsoluteProps::default());
+                        return;
+                    }
+                    "relative" => {
+                        node.layout_mode = LayoutMode::Relative(FlowProps::default());
+                        return;
+                    }
+                    _ => {
+                        node.layout_mode = LayoutMode::Flow(FlowProps::default());
+                    }
+                }
                 match &mut node.layout_mode {
                     LayoutMode::Flow(f) => f,
                     _ => unreachable!(),
@@ -4442,6 +4713,7 @@ fn apply_layout_to_node(node: &mut Node, key: &str, value: &str) {
                 return;
             }
         }
+        LayoutMode::Absolute(_) => unreachable!(),
     };
 
     match key {
@@ -4452,6 +4724,12 @@ fn apply_layout_to_node(node: &mut Node, key: &str, value: &str) {
             "none" => flow.display = FlowDisplay::None,
             "free" => {
                 node.layout_mode = LayoutMode::Free;
+            }
+            "absolute" => {
+                node.layout_mode = LayoutMode::Absolute(AbsoluteProps::default());
+            }
+            "relative" => {
+                node.layout_mode = LayoutMode::Relative(flow.clone());
             }
             _ => {}
         },

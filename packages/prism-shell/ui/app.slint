@@ -92,6 +92,8 @@ struct PreviewNode {
     border-radius: float,
     fg: color,
     bg: color,
+    positioned: bool,
+    layout-mode: string,
 }
 
 struct HelpTooltipData {
@@ -321,6 +323,7 @@ component ToolbarSeparator inherits Rectangle {
 component MenuBarRow inherits Rectangle {
     in property <[MenuDef]> menus: [];
     in-out property <int> active-menu: -1;
+    in-out property <length> active-menu-x: 0px;
     in property <string> app-name: "";
     in property <[TabItem]> page-tabs: [];
     in property <bool> show-tabs: false;
@@ -362,10 +365,12 @@ component MenuBarRow inherits Rectangle {
             menu-touch := TouchArea {
                 mouse-cursor: pointer;
                 clicked => {
+                    root.active-menu-x = self.absolute-position.x;
                     root.active-menu = root.active-menu == idx ? -1 : idx;
                 }
                 changed has-hover => {
                     if (self.has-hover && root.active-menu >= 0 && root.active-menu != idx) {
+                        root.active-menu-x = self.absolute-position.x;
                         root.active-menu = idx;
                     }
                 }
@@ -846,6 +851,7 @@ component InspectorRow inherits Rectangle {
     callback move-up;
     callback move-down;
     callback delete-track;
+    callback right-clicked(float /* x */, float /* y */);
 
     height: 30px;
     background: root.kind == "row"
@@ -899,7 +905,14 @@ component InspectorRow inherits Rectangle {
         }
     }
 
-    inspector-row-hover := TouchArea { clicked => { root.clicked(); } }
+    inspector-row-hover := TouchArea {
+        clicked => { root.clicked(); }
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.down && event.button == PointerEventButton.right {
+                root.right-clicked((self.absolute-position.x + self.mouse-x) / 1px, (self.absolute-position.y + self.mouse-y) / 1px);
+            }
+        }
+    }
 }
 
 component Toast inherits Rectangle {
@@ -1297,6 +1310,16 @@ export component AppWindow inherits Window {
     callback palette-drag-toggle(string /* component-type */);
     callback grid-add-at-edge(string /* cell-path */, string /* edge */);
 
+    // Context menu
+    in property <[MenuItem]> context-menu-items: [];
+    in property <int> context-menu-items-count: 0;
+    in property <float> context-menu-x: 0;
+    in property <float> context-menu-y: 0;
+    in property <bool> show-context-menu: false;
+    callback context-menu-show(string /* target-kind */, string /* target-id */, float /* x */, float /* y */);
+    callback context-menu-dismiss();
+    callback context-menu-command(string /* command-id */);
+
     // User color swatches
     in property <[ColorPreset]> user-color-swatches: [];
     callback save-color-swatch(string /* hex */);
@@ -1392,6 +1415,7 @@ export component AppWindow inherits Window {
 
         // Menu dropdown state (local to Slint)
         property <int> menu-active-index: -1;
+        property <length> menu-active-x: 0px;
 
         VerticalLayout {
             // ── Menu bar ─────────────────────────────────────────
@@ -1400,6 +1424,7 @@ export component AppWindow inherits Window {
                 menu-count: root.menu-defs-count;
                 tabs-count: root.tabs-count;
                 active-menu <=> fs.menu-active-index;
+                active-menu-x <=> fs.menu-active-x;
                 app-name: root.active-app-name;
                 page-tabs: root.tabs;
                 show-tabs: !root.is-launchpad;
@@ -1845,9 +1870,19 @@ export component AppWindow inherits Window {
                                                                             if root.drag-component-type != "" {
                                                                                 root.grid-cell-add-component(root.drag-component-type, cell.path);
                                                                             } else if cell.is-empty {
-                                                                                root.picker-show(cell.path, parent.absolute-position.x / 1px, parent.absolute-position.y / 1px);
+                                                                                root.picker-show(cell.path, (self.absolute-position.x + self.mouse-x) / 1px, (self.absolute-position.y + self.mouse-y) / 1px);
                                                                             } else {
                                                                                 root.grid-cell-clicked(cell.path);
+                                                                            }
+                                                                        }
+                                                                        pointer-event(event) => {
+                                                                            if event.kind == PointerEventKind.down && event.button == PointerEventButton.right {
+                                                                                root.context-menu-show(
+                                                                                    cell.is-empty ? "grid-cell-empty" : "grid-cell",
+                                                                                    cell.is-empty ? cell.path : cell.node-id,
+                                                                                    (self.absolute-position.x + self.mouse-x) / 1px,
+                                                                                    (self.absolute-position.y + self.mouse-y) / 1px
+                                                                                );
                                                                             }
                                                                         }
                                                                     }
@@ -1888,6 +1923,57 @@ export component AppWindow inherits Window {
                                                                     }
                                                                 }
 
+                                                                // Positioned (absolute/free) node overlays — always visible so users can interact
+                                                                if root.preview-factory-ready && root.preview-nodes-count > 0 : Rectangle {
+                                                                    vertical-stretch: 1;
+                                                                    for pn[i] in root.preview-nodes : Rectangle {
+                                                                        visible: i < root.preview-nodes-count && pn.positioned && !pn.selected;
+                                                                        x: pn.x * root.canvas-zoom * 1px;
+                                                                        y: pn.y * root.canvas-zoom * 1px;
+                                                                        width: pn.w * root.canvas-zoom * 1px;
+                                                                        height: pn.h * root.canvas-zoom * 1px;
+                                                                        border-width: 1px;
+                                                                        border-color: pos-touch.has-hover
+                                                                            ? Palette.accent-background.transparentize(40%)
+                                                                            : Palette.foreground.transparentize(78%);
+                                                                        border-radius: pn.border-radius * 1px;
+                                                                        background: pos-touch.has-hover
+                                                                            ? Palette.accent-background.transparentize(94%)
+                                                                            : transparent;
+
+                                                                        // Mode badge
+                                                                        Rectangle {
+                                                                            visible: pos-touch.has-hover;
+                                                                            x: 0px; y: -16px; height: 14px;
+                                                                            width: abs-label.preferred-width + 8px;
+                                                                            border-radius: 2px;
+                                                                            background: Palette.accent-background.transparentize(40%);
+                                                                            abs-label := Text {
+                                                                                text: pn.layout-mode;
+                                                                                color: Palette.accent-foreground;
+                                                                                font-size: 9px;
+                                                                                horizontal-alignment: center;
+                                                                                vertical-alignment: center;
+                                                                            }
+                                                                        }
+
+                                                                        pos-touch := TouchArea {
+                                                                            mouse-cursor: pointer;
+                                                                            clicked => { root.builder-node-clicked(pn.id); }
+                                                                            pointer-event(event) => {
+                                                                                if event.kind == PointerEventKind.down && event.button == PointerEventButton.right {
+                                                                                    root.context-menu-show(
+                                                                                        "builder-node",
+                                                                                        pn.id,
+                                                                                        (self.absolute-position.x + self.mouse-x) / 1px,
+                                                                                        (self.absolute-position.y + self.mouse-y) / 1px
+                                                                                    );
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+
                                                                 // Selection overlays on top of the WYSIWYG preview
                                                                 if root.preview-factory-ready && root.preview-nodes-count > 0 : Rectangle {
                                                                     vertical-stretch: 1;
@@ -1901,9 +1987,36 @@ export component AppWindow inherits Window {
                                                                         border-color: Palette.accent-background;
                                                                         border-radius: pn.border-radius * 1px;
                                                                         background: Palette.accent-background.transparentize(90%);
+
+                                                                        // Mode badge for positioned nodes
+                                                                        Rectangle {
+                                                                            visible: pn.positioned;
+                                                                            x: 0px; y: -18px; height: 14px;
+                                                                            width: sel-mode-label.preferred-width + 8px;
+                                                                            border-radius: 2px;
+                                                                            background: Palette.accent-background;
+                                                                            sel-mode-label := Text {
+                                                                                text: pn.layout-mode;
+                                                                                color: Palette.accent-foreground;
+                                                                                font-size: 9px;
+                                                                                horizontal-alignment: center;
+                                                                                vertical-alignment: center;
+                                                                            }
+                                                                        }
+
                                                                         TouchArea {
                                                                             mouse-cursor: pointer;
                                                                             clicked => { root.builder-node-clicked(pn.id); }
+                                                                            pointer-event(event) => {
+                                                                                if event.kind == PointerEventKind.down && event.button == PointerEventButton.right {
+                                                                                    root.context-menu-show(
+                                                                                        "builder-node",
+                                                                                        pn.id,
+                                                                                        (self.absolute-position.x + self.mouse-x) / 1px,
+                                                                                        (self.absolute-position.y + self.mouse-y) / 1px
+                                                                                    );
+                                                                                }
+                                                                            }
                                                                         }
                                                                     }
                                                                 }
@@ -2104,6 +2217,12 @@ export component AppWindow inherits Window {
                                                             move-up => { root.node-move-up(node.id); }
                                                             move-down => { root.node-move-down(node.id); }
                                                             delete-track => { root.inspector-delete-track(node.id); }
+                                                            right-clicked(x, y) => {
+                                                                root.context-menu-show(
+                                                                    node.kind == "row" ? "inspector-row" : "inspector-node",
+                                                                    node.id, x, y
+                                                                );
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -2146,7 +2265,20 @@ export component AppWindow inherits Window {
                                                             if enode.kind == "node" : Image { source: @image-url("icons/grip.svg"); width: 12px; height: 12px; colorize: Palette.foreground.transparentize(50%); }
                                                             Text { text: enode.label; color: enode.is-active ? Palette.accent-foreground : Palette.foreground; font-size: 12px; font-weight: enode.is-active ? 600 : 400; vertical-alignment: center; overflow: elide; }
                                                         }
-                                                        exp-touch := TouchArea { mouse-cursor: pointer; clicked => { root.explorer-node-clicked(enode.id); } }
+                                                        exp-touch := TouchArea {
+                                                            mouse-cursor: pointer;
+                                                            clicked => { root.explorer-node-clicked(enode.id); }
+                                                            pointer-event(event) => {
+                                                                if event.kind == PointerEventKind.down && event.button == PointerEventButton.right {
+                                                                    root.context-menu-show(
+                                                                        "explorer-" + enode.kind,
+                                                                        enode.id,
+                                                                        (self.absolute-position.x + self.mouse-x) / 1px,
+                                                                        (self.absolute-position.y + self.mouse-y) / 1px
+                                                                    );
+                                                                }
+                                                            }
+                                                        }
                                                     }
                                                 }
                                             }
@@ -2697,10 +2829,7 @@ export component AppWindow inherits Window {
     if fs.menu-active-index >= 0 && fs.menu-active-index < root.menu-defs-count : Rectangle {
         property <int> mi: fs.menu-active-index;
 
-        x: {
-            // Approximate menu label position: 8px padding + index * 70px
-            8px + mi * 70px
-        }
+        x: min(fs.menu-active-x, root.width - 228px);
         y: 28px;
         width: 220px;
         height: menu-drop-layout.preferred-height;
@@ -2832,6 +2961,93 @@ export component AppWindow inherits Window {
         }
     }
 
+    // ── Context menu overlay ─────────────────────────────────────────
+    Rectangle {
+        width: 100%; height: 100%;
+        visible: root.show-context-menu;
+        TouchArea {
+            width: 100%; height: 100%;
+            clicked => { root.context-menu-dismiss(); }
+        }
+
+        Rectangle {
+            x: min(root.context-menu-x * 1px, root.width - 208px);
+            y: min(root.context-menu-y * 1px, root.height - ctx-menu-layout.preferred-height - 8px);
+            width: 200px;
+            height: ctx-menu-layout.preferred-height;
+            background: Palette.alternate-background;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Palette.foreground.transparentize(75%);
+            drop-shadow-blur: 12px;
+            drop-shadow-color: #00000030;
+            clip: true;
+
+            ctx-menu-layout := VerticalLayout {
+                padding: 4px;
+                spacing: 0px;
+
+                for item[ii] in root.context-menu-items : Rectangle {
+                    visible: ii < root.context-menu-items-count;
+                    height: item.is-separator ? 9px : 28px;
+
+                    if item.is-separator : Rectangle {
+                        height: 1px;
+                        y: 4px;
+                        background: Palette.foreground.transparentize(85%);
+                    }
+
+                    if !item.is-separator : Rectangle {
+                        background: ctx-item-touch.has-hover
+                            ? (item.enabled ? Palette.accent-background.transparentize(85%) : transparent)
+                            : transparent;
+                        border-radius: 4px;
+                        height: 28px;
+
+                        HorizontalLayout {
+                            padding-left: 12px;
+                            padding-right: 12px;
+                            alignment: space-between;
+
+                            Text {
+                                text: item.label;
+                                color: item.enabled
+                                    ? Palette.foreground
+                                    : Palette.foreground.transparentize(60%);
+                                font-size: 12px;
+                                vertical-alignment: center;
+                            }
+
+                            if item.shortcut != "" : Rectangle {
+                                background: Palette.control-background;
+                                border-radius: 3px;
+                                height: 18px;
+                                width: ctx-shortcut-label.preferred-width + 10px;
+                                y: 5px;
+                                ctx-shortcut-label := Text {
+                                    text: item.shortcut;
+                                    color: Palette.foreground.transparentize(40%);
+                                    font-size: 10px;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+
+                        ctx-item-touch := TouchArea {
+                            mouse-cursor: item.enabled ? pointer : default;
+                            clicked => {
+                                if item.enabled {
+                                    root.context-menu-command(item.command-id);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // ── Component picker overlay (shown on empty grid cell click) ────
     // Uses visibility instead of `if` conditional to avoid destroying
     // elements mid-event (which triggers property recursion in Slint).
@@ -2846,8 +3062,8 @@ export component AppWindow inherits Window {
         }
 
         Rectangle {
-            x: root.pending-add-x * 1px;
-            y: root.pending-add-y * 1px;
+            x: min(root.pending-add-x * 1px, root.width - 208px);
+            y: min(root.pending-add-y * 1px, root.height - picker-layout.preferred-height - 8px);
             width: 200px;
             height: picker-layout.preferred-height;
             background: Palette.alternate-background;

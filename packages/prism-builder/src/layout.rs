@@ -679,12 +679,100 @@ pub enum LayoutMode {
     /// Positioned by the parent's flow (flex/grid/block).
     Flow(FlowProps),
     /// Removed from flow — positioned by `Transform2D` alone.
+    /// Legacy mode: no anchor resolution, no explicit size.
     Free,
+    /// Removed from flow. Positioned by `Transform2D.position` +
+    /// `Transform2D.anchor` relative to the parent's rect. The parent
+    /// is the positioning anchor — whether that's a grid cell, a
+    /// container component, or the page itself.
+    Absolute(AbsoluteProps),
+    /// Participates in the parent's flow layout (like `Flow`), but
+    /// `Transform2D.position` is applied as an offset *after* the
+    /// flow-computed position (like CSS `position: relative`).
+    Relative(FlowProps),
+}
+
+impl LayoutMode {
+    pub fn is_in_flow(&self) -> bool {
+        matches!(self, Self::Flow(_) | Self::Relative(_))
+    }
+
+    pub fn is_positioned(&self) -> bool {
+        matches!(self, Self::Absolute(_) | Self::Relative(_) | Self::Free)
+    }
+
+    pub fn flow_props(&self) -> Option<&FlowProps> {
+        match self {
+            Self::Flow(f) | Self::Relative(f) => Some(f),
+            _ => None,
+        }
+    }
 }
 
 impl Default for LayoutMode {
     fn default() -> Self {
         Self::Flow(FlowProps::default())
+    }
+}
+
+/// Properties for absolutely-positioned nodes. The node is removed
+/// from the parent's flow and positioned by its `Transform2D.position`
+/// + `Transform2D.anchor` relative to the parent's rect.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AbsoluteProps {
+    #[serde(default)]
+    pub width: Dimension,
+    #[serde(default)]
+    pub height: Dimension,
+    #[serde(default)]
+    pub min_width: Dimension,
+    #[serde(default)]
+    pub min_height: Dimension,
+    #[serde(default)]
+    pub max_width: Dimension,
+    #[serde(default)]
+    pub max_height: Dimension,
+}
+
+impl Default for AbsoluteProps {
+    fn default() -> Self {
+        Self {
+            width: Dimension::Auto,
+            height: Dimension::Auto,
+            min_width: Dimension::Auto,
+            min_height: Dimension::Auto,
+            max_width: Dimension::Auto,
+            max_height: Dimension::Auto,
+        }
+    }
+}
+
+impl AbsoluteProps {
+    pub fn to_taffy_style(&self) -> Style {
+        Style {
+            position: Position::Absolute,
+            size: taffy::Size {
+                width: self.width.to_taffy(),
+                height: self.height.to_taffy(),
+            },
+            min_size: taffy::Size {
+                width: self.min_width.to_taffy(),
+                height: self.min_height.to_taffy(),
+            },
+            max_size: taffy::Size {
+                width: self.max_width.to_taffy(),
+                height: self.max_height.to_taffy(),
+            },
+            ..Default::default()
+        }
+    }
+
+    pub fn fixed(width: f32, height: f32) -> Self {
+        Self {
+            width: Dimension::Px { value: width },
+            height: Dimension::Px { value: height },
+            ..Default::default()
+        }
     }
 }
 
@@ -861,7 +949,7 @@ pub enum Dimension {
 }
 
 impl Dimension {
-    fn to_taffy(self) -> taffy::style::Dimension {
+    pub fn to_taffy(self) -> taffy::style::Dimension {
         match self {
             Self::Auto => taffy::style::Dimension::Auto,
             Self::Px { value } => taffy::style::Dimension::Length(value),
@@ -1023,6 +1111,12 @@ pub fn compute_layout(doc: &BuilderDocument, viewport_size: Size2) -> ComputedLa
                 position: Position::Absolute,
                 ..Default::default()
             },
+            LayoutMode::Absolute(abs) => abs.to_taffy_style(),
+            LayoutMode::Relative(flow) => {
+                let mut style = flow.to_taffy_style();
+                style.position = Position::Relative;
+                style
+            }
         };
 
         let child_taffy_ids: Vec<taffy::NodeId> = node
@@ -1059,12 +1153,14 @@ pub fn compute_layout(doc: &BuilderDocument, viewport_size: Size2) -> ComputedLa
         nodes: HashMap::new(),
     };
 
+    #[allow(clippy::too_many_arguments)]
     fn collect_layouts(
         tree: &TaffyTree<NodeId>,
         taffy_map: &HashMap<NodeId, taffy::NodeId>,
         node: &Node,
         parent_offset: Vec2,
         parent_global: Affine2,
+        parent_size: Vec2,
         content_offset: Vec2,
         result: &mut ComputedLayout,
     ) {
@@ -1074,10 +1170,18 @@ pub fn compute_layout(doc: &BuilderDocument, viewport_size: Size2) -> ComputedLa
         };
 
         let taffy_layout = tree.layout(taffy_node).expect("layout lookup");
-        let layout_pos = Vec2::new(taffy_layout.location.x, taffy_layout.location.y)
+        let mut layout_pos = Vec2::new(taffy_layout.location.x, taffy_layout.location.y)
             + parent_offset
             + content_offset;
         let layout_size = Vec2::new(taffy_layout.size.width, taffy_layout.size.height);
+
+        // Anchor resolution for Absolute nodes: the transform.position
+        // is an offset from the anchor point within the parent rect.
+        if let LayoutMode::Absolute(_) = &node.layout_mode {
+            let anchor_frac = node.transform.anchor.as_fraction();
+            let anchor_origin = parent_size * anchor_frac;
+            layout_pos = anchor_origin + node.transform.position_vec2() + content_offset;
+        }
 
         let local_affine = node.transform.to_local_affine(layout_size);
         let position_affine = Affine2::from_translation(layout_pos);
@@ -1102,6 +1206,7 @@ pub fn compute_layout(doc: &BuilderDocument, viewport_size: Size2) -> ComputedLa
                 child,
                 Vec2::ZERO,
                 computed.global,
+                layout_size,
                 Vec2::ZERO,
                 result,
             );
@@ -1109,12 +1214,14 @@ pub fn compute_layout(doc: &BuilderDocument, viewport_size: Size2) -> ComputedLa
     }
 
     let content_offset = Vec2::new(content_rect.x(), content_rect.y());
+    let page_vec = Vec2::new(page_size.width, page_size.height);
     collect_layouts(
         &tree,
         &taffy_map,
         root,
         Vec2::ZERO,
         Affine2::IDENTITY,
+        page_vec,
         content_offset,
         &mut result,
     );
@@ -1518,5 +1625,255 @@ mod tests {
         assert_eq!(GridPlacement::Line { index: 1 }.resolved_index(), Some(0));
         assert_eq!(GridPlacement::Line { index: 3 }.resolved_index(), Some(2));
         assert_eq!(GridPlacement::Span { count: 2 }.resolved_index(), None);
+    }
+
+    // ── Absolute / Relative positioning tests ──────────────────────
+
+    #[test]
+    fn absolute_props_serde_roundtrip() {
+        let abs = AbsoluteProps {
+            width: Dimension::Px { value: 200.0 },
+            height: Dimension::Px { value: 100.0 },
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&abs).unwrap();
+        let abs2: AbsoluteProps = serde_json::from_str(&json).unwrap();
+        assert_eq!(abs, abs2);
+    }
+
+    #[test]
+    fn layout_mode_absolute_serde_roundtrip() {
+        let mode = LayoutMode::Absolute(AbsoluteProps::fixed(300.0, 150.0));
+        let json = serde_json::to_string(&mode).unwrap();
+        let mode2: LayoutMode = serde_json::from_str(&json).unwrap();
+        assert!(matches!(mode2, LayoutMode::Absolute(_)));
+        if let LayoutMode::Absolute(abs) = mode2 {
+            assert_eq!(abs.width, Dimension::Px { value: 300.0 });
+            assert_eq!(abs.height, Dimension::Px { value: 150.0 });
+        }
+    }
+
+    #[test]
+    fn layout_mode_relative_serde_roundtrip() {
+        let mode = LayoutMode::Relative(FlowProps {
+            display: FlowDisplay::Flex,
+            gap: 8.0,
+            ..Default::default()
+        });
+        let json = serde_json::to_string(&mode).unwrap();
+        let mode2: LayoutMode = serde_json::from_str(&json).unwrap();
+        assert!(matches!(mode2, LayoutMode::Relative(_)));
+    }
+
+    #[test]
+    fn layout_mode_helpers() {
+        assert!(LayoutMode::Flow(FlowProps::default()).is_in_flow());
+        assert!(LayoutMode::Relative(FlowProps::default()).is_in_flow());
+        assert!(!LayoutMode::Absolute(AbsoluteProps::default()).is_in_flow());
+        assert!(!LayoutMode::Free.is_in_flow());
+
+        assert!(!LayoutMode::Flow(FlowProps::default()).is_positioned());
+        assert!(LayoutMode::Relative(FlowProps::default()).is_positioned());
+        assert!(LayoutMode::Absolute(AbsoluteProps::default()).is_positioned());
+        assert!(LayoutMode::Free.is_positioned());
+
+        assert!(LayoutMode::Flow(FlowProps::default())
+            .flow_props()
+            .is_some());
+        assert!(LayoutMode::Relative(FlowProps::default())
+            .flow_props()
+            .is_some());
+        assert!(LayoutMode::Absolute(AbsoluteProps::default())
+            .flow_props()
+            .is_none());
+        assert!(LayoutMode::Free.flow_props().is_none());
+    }
+
+    #[test]
+    fn compute_layout_absolute_node_top_left() {
+        use prism_core::foundation::spatial::Anchor;
+
+        let mut parent = make_node("parent");
+        parent.layout_mode = LayoutMode::Flow(FlowProps {
+            display: FlowDisplay::Flex,
+            width: Dimension::Px { value: 400.0 },
+            height: Dimension::Px { value: 300.0 },
+            ..Default::default()
+        });
+
+        let mut abs_child = make_node("abs");
+        abs_child.layout_mode = LayoutMode::Absolute(AbsoluteProps::fixed(100.0, 50.0));
+        abs_child.transform.position = [20.0, 30.0];
+        abs_child.transform.anchor = Anchor::TopLeft;
+
+        parent.children = vec![abs_child];
+
+        let doc = BuilderDocument {
+            root: Some(parent),
+            ..Default::default()
+        };
+
+        let result = compute_layout(&doc, Size2::new(800.0, 600.0));
+        let abs_layout = &result.nodes["abs"];
+        assert!((abs_layout.rect.x() - 20.0).abs() < 2.0);
+        assert!((abs_layout.rect.y() - 30.0).abs() < 2.0);
+    }
+
+    #[test]
+    fn compute_layout_absolute_node_center_anchor() {
+        use prism_core::foundation::spatial::Anchor;
+
+        let mut parent = make_node("parent");
+        parent.layout_mode = LayoutMode::Flow(FlowProps {
+            display: FlowDisplay::Flex,
+            width: Dimension::Px { value: 400.0 },
+            height: Dimension::Px { value: 300.0 },
+            ..Default::default()
+        });
+
+        let mut abs_child = make_node("centered");
+        abs_child.layout_mode = LayoutMode::Absolute(AbsoluteProps::fixed(100.0, 50.0));
+        abs_child.transform.position = [0.0, 0.0];
+        abs_child.transform.anchor = Anchor::Center;
+
+        parent.children = vec![abs_child];
+
+        let doc = BuilderDocument {
+            root: Some(parent),
+            ..Default::default()
+        };
+
+        let result = compute_layout(&doc, Size2::new(800.0, 600.0));
+        let layout = &result.nodes["centered"];
+        // Center of a 400x300 parent = (200, 150), offset by (0,0)
+        assert!((layout.rect.x() - 200.0).abs() < 2.0);
+        assert!((layout.rect.y() - 150.0).abs() < 2.0);
+    }
+
+    #[test]
+    fn compute_layout_absolute_node_bottom_right() {
+        use prism_core::foundation::spatial::Anchor;
+
+        let mut parent = make_node("parent");
+        parent.layout_mode = LayoutMode::Flow(FlowProps {
+            display: FlowDisplay::Flex,
+            width: Dimension::Px { value: 400.0 },
+            height: Dimension::Px { value: 300.0 },
+            ..Default::default()
+        });
+
+        let mut abs_child = make_node("br");
+        abs_child.layout_mode = LayoutMode::Absolute(AbsoluteProps::fixed(80.0, 40.0));
+        abs_child.transform.position = [-10.0, -5.0];
+        abs_child.transform.anchor = Anchor::BottomRight;
+
+        parent.children = vec![abs_child];
+
+        let doc = BuilderDocument {
+            root: Some(parent),
+            ..Default::default()
+        };
+
+        let result = compute_layout(&doc, Size2::new(800.0, 600.0));
+        let layout = &result.nodes["br"];
+        // Bottom-right of 400x300 = (400, 300), offset by (-10, -5)
+        assert!((layout.rect.x() - 390.0).abs() < 2.0);
+        assert!((layout.rect.y() - 295.0).abs() < 2.0);
+    }
+
+    #[test]
+    fn compute_layout_relative_node_offset() {
+        let mut parent = make_node("parent");
+        parent.layout_mode = LayoutMode::Flow(FlowProps {
+            display: FlowDisplay::Flex,
+            flex_direction: FlexDirection::Column,
+            width: Dimension::Px { value: 400.0 },
+            height: Dimension::Px { value: 300.0 },
+            ..Default::default()
+        });
+
+        let mut flow_child = make_node("flow");
+        flow_child.layout_mode = LayoutMode::Flow(FlowProps {
+            height: Dimension::Px { value: 50.0 },
+            ..Default::default()
+        });
+
+        let mut rel_child = make_node("rel");
+        rel_child.layout_mode = LayoutMode::Relative(FlowProps {
+            height: Dimension::Px { value: 60.0 },
+            ..Default::default()
+        });
+        rel_child.transform.position = [10.0, 5.0];
+
+        parent.children = vec![flow_child, rel_child];
+
+        let doc = BuilderDocument {
+            root: Some(parent),
+            ..Default::default()
+        };
+
+        let result = compute_layout(&doc, Size2::new(800.0, 600.0));
+        assert!(result.nodes.contains_key("rel"));
+        let rel_layout = &result.nodes["rel"];
+        // Relative node is in flow after the 50px flow child, but
+        // its transform position (10, 5) is composed into its transform.
+        assert!((rel_layout.rect.height() - 60.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn absolute_mixed_with_flow_children() {
+        let mut parent = make_node("parent");
+        parent.layout_mode = LayoutMode::Flow(FlowProps {
+            display: FlowDisplay::Flex,
+            flex_direction: FlexDirection::Column,
+            width: Dimension::Px { value: 400.0 },
+            height: Dimension::Px { value: 300.0 },
+            ..Default::default()
+        });
+
+        let mut flow_a = make_node("a");
+        flow_a.layout_mode = LayoutMode::Flow(FlowProps {
+            height: Dimension::Px { value: 100.0 },
+            ..Default::default()
+        });
+
+        let mut abs_b = make_node("b");
+        abs_b.layout_mode = LayoutMode::Absolute(AbsoluteProps::fixed(50.0, 50.0));
+        abs_b.transform.position = [10.0, 10.0];
+
+        let mut flow_c = make_node("c");
+        flow_c.layout_mode = LayoutMode::Flow(FlowProps {
+            height: Dimension::Px { value: 80.0 },
+            ..Default::default()
+        });
+
+        parent.children = vec![flow_a, abs_b, flow_c];
+
+        let doc = BuilderDocument {
+            root: Some(parent),
+            ..Default::default()
+        };
+
+        let result = compute_layout(&doc, Size2::new(800.0, 600.0));
+        let a_rect = &result.nodes["a"].rect;
+        let c_rect = &result.nodes["c"].rect;
+        // Flow children should be stacked: a at top, c right after a.
+        // The absolute child b does NOT take up flow space.
+        assert!((a_rect.height() - 100.0).abs() < 1.0);
+        assert!((c_rect.y() - a_rect.bottom()).abs() < 1.0);
+    }
+
+    #[test]
+    fn absolute_props_default() {
+        let abs = AbsoluteProps::default();
+        assert_eq!(abs.width, Dimension::Auto);
+        assert_eq!(abs.height, Dimension::Auto);
+    }
+
+    #[test]
+    fn absolute_props_fixed_constructor() {
+        let abs = AbsoluteProps::fixed(200.0, 100.0);
+        assert_eq!(abs.width, Dimension::Px { value: 200.0 });
+        assert_eq!(abs.height, Dimension::Px { value: 100.0 });
     }
 }

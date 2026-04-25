@@ -65,7 +65,9 @@ impl PropertiesPanel {
                     "layout.display",
                     "Display",
                     format_display(flow.display),
-                    vec!["block", "flex", "grid", "none"],
+                    vec![
+                        "block", "flex", "grid", "none", "absolute", "relative", "free",
+                    ],
                 )];
 
                 // Width — select for unit + slider for value
@@ -266,8 +268,99 @@ impl PropertiesPanel {
                     "layout.display",
                     "Display",
                     "free".into(),
-                    vec!["free", "block", "flex", "grid", "none"],
+                    vec![
+                        "free", "absolute", "relative", "block", "flex", "grid", "none",
+                    ],
                 )]
+            }
+            LayoutMode::Absolute(abs) => {
+                let mut rows = vec![layout_select(
+                    "layout.display",
+                    "Display",
+                    "absolute".into(),
+                    vec![
+                        "absolute", "relative", "free", "block", "flex", "grid", "none",
+                    ],
+                )];
+                rows.push(layout_select(
+                    "layout.width_unit",
+                    "Width Unit",
+                    dimension_unit(abs.width),
+                    vec!["auto", "px", "%"],
+                ));
+                if let Some((val, lo, hi)) = dimension_slider(abs.width) {
+                    rows.push(layout_number(
+                        "layout.width_value",
+                        "Width",
+                        format_f32(val),
+                        lo,
+                        hi,
+                    ));
+                }
+                rows.push(layout_select(
+                    "layout.height_unit",
+                    "Height Unit",
+                    dimension_unit(abs.height),
+                    vec!["auto", "px", "%"],
+                ));
+                if let Some((val, lo, hi)) = dimension_slider(abs.height) {
+                    rows.push(layout_number(
+                        "layout.height_value",
+                        "Height",
+                        format_f32(val),
+                        lo,
+                        hi,
+                    ));
+                }
+                rows
+            }
+            LayoutMode::Relative(flow) => {
+                let mut rows = vec![layout_select(
+                    "layout.display",
+                    "Display",
+                    "relative".into(),
+                    vec![
+                        "relative", "absolute", "free", "block", "flex", "grid", "none",
+                    ],
+                )];
+                rows.push(layout_select(
+                    "layout.width_unit",
+                    "Width Unit",
+                    dimension_unit(flow.width),
+                    vec!["auto", "px", "%"],
+                ));
+                if let Some((val, lo, hi)) = dimension_slider(flow.width) {
+                    rows.push(layout_number(
+                        "layout.width_value",
+                        "Width",
+                        format_f32(val),
+                        lo,
+                        hi,
+                    ));
+                }
+                rows.push(layout_select(
+                    "layout.height_unit",
+                    "Height Unit",
+                    dimension_unit(flow.height),
+                    vec!["auto", "px", "%"],
+                ));
+                if let Some((val, lo, hi)) = dimension_slider(flow.height) {
+                    rows.push(layout_number(
+                        "layout.height_value",
+                        "Height",
+                        format_f32(val),
+                        lo,
+                        hi,
+                    ));
+                }
+                rows.push(layout_number(
+                    "layout.gap",
+                    "Gap",
+                    format_f32(flow.gap),
+                    0.0,
+                    128.0,
+                ));
+                rows
             }
         }
     }

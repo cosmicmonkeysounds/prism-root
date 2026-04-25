@@ -67,9 +67,18 @@ From `src/lib.rs`:
 ### Layout engine (ADR-003)
 - `PageLayout`, `PageSize`, `Orientation`, `TrackSize` — structural
   page properties (size, margins, bleed, CSS Grid template).
-- `LayoutMode` (`Flow` | `Free`), `FlowProps`, `Dimension`,
-  `FlowDisplay`, `FlexDirection`, `AlignOption`, `JustifyOption`,
+- `LayoutMode` (`Flow` | `Free` | `Absolute` | `Relative`),
+  `FlowProps`, `AbsoluteProps`, `Dimension`, `FlowDisplay`,
+  `FlexDirection`, `AlignOption`, `JustifyOption`,
   `GridPlacement` — per-node layout participation.
+  - `Flow(FlowProps)` — positioned by parent's flex/grid/block flow.
+  - `Free` — legacy mode: `position: absolute` in Taffy, Transform2D only.
+  - `Absolute(AbsoluteProps)` — removed from flow, positioned by
+    `Transform2D.position` + `Transform2D.anchor` relative to the
+    parent's rect. Parent is the anchor (grid cell, container, or page).
+  - `Relative(FlowProps)` — participates in flow, then Transform2D
+    position is applied as a post-flow offset (like CSS `position: relative`).
+  - `LayoutMode::is_in_flow()`, `is_positioned()`, `flow_props()` — helpers.
 - `compute_layout(doc, viewport_size) -> ComputedLayout` — runs
   the Taffy layout pass + transform propagation, returns per-node
   `NodeLayout { rect, transform }`.
@@ -170,7 +179,8 @@ Sixteen modules in `src/`:
 - `document.rs` — `BuilderDocument` + `Node` + `NodeId`. Nodes now
   carry `layout_mode` and `transform`; documents carry `page_layout`.
 - `layout.rs` — the Taffy-backed layout engine (ADR-003). `PageLayout`,
-  `LayoutMode`, `FlowProps`, `compute_layout`. 15 unit tests.
+  `LayoutMode` (Flow/Free/Absolute/Relative), `FlowProps`,
+  `AbsoluteProps`, `compute_layout`. 34 unit tests.
 - `html_block.rs` — the `HtmlBlock` trait + `HtmlRegistry` +
   `HtmlRenderContext`. Independent from `component.rs`.
 - `html_starter.rs` — 17 built-in HTML blocks + `register_html_builtins`.
