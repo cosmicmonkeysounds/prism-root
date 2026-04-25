@@ -57,6 +57,7 @@ fn build_node_tree(source: &str) -> Option<Node> {
                 let prop_end = *line_start;
                 completed.props =
                     parse_props_from_region(source, prop_start, prop_end, &completed.children);
+                translate_slint_keys_to_schema(&completed.component, &mut completed.props);
                 if let Some(parent) = stack.last_mut() {
                     parent.children.push(completed);
                 } else {
@@ -198,6 +199,20 @@ pub fn format_slint_value(value: &Value, px_suffix: bool) -> String {
         }
         Value::Null => "\"\"".to_string(),
         _ => format!("\"{}\"", value),
+    }
+}
+
+/// Rename Slint-native property keys back to their schema equivalents
+/// so the derived `BuilderDocument` uses the same keys `render_slint` reads.
+fn translate_slint_keys_to_schema(component: &str, props: &mut Value) {
+    if let Value::Object(map) = props {
+        if component == "image" {
+            if let Some(v) = map.remove("image-fit") {
+                if !map.contains_key("fit") {
+                    map.insert("fit".to_string(), v);
+                }
+            }
+        }
     }
 }
 

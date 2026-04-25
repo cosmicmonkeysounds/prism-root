@@ -2189,7 +2189,7 @@ export component AppWindow inherits Window {
                                                             visible: i < root.variant-items-count;
                                                             spacing: 8px; height: 28px;
                                                             Text { text: vitem.label; color: Palette.foreground.transparentize(40%); font-size: 11px; width: 80px; vertical-alignment: center; }
-                                                            ComboBox { model: vitem.options; current-value: vitem.selected; horizontal-stretch: 1; }
+                                                            ComboBox { model: vitem.options; current-value: vitem.selected; horizontal-stretch: 1; selected(val) => { root.field-edited(vitem.key, val); } }
                                                         }
                                                         if root.modifier-items-count > 0 : Rectangle { height: 8px; }
                                                         if root.modifier-items-count > 0 : Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }

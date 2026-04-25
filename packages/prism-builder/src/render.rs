@@ -20,6 +20,7 @@ use crate::component::{RenderError, RenderSlintContext};
 use crate::document::BuilderDocument;
 use crate::html::Html;
 use crate::html_block::{HtmlRegistry, HtmlRenderContext};
+use crate::layout::LayoutMode;
 use crate::registry::ComponentRegistry;
 use crate::slint_source::{rgba_to_slint_literal, SlintEmitter};
 use crate::source_map::{PropSpan, SourceMap, SourceSpan};
@@ -294,6 +295,9 @@ pub fn render_document_slint_preview_with_assets(
     let mut out = SlintEmitter::new();
     out.line("// Auto-generated preview by prism_builder.");
     out.blank();
+
+    let has_grid = !doc.page_layout.columns.is_empty() || !doc.page_layout.rows.is_empty();
+
     out.block(
         "export component BuilderPreview inherits Rectangle",
         |out| {
@@ -303,12 +307,58 @@ pub fn render_document_slint_preview_with_assets(
             );
             out.blank();
             if let Some(root) = &doc.root {
-                out.block("VerticalLayout", |out| {
-                    out.prop_px("padding", tokens.spacing.lg as f64);
-                    out.prop_px("spacing", tokens.spacing.md as f64);
-                    out.line("alignment: start;");
-                    ctx.render_child(root, out)
-                })
+                if has_grid {
+                    let margins = &doc.page_layout.margins;
+                    let gap = doc.page_layout.column_gap.max(doc.page_layout.row_gap) as f64;
+                    let num_cols = doc.page_layout.columns.len().max(1);
+                    let num_rows = doc.page_layout.rows.len().max(1);
+
+                    let mut occupied = std::collections::HashMap::new();
+                    for (i, child) in root.children.iter().enumerate() {
+                        let (col, row) = grid_cell_for_child(child);
+                        occupied.insert((col, row), i);
+                    }
+
+                    out.block("GridLayout", |out| {
+                        out.prop_px("padding-left", margins.left as f64);
+                        out.prop_px("padding-top", margins.top as f64);
+                        out.prop_px("padding-right", margins.right as f64);
+                        out.prop_px("padding-bottom", margins.bottom as f64);
+                        if gap > 0.0 {
+                            out.prop_px("spacing", gap);
+                        }
+                        for r in 0..num_rows {
+                            for c in 0..num_cols {
+                                if let Some(&idx) = occupied.get(&(c, r)) {
+                                    out.block("Rectangle", |out| {
+                                        out.line(format!("col: {c};"));
+                                        out.line(format!("row: {r};"));
+                                        out.line("horizontal-stretch: 1;");
+                                        out.line("vertical-stretch: 1;");
+                                        out.line("clip: true;");
+                                        ctx.render_child(&root.children[idx], out)
+                                    })?;
+                                } else {
+                                    out.block("Rectangle", |out| {
+                                        out.line(format!("col: {c};"));
+                                        out.line(format!("row: {r};"));
+                                        out.line("horizontal-stretch: 1;");
+                                        out.line("vertical-stretch: 1;");
+                                        Ok(())
+                                    })?;
+                                }
+                            }
+                        }
+                        Ok(())
+                    })
+                } else {
+                    out.block("VerticalLayout", |out| {
+                        out.prop_px("padding", tokens.spacing.lg as f64);
+                        out.prop_px("spacing", tokens.spacing.md as f64);
+                        out.line("alignment: start;");
+                        ctx.render_child(root, out)
+                    })
+                }
             } else {
                 out.block("Text", |out| {
                     out.prop_string("text", "(empty document)");
@@ -319,6 +369,17 @@ pub fn render_document_slint_preview_with_assets(
         },
     )?;
     Ok(out.build())
+}
+
+fn grid_cell_for_child(child: &crate::document::Node) -> (usize, usize) {
+    match &child.layout_mode {
+        LayoutMode::Flow(f) => {
+            let col = f.grid_column.resolved_index().unwrap_or(0);
+            let row = f.grid_row.resolved_index().unwrap_or(0);
+            (col, row)
+        }
+        _ => (0, 0),
+    }
 }
 
 /// Compile an embeddable preview source through

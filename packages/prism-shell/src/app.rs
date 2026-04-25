@@ -1211,10 +1211,11 @@ impl Shell {
                     let selected_id = s.store.state().selection.primary().cloned();
                     if let Some(ref target_id) = selected_id {
                         let kind = field_kind_for_key(&s, &key);
-                        let formatted = format_value_for_source(&value, kind.as_deref());
+                        let (source_key, formatted) =
+                            slint_source_key_for_edit(&s, &key, &value, kind.as_deref());
                         s.push_undo(&format!("Edit {key}"));
                         if let Some(ref mut live) = s.live {
-                            let _ = live.edit_prop_in_source(target_id, &key, &formatted);
+                            let _ = live.edit_prop_in_source(target_id, &source_key, &formatted);
                         }
                         s.sync_builder_document();
                     }
@@ -3161,18 +3162,27 @@ fn push_wysiwyg_preview(
         return;
     }
     let asset_paths = materialize_vfs_assets(doc, vfs);
+    eprintln!(
+        "[preview] grid cols={} rows={} children={}",
+        doc.page_layout.columns.len(),
+        doc.page_layout.rows.len(),
+        doc.root.as_ref().map(|r| r.children.len()).unwrap_or(0),
+    );
     match render_document_slint_preview_with_assets(doc, registry, tokens, asset_paths) {
-        Ok(source) => match compile_slint_preview(&source) {
-            Ok(definition) => {
-                window.set_preview_factory(preview_component_factory(definition));
-                window.set_preview_factory_ready(true);
+        Ok(source) => {
+            eprintln!("[preview] source:\n{source}");
+            match compile_slint_preview(&source) {
+                Ok(definition) => {
+                    window.set_preview_factory(preview_component_factory(definition));
+                    window.set_preview_factory_ready(true);
+                }
+                Err(e) => {
+                    eprintln!("[preview] compile error: {e}");
+                    window.set_preview_factory(Default::default());
+                    window.set_preview_factory_ready(false);
+                }
             }
-            Err(e) => {
-                eprintln!("[preview] compile error: {e}");
-                window.set_preview_factory(Default::default());
-                window.set_preview_factory_ready(false);
-            }
-        },
+        }
         Err(e) => {
             eprintln!("[preview] render error: {e}");
             window.set_preview_factory(Default::default());
@@ -4055,6 +4065,44 @@ fn format_value_for_source(value: &str, kind: Option<&str>) -> String {
     }
 }
 
+/// Translate a schema property key to its Slint source equivalent and
+/// format the value appropriately. Returns `(slint_key, formatted_value)`.
+fn slint_source_key_for_edit(
+    inner: &ShellInner,
+    schema_key: &str,
+    value: &str,
+    kind: Option<&str>,
+) -> (String, String) {
+    let component_type = {
+        let state = inner.store.state();
+        state.selection.primary().and_then(|sel| {
+            state
+                .builder_document
+                .root
+                .as_ref()
+                .and_then(|r| r.find(sel))
+                .map(|n| n.component.clone())
+        })
+    };
+    let slint_key = match (component_type.as_deref(), schema_key) {
+        (Some("image"), "fit") => Some("image-fit"),
+        _ => None,
+    };
+    if let Some(slint_key) = slint_key {
+        if let Some(ref live) = inner.live {
+            let selected = inner.store.state().selection.primary().cloned();
+            if let Some(ref id) = selected {
+                if let Some(span) = live.source_map.span_for_node(id) {
+                    if span.props.iter().any(|p| p.key == slint_key) {
+                        return (slint_key.to_string(), value.to_string());
+                    }
+                }
+            }
+        }
+    }
+    (schema_key.to_string(), format_value_for_source(value, kind))
+}
+
 fn default_props_for_component(component: &str) -> serde_json::Value {
     match component {
         "text" => json!({ "body": "New paragraph", "level": "paragraph" }),
@@ -4749,7 +4797,7 @@ fn push_composition_data(
                         let opts: Vec<SharedString> = axis
                             .options
                             .iter()
-                            .map(|o| SharedString::from(o.label.as_str()))
+                            .map(|o| SharedString::from(o.value.as_str()))
                             .collect();
                         VariantItem {
                             key: SharedString::from(axis.key.as_str()),

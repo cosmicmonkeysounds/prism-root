@@ -177,7 +177,6 @@ impl Component for ImageComponent {
         _children: &[Node],
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
-        let alt = prop_str(props, "alt", "image");
         let fit = prop_str(props, "fit", "cover");
         let source = props.get("src").and_then(AssetSource::from_prop);
 
@@ -198,36 +197,27 @@ impl Component for ImageComponent {
         };
 
         if let Some(path) = resolved_path {
-            out.block("Image", |out| {
-                out.line(format!(
-                    "source: @image-url(\"{}\");",
-                    escape_slint_string(&path)
-                ));
-                out.line(format!("image-fit: {slint_fit};"));
-                out.prop_px("min-width", 0.0);
-                out.prop_px("min-height", 0.0);
+            out.block("Rectangle", |out| {
+                out.line("clip: true;");
                 out.line("horizontal-stretch: 1;");
                 out.line("vertical-stretch: 1;");
-                Ok(())
-            })
-        } else {
-            let label = match &source {
-                Some(AssetSource::Vfs { filename, .. }) => filename.as_str(),
-                Some(AssetSource::Url { url }) => url.as_str(),
-                None => alt,
-            };
-            out.block("Rectangle", |out| {
-                out.prop_px("min-height", 120.0);
-                out.line("background: #2a3140;");
-                out.line("border-radius: 6px;");
-                out.block("Text", |out| {
-                    out.prop_string("text", label);
-                    out.prop_px("font-size", 12.0);
-                    out.line("color: #9ca4b4;");
-                    out.line("horizontal-alignment: center;");
-                    out.line("vertical-alignment: center;");
+                out.block("Image", |out| {
+                    out.line(format!(
+                        "source: @image-url(\"{}\");",
+                        escape_slint_string(&path)
+                    ));
+                    out.line(format!("image-fit: {slint_fit};"));
+                    out.line("width: parent.width;");
+                    out.line("height: parent.height;");
                     Ok(())
                 })
+            })
+        } else {
+            // No visible placeholder — the grid cell overlay already
+            // shows the component type label.
+            out.block("Rectangle", |out| {
+                out.line("horizontal-stretch: 1;");
+                Ok(())
             })
         }
     }
