@@ -21,9 +21,10 @@ use prism_builder::{
         AlignOption, Dimension, FlexDirection, FlowDisplay, FlowProps, GridPlacement,
         JustifyOption, LayoutMode, PageSize, TrackSize,
     },
-    preview_component_factory, render_document_slint_preview_with_assets,
+    path_from_string, preview_component_factory, render_document_slint_preview_with_assets,
     starter::{builtin_prefab, materialize_prefab, register_builtins},
-    BuilderDocument, ComponentRegistry, FieldKind, LiveDocument, Node, NodeId, StyleProperties,
+    BuilderDocument, CellEdge, ComponentRegistry, FieldKind, GridCell, LiveDocument, Node, NodeId,
+    StyleProperties,
 };
 use prism_core::design_tokens::{DesignTokens, DEFAULT_TOKENS};
 use prism_core::editor::EditorState;
@@ -485,11 +486,16 @@ fn sample_document() -> BuilderDocument {
         page_layout: PageLayout {
             size: PageSize::Responsive,
             margins: Edges::new(32.0, 48.0, 32.0, 48.0),
-            columns: vec![
-                TrackSize::Fr { value: 1.0 },
-                TrackSize::Fr { value: 2.0 },
-                TrackSize::Fr { value: 1.0 },
-            ],
+            grid: Some(GridCell::split(
+                prism_builder::layout::SplitDirection::Vertical,
+                vec![
+                    TrackSize::Fr { value: 1.0 },
+                    TrackSize::Fr { value: 2.0 },
+                    TrackSize::Fr { value: 1.0 },
+                ],
+                24.0,
+                vec![GridCell::leaf(), GridCell::leaf(), GridCell::leaf()],
+            )),
             column_gap: 24.0,
             ..Default::default()
         },
@@ -538,7 +544,7 @@ struct ShellInner {
     sync_timer: Timer,
     dock_check_timer: Timer,
     drag_component_type: String,
-    pending_picker: Option<(i32, i32, f32, f32)>,
+    pending_picker: Option<(String, f32, f32)>,
     vfs: VfsManager,
     toast_timer: Timer,
     user_color_swatches: Vec<String>,
@@ -2212,36 +2218,17 @@ impl Shell {
         self.window.on_grid_cell_clicked({
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
-            move |col, row| {
+            move |path| {
                 {
                     let mut s = inner.borrow_mut();
                     let occupant_id = {
                         let doc = &s.store.state().builder_document;
-                        let children_placements: Vec<(String, Option<usize>, Option<usize>)> = doc
-                            .root
+                        let cell_path = path_from_string(path.as_str());
+                        doc.page_layout
+                            .grid
                             .as_ref()
-                            .map(|r| {
-                                r.children
-                                    .iter()
-                                    .map(|c| {
-                                        let (gc, gr) = match &c.layout_mode {
-                                            LayoutMode::Flow(f) => (
-                                                f.grid_column.resolved_index(),
-                                                f.grid_row.resolved_index(),
-                                            ),
-                                            _ => (None, None),
-                                        };
-                                        (c.id.clone(), gc, gr)
-                                    })
-                                    .collect()
-                            })
-                            .unwrap_or_default();
-                        children_placements
-                            .iter()
-                            .find(|(_, gc, gr)| {
-                                gc.unwrap_or(0) == col as usize && gr.unwrap_or(0) == row as usize
-                            })
-                            .map(|(id, _, _)| id.clone())
+                            .and_then(|g| g.at(&cell_path))
+                            .and_then(|c| c.node_id().map(String::from))
                     };
                     if let Some(id) = occupant_id {
                         s.store.mutate(|state| {
@@ -2255,20 +2242,27 @@ impl Shell {
             }
         });
 
-        // Grid add column
-        self.window.on_grid_add_column({
+        // Grid add at edge (recursive subdivision)
+        self.window.on_grid_add_at_edge({
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
-            move |index| {
+            move |cell_path, edge| {
                 {
                     let mut s = inner.borrow_mut();
-                    s.push_undo("Add column");
-                    let idx = index as usize;
+                    s.push_undo("Add cell");
+                    let path = path_from_string(cell_path.as_str());
+                    let cell_edge = match edge.as_str() {
+                        "top" => CellEdge::Top,
+                        "bottom" => CellEdge::Bottom,
+                        "left" => CellEdge::Left,
+                        "right" => CellEdge::Right,
+                        _ => return,
+                    };
                     s.store.mutate(|state| {
-                        state
+                        let _ = state
                             .builder_document
                             .page_layout
-                            .insert_column(idx, TrackSize::Fr { value: 1.0 });
+                            .insert_at_edge(&path, cell_edge);
                     });
                 }
                 if let Some(w) = weak.upgrade() {
@@ -2277,110 +2271,24 @@ impl Shell {
             }
         });
 
-        // Grid add row
-        self.window.on_grid_add_row({
-            let inner = Rc::clone(&inner);
-            let weak = weak.clone();
-            move |index| {
-                {
-                    let mut s = inner.borrow_mut();
-                    s.push_undo("Add row");
-                    let idx = index as usize;
-                    s.store.mutate(|state| {
-                        state
-                            .builder_document
-                            .page_layout
-                            .insert_row(idx, TrackSize::Fr { value: 1.0 });
-                    });
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
-            }
-        });
-
-        // Grid remove column
-        self.window.on_grid_remove_column({
-            let inner = Rc::clone(&inner);
-            let weak = weak.clone();
-            move |index| {
-                {
-                    let mut s = inner.borrow_mut();
-                    s.push_undo("Remove column");
-                    let idx = index as usize;
-                    s.store.mutate(|state| {
-                        let _ = state.builder_document.page_layout.remove_column(idx);
-                    });
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
-            }
-        });
-
-        // Grid remove row
-        self.window.on_grid_remove_row({
-            let inner = Rc::clone(&inner);
-            let weak = weak.clone();
-            move |index| {
-                {
-                    let mut s = inner.borrow_mut();
-                    s.push_undo("Remove row");
-                    let idx = index as usize;
-                    s.store.mutate(|state| {
-                        let _ = state.builder_document.page_layout.remove_row(idx);
-                    });
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
-            }
-        });
-
-        // Inspector delete-track (parses "row:N" id format)
+        // Inspector delete-track (parses "cell:<path>" id format)
         self.window.on_inspector_delete_track({
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |id| {
                 let id_str = id.as_str();
-                if let Some(idx_str) = id_str.strip_prefix("row:") {
-                    if let Ok(idx) = idx_str.parse::<usize>() {
-                        {
-                            let mut s = inner.borrow_mut();
-                            s.push_undo("Remove row");
-                            s.store.mutate(|state| {
-                                let _ = state.builder_document.page_layout.remove_row(idx);
-                            });
-                        }
-                        if let Some(w) = weak.upgrade() {
-                            sync_ui_from_shared(&inner, &w);
-                        }
+                if let Some(path_str) = id_str.strip_prefix("cell:") {
+                    let path = path_from_string(path_str);
+                    {
+                        let mut s = inner.borrow_mut();
+                        s.push_undo("Remove cell");
+                        s.store.mutate(|state| {
+                            let _ = state.builder_document.page_layout.remove_cell(&path);
+                        });
                     }
-                }
-            }
-        });
-
-        // Grid track resize
-        self.window.on_grid_track_resize({
-            let inner = Rc::clone(&inner);
-            let weak = weak.clone();
-            move |direction, index, new_size| {
-                {
-                    let mut s = inner.borrow_mut();
-                    s.push_undo("Resize track");
-                    let idx = index as usize;
-                    let track = TrackSize::Fixed { value: new_size };
-                    s.store.mutate(|state| {
-                        let pl = &mut state.builder_document.page_layout;
-                        if direction == "col" {
-                            let _ = pl.resize_column(idx, track);
-                        } else {
-                            let _ = pl.resize_row(idx, track);
-                        }
-                    });
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
+                    if let Some(w) = weak.upgrade() {
+                        sync_ui_from_shared(&inner, &w);
+                    }
                 }
             }
         });
@@ -2389,23 +2297,29 @@ impl Shell {
         self.window.on_grid_cell_add_component({
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
-            move |component_type, col, row| {
+            move |component_type, path| {
                 let ct = component_type.to_string();
+                let path_str = path.to_string();
                 {
                     let mut s = inner.borrow_mut();
-                    s.push_undo(&format!("Add {ct} at ({col},{row})"));
+                    s.push_undo(&format!("Add {ct} at {path_str}"));
 
-                    let grid_cell = Some((col, row));
                     if let Some(prefab_def) = builtin_prefab(&ct) {
                         let mut counter = s.store.state().next_node_id;
                         let tree = materialize_prefab(&prefab_def, &mut counter);
                         let root_id = tree.id.clone();
                         if let Some(ref mut live) = s.live {
-                            let _ = live.insert_tree_in_source(Some("root"), &tree, grid_cell);
+                            let _ = live.insert_tree_in_source(Some("root"), &tree, None);
                         }
+                        let cell_path = path_from_string(&path_str);
                         s.store.mutate(|state| {
                             state.next_node_id = counter;
-                            state.selection.select(root_id);
+                            state.selection.select(root_id.clone());
+                            state
+                                .builder_document
+                                .page_layout
+                                .place_node_at(&cell_path, root_id)
+                                .ok();
                         });
                     } else {
                         let node_id = format!("n{}", s.store.state().next_node_id);
@@ -2416,13 +2330,19 @@ impl Shell {
                                 &ct,
                                 &node_id,
                                 &props,
-                                grid_cell,
+                                None,
                             );
                         }
                         let nid = node_id.clone();
+                        let cell_path = path_from_string(&path_str);
                         s.store.mutate(|state| {
                             state.next_node_id += 1;
-                            state.selection.select(nid);
+                            state.selection.select(nid.clone());
+                            state
+                                .builder_document
+                                .page_layout
+                                .place_node_at(&cell_path, nid)
+                                .ok();
                         });
                     }
                     s.sync_builder_document();
@@ -2439,10 +2359,10 @@ impl Shell {
         self.window.on_picker_show({
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
-            move |col, row, x, y| {
+            move |path, x, y| {
                 {
                     let mut s = inner.borrow_mut();
-                    s.pending_picker = Some((col, row, x, y));
+                    s.pending_picker = Some((path.to_string(), x, y));
                 }
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
@@ -2775,9 +2695,8 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
     window.set_drag_component_type(SharedString::from(inner.drag_component_type.as_str()));
 
     // Component picker overlay
-    if let Some((col, row, x, y)) = inner.pending_picker {
-        window.set_pending_add_col(col);
-        window.set_pending_add_row(row);
+    if let Some((ref path, x, y)) = inner.pending_picker {
+        window.set_pending_add_path(SharedString::from(path.as_str()));
         window.set_pending_add_x(x);
         window.set_pending_add_y(y);
         window.set_show_component_picker(true);
@@ -3200,9 +3119,8 @@ fn push_wysiwyg_preview(
     }
     let asset_paths = materialize_vfs_assets(doc, vfs);
     eprintln!(
-        "[preview] grid cols={} rows={} children={}",
-        doc.page_layout.columns.len(),
-        doc.page_layout.rows.len(),
+        "[preview] grid cells={} children={}",
+        doc.page_layout.leaf_count(),
         doc.root.as_ref().map(|r| r.children.len()).unwrap_or(0),
     );
     match render_document_slint_preview_with_assets(doc, registry, tokens, asset_paths) {
@@ -3316,9 +3234,7 @@ fn push_inspector_nodes(
     doc: &BuilderDocument,
     selection: &SelectionModel,
 ) {
-    let pl = &doc.page_layout;
-    let has_grid = !pl.columns.is_empty() || !pl.rows.is_empty();
-    let items = if has_grid {
+    let items = if doc.page_layout.has_grid() {
         flatten_inspector_grid(doc, selection)
     } else {
         flatten_inspector_nodes(doc.root.as_ref(), selection)
@@ -4042,65 +3958,84 @@ fn flatten_walk(node: &Node, depth: i32, selection: &SelectionModel, out: &mut V
 }
 
 fn flatten_inspector_grid(doc: &BuilderDocument, selection: &SelectionModel) -> Vec<InspectorNode> {
-    let pl = &doc.page_layout;
-    let cols = pl.columns.len().max(1);
-    let rows = pl.rows.len().max(1);
+    let grid = match &doc.page_layout.grid {
+        Some(g) => g,
+        None => return Vec::new(),
+    };
 
-    let children: Vec<(&str, Option<usize>, Option<usize>, &str)> = doc
+    let child_map: std::collections::HashMap<&str, &str> = doc
         .root
         .as_ref()
         .map(|r| {
             r.children
                 .iter()
-                .map(|c| {
-                    let (gc, gr) = match &c.layout_mode {
-                        LayoutMode::Flow(f) => {
-                            (f.grid_column.resolved_index(), f.grid_row.resolved_index())
-                        }
-                        _ => (None, None),
-                    };
-                    (c.id.as_str(), gc, gr, c.component.as_str())
-                })
+                .map(|c| (c.id.as_str(), c.component.as_str()))
                 .collect()
         })
         .unwrap_or_default();
 
     let mut items = Vec::new();
-    for r in 0..rows {
-        items.push(InspectorNode {
-            id: SharedString::from(format!("row:{r}")),
-            component_id: SharedString::from(format!("Row {}", r + 1)),
-            depth: 0,
-            selected: false,
-            kind: SharedString::from("row"),
-        });
-        for c in 0..cols {
-            let occupant = children
-                .iter()
-                .find(|(_, gc, gr, _)| gc.unwrap_or(0) == c && gr.unwrap_or(0) == r);
-            match occupant {
-                Some((id, _, _, comp)) => {
-                    items.push(InspectorNode {
-                        id: SharedString::from(*id),
-                        component_id: SharedString::from(format!("{comp} · col {}", c + 1)),
-                        depth: 1,
+    inspect_grid_cell(grid, &mut Vec::new(), 0, &child_map, selection, &mut items);
+    items
+}
+
+fn inspect_grid_cell(
+    cell: &GridCell,
+    path: &mut Vec<usize>,
+    depth: i32,
+    child_map: &std::collections::HashMap<&str, &str>,
+    selection: &SelectionModel,
+    out: &mut Vec<InspectorNode>,
+) {
+    match cell {
+        GridCell::Leaf { node_id } => {
+            let path_str = prism_builder::path_to_string(path);
+            match node_id {
+                Some(id) => {
+                    let comp = child_map.get(id.as_str()).copied().unwrap_or("?");
+                    out.push(InspectorNode {
+                        id: SharedString::from(id.as_str()),
+                        component_id: SharedString::from(comp),
+                        depth,
                         selected: selection.contains(id),
                         kind: SharedString::from("node"),
                     });
                 }
                 None => {
-                    items.push(InspectorNode {
-                        id: SharedString::from(format!("cell:{c}:{r}")),
-                        component_id: SharedString::from(format!("(empty) · col {}", c + 1)),
-                        depth: 1,
+                    out.push(InspectorNode {
+                        id: SharedString::from(format!("cell:{path_str}")),
+                        component_id: SharedString::from("(empty)"),
+                        depth,
                         selected: false,
                         kind: SharedString::from("empty"),
                     });
                 }
             }
         }
+        GridCell::Split {
+            direction,
+            children,
+            ..
+        } => {
+            let label = match direction {
+                prism_builder::layout::SplitDirection::Horizontal => "Rows",
+                prism_builder::layout::SplitDirection::Vertical => "Columns",
+            };
+            let path_str = prism_builder::path_to_string(path);
+            out.push(InspectorNode {
+                id: SharedString::from(format!("cell:{path_str}")),
+                component_id: SharedString::from(format!("{label} ({})", children.len())),
+                depth,
+                selected: false,
+                kind: SharedString::from("row"),
+            });
+            for (i, child) in children.iter().enumerate() {
+                path.push(i);
+                inspect_grid_cell(child, path, depth + 1, child_map, selection, out);
+                path.pop();
+            }
+        }
     }
-    items
 }
 
 fn field_kind_for_key(inner: &ShellInner, key: &str) -> Option<String> {
@@ -4406,90 +4341,18 @@ fn push_page_layout_data(
         margin_left: pl.margins.left,
         column_gap: pl.column_gap,
         row_gap: pl.row_gap,
-        column_count: pl.columns.len().max(1) as i32,
-        row_count: pl.rows.len() as i32,
+        cell_count: pl.leaf_count() as i32,
         show_grid,
         is_responsive,
         page_size_label: SharedString::from(size_label),
     });
 
-    let content_width = pw - pl.margins.left - pl.margins.right;
-    let content_height = ph - pl.margins.top - pl.margins.bottom;
-
-    let col_gutters = compute_gutter_rects(&pl.columns, pl.column_gap, content_width);
-    let row_gutters = compute_gutter_rects(&pl.rows, pl.row_gap, content_height);
-
-    let count = sync_model(&models.column_gutters, &col_gutters);
-    window.set_column_gutters_count(count);
-
-    let count = sync_model(&models.row_gutters, &row_gutters);
-    window.set_row_gutters_count(count);
-}
-
-fn compute_gutter_rects(tracks: &[TrackSize], gap: f32, available: f32) -> Vec<GutterRect> {
-    if tracks.len() <= 1 || gap <= 0.0 {
-        return Vec::new();
-    }
-
-    let num_gaps = tracks.len() - 1;
-    let total_gap = gap * num_gaps as f32;
-    let track_space = (available - total_gap).max(0.0);
-
-    let total_fr: f32 = tracks
-        .iter()
-        .map(|t| match t {
-            TrackSize::Fr { value } => *value,
-            _ => 0.0,
-        })
-        .sum();
-
-    let fixed_space: f32 = tracks
-        .iter()
-        .map(|t| match t {
-            TrackSize::Fixed { value } => *value,
-            TrackSize::Percent { value } => available * value / 100.0,
-            TrackSize::MinMax { min, .. } => *min,
-            _ => 0.0,
-        })
-        .sum();
-
-    let fr_available = (track_space - fixed_space).max(0.0);
-    let fr_unit = if total_fr > 0.0 {
-        fr_available / total_fr
-    } else {
-        0.0
-    };
-
-    let track_sizes: Vec<f32> = tracks
-        .iter()
-        .map(|t| match t {
-            TrackSize::Fixed { value } => *value,
-            TrackSize::Fr { value } => fr_unit * value,
-            TrackSize::Auto => {
-                if total_fr > 0.0 {
-                    0.0
-                } else {
-                    track_space / tracks.len() as f32
-                }
-            }
-            TrackSize::MinMax { min, max } => (fr_unit).clamp(*min, *max),
-            TrackSize::Percent { value } => available * value / 100.0,
-        })
-        .collect();
-
-    let mut gutters = Vec::with_capacity(num_gaps);
-    let mut pos: f32 = 0.0;
-    for (i, size) in track_sizes.iter().enumerate() {
-        pos += size;
-        if i < num_gaps {
-            gutters.push(GutterRect {
-                offset: pos,
-                size: gap,
-            });
-            pos += gap;
-        }
-    }
-    gutters
+    // Gutters are no longer needed with the recursive grid model —
+    // each split has its own gap handled by flatten_cells.
+    sync_model(&models.column_gutters, &[]);
+    window.set_column_gutters_count(0);
+    sync_model(&models.row_gutters, &[]);
+    window.set_row_gutters_count(0);
 }
 
 fn apply_style_edit(style: &mut StyleProperties, key: &str, value: &str) {
@@ -4520,7 +4383,6 @@ fn apply_style_edit(style: &mut StyleProperties, key: &str, value: &str) {
 
 fn apply_page_layout_edit(pl: &mut prism_builder::layout::PageLayout, key: &str, value: &str) {
     let parse_f32 = |s: &str| s.parse::<f32>().unwrap_or(0.0);
-    let parse_usize = |s: &str| s.parse::<usize>().unwrap_or(0);
 
     match key {
         "page_size" => {
@@ -4539,16 +4401,10 @@ fn apply_page_layout_edit(pl: &mut prism_builder::layout::PageLayout, key: &str,
                 _ => pl.size,
             };
         }
-        "columns" => {
-            let count = parse_usize(value).max(1);
-            pl.columns = (0..count).map(|_| TrackSize::Fr { value: 1.0 }).collect();
+        "column_gap" => {
+            pl.column_gap = parse_f32(value);
+            pl.row_gap = parse_f32(value);
         }
-        "rows" => {
-            let count = parse_usize(value);
-            pl.rows = (0..count).map(|_| TrackSize::Auto).collect();
-        }
-        "column_gap" => pl.column_gap = parse_f32(value),
-        "row_gap" => pl.row_gap = parse_f32(value),
         "margin_top" => pl.margins.top = parse_f32(value),
         "margin_right" => pl.margins.right = parse_f32(value),
         "margin_bottom" => pl.margins.bottom = parse_f32(value),
@@ -4942,87 +4798,62 @@ fn push_grid_cells(
     selection: &SelectionModel,
     viewport_width: f32,
 ) {
-    let pl = &doc.page_layout;
-    let cols = pl.columns.len().max(1);
-    let rows = pl.rows.len().max(1);
-
-    if pl.columns.is_empty() && pl.rows.is_empty() {
+    if !doc.page_layout.has_grid() {
         sync_model(&models.grid_cells, &[]);
         window.set_grid_cells_count(0);
         return;
     }
 
-    let resolved = pl.resolved_size();
+    let resolved = doc.page_layout.resolved_size();
     let (pw, ph) = resolved
         .map(|s| (s.width, s.height))
         .unwrap_or((viewport_width, viewport_width * 0.625));
-    let content_w = pw - pl.margins.left - pl.margins.right;
-    let content_h = ph - pl.margins.top - pl.margins.bottom;
+    let content_w = pw - doc.page_layout.margins.left - doc.page_layout.margins.right;
+    let content_h = ph - doc.page_layout.margins.top - doc.page_layout.margins.bottom;
 
-    let col_sizes = compute_track_sizes(&pl.columns, pl.column_gap, content_w);
-    let row_sizes = compute_track_sizes(&pl.rows, pl.row_gap, content_h);
+    let flat = doc.page_layout.flatten_cells(content_w, content_h);
 
-    let children: Vec<(&str, Option<usize>, Option<usize>, &str)> = doc
+    let child_map: std::collections::HashMap<&str, &Node> = doc
         .root
         .as_ref()
-        .map(|r| {
-            r.children
-                .iter()
-                .map(|c| {
-                    let (gc, gr) = match &c.layout_mode {
-                        LayoutMode::Flow(f) => {
-                            (f.grid_column.resolved_index(), f.grid_row.resolved_index())
-                        }
-                        _ => (None, None),
-                    };
-                    let preview = c
-                        .props
-                        .get("text")
-                        .or_else(|| c.props.get("body"))
-                        .or_else(|| c.props.get("title"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
-                    (c.id.as_str(), gc, gr, preview)
-                })
-                .collect()
-        })
+        .map(|r| r.children.iter().map(|c| (c.id.as_str(), c)).collect())
         .unwrap_or_default();
 
-    let mut cells: Vec<GridCellItem> = Vec::with_capacity(cols * rows);
-    let mut y_off = 0.0_f32;
-    for r in 0..rows {
-        let rh = row_sizes.get(r).copied().unwrap_or(80.0);
-        let mut x_off = 0.0_f32;
-        for c in 0..cols {
-            let cw = col_sizes.get(c).copied().unwrap_or(content_w / cols as f32);
-            let occupant = children
-                .iter()
-                .find(|(_, gc, gr, _)| gc.unwrap_or(0) == c && gr.unwrap_or(0) == r);
-            let (is_empty, node_id, component_type, selected, preview_text) = match occupant {
-                Some((id, _, _, preview)) => {
-                    let node = doc.root.as_ref().and_then(|root| root.find(id));
+    let cells: Vec<GridCellItem> = flat
+        .iter()
+        .map(|fc| {
+            let path_str = prism_builder::path_to_string(&fc.path);
+            let (is_empty, node_id, component_type, selected, preview_text) = match &fc.node_id {
+                Some(id) => {
+                    let node = child_map.get(id.as_str());
                     let ct = node.map(|n| n.component.as_str()).unwrap_or("");
-                    (false, *id, ct, selection.contains(id), *preview)
+                    let preview = node
+                        .and_then(|n| {
+                            n.props
+                                .get("text")
+                                .or_else(|| n.props.get("body"))
+                                .or_else(|| n.props.get("title"))
+                                .and_then(|v| v.as_str())
+                        })
+                        .unwrap_or("");
+                    (false, id.as_str(), ct, selection.contains(id), preview)
                 }
                 None => (true, "", "", false, ""),
             };
-            cells.push(GridCellItem {
-                col: c as i32,
-                row: r as i32,
-                x: x_off,
-                y: y_off,
-                width: cw,
-                height: rh,
+            GridCellItem {
+                path: SharedString::from(path_str),
+                x: fc.x,
+                y: fc.y,
+                width: fc.width,
+                height: fc.height,
                 is_empty,
                 node_id: SharedString::from(node_id),
                 component_type: SharedString::from(component_type),
                 selected,
                 preview_text: SharedString::from(preview_text),
-            });
-            x_off += cw + pl.column_gap;
-        }
-        y_off += rh + pl.row_gap;
-    }
+            }
+        })
+        .collect();
 
     let count = sync_model(&models.grid_cells, &cells);
     window.set_grid_cells_count(count);
@@ -5034,152 +4865,43 @@ fn push_grid_edge_handles(
     doc: &BuilderDocument,
     viewport_width: f32,
 ) {
-    let pl = &doc.page_layout;
-    let cols = pl.columns.len();
-    let rows = pl.rows.len();
-
-    if cols == 0 && rows == 0 {
+    if !doc.page_layout.has_grid() {
         sync_model(&models.grid_edge_handles, &[]);
         window.set_grid_edge_handles_count(0);
         return;
     }
 
-    let resolved = pl.resolved_size();
+    let resolved = doc.page_layout.resolved_size();
     let (pw, ph) = resolved
         .map(|s| (s.width, s.height))
         .unwrap_or((viewport_width, viewport_width * 0.625));
-    let content_w = pw - pl.margins.left - pl.margins.right;
-    let content_h = ph - pl.margins.top - pl.margins.bottom;
+    let content_w = pw - doc.page_layout.margins.left - doc.page_layout.margins.right;
+    let content_h = ph - doc.page_layout.margins.top - doc.page_layout.margins.bottom;
 
-    let col_sizes = compute_track_sizes(&pl.columns, pl.column_gap, content_w);
-    let row_sizes = compute_track_sizes(&pl.rows, pl.row_gap, content_h);
+    let edge_handles = doc.page_layout.flatten_edge_handles(content_w, content_h);
 
-    let handle_zone = 12.0_f32;
-    let mut handles = Vec::new();
-
-    // Column boundary positions (cumulative x from content-area origin)
-    let mut col_edges = Vec::with_capacity(cols + 1);
-    {
-        let mut x = 0.0_f32;
-        for (i, &size) in col_sizes.iter().enumerate() {
-            col_edges.push(x);
-            x += size;
-            if i + 1 < cols {
-                x += pl.column_gap;
+    let handles: Vec<GridEdgeHandle> = edge_handles
+        .iter()
+        .map(|eh| {
+            let edge_str = match eh.edge {
+                CellEdge::Top => "top",
+                CellEdge::Bottom => "bottom",
+                CellEdge::Left => "left",
+                CellEdge::Right => "right",
+            };
+            GridEdgeHandle {
+                cell_path: SharedString::from(prism_builder::path_to_string(&eh.cell_path)),
+                edge: SharedString::from(edge_str),
+                x: eh.x,
+                y: eh.y,
+                width: eh.width,
+                height: eh.height,
             }
-        }
-        col_edges.push(x);
-    }
-
-    for c in 0..=cols {
-        let (hx, hw) = if c == 0 {
-            (-handle_zone / 2.0, handle_zone)
-        } else if c == cols {
-            (col_edges[cols] - handle_zone / 2.0, handle_zone)
-        } else {
-            let gap_start = col_edges[c] - pl.column_gap;
-            (gap_start, pl.column_gap.max(handle_zone))
-        };
-        handles.push(GridEdgeHandle {
-            kind: SharedString::from("col"),
-            index: c as i32,
-            x: hx,
-            y: 0.0,
-            width: hw,
-            height: content_h,
-        });
-    }
-
-    // Row boundary positions (cumulative y from content-area origin)
-    let mut row_edges = Vec::with_capacity(rows + 1);
-    {
-        let mut y = 0.0_f32;
-        for (i, &size) in row_sizes.iter().enumerate() {
-            row_edges.push(y);
-            y += size;
-            if i + 1 < rows {
-                y += pl.row_gap;
-            }
-        }
-        row_edges.push(y);
-    }
-
-    for r in 0..=rows {
-        let (hy, hh) = if r == 0 {
-            (-handle_zone / 2.0, handle_zone)
-        } else if r == rows {
-            (row_edges[rows] - handle_zone / 2.0, handle_zone)
-        } else {
-            let gap_start = row_edges[r] - pl.row_gap;
-            (gap_start, pl.row_gap.max(handle_zone))
-        };
-        handles.push(GridEdgeHandle {
-            kind: SharedString::from("row"),
-            index: r as i32,
-            x: 0.0,
-            y: hy,
-            width: content_w,
-            height: hh,
-        });
-    }
+        })
+        .collect();
 
     let count = sync_model(&models.grid_edge_handles, &handles);
     window.set_grid_edge_handles_count(count);
-}
-
-fn compute_track_sizes(tracks: &[TrackSize], gap: f32, available: f32) -> Vec<f32> {
-    if tracks.is_empty() {
-        return vec![available];
-    }
-    let num_gaps = if tracks.len() > 1 {
-        tracks.len() - 1
-    } else {
-        0
-    };
-    let total_gap = gap * num_gaps as f32;
-    let track_space = (available - total_gap).max(0.0);
-
-    let total_fr: f32 = tracks
-        .iter()
-        .map(|t| match t {
-            TrackSize::Fr { value } => *value,
-            _ => 0.0,
-        })
-        .sum();
-
-    let fixed_space: f32 = tracks
-        .iter()
-        .map(|t| match t {
-            TrackSize::Fixed { value } => *value,
-            TrackSize::Percent { value } => available * value / 100.0,
-            TrackSize::MinMax { min, .. } => *min,
-            _ => 0.0,
-        })
-        .sum();
-
-    let fr_available = (track_space - fixed_space).max(0.0);
-    let fr_unit = if total_fr > 0.0 {
-        fr_available / total_fr
-    } else {
-        0.0
-    };
-
-    tracks
-        .iter()
-        .map(|t| match t {
-            TrackSize::Fixed { value } => *value,
-            TrackSize::Fr { value } => fr_unit * value,
-            TrackSize::Auto => {
-                if total_fr > 0.0 {
-                    0.0
-                } else {
-                    track_space / tracks.len() as f32
-                }
-            }
-            TrackSize::MinMax { min, max } => fr_unit.clamp(*min, *max),
-            TrackSize::Percent { value } => available * value / 100.0,
-        })
-        .collect()
 }
 
 fn push_style_rows(

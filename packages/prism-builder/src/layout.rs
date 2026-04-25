@@ -11,7 +11,7 @@
 //! - [`ComputedLayout`] — the output of the layout pass: a per-node
 //!   map of resolved rectangles + composed transforms.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use glam::{Affine2, Vec2};
 use prism_core::foundation::geometry::{Edges, Point2, Rect, Size2};
@@ -24,8 +24,170 @@ use thiserror::Error;
 pub enum GridEditError {
     #[error("index out of bounds: {0}")]
     IndexOutOfBounds(usize),
-    #[error("cannot remove last track")]
-    CannotRemoveLastTrack,
+    #[error("cannot remove last cell")]
+    CannotRemoveLastCell,
+    #[error("no grid defined")]
+    NoGrid,
+    #[error("target is not a leaf cell")]
+    NotALeaf,
+}
+
+// ── Recursive grid cell tree ────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SplitDirection {
+    Horizontal,
+    Vertical,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CellEdge {
+    Top,
+    Bottom,
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+pub enum GridCell {
+    Leaf {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        node_id: Option<String>,
+    },
+    Split {
+        direction: SplitDirection,
+        tracks: Vec<TrackSize>,
+        #[serde(default)]
+        gap: f32,
+        children: Vec<GridCell>,
+    },
+}
+
+impl GridCell {
+    pub fn leaf() -> Self {
+        Self::Leaf { node_id: None }
+    }
+
+    pub fn leaf_with(id: impl Into<String>) -> Self {
+        Self::Leaf {
+            node_id: Some(id.into()),
+        }
+    }
+
+    pub fn split(
+        direction: SplitDirection,
+        tracks: Vec<TrackSize>,
+        gap: f32,
+        children: Vec<GridCell>,
+    ) -> Self {
+        Self::Split {
+            direction,
+            tracks,
+            gap,
+            children,
+        }
+    }
+
+    pub fn is_leaf(&self) -> bool {
+        matches!(self, Self::Leaf { .. })
+    }
+
+    pub fn node_id(&self) -> Option<&str> {
+        match self {
+            Self::Leaf { node_id } => node_id.as_deref(),
+            Self::Split { .. } => None,
+        }
+    }
+
+    pub fn at(&self, path: &[usize]) -> Option<&GridCell> {
+        if path.is_empty() {
+            return Some(self);
+        }
+        match self {
+            Self::Split { children, .. } => children.get(path[0]).and_then(|c| c.at(&path[1..])),
+            Self::Leaf { .. } => None,
+        }
+    }
+
+    pub fn at_mut(&mut self, path: &[usize]) -> Option<&mut GridCell> {
+        if path.is_empty() {
+            return Some(self);
+        }
+        match self {
+            Self::Split { children, .. } => {
+                children.get_mut(path[0]).and_then(|c| c.at_mut(&path[1..]))
+            }
+            Self::Leaf { .. } => None,
+        }
+    }
+
+    pub fn leaf_count(&self) -> usize {
+        match self {
+            Self::Leaf { .. } => 1,
+            Self::Split { children, .. } => children.iter().map(|c| c.leaf_count()).sum(),
+        }
+    }
+
+    pub fn collect_node_ids(&self) -> Vec<String> {
+        let mut ids = Vec::new();
+        self.walk_leaves(&mut |_, nid| {
+            if let Some(id) = nid {
+                ids.push(id.to_string());
+            }
+        });
+        ids
+    }
+
+    pub fn walk_leaves(&self, f: &mut impl FnMut(&[usize], Option<&str>)) {
+        self.walk_leaves_inner(&mut Vec::new(), f);
+    }
+
+    fn walk_leaves_inner(&self, path: &mut Vec<usize>, f: &mut impl FnMut(&[usize], Option<&str>)) {
+        match self {
+            Self::Leaf { node_id } => f(path, node_id.as_deref()),
+            Self::Split { children, .. } => {
+                for (i, child) in children.iter().enumerate() {
+                    path.push(i);
+                    child.walk_leaves_inner(path, f);
+                    path.pop();
+                }
+            }
+        }
+    }
+}
+
+pub fn path_to_string(path: &[usize]) -> String {
+    path.iter()
+        .map(|i| i.to_string())
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
+pub fn path_from_string(s: &str) -> Vec<usize> {
+    if s.is_empty() {
+        return Vec::new();
+    }
+    s.split('.').filter_map(|p| p.parse().ok()).collect()
+}
+
+pub struct FlatCell {
+    pub path: Vec<usize>,
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    pub node_id: Option<String>,
+}
+
+pub struct EdgeHandle {
+    pub cell_path: Vec<usize>,
+    pub edge: CellEdge,
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
 }
 
 use crate::document::{BuilderDocument, Node, NodeId};
@@ -95,20 +257,9 @@ pub enum TrackSize {
     Percent { value: f32 },
 }
 
-impl TrackSize {
-    fn to_taffy(self) -> taffy::style::TrackSizingFunction {
-        match self {
-            Self::Fixed { value } => minmax(length(value), length(value)),
-            Self::Fr { value } => minmax(length(0.0), fr(value)),
-            Self::Auto => minmax(auto(), auto()),
-            Self::MinMax { min, max } => minmax(length(min), length(max)),
-            Self::Percent { value } => minmax(percent(value / 100.0), percent(value / 100.0)),
-        }
-    }
-}
-
-/// Structural layout properties of a page. Every page in a
-/// `BuilderDocument` has one of these — it's not a component.
+/// Structural layout properties of a page. The grid is a recursive
+/// `GridCell` tree where each cell can be independently split
+/// horizontally (columns) or vertically (rows).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PageLayout {
     #[serde(default)]
@@ -119,10 +270,8 @@ pub struct PageLayout {
     pub margins: Edges<f32>,
     #[serde(default)]
     pub bleed: f32,
-    #[serde(default)]
-    pub columns: Vec<TrackSize>,
-    #[serde(default)]
-    pub rows: Vec<TrackSize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grid: Option<GridCell>,
     #[serde(default)]
     pub column_gap: f32,
     #[serde(default)]
@@ -130,83 +279,12 @@ pub struct PageLayout {
 }
 
 impl PageLayout {
-    pub fn insert_column(&mut self, index: usize, track: TrackSize) -> usize {
-        if index >= self.columns.len() {
-            self.columns.push(track);
-        } else {
-            self.columns.insert(index, track);
-        }
-        self.columns.len()
+    pub fn has_grid(&self) -> bool {
+        self.grid.is_some()
     }
 
-    pub fn remove_column(&mut self, index: usize) -> Result<(), GridEditError> {
-        if self.columns.len() <= 1 {
-            return Err(GridEditError::CannotRemoveLastTrack);
-        }
-        if index >= self.columns.len() {
-            return Err(GridEditError::IndexOutOfBounds(index));
-        }
-        self.columns.remove(index);
-        Ok(())
-    }
-
-    pub fn resize_column(&mut self, index: usize, track: TrackSize) -> Result<(), GridEditError> {
-        if index >= self.columns.len() {
-            return Err(GridEditError::IndexOutOfBounds(index));
-        }
-        self.columns[index] = track;
-        Ok(())
-    }
-
-    pub fn insert_row(&mut self, index: usize, track: TrackSize) -> usize {
-        if index >= self.rows.len() {
-            self.rows.push(track);
-        } else {
-            self.rows.insert(index, track);
-        }
-        self.rows.len()
-    }
-
-    pub fn remove_row(&mut self, index: usize) -> Result<(), GridEditError> {
-        if self.rows.len() <= 1 {
-            return Err(GridEditError::CannotRemoveLastTrack);
-        }
-        if index >= self.rows.len() {
-            return Err(GridEditError::IndexOutOfBounds(index));
-        }
-        self.rows.remove(index);
-        Ok(())
-    }
-
-    pub fn resize_row(&mut self, index: usize, track: TrackSize) -> Result<(), GridEditError> {
-        if index >= self.rows.len() {
-            return Err(GridEditError::IndexOutOfBounds(index));
-        }
-        self.rows[index] = track;
-        Ok(())
-    }
-
-    pub fn cell_positions(&self) -> Vec<(usize, usize)> {
-        let cols = self.columns.len().max(1);
-        let rows = self.rows.len().max(1);
-        let mut cells = Vec::with_capacity(cols * rows);
-        for r in 0..rows {
-            for c in 0..cols {
-                cells.push((c, r));
-            }
-        }
-        cells
-    }
-
-    pub fn empty_cells(&self, occupied: &[(GridPlacement, GridPlacement)]) -> Vec<(usize, usize)> {
-        let all = self.cell_positions();
-        let mut taken = HashSet::new();
-        for (col_p, row_p) in occupied {
-            let col = col_p.resolved_index().unwrap_or(0);
-            let row = row_p.resolved_index().unwrap_or(0);
-            taken.insert((col, row));
-        }
-        all.into_iter().filter(|c| !taken.contains(c)).collect()
+    pub fn leaf_count(&self) -> usize {
+        self.grid.as_ref().map_or(0, |g| g.leaf_count())
     }
 
     /// Resolve the page dimensions, applying orientation. Returns
@@ -218,44 +296,188 @@ impl PageLayout {
         })
     }
 
-    /// The content area after subtracting margins from the page size.
     pub fn content_rect(&self, page_size: Size2) -> Rect {
         Rect::new(0.0, 0.0, page_size.width, page_size.height).inset(&self.margins)
     }
 
-    /// The bleed area — extends outward from the page edges.
     pub fn bleed_rect(&self, page_size: Size2) -> Rect {
         let bleed_edges = Edges::all(self.bleed);
         Rect::new(0.0, 0.0, page_size.width, page_size.height).outset(&bleed_edges)
     }
 
+    pub fn flatten_cells(&self, content_w: f32, content_h: f32) -> Vec<FlatCell> {
+        let mut out = Vec::new();
+        if let Some(grid) = &self.grid {
+            let mut path = Vec::new();
+            flatten_cells_rec(grid, 0.0, 0.0, content_w, content_h, &mut path, &mut out);
+        }
+        out
+    }
+
+    pub fn flatten_edge_handles(&self, content_w: f32, content_h: f32) -> Vec<EdgeHandle> {
+        let mut out = Vec::new();
+        if let Some(grid) = &self.grid {
+            let mut path = Vec::new();
+            flatten_edges_rec(grid, 0.0, 0.0, content_w, content_h, &mut path, &mut out);
+        }
+        out
+    }
+
+    pub fn insert_at_edge(
+        &mut self,
+        cell_path: &[usize],
+        edge: CellEdge,
+    ) -> Result<(), GridEditError> {
+        let desired_dir = match edge {
+            CellEdge::Left | CellEdge::Right => SplitDirection::Horizontal,
+            CellEdge::Top | CellEdge::Bottom => SplitDirection::Vertical,
+        };
+        let insert_before = matches!(edge, CellEdge::Left | CellEdge::Top);
+
+        let grid = self.grid.as_mut().ok_or(GridEditError::NoGrid)?;
+
+        if cell_path.is_empty() {
+            let old = std::mem::replace(grid, GridCell::leaf());
+            let gap = match desired_dir {
+                SplitDirection::Horizontal => self.column_gap,
+                SplitDirection::Vertical => self.row_gap,
+            };
+            let children = if insert_before {
+                vec![GridCell::leaf(), old]
+            } else {
+                vec![old, GridCell::leaf()]
+            };
+            *grid = GridCell::split(
+                desired_dir,
+                vec![TrackSize::Fr { value: 1.0 }; 2],
+                gap,
+                children,
+            );
+            return Ok(());
+        }
+
+        let (parent_path, tail) = cell_path.split_at(cell_path.len() - 1);
+        let child_idx = tail[0];
+        let default_gap = match desired_dir {
+            SplitDirection::Horizontal => self.column_gap,
+            SplitDirection::Vertical => self.row_gap,
+        };
+
+        let parent = grid
+            .at_mut(parent_path)
+            .ok_or(GridEditError::IndexOutOfBounds(0))?;
+
+        match parent {
+            GridCell::Split {
+                direction,
+                tracks,
+                children,
+                ..
+            } => {
+                if *direction == desired_dir {
+                    let ins = if insert_before {
+                        child_idx
+                    } else {
+                        child_idx + 1
+                    };
+                    children.insert(ins, GridCell::leaf());
+                    tracks.insert(ins, TrackSize::Fr { value: 1.0 });
+                } else {
+                    let old = children[child_idx].clone();
+                    let new_children = if insert_before {
+                        vec![GridCell::leaf(), old]
+                    } else {
+                        vec![old, GridCell::leaf()]
+                    };
+                    children[child_idx] = GridCell::split(
+                        desired_dir,
+                        vec![TrackSize::Fr { value: 1.0 }; 2],
+                        default_gap,
+                        new_children,
+                    );
+                }
+            }
+            GridCell::Leaf { .. } => return Err(GridEditError::IndexOutOfBounds(0)),
+        }
+        Ok(())
+    }
+
+    pub fn remove_cell(&mut self, cell_path: &[usize]) -> Result<(), GridEditError> {
+        let grid = self.grid.as_mut().ok_or(GridEditError::NoGrid)?;
+
+        if cell_path.is_empty() {
+            return Err(GridEditError::CannotRemoveLastCell);
+        }
+
+        let (parent_path, tail) = cell_path.split_at(cell_path.len() - 1);
+        let child_idx = tail[0];
+
+        let parent = grid
+            .at_mut(parent_path)
+            .ok_or(GridEditError::IndexOutOfBounds(0))?;
+
+        match parent {
+            GridCell::Split {
+                tracks, children, ..
+            } => {
+                if children.len() <= 1 {
+                    return Err(GridEditError::CannotRemoveLastCell);
+                }
+                if child_idx >= children.len() {
+                    return Err(GridEditError::IndexOutOfBounds(child_idx));
+                }
+                children.remove(child_idx);
+                if child_idx < tracks.len() {
+                    tracks.remove(child_idx);
+                }
+                if children.len() == 1 {
+                    let remaining = children.remove(0);
+                    *parent = remaining;
+                }
+            }
+            _ => return Err(GridEditError::IndexOutOfBounds(0)),
+        }
+        Ok(())
+    }
+
+    pub fn place_node_at(&mut self, path: &[usize], node_id: String) -> Result<(), GridEditError> {
+        let grid = self.grid.as_mut().ok_or(GridEditError::NoGrid)?;
+        let cell = grid
+            .at_mut(path)
+            .ok_or(GridEditError::IndexOutOfBounds(0))?;
+        match cell {
+            GridCell::Leaf { node_id: nid } => {
+                *nid = Some(node_id);
+                Ok(())
+            }
+            GridCell::Split { .. } => Err(GridEditError::NotALeaf),
+        }
+    }
+
+    pub fn clear_cell(&mut self, path: &[usize]) -> Result<(), GridEditError> {
+        let grid = self.grid.as_mut().ok_or(GridEditError::NoGrid)?;
+        let cell = grid
+            .at_mut(path)
+            .ok_or(GridEditError::IndexOutOfBounds(0))?;
+        match cell {
+            GridCell::Leaf { node_id } => {
+                *node_id = None;
+                Ok(())
+            }
+            GridCell::Split { .. } => Err(GridEditError::NotALeaf),
+        }
+    }
+
     fn build_taffy_style(&self, page_size: Size2) -> Style {
         let content = self.content_rect(page_size);
-
-        let grid_template_columns: Vec<TrackSizingFunction> = if self.columns.is_empty() {
-            vec![minmax(auto(), fr(1.0))]
-        } else {
-            self.columns
-                .iter()
-                .copied()
-                .map(TrackSize::to_taffy)
-                .collect()
-        };
-
-        let grid_template_rows: Vec<TrackSizingFunction> = if self.rows.is_empty() {
-            vec![minmax(auto(), auto())]
-        } else {
-            self.rows.iter().copied().map(TrackSize::to_taffy).collect()
-        };
-
         Style {
             display: Display::Grid,
             size: taffy::Size {
                 width: length(content.width()),
                 height: length(content.height()),
             },
-            grid_template_columns,
-            grid_template_rows,
+            grid_template_columns: vec![minmax(auto(), fr(1.0))],
+            grid_template_rows: vec![minmax(auto(), auto())],
             gap: taffy::Size {
                 width: length(self.column_gap),
                 height: length(self.row_gap),
@@ -265,6 +487,175 @@ impl PageLayout {
     }
 }
 
+fn flatten_cells_rec(
+    cell: &GridCell,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    path: &mut Vec<usize>,
+    out: &mut Vec<FlatCell>,
+) {
+    match cell {
+        GridCell::Leaf { node_id } => {
+            out.push(FlatCell {
+                path: path.clone(),
+                x,
+                y,
+                width: w,
+                height: h,
+                node_id: node_id.clone(),
+            });
+        }
+        GridCell::Split {
+            direction,
+            tracks,
+            gap,
+            children,
+        } => {
+            let available = match direction {
+                SplitDirection::Horizontal => w,
+                SplitDirection::Vertical => h,
+            };
+            let sizes = compute_track_sizes(tracks, *gap, available);
+            let mut offset = 0.0;
+            for (i, child) in children.iter().enumerate() {
+                let sz = sizes.get(i).copied().unwrap_or(0.0);
+                path.push(i);
+                match direction {
+                    SplitDirection::Horizontal => {
+                        flatten_cells_rec(child, x + offset, y, sz, h, path, out);
+                    }
+                    SplitDirection::Vertical => {
+                        flatten_cells_rec(child, x, y + offset, w, sz, path, out);
+                    }
+                }
+                path.pop();
+                offset += sz + gap;
+            }
+        }
+    }
+}
+
+fn flatten_edges_rec(
+    cell: &GridCell,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    path: &mut Vec<usize>,
+    out: &mut Vec<EdgeHandle>,
+) {
+    let handle_zone = 12.0_f32;
+    match cell {
+        GridCell::Leaf { .. } => {
+            for &edge in &[
+                CellEdge::Top,
+                CellEdge::Bottom,
+                CellEdge::Left,
+                CellEdge::Right,
+            ] {
+                let (hx, hy, hw, hh) = match edge {
+                    CellEdge::Top => (x, y - handle_zone / 2.0, w, handle_zone),
+                    CellEdge::Bottom => (x, y + h - handle_zone / 2.0, w, handle_zone),
+                    CellEdge::Left => (x - handle_zone / 2.0, y, handle_zone, h),
+                    CellEdge::Right => (x + w - handle_zone / 2.0, y, handle_zone, h),
+                };
+                out.push(EdgeHandle {
+                    cell_path: path.clone(),
+                    edge,
+                    x: hx,
+                    y: hy,
+                    width: hw,
+                    height: hh,
+                });
+            }
+        }
+        GridCell::Split {
+            direction,
+            tracks,
+            gap,
+            children,
+        } => {
+            let available = match direction {
+                SplitDirection::Horizontal => w,
+                SplitDirection::Vertical => h,
+            };
+            let sizes = compute_track_sizes(tracks, *gap, available);
+            let mut offset = 0.0;
+            for (i, child) in children.iter().enumerate() {
+                let sz = sizes.get(i).copied().unwrap_or(0.0);
+                path.push(i);
+                match direction {
+                    SplitDirection::Horizontal => {
+                        flatten_edges_rec(child, x + offset, y, sz, h, path, out);
+                    }
+                    SplitDirection::Vertical => {
+                        flatten_edges_rec(child, x, y + offset, w, sz, path, out);
+                    }
+                }
+                path.pop();
+                offset += sz + gap;
+            }
+        }
+    }
+}
+
+pub fn compute_track_sizes(tracks: &[TrackSize], gap: f32, available: f32) -> Vec<f32> {
+    if tracks.is_empty() {
+        return vec![available];
+    }
+    let num_gaps = if tracks.len() > 1 {
+        tracks.len() - 1
+    } else {
+        0
+    };
+    let total_gap = gap * num_gaps as f32;
+    let track_space = (available - total_gap).max(0.0);
+
+    let total_fr: f32 = tracks
+        .iter()
+        .map(|t| match t {
+            TrackSize::Fr { value } => *value,
+            _ => 0.0,
+        })
+        .sum();
+
+    let fixed_space: f32 = tracks
+        .iter()
+        .map(|t| match t {
+            TrackSize::Fixed { value } => *value,
+            TrackSize::Percent { value } => available * value / 100.0,
+            TrackSize::MinMax { min, .. } => *min,
+            _ => 0.0,
+        })
+        .sum();
+
+    let fr_available = (track_space - fixed_space).max(0.0);
+    let fr_unit = if total_fr > 0.0 {
+        fr_available / total_fr
+    } else {
+        0.0
+    };
+
+    tracks
+        .iter()
+        .map(|t| match t {
+            TrackSize::Fixed { value } => *value,
+            TrackSize::Fr { value } => fr_unit * value,
+            TrackSize::Auto => {
+                if total_fr > 0.0 {
+                    0.0
+                } else {
+                    track_space / tracks.len() as f32
+                }
+            }
+            TrackSize::MinMax { min, max } => fr_unit.clamp(*min, *max),
+            TrackSize::Percent { value } => available * value / 100.0,
+        })
+        .collect()
+}
+
 impl Default for PageLayout {
     fn default() -> Self {
         Self {
@@ -272,8 +663,7 @@ impl Default for PageLayout {
             orientation: Orientation::default(),
             margins: Edges::ZERO,
             bleed: 0.0,
-            columns: Vec::new(),
-            rows: Vec::new(),
+            grid: None,
             column_gap: 0.0,
             row_gap: 0.0,
         }
@@ -921,8 +1311,12 @@ mod tests {
             orientation: Orientation::Landscape,
             margins: Edges::new(20.0, 15.0, 20.0, 15.0),
             bleed: 3.0,
-            columns: vec![TrackSize::Fr { value: 1.0 }, TrackSize::Fr { value: 2.0 }],
-            rows: vec![TrackSize::Auto, TrackSize::Fixed { value: 200.0 }],
+            grid: Some(GridCell::split(
+                SplitDirection::Horizontal,
+                vec![TrackSize::Fr { value: 1.0 }, TrackSize::Fr { value: 2.0 }],
+                16.0,
+                vec![GridCell::leaf(), GridCell::leaf()],
+            )),
             column_gap: 16.0,
             row_gap: 12.0,
         };
@@ -930,6 +1324,7 @@ mod tests {
         let layout2: PageLayout = serde_json::from_str(&json).unwrap();
         assert_eq!(layout.bleed, layout2.bleed);
         assert_eq!(layout.column_gap, layout2.column_gap);
+        assert!(layout2.grid.is_some());
     }
 
     #[test]
@@ -979,117 +1374,142 @@ mod tests {
         }
     }
 
-    // ── Grid manipulation tests ─────────────────────────────────────
+    // ── Grid cell tree tests ────────────────────────────────────────
 
     #[test]
-    fn insert_column_appends() {
-        let mut layout = PageLayout::default();
-        layout.insert_column(0, TrackSize::Fr { value: 1.0 });
-        layout.insert_column(100, TrackSize::Fr { value: 2.0 });
-        assert_eq!(layout.columns.len(), 2);
+    fn grid_cell_at_navigates() {
+        let grid = GridCell::split(
+            SplitDirection::Horizontal,
+            vec![TrackSize::Fr { value: 1.0 }; 2],
+            0.0,
+            vec![
+                GridCell::leaf_with("a"),
+                GridCell::split(
+                    SplitDirection::Vertical,
+                    vec![TrackSize::Fr { value: 1.0 }; 2],
+                    0.0,
+                    vec![GridCell::leaf_with("b"), GridCell::leaf()],
+                ),
+            ],
+        );
+        assert_eq!(grid.at(&[0]).unwrap().node_id(), Some("a"));
+        assert_eq!(grid.at(&[1, 0]).unwrap().node_id(), Some("b"));
+        assert_eq!(grid.at(&[1, 1]).unwrap().node_id(), None);
+        assert!(grid.at(&[2]).is_none());
     }
 
     #[test]
-    fn insert_column_at_index() {
+    fn insert_at_edge_adds_sibling() {
         let mut layout = PageLayout {
-            columns: vec![TrackSize::Fr { value: 1.0 }, TrackSize::Fr { value: 3.0 }],
+            grid: Some(GridCell::split(
+                SplitDirection::Horizontal,
+                vec![TrackSize::Fr { value: 1.0 }; 2],
+                16.0,
+                vec![GridCell::leaf_with("a"), GridCell::leaf_with("b")],
+            )),
+            column_gap: 16.0,
             ..Default::default()
         };
-        layout.insert_column(1, TrackSize::Fr { value: 2.0 });
-        assert_eq!(layout.columns.len(), 3);
-        assert_eq!(layout.columns[1], TrackSize::Fr { value: 2.0 });
+        layout.insert_at_edge(&[1], CellEdge::Right).unwrap();
+        let grid = layout.grid.as_ref().unwrap();
+        match grid {
+            GridCell::Split { children, .. } => {
+                assert_eq!(children.len(), 3);
+                assert_eq!(children[1].node_id(), Some("b"));
+                assert!(children[2].is_leaf());
+            }
+            _ => panic!("expected split"),
+        }
     }
 
     #[test]
-    fn remove_column_last_errors() {
+    fn insert_at_edge_subdivides_perpendicular() {
         let mut layout = PageLayout {
-            columns: vec![TrackSize::Fr { value: 1.0 }],
+            grid: Some(GridCell::split(
+                SplitDirection::Horizontal,
+                vec![TrackSize::Fr { value: 1.0 }; 2],
+                16.0,
+                vec![GridCell::leaf_with("a"), GridCell::leaf_with("b")],
+            )),
+            row_gap: 12.0,
             ..Default::default()
         };
-        assert!(layout.remove_column(0).is_err());
+        layout.insert_at_edge(&[1], CellEdge::Bottom).unwrap();
+        let grid = layout.grid.as_ref().unwrap();
+        match grid {
+            GridCell::Split { children, .. } => {
+                assert_eq!(children.len(), 2);
+                assert_eq!(children[0].node_id(), Some("a"));
+                match &children[1] {
+                    GridCell::Split {
+                        direction,
+                        children: inner,
+                        ..
+                    } => {
+                        assert_eq!(*direction, SplitDirection::Vertical);
+                        assert_eq!(inner.len(), 2);
+                        assert_eq!(inner[0].node_id(), Some("b"));
+                        assert!(inner[1].is_leaf());
+                    }
+                    _ => panic!("expected vertical split"),
+                }
+            }
+            _ => panic!("expected split"),
+        }
     }
 
     #[test]
-    fn remove_column_valid() {
+    fn remove_cell_collapses_parent() {
         let mut layout = PageLayout {
-            columns: vec![TrackSize::Fr { value: 1.0 }, TrackSize::Fr { value: 2.0 }],
+            grid: Some(GridCell::split(
+                SplitDirection::Horizontal,
+                vec![TrackSize::Fr { value: 1.0 }; 2],
+                0.0,
+                vec![GridCell::leaf_with("a"), GridCell::leaf_with("b")],
+            )),
             ..Default::default()
         };
-        layout.remove_column(0).unwrap();
-        assert_eq!(layout.columns.len(), 1);
-        assert_eq!(layout.columns[0], TrackSize::Fr { value: 2.0 });
+        layout.remove_cell(&[0]).unwrap();
+        assert_eq!(layout.grid.as_ref().unwrap().node_id(), Some("b"));
     }
 
     #[test]
-    fn resize_column_valid() {
-        let mut layout = PageLayout {
-            columns: vec![TrackSize::Fr { value: 1.0 }],
-            ..Default::default()
-        };
-        layout
-            .resize_column(0, TrackSize::Fixed { value: 300.0 })
-            .unwrap();
-        assert_eq!(layout.columns[0], TrackSize::Fixed { value: 300.0 });
-    }
-
-    #[test]
-    fn resize_column_oob() {
-        let mut layout = PageLayout::default();
-        assert!(layout
-            .resize_column(5, TrackSize::Fr { value: 1.0 })
-            .is_err());
-    }
-
-    #[test]
-    fn insert_remove_row() {
-        let mut layout = PageLayout::default();
-        layout.insert_row(0, TrackSize::Auto);
-        layout.insert_row(1, TrackSize::Fr { value: 1.0 });
-        assert_eq!(layout.rows.len(), 2);
-        layout.remove_row(0).unwrap();
-        assert_eq!(layout.rows.len(), 1);
-    }
-
-    #[test]
-    fn cell_positions_2x3() {
+    fn flatten_cells_computes_positions() {
         let layout = PageLayout {
-            columns: vec![TrackSize::Fr { value: 1.0 }, TrackSize::Fr { value: 1.0 }],
-            rows: vec![TrackSize::Auto, TrackSize::Auto, TrackSize::Auto],
+            grid: Some(GridCell::split(
+                SplitDirection::Horizontal,
+                vec![TrackSize::Fr { value: 1.0 }; 2],
+                0.0,
+                vec![GridCell::leaf_with("a"), GridCell::leaf_with("b")],
+            )),
             ..Default::default()
         };
-        let cells = layout.cell_positions();
-        assert_eq!(cells.len(), 6);
-        assert_eq!(cells[0], (0, 0));
-        assert_eq!(cells[1], (1, 0));
-        assert_eq!(cells[2], (0, 1));
-        assert_eq!(cells[5], (1, 2));
+        let cells = layout.flatten_cells(200.0, 100.0);
+        assert_eq!(cells.len(), 2);
+        assert_eq!(cells[0].x, 0.0);
+        assert_eq!(cells[0].width, 100.0);
+        assert_eq!(cells[1].x, 100.0);
+        assert_eq!(cells[1].width, 100.0);
     }
 
     #[test]
-    fn cell_positions_empty_layout() {
-        let layout = PageLayout::default();
-        let cells = layout.cell_positions();
-        assert_eq!(cells.len(), 1);
-        assert_eq!(cells[0], (0, 0));
+    fn place_node_at_and_clear() {
+        let mut layout = PageLayout {
+            grid: Some(GridCell::leaf()),
+            ..Default::default()
+        };
+        layout.place_node_at(&[], "n0".into()).unwrap();
+        assert_eq!(layout.grid.as_ref().unwrap().node_id(), Some("n0"));
+        layout.clear_cell(&[]).unwrap();
+        assert_eq!(layout.grid.as_ref().unwrap().node_id(), None);
     }
 
     #[test]
-    fn empty_cells_computation() {
-        let layout = PageLayout {
-            columns: vec![TrackSize::Fr { value: 1.0 }, TrackSize::Fr { value: 1.0 }],
-            rows: vec![TrackSize::Auto, TrackSize::Auto],
-            ..Default::default()
-        };
-        let occupied = vec![(
-            GridPlacement::Line { index: 1 },
-            GridPlacement::Line { index: 1 },
-        )];
-        let empty = layout.empty_cells(&occupied);
-        assert_eq!(empty.len(), 3);
-        assert!(!empty.contains(&(0, 0)));
-        assert!(empty.contains(&(1, 0)));
-        assert!(empty.contains(&(0, 1)));
-        assert!(empty.contains(&(1, 1)));
+    fn path_string_round_trips() {
+        let path = vec![1, 0, 2];
+        assert_eq!(path_from_string(&path_to_string(&path)), path);
+        assert!(path_from_string("").is_empty());
+        assert_eq!(path_to_string(&[]), "");
     }
 
     #[test]

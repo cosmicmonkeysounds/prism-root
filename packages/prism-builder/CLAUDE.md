@@ -76,20 +76,33 @@ From `src/lib.rs`:
 - `Node` now carries `layout_mode: LayoutMode` and
   `transform: Transform2D` (from `prism-core::foundation::spatial`).
 - `BuilderDocument` now carries `page_layout: PageLayout`.
-- `GridEditError` — error enum for grid track operations
-  (IndexOutOfBounds, CannotRemoveLastTrack).
-- `PageLayout::insert_column/row`, `remove_column/row`,
-  `resize_column/row` — interactive grid manipulation methods.
-- `PageLayout::cell_positions()` — all (col, row) pairs, row-major.
-- `PageLayout::empty_cells(occupied)` — unoccupied cells.
+- `GridCell` — recursive grid tree (`Leaf` with optional `node_id`,
+  or `Split` with direction/tracks/gap/children). Each cell can be
+  independently subdivided horizontally or vertically.
+- `SplitDirection` (`Horizontal` | `Vertical`), `CellEdge`
+  (`Top`/`Bottom`/`Left`/`Right`) — subdivision types.
+- `FlatCell`, `EdgeHandle` — output of `flatten_cells` /
+  `flatten_edge_handles`: pixel-positioned leaf cells and interactive
+  edge handles with cell paths.
+- `path_to_string(path)` / `path_from_string(s)` — dot-separated
+  cell path encoding (e.g. "1.0.2").
+- `compute_track_sizes(tracks, gap, available) -> Vec<f32>` —
+  resolves `TrackSize` values to pixel widths.
+- `GridEditError` — error enum for grid operations
+  (IndexOutOfBounds, CannotRemoveLastCell, NoGrid, NotALeaf).
+- `PageLayout::has_grid()`, `leaf_count()`, `flatten_cells()`,
+  `flatten_edge_handles()` — grid query/layout methods.
+- `PageLayout::insert_at_edge(path, edge)`, `remove_cell(path)`,
+  `place_node_at(path, node_id)`, `clear_cell(path)` — interactive
+  grid manipulation via cell paths.
 - `GridPlacement::resolved_index()` — converts 1-based line index
   to 0-based cell index.
-- `BuilderDocument::place_in_cell(node_id, col, row)` and
-  `move_to_cell` — set a node's grid_column/grid_row placement.
+- `BuilderDocument::place_in_grid(node_id, path)` — place a node
+  at a specific grid cell path.
 - `BuilderDocument::page_shell()` — factory for new pages: returns
-  a document with a single-section responsive grid (1 col × 1 row),
-  root container, and 24/32px margins. Every new page starts from
-  this shell rather than an empty document.
+  a document with a single leaf grid cell, root container, and
+  24/32px margins. Every new page starts from this shell rather
+  than an empty document.
 
 ### Style cascade
 - `StyleProperties` — 10-field all-`Option` struct (font_family,

@@ -48,8 +48,9 @@ pub use html::{escape_attr, escape_text, Html};
 pub use html_block::{HtmlBlock, HtmlRegistry, HtmlRenderContext};
 pub use html_starter::register_html_builtins;
 pub use layout::{
-    compute_layout, ComputedLayout, FlowProps, GridEditError, GridPlacement, LayoutMode,
-    NodeLayout, PageLayout, PageSize,
+    compute_layout, compute_track_sizes, path_from_string, path_to_string, CellEdge,
+    ComputedLayout, EdgeHandle, FlatCell, FlowProps, GridCell, GridEditError, GridPlacement,
+    LayoutMode, NodeLayout, PageLayout, PageSize, SplitDirection,
 };
 pub use modifier::{Modifier, ModifierKind};
 pub use prefab::{ExposedSlot, PrefabComponent, PrefabDef, PrefabHtmlBlock};

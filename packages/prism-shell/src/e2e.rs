@@ -72,7 +72,7 @@ impl Rect {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ElementLocator {
     NodeId(String),
-    GridCell { col: i32, row: i32 },
+    GridCell { path: String },
     ActivityBarButton(i32),
     Panel(String),
     ToolbarButton(String),
@@ -172,9 +172,9 @@ impl TestScript {
         })
     }
 
-    pub fn click_grid(self, col: i32, row: i32) -> Self {
+    pub fn click_grid(self, path: impl Into<String>) -> Self {
         self.step(TestAction::ClickElement {
-            locator: ElementLocator::GridCell { col, row },
+            locator: ElementLocator::GridCell { path: path.into() },
         })
     }
 
@@ -333,36 +333,33 @@ impl LayoutOracle {
         (w, h)
     }
 
-    pub fn grid_cell_rect(state: &AppState, col: i32, row: i32) -> Option<Rect> {
+    pub fn grid_cell_rect(state: &AppState, path: &str) -> Option<Rect> {
         let doc = &state.builder_document;
         let layout = &doc.page_layout;
-        if layout.columns.is_empty() && layout.rows.is_empty() {
+        if !layout.has_grid() {
             return None;
         }
         let (ox, oy) = Self::content_origin(state);
         let (cw, ch) = Self::content_size(state);
+        let avail_w = cw - layout.margins.left - layout.margins.right;
+        let avail_h = ch - layout.margins.top - layout.margins.bottom;
 
-        let num_cols = layout.columns.len().max(1) as f32;
-        let num_rows = layout.rows.len().max(1) as f32;
-        let ml = layout.margins.left;
-        let mt = layout.margins.top;
-        let avail_w = cw - ml - layout.margins.right;
-        let avail_h = ch - mt - layout.margins.bottom;
-        let cell_w = (avail_w - layout.column_gap * (num_cols - 1.0).max(0.0)) / num_cols;
-        let cell_h = (avail_h - layout.row_gap * (num_rows - 1.0).max(0.0)) / num_rows;
-
-        Some(Rect::new(
-            ox + ml + col as f32 * (cell_w + layout.column_gap),
-            oy + mt + row as f32 * (cell_h + layout.row_gap),
-            cell_w,
-            cell_h,
-        ))
+        let cell_path = prism_builder::path_from_string(path);
+        let flat = layout.flatten_cells(avail_w, avail_h);
+        flat.iter().find(|fc| fc.path == cell_path).map(|fc| {
+            Rect::new(
+                ox + layout.margins.left + fc.x,
+                oy + layout.margins.top + fc.y,
+                fc.width,
+                fc.height,
+            )
+        })
     }
 
     pub fn element_rect(state: &AppState, locator: &ElementLocator) -> Option<Rect> {
         match locator {
             ElementLocator::ActivityBarButton(idx) => Some(Self::activity_bar_button(*idx)),
-            ElementLocator::GridCell { col, row } => Self::grid_cell_rect(state, *col, *row),
+            ElementLocator::GridCell { path } => Self::grid_cell_rect(state, path),
             ElementLocator::Position { x, y } => Some(Rect::new(*x, *y, 1.0, 1.0)),
             _ => None,
         }
@@ -670,32 +667,33 @@ impl E2eDriver {
             }
         }
         let state = self.shell.state();
-        if let Some(rect) = LayoutOracle::grid_cell_rect(&state, 0, 0) {
-            let doc = &state.builder_document;
-            let layout = &doc.page_layout;
-            let num_cols = layout.columns.len().max(1);
-            let num_rows = layout.rows.len().max(1);
-            for row in 0..num_rows {
-                for col in 0..num_cols {
-                    if let Some(cell) = LayoutOracle::grid_cell_rect(&state, col as i32, row as i32)
-                    {
-                        if cell.contains(x, y) {
-                            TestInput::click_grid_cell(&self.shell, col as i32, row as i32);
-                            return;
-                        }
-                    }
+        if state.builder_document.page_layout.has_grid() {
+            let layout = &state.builder_document.page_layout;
+            let (cw, ch) = LayoutOracle::content_size(&state);
+            let avail_w = cw - layout.margins.left - layout.margins.right;
+            let avail_h = ch - layout.margins.top - layout.margins.bottom;
+            let (ox, oy) = LayoutOracle::content_origin(&state);
+            let flat = layout.flatten_cells(avail_w, avail_h);
+            for fc in &flat {
+                let rect = Rect::new(
+                    ox + layout.margins.left + fc.x,
+                    oy + layout.margins.top + fc.y,
+                    fc.width,
+                    fc.height,
+                );
+                if rect.contains(x, y) {
+                    let path_str = prism_builder::path_to_string(&fc.path);
+                    TestInput::click_grid_cell(&self.shell, &path_str);
+                    return;
                 }
             }
-            let _ = rect;
         }
     }
 
     pub fn click_element(&self, locator: &ElementLocator) {
         match locator {
             ElementLocator::NodeId(id) => TestInput::click_node(&self.shell, id),
-            ElementLocator::GridCell { col, row } => {
-                TestInput::click_grid_cell(&self.shell, *col, *row)
-            }
+            ElementLocator::GridCell { path } => TestInput::click_grid_cell(&self.shell, path),
             ElementLocator::Panel(panel) => {
                 let panel_id = match panel.as_str() {
                     "identity" => 0,
@@ -1283,7 +1281,7 @@ fn test_grid_cell_interaction() -> TestScript {
     )
     .scene("builder-grid")
     .assert(StateCheck::DocumentHasRoot)
-    .click_grid(0, 0)
+    .click_grid("0")
     .wait(50)
 }
 
@@ -1635,7 +1633,7 @@ mod tests {
     #[test]
     fn layout_oracle_grid_cell() {
         let state = apply_scene(BuiltinScene::BuilderGrid);
-        let rect = LayoutOracle::grid_cell_rect(&state, 0, 0);
+        let rect = LayoutOracle::grid_cell_rect(&state, "0");
         assert!(rect.is_some());
         let r = rect.unwrap();
         assert!(r.width > 0.0);

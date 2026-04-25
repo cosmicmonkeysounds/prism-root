@@ -7,7 +7,7 @@ use prism_core::foundation::spatial::Transform2D;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::layout::{GridPlacement, LayoutMode, PageLayout};
+use crate::layout::{LayoutMode, PageLayout};
 use crate::modifier::Modifier;
 use crate::prefab::PrefabDef;
 use crate::resource::{ResourceDef, ResourceId};
@@ -62,31 +62,10 @@ impl Node {
 
 impl BuilderDocument {
     /// Place a node at a specific grid cell by updating its FlowProps.
-    pub fn place_in_cell(&mut self, node_id: &str, col: usize, row: usize) -> bool {
-        let root = match &mut self.root {
-            Some(r) => r,
-            None => return false,
-        };
-        let node = match root.find_mut(node_id) {
-            Some(n) => n,
-            None => return false,
-        };
-        if let LayoutMode::Flow(ref mut flow) = node.layout_mode {
-            flow.grid_column = GridPlacement::Line {
-                index: (col + 1) as i16,
-            };
-            flow.grid_row = GridPlacement::Line {
-                index: (row + 1) as i16,
-            };
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Move a node to a different grid cell.
-    pub fn move_to_cell(&mut self, node_id: &str, col: usize, row: usize) -> bool {
-        self.place_in_cell(node_id, col, row)
+    pub fn place_in_grid(&mut self, node_id: &str, path: &[usize]) -> bool {
+        self.page_layout
+            .place_node_at(path, node_id.to_string())
+            .is_ok()
     }
 
     /// Create a new page document with a basic shell layout.
@@ -96,7 +75,7 @@ impl BuilderDocument {
     /// bare minimum starting point for every new page — users add
     /// components by dragging into the grid cells.
     pub fn page_shell() -> Self {
-        use crate::layout::{FlowDisplay, FlowProps, TrackSize};
+        use crate::layout::{FlowDisplay, FlowProps};
         use prism_core::foundation::geometry::Edges;
 
         Self {
@@ -116,8 +95,7 @@ impl BuilderDocument {
             page_layout: PageLayout {
                 size: crate::layout::PageSize::Responsive,
                 margins: Edges::new(24.0, 32.0, 24.0, 32.0),
-                columns: vec![TrackSize::Fr { value: 1.0 }],
-                rows: vec![TrackSize::Fr { value: 1.0 }],
+                grid: Some(crate::layout::GridCell::leaf()),
                 column_gap: 16.0,
                 row_gap: 16.0,
                 ..Default::default()

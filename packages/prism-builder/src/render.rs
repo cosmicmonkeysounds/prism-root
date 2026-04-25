@@ -20,7 +20,7 @@ use crate::component::{RenderError, RenderSlintContext};
 use crate::document::BuilderDocument;
 use crate::html::Html;
 use crate::html_block::{HtmlRegistry, HtmlRenderContext};
-use crate::layout::LayoutMode;
+use crate::layout::{GridCell, SplitDirection};
 use crate::registry::ComponentRegistry;
 use crate::slint_source::{rgba_to_slint_literal, SlintEmitter};
 use crate::source_map::{PropSpan, SourceMap, SourceSpan};
@@ -296,7 +296,7 @@ pub fn render_document_slint_preview_with_assets(
     out.line("// Auto-generated preview by prism_builder.");
     out.blank();
 
-    let has_grid = !doc.page_layout.columns.is_empty() || !doc.page_layout.rows.is_empty();
+    let has_grid = doc.page_layout.has_grid();
 
     out.block(
         "export component BuilderPreview inherits Rectangle",
@@ -309,51 +309,26 @@ pub fn render_document_slint_preview_with_assets(
             if let Some(root) = &doc.root {
                 if has_grid {
                     let margins = &doc.page_layout.margins;
-                    let gap = doc.page_layout.column_gap.max(doc.page_layout.row_gap) as f64;
-                    let num_cols = doc.page_layout.columns.len().max(1);
-                    let num_rows = doc.page_layout.rows.len().max(1);
 
-                    let mut occupied = std::collections::HashMap::new();
-                    for (i, child) in root.children.iter().enumerate() {
-                        let (col, row) = grid_cell_for_child(child);
-                        occupied.insert((col, row), i);
-                    }
+                    let child_by_id: std::collections::HashMap<&str, usize> = root
+                        .children
+                        .iter()
+                        .enumerate()
+                        .map(|(i, c)| (c.id.as_str(), i))
+                        .collect();
 
-                    out.block("GridLayout", |out| {
+                    out.block("VerticalLayout", |out| {
                         out.prop_px("padding-left", margins.left as f64);
                         out.prop_px("padding-top", margins.top as f64);
                         out.prop_px("padding-right", margins.right as f64);
                         out.prop_px("padding-bottom", margins.bottom as f64);
-                        if gap > 0.0 {
-                            out.prop_px("spacing", gap);
-                        }
-                        for r in 0..num_rows {
-                            for c in 0..num_cols {
-                                if let Some(&idx) = occupied.get(&(c, r)) {
-                                    out.block("Rectangle", |out| {
-                                        out.line(format!("col: {c};"));
-                                        out.line(format!("row: {r};"));
-                                        out.line("horizontal-stretch: 1;");
-                                        out.line("vertical-stretch: 1;");
-                                        out.line("preferred-width: 0px;");
-                                        out.line("preferred-height: 0px;");
-                                        out.line("clip: true;");
-                                        out.block("VerticalLayout", |out| {
-                                            ctx.render_child(&root.children[idx], out)
-                                        })
-                                    })?;
-                                } else {
-                                    out.block("Rectangle", |out| {
-                                        out.line(format!("col: {c};"));
-                                        out.line(format!("row: {r};"));
-                                        out.line("horizontal-stretch: 1;");
-                                        out.line("vertical-stretch: 1;");
-                                        Ok(())
-                                    })?;
-                                }
-                            }
-                        }
-                        Ok(())
+                        emit_grid_cell(
+                            doc.page_layout.grid.as_ref().unwrap(),
+                            &child_by_id,
+                            &root.children,
+                            &mut ctx,
+                            out,
+                        )
                     })
                 } else {
                     out.block("VerticalLayout", |out| {
@@ -375,14 +350,62 @@ pub fn render_document_slint_preview_with_assets(
     Ok(out.build())
 }
 
-fn grid_cell_for_child(child: &crate::document::Node) -> (usize, usize) {
-    match &child.layout_mode {
-        LayoutMode::Flow(f) => {
-            let col = f.grid_column.resolved_index().unwrap_or(0);
-            let row = f.grid_row.resolved_index().unwrap_or(0);
-            (col, row)
+fn emit_grid_cell(
+    cell: &GridCell,
+    child_by_id: &std::collections::HashMap<&str, usize>,
+    children: &[crate::document::Node],
+    ctx: &mut RenderSlintContext<'_>,
+    out: &mut SlintEmitter,
+) -> Result<(), RenderError> {
+    match cell {
+        GridCell::Leaf { node_id } => {
+            if let Some(id) = node_id {
+                if let Some(&idx) = child_by_id.get(id.as_str()) {
+                    out.block("Rectangle", |out| {
+                        out.line("horizontal-stretch: 1;");
+                        out.line("vertical-stretch: 1;");
+                        out.line("preferred-width: 0px;");
+                        out.line("preferred-height: 0px;");
+                        out.line("clip: true;");
+                        out.block("VerticalLayout", |out| {
+                            ctx.render_child(&children[idx], out)
+                        })
+                    })
+                } else {
+                    out.block("Rectangle", |out| {
+                        out.line("horizontal-stretch: 1;");
+                        out.line("vertical-stretch: 1;");
+                        Ok(())
+                    })
+                }
+            } else {
+                out.block("Rectangle", |out| {
+                    out.line("horizontal-stretch: 1;");
+                    out.line("vertical-stretch: 1;");
+                    Ok(())
+                })
+            }
         }
-        _ => (0, 0),
+        GridCell::Split {
+            direction,
+            gap,
+            children: cells,
+            ..
+        } => {
+            let layout = match direction {
+                SplitDirection::Horizontal => "HorizontalLayout",
+                SplitDirection::Vertical => "VerticalLayout",
+            };
+            out.block(layout, |out| {
+                if *gap > 0.0 {
+                    out.prop_px("spacing", *gap as f64);
+                }
+                for cell in cells {
+                    emit_grid_cell(cell, child_by_id, children, ctx, out)?;
+                }
+                Ok(())
+            })
+        }
     }
 }
 

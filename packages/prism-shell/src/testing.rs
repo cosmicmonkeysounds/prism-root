@@ -241,9 +241,9 @@ impl TestInput {
     }
 
     /// Simulate clicking a grid cell by invoking the grid-cell-clicked
-    /// callback.
-    pub fn click_grid_cell(shell: &Shell, col: i32, row: i32) {
-        shell.window().invoke_grid_cell_clicked(col, row);
+    /// callback with a cell path string (e.g. "0", "1.0").
+    pub fn click_grid_cell(shell: &Shell, path: &str) {
+        shell.window().invoke_grid_cell_clicked(path.into());
     }
 
     /// Simulate clicking a builder node by invoking the
@@ -315,8 +315,8 @@ impl TestHarness {
         TestInput::set_viewport(&self.shell, preset);
     }
 
-    pub fn click_grid_cell(&self, col: i32, row: i32) {
-        TestInput::click_grid_cell(&self.shell, col, row);
+    pub fn click_grid_cell(&self, path: &str) {
+        TestInput::click_grid_cell(&self.shell, path);
     }
 
     pub fn click_node(&self, node_id: &str) {

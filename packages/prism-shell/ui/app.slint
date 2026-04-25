@@ -53,8 +53,8 @@ struct InspectorNode {
 }
 
 struct GridEdgeHandle {
-    kind: string,
-    index: int,
+    cell-path: string,
+    edge: string,
     x: float,
     y: float,
     width: float,
@@ -118,8 +118,7 @@ struct DocsPanelData {
 }
 
 struct GridCellItem {
-    col: int,
-    row: int,
+    path: string,
     x: float,
     y: float,
     width: float,
@@ -140,8 +139,7 @@ struct PageLayoutData {
     margin-left: float,
     column-gap: float,
     row-gap: float,
-    column-count: int,
-    row-count: int,
+    cell-count: int,
     show-grid: bool,
     is-responsive: bool,
     page-size-label: string,
@@ -1250,7 +1248,7 @@ export component AppWindow inherits Window {
         page-width: 1280.0, page-height: 800.0,
         margin-top: 0.0, margin-right: 0.0, margin-bottom: 0.0, margin-left: 0.0,
         column-gap: 0.0, row-gap: 0.0,
-        column-count: 1, row-count: 0,
+        cell-count: 1,
         show-grid: false, is-responsive: true,
         page-size-label: "Responsive",
     };
@@ -1287,22 +1285,17 @@ export component AppWindow inherits Window {
     in property <[GridCellItem]> grid-cells: [];
     in property <[GridEdgeHandle]> grid-edge-handles: [];
     in property <int> grid-edge-handles-count: 0;
-    in property <int> pending-add-col: -1;
-    in property <int> pending-add-row: -1;
+    in property <string> pending-add-path: "";
     in property <float> pending-add-x: 0;
     in property <float> pending-add-y: 0;
     in property <bool> show-component-picker: false;
     in property <string> drag-component-type: "";
-    callback grid-cell-clicked(int /* col */, int /* row */);
-    callback grid-cell-add-component(string /* component-type */, int /* col */, int /* row */);
-    callback picker-show(int /* col */, int /* row */, float /* x */, float /* y */);
+    callback grid-cell-clicked(string /* path */);
+    callback grid-cell-add-component(string /* component-type */, string /* path */);
+    callback picker-show(string /* path */, float /* x */, float /* y */);
     callback picker-dismiss();
     callback palette-drag-toggle(string /* component-type */);
-    callback grid-add-column(int /* index */);
-    callback grid-add-row(int /* index */);
-    callback grid-remove-column(int /* index */);
-    callback grid-remove-row(int /* index */);
-    callback grid-track-resize(string /* "col" | "row" */, int /* index */, float /* new-size-px */);
+    callback grid-add-at-edge(string /* cell-path */, string /* edge */);
 
     // User color swatches
     in property <[ColorPreset]> user-color-swatches: [];
@@ -1657,8 +1650,8 @@ export component AppWindow inherits Window {
                                                         }
                                                     }
                                                     ToolbarSeparator { }
-                                                    if root.page-layout.column-count > 1 : Text { text: root.page-layout.column-count + " cols"; color: Palette.foreground.transparentize(50%); font-size: 11px; vertical-alignment: center; }
-                                                    if root.page-layout.column-count > 1 : Text { text: "\u{00B7}"; color: Palette.foreground.transparentize(60%); font-size: 11px; vertical-alignment: center; }
+                                                    if root.page-layout.cell-count > 1 : Text { text: root.page-layout.cell-count + " cells"; color: Palette.foreground.transparentize(50%); font-size: 11px; vertical-alignment: center; }
+                                                    if root.page-layout.cell-count > 1 : Text { text: "\u{00B7}"; color: Palette.foreground.transparentize(60%); font-size: 11px; vertical-alignment: center; }
                                                     Text { text: root.builder-node-count + " nodes"; color: Palette.foreground.transparentize(50%); font-size: 11px; vertical-alignment: center; }
                                                 }
                                             }
@@ -1850,11 +1843,11 @@ export component AppWindow inherits Window {
                                                                         mouse-cursor: pointer;
                                                                         clicked => {
                                                                             if root.drag-component-type != "" {
-                                                                                root.grid-cell-add-component(root.drag-component-type, cell.col, cell.row);
+                                                                                root.grid-cell-add-component(root.drag-component-type, cell.path);
                                                                             } else if cell.is-empty {
-                                                                                root.picker-show(cell.col, cell.row, parent.absolute-position.x / 1px, parent.absolute-position.y / 1px);
+                                                                                root.picker-show(cell.path, parent.absolute-position.x / 1px, parent.absolute-position.y / 1px);
                                                                             } else {
-                                                                                root.grid-cell-clicked(cell.col, cell.row);
+                                                                                root.grid-cell-clicked(cell.path);
                                                                             }
                                                                         }
                                                                     }
@@ -1873,12 +1866,12 @@ export component AppWindow inherits Window {
                                                                         visible: edge-handle-touch.has-hover;
                                                                         width: 20px; height: 20px; border-radius: 10px;
                                                                         background: Palette.accent-background;
-                                                                        x: handle.kind == "col"
-                                                                            ? (parent.width - self.width) / 2
-                                                                            : min(max(0px, edge-handle-touch.mouse-x - 10px), parent.width - self.width);
-                                                                        y: handle.kind == "row"
-                                                                            ? (parent.height - self.height) / 2
-                                                                            : min(max(0px, edge-handle-touch.mouse-y - 10px), parent.height - self.height);
+                                                                        x: handle.edge == "top" || handle.edge == "bottom"
+                                                                            ? min(max(0px, edge-handle-touch.mouse-x - 10px), parent.width - self.width)
+                                                                            : (parent.width - self.width) / 2;
+                                                                        y: handle.edge == "left" || handle.edge == "right"
+                                                                            ? min(max(0px, edge-handle-touch.mouse-y - 10px), parent.height - self.height)
+                                                                            : (parent.height - self.height) / 2;
                                                                         Text {
                                                                             text: "+";
                                                                             color: Palette.accent-foreground;
@@ -1890,11 +1883,7 @@ export component AppWindow inherits Window {
                                                                     edge-handle-touch := TouchArea {
                                                                         mouse-cursor: pointer;
                                                                         clicked => {
-                                                                            if handle.kind == "col" {
-                                                                                root.grid-add-column(handle.index);
-                                                                            } else {
-                                                                                root.grid-add-row(handle.index);
-                                                                            }
+                                                                            root.grid-add-at-edge(handle.cell-path, handle.edge);
                                                                         }
                                                                     }
                                                                 }
@@ -2053,34 +2042,15 @@ export component AppWindow inherits Window {
                                                     }
                                                     if root.page-layout-expanded : VerticalLayout {
                                                         spacing: 2px;
-                                                        Text { text: "Columns"; color: Palette.foreground.transparentize(40%); font-size: 11px; }
-                                                        HorizontalLayout { spacing: 4px; height: 24px;
-                                                            LineEdit { width: 48px; height: 24px; text: root.page-layout.column-count; placeholder-text: "1"; accepted(val) => { root.page-layout-edited("columns", val); } }
-                                                            Slider { horizontal-stretch: 1; height: 20px; minimum: 1; maximum: 24; value: root.page-layout.column-count; changed(val) => { root.page-layout-edited("columns", round(val)); } }
-                                                        }
+                                                        Text { text: "Cells"; color: Palette.foreground.transparentize(40%); font-size: 11px; }
+                                                        Text { text: root.page-layout.cell-count; color: Palette.foreground; font-size: 12px; }
                                                     }
                                                     if root.page-layout-expanded : VerticalLayout {
                                                         spacing: 2px;
-                                                        Text { text: "Column Gap"; color: Palette.foreground.transparentize(40%); font-size: 11px; }
+                                                        Text { text: "Gap"; color: Palette.foreground.transparentize(40%); font-size: 11px; }
                                                         HorizontalLayout { spacing: 4px; height: 24px;
                                                             LineEdit { width: 48px; height: 24px; text: root.page-layout.column-gap; placeholder-text: "0"; accepted(val) => { root.page-layout-edited("column_gap", val); } }
                                                             Slider { horizontal-stretch: 1; height: 20px; minimum: 0; maximum: 128; value: root.page-layout.column-gap; changed(val) => { root.page-layout-edited("column_gap", round(val)); } }
-                                                        }
-                                                    }
-                                                    if root.page-layout-expanded : VerticalLayout {
-                                                        spacing: 2px;
-                                                        Text { text: "Rows"; color: Palette.foreground.transparentize(40%); font-size: 11px; }
-                                                        HorizontalLayout { spacing: 4px; height: 24px;
-                                                            LineEdit { width: 48px; height: 24px; text: root.page-layout.row-count; placeholder-text: "0"; accepted(val) => { root.page-layout-edited("rows", val); } }
-                                                            Slider { horizontal-stretch: 1; height: 20px; minimum: 0; maximum: 24; value: root.page-layout.row-count; changed(val) => { root.page-layout-edited("rows", round(val)); } }
-                                                        }
-                                                    }
-                                                    if root.page-layout-expanded : VerticalLayout {
-                                                        spacing: 2px;
-                                                        Text { text: "Row Gap"; color: Palette.foreground.transparentize(40%); font-size: 11px; }
-                                                        HorizontalLayout { spacing: 4px; height: 24px;
-                                                            LineEdit { width: 48px; height: 24px; text: root.page-layout.row-gap; placeholder-text: "0"; accepted(val) => { root.page-layout-edited("row_gap", val); } }
-                                                            Slider { horizontal-stretch: 1; height: 20px; minimum: 0; maximum: 128; value: root.page-layout.row-gap; changed(val) => { root.page-layout-edited("row_gap", round(val)); } }
                                                         }
                                                     }
 
@@ -2950,7 +2920,7 @@ export component AppWindow inherits Window {
                         picker-item-touch := TouchArea {
                             mouse-cursor: pointer;
                             clicked => {
-                                root.grid-cell-add-component(comp.component-type, root.pending-add-col, root.pending-add-row);
+                                root.grid-cell-add-component(comp.component-type, root.pending-add-path);
                             }
                         }
                     }
