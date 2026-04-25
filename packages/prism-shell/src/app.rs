@@ -47,8 +47,9 @@ use crate::{
     AppCardItem, AppWindow, BreadcrumbItem, ButtonSpec, ColorPreset, CommandItem,
     ComponentPaletteItem, DockDividerRect, DockPanelRect, DockTabItem, DocsPanelData,
     EditorIndentGuide, EditorLine, EditorToken, ExplorerNodeItem, FieldRow, GridCellItem,
-    GutterRect, HelpTooltipData, InspectorNode, MenuDef, MenuItem, ModifierItem, PageLayoutData,
-    PreviewNode, SearchResultItem, SignalItem, TabItem, ToastItem, VariantItem, WorkflowPageItem,
+    GridEdgeHandle, GutterRect, HelpTooltipData, InspectorNode, MenuDef, MenuItem, ModifierItem,
+    PageLayoutData, PreviewNode, SearchResultItem, SignalItem, TabItem, ToastItem, VariantItem,
+    WorkflowPageItem,
 };
 
 // ── Persistent VecModels ───────────────────────────────────────────
@@ -97,6 +98,7 @@ macro_rules! persistent_models {
 
 persistent_models! {
     grid_cells: GridCellItem,
+    grid_edge_handles: GridEdgeHandle,
     preview_nodes: PreviewNode,
     inspector_nodes: InspectorNode,
     field_rows: FieldRow,
@@ -716,6 +718,7 @@ impl Shell {
             };
         }
         bind_model!(set_grid_cells, grid_cells, GridCellItem);
+        bind_model!(set_grid_edge_handles, grid_edge_handles, GridEdgeHandle);
         bind_model!(set_preview_nodes, preview_nodes, PreviewNode);
         bind_model!(set_inspector_nodes, inspector_nodes, InspectorNode);
         bind_model!(set_field_rows, field_rows, FieldRow);
@@ -2334,6 +2337,29 @@ impl Shell {
             }
         });
 
+        // Inspector delete-track (parses "row:N" id format)
+        self.window.on_inspector_delete_track({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |id| {
+                let id_str = id.as_str();
+                if let Some(idx_str) = id_str.strip_prefix("row:") {
+                    if let Ok(idx) = idx_str.parse::<usize>() {
+                        {
+                            let mut s = inner.borrow_mut();
+                            s.push_undo("Remove row");
+                            s.store.mutate(|state| {
+                                let _ = state.builder_document.page_layout.remove_row(idx);
+                            });
+                        }
+                        if let Some(w) = weak.upgrade() {
+                            sync_ui_from_shared(&inner, &w);
+                        }
+                    }
+                }
+            }
+        });
+
         // Grid track resize
         self.window.on_grid_track_resize({
             let inner = Rc::clone(&inner);
@@ -2847,6 +2873,7 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
             &state.selection,
             vw,
         );
+        push_grid_edge_handles(&inner.models, window, &state.builder_document, vw);
         push_style_rows(
             &inner.models,
             window,
@@ -2954,6 +2981,8 @@ fn clear_panel_slots(models: &PersistentModels, window: &AppWindow) {
     window.set_inspector_tree(SharedString::new());
     sync_model(&models.inspector_nodes, &[]);
     window.set_inspector_nodes_count(0);
+    sync_model(&models.grid_edge_handles, &[]);
+    window.set_grid_edge_handles_count(0);
     window.set_selected_component(SharedString::new());
     sync_model(&models.field_rows, &[]);
     window.set_field_rows_count(0);
@@ -3287,7 +3316,13 @@ fn push_inspector_nodes(
     doc: &BuilderDocument,
     selection: &SelectionModel,
 ) {
-    let items = flatten_inspector_nodes(doc.root.as_ref(), selection);
+    let pl = &doc.page_layout;
+    let has_grid = !pl.columns.is_empty() || !pl.rows.is_empty();
+    let items = if has_grid {
+        flatten_inspector_grid(doc, selection)
+    } else {
+        flatten_inspector_nodes(doc.root.as_ref(), selection)
+    };
     let count = sync_model(&models.inspector_nodes, &items);
     window.set_inspector_nodes_count(count);
 }
@@ -3999,10 +4034,73 @@ fn flatten_walk(node: &Node, depth: i32, selection: &SelectionModel, out: &mut V
         component_id: SharedString::from(&node.component),
         depth,
         selected: selection.contains(&node.id),
+        kind: SharedString::from("node"),
     });
     for child in &node.children {
         flatten_walk(child, depth + 1, selection, out);
     }
+}
+
+fn flatten_inspector_grid(doc: &BuilderDocument, selection: &SelectionModel) -> Vec<InspectorNode> {
+    let pl = &doc.page_layout;
+    let cols = pl.columns.len().max(1);
+    let rows = pl.rows.len().max(1);
+
+    let children: Vec<(&str, Option<usize>, Option<usize>, &str)> = doc
+        .root
+        .as_ref()
+        .map(|r| {
+            r.children
+                .iter()
+                .map(|c| {
+                    let (gc, gr) = match &c.layout_mode {
+                        LayoutMode::Flow(f) => {
+                            (f.grid_column.resolved_index(), f.grid_row.resolved_index())
+                        }
+                        _ => (None, None),
+                    };
+                    (c.id.as_str(), gc, gr, c.component.as_str())
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let mut items = Vec::new();
+    for r in 0..rows {
+        items.push(InspectorNode {
+            id: SharedString::from(format!("row:{r}")),
+            component_id: SharedString::from(format!("Row {}", r + 1)),
+            depth: 0,
+            selected: false,
+            kind: SharedString::from("row"),
+        });
+        for c in 0..cols {
+            let occupant = children
+                .iter()
+                .find(|(_, gc, gr, _)| gc.unwrap_or(0) == c && gr.unwrap_or(0) == r);
+            match occupant {
+                Some((id, _, _, comp)) => {
+                    items.push(InspectorNode {
+                        id: SharedString::from(*id),
+                        component_id: SharedString::from(format!("{comp} · col {}", c + 1)),
+                        depth: 1,
+                        selected: selection.contains(id),
+                        kind: SharedString::from("node"),
+                    });
+                }
+                None => {
+                    items.push(InspectorNode {
+                        id: SharedString::from(format!("cell:{c}:{r}")),
+                        component_id: SharedString::from(format!("(empty) · col {}", c + 1)),
+                        depth: 1,
+                        selected: false,
+                        kind: SharedString::from("empty"),
+                    });
+                }
+            }
+        }
+    }
+    items
 }
 
 fn field_kind_for_key(inner: &ShellInner, key: &str) -> Option<String> {
@@ -4928,6 +5026,105 @@ fn push_grid_cells(
 
     let count = sync_model(&models.grid_cells, &cells);
     window.set_grid_cells_count(count);
+}
+
+fn push_grid_edge_handles(
+    models: &PersistentModels,
+    window: &AppWindow,
+    doc: &BuilderDocument,
+    viewport_width: f32,
+) {
+    let pl = &doc.page_layout;
+    let cols = pl.columns.len();
+    let rows = pl.rows.len();
+
+    if cols == 0 && rows == 0 {
+        sync_model(&models.grid_edge_handles, &[]);
+        window.set_grid_edge_handles_count(0);
+        return;
+    }
+
+    let resolved = pl.resolved_size();
+    let (pw, ph) = resolved
+        .map(|s| (s.width, s.height))
+        .unwrap_or((viewport_width, viewport_width * 0.625));
+    let content_w = pw - pl.margins.left - pl.margins.right;
+    let content_h = ph - pl.margins.top - pl.margins.bottom;
+
+    let col_sizes = compute_track_sizes(&pl.columns, pl.column_gap, content_w);
+    let row_sizes = compute_track_sizes(&pl.rows, pl.row_gap, content_h);
+
+    let handle_zone = 12.0_f32;
+    let mut handles = Vec::new();
+
+    // Column boundary positions (cumulative x from content-area origin)
+    let mut col_edges = Vec::with_capacity(cols + 1);
+    {
+        let mut x = 0.0_f32;
+        for (i, &size) in col_sizes.iter().enumerate() {
+            col_edges.push(x);
+            x += size;
+            if i + 1 < cols {
+                x += pl.column_gap;
+            }
+        }
+        col_edges.push(x);
+    }
+
+    for c in 0..=cols {
+        let (hx, hw) = if c == 0 {
+            (-handle_zone / 2.0, handle_zone)
+        } else if c == cols {
+            (col_edges[cols] - handle_zone / 2.0, handle_zone)
+        } else {
+            let gap_start = col_edges[c] - pl.column_gap;
+            (gap_start, pl.column_gap.max(handle_zone))
+        };
+        handles.push(GridEdgeHandle {
+            kind: SharedString::from("col"),
+            index: c as i32,
+            x: hx,
+            y: 0.0,
+            width: hw,
+            height: content_h,
+        });
+    }
+
+    // Row boundary positions (cumulative y from content-area origin)
+    let mut row_edges = Vec::with_capacity(rows + 1);
+    {
+        let mut y = 0.0_f32;
+        for (i, &size) in row_sizes.iter().enumerate() {
+            row_edges.push(y);
+            y += size;
+            if i + 1 < rows {
+                y += pl.row_gap;
+            }
+        }
+        row_edges.push(y);
+    }
+
+    for r in 0..=rows {
+        let (hy, hh) = if r == 0 {
+            (-handle_zone / 2.0, handle_zone)
+        } else if r == rows {
+            (row_edges[rows] - handle_zone / 2.0, handle_zone)
+        } else {
+            let gap_start = row_edges[r] - pl.row_gap;
+            (gap_start, pl.row_gap.max(handle_zone))
+        };
+        handles.push(GridEdgeHandle {
+            kind: SharedString::from("row"),
+            index: r as i32,
+            x: 0.0,
+            y: hy,
+            width: content_w,
+            height: hh,
+        });
+    }
+
+    let count = sync_model(&models.grid_edge_handles, &handles);
+    window.set_grid_edge_handles_count(count);
 }
 
 fn compute_track_sizes(tracks: &[TrackSize], gap: f32, available: f32) -> Vec<f32> {

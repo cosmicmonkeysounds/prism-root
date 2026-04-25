@@ -49,6 +49,16 @@ struct InspectorNode {
     component-id: string,
     depth: int,
     selected: bool,
+    kind: string,
+}
+
+struct GridEdgeHandle {
+    kind: string,
+    index: int,
+    x: float,
+    y: float,
+    width: float,
+    height: float,
 }
 
 struct SearchResultItem {
@@ -833,12 +843,16 @@ component InspectorRow inherits Rectangle {
     in property <string> component-id;
     in property <int> depth;
     in property <bool> selected;
+    in property <string> kind: "node";
     callback clicked;
     callback move-up;
     callback move-down;
+    callback delete-track;
 
     height: 30px;
-    background: selected ? Palette.accent-background.transparentize(85%) : transparent;
+    background: root.kind == "row"
+        ? Palette.foreground.transparentize(96%)
+        : (selected ? Palette.accent-background.transparentize(85%) : transparent);
     border-radius: 4px;
 
     HorizontalLayout {
@@ -848,19 +862,46 @@ component InspectorRow inherits Rectangle {
 
         HorizontalLayout {
             spacing: 6px; alignment: start;
-            Rectangle { width: 6px; height: 6px; border-radius: 3px; background: root.selected ? Palette.accent-background : Palette.foreground.transparentize(60%); y: 12px; }
-            Text { text: root.component-id; color: root.selected ? Palette.accent-foreground : Palette.foreground; font-size: 12px; font-weight: root.selected ? 600 : 400; vertical-alignment: center; }
-            Text { text: root.node-id; color: Palette.foreground.transparentize(50%); font-size: 10px; font-family: "monospace"; vertical-alignment: center; }
+            Rectangle {
+                width: 6px; height: 6px; border-radius: root.kind == "row" ? 1px : 3px; y: 12px;
+                background: root.kind == "row"
+                    ? Palette.foreground.transparentize(40%)
+                    : (root.kind == "empty"
+                        ? Palette.foreground.transparentize(80%)
+                        : (root.selected ? Palette.accent-background : Palette.foreground.transparentize(60%)));
+            }
+            Text {
+                text: root.component-id;
+                font-size: root.kind == "row" ? 11px : 12px;
+                font-weight: root.kind == "row" ? 600 : (root.selected ? 600 : 400);
+                color: root.kind == "row"
+                    ? Palette.foreground.transparentize(20%)
+                    : (root.kind == "empty"
+                        ? Palette.foreground.transparentize(60%)
+                        : (root.selected ? Palette.accent-foreground : Palette.foreground));
+                vertical-alignment: center;
+            }
+            Text {
+                visible: root.kind == "node";
+                text: root.node-id;
+                color: Palette.foreground.transparentize(50%);
+                font-size: 10px; font-family: "monospace"; vertical-alignment: center;
+            }
         }
 
-        if root.selected : HorizontalLayout {
+        if root.selected && root.kind == "node" : HorizontalLayout {
             spacing: 2px; width: 60px; alignment: end;
             IconButton { icon: @image-url("icons/chevron-up.svg"); clicked => { root.move-up(); } }
             IconButton { icon: @image-url("icons/chevron-down.svg"); clicked => { root.move-down(); } }
         }
+
+        if root.kind == "row" && inspector-row-hover.has-hover : HorizontalLayout {
+            spacing: 2px; width: 30px; alignment: end;
+            IconButton { icon: @image-url("icons/trash.svg"); clicked => { root.delete-track(); } }
+        }
     }
 
-    TouchArea { clicked => { root.clicked(); } }
+    inspector-row-hover := TouchArea { clicked => { root.clicked(); } }
 }
 
 component Toast inherits Rectangle {
@@ -1110,6 +1151,8 @@ export component AppWindow inherits Window {
     callback node-clicked(string);
     callback node-move-up(string);
     callback node-move-down(string);
+    callback inspector-delete-track(string /* "row:N" */);
+
 
     // Properties
     in property <string> selected-component: "";
@@ -1242,6 +1285,8 @@ export component AppWindow inherits Window {
 
     // Grid cells (interactive page grid)
     in property <[GridCellItem]> grid-cells: [];
+    in property <[GridEdgeHandle]> grid-edge-handles: [];
+    in property <int> grid-edge-handles-count: 0;
     in property <int> pending-add-col: -1;
     in property <int> pending-add-row: -1;
     in property <float> pending-add-x: 0;
@@ -1728,27 +1773,6 @@ export component AppWindow inherits Window {
 
                                                             // Content area
                                                             Rectangle {
-                                                                // Grid editing controls overlay
-                                                                HorizontalLayout {
-                                                                    visible: root.grid-cells-count > 0;
-                                                                    alignment: end; spacing: 4px; height: 24px;
-                                                                    x: root.page-layout.margin-left * root.canvas-zoom * 1px;
-                                                                    y: root.page-layout.margin-top * root.canvas-zoom * 1px - 28px;
-                                                                    width: parent.width - root.page-layout.margin-left * root.canvas-zoom * 1px - root.page-layout.margin-right * root.canvas-zoom * 1px;
-                                                                    Rectangle {
-                                                                        width: grid-add-col-text.preferred-width + 12px; height: 20px; border-radius: 4px;
-                                                                        background: grid-add-col-touch.has-hover ? Palette.control-background : Palette.foreground.transparentize(94%);
-                                                                        grid-add-col-text := Text { text: "+ Col"; color: Palette.foreground.transparentize(40%); font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
-                                                                        grid-add-col-touch := TouchArea { mouse-cursor: pointer; clicked => { root.grid-add-column(root.page-layout.column-count); } }
-                                                                    }
-                                                                    Rectangle {
-                                                                        width: grid-add-row-text.preferred-width + 12px; height: 20px; border-radius: 4px;
-                                                                        background: grid-add-row-touch.has-hover ? Palette.control-background : Palette.foreground.transparentize(94%);
-                                                                        grid-add-row-text := Text { text: "+ Row"; color: Palette.foreground.transparentize(40%); font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
-                                                                        grid-add-row-touch := TouchArea { mouse-cursor: pointer; clicked => { root.grid-add-row(root.page-layout.row-count); } }
-                                                                    }
-                                                                }
-
                                                                 // Grid cells (interactive page grid — inline to avoid component recursion)
                                                                 for cell[i] in root.grid-cells : Rectangle {
                                                                     visible: i < root.grid-cells-count;
@@ -1831,6 +1855,45 @@ export component AppWindow inherits Window {
                                                                                 root.picker-show(cell.col, cell.row, parent.absolute-position.x / 1px, parent.absolute-position.y / 1px);
                                                                             } else {
                                                                                 root.grid-cell-clicked(cell.col, cell.row);
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+
+                                                                // Contextual edge "+" handles — appear on hover at cell boundaries
+                                                                for handle[hi] in root.grid-edge-handles : Rectangle {
+                                                                    visible: hi < root.grid-edge-handles-count;
+                                                                    x: (root.page-layout.margin-left + handle.x) * root.canvas-zoom * 1px;
+                                                                    y: (root.page-layout.margin-top + handle.y) * root.canvas-zoom * 1px;
+                                                                    width: max(handle.width * root.canvas-zoom * 1px, 14px);
+                                                                    height: max(handle.height * root.canvas-zoom * 1px, 14px);
+                                                                    background: transparent;
+
+                                                                    Rectangle {
+                                                                        visible: edge-handle-touch.has-hover;
+                                                                        width: 20px; height: 20px; border-radius: 10px;
+                                                                        background: Palette.accent-background;
+                                                                        x: handle.kind == "col"
+                                                                            ? (parent.width - self.width) / 2
+                                                                            : min(max(0px, edge-handle-touch.mouse-x - 10px), parent.width - self.width);
+                                                                        y: handle.kind == "row"
+                                                                            ? (parent.height - self.height) / 2
+                                                                            : min(max(0px, edge-handle-touch.mouse-y - 10px), parent.height - self.height);
+                                                                        Text {
+                                                                            text: "+";
+                                                                            color: Palette.accent-foreground;
+                                                                            font-size: 14px; font-weight: 700;
+                                                                            horizontal-alignment: center; vertical-alignment: center;
+                                                                        }
+                                                                    }
+
+                                                                    edge-handle-touch := TouchArea {
+                                                                        mouse-cursor: pointer;
+                                                                        clicked => {
+                                                                            if handle.kind == "col" {
+                                                                                root.grid-add-column(handle.index);
+                                                                            } else {
+                                                                                root.grid-add-row(handle.index);
                                                                             }
                                                                         }
                                                                     }
@@ -2066,10 +2129,11 @@ export component AppWindow inherits Window {
                                                         min-width: 200px; spacing: 1px;
                                                         for node[i] in root.inspector-nodes : InspectorRow {
                                                             visible: i < root.inspector-nodes-count;
-                                                            node-id: node.id; component-id: node.component-id; depth: node.depth; selected: node.selected;
+                                                            node-id: node.id; component-id: node.component-id; depth: node.depth; selected: node.selected; kind: node.kind;
                                                             clicked => { root.node-clicked(node.id); }
                                                             move-up => { root.node-move-up(node.id); }
                                                             move-down => { root.node-move-down(node.id); }
+                                                            delete-track => { root.inspector-delete-track(node.id); }
                                                         }
                                                     }
                                                 }
