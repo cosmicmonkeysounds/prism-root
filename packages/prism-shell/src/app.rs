@@ -1165,7 +1165,7 @@ impl Shell {
                         let tree = materialize_prefab(&prefab_def, &mut counter);
                         let root_id = tree.id.clone();
                         if let Some(ref mut live) = s.live {
-                            let _ = live.insert_tree_in_source(parent_id.as_deref(), &tree);
+                            let _ = live.insert_tree_in_source(parent_id.as_deref(), &tree, None);
                         }
                         s.store.mutate(|state| {
                             state.next_node_id = counter;
@@ -1180,6 +1180,7 @@ impl Shell {
                                 &ct,
                                 &node_id,
                                 &props,
+                                None,
                             );
                         }
                         let nid = node_id.clone();
@@ -2368,12 +2369,13 @@ impl Shell {
                     let mut s = inner.borrow_mut();
                     s.push_undo(&format!("Add {ct} at ({col},{row})"));
 
+                    let grid_cell = Some((col, row));
                     if let Some(prefab_def) = builtin_prefab(&ct) {
                         let mut counter = s.store.state().next_node_id;
                         let tree = materialize_prefab(&prefab_def, &mut counter);
                         let root_id = tree.id.clone();
                         if let Some(ref mut live) = s.live {
-                            let _ = live.insert_tree_in_source(Some("root"), &tree);
+                            let _ = live.insert_tree_in_source(Some("root"), &tree, grid_cell);
                         }
                         s.store.mutate(|state| {
                             state.next_node_id = counter;
@@ -2383,7 +2385,13 @@ impl Shell {
                         let node_id = format!("n{}", s.store.state().next_node_id);
                         let props = default_props_for_component(&ct);
                         if let Some(ref mut live) = s.live {
-                            let _ = live.insert_node_in_source(Some("root"), &ct, &node_id, &props);
+                            let _ = live.insert_node_in_source(
+                                Some("root"),
+                                &ct,
+                                &node_id,
+                                &props,
+                                grid_cell,
+                            );
                         }
                         let nid = node_id.clone();
                         s.store.mutate(|state| {
@@ -3526,7 +3534,7 @@ fn execute_command(
                 let new_id = new_node.id.clone();
                 let parent_id = s.store.state().selection.primary().cloned();
                 if let Some(ref mut live) = s.live {
-                    let _ = live.insert_tree_in_source(parent_id.as_deref(), &new_node);
+                    let _ = live.insert_tree_in_source(parent_id.as_deref(), &new_node, None);
                 }
                 s.store.mutate(|state| {
                     state.next_node_id = next_id;
@@ -3573,7 +3581,7 @@ fn execute_command(
                 let new_node = clone_node_with_new_ids(&node, &mut next_id);
                 let new_id = new_node.id.clone();
                 if let Some(ref mut live) = s.live {
-                    let _ = live.insert_tree_in_source(Some(&target_id), &new_node);
+                    let _ = live.insert_tree_in_source(Some(&target_id), &new_node, None);
                 }
                 s.store.mutate(|state| {
                     state.next_node_id = next_id;

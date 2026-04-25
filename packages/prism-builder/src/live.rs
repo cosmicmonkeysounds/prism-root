@@ -190,8 +190,9 @@ impl LiveDocument {
         component: &str,
         node_id: &str,
         props: &serde_json::Value,
+        grid_cell: Option<(i32, i32)>,
     ) -> Result<(), SourceEditError> {
-        let snippet = generate_node_snippet(node_id, component, props, &self.registry);
+        let snippet = generate_node_snippet(node_id, component, props, &self.registry, grid_cell);
 
         match parent_id {
             Some(pid) => {
@@ -227,8 +228,9 @@ impl LiveDocument {
         &mut self,
         parent_id: Option<&str>,
         root_node: &Node,
+        grid_cell: Option<(i32, i32)>,
     ) -> Result<(), SourceEditError> {
-        let snippet = generate_tree_snippet(root_node, &self.registry);
+        let snippet = generate_tree_snippet(root_node, &self.registry, grid_cell);
 
         match parent_id {
             Some(pid) => {
@@ -625,9 +627,13 @@ fn generate_node_snippet(
     component: &str,
     props: &serde_json::Value,
     registry: &ComponentRegistry,
+    grid_cell: Option<(i32, i32)>,
 ) -> String {
     let mut out = String::new();
     out.push_str(&format!("// @node-start:{node_id}:{component}\n"));
+    if let Some((col, row)) = grid_cell {
+        out.push_str(&format!("// @grid:{col},{row}\n"));
+    }
 
     let element_name = element_name_for_component(component);
 
@@ -664,17 +670,29 @@ fn element_name_for_component(component: &str) -> &'static str {
     }
 }
 
-fn generate_tree_snippet(node: &Node, registry: &ComponentRegistry) -> String {
-    generate_tree_snippet_inner(node, registry, 0)
+fn generate_tree_snippet(
+    node: &Node,
+    registry: &ComponentRegistry,
+    grid_cell: Option<(i32, i32)>,
+) -> String {
+    generate_tree_snippet_inner(node, registry, 0, grid_cell)
 }
 
-fn generate_tree_snippet_inner(node: &Node, registry: &ComponentRegistry, depth: usize) -> String {
+fn generate_tree_snippet_inner(
+    node: &Node,
+    registry: &ComponentRegistry,
+    depth: usize,
+    grid_cell: Option<(i32, i32)>,
+) -> String {
     let mut out = String::new();
     let indent = "    ".repeat(depth);
     out.push_str(&format!(
         "{indent}// @node-start:{}:{}\n",
         node.id, node.component
     ));
+    if let Some((col, row)) = grid_cell {
+        out.push_str(&format!("{indent}// @grid:{col},{row}\n"));
+    }
 
     let element_name = element_name_for_component(&node.component);
     out.push_str(&format!("{indent}{element_name} {{\n"));
@@ -694,7 +712,12 @@ fn generate_tree_snippet_inner(node: &Node, registry: &ComponentRegistry, depth:
     }
 
     for child in &node.children {
-        out.push_str(&generate_tree_snippet_inner(child, registry, depth + 1));
+        out.push_str(&generate_tree_snippet_inner(
+            child,
+            registry,
+            depth + 1,
+            None,
+        ));
     }
 
     out.push_str(&format!("{indent}}}\n"));

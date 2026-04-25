@@ -10,6 +10,7 @@
 use serde_json::Value;
 
 use crate::document::{BuilderDocument, Node};
+use crate::layout::{FlowProps, GridPlacement, LayoutMode};
 use crate::render::line_byte_offsets;
 use crate::source_map::SourceMap;
 
@@ -48,6 +49,24 @@ fn build_node_tree(source: &str) -> Option<Node> {
                     children: Vec::new(),
                     ..Default::default()
                 });
+            }
+        } else if let Some(rest) = trimmed.strip_prefix("// @grid:") {
+            if let Some(node) = stack.last_mut() {
+                if let Some((col_s, row_s)) = rest.split_once(',') {
+                    if let (Ok(col), Ok(row)) =
+                        (col_s.trim().parse::<i32>(), row_s.trim().parse::<i32>())
+                    {
+                        node.layout_mode = LayoutMode::Flow(FlowProps {
+                            grid_column: GridPlacement::Line {
+                                index: (col + 1) as i16,
+                            },
+                            grid_row: GridPlacement::Line {
+                                index: (row + 1) as i16,
+                            },
+                            ..Default::default()
+                        });
+                    }
+                }
             }
         } else if let Some(rest) = trimmed.strip_prefix("// @node-end:") {
             let node_id = rest.trim();
