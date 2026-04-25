@@ -335,8 +335,12 @@ pub fn render_document_slint_preview_with_assets(
                                         out.line(format!("row: {r};"));
                                         out.line("horizontal-stretch: 1;");
                                         out.line("vertical-stretch: 1;");
+                                        out.line("preferred-width: 0px;");
+                                        out.line("preferred-height: 0px;");
                                         out.line("clip: true;");
-                                        ctx.render_child(&root.children[idx], out)
+                                        out.block("VerticalLayout", |out| {
+                                            ctx.render_child(&root.children[idx], out)
+                                        })
                                     })?;
                                 } else {
                                     out.block("Rectangle", |out| {
