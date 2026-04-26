@@ -102,6 +102,9 @@ impl CommandRegistry {
             CommandEntry::new("view.zoom_to_fit", "Zoom to Fit", "View")
                 .with_shortcut("Ctrl+Shift+0"),
         );
+        reg.register(CommandEntry::new("tool.move", "Move Tool", "Tool").with_shortcut("W"));
+        reg.register(CommandEntry::new("tool.rotate", "Rotate Tool", "Tool").with_shortcut("E"));
+        reg.register(CommandEntry::new("tool.scale", "Scale Tool", "Tool").with_shortcut("R"));
         reg.register(CommandEntry::new(
             "panel.identity",
             "Go to Identity",

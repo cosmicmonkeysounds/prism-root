@@ -1553,4 +1553,31 @@ mod tests {
         eprintln!("grid+positioned source:\n{source}");
         compile_slint_preview(&source).expect("grid with positioned child should compile");
     }
+
+    #[cfg(feature = "interpreter")]
+    #[test]
+    fn preview_compiles_with_rotation_and_scale() {
+        use crate::layout::AbsoluteProps;
+        use prism_core::foundation::spatial::Transform2D;
+
+        let mut doc = doc_with_content();
+        if let Some(ref mut root) = doc.root {
+            root.children[1].layout_mode = LayoutMode::Absolute(AbsoluteProps::default());
+            root.children[1].transform = Transform2D {
+                position: [50.0, 100.0],
+                rotation: std::f32::consts::FRAC_PI_4,
+                scale: [1.5, 0.8],
+                ..Default::default()
+            };
+        }
+        let reg = real_registry();
+        let tokens = DesignTokens::default();
+        let source =
+            render_document_slint_preview(&doc, &reg, &tokens).expect("render should succeed");
+        eprintln!("rotated+scaled source:\n{source}");
+        assert!(source.contains("transform-rotation:"));
+        assert!(source.contains("transform-scale-x:"));
+        assert!(source.contains("transform-scale-y:"));
+        compile_slint_preview(&source).expect("rotated+scaled node should compile");
+    }
 }

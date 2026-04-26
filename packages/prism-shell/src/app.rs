@@ -2320,7 +2320,7 @@ impl Shell {
         self.window.on_node_drag_moved({
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
-            move |node_id, tool, dx, dy| {
+            move |node_id, tool, dx, dy, shift| {
                 if inner.borrow().syncing.get() {
                     return;
                 }
@@ -2333,7 +2333,7 @@ impl Shell {
                         if snap.node_id == nid {
                             let _ = live.mutate_document(|doc| {
                                 if let Some(ref mut root) = doc.root {
-                                    apply_drag_to_node(root, &tool, dx, dy, snap);
+                                    apply_drag_to_node(root, &tool, dx, dy, shift, snap);
                                 }
                             });
                         }
@@ -2350,7 +2350,7 @@ impl Shell {
         self.window.on_node_drag_finished({
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
-            move |node_id, tool, dx, dy| {
+            move |node_id, tool, dx, dy, shift| {
                 if inner.borrow().syncing.get() {
                     return;
                 }
@@ -2370,7 +2370,7 @@ impl Shell {
                             if let Some(ref mut live) = s.live {
                                 let _ = live.mutate_document(|doc| {
                                     if let Some(ref mut root) = doc.root {
-                                        apply_drag_to_node(root, &tool, dx, dy, &snap);
+                                        apply_drag_to_node(root, &tool, dx, dy, shift, &snap);
                                     }
                                 });
                             }
@@ -3361,6 +3361,9 @@ fn push_live_preview(
                     bg,
                     positioned,
                     layout_mode: SharedString::from(layout_mode_str),
+                    rotation_deg: node.transform.rotation.to_degrees(),
+                    scale_x: node.transform.scale[0],
+                    scale_y: node.transform.scale[1],
                 });
             }
         }
@@ -4040,6 +4043,21 @@ fn execute_command(
                     drop(s);
                     w.set_canvas_zoom(fit);
                 }
+            }
+        }
+        "tool.move" => {
+            if let Some(w) = weak.upgrade() {
+                w.set_transform_tool("move".into());
+            }
+        }
+        "tool.rotate" => {
+            if let Some(w) = weak.upgrade() {
+                w.set_transform_tool("rotate".into());
+            }
+        }
+        "tool.scale" => {
+            if let Some(w) = weak.upgrade() {
+                w.set_transform_tool("scale".into());
             }
         }
         "file.save" => {}
@@ -4846,7 +4864,14 @@ fn find_node_transform(
     None
 }
 
-fn apply_drag_to_node(root: &mut Node, tool: &str, dx: f32, dy: f32, snap: &DragSnapshot) {
+fn apply_drag_to_node(
+    root: &mut Node,
+    tool: &str,
+    dx: f32,
+    dy: f32,
+    shift: bool,
+    snap: &DragSnapshot,
+) {
     let node = if root.id == snap.node_id {
         root
     } else {
@@ -4869,15 +4894,41 @@ fn apply_drag_to_node(root: &mut Node, tool: &str, dx: f32, dy: f32, snap: &Drag
     let t = &mut node.transform;
     match tool {
         "move" => {
-            t.position[0] = snap.position[0] + dx;
-            t.position[1] = snap.position[1] + dy;
+            if shift {
+                // Shift: constrain to major axis
+                if dx.abs() > dy.abs() {
+                    t.position[0] = snap.position[0] + dx;
+                    t.position[1] = snap.position[1];
+                } else {
+                    t.position[0] = snap.position[0];
+                    t.position[1] = snap.position[1] + dy;
+                }
+            } else {
+                t.position[0] = snap.position[0] + dx;
+                t.position[1] = snap.position[1] + dy;
+            }
         }
         "rotate" => {
-            t.rotation = snap.rotation + (dx * 0.5_f32).to_radians();
+            let raw = snap.rotation + (dx * 0.5_f32).to_radians();
+            if shift {
+                // Shift: snap to 15-degree increments
+                let deg = raw.to_degrees();
+                let snapped = (deg / 15.0).round() * 15.0;
+                t.rotation = snapped.to_radians();
+            } else {
+                t.rotation = raw;
+            }
         }
         "scale" => {
-            t.scale[0] = (snap.scale[0] * (1.0 + dx / 100.0)).max(0.01);
-            t.scale[1] = (snap.scale[1] * (1.0 - dy / 100.0)).max(0.01);
+            if shift {
+                // Shift: uniform scale (use dx for both axes)
+                let factor = (1.0 + dx / 100.0).max(0.01);
+                t.scale[0] = snap.scale[0] * factor;
+                t.scale[1] = snap.scale[1] * factor;
+            } else {
+                t.scale[0] = (snap.scale[0] * (1.0 + dx / 100.0)).max(0.01);
+                t.scale[1] = (snap.scale[1] * (1.0 - dy / 100.0)).max(0.01);
+            }
         }
         _ => {}
     }

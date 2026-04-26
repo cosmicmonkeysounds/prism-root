@@ -16,7 +16,7 @@ property-panel field factories.
 - `cargo test -p prism-builder` — 172 unit tests (baseline).
 - `cargo test -p prism-builder --features interpreter` — adds
   live document, syntax provider, and compile round-trip tests
-  (220 tests total).
+  (222 tests total).
 
 ## Public surface
 From `src/lib.rs`:
@@ -177,13 +177,15 @@ Sixteen modules in `src/`:
 - `component.rs` — the `Component` trait (Slint-only) + `RenderError`
   + `RenderSlintContext` / `RenderContext`. `emit_layout_props` emits
   x/y for Absolute, Free, and Relative (non-zero offset) nodes;
-  Absolute also emits width/height. `emit_flow_props` is the shared
-  helper for Flow and Relative flow properties. Positioned children
-  (those that emit x/y) are automatically separated from flow children
-  during rendering: `render_component_inner` wraps the component in a
-  Rectangle and renders positioned children as siblings outside the
-  component's layout element, preventing Slint's "cannot set x/y in
-  layout" compile error.
+  Absolute also emits width/height. `emit_transform_props` emits
+  `transform-rotation` (deg), `transform-scale-x`, `transform-scale-y`
+  when non-default. `emit_flow_props` is the shared helper for Flow
+  and Relative flow properties. Positioned children (those that emit
+  x/y) are automatically separated from flow children during rendering:
+  `render_component_inner` wraps the component in a Rectangle and
+  renders positioned children as siblings outside the component's
+  layout element, preventing Slint's "cannot set x/y in layout"
+  compile error.
 - `document.rs` — `BuilderDocument` + `Node` + `NodeId`. Nodes now
   carry `layout_mode` and `transform`; documents carry `page_layout`.
 - `layout.rs` — the Taffy-backed layout engine (ADR-003). `PageLayout`,

@@ -221,6 +221,9 @@ impl InputManager {
                 .bind_when("backspace", "selection.delete", "hasSelection")
                 .bind("up", "navigate.inspector_prev")
                 .bind("down", "navigate.inspector_next")
+                .bind("w", "tool.move")
+                .bind("e", "tool.rotate")
+                .bind("r", "tool.scale")
                 .build(),
         );
 

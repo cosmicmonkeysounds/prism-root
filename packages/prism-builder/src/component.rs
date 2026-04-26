@@ -304,6 +304,22 @@ impl<'a> RenderSlintContext<'a> {
                 out.prop_px("y", transform.position[1] as f64);
             }
         }
+        Self::emit_transform_props(transform, out);
+    }
+
+    fn emit_transform_props(transform: &Transform2D, out: &mut SlintEmitter) {
+        if transform.rotation != 0.0 {
+            out.property(
+                "transform-rotation",
+                format!("{}deg", transform.rotation.to_degrees()),
+            );
+        }
+        if transform.scale[0] != 1.0 {
+            out.prop_float("transform-scale-x", transform.scale[0] as f64);
+        }
+        if transform.scale[1] != 1.0 {
+            out.prop_float("transform-scale-y", transform.scale[1] as f64);
+        }
     }
 
     fn emit_flow_props(&self, f: &FlowProps, out: &mut SlintEmitter) {
