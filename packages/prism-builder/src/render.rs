@@ -508,6 +508,7 @@ mod tests {
     use crate::component::{Component, ComponentId, RenderSlintContext};
     use crate::document::Node;
     use crate::html_block::HtmlBlock;
+    use crate::layout::LayoutMode;
     use crate::registry::FieldSpec;
 
     // ── Slint-side test components ────────────────────────────────
@@ -1113,5 +1114,199 @@ mod tests {
 
         assert!(new_source.contains(r#"text: "After";"#));
         assert!(!new_source.contains("Before"));
+    }
+
+    // ── Layout mode DSL emission tests ───────────────────────────
+
+    #[test]
+    fn slint_source_absolute_node_emits_xy() {
+        use crate::layout::AbsoluteProps;
+        use prism_core::foundation::spatial::Transform2D;
+
+        let doc = BuilderDocument {
+            root: Some(Node {
+                id: "root".into(),
+                component: "section".into(),
+                props: json!({}),
+                children: vec![Node {
+                    id: "abs".into(),
+                    component: "heading".into(),
+                    props: json!({ "text": "Hi" }),
+                    layout_mode: LayoutMode::Absolute(AbsoluteProps::default()),
+                    transform: Transform2D {
+                        position: [50.0, 100.0],
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let reg = slint_registry();
+        let tokens = DesignTokens::default();
+        let source = render_document_slint_source(&doc, &reg, &tokens).unwrap();
+        assert!(source.contains("x: 50px;"), "source:\n{source}");
+        assert!(source.contains("y: 100px;"), "source:\n{source}");
+    }
+
+    #[test]
+    fn slint_source_absolute_node_emits_width_height() {
+        use crate::layout::{AbsoluteProps, Dimension};
+        use prism_core::foundation::spatial::Transform2D;
+
+        let doc = BuilderDocument {
+            root: Some(Node {
+                id: "root".into(),
+                component: "section".into(),
+                props: json!({}),
+                children: vec![Node {
+                    id: "abs".into(),
+                    component: "heading".into(),
+                    props: json!({ "text": "Hi" }),
+                    layout_mode: LayoutMode::Absolute(AbsoluteProps {
+                        width: Dimension::Px { value: 200.0 },
+                        height: Dimension::Px { value: 80.0 },
+                        ..Default::default()
+                    }),
+                    transform: Transform2D {
+                        position: [10.0, 20.0],
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let reg = slint_registry();
+        let tokens = DesignTokens::default();
+        let source = render_document_slint_source(&doc, &reg, &tokens).unwrap();
+        assert!(source.contains("width: 200px;"), "source:\n{source}");
+        assert!(source.contains("height: 80px;"), "source:\n{source}");
+    }
+
+    #[test]
+    fn slint_source_free_node_emits_xy() {
+        use prism_core::foundation::spatial::Transform2D;
+
+        let doc = BuilderDocument {
+            root: Some(Node {
+                id: "root".into(),
+                component: "section".into(),
+                props: json!({}),
+                children: vec![Node {
+                    id: "free".into(),
+                    component: "heading".into(),
+                    props: json!({ "text": "Floating" }),
+                    layout_mode: LayoutMode::Free,
+                    transform: Transform2D {
+                        position: [75.0, 30.0],
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let reg = slint_registry();
+        let tokens = DesignTokens::default();
+        let source = render_document_slint_source(&doc, &reg, &tokens).unwrap();
+        assert!(source.contains("x: 75px;"), "source:\n{source}");
+        assert!(source.contains("y: 30px;"), "source:\n{source}");
+    }
+
+    #[test]
+    fn slint_source_relative_node_emits_offset() {
+        use crate::layout::FlowProps;
+        use prism_core::foundation::spatial::Transform2D;
+
+        let doc = BuilderDocument {
+            root: Some(Node {
+                id: "root".into(),
+                component: "section".into(),
+                props: json!({}),
+                children: vec![Node {
+                    id: "rel".into(),
+                    component: "heading".into(),
+                    props: json!({ "text": "Offset" }),
+                    layout_mode: LayoutMode::Relative(FlowProps::default()),
+                    transform: Transform2D {
+                        position: [15.0, -10.0],
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let reg = slint_registry();
+        let tokens = DesignTokens::default();
+        let source = render_document_slint_source(&doc, &reg, &tokens).unwrap();
+        assert!(source.contains("x: 15px;"), "source:\n{source}");
+        assert!(source.contains("y: -10px;"), "source:\n{source}");
+    }
+
+    #[test]
+    fn slint_source_relative_zero_offset_no_xy() {
+        use crate::layout::FlowProps;
+
+        let doc = BuilderDocument {
+            root: Some(Node {
+                id: "root".into(),
+                component: "section".into(),
+                props: json!({}),
+                children: vec![Node {
+                    id: "rel".into(),
+                    component: "heading".into(),
+                    props: json!({ "text": "NoOffset" }),
+                    layout_mode: LayoutMode::Relative(FlowProps::default()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let reg = slint_registry();
+        let tokens = DesignTokens::default();
+        let source = render_document_slint_source(&doc, &reg, &tokens).unwrap();
+        assert!(!source.contains("x:"), "no x expected:\n{source}");
+        assert!(!source.contains("y:"), "no y expected:\n{source}");
+    }
+
+    #[test]
+    fn slint_source_absolute_wrapper_is_rectangle() {
+        use crate::layout::AbsoluteProps;
+        use prism_core::foundation::spatial::Transform2D;
+
+        let doc = BuilderDocument {
+            root: Some(Node {
+                id: "root".into(),
+                component: "section".into(),
+                props: json!({}),
+                children: vec![Node {
+                    id: "abs".into(),
+                    component: "heading".into(),
+                    props: json!({ "text": "X" }),
+                    layout_mode: LayoutMode::Absolute(AbsoluteProps::default()),
+                    transform: Transform2D {
+                        position: [10.0, 10.0],
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let reg = slint_registry();
+        let tokens = DesignTokens::default();
+        let source = render_document_slint_source(&doc, &reg, &tokens).unwrap();
+        assert!(
+            source.contains("Rectangle {"),
+            "Absolute wrapper should be Rectangle:\n{source}"
+        );
     }
 }

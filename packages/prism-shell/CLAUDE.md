@@ -23,7 +23,7 @@ licence requires.
   after the cargo step to emit the JS loader next to
   `web/index.html`. `prism build --target web` wires this up as
   one command.
-- `cargo test -p prism-shell` — unit + insta snapshot tests (155+).
+- `cargo test -p prism-shell` — unit + insta snapshot tests (197+).
   Slint tests that need a platform backend gracefully skip if none is
   available (CI-friendly).
 - `prism dev shell` — native bin at `src/bin/native.rs`. Supports CLI
@@ -357,6 +357,23 @@ shell framework features are implemented:
   panel exposes display mode switching (block/flex/grid/none/absolute/
   relative/free). Positioned nodes show a mode badge on hover and
   have dashed-outline overlays on the builder canvas.
+- **Transform properties panel**: Godot-style unified Transform section
+  in the right sidebar properties panel. Shows Position X/Y, Rotation
+  (degrees), Scale X/Y, and Anchor (9-point + Stretch select) for the
+  selected node. Edits are wired through `apply_transform_to_node`
+  with full undo support. The `transform_rows()` generator in
+  `panels/properties.rs` produces `FieldRowData` items displayed via
+  the persistent `transform_rows` VecModel.
+- **Canvas drag gizmo**: Selected positioned nodes (Absolute/Free/
+  Relative) can be dragged on the canvas to reposition. The selection
+  overlay TouchArea emits `node-drag-moved` (live preview) and
+  `node-drag-finished` (undo commit) callbacks. A move cursor appears
+  on positioned node overlays. A tool indicator badge on the selection
+  shows the current tool mode icon.
+- **Transform tool mode**: Three toolbar buttons (Move ✥ / Rotate ↻ /
+  Scale ⤢) toggle the `transform-tool` property. Right-click on the
+  tool indicator badge cycles modes. Move drag is fully functional;
+  Rotate/Scale gizmo math is the next incremental step.
 - **Palette → grid placement**: When a page has grid cells, clicking
   a component in the left palette enters "place mode" — the item
   highlights and grid cells show "Place [type]" on hover. Clicking

@@ -23,7 +23,7 @@ use serde_json::Value;
 use thiserror::Error;
 
 use crate::document::Node;
-use crate::layout::{Dimension, FlexDirection, FlowDisplay, GridPlacement, LayoutMode};
+use crate::layout::{Dimension, FlexDirection, FlowDisplay, FlowProps, GridPlacement, LayoutMode};
 use crate::registry::{ComponentRegistry, FieldSpec};
 use crate::signal::SignalDef;
 use crate::slint_source::SlintEmitter;
@@ -145,7 +145,7 @@ impl<'a> RenderSlintContext<'a> {
             LayoutMode::Flow(f) => !f.is_default(),
             LayoutMode::Free => true,
             LayoutMode::Absolute(_) => true,
-            LayoutMode::Relative(f) => !f.is_default(),
+            LayoutMode::Relative(f) => !f.is_default() || child.transform.position != [0.0, 0.0],
         };
         let needs_style_wrapper = child.style.has_background_or_border();
 
@@ -238,27 +238,15 @@ impl<'a> RenderSlintContext<'a> {
         out: &mut SlintEmitter,
     ) {
         match layout_mode {
-            LayoutMode::Flow(f) | LayoutMode::Relative(f) => {
-                if f.gap != 0.0 && f.display == FlowDisplay::Flex {
-                    out.prop_px("spacing", f.gap as f64);
+            LayoutMode::Flow(f) => {
+                self.emit_flow_props(f, out);
+            }
+            LayoutMode::Relative(f) => {
+                if transform.position != [0.0, 0.0] {
+                    out.prop_px("x", transform.position[0] as f64);
+                    out.prop_px("y", transform.position[1] as f64);
                 }
-                self.emit_dimension("preferred-width", f.width, out);
-                self.emit_dimension("preferred-height", f.height, out);
-                if f.padding.top != 0.0 {
-                    out.prop_px("padding-top", f.padding.top as f64);
-                }
-                if f.padding.right != 0.0 {
-                    out.prop_px("padding-right", f.padding.right as f64);
-                }
-                if f.padding.bottom != 0.0 {
-                    out.prop_px("padding-bottom", f.padding.bottom as f64);
-                }
-                if f.padding.left != 0.0 {
-                    out.prop_px("padding-left", f.padding.left as f64);
-                }
-                if f.display == FlowDisplay::Flex {
-                    out.line("alignment: start;");
-                }
+                self.emit_flow_props(f, out);
             }
             LayoutMode::Absolute(abs) => {
                 out.prop_px("x", transform.position[0] as f64);
@@ -270,6 +258,29 @@ impl<'a> RenderSlintContext<'a> {
                 out.prop_px("x", transform.position[0] as f64);
                 out.prop_px("y", transform.position[1] as f64);
             }
+        }
+    }
+
+    fn emit_flow_props(&self, f: &FlowProps, out: &mut SlintEmitter) {
+        if f.gap != 0.0 && f.display == FlowDisplay::Flex {
+            out.prop_px("spacing", f.gap as f64);
+        }
+        self.emit_dimension("preferred-width", f.width, out);
+        self.emit_dimension("preferred-height", f.height, out);
+        if f.padding.top != 0.0 {
+            out.prop_px("padding-top", f.padding.top as f64);
+        }
+        if f.padding.right != 0.0 {
+            out.prop_px("padding-right", f.padding.right as f64);
+        }
+        if f.padding.bottom != 0.0 {
+            out.prop_px("padding-bottom", f.padding.bottom as f64);
+        }
+        if f.padding.left != 0.0 {
+            out.prop_px("padding-left", f.padding.left as f64);
+        }
+        if f.display == FlowDisplay::Flex {
+            out.line("alignment: start;");
         }
     }
 

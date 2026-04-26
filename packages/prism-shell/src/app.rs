@@ -5891,4 +5891,408 @@ mod tests {
         assert!(!find_path_to_node(root, "nonexistent", &mut path));
         assert!(path.is_empty());
     }
+
+    // ── Transform edit tests ──────────────────────────────────────
+
+    fn transform_node() -> Node {
+        Node {
+            id: "n1".into(),
+            component: "text".into(),
+            props: json!({}),
+            layout_mode: LayoutMode::Absolute(AbsoluteProps::default()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn transform_edit_position_x() {
+        let mut node = transform_node();
+        apply_transform_to_node(&mut node, "transform.x", "42.5");
+        assert!((node.transform.position[0] - 42.5).abs() < f32::EPSILON);
+        assert!((node.transform.position[1] - 0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn transform_edit_position_y() {
+        let mut node = transform_node();
+        apply_transform_to_node(&mut node, "transform.y", "-100");
+        assert!((node.transform.position[1] - (-100.0)).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn transform_edit_rotation_degrees_to_radians() {
+        let mut node = transform_node();
+        apply_transform_to_node(&mut node, "transform.rotation", "90");
+        let expected = 90.0_f32.to_radians();
+        assert!((node.transform.rotation - expected).abs() < 1e-5);
+    }
+
+    #[test]
+    fn transform_edit_rotation_negative() {
+        let mut node = transform_node();
+        apply_transform_to_node(&mut node, "transform.rotation", "-45");
+        let expected = (-45.0_f32).to_radians();
+        assert!((node.transform.rotation - expected).abs() < 1e-5);
+    }
+
+    #[test]
+    fn transform_edit_scale_x() {
+        let mut node = transform_node();
+        apply_transform_to_node(&mut node, "transform.scale_x", "2.5");
+        assert!((node.transform.scale[0] - 2.5).abs() < f32::EPSILON);
+        assert!((node.transform.scale[1] - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn transform_edit_scale_y() {
+        let mut node = transform_node();
+        apply_transform_to_node(&mut node, "transform.scale_y", "0.5");
+        assert!((node.transform.scale[1] - 0.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn transform_edit_anchor_all_variants() {
+        use prism_core::foundation::spatial::Anchor;
+        let cases = [
+            ("top-left", Anchor::TopLeft),
+            ("top-center", Anchor::TopCenter),
+            ("top-right", Anchor::TopRight),
+            ("center-left", Anchor::CenterLeft),
+            ("center", Anchor::Center),
+            ("center-right", Anchor::CenterRight),
+            ("bottom-left", Anchor::BottomLeft),
+            ("bottom-center", Anchor::BottomCenter),
+            ("bottom-right", Anchor::BottomRight),
+            ("stretch", Anchor::Stretch),
+        ];
+        for (label, expected) in cases {
+            let mut node = transform_node();
+            apply_transform_to_node(&mut node, "transform.anchor", label);
+            assert_eq!(node.transform.anchor, expected, "anchor {label}");
+        }
+    }
+
+    #[test]
+    fn transform_edit_anchor_unknown_preserves_current() {
+        use prism_core::foundation::spatial::Anchor;
+        let mut node = transform_node();
+        node.transform.anchor = Anchor::Center;
+        apply_transform_to_node(&mut node, "transform.anchor", "nonsense");
+        assert_eq!(node.transform.anchor, Anchor::Center);
+    }
+
+    #[test]
+    fn transform_edit_unknown_key_is_noop() {
+        let mut node = transform_node();
+        let before = node.transform.clone();
+        apply_transform_to_node(&mut node, "transform.z", "999");
+        assert_eq!(node.transform, before);
+    }
+
+    #[test]
+    fn transform_edit_invalid_number_defaults_to_zero() {
+        let mut node = transform_node();
+        node.transform.position[0] = 50.0;
+        apply_transform_to_node(&mut node, "transform.x", "abc");
+        assert!((node.transform.position[0] - 0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn node_transform_edit_recursive_finds_child() {
+        let mut root = Node {
+            id: "root".into(),
+            component: "container".into(),
+            props: json!({}),
+            children: vec![
+                Node {
+                    id: "a".into(),
+                    component: "text".into(),
+                    props: json!({}),
+                    children: vec![Node {
+                        id: "deep".into(),
+                        component: "text".into(),
+                        props: json!({}),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+                transform_node(),
+            ],
+            ..Default::default()
+        };
+        assert!(apply_node_transform_edit(
+            &mut root,
+            "deep",
+            "transform.x",
+            "77"
+        ));
+        let deep = root.children[0].children[0].clone();
+        assert!((deep.transform.position[0] - 77.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn node_transform_edit_returns_false_for_missing() {
+        let mut root = transform_node();
+        assert!(!apply_node_transform_edit(
+            &mut root,
+            "nonexistent",
+            "transform.x",
+            "10"
+        ));
+    }
+
+    // ── Layout mode switching tests ───────────────────────────────
+
+    #[test]
+    fn layout_switch_flow_to_absolute() {
+        let mut node = Node {
+            id: "n".into(),
+            component: "text".into(),
+            props: json!({}),
+            layout_mode: LayoutMode::Flow(FlowProps::default()),
+            ..Default::default()
+        };
+        apply_layout_to_node(&mut node, "layout.display", "absolute");
+        assert!(matches!(node.layout_mode, LayoutMode::Absolute(_)));
+    }
+
+    #[test]
+    fn layout_switch_flow_to_relative() {
+        let mut node = Node {
+            id: "n".into(),
+            component: "text".into(),
+            props: json!({}),
+            layout_mode: LayoutMode::Flow(FlowProps {
+                gap: 8.0,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        apply_layout_to_node(&mut node, "layout.display", "relative");
+        match &node.layout_mode {
+            LayoutMode::Relative(f) => assert!((f.gap - 8.0).abs() < f32::EPSILON),
+            other => panic!("expected Relative, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn layout_switch_flow_to_free() {
+        let mut node = Node {
+            id: "n".into(),
+            component: "text".into(),
+            props: json!({}),
+            layout_mode: LayoutMode::Flow(FlowProps::default()),
+            ..Default::default()
+        };
+        apply_layout_to_node(&mut node, "layout.display", "free");
+        assert!(matches!(node.layout_mode, LayoutMode::Free));
+    }
+
+    #[test]
+    fn layout_switch_absolute_to_flow() {
+        let mut node = Node {
+            id: "n".into(),
+            component: "text".into(),
+            props: json!({}),
+            layout_mode: LayoutMode::Absolute(AbsoluteProps::default()),
+            ..Default::default()
+        };
+        apply_layout_to_node(&mut node, "layout.display", "flex");
+        match &node.layout_mode {
+            LayoutMode::Flow(f) => assert_eq!(f.display, FlowDisplay::Flex),
+            other => panic!("expected Flow, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn layout_switch_absolute_to_free() {
+        let mut node = Node {
+            id: "n".into(),
+            component: "text".into(),
+            props: json!({}),
+            layout_mode: LayoutMode::Absolute(AbsoluteProps::default()),
+            ..Default::default()
+        };
+        apply_layout_to_node(&mut node, "layout.display", "free");
+        assert!(matches!(node.layout_mode, LayoutMode::Free));
+    }
+
+    #[test]
+    fn layout_switch_absolute_to_relative() {
+        let mut node = Node {
+            id: "n".into(),
+            component: "text".into(),
+            props: json!({}),
+            layout_mode: LayoutMode::Absolute(AbsoluteProps::default()),
+            ..Default::default()
+        };
+        apply_layout_to_node(&mut node, "layout.display", "relative");
+        assert!(matches!(node.layout_mode, LayoutMode::Relative(_)));
+    }
+
+    #[test]
+    fn layout_switch_free_to_absolute() {
+        let mut node = Node {
+            id: "n".into(),
+            component: "text".into(),
+            props: json!({}),
+            layout_mode: LayoutMode::Free,
+            ..Default::default()
+        };
+        apply_layout_to_node(&mut node, "layout.display", "absolute");
+        assert!(matches!(node.layout_mode, LayoutMode::Absolute(_)));
+    }
+
+    #[test]
+    fn layout_switch_free_to_flow() {
+        let mut node = Node {
+            id: "n".into(),
+            component: "text".into(),
+            props: json!({}),
+            layout_mode: LayoutMode::Free,
+            ..Default::default()
+        };
+        apply_layout_to_node(&mut node, "layout.display", "block");
+        assert!(matches!(node.layout_mode, LayoutMode::Flow(_)));
+    }
+
+    #[test]
+    fn layout_relative_display_change_stays_relative() {
+        let mut node = Node {
+            id: "n".into(),
+            component: "text".into(),
+            props: json!({}),
+            layout_mode: LayoutMode::Relative(FlowProps::default()),
+            ..Default::default()
+        };
+        apply_layout_to_node(&mut node, "layout.display", "flex");
+        match &node.layout_mode {
+            LayoutMode::Relative(f) => assert_eq!(f.display, FlowDisplay::Flex),
+            other => panic!("expected Relative, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn layout_switch_relative_to_free() {
+        let mut node = Node {
+            id: "n".into(),
+            component: "text".into(),
+            props: json!({}),
+            layout_mode: LayoutMode::Relative(FlowProps::default()),
+            ..Default::default()
+        };
+        apply_layout_to_node(&mut node, "layout.display", "free");
+        assert!(matches!(node.layout_mode, LayoutMode::Free));
+    }
+
+    #[test]
+    fn layout_switch_relative_to_absolute() {
+        let mut node = Node {
+            id: "n".into(),
+            component: "text".into(),
+            props: json!({}),
+            layout_mode: LayoutMode::Relative(FlowProps::default()),
+            ..Default::default()
+        };
+        apply_layout_to_node(&mut node, "layout.display", "absolute");
+        assert!(matches!(node.layout_mode, LayoutMode::Absolute(_)));
+    }
+
+    #[test]
+    fn layout_absolute_width_edit() {
+        let mut node = Node {
+            id: "n".into(),
+            component: "text".into(),
+            props: json!({}),
+            layout_mode: LayoutMode::Absolute(AbsoluteProps::default()),
+            ..Default::default()
+        };
+        apply_layout_to_node(&mut node, "layout.width_unit", "px");
+        apply_layout_to_node(&mut node, "layout.width_value", "200");
+        match &node.layout_mode {
+            LayoutMode::Absolute(abs) => {
+                assert!(
+                    matches!(abs.width, Dimension::Px { value } if (value - 200.0).abs() < f32::EPSILON)
+                );
+            }
+            other => panic!("expected Absolute, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn layout_absolute_height_percent() {
+        let mut node = Node {
+            id: "n".into(),
+            component: "text".into(),
+            props: json!({}),
+            layout_mode: LayoutMode::Absolute(AbsoluteProps::default()),
+            ..Default::default()
+        };
+        apply_layout_to_node(&mut node, "layout.height_unit", "%");
+        apply_layout_to_node(&mut node, "layout.height_value", "50");
+        match &node.layout_mode {
+            LayoutMode::Absolute(abs) => {
+                assert!(
+                    matches!(abs.height, Dimension::Percent { value } if (value - 50.0).abs() < f32::EPSILON)
+                );
+            }
+            other => panic!("expected Absolute, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn layout_absolute_noop_for_same_mode() {
+        let mut node = Node {
+            id: "n".into(),
+            component: "text".into(),
+            props: json!({}),
+            layout_mode: LayoutMode::Absolute(AbsoluteProps::default()),
+            ..Default::default()
+        };
+        apply_layout_to_node(&mut node, "layout.display", "absolute");
+        assert!(matches!(node.layout_mode, LayoutMode::Absolute(_)));
+    }
+
+    #[test]
+    fn layout_flow_gap_edit() {
+        let mut node = Node {
+            id: "n".into(),
+            component: "text".into(),
+            props: json!({}),
+            layout_mode: LayoutMode::Flow(FlowProps::default()),
+            ..Default::default()
+        };
+        apply_layout_to_node(&mut node, "layout.gap", "16");
+        match &node.layout_mode {
+            LayoutMode::Flow(f) => assert!((f.gap - 16.0).abs() < f32::EPSILON),
+            other => panic!("expected Flow, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn layout_recursive_edit_finds_target() {
+        let mut root = Node {
+            id: "root".into(),
+            component: "container".into(),
+            props: json!({}),
+            children: vec![Node {
+                id: "child".into(),
+                component: "text".into(),
+                props: json!({}),
+                layout_mode: LayoutMode::Flow(FlowProps::default()),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert!(apply_node_layout_edit(
+            &mut root,
+            "child",
+            "layout.display",
+            "absolute"
+        ));
+        assert!(matches!(
+            root.children[0].layout_mode,
+            LayoutMode::Absolute(_)
+        ));
+    }
 }

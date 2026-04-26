@@ -13,10 +13,10 @@ property-panel field factories.
   path (`compile_slint_source` / `instantiate_document`) is
   available. `prism-shell` and `prism-studio` flip this on; the
   relay leaves it off so its dep graph stays Slint-free.
-- `cargo test -p prism-builder` — 166 unit tests (baseline).
+- `cargo test -p prism-builder` — 172 unit tests (baseline).
 - `cargo test -p prism-builder --features interpreter` — adds
   live document, syntax provider, and compile round-trip tests
-  (162 tests total).
+  (214 tests total).
 
 ## Public surface
 From `src/lib.rs`:
@@ -175,7 +175,10 @@ Sixteen modules in `src/`:
 - `asset.rs` — `AssetSource` enum (URL vs VFS), prop parsing,
   `collect_vfs_hashes`, `FileFieldConfig`. 10 unit tests.
 - `component.rs` — the `Component` trait (Slint-only) + `RenderError`
-  + `RenderSlintContext` / `RenderContext`.
+  + `RenderSlintContext` / `RenderContext`. `emit_layout_props` emits
+  x/y for Absolute, Free, and Relative (non-zero offset) nodes;
+  Absolute also emits width/height. `emit_flow_props` is the shared
+  helper for Flow and Relative flow properties.
 - `document.rs` — `BuilderDocument` + `Node` + `NodeId`. Nodes now
   carry `layout_mode` and `transform`; documents carry `page_layout`.
 - `layout.rs` — the Taffy-backed layout engine (ADR-003). `PageLayout`,
