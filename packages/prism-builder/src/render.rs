@@ -1309,4 +1309,179 @@ mod tests {
             "Absolute wrapper should be Rectangle:\n{source}"
         );
     }
+
+    // ── Full starter-registry compile tests ──────────────────────
+
+    #[cfg(feature = "interpreter")]
+    fn real_registry() -> ComponentRegistry {
+        let mut reg = ComponentRegistry::new();
+        let _ = crate::starter::register_builtins(&mut reg);
+        reg
+    }
+
+    #[cfg(feature = "interpreter")]
+    fn doc_with_content() -> BuilderDocument {
+        BuilderDocument {
+            root: Some(Node {
+                id: "root".into(),
+                component: "container".into(),
+                props: json!({}),
+                children: vec![
+                    Node {
+                        id: "h1".into(),
+                        component: "text".into(),
+                        props: json!({ "body": "Hello World", "level": "h1" }),
+                        children: vec![],
+                        ..Default::default()
+                    },
+                    Node {
+                        id: "btn".into(),
+                        component: "button".into(),
+                        props: json!({ "label": "Click Me" }),
+                        children: vec![],
+                        ..Default::default()
+                    },
+                    Node {
+                        id: "card".into(),
+                        component: "card".into(),
+                        props: json!({ "title": "My Card" }),
+                        children: vec![Node {
+                            id: "inner".into(),
+                            component: "text".into(),
+                            props: json!({ "body": "Card body text" }),
+                            children: vec![],
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[cfg(feature = "interpreter")]
+    #[test]
+    fn preview_compiles_default_layout() {
+        let doc = doc_with_content();
+        let reg = real_registry();
+        let tokens = DesignTokens::default();
+        let source =
+            render_document_slint_preview(&doc, &reg, &tokens).expect("render should succeed");
+        eprintln!("default layout source:\n{source}");
+        compile_slint_preview(&source).expect("default layout should compile");
+    }
+
+    #[cfg(feature = "interpreter")]
+    #[test]
+    fn preview_compiles_with_absolute_child() {
+        use crate::layout::AbsoluteProps;
+        use prism_core::foundation::spatial::Transform2D;
+
+        let mut doc = doc_with_content();
+        if let Some(ref mut root) = doc.root {
+            root.children[1].layout_mode = LayoutMode::Absolute(AbsoluteProps::default());
+            root.children[1].transform = Transform2D {
+                position: [50.0, 100.0],
+                ..Default::default()
+            };
+        }
+        let reg = real_registry();
+        let tokens = DesignTokens::default();
+        let source =
+            render_document_slint_preview(&doc, &reg, &tokens).expect("render should succeed");
+        eprintln!("absolute child source:\n{source}");
+        compile_slint_preview(&source).expect("absolute child should compile");
+    }
+
+    #[cfg(feature = "interpreter")]
+    #[test]
+    fn preview_compiles_with_flex_child() {
+        use crate::layout::FlowProps;
+
+        let mut doc = doc_with_content();
+        if let Some(ref mut root) = doc.root {
+            root.children[0].layout_mode = LayoutMode::Flow(FlowProps {
+                display: crate::layout::FlowDisplay::Flex,
+                ..Default::default()
+            });
+        }
+        let reg = real_registry();
+        let tokens = DesignTokens::default();
+        let source =
+            render_document_slint_preview(&doc, &reg, &tokens).expect("render should succeed");
+        eprintln!("flex child source:\n{source}");
+        compile_slint_preview(&source).expect("flex child should compile");
+    }
+
+    #[cfg(feature = "interpreter")]
+    #[test]
+    fn preview_compiles_with_relative_child() {
+        use crate::layout::FlowProps;
+        use prism_core::foundation::spatial::Transform2D;
+
+        let mut doc = doc_with_content();
+        if let Some(ref mut root) = doc.root {
+            root.children[0].layout_mode = LayoutMode::Relative(FlowProps::default());
+            root.children[0].transform = Transform2D {
+                position: [10.0, -5.0],
+                ..Default::default()
+            };
+        }
+        let reg = real_registry();
+        let tokens = DesignTokens::default();
+        let source =
+            render_document_slint_preview(&doc, &reg, &tokens).expect("render should succeed");
+        eprintln!("relative child source:\n{source}");
+        compile_slint_preview(&source).expect("relative child should compile");
+    }
+
+    #[cfg(feature = "interpreter")]
+    #[test]
+    fn preview_compiles_with_free_child() {
+        use prism_core::foundation::spatial::Transform2D;
+
+        let mut doc = doc_with_content();
+        if let Some(ref mut root) = doc.root {
+            root.children[1].layout_mode = LayoutMode::Free;
+            root.children[1].transform = Transform2D {
+                position: [200.0, 50.0],
+                ..Default::default()
+            };
+        }
+        let reg = real_registry();
+        let tokens = DesignTokens::default();
+        let source =
+            render_document_slint_preview(&doc, &reg, &tokens).expect("render should succeed");
+        eprintln!("free child source:\n{source}");
+        compile_slint_preview(&source).expect("free child should compile");
+    }
+
+    #[cfg(feature = "interpreter")]
+    #[test]
+    fn mapped_source_compiles_with_layout_modes() {
+        use crate::layout::{AbsoluteProps, FlowProps};
+        use prism_core::foundation::spatial::Transform2D;
+
+        let mut doc = doc_with_content();
+        if let Some(ref mut root) = doc.root {
+            root.children[0].layout_mode = LayoutMode::Flow(FlowProps {
+                display: crate::layout::FlowDisplay::Flex,
+                ..Default::default()
+            });
+            root.children[1].layout_mode = LayoutMode::Absolute(AbsoluteProps::default());
+            root.children[1].transform = Transform2D {
+                position: [30.0, 40.0],
+                ..Default::default()
+            };
+            root.children[2].layout_mode = LayoutMode::Free;
+        }
+        let reg = real_registry();
+        let tokens = DesignTokens::default();
+        let (source, _map) =
+            render_document_slint_source_mapped(&doc, &reg, &tokens).expect("render ok");
+        eprintln!("mixed layout mapped source:\n{source}");
+        compile_slint_source(&source).expect("mixed layout mapped source should compile");
+    }
 }

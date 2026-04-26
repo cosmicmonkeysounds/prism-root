@@ -14,7 +14,7 @@
 //! live in the [`crate::registry::ComponentRegistry`] and be dispatched
 //! by `ComponentId` at walk time.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -89,6 +89,11 @@ pub struct RenderSlintContext<'a> {
     /// Set by the host before rendering so VFS-backed images can emit
     /// `@image-url()` references the Slint interpreter can resolve.
     pub asset_paths: HashMap<String, PathBuf>,
+    /// When true, `render_child` skips children that would emit x/y
+    /// (Absolute, Free, Relative with offset). These are rendered in a
+    /// second pass outside the parent's layout element so the Slint
+    /// compiler doesn't reject the x/y properties.
+    skip_positioned: Cell<bool>,
 }
 
 impl<'a> RenderSlintContext<'a> {
@@ -108,6 +113,7 @@ impl<'a> RenderSlintContext<'a> {
             emit_markers,
             current_style: RefCell::new(StyleProperties::default()),
             asset_paths: HashMap::new(),
+            skip_positioned: Cell::new(false),
         }
     }
 
@@ -119,7 +125,18 @@ impl<'a> RenderSlintContext<'a> {
         self.current_style.borrow().clone()
     }
 
+    fn child_emits_position(child: &Node) -> bool {
+        match &child.layout_mode {
+            LayoutMode::Absolute(_) | LayoutMode::Free => true,
+            LayoutMode::Relative(_) => child.transform.position != [0.0, 0.0],
+            LayoutMode::Flow(_) => false,
+        }
+    }
+
     pub fn render_child(&self, child: &Node, out: &mut SlintEmitter) -> Result<(), RenderError> {
+        if self.skip_positioned.get() && Self::child_emits_position(child) {
+            return Ok(());
+        }
         if self.emit_markers {
             out.line(format!("// @node-start:{}:{}", child.id, child.component));
             if let Some(f) = child.layout_mode.flow_props() {
@@ -210,10 +227,38 @@ impl<'a> RenderSlintContext<'a> {
         children: &[Node],
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
-        if modifiers.is_empty() {
-            component.render_slint(self, props, children, out)
+        let has_positioned_children = children.iter().any(Self::child_emits_position);
+
+        if !has_positioned_children {
+            if modifiers.is_empty() {
+                component.render_slint(self, props, children, out)
+            } else {
+                self.apply_slint_modifiers(modifiers, 0, props, children, component, out)
+            }
         } else {
-            self.apply_slint_modifiers(modifiers, 0, props, children, component, out)
+            // Wrap in Rectangle so flow children live inside the
+            // component's layout, and positioned children live
+            // outside it (as siblings). Slint layout elements reject
+            // x/y on their children, so positioned nodes must not
+            // be inside VerticalLayout / HorizontalLayout / GridLayout.
+            out.block("Rectangle", |out| {
+                out.line("horizontal-stretch: 1;");
+                out.line("vertical-stretch: 1;");
+                self.skip_positioned.set(true);
+                let inner = if modifiers.is_empty() {
+                    component.render_slint(self, props, children, out)
+                } else {
+                    self.apply_slint_modifiers(modifiers, 0, props, children, component, out)
+                };
+                self.skip_positioned.set(false);
+                inner?;
+                for child in children {
+                    if Self::child_emits_position(child) {
+                        self.render_child(child, out)?;
+                    }
+                }
+                Ok(())
+            })
         }
     }
 
