@@ -23,7 +23,7 @@ licence requires.
   after the cargo step to emit the JS loader next to
   `web/index.html`. `prism build --target web` wires this up as
   one command.
-- `cargo test -p prism-shell` — unit + insta snapshot tests (197+).
+- `cargo test -p prism-shell` — unit + insta snapshot tests (203+).
   Slint tests that need a platform backend gracefully skip if none is
   available (CI-friendly).
 - `prism dev shell` — native bin at `src/bin/native.rs`. Supports CLI
@@ -377,10 +377,26 @@ shell framework features are implemented:
   arms with square tips + white center). Right-click on the gizmo
   cycles tool mode.
 - **Transform tool mode**: Three toolbar buttons (Move / Rotate /
-  Scale) toggle the `transform-tool` property. All three modes are
-  fully functional: Move applies dx/dy to position, Rotate applies
-  0.5 deg/px horizontal drag to rotation, Scale applies dx/dy as
-  proportional scale factors (clamped to min 0.01).
+  Scale) toggle the `transform-tool` property. Keyboard shortcuts:
+  W (move), E (rotate), R (scale) — Godot-standard bindings.
+  All three modes are fully functional: Move applies dx/dy to
+  position, Rotate applies 0.5 deg/px horizontal drag to rotation,
+  Scale applies dx/dy as proportional scale factors (min 0.01).
+  Shift-drag constraints: Move constrains to major axis, Rotate
+  snaps to 15-degree increments, Scale applies uniform scaling.
+  The WYSIWYG preview renders `transform-rotation`, `transform-scale-x`,
+  `transform-scale-y` via the Slint render walker; the ComponentContainer
+  is rendered at unscaled page size with `transform-scale` for zoom
+  so internal layout is correct at all zoom levels.
+- **Resize handles**: 8-point selection handles (tl/t/tr/r/br/b/bl/l)
+  on selected positioned nodes. Handles are 8×8px white squares with
+  accent border, positioned at corners and edge midpoints. Each handle
+  has an appropriate cursor (nwse-resize, ns-resize, etc.). Delta-based
+  protocol via `ResizeSnapshot` (position + computed dimensions);
+  handle direction maps delta to position/size changes (e.g. "tl"
+  moves origin and shrinks, "br" only grows). Shift-drag constrains
+  aspect ratio on corner handles. Free nodes promote to Absolute on
+  resize. Minimum size 4px. Undo pushed on release.
 - **Palette → grid placement**: When a page has grid cells, clicking
   a component in the left palette enters "place mode" — the item
   highlights and grid cells show "Place [type]" on hover. Clicking

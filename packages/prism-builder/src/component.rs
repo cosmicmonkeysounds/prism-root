@@ -165,6 +165,32 @@ impl<'a> RenderSlintContext<'a> {
             LayoutMode::Relative(f) => !f.is_default() || child.transform.position != [0.0, 0.0],
         };
         let needs_style_wrapper = child.style.has_background_or_border();
+        let needs_scale_wrapper = Self::has_scale(&child.transform);
+
+        let render_inner = |ctx: &Self, out: &mut SlintEmitter| -> Result<(), RenderError> {
+            if needs_scale_wrapper {
+                out.block("Rectangle", |out| {
+                    Self::emit_scale(&child.transform, out);
+                    out.line("horizontal-stretch: 1;");
+                    out.line("vertical-stretch: 1;");
+                    ctx.render_component_inner(
+                        &*component,
+                        &props,
+                        &child.modifiers,
+                        &child.children,
+                        out,
+                    )
+                })
+            } else {
+                ctx.render_component_inner(
+                    &*component,
+                    &props,
+                    &child.modifiers,
+                    &child.children,
+                    out,
+                )
+            }
+        };
 
         if needs_layout_wrapper {
             let wrapper_element = self.layout_wrapper_element(&child.layout_mode);
@@ -173,43 +199,19 @@ impl<'a> RenderSlintContext<'a> {
                 if needs_style_wrapper {
                     out.block("Rectangle", |out| {
                         self.emit_style_wrapper_props(&child.style, out);
-                        self.render_component_inner(
-                            &*component,
-                            &props,
-                            &child.modifiers,
-                            &child.children,
-                            out,
-                        )
+                        render_inner(self, out)
                     })
                 } else {
-                    self.render_component_inner(
-                        &*component,
-                        &props,
-                        &child.modifiers,
-                        &child.children,
-                        out,
-                    )
+                    render_inner(self, out)
                 }
             })?;
         } else if needs_style_wrapper {
             out.block("Rectangle", |out| {
                 self.emit_style_wrapper_props(&child.style, out);
-                self.render_component_inner(
-                    &*component,
-                    &props,
-                    &child.modifiers,
-                    &child.children,
-                    out,
-                )
+                render_inner(self, out)
             })?;
         } else {
-            self.render_component_inner(
-                &*component,
-                &props,
-                &child.modifiers,
-                &child.children,
-                out,
-            )?;
+            render_inner(self, out)?;
         }
 
         if self.emit_markers {
@@ -304,16 +306,23 @@ impl<'a> RenderSlintContext<'a> {
                 out.prop_px("y", transform.position[1] as f64);
             }
         }
-        Self::emit_transform_props(transform, out);
+        Self::emit_rotation(transform, out);
     }
 
-    fn emit_transform_props(transform: &Transform2D, out: &mut SlintEmitter) {
+    fn emit_rotation(transform: &Transform2D, out: &mut SlintEmitter) {
         if transform.rotation != 0.0 {
             out.property(
                 "transform-rotation",
                 format!("{}deg", transform.rotation.to_degrees()),
             );
         }
+    }
+
+    fn has_scale(transform: &Transform2D) -> bool {
+        transform.scale[0] != 1.0 || transform.scale[1] != 1.0
+    }
+
+    fn emit_scale(transform: &Transform2D, out: &mut SlintEmitter) {
         if transform.scale[0] != 1.0 {
             out.prop_float("transform-scale-x", transform.scale[0] as f64);
         }

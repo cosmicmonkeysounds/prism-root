@@ -95,8 +95,6 @@ struct PreviewNode {
     positioned: bool,
     layout-mode: string,
     rotation-deg: float,
-    scale-x: float,
-    scale-y: float,
 }
 
 struct HelpTooltipData {
@@ -1285,10 +1283,13 @@ export component AppWindow inherits Window {
 
     // Node drag (positioned nodes)
     // transform-tool: "move" | "rotate" | "scale"
-    in-out property <string> transform-tool: "move";
+    in property <string> transform-tool: "move";
     callback node-drag-started(string /* node-id */);
     callback node-drag-moved(string /* node-id */, string /* tool */, float /* dx */, float /* dy */, bool /* shift */);
     callback node-drag-finished(string /* node-id */, string /* tool */, float /* dx */, float /* dy */, bool /* shift */);
+    callback node-resize-started(string /* node-id */, string /* handle: tl/t/tr/r/br/b/bl/l */);
+    callback node-resize-moved(string /* node-id */, string /* handle */, float /* dx */, float /* dy */, bool /* shift */);
+    callback node-resize-finished(string /* node-id */, string /* handle */, float /* dx */, float /* dy */, bool /* shift */);
 
     // Composition systems
     in property <[ModifierItem]> modifier-items: [];
@@ -1626,19 +1627,19 @@ export component AppWindow inherits Window {
                                                         width: 28px; height: 28px; border-radius: 6px;
                                                         background: root.transform-tool == "move" ? Palette.accent-background.transparentize(85%) : (tool-move-ta.has-hover ? Palette.control-background : transparent);
                                                         Text { text: "\u{2725}"; font-size: 14px; horizontal-alignment: center; vertical-alignment: center; color: root.transform-tool == "move" ? Palette.accent-foreground : Palette.foreground.transparentize(20%); }
-                                                        tool-move-ta := TouchArea { mouse-cursor: pointer; clicked => { root.transform-tool = "move"; } }
+                                                        tool-move-ta := TouchArea { mouse-cursor: pointer; clicked => { root.menu-command("tool.move"); } }
                                                     }
                                                     Rectangle {
                                                         width: 28px; height: 28px; border-radius: 6px;
                                                         background: root.transform-tool == "rotate" ? Palette.accent-background.transparentize(85%) : (tool-rotate-ta.has-hover ? Palette.control-background : transparent);
                                                         Text { text: "\u{21BB}"; font-size: 14px; horizontal-alignment: center; vertical-alignment: center; color: root.transform-tool == "rotate" ? Palette.accent-foreground : Palette.foreground.transparentize(20%); }
-                                                        tool-rotate-ta := TouchArea { mouse-cursor: pointer; clicked => { root.transform-tool = "rotate"; } }
+                                                        tool-rotate-ta := TouchArea { mouse-cursor: pointer; clicked => { root.menu-command("tool.rotate"); } }
                                                     }
                                                     Rectangle {
                                                         width: 28px; height: 28px; border-radius: 6px;
                                                         background: root.transform-tool == "scale" ? Palette.accent-background.transparentize(85%) : (tool-scale-ta.has-hover ? Palette.control-background : transparent);
                                                         Text { text: "\u{2922}"; font-size: 14px; horizontal-alignment: center; vertical-alignment: center; color: root.transform-tool == "scale" ? Palette.accent-foreground : Palette.foreground.transparentize(20%); }
-                                                        tool-scale-ta := TouchArea { mouse-cursor: pointer; clicked => { root.transform-tool = "scale"; } }
+                                                        tool-scale-ta := TouchArea { mouse-cursor: pointer; clicked => { root.menu-command("tool.scale"); } }
                                                     }
                                                     ToolbarSeparator { }
                                                     Rectangle {
@@ -1976,8 +1977,6 @@ export component AppWindow inherits Window {
                                                                         width: pn.w * root.canvas-zoom * 1px;
                                                                         height: pn.h * root.canvas-zoom * 1px;
                                                                         transform-rotation: pn.rotation-deg * 1deg;
-                                                                        transform-scale-x: pn.scale-x == 0 ? 1 : pn.scale-x;
-                                                                        transform-scale-y: pn.scale-y == 0 ? 1 : pn.scale-y;
                                                                         border-width: 1px;
                                                                         border-color: pos-touch.has-hover
                                                                             ? Palette.accent-background.transparentize(40%)
@@ -2031,8 +2030,6 @@ export component AppWindow inherits Window {
                                                                         width: pn.w * root.canvas-zoom * 1px;
                                                                         height: pn.h * root.canvas-zoom * 1px;
                                                                         transform-rotation: pn.rotation-deg * 1deg;
-                                                                        transform-scale-x: pn.scale-x == 0 ? 1 : pn.scale-x;
-                                                                        transform-scale-y: pn.scale-y == 0 ? 1 : pn.scale-y;
                                                                         border-width: 2px;
                                                                         border-color: Palette.accent-background;
                                                                         border-radius: pn.border-radius * 1px;
@@ -2172,13 +2169,100 @@ export component AppWindow inherits Window {
                                                                                     }
                                                                                     if event.kind == PointerEventKind.down && event.button == PointerEventButton.right {
                                                                                         if root.transform-tool == "move" {
-                                                                                            root.transform-tool = "rotate";
+                                                                                            root.menu-command("tool.rotate");
                                                                                         } else if root.transform-tool == "rotate" {
-                                                                                            root.transform-tool = "scale";
+                                                                                            root.menu-command("tool.scale");
                                                                                         } else {
-                                                                                            root.transform-tool = "move";
+                                                                                            root.menu-command("tool.move");
                                                                                         }
                                                                                     }
+                                                                                }
+                                                                            }
+                                                                        }
+
+                                                                        // ── Resize handles (8 points around the selection) ──
+                                                                        if pn.positioned : Rectangle {
+                                                                            property <length> hs: 8px;
+                                                                            property <length> ho: -4px;
+
+                                                                            // Top-left
+                                                                            Rectangle { x: ho; y: ho; width: hs; height: hs; background: white; border-width: 1px; border-color: Palette.accent-background;
+                                                                                resize-tl := TouchArea { mouse-cursor: nwse-resize;
+                                                                                    pointer-event(event) => {
+                                                                                        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left { shift-held = event.modifiers.shift; root.node-resize-started(pn.id, "tl"); }
+                                                                                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.left { root.node-resize-finished(pn.id, "tl", (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px), (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px), shift-held); }
+                                                                                    }
+                                                                                    moved => { if self.pressed { root.node-resize-moved(pn.id, "tl", (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px), (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px), shift-held); } }
+                                                                                }
+                                                                            }
+                                                                            // Top-center
+                                                                            Rectangle { x: (parent.width - hs) / 2; y: ho; width: hs; height: hs; background: white; border-width: 1px; border-color: Palette.accent-background;
+                                                                                resize-t := TouchArea { mouse-cursor: ns-resize;
+                                                                                    pointer-event(event) => {
+                                                                                        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left { shift-held = event.modifiers.shift; root.node-resize-started(pn.id, "t"); }
+                                                                                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.left { root.node-resize-finished(pn.id, "t", (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px), (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px), shift-held); }
+                                                                                    }
+                                                                                    moved => { if self.pressed { root.node-resize-moved(pn.id, "t", (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px), (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px), shift-held); } }
+                                                                                }
+                                                                            }
+                                                                            // Top-right
+                                                                            Rectangle { x: parent.width - hs - ho; y: ho; width: hs; height: hs; background: white; border-width: 1px; border-color: Palette.accent-background;
+                                                                                resize-tr := TouchArea { mouse-cursor: nesw-resize;
+                                                                                    pointer-event(event) => {
+                                                                                        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left { shift-held = event.modifiers.shift; root.node-resize-started(pn.id, "tr"); }
+                                                                                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.left { root.node-resize-finished(pn.id, "tr", (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px), (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px), shift-held); }
+                                                                                    }
+                                                                                    moved => { if self.pressed { root.node-resize-moved(pn.id, "tr", (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px), (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px), shift-held); } }
+                                                                                }
+                                                                            }
+                                                                            // Right
+                                                                            Rectangle { x: parent.width - hs - ho; y: (parent.height - hs) / 2; width: hs; height: hs; background: white; border-width: 1px; border-color: Palette.accent-background;
+                                                                                resize-r := TouchArea { mouse-cursor: ew-resize;
+                                                                                    pointer-event(event) => {
+                                                                                        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left { shift-held = event.modifiers.shift; root.node-resize-started(pn.id, "r"); }
+                                                                                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.left { root.node-resize-finished(pn.id, "r", (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px), (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px), shift-held); }
+                                                                                    }
+                                                                                    moved => { if self.pressed { root.node-resize-moved(pn.id, "r", (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px), (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px), shift-held); } }
+                                                                                }
+                                                                            }
+                                                                            // Bottom-right
+                                                                            Rectangle { x: parent.width - hs - ho; y: parent.height - hs - ho; width: hs; height: hs; background: white; border-width: 1px; border-color: Palette.accent-background;
+                                                                                resize-br := TouchArea { mouse-cursor: nwse-resize;
+                                                                                    pointer-event(event) => {
+                                                                                        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left { shift-held = event.modifiers.shift; root.node-resize-started(pn.id, "br"); }
+                                                                                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.left { root.node-resize-finished(pn.id, "br", (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px), (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px), shift-held); }
+                                                                                    }
+                                                                                    moved => { if self.pressed { root.node-resize-moved(pn.id, "br", (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px), (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px), shift-held); } }
+                                                                                }
+                                                                            }
+                                                                            // Bottom-center
+                                                                            Rectangle { x: (parent.width - hs) / 2; y: parent.height - hs - ho; width: hs; height: hs; background: white; border-width: 1px; border-color: Palette.accent-background;
+                                                                                resize-b := TouchArea { mouse-cursor: ns-resize;
+                                                                                    pointer-event(event) => {
+                                                                                        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left { shift-held = event.modifiers.shift; root.node-resize-started(pn.id, "b"); }
+                                                                                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.left { root.node-resize-finished(pn.id, "b", (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px), (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px), shift-held); }
+                                                                                    }
+                                                                                    moved => { if self.pressed { root.node-resize-moved(pn.id, "b", (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px), (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px), shift-held); } }
+                                                                                }
+                                                                            }
+                                                                            // Bottom-left
+                                                                            Rectangle { x: ho; y: parent.height - hs - ho; width: hs; height: hs; background: white; border-width: 1px; border-color: Palette.accent-background;
+                                                                                resize-bl := TouchArea { mouse-cursor: nesw-resize;
+                                                                                    pointer-event(event) => {
+                                                                                        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left { shift-held = event.modifiers.shift; root.node-resize-started(pn.id, "bl"); }
+                                                                                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.left { root.node-resize-finished(pn.id, "bl", (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px), (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px), shift-held); }
+                                                                                    }
+                                                                                    moved => { if self.pressed { root.node-resize-moved(pn.id, "bl", (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px), (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px), shift-held); } }
+                                                                                }
+                                                                            }
+                                                                            // Left
+                                                                            Rectangle { x: ho; y: (parent.height - hs) / 2; width: hs; height: hs; background: white; border-width: 1px; border-color: Palette.accent-background;
+                                                                                resize-l := TouchArea { mouse-cursor: ew-resize;
+                                                                                    pointer-event(event) => {
+                                                                                        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left { shift-held = event.modifiers.shift; root.node-resize-started(pn.id, "l"); }
+                                                                                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.left { root.node-resize-finished(pn.id, "l", (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px), (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px), shift-held); }
+                                                                                    }
+                                                                                    moved => { if self.pressed { root.node-resize-moved(pn.id, "l", (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px), (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px), shift-held); } }
                                                                                 }
                                                                             }
                                                                         }

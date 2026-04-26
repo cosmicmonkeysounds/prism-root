@@ -151,9 +151,19 @@ pub struct AppState {
     pub explorer_view_mode: crate::explorer::ExplorerViewMode,
     #[serde(default = "default_viewport_width")]
     pub viewport_width: f32,
+    #[serde(default)]
+    pub transform_tool: TransformTool,
     next_toast_id: u64,
     next_node_id: u64,
     next_app_id: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum TransformTool {
+    #[default]
+    Move,
+    Rotate,
+    Scale,
 }
 
 fn default_viewport_width() -> f32 {
@@ -288,6 +298,7 @@ impl Default for AppState {
             explorer_expanded: HashSet::new(),
             explorer_view_mode: crate::explorer::ExplorerViewMode::default(),
             viewport_width: 1280.0,
+            transform_tool: TransformTool::Move,
             next_toast_id: 0,
             next_node_id: 100,
             next_app_id: 10,
@@ -555,6 +566,7 @@ struct ShellInner {
     dock_check_timer: Timer,
     drag_component_type: String,
     drag_initial_transform: Option<DragSnapshot>,
+    resize_initial: Option<ResizeSnapshot>,
     pending_picker: Option<(String, f32, f32)>,
     pending_context_menu: Option<ContextMenuState>,
     vfs: VfsManager,
@@ -788,6 +800,7 @@ impl Shell {
             dock_check_timer: Timer::default(),
             drag_component_type: String::new(),
             drag_initial_transform: None,
+            resize_initial: None,
             pending_picker: None,
             pending_context_menu: None,
             vfs: VfsManager::new(),
@@ -2384,6 +2397,95 @@ impl Shell {
             }
         });
 
+        // Node resize — snapshot initial position + dimensions on press
+        self.window.on_node_resize_started({
+            let inner = Rc::clone(&inner);
+            move |node_id, _handle| {
+                use prism_core::foundation::geometry::Size2;
+                let nid = node_id.to_string();
+                let mut s = inner.borrow_mut();
+                let state = s.store.state();
+                let doc = &state.builder_document;
+                if let Some(ref root) = doc.root {
+                    let vp = Size2::new(state.viewport_width, 800.0);
+                    let layout = compute_layout(doc, vp);
+                    if let Some(t) = find_node_transform(root, &nid) {
+                        let (w, h) =
+                            find_node_layout_size(root, &nid, &layout).unwrap_or((100.0, 100.0));
+                        s.resize_initial = Some(ResizeSnapshot {
+                            node_id: nid,
+                            position: t.position,
+                            width: w,
+                            height: h,
+                        });
+                    }
+                }
+            }
+        });
+
+        // Node resize — live update while dragging
+        self.window.on_node_resize_moved({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |node_id, handle, dx, dy, shift| {
+                if inner.borrow().syncing.get() {
+                    return;
+                }
+                let nid = node_id.to_string();
+                let handle = handle.to_string();
+                {
+                    let mut s = inner.borrow_mut();
+                    let snap = s.resize_initial.clone();
+                    if let (Some(ref snap), Some(ref mut live)) = (&snap, &mut s.live) {
+                        if snap.node_id == nid {
+                            let _ = live.mutate_document(|doc| {
+                                if let Some(ref mut root) = doc.root {
+                                    apply_resize_to_node(root, &handle, dx, dy, shift, snap);
+                                }
+                            });
+                        }
+                    }
+                    s.sync_builder_document();
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Node resize — commit final size with undo
+        self.window.on_node_resize_finished({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |node_id, handle, dx, dy, shift| {
+                if inner.borrow().syncing.get() {
+                    return;
+                }
+                let nid = node_id.to_string();
+                let handle = handle.to_string();
+                {
+                    let mut s = inner.borrow_mut();
+                    let snap = s.resize_initial.take();
+                    if let Some(snap) = snap {
+                        if snap.node_id == nid {
+                            s.push_undo("Resize node");
+                            if let Some(ref mut live) = s.live {
+                                let _ = live.mutate_document(|doc| {
+                                    if let Some(ref mut root) = doc.root {
+                                        apply_resize_to_node(root, &handle, dx, dy, shift, &snap);
+                                    }
+                                });
+                            }
+                        }
+                    }
+                    s.sync_builder_document();
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
         // Grid cell clicked (select node or open palette for empty cell)
         self.window.on_grid_cell_clicked({
             let inner = Rc::clone(&inner);
@@ -2925,6 +3027,13 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
     // Drag/place mode
     window.set_drag_component_type(SharedString::from(inner.drag_component_type.as_str()));
 
+    // Transform tool
+    window.set_transform_tool(SharedString::from(match state.transform_tool {
+        TransformTool::Move => "move",
+        TransformTool::Rotate => "rotate",
+        TransformTool::Scale => "scale",
+    }));
+
     // Component picker overlay
     if let Some((ref path, x, y)) = inner.pending_picker {
         window.set_pending_add_path(SharedString::from(path.as_str()));
@@ -3362,8 +3471,6 @@ fn push_live_preview(
                     positioned,
                     layout_mode: SharedString::from(layout_mode_str),
                     rotation_deg: node.transform.rotation.to_degrees(),
-                    scale_x: node.transform.scale[0],
-                    scale_y: node.transform.scale[1],
                 });
             }
         }
@@ -4046,19 +4153,22 @@ fn execute_command(
             }
         }
         "tool.move" => {
-            if let Some(w) = weak.upgrade() {
-                w.set_transform_tool("move".into());
-            }
+            shared
+                .borrow_mut()
+                .store
+                .mutate(|s| s.transform_tool = TransformTool::Move);
         }
         "tool.rotate" => {
-            if let Some(w) = weak.upgrade() {
-                w.set_transform_tool("rotate".into());
-            }
+            shared
+                .borrow_mut()
+                .store
+                .mutate(|s| s.transform_tool = TransformTool::Rotate);
         }
         "tool.scale" => {
-            if let Some(w) = weak.upgrade() {
-                w.set_transform_tool("scale".into());
-            }
+            shared
+                .borrow_mut()
+                .store
+                .mutate(|s| s.transform_tool = TransformTool::Scale);
         }
         "file.save" => {}
         other => {
@@ -4931,6 +5041,151 @@ fn apply_drag_to_node(
             }
         }
         _ => {}
+    }
+}
+
+#[derive(Clone)]
+struct ResizeSnapshot {
+    node_id: String,
+    position: [f32; 2],
+    width: f32,
+    height: f32,
+}
+
+fn find_node_layout_size(
+    root: &Node,
+    target: &str,
+    layout: &prism_builder::ComputedLayout,
+) -> Option<(f32, f32)> {
+    if root.id == target {
+        return layout
+            .nodes
+            .get(target)
+            .map(|nl| (nl.rect.size.width, nl.rect.size.height));
+    }
+    for child in &root.children {
+        if let Some(s) = find_node_layout_size(child, target, layout) {
+            return Some(s);
+        }
+    }
+    None
+}
+
+fn apply_resize_to_node(
+    root: &mut Node,
+    handle: &str,
+    dx: f32,
+    dy: f32,
+    shift: bool,
+    snap: &ResizeSnapshot,
+) {
+    fn find_mut<'a>(node: &'a mut Node, id: &str) -> Option<&'a mut Node> {
+        for child in &mut node.children {
+            if child.id == id {
+                return Some(child);
+            }
+            if let Some(n) = find_mut(child, id) {
+                return Some(n);
+            }
+        }
+        None
+    }
+    let node = if root.id == snap.node_id {
+        root
+    } else {
+        match find_mut(root, &snap.node_id) {
+            Some(n) => n,
+            None => return,
+        }
+    };
+
+    let (mut dx, mut dy) = (dx, dy);
+    if shift {
+        // Uniform: constrain aspect ratio
+        let aspect = if snap.height > 0.0 {
+            snap.width / snap.height
+        } else {
+            1.0
+        };
+        match handle {
+            "tl" | "br" => {
+                let d = if dx.abs() > dy.abs() { dx } else { dy * aspect };
+                dx = d;
+                dy = d / aspect;
+            }
+            "tr" | "bl" => {
+                let d = if dx.abs() > dy.abs() {
+                    dx
+                } else {
+                    -dy * aspect
+                };
+                dx = d;
+                dy = -d / aspect;
+            }
+            _ => {}
+        }
+    }
+
+    // Compute new position and size based on which handle is being dragged.
+    // "tl" moves origin and shrinks; "br" only grows; edges move one axis.
+    let (mut new_x, mut new_y, mut new_w, mut new_h) =
+        (snap.position[0], snap.position[1], snap.width, snap.height);
+
+    match handle {
+        "tl" => {
+            new_x += dx;
+            new_y += dy;
+            new_w -= dx;
+            new_h -= dy;
+        }
+        "t" => {
+            new_y += dy;
+            new_h -= dy;
+        }
+        "tr" => {
+            new_w += dx;
+            new_y += dy;
+            new_h -= dy;
+        }
+        "r" => {
+            new_w += dx;
+        }
+        "br" => {
+            new_w += dx;
+            new_h += dy;
+        }
+        "b" => {
+            new_h += dy;
+        }
+        "bl" => {
+            new_x += dx;
+            new_w -= dx;
+            new_h += dy;
+        }
+        "l" => {
+            new_x += dx;
+            new_w -= dx;
+        }
+        _ => {}
+    }
+
+    let min_size = 4.0;
+    new_w = new_w.max(min_size);
+    new_h = new_h.max(min_size);
+
+    node.transform.position = [new_x, new_y];
+    match &mut node.layout_mode {
+        LayoutMode::Absolute(abs) => {
+            abs.width = Dimension::Px { value: new_w };
+            abs.height = Dimension::Px { value: new_h };
+        }
+        LayoutMode::Free => {
+            node.layout_mode = LayoutMode::Absolute(AbsoluteProps::fixed(new_w, new_h));
+        }
+        LayoutMode::Relative(f) | LayoutMode::Flow(f) => {
+            f.width = Dimension::Px { value: new_w };
+            f.height = Dimension::Px { value: new_h };
+        }
     }
 }
 
@@ -6422,5 +6677,151 @@ mod tests {
             root.children[0].layout_mode,
             LayoutMode::Absolute(_)
         ));
+    }
+
+    fn make_absolute_node(id: &str, x: f32, y: f32, w: f32, h: f32) -> Node {
+        Node {
+            id: id.to_string(),
+            component: "card".to_string(),
+            layout_mode: LayoutMode::Absolute(AbsoluteProps::fixed(w, h)),
+            transform: prism_core::foundation::spatial::Transform2D {
+                position: [x, y],
+                ..Default::default()
+            },
+            ..Node::default()
+        }
+    }
+
+    #[test]
+    fn resize_br_grows_size() {
+        let mut root = make_absolute_node("n1", 10.0, 20.0, 100.0, 80.0);
+        let snap = ResizeSnapshot {
+            node_id: "n1".into(),
+            position: [10.0, 20.0],
+            width: 100.0,
+            height: 80.0,
+        };
+        apply_resize_to_node(&mut root, "br", 30.0, 15.0, false, &snap);
+        assert_eq!(root.transform.position, [10.0, 20.0]);
+        match &root.layout_mode {
+            LayoutMode::Absolute(a) => {
+                assert_eq!(a.width, Dimension::Px { value: 130.0 });
+                assert_eq!(a.height, Dimension::Px { value: 95.0 });
+            }
+            _ => panic!("expected Absolute"),
+        }
+    }
+
+    #[test]
+    fn resize_tl_moves_origin_and_shrinks() {
+        let mut root = make_absolute_node("n1", 50.0, 50.0, 200.0, 150.0);
+        let snap = ResizeSnapshot {
+            node_id: "n1".into(),
+            position: [50.0, 50.0],
+            width: 200.0,
+            height: 150.0,
+        };
+        apply_resize_to_node(&mut root, "tl", 20.0, 10.0, false, &snap);
+        assert_eq!(root.transform.position, [70.0, 60.0]);
+        match &root.layout_mode {
+            LayoutMode::Absolute(a) => {
+                assert_eq!(a.width, Dimension::Px { value: 180.0 });
+                assert_eq!(a.height, Dimension::Px { value: 140.0 });
+            }
+            _ => panic!("expected Absolute"),
+        }
+    }
+
+    #[test]
+    fn resize_r_only_changes_width() {
+        let mut root = make_absolute_node("n1", 0.0, 0.0, 100.0, 100.0);
+        let snap = ResizeSnapshot {
+            node_id: "n1".into(),
+            position: [0.0, 0.0],
+            width: 100.0,
+            height: 100.0,
+        };
+        apply_resize_to_node(&mut root, "r", 50.0, 25.0, false, &snap);
+        assert_eq!(root.transform.position, [0.0, 0.0]);
+        match &root.layout_mode {
+            LayoutMode::Absolute(a) => {
+                assert_eq!(a.width, Dimension::Px { value: 150.0 });
+                assert_eq!(a.height, Dimension::Px { value: 100.0 });
+            }
+            _ => panic!("expected Absolute"),
+        }
+    }
+
+    #[test]
+    fn resize_enforces_minimum_size() {
+        let mut root = make_absolute_node("n1", 0.0, 0.0, 50.0, 50.0);
+        let snap = ResizeSnapshot {
+            node_id: "n1".into(),
+            position: [0.0, 0.0],
+            width: 50.0,
+            height: 50.0,
+        };
+        apply_resize_to_node(&mut root, "tl", 200.0, 200.0, false, &snap);
+        match &root.layout_mode {
+            LayoutMode::Absolute(a) => {
+                assert_eq!(a.width, Dimension::Px { value: 4.0 });
+                assert_eq!(a.height, Dimension::Px { value: 4.0 });
+            }
+            _ => panic!("expected Absolute"),
+        }
+    }
+
+    #[test]
+    fn resize_shift_constrains_aspect_ratio_br() {
+        let mut root = make_absolute_node("n1", 0.0, 0.0, 200.0, 100.0);
+        let snap = ResizeSnapshot {
+            node_id: "n1".into(),
+            position: [0.0, 0.0],
+            width: 200.0,
+            height: 100.0,
+        };
+        apply_resize_to_node(&mut root, "br", 40.0, 5.0, true, &snap);
+        match &root.layout_mode {
+            LayoutMode::Absolute(a) => {
+                if let Dimension::Px { value: w } = a.width {
+                    if let Dimension::Px { value: h } = a.height {
+                        let ratio = w / h;
+                        assert!(
+                            (ratio - 2.0).abs() < 0.01,
+                            "aspect ratio should be 2:1, got {ratio}"
+                        );
+                    }
+                }
+            }
+            _ => panic!("expected Absolute"),
+        }
+    }
+
+    #[test]
+    fn resize_free_node_promotes_to_absolute() {
+        let mut root = Node {
+            id: "n1".to_string(),
+            component: "card".to_string(),
+            layout_mode: LayoutMode::Free,
+            transform: prism_core::foundation::spatial::Transform2D {
+                position: [10.0, 10.0],
+                ..Default::default()
+            },
+            ..Node::default()
+        };
+        let snap = ResizeSnapshot {
+            node_id: "n1".into(),
+            position: [10.0, 10.0],
+            width: 80.0,
+            height: 60.0,
+        };
+        apply_resize_to_node(&mut root, "br", 20.0, 10.0, false, &snap);
+        match &root.layout_mode {
+            LayoutMode::Absolute(a) => {
+                assert_eq!(a.width, Dimension::Px { value: 100.0 });
+                assert_eq!(a.height, Dimension::Px { value: 70.0 });
+            }
+            _ => panic!("expected Absolute after resize of Free node"),
+        }
     }
 }
