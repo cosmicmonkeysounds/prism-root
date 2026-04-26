@@ -554,6 +554,7 @@ struct ShellInner {
     sync_timer: Timer,
     dock_check_timer: Timer,
     drag_component_type: String,
+    drag_initial_transform: Option<DragSnapshot>,
     pending_picker: Option<(String, f32, f32)>,
     pending_context_menu: Option<ContextMenuState>,
     vfs: VfsManager,
@@ -786,6 +787,7 @@ impl Shell {
             sync_timer: Timer::default(),
             dock_check_timer: Timer::default(),
             drag_component_type: String::new(),
+            drag_initial_transform: None,
             pending_picker: None,
             pending_context_menu: None,
             vfs: VfsManager::new(),
@@ -2292,34 +2294,49 @@ impl Shell {
             }
         });
 
-        // Node drag — live position update while dragging
+        // Node drag — snapshot initial transform on press
+        self.window.on_node_drag_started({
+            let inner = Rc::clone(&inner);
+            move |node_id| {
+                let nid = node_id.to_string();
+                let mut s = inner.borrow_mut();
+                if let Some(ref mut live) = s.live {
+                    let doc = live.document();
+                    if let Some(ref root) = doc.root {
+                        if let Some(t) = find_node_transform(root, &nid) {
+                            s.drag_initial_transform = Some(DragSnapshot {
+                                node_id: nid,
+                                position: t.position,
+                                rotation: t.rotation,
+                                scale: t.scale,
+                            });
+                        }
+                    }
+                }
+            }
+        });
+
+        // Node drag — live update while dragging (delta from press point)
         self.window.on_node_drag_moved({
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
-            move |node_id, new_x, new_y| {
+            move |node_id, tool, dx, dy| {
                 if inner.borrow().syncing.get() {
                     return;
                 }
                 let nid = node_id.to_string();
+                let tool = tool.to_string();
                 {
                     let mut s = inner.borrow_mut();
-                    if let Some(ref mut live) = s.live {
-                        let _ = live.mutate_document(|doc| {
-                            if let Some(ref mut root) = doc.root {
-                                apply_node_transform_edit(
-                                    root,
-                                    &nid,
-                                    "transform.x",
-                                    &format_slider_value(new_x),
-                                );
-                                apply_node_transform_edit(
-                                    root,
-                                    &nid,
-                                    "transform.y",
-                                    &format_slider_value(new_y),
-                                );
-                            }
-                        });
+                    let snap = s.drag_initial_transform.clone();
+                    if let (Some(ref snap), Some(ref mut live)) = (&snap, &mut s.live) {
+                        if snap.node_id == nid {
+                            let _ = live.mutate_document(|doc| {
+                                if let Some(ref mut root) = doc.root {
+                                    apply_drag_to_node(root, &tool, dx, dy, snap);
+                                }
+                            });
+                        }
                     }
                     s.sync_builder_document();
                 }
@@ -2329,35 +2346,35 @@ impl Shell {
             }
         });
 
-        // Node drag — commit final position with undo
+        // Node drag — commit final transform with undo
         self.window.on_node_drag_finished({
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
-            move |node_id, new_x, new_y| {
+            move |node_id, tool, dx, dy| {
                 if inner.borrow().syncing.get() {
                     return;
                 }
                 let nid = node_id.to_string();
+                let tool = tool.to_string();
                 {
                     let mut s = inner.borrow_mut();
-                    s.push_undo("Drag node position");
-                    if let Some(ref mut live) = s.live {
-                        let _ = live.mutate_document(|doc| {
-                            if let Some(ref mut root) = doc.root {
-                                apply_node_transform_edit(
-                                    root,
-                                    &nid,
-                                    "transform.x",
-                                    &format_slider_value(new_x),
-                                );
-                                apply_node_transform_edit(
-                                    root,
-                                    &nid,
-                                    "transform.y",
-                                    &format_slider_value(new_y),
-                                );
+                    let snap = s.drag_initial_transform.take();
+                    if let Some(snap) = snap {
+                        if snap.node_id == nid {
+                            let desc = match tool.as_str() {
+                                "rotate" => "Rotate node",
+                                "scale" => "Scale node",
+                                _ => "Move node",
+                            };
+                            s.push_undo(desc);
+                            if let Some(ref mut live) = s.live {
+                                let _ = live.mutate_document(|doc| {
+                                    if let Some(ref mut root) = doc.root {
+                                        apply_drag_to_node(root, &tool, dx, dy, &snap);
+                                    }
+                                });
                             }
-                        });
+                        }
                     }
                     s.sync_builder_document();
                 }
@@ -4801,6 +4818,66 @@ fn apply_transform_to_node(node: &mut Node, key: &str, value: &str) {
                 "stretch" => Anchor::Stretch,
                 _ => t.anchor,
             };
+        }
+        _ => {}
+    }
+}
+
+#[derive(Clone)]
+struct DragSnapshot {
+    node_id: String,
+    position: [f32; 2],
+    rotation: f32,
+    scale: [f32; 2],
+}
+
+fn find_node_transform(
+    root: &Node,
+    target: &str,
+) -> Option<prism_core::foundation::spatial::Transform2D> {
+    if root.id == target {
+        return Some(root.transform.clone());
+    }
+    for child in &root.children {
+        if let Some(t) = find_node_transform(child, target) {
+            return Some(t);
+        }
+    }
+    None
+}
+
+fn apply_drag_to_node(root: &mut Node, tool: &str, dx: f32, dy: f32, snap: &DragSnapshot) {
+    let node = if root.id == snap.node_id {
+        root
+    } else {
+        fn find_mut<'a>(node: &'a mut Node, id: &str) -> Option<&'a mut Node> {
+            for child in &mut node.children {
+                if child.id == id {
+                    return Some(child);
+                }
+                if let Some(n) = find_mut(child, id) {
+                    return Some(n);
+                }
+            }
+            None
+        }
+        match find_mut(root, &snap.node_id) {
+            Some(n) => n,
+            None => return,
+        }
+    };
+    let t = &mut node.transform;
+    match tool {
+        "move" => {
+            t.position[0] = snap.position[0] + dx;
+            t.position[1] = snap.position[1] + dy;
+        }
+        "rotate" => {
+            t.rotation = snap.rotation + (dx * 0.5_f32).to_radians();
+        }
+        "scale" => {
+            t.scale[0] = (snap.scale[0] * (1.0 + dx / 100.0)).max(0.01);
+            t.scale[1] = (snap.scale[1] * (1.0 - dy / 100.0)).max(0.01);
         }
         _ => {}
     }

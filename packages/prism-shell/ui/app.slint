@@ -1283,8 +1283,9 @@ export component AppWindow inherits Window {
     // Node drag (positioned nodes)
     // transform-tool: "move" | "rotate" | "scale"
     in-out property <string> transform-tool: "move";
-    callback node-drag-moved(string /* node-id */, float /* new-x */, float /* new-y */);
-    callback node-drag-finished(string /* node-id */, float /* new-x */, float /* new-y */);
+    callback node-drag-started(string /* node-id */);
+    callback node-drag-moved(string /* node-id */, string /* tool */, float /* dx */, float /* dy */);
+    callback node-drag-finished(string /* node-id */, string /* tool */, float /* dx */, float /* dy */);
 
     // Composition systems
     in property <[ModifierItem]> modifier-items: [];
@@ -2036,21 +2037,61 @@ export component AppWindow inherits Window {
                                                                             }
                                                                         }
 
-                                                                        // Tool mode indicator for positioned nodes
+                                                                        // Transform gizmo at center of positioned nodes
                                                                         if pn.positioned : Rectangle {
-                                                                            x: parent.width - 20px; y: 2px;
-                                                                            width: 16px; height: 16px;
-                                                                            border-radius: 3px;
-                                                                            background: Palette.accent-background;
-                                                                            Text {
-                                                                                text: root.transform-tool == "move" ? "\u{2725}"
-                                                                                    : root.transform-tool == "rotate" ? "\u{21BB}"
-                                                                                    : "\u{2922}";
-                                                                                color: Palette.accent-foreground;
-                                                                                font-size: 10px;
-                                                                                horizontal-alignment: center;
-                                                                                vertical-alignment: center;
+                                                                            property <length> gizmo-size: 72px;
+                                                                            property <length> arm-len: 28px;
+                                                                            property <length> cx: (parent.width - gizmo-size) / 2;
+                                                                            property <length> cy: (parent.height - gizmo-size) / 2;
+                                                                            x: cx; y: cy;
+                                                                            width: gizmo-size; height: gizmo-size;
+
+                                                                            // ── Move gizmo: red X arrow, green Y arrow, white center ──
+                                                                            Rectangle {
+                                                                                visible: root.transform-tool == "move";
+                                                                                // X axis arm (red)
+                                                                                Rectangle { x: 38px; y: 35px; width: arm-len; height: 2px; background: #e74c3c; }
+                                                                                // X arrow tip: three stacked bars narrowing to a point
+                                                                                Rectangle { x: 38px + arm-len; y: 31px; width: 2px; height: 10px; background: #e74c3c; }
+                                                                                Rectangle { x: 38px + arm-len + 2px; y: 33px; width: 2px; height: 6px; background: #e74c3c; }
+                                                                                Rectangle { x: 38px + arm-len + 4px; y: 35px; width: 2px; height: 2px; background: #e74c3c; }
+                                                                                // Y axis arm (green)
+                                                                                Rectangle { x: 35px; y: 36px - arm-len; width: 2px; height: arm-len; background: #2ecc71; }
+                                                                                // Y arrow tip: three stacked bars narrowing upward
+                                                                                Rectangle { x: 31px; y: 36px - arm-len - 2px; width: 10px; height: 2px; background: #2ecc71; }
+                                                                                Rectangle { x: 33px; y: 36px - arm-len - 4px; width: 6px; height: 2px; background: #2ecc71; }
+                                                                                Rectangle { x: 35px; y: 36px - arm-len - 6px; width: 2px; height: 2px; background: #2ecc71; }
+                                                                                // Center square (free-move handle)
+                                                                                Rectangle { x: 32px; y: 32px; width: 8px; height: 8px; background: white; border-width: 1px; border-color: #555; }
                                                                             }
+
+                                                                            // ── Rotate gizmo: orange circle ──
+                                                                            Rectangle {
+                                                                                visible: root.transform-tool == "rotate";
+                                                                                x: 6px; y: 6px;
+                                                                                width: 60px; height: 60px;
+                                                                                border-radius: 30px;
+                                                                                border-width: 2px;
+                                                                                border-color: #f39c12;
+                                                                                background: transparent;
+                                                                                // Handle dot at 3-o'clock
+                                                                                Rectangle { x: 52px; y: 26px; width: 8px; height: 8px; border-radius: 4px; background: #f39c12; }
+                                                                            }
+
+                                                                            // ── Scale gizmo: red/green lines with square tips ──
+                                                                            Rectangle {
+                                                                                visible: root.transform-tool == "scale";
+                                                                                // X axis (red)
+                                                                                Rectangle { x: 36px; y: 35px; width: arm-len; height: 2px; background: #e74c3c; }
+                                                                                Rectangle { x: 36px + arm-len - 4px; y: 31px; width: 10px; height: 10px; background: #e74c3c; }
+                                                                                // Y axis (green)
+                                                                                Rectangle { x: 35px; y: 36px - arm-len; width: 2px; height: arm-len; background: #2ecc71; }
+                                                                                Rectangle { x: 31px; y: 36px - arm-len - 4px; width: 10px; height: 10px; background: #2ecc71; }
+                                                                                // Center square
+                                                                                Rectangle { x: 32px; y: 32px; width: 8px; height: 8px; background: white; border-width: 1px; border-color: #555; }
+                                                                            }
+
+                                                                            // Right-click cycles tool mode
                                                                             tool-cycle-touch := TouchArea {
                                                                                 mouse-cursor: pointer;
                                                                                 pointer-event(event) => {
@@ -2074,12 +2115,16 @@ export component AppWindow inherits Window {
                                                                                 if pn.positioned && self.pressed {
                                                                                     root.node-drag-moved(
                                                                                         pn.id,
-                                                                                        pn.x + (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px),
-                                                                                        pn.y + (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px)
+                                                                                        root.transform-tool,
+                                                                                        (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px),
+                                                                                        (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px)
                                                                                     );
                                                                                 }
                                                                             }
                                                                             pointer-event(event) => {
+                                                                                if pn.positioned && event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                                                                                    root.node-drag-started(pn.id);
+                                                                                }
                                                                                 if event.kind == PointerEventKind.down && event.button == PointerEventButton.right {
                                                                                     root.context-menu-show(
                                                                                         "builder-node",
@@ -2091,8 +2136,9 @@ export component AppWindow inherits Window {
                                                                                 if pn.positioned && event.kind == PointerEventKind.up && event.button == PointerEventButton.left {
                                                                                     root.node-drag-finished(
                                                                                         pn.id,
-                                                                                        pn.x + (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px),
-                                                                                        pn.y + (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px)
+                                                                                        root.transform-tool,
+                                                                                        (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px),
+                                                                                        (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px)
                                                                                     );
                                                                                 }
                                                                             }

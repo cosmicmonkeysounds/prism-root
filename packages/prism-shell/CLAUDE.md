@@ -365,15 +365,22 @@ shell framework features are implemented:
   `panels/properties.rs` produces `FieldRowData` items displayed via
   the persistent `transform_rows` VecModel.
 - **Canvas drag gizmo**: Selected positioned nodes (Absolute/Free/
-  Relative) can be dragged on the canvas to reposition. The selection
-  overlay TouchArea emits `node-drag-moved` (live preview) and
-  `node-drag-finished` (undo commit) callbacks. A move cursor appears
-  on positioned node overlays. A tool indicator badge on the selection
-  shows the current tool mode icon.
-- **Transform tool mode**: Three toolbar buttons (Move ✥ / Rotate ↻ /
-  Scale ⤢) toggle the `transform-tool` property. Right-click on the
-  tool indicator badge cycles modes. Move drag is fully functional;
-  Rotate/Scale gizmo math is the next incremental step.
+  Relative) can be dragged on the canvas. Delta-based drag protocol:
+  Slint sends `(mouse - pressed) / zoom` deltas via three callbacks
+  (`node-drag-started`, `node-drag-moved`, `node-drag-finished`);
+  Rust snapshots the initial transform into a `DragSnapshot` on press
+  and applies deltas relative to that snapshot. Undo is pushed on
+  release. Tool indicator badge on the selection shows the current
+  tool mode icon. Godot-style gizmos drawn at the center of selected
+  positioned nodes: Move (red/green axis arms with arrow tips + white
+  center), Rotate (orange circle with handle dot), Scale (red/green
+  arms with square tips + white center). Right-click on the gizmo
+  cycles tool mode.
+- **Transform tool mode**: Three toolbar buttons (Move / Rotate /
+  Scale) toggle the `transform-tool` property. All three modes are
+  fully functional: Move applies dx/dy to position, Rotate applies
+  0.5 deg/px horizontal drag to rotation, Scale applies dx/dy as
+  proportional scale factors (clamped to min 0.01).
 - **Palette → grid placement**: When a page has grid cells, clicking
   a component in the left palette enters "place mode" — the item
   highlights and grid cells show "Place [type]" on hover. Clicking
