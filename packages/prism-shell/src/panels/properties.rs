@@ -1,17 +1,21 @@
-//! Properties panel — the schema-driven field-row editor for the
-//! currently selected node. Walks the component's [`FieldSpec`]
-//! list and emits one field row per entry, reading the current
-//! value straight out of the node's `props` via [`FieldValue`].
+//! Properties panel — unified section-based inspector for the
+//! currently selected node. Inspired by Unity's Inspector:
+//! every node is a "game object" with Transform, Component props,
+//! Layout, and Appearance sections. Collapse state is automatic —
+//! sections at their defaults collapse; modified sections expand.
 //!
-//! The Slint side paints each row as a label + value + hint in a
-//! vertical list; editing is wired up when the store grows a
-//! mutate-prop action in Phase 4. Read-only for now is fine — the
-//! important thing for Phase 3 is that the schema walks end-to-end.
+//! The Slint side receives a single flat `property-rows` model
+//! where section headers and field rows are interleaved. One
+//! unified edit callback routes by key prefix.
 
 use prism_builder::layout::{
     AlignOption, Dimension, FlexDirection, FlowDisplay, GridPlacement, JustifyOption, LayoutMode,
 };
-use prism_builder::{BuilderDocument, ComponentRegistry, FieldKind, FieldSpec, FieldValue, NodeId};
+use prism_builder::style::StyleProperties;
+use prism_builder::{
+    BuilderDocument, ComponentRegistry, FieldKind, FieldSpec, FieldValue, Node, NodeId, PrismApp,
+};
+use prism_core::foundation::spatial::Transform2D;
 use prism_core::help::HelpEntry;
 use serde_json::Value;
 
@@ -34,6 +38,27 @@ pub struct FieldRowData {
     pub options: Vec<String>,
 }
 
+/// A collapsible section in the properties panel. Collapse state
+/// is computed from the data: sections at defaults auto-collapse,
+/// modified sections auto-expand. No stored booleans.
+#[derive(Debug, Clone)]
+pub struct PropertySection {
+    pub id: String,
+    pub label: String,
+    pub icon: String,
+    pub collapsed: bool,
+    pub rows: Vec<FieldRowData>,
+}
+
+/// Origin of an appearance value in the cascade.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StyleOrigin {
+    Node,
+    Page,
+    App,
+    Default,
+}
+
 impl PropertiesPanel {
     pub const ID: i32 = 3;
     pub fn new() -> Self {
@@ -48,6 +73,375 @@ impl PropertiesPanel {
             .and_then(|id| doc.root.as_ref().and_then(|n| n.find(id)))
             .map(|n| n.component.clone())
             .unwrap_or_default()
+    }
+
+    /// Compute all property sections for the selected node.
+    /// Collapse state is automatic: sections at their default
+    /// values collapse; sections with user-modified data expand.
+    /// Returns an empty vec when nothing is selected.
+    pub fn sections(
+        doc: &BuilderDocument,
+        registry: &ComponentRegistry,
+        selected: &Option<NodeId>,
+        app: Option<&PrismApp>,
+    ) -> Vec<PropertySection> {
+        let Some(selected_id) = selected else {
+            return Self::page_sections(app);
+        };
+        let Some(node) = doc.root.as_ref().and_then(|n| n.find(selected_id)) else {
+            return vec![];
+        };
+        let component = registry.get(&node.component);
+
+        let mut sections = vec![];
+
+        // ── Transform ──────────────────────────────────────────
+        let transform_default = node.transform == Transform2D::default();
+        sections.push(PropertySection {
+            id: "transform".into(),
+            label: "Transform".into(),
+            icon: "move".into(),
+            collapsed: transform_default,
+            rows: Self::transform_rows(doc, selected),
+        });
+
+        // ── Component (schema-driven props) ────────────────────
+        let component_rows = Self::rows(doc, registry, selected);
+        let component_label = component
+            .as_ref()
+            .map(|c| {
+                let id = c.id();
+                let mut chars = id.chars();
+                match chars.next() {
+                    Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                    None => id.to_string(),
+                }
+            })
+            .unwrap_or_else(|| "Component".into());
+        sections.push(PropertySection {
+            id: "component".into(),
+            label: component_label,
+            icon: "sliders".into(),
+            collapsed: false,
+            rows: component_rows,
+        });
+
+        // ── Layout ─────────────────────────────────────────────
+        let layout_default = node.layout_mode == LayoutMode::default();
+        let layout_rows = Self::layout_rows(doc, selected);
+        sections.push(PropertySection {
+            id: "layout".into(),
+            label: "Layout".into(),
+            icon: "layout".into(),
+            collapsed: layout_default,
+            rows: layout_rows,
+        });
+
+        // ── Appearance (cascade) ───────────────────────────────
+        let node_style_default = node.style == StyleProperties::default();
+        let appearance_rows = Self::appearance_rows(node, app);
+        sections.push(PropertySection {
+            id: "appearance".into(),
+            label: "Appearance".into(),
+            icon: "palette".into(),
+            collapsed: node_style_default,
+            rows: appearance_rows,
+        });
+
+        // ── Modifiers (only when non-empty) ────────────────────
+        if !node.modifiers.is_empty() {
+            let modifier_rows: Vec<FieldRowData> = node
+                .modifiers
+                .iter()
+                .enumerate()
+                .map(|(i, m)| FieldRowData {
+                    key: format!("modifier.{i}"),
+                    label: format!("{:?}", m.kind),
+                    kind: "text".into(),
+                    value: format!("{:?}", m.kind),
+                    required: false,
+                    min: 0.0,
+                    max: 0.0,
+                    has_bounds: false,
+                    options: vec![],
+                })
+                .collect();
+            sections.push(PropertySection {
+                id: "modifiers".into(),
+                label: "Modifiers".into(),
+                icon: "layers".into(),
+                collapsed: false,
+                rows: modifier_rows,
+            });
+        }
+
+        // ── Variants (only when component declares them) ───────
+        if let Some(ref c) = component {
+            let variant_axes = c.variants();
+            if !variant_axes.is_empty() {
+                let variant_rows: Vec<FieldRowData> = variant_axes
+                    .iter()
+                    .map(|axis| {
+                        let current = node
+                            .props
+                            .get(&axis.key)
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(
+                                axis.options.first().map(|o| o.value.as_str()).unwrap_or(""),
+                            );
+                        FieldRowData {
+                            key: axis.key.clone(),
+                            label: axis.label.clone(),
+                            kind: "select".into(),
+                            value: current.to_string(),
+                            required: false,
+                            min: 0.0,
+                            max: 0.0,
+                            has_bounds: false,
+                            options: axis.options.iter().map(|o| o.value.clone()).collect(),
+                        }
+                    })
+                    .collect();
+                sections.push(PropertySection {
+                    id: "variants".into(),
+                    label: "Variants".into(),
+                    icon: "layers".into(),
+                    collapsed: false,
+                    rows: variant_rows,
+                });
+            }
+        }
+
+        // ── Signals (only when component declares them) ────────
+        if let Some(ref c) = component {
+            let signals = c.signals();
+            if !signals.is_empty() {
+                let signal_rows: Vec<FieldRowData> = signals
+                    .iter()
+                    .map(|sig| FieldRowData {
+                        key: format!("signal.{}", sig.name),
+                        label: sig.name.clone(),
+                        kind: "text".into(),
+                        value: sig.description.clone(),
+                        required: false,
+                        min: 0.0,
+                        max: 0.0,
+                        has_bounds: false,
+                        options: vec![],
+                    })
+                    .collect();
+                sections.push(PropertySection {
+                    id: "signals".into(),
+                    label: "Signals".into(),
+                    icon: "zap".into(),
+                    collapsed: true,
+                    rows: signal_rows,
+                });
+            }
+        }
+
+        sections
+    }
+
+    /// When nothing is selected, show page-level style editing.
+    fn page_sections(app: Option<&PrismApp>) -> Vec<PropertySection> {
+        let default_style = StyleProperties::default();
+        let page_style = app
+            .and_then(|a| a.pages.get(a.active_page))
+            .map(|p| &p.style)
+            .unwrap_or(&default_style);
+        let page_default = *page_style == default_style;
+        let rows = style_rows_from(page_style, "style");
+        vec![PropertySection {
+            id: "appearance".into(),
+            label: "Page Styles".into(),
+            icon: "palette".into(),
+            collapsed: page_default,
+            rows,
+        }]
+    }
+
+    /// Build appearance rows showing the cascade for a selected node.
+    /// Node-level overrides come first, then inherited values (dimmed
+    /// via a "inherited." key prefix so the Slint side can style them).
+    fn appearance_rows(node: &Node, app: Option<&PrismApp>) -> Vec<FieldRowData> {
+        let default_style = StyleProperties::default();
+        let app_style = app.map(|a| &a.style).unwrap_or(&default_style);
+        let page_style = app
+            .and_then(|a| a.pages.get(a.active_page))
+            .map(|p| &p.style)
+            .unwrap_or(&default_style);
+
+        let mut rows = Vec::new();
+
+        struct CascadeField<'a> {
+            key: &'a str,
+            label: &'a str,
+            kind: &'a str,
+            node_val: Option<String>,
+            page_val: Option<String>,
+            app_val: Option<String>,
+            min: f32,
+            max: f32,
+        }
+
+        let fields = [
+            CascadeField {
+                key: "font_family",
+                label: "Font family",
+                kind: "text",
+                node_val: node.style.font_family.clone(),
+                page_val: page_style.font_family.clone(),
+                app_val: app_style.font_family.clone(),
+                min: 0.0,
+                max: 0.0,
+            },
+            CascadeField {
+                key: "font_size",
+                label: "Font size",
+                kind: "number",
+                node_val: node.style.font_size.map(|v| format!("{v}")),
+                page_val: page_style.font_size.map(|v| format!("{v}")),
+                app_val: app_style.font_size.map(|v| format!("{v}")),
+                min: 6.0,
+                max: 120.0,
+            },
+            CascadeField {
+                key: "font_weight",
+                label: "Font weight",
+                kind: "number",
+                node_val: node.style.font_weight.map(|v| format!("{v}")),
+                page_val: page_style.font_weight.map(|v| format!("{v}")),
+                app_val: app_style.font_weight.map(|v| format!("{v}")),
+                min: 100.0,
+                max: 900.0,
+            },
+            CascadeField {
+                key: "line_height",
+                label: "Line height",
+                kind: "number",
+                node_val: node.style.line_height.map(|v| format!("{v}")),
+                page_val: page_style.line_height.map(|v| format!("{v}")),
+                app_val: app_style.line_height.map(|v| format!("{v}")),
+                min: 0.5,
+                max: 4.0,
+            },
+            CascadeField {
+                key: "color",
+                label: "Text color",
+                kind: "color",
+                node_val: node.style.color.clone(),
+                page_val: page_style.color.clone(),
+                app_val: app_style.color.clone(),
+                min: 0.0,
+                max: 0.0,
+            },
+            CascadeField {
+                key: "background",
+                label: "Background",
+                kind: "color",
+                node_val: node.style.background.clone(),
+                page_val: page_style.background.clone(),
+                app_val: app_style.background.clone(),
+                min: 0.0,
+                max: 0.0,
+            },
+            CascadeField {
+                key: "accent",
+                label: "Accent",
+                kind: "color",
+                node_val: node.style.accent.clone(),
+                page_val: page_style.accent.clone(),
+                app_val: app_style.accent.clone(),
+                min: 0.0,
+                max: 0.0,
+            },
+            CascadeField {
+                key: "base_spacing",
+                label: "Spacing",
+                kind: "number",
+                node_val: node.style.base_spacing.map(|v| format!("{v}")),
+                page_val: page_style.base_spacing.map(|v| format!("{v}")),
+                app_val: app_style.base_spacing.map(|v| format!("{v}")),
+                min: 0.0,
+                max: 64.0,
+            },
+            CascadeField {
+                key: "border_radius",
+                label: "Radius",
+                kind: "number",
+                node_val: node.style.border_radius.map(|v| format!("{v}")),
+                page_val: page_style.border_radius.map(|v| format!("{v}")),
+                app_val: app_style.border_radius.map(|v| format!("{v}")),
+                min: 0.0,
+                max: 64.0,
+            },
+        ];
+
+        for f in &fields {
+            let (resolved, origin) = if let Some(ref v) = f.node_val {
+                (v.clone(), StyleOrigin::Node)
+            } else if let Some(ref v) = f.page_val {
+                (v.clone(), StyleOrigin::Page)
+            } else if let Some(ref v) = f.app_val {
+                (v.clone(), StyleOrigin::App)
+            } else {
+                (String::new(), StyleOrigin::Default)
+            };
+
+            let key_prefix = match origin {
+                StyleOrigin::Node => "style.",
+                _ => "inherited.style.",
+            };
+
+            rows.push(FieldRowData {
+                key: format!("{key_prefix}{}", f.key),
+                label: match origin {
+                    StyleOrigin::Node => f.label.to_string(),
+                    StyleOrigin::Page => format!("{} (page)", f.label),
+                    StyleOrigin::App => format!("{} (app)", f.label),
+                    StyleOrigin::Default => format!("{} (—)", f.label),
+                },
+                kind: f.kind.into(),
+                value: resolved,
+                required: false,
+                min: f.min,
+                max: f.max,
+                has_bounds: f.kind == "number",
+                options: vec![],
+            });
+        }
+
+        rows
+    }
+
+    /// Flatten sections into a single row list for Slint consumption.
+    /// Section headers are emitted as rows with `kind = "section"`.
+    pub fn flatten_sections(sections: &[PropertySection]) -> Vec<FieldRowData> {
+        let mut flat = Vec::new();
+        for section in sections {
+            flat.push(FieldRowData {
+                key: section.id.clone(),
+                label: section.label.clone(),
+                kind: "section".into(),
+                value: if section.collapsed {
+                    "collapsed".into()
+                } else {
+                    "expanded".into()
+                },
+                required: false,
+                min: 0.0,
+                max: 0.0,
+                has_bounds: false,
+                options: vec![section.icon.clone()],
+            });
+            if !section.collapsed {
+                for row in &section.rows {
+                    flat.push(row.clone());
+                }
+            }
+        }
+        flat
     }
 
     /// Produce layout-specific [`FieldRowData`] items for the
@@ -676,6 +1070,83 @@ fn format_f32(v: f32) -> String {
     }
 }
 
+fn style_rows_from(style: &StyleProperties, prefix: &str) -> Vec<FieldRowData> {
+    let mut rows = Vec::new();
+    let text = |key: &str, label: &str, val: &Option<String>| FieldRowData {
+        key: format!("{prefix}.{key}"),
+        label: label.into(),
+        kind: "text".into(),
+        value: val.as_deref().unwrap_or("").into(),
+        required: false,
+        min: 0.0,
+        max: 0.0,
+        has_bounds: false,
+        options: vec![],
+    };
+    let number = |key: &str, label: &str, val: &Option<f32>, min: f32, max: f32| FieldRowData {
+        key: format!("{prefix}.{key}"),
+        label: label.into(),
+        kind: "number".into(),
+        value: val.map(|v| format!("{v}")).unwrap_or_default(),
+        required: false,
+        min,
+        max,
+        has_bounds: true,
+        options: vec![],
+    };
+    let color = |key: &str, label: &str, val: &Option<String>| FieldRowData {
+        key: format!("{prefix}.{key}"),
+        label: label.into(),
+        kind: "color".into(),
+        value: val.as_deref().unwrap_or("#000000").into(),
+        required: false,
+        min: 0.0,
+        max: 0.0,
+        has_bounds: false,
+        options: vec![],
+    };
+    rows.push(text("font_family", "Font family", &style.font_family));
+    rows.push(number(
+        "font_size",
+        "Font size",
+        &style.font_size,
+        6.0,
+        120.0,
+    ));
+    rows.push(number(
+        "font_weight",
+        "Font weight",
+        &style.font_weight.map(|w| w as f32),
+        100.0,
+        900.0,
+    ));
+    rows.push(number(
+        "line_height",
+        "Line height",
+        &style.line_height,
+        0.5,
+        4.0,
+    ));
+    rows.push(color("color", "Text color", &style.color));
+    rows.push(color("background", "Background", &style.background));
+    rows.push(color("accent", "Accent", &style.accent));
+    rows.push(number(
+        "base_spacing",
+        "Spacing",
+        &style.base_spacing,
+        0.0,
+        64.0,
+    ));
+    rows.push(number(
+        "border_radius",
+        "Radius",
+        &style.border_radius,
+        0.0,
+        64.0,
+    ));
+    rows
+}
+
 impl Default for PropertiesPanel {
     fn default() -> Self {
         Self::new()
@@ -941,5 +1412,250 @@ mod tests {
             "container"
         );
         assert_eq!(PropertiesPanel::selected_component(&doc, &None), "");
+    }
+
+    #[test]
+    fn sections_default_node_collapses_transform_layout_appearance() {
+        let (doc, reg) = setup();
+        let sections = PropertiesPanel::sections(&doc, &reg, &Some("h".into()), None);
+        assert!(sections.iter().any(|s| s.id == "transform"));
+        assert!(sections.iter().any(|s| s.id == "component"));
+        assert!(sections.iter().any(|s| s.id == "layout"));
+        assert!(sections.iter().any(|s| s.id == "appearance"));
+        let transform = sections.iter().find(|s| s.id == "transform").unwrap();
+        let component = sections.iter().find(|s| s.id == "component").unwrap();
+        let layout = sections.iter().find(|s| s.id == "layout").unwrap();
+        let appearance = sections.iter().find(|s| s.id == "appearance").unwrap();
+        assert!(
+            transform.collapsed,
+            "transform should auto-collapse at defaults"
+        );
+        assert!(!component.collapsed, "component should always expand");
+        assert!(layout.collapsed, "layout should auto-collapse at defaults");
+        assert!(
+            appearance.collapsed,
+            "appearance should auto-collapse at defaults"
+        );
+    }
+
+    #[test]
+    fn sections_non_default_transform_expands() {
+        use prism_core::foundation::spatial::Transform2D;
+        let mut reg = ComponentRegistry::new();
+        register_builtins(&mut reg).unwrap();
+        let doc = BuilderDocument {
+            root: Some(Node {
+                id: "n".into(),
+                component: "text".into(),
+                props: json!({ "body": "Hello" }),
+                transform: Transform2D {
+                    position: [50.0, 0.0],
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let sections = PropertiesPanel::sections(&doc, &reg, &Some("n".into()), None);
+        assert!(
+            !sections[0].collapsed,
+            "non-default transform should expand"
+        );
+    }
+
+    #[test]
+    fn sections_non_default_layout_expands() {
+        use prism_builder::layout::{FlowDisplay, FlowProps, LayoutMode};
+        let mut reg = ComponentRegistry::new();
+        register_builtins(&mut reg).unwrap();
+        let doc = BuilderDocument {
+            root: Some(Node {
+                id: "n".into(),
+                component: "container".into(),
+                props: json!({}),
+                layout_mode: LayoutMode::Flow(FlowProps {
+                    display: FlowDisplay::Flex,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let sections = PropertiesPanel::sections(&doc, &reg, &Some("n".into()), None);
+        let layout_section = sections.iter().find(|s| s.id == "layout").unwrap();
+        assert!(!layout_section.collapsed, "flex layout should expand");
+    }
+
+    #[test]
+    fn sections_non_default_style_expands_appearance() {
+        let mut reg = ComponentRegistry::new();
+        register_builtins(&mut reg).unwrap();
+        let doc = BuilderDocument {
+            root: Some(Node {
+                id: "n".into(),
+                component: "text".into(),
+                props: json!({}),
+                style: prism_builder::style::StyleProperties {
+                    color: Some("#ff0000".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let sections = PropertiesPanel::sections(&doc, &reg, &Some("n".into()), None);
+        let appearance = sections.iter().find(|s| s.id == "appearance").unwrap();
+        assert!(
+            !appearance.collapsed,
+            "node with style override should expand appearance"
+        );
+    }
+
+    #[test]
+    fn sections_no_selection_shows_page_styles() {
+        let sections = PropertiesPanel::sections(
+            &BuilderDocument::default(),
+            &ComponentRegistry::new(),
+            &None,
+            None,
+        );
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].id, "appearance");
+        assert_eq!(sections[0].label, "Page Styles");
+    }
+
+    #[test]
+    fn sections_component_label_is_capitalized() {
+        let (doc, reg) = setup();
+        let sections = PropertiesPanel::sections(&doc, &reg, &Some("h".into()), None);
+        let component = sections.iter().find(|s| s.id == "component").unwrap();
+        assert_eq!(component.label, "Text");
+    }
+
+    #[test]
+    fn flatten_sections_interleaves_headers_and_fields() {
+        let (doc, reg) = setup();
+        let sections = PropertiesPanel::sections(&doc, &reg, &Some("h".into()), None);
+        let flat = PropertiesPanel::flatten_sections(&sections);
+        let section_headers: Vec<&str> = flat
+            .iter()
+            .filter(|r| r.kind == "section")
+            .map(|r| r.label.as_str())
+            .collect();
+        assert!(section_headers.contains(&"Transform"));
+        assert!(section_headers.contains(&"Text"));
+        assert!(section_headers.contains(&"Layout"));
+        assert!(section_headers.contains(&"Appearance"));
+        let expanded_headers: Vec<&str> = flat
+            .iter()
+            .filter(|r| r.kind == "section" && r.value == "expanded")
+            .map(|r| r.label.as_str())
+            .collect();
+        assert!(expanded_headers.contains(&"Text"));
+    }
+
+    #[test]
+    fn flatten_sections_collapsed_sections_have_no_field_rows() {
+        let (doc, reg) = setup();
+        let sections = PropertiesPanel::sections(&doc, &reg, &Some("h".into()), None);
+        let flat = PropertiesPanel::flatten_sections(&sections);
+        let after_transform: Vec<&str> = flat
+            .iter()
+            .skip_while(|r| !(r.kind == "section" && r.label == "Transform"))
+            .skip(1)
+            .take_while(|r| r.kind != "section")
+            .map(|r| r.key.as_str())
+            .collect();
+        assert!(
+            after_transform.is_empty(),
+            "collapsed Transform should have no field rows after its header"
+        );
+    }
+
+    #[test]
+    fn appearance_rows_show_origin_in_label() {
+        use prism_builder::PrismApp;
+        let mut reg = ComponentRegistry::new();
+        register_builtins(&mut reg).unwrap();
+        let app = PrismApp {
+            id: "test".into(),
+            name: "Test".into(),
+            description: String::new(),
+            icon: prism_builder::AppIcon::Cube,
+            pages: vec![],
+            active_page: 0,
+            navigation: prism_builder::NavigationConfig::default(),
+            style: StyleProperties {
+                font_family: Some("Inter".into()),
+                color: Some("#000".into()),
+                ..Default::default()
+            },
+        };
+        let doc = BuilderDocument {
+            root: Some(Node {
+                id: "n".into(),
+                component: "text".into(),
+                props: json!({}),
+                style: StyleProperties {
+                    font_size: Some(24.0),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let sections = PropertiesPanel::sections(&doc, &reg, &Some("n".into()), Some(&app));
+        let appearance = sections.iter().find(|s| s.id == "appearance").unwrap();
+        let font_family_row = appearance
+            .rows
+            .iter()
+            .find(|r| r.key.contains("font_family"))
+            .unwrap();
+        assert!(
+            font_family_row.label.contains("(app)"),
+            "inherited from app should show origin"
+        );
+        assert!(
+            font_family_row.key.starts_with("inherited."),
+            "inherited keys should have inherited prefix"
+        );
+        let font_size_row = appearance
+            .rows
+            .iter()
+            .find(|r| r.key.contains("font_size"))
+            .unwrap();
+        assert!(
+            !font_size_row.label.contains("("),
+            "node-level override should not show origin"
+        );
+        assert!(
+            font_size_row.key.starts_with("style."),
+            "node overrides should use style. prefix"
+        );
+    }
+
+    #[test]
+    fn button_sections_include_variants_and_signals() {
+        let mut reg = ComponentRegistry::new();
+        register_builtins(&mut reg).unwrap();
+        let doc = BuilderDocument {
+            root: Some(Node {
+                id: "btn".into(),
+                component: "button".into(),
+                props: json!({ "text": "Click" }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let sections = PropertiesPanel::sections(&doc, &reg, &Some("btn".into()), None);
+        let ids: Vec<&str> = sections.iter().map(|s| s.id.as_str()).collect();
+        assert!(
+            ids.contains(&"variants"),
+            "button should have variants section"
+        );
+        assert!(
+            ids.contains(&"signals"),
+            "button should have signals section"
+        );
     }
 }

@@ -116,6 +116,11 @@ pub struct FieldSpec {
     /// Optional helper string shown beneath the editor.
     #[serde(default)]
     pub help: Option<String>,
+    /// Optional group name for organizing fields within a section.
+    /// Components can use this to cluster related fields (e.g. "content",
+    /// "appearance"). Ungrouped fields render under the component heading.
+    #[serde(default)]
+    pub group: Option<String>,
 }
 
 impl FieldSpec {
@@ -130,6 +135,7 @@ impl FieldSpec {
             default: Value::Null,
             required: false,
             help: None,
+            group: None,
         }
     }
 
@@ -145,6 +151,11 @@ impl FieldSpec {
 
     pub fn with_help(mut self, help: impl Into<String>) -> Self {
         self.help = Some(help.into());
+        self
+    }
+
+    pub fn group(mut self, group: impl Into<String>) -> Self {
+        self.group = Some(group.into());
         self
     }
 

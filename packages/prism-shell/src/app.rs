@@ -48,9 +48,8 @@ use crate::{
     AppCardItem, AppWindow, BreadcrumbItem, ButtonSpec, ColorPreset, CommandItem,
     ComponentPaletteItem, DockDividerRect, DockPanelRect, DockTabItem, DocsPanelData,
     EditorIndentGuide, EditorLine, EditorToken, ExplorerNodeItem, FieldRow, GridCellItem,
-    GridEdgeHandle, GutterRect, HelpTooltipData, InspectorNode, MenuDef, MenuItem, ModifierItem,
-    PageLayoutData, PreviewNode, SearchResultItem, SignalItem, TabItem, ToastItem, VariantItem,
-    WorkflowPageItem,
+    GridEdgeHandle, GutterRect, HelpTooltipData, InspectorNode, MenuDef, MenuItem, PageLayoutData,
+    PreviewNode, SearchResultItem, TabItem, ToastItem, WorkflowPageItem,
 };
 
 // ── Persistent VecModels ───────────────────────────────────────────
@@ -102,10 +101,7 @@ persistent_models! {
     grid_edge_handles: GridEdgeHandle,
     preview_nodes: PreviewNode,
     inspector_nodes: InspectorNode,
-    field_rows: FieldRow,
-    layout_rows: FieldRow,
-    transform_rows: FieldRow,
-    style_rows: FieldRow,
+    property_rows: FieldRow,
     breadcrumbs: BreadcrumbItem,
     component_palette: ComponentPaletteItem,
     tabs: TabItem,
@@ -121,9 +117,6 @@ persistent_models! {
     workflow_pages: WorkflowPageItem,
     actions: ButtonSpec,
     menu_defs: MenuDef,
-    modifier_items: ModifierItem,
-    signal_items: SignalItem,
-    variant_items: VariantItem,
     editor_lines: EditorLine,
 }
 
@@ -572,6 +565,8 @@ struct ShellInner {
     vfs: VfsManager,
     toast_timer: Timer,
     user_color_swatches: Vec<String>,
+    toggled_sections: std::collections::HashSet<String>,
+    last_selected_node: Option<String>,
 }
 
 impl ShellInner {
@@ -751,10 +746,7 @@ impl Shell {
         bind_model!(set_grid_edge_handles, grid_edge_handles, GridEdgeHandle);
         bind_model!(set_preview_nodes, preview_nodes, PreviewNode);
         bind_model!(set_inspector_nodes, inspector_nodes, InspectorNode);
-        bind_model!(set_field_rows, field_rows, FieldRow);
-        bind_model!(set_layout_rows, layout_rows, FieldRow);
-        bind_model!(set_transform_rows, transform_rows, FieldRow);
-        bind_model!(set_style_rows, style_rows, FieldRow);
+        bind_model!(set_property_rows, property_rows, FieldRow);
         bind_model!(set_breadcrumbs, breadcrumbs, BreadcrumbItem);
         bind_model!(
             set_component_palette,
@@ -774,9 +766,6 @@ impl Shell {
         bind_model!(set_workflow_pages, workflow_pages, WorkflowPageItem);
         bind_model!(set_actions, actions, ButtonSpec);
         bind_model!(set_menu_defs, menu_defs, MenuDef);
-        bind_model!(set_modifier_items, modifier_items, ModifierItem);
-        bind_model!(set_signal_items, signal_items, SignalItem);
-        bind_model!(set_variant_items, variant_items, VariantItem);
         bind_model!(set_editor_lines, editor_lines, EditorLine);
 
         let inner = Rc::new(RefCell::new(ShellInner {
@@ -806,6 +795,8 @@ impl Shell {
             vfs: VfsManager::new(),
             toast_timer: Timer::default(),
             user_color_swatches: Vec::new(),
+            toggled_sections: std::collections::HashSet::new(),
+            last_selected_node: None,
         }));
         {
             let mut s = inner.borrow_mut();
@@ -1234,68 +1225,6 @@ impl Shell {
             }
         });
 
-        // Property field editing
-        self.window.on_field_edited({
-            let inner = Rc::clone(&inner);
-            let weak = weak.clone();
-            move |key, value| {
-                if inner.borrow().syncing.get() {
-                    return;
-                }
-                let key = key.to_string();
-                let value = value.to_string();
-                {
-                    let mut s = inner.borrow_mut();
-                    let selected_id = s.store.state().selection.primary().cloned();
-                    if let Some(ref target_id) = selected_id {
-                        let kind = field_kind_for_key(&s, &key);
-                        let (source_key, formatted) =
-                            slint_source_key_for_edit(&s, &key, &value, kind.as_deref());
-                        s.push_undo(&format!("Edit {key}"));
-                        if let Some(ref mut live) = s.live {
-                            let _ = live.edit_prop_in_source(target_id, &source_key, &formatted);
-                        }
-                        s.sync_builder_document();
-                    }
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
-            }
-        });
-
-        // Numeric field editing (from sliders)
-        self.window.on_field_edited_number({
-            let inner = Rc::clone(&inner);
-            let weak = weak.clone();
-            move |key, val| {
-                if inner.borrow().syncing.get() {
-                    return;
-                }
-                let key = key.to_string();
-                {
-                    let mut s = inner.borrow_mut();
-                    let selected_id = s.store.state().selection.primary().cloned();
-                    if let Some(ref target_id) = selected_id {
-                        let kind = field_kind_for_key(&s, &key);
-                        let formatted = match kind.as_deref() {
-                            Some("integer") => format!("{}", val as i64),
-                            Some("number") => format!("{}px", format_slider_value(val)),
-                            _ => format_slider_value(val),
-                        };
-                        s.push_undo(&format!("Edit {key}"));
-                        if let Some(ref mut live) = s.live {
-                            let _ = live.edit_prop_in_source(target_id, &key, &formatted);
-                        }
-                        s.sync_builder_document();
-                    }
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
-            }
-        });
-
         // File browse button — opens native file dialog, imports into VFS
         self.window.on_file_browse_requested({
             let inner = Rc::clone(&inner);
@@ -1364,6 +1293,202 @@ impl Shell {
                             s.sync_builder_document();
                         }
                         s.add_toast("Imported", &filename, "success");
+                    }
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Unified property field editing (routes by key prefix)
+        self.window.on_property_field_edited({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |key, value| {
+                if inner.borrow().syncing.get() {
+                    return;
+                }
+                let key = key.to_string();
+                let value = value.to_string();
+                {
+                    let mut s = inner.borrow_mut();
+                    let selected_id = s.store.state().selection.primary().cloned();
+                    if key.starts_with("layout.") {
+                        if let Some(ref target_id) = selected_id {
+                            s.push_undo(&format!("Edit {key}"));
+                            let tid = target_id.clone();
+                            if let Some(ref mut live) = s.live {
+                                let _ = live.mutate_document(|doc| {
+                                    if let Some(ref mut root) = doc.root {
+                                        apply_node_layout_edit(root, &tid, &key, &value);
+                                    }
+                                });
+                            }
+                            s.sync_builder_document();
+                        }
+                    } else if key.starts_with("transform.") {
+                        if let Some(ref target_id) = selected_id {
+                            s.push_undo(&format!("Edit {key}"));
+                            let tid = target_id.clone();
+                            if let Some(ref mut live) = s.live {
+                                let _ = live.mutate_document(|doc| {
+                                    if let Some(ref mut root) = doc.root {
+                                        apply_node_transform_edit(root, &tid, &key, &value);
+                                    }
+                                });
+                            }
+                            s.sync_builder_document();
+                        }
+                    } else if key.starts_with("style.") || key.starts_with("inherited.style.") {
+                        let style_key = key
+                            .strip_prefix("inherited.style.")
+                            .or_else(|| key.strip_prefix("style."))
+                            .unwrap_or(&key);
+                        let sk = style_key.to_string();
+                        s.push_undo(&format!("Edit style {key}"));
+                        if let Some(ref target_id) = selected_id {
+                            let tid = target_id.clone();
+                            if let Some(ref mut live) = s.live {
+                                let _ = live.mutate_document(|doc| {
+                                    if let Some(ref mut root) = doc.root {
+                                        if let Some(node) = root.find_mut(&tid) {
+                                            apply_style_edit(&mut node.style, &sk, &value);
+                                        }
+                                    }
+                                });
+                            }
+                            s.sync_builder_document();
+                        } else {
+                            s.store.mutate(|state| {
+                                if let Some(app) = state.active_app_mut() {
+                                    if let Some(page) = app.pages.get_mut(app.active_page) {
+                                        apply_style_edit(&mut page.style, &sk, &value);
+                                    }
+                                }
+                            });
+                        }
+                    } else {
+                        if let Some(ref target_id) = selected_id {
+                            let kind = field_kind_for_key(&s, &key);
+                            let (source_key, formatted) =
+                                slint_source_key_for_edit(&s, &key, &value, kind.as_deref());
+                            s.push_undo(&format!("Edit {key}"));
+                            if let Some(ref mut live) = s.live {
+                                let _ =
+                                    live.edit_prop_in_source(target_id, &source_key, &formatted);
+                            }
+                            s.sync_builder_document();
+                        }
+                    }
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Unified property numeric editing (routes by key prefix)
+        self.window.on_property_field_edited_number({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |key, val| {
+                if inner.borrow().syncing.get() {
+                    return;
+                }
+                let key = key.to_string();
+                let value = format_slider_value(val);
+                {
+                    let mut s = inner.borrow_mut();
+                    let selected_id = s.store.state().selection.primary().cloned();
+                    if key.starts_with("layout.") {
+                        if let Some(ref target_id) = selected_id {
+                            s.push_undo(&format!("Edit {key}"));
+                            let tid = target_id.clone();
+                            if let Some(ref mut live) = s.live {
+                                let _ = live.mutate_document(|doc| {
+                                    if let Some(ref mut root) = doc.root {
+                                        apply_node_layout_edit(root, &tid, &key, &value);
+                                    }
+                                });
+                            }
+                            s.sync_builder_document();
+                        }
+                    } else if key.starts_with("transform.") {
+                        if let Some(ref target_id) = selected_id {
+                            s.push_undo(&format!("Edit {key}"));
+                            let tid = target_id.clone();
+                            if let Some(ref mut live) = s.live {
+                                let _ = live.mutate_document(|doc| {
+                                    if let Some(ref mut root) = doc.root {
+                                        apply_node_transform_edit(root, &tid, &key, &value);
+                                    }
+                                });
+                            }
+                            s.sync_builder_document();
+                        }
+                    } else if key.starts_with("style.") || key.starts_with("inherited.style.") {
+                        let style_key = key
+                            .strip_prefix("inherited.style.")
+                            .or_else(|| key.strip_prefix("style."))
+                            .unwrap_or(&key);
+                        let sk = style_key.to_string();
+                        s.push_undo(&format!("Edit style {key}"));
+                        if let Some(ref target_id) = selected_id {
+                            let tid = target_id.clone();
+                            if let Some(ref mut live) = s.live {
+                                let _ = live.mutate_document(|doc| {
+                                    if let Some(ref mut root) = doc.root {
+                                        if let Some(node) = root.find_mut(&tid) {
+                                            apply_style_edit(&mut node.style, &sk, &value);
+                                        }
+                                    }
+                                });
+                            }
+                            s.sync_builder_document();
+                        } else {
+                            s.store.mutate(|state| {
+                                if let Some(app) = state.active_app_mut() {
+                                    if let Some(page) = app.pages.get_mut(app.active_page) {
+                                        apply_style_edit(&mut page.style, &sk, &value);
+                                    }
+                                }
+                            });
+                        }
+                    } else {
+                        if let Some(ref target_id) = selected_id {
+                            let kind = field_kind_for_key(&s, &key);
+                            let formatted = match kind.as_deref() {
+                                Some("integer") => format!("{}", val as i64),
+                                Some("number") => format!("{}px", format_slider_value(val)),
+                                _ => format_slider_value(val),
+                            };
+                            s.push_undo(&format!("Edit {key}"));
+                            if let Some(ref mut live) = s.live {
+                                let _ = live.edit_prop_in_source(target_id, &key, &formatted);
+                            }
+                            s.sync_builder_document();
+                        }
+                    }
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Section toggle (manual override of auto-collapse)
+        self.window.on_property_section_toggled({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |section_id| {
+                let section_id = section_id.to_string();
+                {
+                    let mut s = inner.borrow_mut();
+                    if s.toggled_sections.contains(&section_id) {
+                        s.toggled_sections.remove(&section_id);
+                    } else {
+                        s.toggled_sections.insert(section_id);
                     }
                 }
                 if let Some(w) = weak.upgrade() {
@@ -2178,135 +2303,6 @@ impl Shell {
             }
         });
 
-        // Layout field editing (per-node) — routes through LiveDocument
-        // so the Slint source stays in sync (unified system).
-        self.window.on_layout_field_edited({
-            let inner = Rc::clone(&inner);
-            let weak = weak.clone();
-            move |key, value| {
-                if inner.borrow().syncing.get() {
-                    return;
-                }
-                let key = key.to_string();
-                let value = value.to_string();
-                {
-                    let mut s = inner.borrow_mut();
-                    let selected_id = s.store.state().selection.primary().cloned();
-                    if let Some(ref target_id) = selected_id {
-                        s.push_undo(&format!("Edit layout {key}"));
-                        let tid = target_id.clone();
-                        if let Some(ref mut live) = s.live {
-                            let _ = live.mutate_document(|doc| {
-                                if let Some(ref mut root) = doc.root {
-                                    apply_node_layout_edit(root, &tid, &key, &value);
-                                }
-                            });
-                        }
-                        s.sync_builder_document();
-                    }
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
-            }
-        });
-
-        // Layout numeric field editing (from sliders)
-        self.window.on_layout_field_edited_number({
-            let inner = Rc::clone(&inner);
-            let weak = weak.clone();
-            move |key, val| {
-                if inner.borrow().syncing.get() {
-                    return;
-                }
-                let key = key.to_string();
-                let value = format_slider_value(val);
-                {
-                    let mut s = inner.borrow_mut();
-                    let selected_id = s.store.state().selection.primary().cloned();
-                    if let Some(ref target_id) = selected_id {
-                        s.push_undo(&format!("Edit layout {key}"));
-                        let tid = target_id.clone();
-                        if let Some(ref mut live) = s.live {
-                            let _ = live.mutate_document(|doc| {
-                                if let Some(ref mut root) = doc.root {
-                                    apply_node_layout_edit(root, &tid, &key, &value);
-                                }
-                            });
-                        }
-                        s.sync_builder_document();
-                    }
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
-            }
-        });
-
-        // Transform field editing (text/select)
-        self.window.on_transform_field_edited({
-            let inner = Rc::clone(&inner);
-            let weak = weak.clone();
-            move |key, value| {
-                if inner.borrow().syncing.get() {
-                    return;
-                }
-                let key = key.to_string();
-                let value = value.to_string();
-                {
-                    let mut s = inner.borrow_mut();
-                    let selected_id = s.store.state().selection.primary().cloned();
-                    if let Some(ref target_id) = selected_id {
-                        s.push_undo(&format!("Edit transform {key}"));
-                        let tid = target_id.clone();
-                        if let Some(ref mut live) = s.live {
-                            let _ = live.mutate_document(|doc| {
-                                if let Some(ref mut root) = doc.root {
-                                    apply_node_transform_edit(root, &tid, &key, &value);
-                                }
-                            });
-                        }
-                        s.sync_builder_document();
-                    }
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
-            }
-        });
-
-        // Transform numeric field editing (from sliders)
-        self.window.on_transform_field_edited_number({
-            let inner = Rc::clone(&inner);
-            let weak = weak.clone();
-            move |key, val| {
-                if inner.borrow().syncing.get() {
-                    return;
-                }
-                let key = key.to_string();
-                let value = format_slider_value(val);
-                {
-                    let mut s = inner.borrow_mut();
-                    let selected_id = s.store.state().selection.primary().cloned();
-                    if let Some(ref target_id) = selected_id {
-                        s.push_undo(&format!("Edit transform {key}"));
-                        let tid = target_id.clone();
-                        if let Some(ref mut live) = s.live {
-                            let _ = live.mutate_document(|doc| {
-                                if let Some(ref mut root) = doc.root {
-                                    apply_node_transform_edit(root, &tid, &key, &value);
-                                }
-                            });
-                        }
-                        s.sync_builder_document();
-                    }
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
-            }
-        });
-
         // Node drag — snapshot initial transform on press
         self.window.on_node_drag_started({
             let inner = Rc::clone(&inner);
@@ -2739,95 +2735,6 @@ impl Shell {
             }
         });
 
-        // Style field edits (from properties panel) — routes through
-        // LiveDocument for node-level styles so Slint source stays in sync.
-        self.window.on_style_field_edited({
-            let inner = Rc::clone(&inner);
-            let weak = weak.clone();
-            move |key, value| {
-                if inner.borrow().syncing.get() {
-                    return;
-                }
-                let key = key.to_string();
-                let value = value.to_string();
-                {
-                    let mut s = inner.borrow_mut();
-                    s.push_undo(&format!("Edit style {key}"));
-                    let selected_id = s.store.state().selection.primary().cloned();
-                    let style_key = key.strip_prefix("style.").unwrap_or(&key);
-                    let sk = style_key.to_string();
-                    if let Some(ref _target_id) = selected_id {
-                        let tid = _target_id.clone();
-                        if let Some(ref mut live) = s.live {
-                            let _ = live.mutate_document(|doc| {
-                                if let Some(ref mut root) = doc.root {
-                                    if let Some(node) = root.find_mut(&tid) {
-                                        apply_style_edit(&mut node.style, &sk, &value);
-                                    }
-                                }
-                            });
-                        }
-                        s.sync_builder_document();
-                    } else {
-                        s.store.mutate(|state| {
-                            if let Some(app) = state.active_app_mut() {
-                                if let Some(page) = app.pages.get_mut(app.active_page) {
-                                    apply_style_edit(&mut page.style, &sk, &value);
-                                }
-                            }
-                        });
-                    }
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
-            }
-        });
-
-        // Style numeric field edits
-        self.window.on_style_field_edited_number({
-            let inner = Rc::clone(&inner);
-            let weak = weak.clone();
-            move |key, val| {
-                if inner.borrow().syncing.get() {
-                    return;
-                }
-                let key = key.to_string();
-                let value = format_slider_value(val);
-                {
-                    let mut s = inner.borrow_mut();
-                    s.push_undo(&format!("Edit style {key}"));
-                    let selected_id = s.store.state().selection.primary().cloned();
-                    let style_key = key.strip_prefix("style.").unwrap_or(&key);
-                    let sk = style_key.to_string();
-                    if let Some(ref _target_id) = selected_id {
-                        let tid = _target_id.clone();
-                        if let Some(ref mut live) = s.live {
-                            let _ = live.mutate_document(|doc| {
-                                if let Some(ref mut root) = doc.root {
-                                    if let Some(node) = root.find_mut(&tid) {
-                                        apply_style_edit(&mut node.style, &sk, &value);
-                                    }
-                                }
-                            });
-                        }
-                        s.sync_builder_document();
-                    } else {
-                        s.store.mutate(|state| {
-                            if let Some(app) = state.active_app_mut() {
-                                if let Some(page) = app.pages.get_mut(app.active_page) {
-                                    apply_style_edit(&mut page.style, &sk, &value);
-                                }
-                            }
-                        });
-                    }
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
-            }
-        });
-
         // Save a user color swatch
         self.window.on_save_color_swatch({
             let inner = Rc::clone(&inner);
@@ -2923,6 +2830,11 @@ fn sync_ui_from_shared(shared: &Rc<RefCell<ShellInner>>, window: &AppWindow) {
         inner.input.set_context("hasSelection", has_sel);
         inner.input.set_context("hasClipboard", has_clip);
         inner.input.set_context("commandPaletteOpen", palette_open);
+        let current_selected = inner.store.state().selection.as_option();
+        if current_selected != inner.last_selected_node {
+            inner.toggled_sections.clear();
+            inner.last_selected_node = current_selected;
+        }
     }
     // Defer Slint property writes to the next event loop tick to avoid
     // recursion when a callback sets properties that the triggering
@@ -3117,12 +3029,14 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
             &state.builder_document,
             &state.selection,
         );
-        push_property_rows(
+        push_property_sections(
             &inner.models,
             window,
             &state.builder_document,
             &inner.registry,
             &state.selection,
+            state.active_app(),
+            &inner.toggled_sections,
         );
         push_breadcrumbs(
             &inner.models,
@@ -3138,20 +3052,7 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
             state.show_grid_overlay,
             vw,
         );
-        push_layout_rows(
-            &inner.models,
-            window,
-            &state.builder_document,
-            &state.selection,
-        );
-        push_transform_rows(
-            &inner.models,
-            window,
-            &state.builder_document,
-            &state.selection,
-        );
-        push_composition_data(
-            &inner.models,
+        push_composition_counts(
             window,
             &state.builder_document,
             &inner.registry,
@@ -3165,13 +3066,6 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
             vw,
         );
         push_grid_edge_handles(&inner.models, window, &state.builder_document, vw);
-        push_style_rows(
-            &inner.models,
-            window,
-            state.active_app(),
-            &state.selection,
-            &state.builder_document,
-        );
         push_explorer_nodes(
             &inner.models,
             window,
@@ -3275,8 +3169,6 @@ fn clear_panel_slots(models: &PersistentModels, window: &AppWindow) {
     sync_model(&models.grid_edge_handles, &[]);
     window.set_grid_edge_handles_count(0);
     window.set_selected_component(SharedString::new());
-    sync_model(&models.field_rows, &[]);
-    window.set_field_rows_count(0);
     sync_model(&models.component_palette, &[]);
     window.set_component_palette_count(0);
 }
@@ -3653,6 +3545,7 @@ fn field_row_data_to_slint(r: &crate::panels::properties::FieldRowData) -> Field
         has_bounds: r.has_bounds,
         options: ModelRc::from(Rc::new(VecModel::from(opts)) as Rc<dyn Model<Data = SharedString>>),
         swatch,
+        section_id: SharedString::default(),
     }
 }
 
@@ -3665,22 +3558,34 @@ fn parse_hex_color(hex: &str) -> slint::Color {
     slint::Color::from_argb_u8(a, r, g, b)
 }
 
-fn push_property_rows(
+fn push_property_sections(
     models: &PersistentModels,
     window: &AppWindow,
     doc: &BuilderDocument,
     registry: &ComponentRegistry,
     selection: &SelectionModel,
+    app: Option<&PrismApp>,
+    toggled_sections: &std::collections::HashSet<String>,
 ) {
     let selected = selection.as_option();
     let component_id = PropertiesPanel::selected_component(doc, &selected);
     window.set_selected_component(SharedString::from(component_id));
-    let rows: Vec<FieldRow> = PropertiesPanel::rows(doc, registry, &selected)
+
+    let mut sections = PropertiesPanel::sections(doc, registry, &selected, app);
+
+    for section in &mut sections {
+        if toggled_sections.contains(&section.id) {
+            section.collapsed = !section.collapsed;
+        }
+    }
+
+    let flat = PropertiesPanel::flatten_sections(&sections);
+    let rows: Vec<FieldRow> = flat
         .into_iter()
         .map(|r| field_row_data_to_slint(&r))
         .collect();
-    let count = sync_model(&models.field_rows, &rows);
-    window.set_field_rows_count(count);
+    let count = sync_model(&models.property_rows, &rows);
+    window.set_property_rows_count(count);
 }
 
 // ── Context menu items ─────────────────────────────────────────────
@@ -5539,119 +5444,13 @@ fn parse_edge_values(s: &str) -> prism_core::foundation::geometry::Edges<f32> {
     }
 }
 
-fn push_layout_rows(
-    models: &PersistentModels,
+fn push_composition_counts(
     window: &AppWindow,
     doc: &BuilderDocument,
+    _registry: &prism_builder::ComponentRegistry,
     selection: &SelectionModel,
 ) {
     let selected = selection.as_option();
-    let rows: Vec<FieldRow> = PropertiesPanel::layout_rows(doc, &selected)
-        .into_iter()
-        .map(|r| field_row_data_to_slint(&r))
-        .collect();
-    let count = sync_model(&models.layout_rows, &rows);
-    window.set_layout_rows_count(count);
-}
-
-fn push_transform_rows(
-    models: &PersistentModels,
-    window: &AppWindow,
-    doc: &BuilderDocument,
-    selection: &SelectionModel,
-) {
-    let selected = selection.as_option();
-    let rows: Vec<FieldRow> = PropertiesPanel::transform_rows(doc, &selected)
-        .into_iter()
-        .map(|r| field_row_data_to_slint(&r))
-        .collect();
-    let count = sync_model(&models.transform_rows, &rows);
-    window.set_transform_rows_count(count);
-}
-
-fn push_composition_data(
-    models: &PersistentModels,
-    window: &AppWindow,
-    doc: &BuilderDocument,
-    registry: &prism_builder::ComponentRegistry,
-    selection: &SelectionModel,
-) {
-    let selected = selection.as_option();
-    let node = selected
-        .as_ref()
-        .and_then(|id| doc.root.as_ref().and_then(|r| r.find(id)));
-
-    let modifiers: Vec<ModifierItem> = node
-        .map(|n| {
-            n.modifiers
-                .iter()
-                .map(|m| ModifierItem {
-                    kind: SharedString::from(
-                        serde_json::to_string(&m.kind)
-                            .unwrap_or_default()
-                            .trim_matches('"'),
-                    ),
-                    label: SharedString::from(m.kind.label()),
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let count = sync_model(&models.modifier_items, &modifiers);
-    window.set_modifier_items_count(count);
-
-    let comp = node.and_then(|n| registry.get(&n.component));
-
-    let signals: Vec<SignalItem> = comp
-        .as_ref()
-        .map(|c| {
-            c.signals()
-                .into_iter()
-                .map(|s| SignalItem {
-                    name: SharedString::from(s.name.as_str()),
-                    description: SharedString::from(s.description.as_str()),
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let count = sync_model(&models.signal_items, &signals);
-    window.set_signal_items_count(count);
-
-    let variants: Vec<VariantItem> = comp
-        .and_then(|c| {
-            let axes = c.variants();
-            if axes.is_empty() {
-                return None;
-            }
-            let n = node.unwrap();
-            Some(
-                axes.into_iter()
-                    .map(|axis| {
-                        let current = n
-                            .props
-                            .get(&axis.key)
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("");
-                        let opts: Vec<SharedString> = axis
-                            .options
-                            .iter()
-                            .map(|o| SharedString::from(o.value.as_str()))
-                            .collect();
-                        VariantItem {
-                            key: SharedString::from(axis.key.as_str()),
-                            label: SharedString::from(axis.label.as_str()),
-                            selected: SharedString::from(current),
-                            options: ModelRc::from(
-                                Rc::new(VecModel::from(opts)) as Rc<dyn Model<Data = SharedString>>
-                            ),
-                        }
-                    })
-                    .collect(),
-            )
-        })
-        .unwrap_or_default();
-    let count = sync_model(&models.variant_items, &variants);
-    window.set_variant_items_count(count);
-
     let conn_count = doc
         .connections
         .iter()
@@ -5777,146 +5576,6 @@ fn push_grid_edge_handles(
 
     let count = sync_model(&models.grid_edge_handles, &handles);
     window.set_grid_edge_handles_count(count);
-}
-
-fn push_style_rows(
-    models: &PersistentModels,
-    window: &AppWindow,
-    app: Option<&PrismApp>,
-    selection: &SelectionModel,
-    doc: &BuilderDocument,
-) {
-    let default_style = StyleProperties::default();
-    let app_style = app.map(|a| &a.style).unwrap_or(&default_style);
-    let page_style = app
-        .and_then(|a| a.pages.get(a.active_page))
-        .map(|p| &p.style)
-        .unwrap_or(&default_style);
-    let node_style = selection
-        .as_option()
-        .and_then(|id| doc.root.as_ref().and_then(|r| r.find(&id)))
-        .map(|n| &n.style);
-    let resolved = if let Some(ns) = node_style {
-        prism_builder::resolve_cascade(app_style, page_style, ns)
-    } else {
-        prism_builder::resolve_cascade(app_style, page_style, &default_style)
-    };
-
-    let mut rows: Vec<FieldRow> = Vec::new();
-    let empty_opts: Vec<SharedString> = Vec::new();
-
-    let push_text = |rows: &mut Vec<FieldRow>, key: &str, label: &str, val: &Option<String>| {
-        rows.push(FieldRow {
-            key: SharedString::from(key),
-            label: SharedString::from(label),
-            kind: SharedString::from("text"),
-            value: SharedString::from(val.as_deref().unwrap_or("")),
-            required: false,
-            min: 0.0,
-            max: 0.0,
-            has_bounds: false,
-            options: ModelRc::from(
-                Rc::new(VecModel::from(empty_opts.clone())) as Rc<dyn Model<Data = SharedString>>
-            ),
-            swatch: slint::Color::from_argb_u8(0, 0, 0, 0),
-        });
-    };
-    let push_number = |rows: &mut Vec<FieldRow>,
-                       key: &str,
-                       label: &str,
-                       val: &Option<f32>,
-                       min: f32,
-                       max: f32| {
-        rows.push(FieldRow {
-            key: SharedString::from(key),
-            label: SharedString::from(label),
-            kind: SharedString::from("number"),
-            value: SharedString::from(val.map(|v| format!("{v}")).unwrap_or_default()),
-            required: false,
-            min,
-            max,
-            has_bounds: true,
-            options: ModelRc::from(
-                Rc::new(VecModel::from(empty_opts.clone())) as Rc<dyn Model<Data = SharedString>>
-            ),
-            swatch: slint::Color::from_argb_u8(0, 0, 0, 0),
-        });
-    };
-    let push_color = |rows: &mut Vec<FieldRow>, key: &str, label: &str, val: &Option<String>| {
-        let hex = val.as_deref().unwrap_or("#000000");
-        rows.push(FieldRow {
-            key: SharedString::from(key),
-            label: SharedString::from(label),
-            kind: SharedString::from("color"),
-            value: SharedString::from(hex),
-            required: false,
-            min: 0.0,
-            max: 0.0,
-            has_bounds: false,
-            options: ModelRc::from(
-                Rc::new(VecModel::from(empty_opts.clone())) as Rc<dyn Model<Data = SharedString>>
-            ),
-            swatch: parse_hex_color(hex),
-        });
-    };
-
-    push_text(
-        &mut rows,
-        "style.font_family",
-        "Font family",
-        &resolved.font_family,
-    );
-    push_number(
-        &mut rows,
-        "style.font_size",
-        "Font size",
-        &resolved.font_size,
-        6.0,
-        120.0,
-    );
-    push_number(
-        &mut rows,
-        "style.font_weight",
-        "Font weight",
-        &resolved.font_weight.map(|w| w as f32),
-        100.0,
-        900.0,
-    );
-    push_number(
-        &mut rows,
-        "style.line_height",
-        "Line height",
-        &resolved.line_height,
-        0.5,
-        4.0,
-    );
-    push_color(&mut rows, "style.color", "Text color", &resolved.color);
-    push_color(
-        &mut rows,
-        "style.background",
-        "Background",
-        &resolved.background,
-    );
-    push_color(&mut rows, "style.accent", "Accent", &resolved.accent);
-    push_number(
-        &mut rows,
-        "style.base_spacing",
-        "Spacing",
-        &resolved.base_spacing,
-        0.0,
-        64.0,
-    );
-    push_number(
-        &mut rows,
-        "style.border_radius",
-        "Radius",
-        &resolved.border_radius,
-        0.0,
-        64.0,
-    );
-
-    let count = sync_model(&models.style_rows, &rows);
-    window.set_style_rows_count(count);
 }
 
 fn push_editor_data(models: &PersistentModels, window: &AppWindow, es: &EditorState) {

@@ -23,6 +23,7 @@ struct FieldRow {
     has-bounds: bool,
     options: [string],
     swatch: color,
+    section-id: string,
 }
 
 struct TabItem {
@@ -151,23 +152,6 @@ struct PageLayoutData {
 struct GutterRect {
     offset: float,
     size: float,
-}
-
-struct ModifierItem {
-    kind: string,
-    label: string,
-}
-
-struct SignalItem {
-    name: string,
-    description: string,
-}
-
-struct VariantItem {
-    key: string,
-    label: string,
-    selected: string,
-    options: [string],
 }
 
 struct AppCardItem {
@@ -464,6 +448,50 @@ component NavButton inherits Rectangle {
     }
 }
 
+component SectionHeader inherits Rectangle {
+    in property <string> label;
+    in property <bool> collapsed;
+    in property <string> section-id;
+    callback section-toggled(string);
+
+    height: 32px;
+    background: transparent;
+
+    section-touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.section-toggled(root.section-id); }
+    }
+
+    HorizontalLayout {
+        spacing: 6px; alignment: start;
+        padding-left: 4px; padding-right: 4px;
+        Image {
+            source: root.collapsed ? @image-url("icons/chevron-left.svg") : @image-url("icons/chevron-down.svg");
+            width: 10px; height: 10px;
+            colorize: root.collapsed ? Palette.foreground.transparentize(60%) : Palette.foreground.transparentize(30%);
+        }
+        Text {
+            text: root.label;
+            color: root.collapsed ? Palette.foreground.transparentize(50%) : Palette.foreground.transparentize(20%);
+            font-size: 11px;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+        if root.collapsed : Text {
+            text: "(default)";
+            color: Palette.foreground.transparentize(70%);
+            font-size: 10px;
+            vertical-alignment: center;
+        }
+    }
+
+    Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        background: Palette.foreground.transparentize(90%);
+    }
+}
+
 component FieldEditor inherits Rectangle {
     in property <string> key;
     in property <string> label;
@@ -490,9 +518,11 @@ component FieldEditor inherits Rectangle {
     background: transparent;
 
     VerticalLayout {
-        spacing: 2px;
+        spacing: 4px;
         padding-top: 4px;
-        padding-bottom: 4px;
+        padding-bottom: 6px;
+        padding-left: 4px;
+        padding-right: 4px;
 
         Text {
             text: root.required ? root.label + " *" : root.label;
@@ -1166,11 +1196,13 @@ export component AppWindow inherits Window {
     callback inspector-delete-track(string /* "row:N" */);
 
 
-    // Properties
+    // Properties — unified section model
     in property <string> selected-component: "";
-    in property <[FieldRow]> field-rows: [];
-    callback field-edited(string, string);
-    callback field-edited-number(string, float);
+    in property <[FieldRow]> property-rows: [];
+    in property <int> property-rows-count: 0;
+    callback property-field-edited(string, string);
+    callback property-field-edited-number(string, float);
+    callback property-section-toggled(string);
     callback file-browse-requested(string);
 
     // Tabbed MDI
@@ -1271,16 +1303,6 @@ export component AppWindow inherits Window {
     callback toggle-grid-overlay;
     callback page-layout-edited(string, string);
 
-    // Layout properties for selected node
-    in property <[FieldRow]> layout-rows: [];
-    callback layout-field-edited(string, string);
-    callback layout-field-edited-number(string, float);
-
-    // Transform properties for selected node
-    in property <[FieldRow]> transform-rows: [];
-    callback transform-field-edited(string, string);
-    callback transform-field-edited-number(string, float);
-
     // Node drag (positioned nodes)
     // transform-tool: "move" | "rotate" | "scale"
     in property <string> transform-tool: "move";
@@ -1291,10 +1313,7 @@ export component AppWindow inherits Window {
     callback node-resize-moved(string /* node-id */, string /* handle */, float /* dx */, float /* dy */, bool /* shift */);
     callback node-resize-finished(string /* node-id */, string /* handle */, float /* dx */, float /* dy */, bool /* shift */);
 
-    // Composition systems
-    in property <[ModifierItem]> modifier-items: [];
-    in property <[SignalItem]> signal-items: [];
-    in property <[VariantItem]> variant-items: [];
+    // Composition counts
     in property <int> connection-count: 0;
     in property <int> resource-count: 0;
     in property <int> prefab-count: 0;
@@ -1341,11 +1360,6 @@ export component AppWindow inherits Window {
     callback save-color-swatch(string /* hex */);
     callback remove-color-swatch(int /* index */);
 
-    // Style cascade (app/page/node)
-    in property <[FieldRow]> style-rows: [];
-    callback style-field-edited(string /* key */, string /* value */);
-    callback style-field-edited-number(string /* key */, float /* value */);
-
     // Launchpad / App navigation
     in property <bool> is-launchpad: true;
     in property <[AppCardItem]> app-cards: [];
@@ -1387,10 +1401,6 @@ export component AppWindow inherits Window {
     // Persistent model counts (hidden-excess visibility)
     in property <int> preview-nodes-count: 0;
     in property <int> inspector-nodes-count: 0;
-    in property <int> field-rows-count: 0;
-    in property <int> layout-rows-count: 0;
-    in property <int> transform-rows-count: 0;
-    in property <int> style-rows-count: 0;
     in property <int> breadcrumbs-count: 0;
     in property <int> component-palette-count: 0;
     in property <int> tabs-count: 0;
@@ -1406,9 +1416,6 @@ export component AppWindow inherits Window {
     in property <int> workflow-pages-count: 0;
     in property <int> actions-count: 0;
     in property <int> menu-defs-count: 0;
-    in property <int> modifier-items-count: 0;
-    in property <int> signal-items-count: 0;
-    in property <int> variant-items-count: 0;
     in property <int> editor-lines-count: 0;
     in property <int> grid-cells-count: 0;
 
@@ -2541,155 +2548,43 @@ export component AppWindow inherits Window {
                                         }
 
                                         // ════════════════════════════════════
-                                        // PROPERTIES
-                                        // ══════════���═════════════════════════
+                                        // PROPERTIES — unified section model
+                                        // ══��═════════════════════════════════
                                         if panel.panel-id == "properties" : Rectangle {
                                             background: Palette.alternate-background;
-                                            VerticalLayout {
-                                                width: 100%; height: 100%;
-                                                padding: 16px; spacing: 8px;
+                                            ScrollView {
+                                                vertical-stretch: 1;
+                                                VerticalLayout {
+                                                    width: 100%;
+                                                    padding-top: 8px; padding-bottom: 16px;
+                                                    padding-left: 14px; padding-right: 14px;
+                                                    spacing: 2px;
+                                                    min-width: 220px;
 
-                                                if root.has-selection && root.selected-component != "" : HorizontalLayout {
-                                                    spacing: 6px; alignment: start;
-                                                    Image { source: @image-url("icons/sliders.svg"); width: 12px; height: 12px; colorize: Palette.foreground.transparentize(40%); y: 1px; }
-                                                    Text { text: root.selected-component; color: Palette.foreground.transparentize(30%); font-size: 11px; font-weight: 600; vertical-alignment: center; }
-                                                }
+                                                    for row[i] in root.property-rows : Rectangle {
+                                                        visible: i < root.property-rows-count;
 
-                                                if root.has-selection && root.selected-component != "" : ScrollView {
-                                                    vertical-stretch: 1;
-                                                    VerticalLayout {
-                                                        min-width: 220px; spacing: 4px;
-                                                        for field[i] in root.field-rows : FieldEditor {
-                                                            visible: i < root.field-rows-count;
-                                                            key: field.key; label: field.label; kind: field.kind; value: field.value; required: field.required;
-                                                            min: field.min; max: field.max; has-bounds: field.has-bounds; options: field.options; swatch: field.swatch;
+                                                        if row.kind == "section" : SectionHeader {
+                                                            label: row.label;
+                                                            collapsed: row.value == "collapsed";
+                                                            section-id: row.key;
+                                                            section-toggled(id) => { root.property-section-toggled(id); }
+                                                        }
+
+                                                        if row.kind != "section" : FieldEditor {
+                                                            key: row.key; label: row.label; kind: row.kind; value: row.value; required: row.required;
+                                                            min: row.min; max: row.max; has-bounds: row.has-bounds; options: row.options; swatch: row.swatch;
                                                             user-swatches: root.user-color-swatches;
-                                                            field-edited(key, val) => { root.field-edited(key, val); }
-                                                            field-edited-number(key, val) => { root.field-edited-number(key, val); }
+                                                            field-edited(key, val) => { root.property-field-edited(key, val); }
+                                                            field-edited-number(key, val) => { root.property-field-edited-number(key, val); }
                                                             file-browse-requested(key) => { root.file-browse-requested(key); }
                                                             save-color-swatch(hex) => { root.save-color-swatch(hex); }
                                                         }
-                                                        if root.style-rows-count > 0 : Rectangle { height: 8px; }
-                                                        if root.style-rows-count > 0 : Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
-                                                        if root.style-rows-count > 0 : Rectangle { height: 4px; }
-                                                        if root.style-rows-count > 0 : HorizontalLayout {
-                                                            spacing: 6px; alignment: start;
-                                                            Text { text: "Style"; color: Palette.foreground.transparentize(30%); font-size: 11px; font-weight: 600; vertical-alignment: center; }
-                                                            Text { text: "(cascading)"; color: Palette.foreground.transparentize(60%); font-size: 10px; vertical-alignment: center; }
-                                                        }
-                                                        for sfield[i] in root.style-rows : FieldEditor {
-                                                            visible: i < root.style-rows-count;
-                                                            key: sfield.key; label: sfield.label; kind: sfield.kind; value: sfield.value; required: sfield.required;
-                                                            min: sfield.min; max: sfield.max; has-bounds: sfield.has-bounds; options: sfield.options; swatch: sfield.swatch;
-                                                            user-swatches: root.user-color-swatches;
-                                                            field-edited(key, val) => { root.style-field-edited(key, val); }
-                                                            field-edited-number(key, val) => { root.style-field-edited-number(key, val); }
-                                                            save-color-swatch(hex) => { root.save-color-swatch(hex); }
-                                                        }
-                                                        if root.layout-rows-count > 0 : Rectangle { height: 8px; }
-                                                        if root.layout-rows-count > 0 : Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
-                                                        if root.layout-rows-count > 0 : Rectangle { height: 4px; }
-                                                        if root.layout-rows-count > 0 : HorizontalLayout {
-                                                            spacing: 6px; alignment: start;
-                                                            Image { source: @image-url("icons/layout.svg"); width: 12px; height: 12px; colorize: Palette.foreground.transparentize(40%); y: 1px; }
-                                                            Text { text: "Layout"; color: Palette.foreground.transparentize(30%); font-size: 11px; font-weight: 600; vertical-alignment: center; }
-                                                        }
-                                                        for lfield[i] in root.layout-rows : FieldEditor {
-                                                            visible: i < root.layout-rows-count;
-                                                            key: lfield.key; label: lfield.label; kind: lfield.kind; value: lfield.value; required: lfield.required;
-                                                            min: lfield.min; max: lfield.max; has-bounds: lfield.has-bounds; options: lfield.options; swatch: lfield.swatch;
-                                                            user-swatches: root.user-color-swatches;
-                                                            field-edited(key, val) => { root.layout-field-edited(key, val); }
-                                                            field-edited-number(key, val) => { root.layout-field-edited-number(key, val); }
-                                                            save-color-swatch(hex) => { root.save-color-swatch(hex); }
-                                                        }
-                                                        if root.transform-rows-count > 0 : Rectangle { height: 8px; }
-                                                        if root.transform-rows-count > 0 : Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
-                                                        if root.transform-rows-count > 0 : Rectangle { height: 4px; }
-                                                        if root.transform-rows-count > 0 : HorizontalLayout {
-                                                            spacing: 6px; alignment: start;
-                                                            Image { source: @image-url("icons/box.svg"); width: 12px; height: 12px; colorize: Palette.foreground.transparentize(40%); y: 1px; }
-                                                            Text { text: "Transform"; color: Palette.foreground.transparentize(30%); font-size: 11px; font-weight: 600; vertical-alignment: center; }
-                                                        }
-                                                        for tfield[i] in root.transform-rows : FieldEditor {
-                                                            visible: i < root.transform-rows-count;
-                                                            key: tfield.key; label: tfield.label; kind: tfield.kind; value: tfield.value; required: tfield.required;
-                                                            min: tfield.min; max: tfield.max; has-bounds: tfield.has-bounds; options: tfield.options; swatch: tfield.swatch;
-                                                            user-swatches: root.user-color-swatches;
-                                                            field-edited(key, val) => { root.transform-field-edited(key, val); }
-                                                            field-edited-number(key, val) => { root.transform-field-edited-number(key, val); }
-                                                            save-color-swatch(hex) => { root.save-color-swatch(hex); }
-                                                        }
-                                                        if root.variant-items-count > 0 : Rectangle { height: 8px; }
-                                                        if root.variant-items-count > 0 : Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
-                                                        if root.variant-items-count > 0 : Rectangle { height: 4px; }
-                                                        if root.variant-items-count > 0 : HorizontalLayout { spacing: 6px; alignment: start; Text { text: "Variants"; color: Palette.foreground.transparentize(30%); font-size: 11px; font-weight: 600; vertical-alignment: center; } }
-                                                        for vitem[i] in root.variant-items : HorizontalLayout {
-                                                            visible: i < root.variant-items-count;
-                                                            spacing: 8px; height: 28px;
-                                                            Text { text: vitem.label; color: Palette.foreground.transparentize(40%); font-size: 11px; width: 80px; vertical-alignment: center; }
-                                                            ComboBox { model: vitem.options; current-value: vitem.selected; horizontal-stretch: 1; selected(val) => { root.field-edited(vitem.key, val); } }
-                                                        }
-                                                        if root.modifier-items-count > 0 : Rectangle { height: 8px; }
-                                                        if root.modifier-items-count > 0 : Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
-                                                        if root.modifier-items-count > 0 : Rectangle { height: 4px; }
-                                                        if root.modifier-items-count > 0 : HorizontalLayout { spacing: 6px; alignment: start; Text { text: "Modifiers"; color: Palette.foreground.transparentize(30%); font-size: 11px; font-weight: 600; vertical-alignment: center; } }
-                                                        for mitem[i] in root.modifier-items : Rectangle {
-                                                            visible: i < root.modifier-items-count;
-                                                            height: 24px;
-                                                            HorizontalLayout { spacing: 6px; alignment: start; padding-left: 4px;
-                                                                Rectangle { width: 6px; height: 6px; border-radius: 3px; background: Palette.accent-background; y: 5px; }
-                                                                Text { text: mitem.label; color: Palette.foreground.transparentize(20%); font-size: 11px; vertical-alignment: center; }
-                                                            }
-                                                        }
-                                                        if root.signal-items-count > 0 : Rectangle { height: 8px; }
-                                                        if root.signal-items-count > 0 : Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
-                                                        if root.signal-items-count > 0 : Rectangle { height: 4px; }
-                                                        if root.signal-items-count > 0 : HorizontalLayout {
-                                                            spacing: 6px; alignment: start;
-                                                            Text { text: "Signals"; color: Palette.foreground.transparentize(30%); font-size: 11px; font-weight: 600; vertical-alignment: center; }
-                                                            if root.connection-count > 0 : Text {
-                                                                text: root.connection-count == 1 ? "1 connection" : "\{root.connection-count} connections";
-                                                                color: Palette.accent-background; font-size: 10px; vertical-alignment: center;
-                                                            }
-                                                        }
-                                                        for sitem[i] in root.signal-items : Rectangle {
-                                                            visible: i < root.signal-items-count;
-                                                            height: 24px;
-                                                            HorizontalLayout { spacing: 6px; alignment: start; padding-left: 4px;
-                                                                Text { text: "\u{26A1}"; font-size: 10px; vertical-alignment: center; }
-                                                                Text { text: sitem.name; color: Palette.foreground.transparentize(20%); font-size: 11px; font-weight: 500; vertical-alignment: center; }
-                                                                Text { text: sitem.description; color: Palette.foreground.transparentize(50%); font-size: 10px; vertical-alignment: center; }
-                                                            }
-                                                        }
-                                                        if root.resource-count > 0 || root.prefab-count > 0 : Rectangle { height: 8px; }
-                                                        if root.resource-count > 0 || root.prefab-count > 0 : Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
-                                                        if root.resource-count > 0 || root.prefab-count > 0 : Rectangle { height: 4px; }
-                                                        if root.resource-count > 0 : Text { text: root.resource-count == 1 ? "1 resource" : "\{root.resource-count} resources"; color: Palette.foreground.transparentize(50%); font-size: 10px; }
-                                                        if root.prefab-count > 0 : Text { text: root.prefab-count == 1 ? "1 prefab" : "\{root.prefab-count} prefabs"; color: Palette.foreground.transparentize(50%); font-size: 10px; }
                                                     }
-                                                }
 
-                                                if !root.has-selection : VerticalLayout {
-                                                    vertical-stretch: 1;
-                                                    spacing: 8px; padding-top: 24px;
-                                                    Text { text: "Page styles"; color: Palette.foreground.transparentize(30%); font-size: 13px; font-weight: 600; horizontal-alignment: center; }
-                                                    Text { text: "Set global styles that cascade to all components on this page."; color: Palette.foreground.transparentize(50%); font-size: 11px; wrap: word-wrap; horizontal-alignment: center; }
-                                                    if root.style-rows-count > 0 : ScrollView {
-                                                        vertical-stretch: 1;
-                                                        VerticalLayout {
-                                                            min-width: 200px; spacing: 4px; padding-top: 8px;
-                                                            for sfield[i] in root.style-rows : FieldEditor {
-                                                                visible: i < root.style-rows-count;
-                                                                key: sfield.key; label: sfield.label; kind: sfield.kind; value: sfield.value; required: sfield.required;
-                                                                min: sfield.min; max: sfield.max; has-bounds: sfield.has-bounds; options: sfield.options; swatch: sfield.swatch;
-                                                                user-swatches: root.user-color-swatches;
-                                                                field-edited(key, val) => { root.style-field-edited(key, val); }
-                                                                field-edited-number(key, val) => { root.style-field-edited-number(key, val); }
-                                                                save-color-swatch(hex) => { root.save-color-swatch(hex); }
-                                                            }
-                                                        }
-                                                    }
+                                                    if root.resource-count > 0 || root.prefab-count > 0 : Rectangle { height: 8px; }
+                                                    if root.resource-count > 0 : Text { text: root.resource-count == 1 ? "1 resource" : "\{root.resource-count} resources"; color: Palette.foreground.transparentize(50%); font-size: 10px; }
+                                                    if root.prefab-count > 0 : Text { text: root.prefab-count == 1 ? "1 prefab" : "\{root.prefab-count} prefabs"; color: Palette.foreground.transparentize(50%); font-size: 10px; }
                                                 }
                                             }
                                         }

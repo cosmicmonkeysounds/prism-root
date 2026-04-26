@@ -673,7 +673,7 @@ impl Default for PageLayout {
 // ── Per-node layout mode ─────────────────────────────────────────────
 
 /// How a node participates in its parent's layout.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "kebab-case")]
 pub enum LayoutMode {
     /// Positioned by the parent's flow (flex/grid/block).
