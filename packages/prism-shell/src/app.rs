@@ -2314,6 +2314,7 @@ impl Shell {
                 let nid = node_id.to_string();
                 let mut s = inner.borrow_mut();
                 if let Some(ref mut live) = s.live {
+                    let pre_drag_source = live.source.clone();
                     let doc = live.document();
                     if let Some(ref root) = doc.root {
                         if let Some(t) = find_node_transform(root, &nid) {
@@ -2322,6 +2323,7 @@ impl Shell {
                                 position: t.position,
                                 rotation: t.rotation,
                                 scale: t.scale,
+                                pre_drag_source,
                             });
                         }
                     }
@@ -2363,29 +2365,30 @@ impl Shell {
         self.window.on_node_drag_finished({
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
-            move |node_id, tool, dx, dy, shift| {
+            move |node_id, _tool, _dx, _dy, _shift| {
                 if inner.borrow().syncing.get() {
                     return;
                 }
                 let nid = node_id.to_string();
-                let tool = tool.to_string();
                 {
                     let mut s = inner.borrow_mut();
                     let snap = s.drag_initial_transform.take();
                     if let Some(snap) = snap {
                         if snap.node_id == nid {
-                            let desc = match tool.as_str() {
+                            let desc = match _tool.to_string().as_str() {
                                 "rotate" => "Rotate node",
                                 "scale" => "Scale node",
                                 _ => "Move node",
                             };
-                            s.push_undo(desc);
-                            if let Some(ref mut live) = s.live {
-                                let _ = live.mutate_document(|doc| {
-                                    if let Some(ref mut root) = doc.root {
-                                        apply_drag_to_node(root, &tool, dx, dy, shift, &snap);
-                                    }
-                                });
+                            let selection = s.store.state().selection.clone();
+                            s.undo_past.push(SourceSnapshot {
+                                description: desc.into(),
+                                source: snap.pre_drag_source,
+                                selection,
+                            });
+                            s.undo_future.clear();
+                            if s.undo_past.len() > 100 {
+                                s.undo_past.remove(0);
                             }
                         }
                     }
@@ -3397,9 +3400,13 @@ fn push_live_preview(
         layout: &prism_builder::ComputedLayout,
         selection: &SelectionModel,
         items: &mut Vec<PreviewNode>,
+        parent_global_x: f32,
+        parent_global_y: f32,
     ) {
-        if let Some(nl) = layout.nodes.get(&node.id) {
+        let (global_x, global_y) = if let Some(nl) = layout.nodes.get(&node.id) {
             let r = &nl.rect;
+            let gx = r.origin.x + parent_global_x;
+            let gy = r.origin.y + parent_global_y;
             let ct = node.component.as_str();
             let props = &node.props;
             let fg = slint::Color::from_argb_u8(255, 216, 222, 233); // #d8dee9
@@ -3441,8 +3448,6 @@ fn push_live_preview(
                 _ => transparent,
             };
 
-            // Skip pure layout containers — they have no visual of their own,
-            // but their children carry the content.
             let is_layout_only = matches!(ct, "container" | "columns" | "form" | "list" | "spacer");
             let positioned = node.layout_mode.is_positioned();
             let layout_mode_str = match &node.layout_mode {
@@ -3456,8 +3461,8 @@ fn push_live_preview(
                     id: SharedString::from(&node.id),
                     component_type: SharedString::from(ct),
                     selected: selection.contains(&node.id),
-                    x: r.origin.x,
-                    y: r.origin.y,
+                    x: gx,
+                    y: gy,
                     w: r.size.width,
                     h: r.size.height,
                     text: SharedString::from(&text),
@@ -3473,13 +3478,16 @@ fn push_live_preview(
                     rotation_deg: node.transform.rotation.to_degrees(),
                 });
             }
-        }
+            (gx, gy)
+        } else {
+            (parent_global_x, parent_global_y)
+        };
         for child in &node.children {
-            walk_preview(child, layout, selection, items);
+            walk_preview(child, layout, selection, items, global_x, global_y);
         }
     }
 
-    walk_preview(root, &layout, selection, &mut items);
+    walk_preview(root, &layout, selection, &mut items, 0.0, 0.0);
     let count = sync_model(&models.preview_nodes, &items);
     window.set_preview_nodes_count(count);
 }
@@ -4957,6 +4965,7 @@ struct DragSnapshot {
     position: [f32; 2],
     rotation: f32,
     scale: [f32; 2],
+    pre_drag_source: String,
 }
 
 fn find_node_transform(

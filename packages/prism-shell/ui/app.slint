@@ -1993,6 +1993,7 @@ export component AppWindow inherits Window {
                                                                             width: abs-label.preferred-width + 8px;
                                                                             border-radius: 2px;
                                                                             background: Palette.accent-background.transparentize(40%);
+                                                                            transform-rotation: -pn.rotation-deg * 1deg;
                                                                             abs-label := Text {
                                                                                 text: pn.layout-mode;
                                                                                 color: Palette.accent-foreground;
@@ -2024,6 +2025,8 @@ export component AppWindow inherits Window {
                                                                     vertical-stretch: 1;
                                                                     for pn[i] in root.preview-nodes : Rectangle {
                                                                         property <bool> shift-held: false;
+                                                                        property <length> drag-press-abs-x: 0px;
+                                                                        property <length> drag-press-abs-y: 0px;
                                                                         visible: i < root.preview-nodes-count && pn.selected;
                                                                         x: pn.x * root.canvas-zoom * 1px;
                                                                         y: pn.y * root.canvas-zoom * 1px;
@@ -2042,6 +2045,7 @@ export component AppWindow inherits Window {
                                                                             width: sel-mode-label.preferred-width + 8px;
                                                                             border-radius: 2px;
                                                                             background: Palette.accent-background;
+                                                                            transform-rotation: -pn.rotation-deg * 1deg;
                                                                             sel-mode-label := Text {
                                                                                 text: pn.layout-mode;
                                                                                 color: Palette.accent-foreground;
@@ -2059,8 +2063,8 @@ export component AppWindow inherits Window {
                                                                                     root.node-drag-moved(
                                                                                         pn.id,
                                                                                         root.transform-tool,
-                                                                                        (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px),
-                                                                                        (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px),
+                                                                                        (self.absolute-position.x + self.mouse-x - drag-press-abs-x) / (root.canvas-zoom * 1px),
+                                                                                        (self.absolute-position.y + self.mouse-y - drag-press-abs-y) / (root.canvas-zoom * 1px),
                                                                                         shift-held
                                                                                     );
                                                                                 }
@@ -2068,6 +2072,8 @@ export component AppWindow inherits Window {
                                                                             pointer-event(event) => {
                                                                                 if pn.positioned && event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
                                                                                     shift-held = event.modifiers.shift;
+                                                                                    drag-press-abs-x = self.absolute-position.x + self.mouse-x;
+                                                                                    drag-press-abs-y = self.absolute-position.y + self.mouse-y;
                                                                                     root.node-drag-started(pn.id);
                                                                                 }
                                                                                 if event.kind == PointerEventKind.down && event.button == PointerEventButton.right {
@@ -2082,8 +2088,8 @@ export component AppWindow inherits Window {
                                                                                     root.node-drag-finished(
                                                                                         pn.id,
                                                                                         root.transform-tool,
-                                                                                        (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px),
-                                                                                        (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px),
+                                                                                        (self.absolute-position.x + self.mouse-x - drag-press-abs-x) / (root.canvas-zoom * 1px),
+                                                                                        (self.absolute-position.y + self.mouse-y - drag-press-abs-y) / (root.canvas-zoom * 1px),
                                                                                         shift-held
                                                                                     );
                                                                                 }
@@ -2098,6 +2104,7 @@ export component AppWindow inherits Window {
                                                                             property <length> cy: (parent.height - gizmo-size) / 2;
                                                                             x: cx; y: cy;
                                                                             width: gizmo-size; height: gizmo-size;
+                                                                            transform-rotation: -pn.rotation-deg * 1deg;
 
                                                                             // ── Move gizmo: red X arrow, green Y arrow, white center ──
                                                                             Rectangle {
@@ -2147,8 +2154,8 @@ export component AppWindow inherits Window {
                                                                                         root.node-drag-moved(
                                                                                             pn.id,
                                                                                             root.transform-tool,
-                                                                                            (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px),
-                                                                                            (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px),
+                                                                                            (self.absolute-position.x + self.mouse-x - drag-press-abs-x) / (root.canvas-zoom * 1px),
+                                                                                            (self.absolute-position.y + self.mouse-y - drag-press-abs-y) / (root.canvas-zoom * 1px),
                                                                                             shift-held
                                                                                         );
                                                                                     }
@@ -2156,14 +2163,16 @@ export component AppWindow inherits Window {
                                                                                 pointer-event(event) => {
                                                                                     if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
                                                                                         shift-held = event.modifiers.shift;
+                                                                                        drag-press-abs-x = self.absolute-position.x + self.mouse-x;
+                                                                                        drag-press-abs-y = self.absolute-position.y + self.mouse-y;
                                                                                         root.node-drag-started(pn.id);
                                                                                     }
                                                                                     if event.kind == PointerEventKind.up && event.button == PointerEventButton.left {
                                                                                         root.node-drag-finished(
                                                                                             pn.id,
                                                                                             root.transform-tool,
-                                                                                            (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px),
-                                                                                            (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px),
+                                                                                            (self.absolute-position.x + self.mouse-x - drag-press-abs-x) / (root.canvas-zoom * 1px),
+                                                                                            (self.absolute-position.y + self.mouse-y - drag-press-abs-y) / (root.canvas-zoom * 1px),
                                                                                             shift-held
                                                                                         );
                                                                                     }
@@ -2189,80 +2198,80 @@ export component AppWindow inherits Window {
                                                                             Rectangle { x: ho; y: ho; width: hs; height: hs; background: white; border-width: 1px; border-color: Palette.accent-background;
                                                                                 resize-tl := TouchArea { mouse-cursor: nwse-resize;
                                                                                     pointer-event(event) => {
-                                                                                        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left { shift-held = event.modifiers.shift; root.node-resize-started(pn.id, "tl"); }
-                                                                                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.left { root.node-resize-finished(pn.id, "tl", (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px), (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px), shift-held); }
+                                                                                        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left { shift-held = event.modifiers.shift; drag-press-abs-x = self.absolute-position.x + self.mouse-x; drag-press-abs-y = self.absolute-position.y + self.mouse-y; root.node-resize-started(pn.id, "tl"); }
+                                                                                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.left { root.node-resize-finished(pn.id, "tl", (self.absolute-position.x + self.mouse-x - drag-press-abs-x) / (root.canvas-zoom * 1px), (self.absolute-position.y + self.mouse-y - drag-press-abs-y) / (root.canvas-zoom * 1px), shift-held); }
                                                                                     }
-                                                                                    moved => { if self.pressed { root.node-resize-moved(pn.id, "tl", (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px), (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px), shift-held); } }
+                                                                                    moved => { if self.pressed { root.node-resize-moved(pn.id, "tl", (self.absolute-position.x + self.mouse-x - drag-press-abs-x) / (root.canvas-zoom * 1px), (self.absolute-position.y + self.mouse-y - drag-press-abs-y) / (root.canvas-zoom * 1px), shift-held); } }
                                                                                 }
                                                                             }
                                                                             // Top-center
                                                                             Rectangle { x: (parent.width - hs) / 2; y: ho; width: hs; height: hs; background: white; border-width: 1px; border-color: Palette.accent-background;
                                                                                 resize-t := TouchArea { mouse-cursor: ns-resize;
                                                                                     pointer-event(event) => {
-                                                                                        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left { shift-held = event.modifiers.shift; root.node-resize-started(pn.id, "t"); }
-                                                                                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.left { root.node-resize-finished(pn.id, "t", (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px), (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px), shift-held); }
+                                                                                        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left { shift-held = event.modifiers.shift; drag-press-abs-x = self.absolute-position.x + self.mouse-x; drag-press-abs-y = self.absolute-position.y + self.mouse-y; root.node-resize-started(pn.id, "t"); }
+                                                                                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.left { root.node-resize-finished(pn.id, "t", (self.absolute-position.x + self.mouse-x - drag-press-abs-x) / (root.canvas-zoom * 1px), (self.absolute-position.y + self.mouse-y - drag-press-abs-y) / (root.canvas-zoom * 1px), shift-held); }
                                                                                     }
-                                                                                    moved => { if self.pressed { root.node-resize-moved(pn.id, "t", (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px), (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px), shift-held); } }
+                                                                                    moved => { if self.pressed { root.node-resize-moved(pn.id, "t", (self.absolute-position.x + self.mouse-x - drag-press-abs-x) / (root.canvas-zoom * 1px), (self.absolute-position.y + self.mouse-y - drag-press-abs-y) / (root.canvas-zoom * 1px), shift-held); } }
                                                                                 }
                                                                             }
                                                                             // Top-right
                                                                             Rectangle { x: parent.width - hs - ho; y: ho; width: hs; height: hs; background: white; border-width: 1px; border-color: Palette.accent-background;
                                                                                 resize-tr := TouchArea { mouse-cursor: nesw-resize;
                                                                                     pointer-event(event) => {
-                                                                                        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left { shift-held = event.modifiers.shift; root.node-resize-started(pn.id, "tr"); }
-                                                                                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.left { root.node-resize-finished(pn.id, "tr", (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px), (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px), shift-held); }
+                                                                                        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left { shift-held = event.modifiers.shift; drag-press-abs-x = self.absolute-position.x + self.mouse-x; drag-press-abs-y = self.absolute-position.y + self.mouse-y; root.node-resize-started(pn.id, "tr"); }
+                                                                                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.left { root.node-resize-finished(pn.id, "tr", (self.absolute-position.x + self.mouse-x - drag-press-abs-x) / (root.canvas-zoom * 1px), (self.absolute-position.y + self.mouse-y - drag-press-abs-y) / (root.canvas-zoom * 1px), shift-held); }
                                                                                     }
-                                                                                    moved => { if self.pressed { root.node-resize-moved(pn.id, "tr", (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px), (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px), shift-held); } }
+                                                                                    moved => { if self.pressed { root.node-resize-moved(pn.id, "tr", (self.absolute-position.x + self.mouse-x - drag-press-abs-x) / (root.canvas-zoom * 1px), (self.absolute-position.y + self.mouse-y - drag-press-abs-y) / (root.canvas-zoom * 1px), shift-held); } }
                                                                                 }
                                                                             }
                                                                             // Right
                                                                             Rectangle { x: parent.width - hs - ho; y: (parent.height - hs) / 2; width: hs; height: hs; background: white; border-width: 1px; border-color: Palette.accent-background;
                                                                                 resize-r := TouchArea { mouse-cursor: ew-resize;
                                                                                     pointer-event(event) => {
-                                                                                        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left { shift-held = event.modifiers.shift; root.node-resize-started(pn.id, "r"); }
-                                                                                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.left { root.node-resize-finished(pn.id, "r", (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px), (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px), shift-held); }
+                                                                                        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left { shift-held = event.modifiers.shift; drag-press-abs-x = self.absolute-position.x + self.mouse-x; drag-press-abs-y = self.absolute-position.y + self.mouse-y; root.node-resize-started(pn.id, "r"); }
+                                                                                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.left { root.node-resize-finished(pn.id, "r", (self.absolute-position.x + self.mouse-x - drag-press-abs-x) / (root.canvas-zoom * 1px), (self.absolute-position.y + self.mouse-y - drag-press-abs-y) / (root.canvas-zoom * 1px), shift-held); }
                                                                                     }
-                                                                                    moved => { if self.pressed { root.node-resize-moved(pn.id, "r", (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px), (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px), shift-held); } }
+                                                                                    moved => { if self.pressed { root.node-resize-moved(pn.id, "r", (self.absolute-position.x + self.mouse-x - drag-press-abs-x) / (root.canvas-zoom * 1px), (self.absolute-position.y + self.mouse-y - drag-press-abs-y) / (root.canvas-zoom * 1px), shift-held); } }
                                                                                 }
                                                                             }
                                                                             // Bottom-right
                                                                             Rectangle { x: parent.width - hs - ho; y: parent.height - hs - ho; width: hs; height: hs; background: white; border-width: 1px; border-color: Palette.accent-background;
                                                                                 resize-br := TouchArea { mouse-cursor: nwse-resize;
                                                                                     pointer-event(event) => {
-                                                                                        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left { shift-held = event.modifiers.shift; root.node-resize-started(pn.id, "br"); }
-                                                                                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.left { root.node-resize-finished(pn.id, "br", (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px), (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px), shift-held); }
+                                                                                        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left { shift-held = event.modifiers.shift; drag-press-abs-x = self.absolute-position.x + self.mouse-x; drag-press-abs-y = self.absolute-position.y + self.mouse-y; root.node-resize-started(pn.id, "br"); }
+                                                                                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.left { root.node-resize-finished(pn.id, "br", (self.absolute-position.x + self.mouse-x - drag-press-abs-x) / (root.canvas-zoom * 1px), (self.absolute-position.y + self.mouse-y - drag-press-abs-y) / (root.canvas-zoom * 1px), shift-held); }
                                                                                     }
-                                                                                    moved => { if self.pressed { root.node-resize-moved(pn.id, "br", (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px), (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px), shift-held); } }
+                                                                                    moved => { if self.pressed { root.node-resize-moved(pn.id, "br", (self.absolute-position.x + self.mouse-x - drag-press-abs-x) / (root.canvas-zoom * 1px), (self.absolute-position.y + self.mouse-y - drag-press-abs-y) / (root.canvas-zoom * 1px), shift-held); } }
                                                                                 }
                                                                             }
                                                                             // Bottom-center
                                                                             Rectangle { x: (parent.width - hs) / 2; y: parent.height - hs - ho; width: hs; height: hs; background: white; border-width: 1px; border-color: Palette.accent-background;
                                                                                 resize-b := TouchArea { mouse-cursor: ns-resize;
                                                                                     pointer-event(event) => {
-                                                                                        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left { shift-held = event.modifiers.shift; root.node-resize-started(pn.id, "b"); }
-                                                                                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.left { root.node-resize-finished(pn.id, "b", (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px), (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px), shift-held); }
+                                                                                        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left { shift-held = event.modifiers.shift; drag-press-abs-x = self.absolute-position.x + self.mouse-x; drag-press-abs-y = self.absolute-position.y + self.mouse-y; root.node-resize-started(pn.id, "b"); }
+                                                                                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.left { root.node-resize-finished(pn.id, "b", (self.absolute-position.x + self.mouse-x - drag-press-abs-x) / (root.canvas-zoom * 1px), (self.absolute-position.y + self.mouse-y - drag-press-abs-y) / (root.canvas-zoom * 1px), shift-held); }
                                                                                     }
-                                                                                    moved => { if self.pressed { root.node-resize-moved(pn.id, "b", (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px), (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px), shift-held); } }
+                                                                                    moved => { if self.pressed { root.node-resize-moved(pn.id, "b", (self.absolute-position.x + self.mouse-x - drag-press-abs-x) / (root.canvas-zoom * 1px), (self.absolute-position.y + self.mouse-y - drag-press-abs-y) / (root.canvas-zoom * 1px), shift-held); } }
                                                                                 }
                                                                             }
                                                                             // Bottom-left
                                                                             Rectangle { x: ho; y: parent.height - hs - ho; width: hs; height: hs; background: white; border-width: 1px; border-color: Palette.accent-background;
                                                                                 resize-bl := TouchArea { mouse-cursor: nesw-resize;
                                                                                     pointer-event(event) => {
-                                                                                        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left { shift-held = event.modifiers.shift; root.node-resize-started(pn.id, "bl"); }
-                                                                                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.left { root.node-resize-finished(pn.id, "bl", (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px), (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px), shift-held); }
+                                                                                        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left { shift-held = event.modifiers.shift; drag-press-abs-x = self.absolute-position.x + self.mouse-x; drag-press-abs-y = self.absolute-position.y + self.mouse-y; root.node-resize-started(pn.id, "bl"); }
+                                                                                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.left { root.node-resize-finished(pn.id, "bl", (self.absolute-position.x + self.mouse-x - drag-press-abs-x) / (root.canvas-zoom * 1px), (self.absolute-position.y + self.mouse-y - drag-press-abs-y) / (root.canvas-zoom * 1px), shift-held); }
                                                                                     }
-                                                                                    moved => { if self.pressed { root.node-resize-moved(pn.id, "bl", (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px), (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px), shift-held); } }
+                                                                                    moved => { if self.pressed { root.node-resize-moved(pn.id, "bl", (self.absolute-position.x + self.mouse-x - drag-press-abs-x) / (root.canvas-zoom * 1px), (self.absolute-position.y + self.mouse-y - drag-press-abs-y) / (root.canvas-zoom * 1px), shift-held); } }
                                                                                 }
                                                                             }
                                                                             // Left
                                                                             Rectangle { x: ho; y: (parent.height - hs) / 2; width: hs; height: hs; background: white; border-width: 1px; border-color: Palette.accent-background;
                                                                                 resize-l := TouchArea { mouse-cursor: ew-resize;
                                                                                     pointer-event(event) => {
-                                                                                        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left { shift-held = event.modifiers.shift; root.node-resize-started(pn.id, "l"); }
-                                                                                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.left { root.node-resize-finished(pn.id, "l", (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px), (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px), shift-held); }
+                                                                                        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left { shift-held = event.modifiers.shift; drag-press-abs-x = self.absolute-position.x + self.mouse-x; drag-press-abs-y = self.absolute-position.y + self.mouse-y; root.node-resize-started(pn.id, "l"); }
+                                                                                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.left { root.node-resize-finished(pn.id, "l", (self.absolute-position.x + self.mouse-x - drag-press-abs-x) / (root.canvas-zoom * 1px), (self.absolute-position.y + self.mouse-y - drag-press-abs-y) / (root.canvas-zoom * 1px), shift-held); }
                                                                                     }
-                                                                                    moved => { if self.pressed { root.node-resize-moved(pn.id, "l", (self.mouse-x - self.pressed-x) / (root.canvas-zoom * 1px), (self.mouse-y - self.pressed-y) / (root.canvas-zoom * 1px), shift-held); } }
+                                                                                    moved => { if self.pressed { root.node-resize-moved(pn.id, "l", (self.absolute-position.x + self.mouse-x - drag-press-abs-x) / (root.canvas-zoom * 1px), (self.absolute-position.y + self.mouse-y - drag-press-abs-y) / (root.canvas-zoom * 1px), shift-held); } }
                                                                                 }
                                                                             }
                                                                         }
