@@ -125,7 +125,7 @@ impl<'a> RenderSlintContext<'a> {
         self.current_style.borrow().clone()
     }
 
-    fn child_emits_position(child: &Node) -> bool {
+    pub fn child_emits_position(child: &Node) -> bool {
         match &child.layout_mode {
             LayoutMode::Absolute(_) | LayoutMode::Free => true,
             LayoutMode::Relative(_) => child.transform.position != [0.0, 0.0],

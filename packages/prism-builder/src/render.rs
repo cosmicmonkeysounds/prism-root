@@ -361,15 +361,18 @@ fn emit_grid_cell(
         GridCell::Leaf { node_id } => {
             if let Some(id) = node_id {
                 if let Some(&idx) = child_by_id.get(id.as_str()) {
+                    let child = &children[idx];
                     out.block("Rectangle", |out| {
                         out.line("horizontal-stretch: 1;");
                         out.line("vertical-stretch: 1;");
-                        out.line("preferred-width: 0px;");
-                        out.line("preferred-height: 0px;");
-                        out.line("clip: true;");
-                        out.block("VerticalLayout", |out| {
-                            ctx.render_child(&children[idx], out)
-                        })
+                        if RenderSlintContext::child_emits_position(child) {
+                            ctx.render_child(child, out)
+                        } else {
+                            out.line("preferred-width: 0px;");
+                            out.line("preferred-height: 0px;");
+                            out.line("clip: true;");
+                            out.block("VerticalLayout", |out| ctx.render_child(child, out))
+                        }
                     })
                 } else {
                     out.block("Rectangle", |out| {
@@ -1483,5 +1486,71 @@ mod tests {
             render_document_slint_source_mapped(&doc, &reg, &tokens).expect("render ok");
         eprintln!("mixed layout mapped source:\n{source}");
         compile_slint_source(&source).expect("mixed layout mapped source should compile");
+    }
+
+    #[cfg(feature = "interpreter")]
+    #[test]
+    fn preview_compiles_grid_with_positioned_child() {
+        use crate::layout::{AbsoluteProps, GridCell, PageLayout, TrackSize};
+        use prism_core::foundation::geometry::Edges;
+        use prism_core::foundation::spatial::Transform2D;
+
+        let doc = BuilderDocument {
+            root: Some(Node {
+                id: "root".into(),
+                component: "container".into(),
+                props: json!({}),
+                children: vec![
+                    Node {
+                        id: "n1".into(),
+                        component: "text".into(),
+                        props: json!({ "body": "Cell 1 text" }),
+                        children: vec![],
+                        ..Default::default()
+                    },
+                    Node {
+                        id: "n2".into(),
+                        component: "button".into(),
+                        props: json!({ "label": "Positioned" }),
+                        layout_mode: LayoutMode::Absolute(AbsoluteProps::default()),
+                        transform: Transform2D {
+                            position: [50.0, 80.0],
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }),
+            page_layout: PageLayout {
+                grid: Some(GridCell::Split {
+                    direction: crate::layout::SplitDirection::Horizontal,
+                    tracks: vec![TrackSize::Fr { value: 1.0 }, TrackSize::Fr { value: 1.0 }],
+                    gap: 8.0,
+                    children: vec![
+                        GridCell::Leaf {
+                            node_id: Some("n1".into()),
+                        },
+                        GridCell::Leaf {
+                            node_id: Some("n2".into()),
+                        },
+                    ],
+                }),
+                margins: Edges {
+                    top: 24.0,
+                    right: 24.0,
+                    bottom: 24.0,
+                    left: 24.0,
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let reg = real_registry();
+        let tokens = DesignTokens::default();
+        let source =
+            render_document_slint_preview(&doc, &reg, &tokens).expect("render should succeed");
+        eprintln!("grid+positioned source:\n{source}");
+        compile_slint_preview(&source).expect("grid with positioned child should compile");
     }
 }
