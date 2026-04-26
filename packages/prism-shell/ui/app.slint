@@ -2104,7 +2104,6 @@ export component AppWindow inherits Window {
                                                                             property <length> cy: (parent.height - gizmo-size) / 2;
                                                                             x: cx; y: cy;
                                                                             width: gizmo-size; height: gizmo-size;
-                                                                            transform-rotation: -pn.rotation-deg * 1deg;
 
                                                                             // ── Move gizmo: red X arrow, green Y arrow, white center ──
                                                                             Rectangle {
@@ -2121,8 +2120,8 @@ export component AppWindow inherits Window {
                                                                                 Rectangle { x: 31px; y: 36px - arm-len - 2px; width: 10px; height: 2px; background: #2ecc71; }
                                                                                 Rectangle { x: 33px; y: 36px - arm-len - 4px; width: 6px; height: 2px; background: #2ecc71; }
                                                                                 Rectangle { x: 35px; y: 36px - arm-len - 6px; width: 2px; height: 2px; background: #2ecc71; }
-                                                                                // Center square
-                                                                                Rectangle { x: 32px; y: 32px; width: 8px; height: 8px; background: white; border-width: 1px; border-color: #555; }
+                                                                                // Center square (stays upright regardless of rotation)
+                                                                                Rectangle { x: 32px; y: 32px; width: 8px; height: 8px; background: white; border-width: 1px; border-color: #555; transform-rotation: -pn.rotation-deg * 1deg; }
                                                                             }
 
                                                                             // ── Rotate gizmo: orange circle ──
