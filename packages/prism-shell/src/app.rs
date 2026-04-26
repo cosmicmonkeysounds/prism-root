@@ -1306,6 +1306,10 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |key, value| {
+                eprintln!(
+                    "[property-edit] key={key:?} value={value:?} syncing={}",
+                    inner.borrow().syncing.get()
+                );
                 if inner.borrow().syncing.get() {
                     return;
                 }
@@ -1393,14 +1397,20 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |key, val| {
+                eprintln!(
+                    "[property-edit-number] key={key:?} val={val} syncing={}",
+                    inner.borrow().syncing.get()
+                );
                 if inner.borrow().syncing.get() {
                     return;
                 }
                 let key = key.to_string();
                 let value = format_slider_value(val);
+                eprintln!("[property-edit-number] formatted value={value:?} for key={key:?}");
                 {
                     let mut s = inner.borrow_mut();
                     let selected_id = s.store.state().selection.primary().cloned();
+                    eprintln!("[property-edit-number] selected_id={selected_id:?}");
                     if key.starts_with("layout.") {
                         if let Some(ref target_id) = selected_id {
                             s.push_undo(&format!("Edit {key}"));
@@ -1419,13 +1429,31 @@ impl Shell {
                             s.push_undo(&format!("Edit {key}"));
                             let tid = target_id.clone();
                             if let Some(ref mut live) = s.live {
-                                let _ = live.mutate_document(|doc| {
+                                let res = live.mutate_document(|doc| {
                                     if let Some(ref mut root) = doc.root {
                                         apply_node_transform_edit(root, &tid, &key, &value);
                                     }
                                 });
+                                eprintln!("[transform-edit-num] mutate result={res:?}");
                             }
                             s.sync_builder_document();
+                            if let Some(node) = s
+                                .store
+                                .state()
+                                .builder_document
+                                .root
+                                .as_ref()
+                                .and_then(|r| r.find(&tid))
+                            {
+                                eprintln!(
+                                    "[transform-edit-num] post-sync pos={:?} rot={:.3} scale={:?}",
+                                    node.transform.position,
+                                    node.transform.rotation,
+                                    node.transform.scale
+                                );
+                            } else {
+                                eprintln!("[transform-edit-num] node {tid} NOT FOUND after sync");
+                            }
                         }
                     } else if key.starts_with("style.") || key.starts_with("inherited.style.") {
                         let style_key = key
@@ -3580,6 +3608,9 @@ fn push_property_sections(
     }
 
     let flat = PropertiesPanel::flatten_sections(&sections);
+    if let Some(tx) = flat.iter().find(|r| r.key == "transform.x") {
+        eprintln!("[push-props] transform.x value={:?}", tx.value);
+    }
     let rows: Vec<FieldRow> = flat
         .into_iter()
         .map(|r| field_row_data_to_slint(&r))

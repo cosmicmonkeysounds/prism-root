@@ -454,7 +454,7 @@ component SectionHeader inherits Rectangle {
     in property <string> section-id;
     callback section-toggled(string);
 
-    height: 32px;
+    height: 36px;
     background: transparent;
 
     section-touch := TouchArea {
@@ -492,7 +492,7 @@ component SectionHeader inherits Rectangle {
     }
 }
 
-component FieldEditor inherits Rectangle {
+component FieldEditor inherits VerticalLayout {
     in property <string> key;
     in property <string> label;
     in property <string> kind;
@@ -515,14 +515,11 @@ component FieldEditor inherits Rectangle {
     property <bool> file-url-mode: false;
     property <bool> select-open: false;
 
-    background: transparent;
-
-    VerticalLayout {
-        spacing: 4px;
-        padding-top: 4px;
-        padding-bottom: 6px;
-        padding-left: 4px;
-        padding-right: 4px;
+    spacing: 4px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+    padding-left: 4px;
+    padding-right: 4px;
 
         Text {
             text: root.required ? root.label + " *" : root.label;
@@ -869,7 +866,6 @@ component FieldEditor inherits Rectangle {
             color: Palette.foreground.transparentize(50%);
             font-size: 10px;
         }
-    }
 }
 
 component InspectorRow inherits Rectangle {
@@ -2556,12 +2552,12 @@ export component AppWindow inherits Window {
                                                 vertical-stretch: 1;
                                                 VerticalLayout {
                                                     width: 100%;
-                                                    padding-top: 8px; padding-bottom: 16px;
+                                                    padding-top: 4px; padding-bottom: 16px;
                                                     padding-left: 14px; padding-right: 14px;
-                                                    spacing: 2px;
+                                                    spacing: 0px;
                                                     min-width: 220px;
 
-                                                    for row[i] in root.property-rows : Rectangle {
+                                                    for row[i] in root.property-rows : VerticalLayout {
                                                         visible: i < root.property-rows-count;
 
                                                         if row.kind == "section" : SectionHeader {
