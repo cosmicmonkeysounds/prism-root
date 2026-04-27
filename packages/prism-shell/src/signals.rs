@@ -207,8 +207,12 @@ mod tests {
         let doc = test_doc();
         let results = SignalRuntime::fire_simple("btn", "clicked", &doc.connections);
         assert_eq!(results.len(), 2);
-        assert!(matches!(&results[0], DispatchResult::ToggleVisibility { target_node } if target_node == "modal"));
-        assert!(matches!(&results[1], DispatchResult::SetProperty { target_node, key, .. } if target_node == "modal" && key == "title"));
+        assert!(
+            matches!(&results[0], DispatchResult::ToggleVisibility { target_node } if target_node == "modal")
+        );
+        assert!(
+            matches!(&results[1], DispatchResult::SetProperty { target_node, key, .. } if target_node == "modal" && key == "title")
+        );
     }
 
     #[test]

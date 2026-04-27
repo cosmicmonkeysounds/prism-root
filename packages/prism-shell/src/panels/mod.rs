@@ -17,6 +17,7 @@ pub mod editor;
 pub mod identity;
 pub mod inspector;
 pub mod properties;
+pub mod signals;
 
 use prism_core::help::HelpEntry;
 

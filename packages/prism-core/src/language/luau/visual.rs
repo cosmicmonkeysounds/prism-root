@@ -176,6 +176,12 @@ impl VisualLanguage for LuauVisualLanguage {
                 "Write to CRDT store",
                 "Prism",
             ),
+            palette_entry(
+                ScriptNodeKind::EventListener,
+                "Signal Handler",
+                "Handle a component signal (clicked, hovered, etc.)",
+                "Signals",
+            ),
         ]
     }
 
@@ -331,42 +337,67 @@ impl DecompileCtx {
                 Some(id)
             }
             Stmt::FunctionDeclaration(decl) => {
-                let id = self.next_id("fn");
                 let name = decl.name().to_string().trim().to_string();
-                let node =
-                    ScriptNode::new(&id, ScriptNodeKind::FunctionDef, format!("function {name}"))
-                        .with_port(exec_input("exec_in"))
-                        .with_port(exec_output("exec_out"))
-                        .with_property("name", serde_json::Value::String(name))
-                        .with_property(
-                            "body",
-                            serde_json::Value::String(
-                                decl.body().block().to_string().trim().to_string(),
-                            ),
-                        );
-                graph.add_node(node);
-                Some(id)
+                let body_str = decl.body().block().to_string().trim().to_string();
+                let params_str = decl.body().parameters().to_string().trim().to_string();
+                if name.starts_with("on_") {
+                    let id = self.next_id("signal");
+                    let signal = name.trim_start_matches("on_").replace('_', "-");
+                    let node =
+                        ScriptNode::new(&id, ScriptNodeKind::EventListener, format!("on {signal}"))
+                            .with_port(exec_input("exec_in"))
+                            .with_port(exec_output("exec_out"))
+                            .with_property("signal", serde_json::Value::String(signal))
+                            .with_property("params", serde_json::Value::String(params_str))
+                            .with_property("body", serde_json::Value::String(body_str));
+                    graph.add_node(node);
+                    Some(id)
+                } else {
+                    let id = self.next_id("fn");
+                    let node = ScriptNode::new(
+                        &id,
+                        ScriptNodeKind::FunctionDef,
+                        format!("function {name}"),
+                    )
+                    .with_port(exec_input("exec_in"))
+                    .with_port(exec_output("exec_out"))
+                    .with_property("name", serde_json::Value::String(name))
+                    .with_property("body", serde_json::Value::String(body_str));
+                    graph.add_node(node);
+                    Some(id)
+                }
             }
             Stmt::LocalFunction(local_fn) => {
-                let id = self.next_id("local_fn");
                 let name = local_fn.name().to_string().trim().to_string();
-                let node = ScriptNode::new(
-                    &id,
-                    ScriptNodeKind::FunctionDef,
-                    format!("local function {name}"),
-                )
-                .with_port(exec_input("exec_in"))
-                .with_port(exec_output("exec_out"))
-                .with_property("name", serde_json::Value::String(name))
-                .with_property("local", serde_json::Value::Bool(true))
-                .with_property(
-                    "body",
-                    serde_json::Value::String(
-                        local_fn.body().block().to_string().trim().to_string(),
-                    ),
-                );
-                graph.add_node(node);
-                Some(id)
+                let body_str = local_fn.body().block().to_string().trim().to_string();
+                let params_str = local_fn.body().parameters().to_string().trim().to_string();
+                if name.starts_with("on_") {
+                    let id = self.next_id("signal");
+                    let signal = name.trim_start_matches("on_").replace('_', "-");
+                    let node =
+                        ScriptNode::new(&id, ScriptNodeKind::EventListener, format!("on {signal}"))
+                            .with_port(exec_input("exec_in"))
+                            .with_port(exec_output("exec_out"))
+                            .with_property("signal", serde_json::Value::String(signal))
+                            .with_property("params", serde_json::Value::String(params_str))
+                            .with_property("body", serde_json::Value::String(body_str));
+                    graph.add_node(node);
+                    Some(id)
+                } else {
+                    let id = self.next_id("local_fn");
+                    let node = ScriptNode::new(
+                        &id,
+                        ScriptNodeKind::FunctionDef,
+                        format!("local function {name}"),
+                    )
+                    .with_port(exec_input("exec_in"))
+                    .with_port(exec_output("exec_out"))
+                    .with_property("name", serde_json::Value::String(name))
+                    .with_property("local", serde_json::Value::Bool(true))
+                    .with_property("body", serde_json::Value::String(body_str));
+                    graph.add_node(node);
+                    Some(id)
+                }
             }
             Stmt::If(if_stmt) => {
                 let id = self.next_id("if");
@@ -761,6 +792,25 @@ fn compile_node(graph: &ScriptGraph, node: &ScriptNode) -> Option<String> {
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
         },
+        ScriptNodeKind::EventListener => {
+            let signal = node
+                .properties
+                .get("signal")
+                .and_then(|v| v.as_str())
+                .unwrap_or("clicked");
+            let handler_name = format!("on_{}", signal.replace('-', "_"));
+            let params = node
+                .properties
+                .get("params")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let body = node
+                .properties
+                .get("body")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            Some(format!("function {handler_name}({params})\n{body}\nend"))
+        }
         ScriptNodeKind::Literal
         | ScriptNodeKind::Variable
         | ScriptNodeKind::BinaryOp
@@ -962,6 +1012,7 @@ mod tests {
         assert!(!palette.is_empty());
         assert!(palette.iter().any(|p| p.category == "Control Flow"));
         assert!(palette.iter().any(|p| p.category == "Prism"));
+        assert!(palette.iter().any(|p| p.category == "Signals"));
     }
 
     #[test]
@@ -990,5 +1041,46 @@ mod tests {
             assert!(from.is_some(), "edge source {} exists", edge.from_node);
             assert!(to.is_some(), "edge target {} exists", edge.to_node);
         }
+    }
+
+    #[test]
+    fn decompile_signal_handler() {
+        let lang = LuauVisualLanguage::new();
+        let graph = lang
+            .decompile("function on_clicked(x, y)\n  print(x, y)\nend")
+            .unwrap();
+        let handler = graph
+            .nodes
+            .iter()
+            .find(|n| n.kind == ScriptNodeKind::EventListener)
+            .expect("should create EventListener node");
+        assert_eq!(
+            handler.properties.get("signal").unwrap().as_str().unwrap(),
+            "clicked"
+        );
+        assert!(handler.label.contains("clicked"));
+    }
+
+    #[test]
+    fn compile_signal_handler_round_trip() {
+        let lang = LuauVisualLanguage::new();
+        let graph = lang
+            .decompile("function on_hover_ended()\n  print(\"left\")\nend")
+            .unwrap();
+        let source = lang.compile(&graph).unwrap();
+        assert!(source.contains("function on_hover_ended()"));
+        assert!(source.contains("print(\"left\")"));
+    }
+
+    #[test]
+    fn decompile_local_signal_handler() {
+        let lang = LuauVisualLanguage::new();
+        let graph = lang
+            .decompile("local function on_drag_started(x, y)\nend")
+            .unwrap();
+        assert!(graph
+            .nodes
+            .iter()
+            .any(|n| n.kind == ScriptNodeKind::EventListener));
     }
 }

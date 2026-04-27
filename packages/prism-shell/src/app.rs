@@ -13,6 +13,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
+use crate::signals::SignalRuntime;
 use prism_builder::AssetSource;
 use prism_builder::{
     app::{AppIcon, NavigationConfig, Page, PrismApp},
@@ -638,6 +639,35 @@ impl ShellInner {
         self.sync_builder_document();
     }
 
+    fn fire_signal(
+        &mut self,
+        source_node: &str,
+        signal: &str,
+        payload: serde_json::Map<String, serde_json::Value>,
+    ) {
+        let connections = self
+            .store
+            .state()
+            .active_app()
+            .and_then(|a| a.active_document())
+            .map(|d| d.connections.clone())
+            .unwrap_or_default();
+        if connections.is_empty() {
+            return;
+        }
+        let results = SignalRuntime::fire(source_node, signal, payload, &connections);
+        if results.is_empty() {
+            return;
+        }
+        self.store.mutate(|state| {
+            if let Some(doc) = state.active_app_mut().and_then(|a| a.active_document_mut()) {
+                for result in &results {
+                    SignalRuntime::apply_result(result, doc);
+                }
+            }
+        });
+    }
+
     fn load_active_page(&mut self) {
         let state = self.store.state();
         if let Some(app) = state.active_app() {
@@ -1101,6 +1131,7 @@ impl Shell {
                             });
                         }
                     }
+                    s.fire_signal(&nid, "clicked", serde_json::Map::new());
                 }
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
@@ -1372,18 +1403,21 @@ impl Shell {
                                 }
                             });
                         }
-                    } else {
-                        if let Some(ref target_id) = selected_id {
-                            let kind = field_kind_for_key(&s, &key);
-                            let (source_key, formatted) =
-                                slint_source_key_for_edit(&s, &key, &value, kind.as_deref());
-                            s.push_undo(&format!("Edit {key}"));
-                            if let Some(ref mut live) = s.live {
-                                let _ =
-                                    live.edit_prop_in_source(target_id, &source_key, &formatted);
-                            }
-                            s.sync_builder_document();
+                    } else if let Some(ref target_id) = selected_id {
+                        let kind = field_kind_for_key(&s, &key);
+                        let (source_key, formatted) =
+                            slint_source_key_for_edit(&s, &key, &value, kind.as_deref());
+                        s.push_undo(&format!("Edit {key}"));
+                        if let Some(ref mut live) = s.live {
+                            let _ = live.edit_prop_in_source(target_id, &source_key, &formatted);
                         }
+                        s.sync_builder_document();
+                        s.fire_signal(target_id, "changed", {
+                            let mut p = serde_json::Map::new();
+                            p.insert("key".into(), serde_json::Value::from(key.as_str()));
+                            p.insert("value".into(), serde_json::Value::from(value.as_str()));
+                            p
+                        });
                     }
                 }
                 if let Some(w) = weak.upgrade() {
@@ -2343,7 +2377,7 @@ impl Shell {
                     if let Some(ref root) = doc.root {
                         if let Some(t) = find_node_transform(root, &nid) {
                             s.drag_initial_transform = Some(DragSnapshot {
-                                node_id: nid,
+                                node_id: nid.clone(),
                                 position: t.position,
                                 rotation: t.rotation,
                                 scale: t.scale,
@@ -2352,6 +2386,7 @@ impl Shell {
                         }
                     }
                 }
+                s.fire_signal(&nid, "drag-started", serde_json::Map::new());
             }
         });
 
@@ -2417,6 +2452,7 @@ impl Shell {
                         }
                     }
                     s.sync_builder_document();
+                    s.fire_signal(&nid, "drag-ended", serde_json::Map::new());
                 }
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);

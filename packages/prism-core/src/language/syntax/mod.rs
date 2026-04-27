@@ -31,7 +31,7 @@ pub use syntax::{
 };
 pub use syntax_types::{
     CompletionItem, CompletionKind, Diagnostic, DiagnosticSeverity, FieldTypeMapping,
-    FunctionParam, FunctionSignature, HoverInfo, LuauTypeDef, SchemaContext, SyntaxEngine,
-    SyntaxEngineOptions, SyntaxProvider, TextRange, TypeInfo,
+    FunctionParam, FunctionSignature, HoverInfo, LuauTypeDef, SchemaContext, SignalContext,
+    SignalPayloadField, SyntaxEngine, SyntaxEngineOptions, SyntaxProvider, TextRange, TypeInfo,
 };
 pub use token_stream::{BaseToken, TokenError, TokenStream};

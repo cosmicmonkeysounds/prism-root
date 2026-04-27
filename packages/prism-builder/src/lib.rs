@@ -65,8 +65,9 @@ pub use render::{
 };
 pub use resource::{ResourceDef, ResourceId, ResourceKind};
 pub use signal::{
-    common_signals, dispatch_signal, signal_symbols, with_common_signals, ActionKind, Connection,
-    ConnectionId, DispatchResult, SignalDef, SignalEvent,
+    common_signals, dispatch_signal, generate_signal_type_stubs, signal_contexts, signal_symbols,
+    with_common_signals, ActionKind, Connection, ConnectionId, DispatchResult, SignalDef,
+    SignalEvent,
 };
 pub use slint_source::{SlintEmitter, SlintIdent};
 pub use source_map::{MappedEmitter, PropSpan, SourceMap, SourceSpan};

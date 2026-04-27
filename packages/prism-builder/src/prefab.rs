@@ -16,7 +16,7 @@ use crate::document::{Node, NodeId};
 use crate::html::Html;
 use crate::html_block::{HtmlBlock, HtmlRenderContext};
 use crate::registry::FieldSpec;
-use crate::signal::SignalDef;
+use crate::signal::{common_signals, SignalDef};
 use crate::slint_source::SlintEmitter;
 use crate::variant::VariantAxis;
 
@@ -78,7 +78,7 @@ impl Component for PrefabComponent {
     }
 
     fn signals(&self) -> Vec<SignalDef> {
-        vec![]
+        common_signals()
     }
 
     fn variants(&self) -> Vec<VariantAxis> {
@@ -126,7 +126,7 @@ impl HtmlBlock for PrefabHtmlBlock {
     }
 
     fn signals(&self) -> Vec<SignalDef> {
-        vec![]
+        common_signals()
     }
 
     fn variants(&self) -> Vec<VariantAxis> {

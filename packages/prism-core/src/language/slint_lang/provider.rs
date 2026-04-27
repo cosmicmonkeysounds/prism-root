@@ -548,6 +548,7 @@ mod tests {
         let ctx = SchemaContext {
             object_type: "card".into(),
             fields: vec![field],
+            signals: vec![],
         };
         let items = p.complete("titl", 4, Some(&ctx));
         assert!(items.iter().any(|i| i.label == "title"));

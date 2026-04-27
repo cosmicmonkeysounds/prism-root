@@ -80,6 +80,28 @@ pub struct TypeInfo {
 pub struct SchemaContext {
     pub object_type: String,
     pub fields: Vec<EntityFieldDef>,
+    /// Signal definitions available in the current editing context.
+    /// When editing a handler for a component's signal, this carries
+    /// the component's full signal list so the provider can offer
+    /// signal-aware completions and hover.
+    #[allow(dead_code)]
+    pub signals: Vec<SignalContext>,
+}
+
+/// Lightweight signal metadata for syntax providers. Mirrors the
+/// shape of `prism_builder::SignalDef` without the dependency.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SignalContext {
+    pub name: String,
+    pub description: String,
+    pub payload: Vec<SignalPayloadField>,
+}
+
+/// One field in a signal's payload — name + Luau type string.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SignalPayloadField {
+    pub name: String,
+    pub luau_type: String,
 }
 
 // ── Luau typedef ──────────────────────────────────────────────────

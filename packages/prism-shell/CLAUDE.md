@@ -193,7 +193,17 @@ From `src/lib.rs`:
 - `InputAction` — serialisable `Action<AppState>` wrapper around
   `InputEvent`.
 - `panels` — data-provider structs (one per panel) that feed Slint
-  properties. Four panels: Identity, Builder, Inspector, Properties.
+  properties. Five panels: Identity, Builder, Inspector, Properties,
+  Signals.
+- `signals` (`src/signals.rs`) — `SignalRuntime` bridges builder signal
+  dispatch to the shell. `fire`, `fire_simple`, `fire_pointer`,
+  `fire_changed` create `SignalEvent`s and evaluate connections.
+  `apply_result` mutates `BuilderDocument` for SetProperty and
+  ToggleVisibility actions. 7 unit tests.
+- `panels::signals` (`src/panels/signals.rs`) — `SignalsPanel` for
+  authoring signal connections. `connection_rows`, `connections_for_node`,
+  `available_signals`, `available_targets`, `create_connection`,
+  `remove_connection`, `signal_contexts_for_node`. 11 unit tests.
 - `help` (`src/help.rs`) — `register_help_entries(&mut HelpRegistry,
   &ComponentRegistry)` coordinates distributed help registration.
   Component entries come from `Component::help_entry()` via

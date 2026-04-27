@@ -160,6 +160,31 @@ impl SyntaxProvider for LuauSyntaxProvider {
                     });
                 }
             }
+
+            for sig in &ctx.signals {
+                let handler_name = format!("on_{}", sig.name.replace('-', "_"));
+                if handler_name.starts_with(&prefix) {
+                    let params = if sig.payload.is_empty() {
+                        String::new()
+                    } else {
+                        sig.payload
+                            .iter()
+                            .map(|p| format!("{}: {}", p.name, p.luau_type))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    };
+                    let detail = format!("fun({params}) -> ()");
+                    items.push(CompletionItem {
+                        label: handler_name,
+                        kind: CompletionKind::Function,
+                        detail: Some(detail),
+                        documentation: Some(sig.description.clone()),
+                        sort_order: Some(30),
+                        replace_range: None,
+                        insert_text: None,
+                    });
+                }
+            }
         }
 
         items.sort_by(|a, b| a.sort_order.cmp(&b.sort_order).then(a.label.cmp(&b.label)));
@@ -170,7 +195,7 @@ impl SyntaxProvider for LuauSyntaxProvider {
         &self,
         source: &str,
         offset: usize,
-        _context: Option<&SchemaContext>,
+        context: Option<&SchemaContext>,
     ) -> Option<HoverInfo> {
         let (word, start, end) = extract_word_at(source, offset)?;
 
@@ -188,6 +213,32 @@ impl SyntaxProvider for LuauSyntaxProvider {
                 range: TextRange { start, end },
                 contents: format!("{word} (keyword)"),
             });
+        }
+
+        if let Some(ctx) = context {
+            for sig in &ctx.signals {
+                let handler_name = format!("on_{}", sig.name.replace('-', "_"));
+                if word == handler_name {
+                    let params = if sig.payload.is_empty() {
+                        "()".to_string()
+                    } else {
+                        let p = sig
+                            .payload
+                            .iter()
+                            .map(|f| format!("{}: {}", f.name, f.luau_type))
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        format!("({p})")
+                    };
+                    return Some(HoverInfo {
+                        range: TextRange { start, end },
+                        contents: format!(
+                            "signal handler `{}`\n{}\nfun{params} -> ()",
+                            sig.name, sig.description
+                        ),
+                    });
+                }
+            }
         }
 
         None
@@ -326,8 +377,77 @@ mod tests {
         let ctx = SchemaContext {
             object_type: "task".into(),
             fields: vec![field],
+            signals: vec![],
         };
         let items = provider.complete("sta", 3, Some(&ctx));
         assert!(items.iter().any(|i| i.label == "status"));
+    }
+
+    #[test]
+    fn complete_signal_handlers() {
+        use crate::language::syntax::{SignalContext, SignalPayloadField};
+        let provider = LuauSyntaxProvider::new();
+        let ctx = SchemaContext {
+            object_type: "button".into(),
+            fields: vec![],
+            signals: vec![
+                SignalContext {
+                    name: "clicked".into(),
+                    description: "Fires on click".into(),
+                    payload: vec![
+                        SignalPayloadField {
+                            name: "x".into(),
+                            luau_type: "number".into(),
+                        },
+                        SignalPayloadField {
+                            name: "y".into(),
+                            luau_type: "number".into(),
+                        },
+                    ],
+                },
+                SignalContext {
+                    name: "hover-ended".into(),
+                    description: "Fires on hover leave".into(),
+                    payload: vec![],
+                },
+            ],
+        };
+        let items = provider.complete("on_", 3, Some(&ctx));
+        assert!(
+            items.iter().any(|i| i.label == "on_clicked"),
+            "should complete on_clicked"
+        );
+        assert!(
+            items.iter().any(|i| i.label == "on_hover_ended"),
+            "should complete on_hover_ended"
+        );
+
+        let clicked = items.iter().find(|i| i.label == "on_clicked").unwrap();
+        assert!(clicked.detail.as_ref().unwrap().contains("x: number"));
+        assert_eq!(clicked.sort_order, Some(30));
+    }
+
+    #[test]
+    fn hover_signal_handler() {
+        use crate::language::syntax::{SignalContext, SignalPayloadField};
+        let provider = LuauSyntaxProvider::new();
+        let ctx = SchemaContext {
+            object_type: "button".into(),
+            fields: vec![],
+            signals: vec![SignalContext {
+                name: "clicked".into(),
+                description: "Fires on click".into(),
+                payload: vec![SignalPayloadField {
+                    name: "x".into(),
+                    luau_type: "number".into(),
+                }],
+            }],
+        };
+        let hover = provider.hover("on_clicked()", 5, Some(&ctx));
+        assert!(hover.is_some());
+        let info = hover.unwrap();
+        assert!(info.contents.contains("signal handler"));
+        assert!(info.contents.contains("clicked"));
+        assert!(info.contents.contains("x: number"));
     }
 }

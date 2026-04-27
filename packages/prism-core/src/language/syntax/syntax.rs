@@ -1030,6 +1030,7 @@ mod tests {
         let ctx = SchemaContext {
             object_type: "Task".into(),
             fields: vec![field("priority", EntityFieldType::Int)],
+            signals: vec![],
         };
         let diags = engine.diagnose("[field:missing] + 1", Some(&ctx));
         assert!(diags
@@ -1060,6 +1061,7 @@ mod tests {
         let ctx = SchemaContext {
             object_type: "Task".into(),
             fields: vec![field("priority", EntityFieldType::Int)],
+            signals: vec![],
         };
         let def = generate_luau_type_def(&ctx);
         assert!(def.content.contains("---@class Task"));

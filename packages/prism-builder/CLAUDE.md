@@ -139,11 +139,30 @@ From `src/lib.rs`:
   wiring. Components declare signals; documents store connections
   (source signal → target action: SetProperty, ToggleVisibility,
   NavigateTo, PlayAnimation, EmitSignal, Custom).
+- `common_signals()` — 12 universal interaction signals every
+  component gets automatically (clicked, double-clicked, hovered,
+  hover-ended, drag-started/moved/ended, changed, focused, blurred,
+  deleted, mounted). `with_common_signals(component_signals)` merges
+  component-specific + common (component wins on name collision).
+- `SignalEvent`, `DispatchResult`, `dispatch_signal(event, connections)`
+  — runtime signal dispatch. Evaluates a fired signal against the
+  document's connection list and returns actions for the shell to
+  execute.
+- `signal_symbols(component_id, signals)` — codegen bridge that
+  produces a `SymbolDef` class for LuaLS `.d.luau` type stubs.
+  `generate_signal_type_stubs(registry, project_name)` iterates the
+  full registry and emits a complete `signals.d.luau` file via
+  `SymbolEmmyDocEmitter`.
+- `signal_contexts(signals)` — bridge from builder `SignalDef`s to
+  syntax engine `SignalContext`s for the Luau provider's signal-aware
+  completions and hover.
 - `VariantAxis`, `VariantOption`, `apply_variant_overrides`,
   `apply_variant_defaults` — named bundles of prop overrides per axis.
   Render walker applies variant defaults before component render.
-- Both `Component` and `HtmlBlock` traits gained `signals()` and
-  `variants()` default methods (backward-compatible, return `vec![]`).
+- Both `Component` and `HtmlBlock` traits' `signals()` default impl
+  returns `common_signals()` (12 universal signals). Components
+  override with `with_common_signals(extras)` to add component-specific
+  signals alongside the common set.
 - `RenderSlintContext` and `HtmlRenderContext` `render_child()` now
   pipeline: resolve resource refs → apply variant defaults → chain
   modifier wrappers → call component render.
@@ -207,7 +226,11 @@ Sixteen modules in `src/`:
   (implements `Component`), `apply_prop_to_node`. 5 unit tests.
 - `resource.rs` — `ResourceDef`, `ResourceKind`, `resolve_resource_refs`.
   7 unit tests.
-- `signal.rs` — `SignalDef`, `Connection`, `ActionKind`. 5 unit tests.
+- `signal.rs` — `SignalDef`, `Connection`, `ActionKind`, `SignalEvent`,
+  `DispatchResult`, `dispatch_signal`, `common_signals` (12 universal),
+  `with_common_signals` (merge/dedup), `signal_symbols` (codegen),
+  `generate_signal_type_stubs` (full registry → `.d.luau`),
+  `signal_contexts` (builder→syntax bridge). 20 unit tests.
 - `variant.rs` — `VariantAxis`, `VariantOption`, `apply_variant_overrides`,
   `apply_variant_defaults`. 6 unit tests.
 - `source_map.rs` — `SourceMap`, `SourceSpan`, `PropSpan`,
