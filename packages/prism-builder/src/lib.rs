@@ -64,7 +64,10 @@ pub use render::{
     render_document_slint_source_mapped,
 };
 pub use resource::{ResourceDef, ResourceId, ResourceKind};
-pub use signal::{ActionKind, Connection, ConnectionId, SignalDef};
+pub use signal::{
+    common_signals, dispatch_signal, signal_symbols, with_common_signals, ActionKind, Connection,
+    ConnectionId, DispatchResult, SignalDef, SignalEvent,
+};
 pub use slint_source::{SlintEmitter, SlintIdent};
 pub use source_map::{MappedEmitter, PropSpan, SourceMap, SourceSpan};
 pub use source_parse::{derive_document_from_source, format_slint_value, parse_slint_value};

@@ -81,7 +81,7 @@ pub trait HtmlBlock: Send + Sync {
     fn schema(&self) -> Vec<FieldSpec>;
 
     fn signals(&self) -> Vec<SignalDef> {
-        vec![]
+        crate::signal::common_signals()
     }
 
     fn variants(&self) -> Vec<VariantAxis> {

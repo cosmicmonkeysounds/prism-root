@@ -23,7 +23,7 @@ use crate::document::Node;
 use crate::prefab::{ExposedSlot, PrefabComponent, PrefabDef};
 use crate::registry::{prop_f64, prop_str, ComponentRegistry, FieldSpec, RegistryError};
 use crate::schemas;
-use crate::signal::SignalDef;
+use crate::signal::{with_common_signals, SignalDef};
 use crate::slint_source::{escape_slint_string, SlintEmitter};
 use crate::style::StyleProperties;
 use crate::variant::{VariantAxis, VariantOption};
@@ -113,7 +113,11 @@ impl Component for TextComponent {
         ))
     }
     fn signals(&self) -> Vec<SignalDef> {
-        vec![SignalDef::new("clicked", "Fires when a link is clicked")]
+        with_common_signals(vec![SignalDef::new(
+            "link-clicked",
+            "Fires when a hyperlink in the text is clicked",
+        )
+        .with_payload(vec![FieldSpec::text("href", "Link URL")])])
     }
     fn render_slint(
         &self,
@@ -169,6 +173,12 @@ impl Component for ImageComponent {
             "Image",
             "Embedded image. Upload from your device, pick from the current vault, or paste an external URL. Supports configurable object-fit.",
         ))
+    }
+    fn signals(&self) -> Vec<SignalDef> {
+        with_common_signals(vec![SignalDef::new(
+            "loaded",
+            "Fires when the image finishes loading",
+        )])
     }
     fn render_slint(
         &self,
@@ -243,6 +253,13 @@ impl Component for ContainerComponent {
             "Layout wrapper that groups child components with configurable spacing.",
         ))
     }
+    fn signals(&self) -> Vec<SignalDef> {
+        with_common_signals(vec![SignalDef::new(
+            "child-added",
+            "Fires when a child component is added",
+        )
+        .with_payload(vec![FieldSpec::text("child_id", "Added child node ID")])])
+    }
     fn render_slint(
         &self,
         ctx: &RenderSlintContext<'_>,
@@ -316,10 +333,12 @@ impl Component for FormComponent {
         ))
     }
     fn signals(&self) -> Vec<SignalDef> {
-        vec![SignalDef::new(
-            "submitted",
-            "Fires when the form is submitted",
-        )]
+        with_common_signals(vec![
+            SignalDef::new("submitted", "Fires when the form is submitted"),
+            SignalDef::new("validated", "Fires after form validation runs").with_payload(vec![
+                FieldSpec::boolean("valid", "Whether validation passed"),
+            ]),
+        ])
     }
     fn render_slint(
         &self,
@@ -357,11 +376,16 @@ impl Component for InputComponent {
         ))
     }
     fn signals(&self) -> Vec<SignalDef> {
-        vec![
-            SignalDef::new("changed", "Fires when the input value changes"),
-            SignalDef::new("focused", "Fires when the input gains focus"),
-            SignalDef::new("blurred", "Fires when the input loses focus"),
-        ]
+        with_common_signals(vec![
+            SignalDef::new("changed", "Fires when the input value changes").with_payload(vec![
+                FieldSpec::text("value", "Current input value"),
+                FieldSpec::text("old_value", "Previous input value"),
+            ]),
+            SignalDef::new("key-pressed", "Fires on each keystroke").with_payload(vec![
+                FieldSpec::text("key", "Key name"),
+                FieldSpec::text("value", "Current input value"),
+            ]),
+        ])
     }
     fn render_slint(
         &self,
@@ -512,6 +536,9 @@ impl Component for CodeComponent {
             "Preformatted code block with optional language label.",
         ))
     }
+    fn signals(&self) -> Vec<SignalDef> {
+        with_common_signals(vec![])
+    }
     fn render_slint(
         &self,
         ctx: &RenderSlintContext<'_>,
@@ -562,6 +589,9 @@ impl Component for DividerComponent {
             "Horizontal separator line between content sections.",
         ))
     }
+    fn signals(&self) -> Vec<SignalDef> {
+        with_common_signals(vec![])
+    }
     fn render_slint(
         &self,
         _ctx: &RenderSlintContext<'_>,
@@ -595,6 +625,9 @@ impl Component for SpacerComponent {
             "Spacer",
             "Vertical spacing element with configurable height in pixels.",
         ))
+    }
+    fn signals(&self) -> Vec<SignalDef> {
+        with_common_signals(vec![])
     }
     fn render_slint(
         &self,
@@ -630,6 +663,9 @@ impl Component for ColumnsComponent {
             "Side-by-side horizontal layout with configurable gap between children.",
         ))
     }
+    fn signals(&self) -> Vec<SignalDef> {
+        with_common_signals(vec![])
+    }
     fn render_slint(
         &self,
         ctx: &RenderSlintContext<'_>,
@@ -664,6 +700,17 @@ impl Component for ListComponent {
             "Ordered or unordered list. Toggle the ordered property to switch between numbered and bulleted styles.",
         ))
     }
+    fn signals(&self) -> Vec<SignalDef> {
+        with_common_signals(vec![SignalDef::new(
+            "item-clicked",
+            "Fires when a list item is clicked",
+        )
+        .with_payload(vec![FieldSpec::number(
+            "index",
+            "Item index",
+            Default::default(),
+        )])])
+    }
     fn render_slint(
         &self,
         ctx: &RenderSlintContext<'_>,
@@ -697,6 +744,26 @@ impl Component for TableComponent {
             "Table",
             "Data table with comma-separated column headers and optional caption.",
         ))
+    }
+    fn signals(&self) -> Vec<SignalDef> {
+        with_common_signals(vec![
+            SignalDef::new("row-clicked", "Fires when a table row is clicked").with_payload(vec![
+                FieldSpec::number("row", "Row index", Default::default()),
+            ]),
+            SignalDef::new("cell-clicked", "Fires when a table cell is clicked").with_payload(
+                vec![
+                    FieldSpec::number("row", "Row index", Default::default()),
+                    FieldSpec::number("column", "Column index", Default::default()),
+                ],
+            ),
+            SignalDef::new("header-clicked", "Fires when a column header is clicked").with_payload(
+                vec![FieldSpec::number(
+                    "column",
+                    "Column index",
+                    Default::default(),
+                )],
+            ),
+        ])
     }
     fn render_slint(
         &self,
@@ -763,10 +830,14 @@ impl Component for TabsComponent {
         ))
     }
     fn signals(&self) -> Vec<SignalDef> {
-        vec![SignalDef::new(
+        with_common_signals(vec![SignalDef::new(
             "tab-changed",
             "Fires when the active tab changes",
-        )]
+        )
+        .with_payload(vec![
+            FieldSpec::number("index", "Active tab index", Default::default()),
+            FieldSpec::text("label", "Active tab label"),
+        ])])
     }
     fn render_slint(
         &self,
@@ -832,10 +903,14 @@ impl Component for AccordionComponent {
         ))
     }
     fn signals(&self) -> Vec<SignalDef> {
-        vec![SignalDef::new(
+        with_common_signals(vec![SignalDef::new(
             "toggled",
             "Fires when the section is expanded or collapsed",
-        )]
+        )
+        .with_payload(vec![FieldSpec::boolean(
+            "open",
+            "Whether the section is now open",
+        )])])
     }
     fn render_slint(
         &self,
@@ -889,10 +964,7 @@ impl Component for ButtonComponent {
         ))
     }
     fn signals(&self) -> Vec<SignalDef> {
-        vec![SignalDef::new(
-            "clicked",
-            "Fires when the button is pressed",
-        )]
+        with_common_signals(vec![])
     }
     fn variants(&self) -> Vec<VariantAxis> {
         vec![VariantAxis {

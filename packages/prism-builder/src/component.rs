@@ -427,7 +427,7 @@ pub trait Component: Send + Sync {
     }
 
     fn signals(&self) -> Vec<SignalDef> {
-        vec![]
+        crate::signal::common_signals()
     }
 
     fn variants(&self) -> Vec<VariantAxis> {
