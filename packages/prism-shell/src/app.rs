@@ -859,6 +859,9 @@ impl ShellInner {
             self.store.mutate(|state| {
                 state.sync_source_to_app(&source);
                 doc.page_layout = state.builder_document.page_layout.clone();
+                if let Some(app_doc) = state.active_app().and_then(|a| a.active_document()) {
+                    doc.connections = app_doc.connections.clone();
+                }
                 state.builder_document = doc;
                 state.sync_document_to_app();
             });
@@ -871,6 +874,9 @@ impl ShellInner {
             let source = live.source.clone();
             self.store.mutate(|state| {
                 doc.page_layout = state.builder_document.page_layout.clone();
+                if let Some(app_doc) = state.active_app().and_then(|a| a.active_document()) {
+                    doc.connections = app_doc.connections.clone();
+                }
                 state.builder_document = doc;
                 if state.editor_state.text() != source {
                     let cursor = state.editor_state.cursor.position;

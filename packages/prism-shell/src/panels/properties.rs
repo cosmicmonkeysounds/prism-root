@@ -212,34 +212,6 @@ impl PropertiesPanel {
             }
         }
 
-        // ── Signals (only when component declares them) ────────
-        if let Some(ref c) = component {
-            let signals = c.signals();
-            if !signals.is_empty() {
-                let signal_rows: Vec<FieldRowData> = signals
-                    .iter()
-                    .map(|sig| FieldRowData {
-                        key: format!("signal.{}", sig.name),
-                        label: sig.name.clone(),
-                        kind: "text".into(),
-                        value: sig.description.clone(),
-                        required: false,
-                        min: 0.0,
-                        max: 0.0,
-                        has_bounds: false,
-                        options: vec![],
-                    })
-                    .collect();
-                sections.push(PropertySection {
-                    id: "signals".into(),
-                    label: "Signals".into(),
-                    icon: "zap".into(),
-                    collapsed: true,
-                    rows: signal_rows,
-                });
-            }
-        }
-
         sections
     }
 
@@ -1635,7 +1607,7 @@ mod tests {
     }
 
     #[test]
-    fn button_sections_include_variants_and_signals() {
+    fn button_sections_include_variants() {
         let mut reg = ComponentRegistry::new();
         register_builtins(&mut reg).unwrap();
         let doc = BuilderDocument {
@@ -1654,8 +1626,8 @@ mod tests {
             "button should have variants section"
         );
         assert!(
-            ids.contains(&"signals"),
-            "button should have signals section"
+            !ids.contains(&"signals"),
+            "signals belong in the dedicated Signals panel, not Properties"
         );
     }
 }

@@ -2860,154 +2860,112 @@ export component AppWindow inherits Window {
                                         // ════════════════════════════════════
                                         if panel.panel-id == "signals" : Rectangle {
                                             background: Palette.alternate-background;
-                                            VerticalLayout {
-                                                padding: 12px; spacing: 8px; alignment: start;
-                                                // Header
-                                                HorizontalLayout {
-                                                    spacing: 8px; alignment: start;
-                                                    Text { text: "Signal Connections"; color: Palette.foreground.transparentize(20%); font-size: 12px; font-weight: 600; vertical-alignment: center; }
-                                                    Text { text: root.signal-connections-count > 0 ? "(" + root.signal-connections-count + ")" : ""; color: Palette.foreground.transparentize(50%); font-size: 11px; vertical-alignment: center; }
-                                                }
-
-                                                // Connection list
-                                                if root.signal-connections-count > 0 : ScrollView {
-                                                    min-height: 60px;
-                                                    VerticalLayout {
-                                                        spacing: 2px;
-                                                        for conn[i] in root.signal-connections : Rectangle {
-                                                            visible: i < root.signal-connections-count;
-                                                            height: 36px;
-                                                            background: conn-touch.has-hover ? Palette.control-background : transparent;
-                                                            border-radius: 4px;
-                                                            conn-touch := TouchArea {
-                                                                HorizontalLayout {
-                                                                    padding-left: 8px; padding-right: 4px; spacing: 6px;
-                                                                    VerticalLayout {
-                                                                        alignment: center;
-                                                                        Text { text: conn.source-label; color: Palette.accent-foreground; font-size: 10px; overflow: elide; }
-                                                                        HorizontalLayout {
-                                                                            spacing: 4px;
-                                                                            Text { text: conn.signal; color: Palette.foreground.transparentize(30%); font-size: 10px; font-weight: 500; }
-                                                                            Text { text: "→"; color: Palette.foreground.transparentize(50%); font-size: 10px; }
-                                                                            Text { text: conn.target-label; color: Palette.foreground.transparentize(20%); font-size: 10px; overflow: elide; }
-                                                                        }
-                                                                    }
-                                                                    Rectangle { horizontal-stretch: 1; }
-                                                                    Text { text: conn-touch.has-hover ? conn.action-summary : conn.action-kind; color: Palette.foreground.transparentize(50%); font-size: 9px; vertical-alignment: center; }
-                                                                    // Remove button
-                                                                    Rectangle {
-                                                                        width: 20px; height: 20px;
-                                                                        visible: conn-touch.has-hover;
-                                                                        border-radius: 3px;
-                                                                        background: conn-rm.has-hover ? Palette.foreground.transparentize(85%) : transparent;
-                                                                        conn-rm := TouchArea {
-                                                                            clicked => { root.signal-connection-remove(conn.id); }
-                                                                            Text { text: "×"; color: Palette.foreground.transparentize(40%); font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
+                                            vertical-stretch: 1;
+                                            ScrollView {
+                                                vertical-stretch: 1;
+                                                VerticalLayout {
+                                                    padding: 12px; spacing: 6px; alignment: start;
+                                                    // Header
+                                                    HorizontalLayout {
+                                                        spacing: 8px; alignment: start;
+                                                        Text { text: "Signals"; color: Palette.foreground.transparentize(20%); font-size: 12px; font-weight: 600; vertical-alignment: center; }
+                                                        Text { text: root.signal-connections-count > 0 ? root.signal-connections-count + " connected" : ""; color: Palette.foreground.transparentize(50%); font-size: 11px; vertical-alignment: center; }
                                                     }
-                                                }
-                                                if root.signal-connections-count == 0 && root.has-selection : Text {
-                                                    text: "No connections on this component. Wire signals in Luau or add connections here.";
-                                                    color: Palette.foreground.transparentize(60%);
-                                                    font-size: 11px;
-                                                    wrap: word-wrap;
-                                                }
 
-                                                // Available signals for selected node
-                                                if root.has-selection && root.signal-list-count > 0 : Rectangle {
-                                                    height: 1px;
-                                                    background: Palette.border;
-                                                }
-                                                if root.has-selection && root.signal-list-count > 0 : Text {
-                                                    text: "Available Signals";
-                                                    color: Palette.foreground.transparentize(30%);
-                                                    font-size: 11px;
-                                                    font-weight: 600;
-                                                }
-                                                if root.has-selection && root.signal-list-count > 0 : ScrollView {
-                                                    min-height: 40px;
-                                                    VerticalLayout {
-                                                        spacing: 2px;
+                                                    // Each signal with its connections inline
+                                                    if root.has-selection && root.signal-list-count > 0 : VerticalLayout {
+                                                        spacing: 4px;
                                                         for sig[si] in root.signal-list : Rectangle {
                                                             property <bool> expanded: false;
                                                             property <int> chosen-target-idx: 0;
                                                             property <int> chosen-action-idx: 0;
                                                             visible: si < root.signal-list-count;
-                                                            height: expanded ? 110px : (sig-touch.has-hover ? 40px : 28px);
-                                                            background: sig-touch.has-hover || expanded ? Palette.control-background : transparent;
-                                                            border-radius: 4px;
-                                                            clip: true;
-                                                            sig-touch := TouchArea {
-                                                                clicked => {
-                                                                    expanded = !expanded;
-                                                                }
-                                                                VerticalLayout {
-                                                                    alignment: start;
-                                                                    padding-top: 4px;
-                                                                    spacing: 4px;
+                                                            background: Palette.control-background.transparentize(50%);
+                                                            border-radius: 6px;
+                                                            VerticalLayout {
+                                                                padding: 6px; spacing: 4px;
+                                                                // Signal header
+                                                                sig-hdr := TouchArea {
+                                                                    clicked => { expanded = !expanded; }
+                                                                    height: 24px;
                                                                     HorizontalLayout {
-                                                                        padding-left: 8px; padding-right: 8px; spacing: 8px;
-                                                                        Text { text: sig.name; color: Palette.foreground.transparentize(20%); font-size: 10px; font-weight: 500; vertical-alignment: center; }
+                                                                        spacing: 6px;
+                                                                        Text { text: expanded ? "▾" : "▸"; color: Palette.foreground.transparentize(40%); font-size: 9px; vertical-alignment: center; width: 10px; }
+                                                                        Text { text: sig.name; color: Palette.foreground; font-size: 11px; font-weight: 600; vertical-alignment: center; }
                                                                         Rectangle { horizontal-stretch: 1; }
                                                                         Text { text: sig.payload-summary; color: Palette.foreground.transparentize(55%); font-size: 9px; vertical-alignment: center; }
-                                                                        Text {
-                                                                            visible: !expanded;
-                                                                            text: "+ Connect";
-                                                                            color: Palette.accent-foreground;
-                                                                            font-size: 9px;
-                                                                            vertical-alignment: center;
+                                                                    }
+                                                                }
+                                                                // Connections for this signal
+                                                                for conn[ci] in root.signal-connections : Rectangle {
+                                                                    visible: ci < root.signal-connections-count && conn.signal == sig.name;
+                                                                    height: ci < root.signal-connections-count && conn.signal == sig.name ? 28px : 0;
+                                                                    border-radius: 4px;
+                                                                    background: conn-touch.has-hover ? Palette.control-background : transparent;
+                                                                    conn-touch := TouchArea {
+                                                                        HorizontalLayout {
+                                                                            padding-left: 18px; padding-right: 4px; spacing: 6px;
+                                                                            Text { text: "→"; color: Palette.accent-foreground; font-size: 10px; vertical-alignment: center; }
+                                                                            Text { text: conn.target-label; color: Palette.foreground.transparentize(20%); font-size: 10px; vertical-alignment: center; overflow: elide; }
+                                                                            Rectangle { horizontal-stretch: 1; }
+                                                                            Text { text: conn-touch.has-hover ? conn.action-summary : conn.action-kind; color: Palette.foreground.transparentize(50%); font-size: 9px; vertical-alignment: center; }
+                                                                            Rectangle {
+                                                                                width: 18px; height: 18px;
+                                                                                visible: conn-touch.has-hover;
+                                                                                border-radius: 3px;
+                                                                                background: conn-rm.has-hover ? Palette.foreground.transparentize(85%) : transparent;
+                                                                                conn-rm := TouchArea {
+                                                                                    clicked => { root.signal-connection-remove(conn.id); }
+                                                                                    Text { text: "×"; color: Palette.foreground.transparentize(40%); font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
+                                                                                }
+                                                                            }
                                                                         }
                                                                     }
-                                                                    if (sig-touch.has-hover || expanded) && sig.description != "" : Text {
+                                                                }
+                                                                // Add connection form
+                                                                if expanded : VerticalLayout {
+                                                                    spacing: 4px;
+                                                                    padding-top: 4px;
+                                                                    if sig.description != "" : Text {
                                                                         text: sig.description;
                                                                         color: Palette.foreground.transparentize(50%);
                                                                         font-size: 9px;
-                                                                        horizontal-alignment: left;
                                                                     }
-                                                                    if expanded : VerticalLayout {
-                                                                        spacing: 4px;
-                                                                        HorizontalLayout {
-                                                                            padding-left: 8px; padding-right: 8px; spacing: 6px;
-                                                                            Text { text: "Target"; color: Palette.foreground.transparentize(40%); font-size: 9px; vertical-alignment: center; width: 36px; }
-                                                                            ComboBox {
-                                                                                model: root.signal-target-labels;
-                                                                                current-index: chosen-target-idx;
-                                                                                height: 22px;
-                                                                                horizontal-stretch: 1;
-                                                                                selected(val) => {
-                                                                                    chosen-target-idx = self.current-index;
-                                                                                }
+                                                                    HorizontalLayout {
+                                                                        padding-left: 2px; padding-right: 2px; spacing: 6px;
+                                                                        Text { text: "Target"; color: Palette.foreground.transparentize(40%); font-size: 9px; vertical-alignment: center; width: 36px; }
+                                                                        ComboBox {
+                                                                            model: root.signal-target-labels;
+                                                                            current-index: chosen-target-idx;
+                                                                            height: 22px;
+                                                                            horizontal-stretch: 1;
+                                                                            selected(val) => {
+                                                                                chosen-target-idx = self.current-index;
                                                                             }
                                                                         }
-                                                                        HorizontalLayout {
-                                                                            padding-left: 8px; padding-right: 8px; spacing: 6px;
-                                                                            Text { text: "Action"; color: Palette.foreground.transparentize(40%); font-size: 9px; vertical-alignment: center; width: 36px; }
-                                                                            ComboBox {
-                                                                                model: root.signal-action-labels;
-                                                                                current-index: chosen-action-idx;
-                                                                                height: 22px;
-                                                                                horizontal-stretch: 1;
-                                                                                selected(val) => {
-                                                                                    chosen-action-idx = self.current-index;
-                                                                                }
+                                                                    }
+                                                                    HorizontalLayout {
+                                                                        padding-left: 2px; padding-right: 2px; spacing: 6px;
+                                                                        Text { text: "Action"; color: Palette.foreground.transparentize(40%); font-size: 9px; vertical-alignment: center; width: 36px; }
+                                                                        ComboBox {
+                                                                            model: root.signal-action-labels;
+                                                                            current-index: chosen-action-idx;
+                                                                            height: 22px;
+                                                                            horizontal-stretch: 1;
+                                                                            selected(val) => {
+                                                                                chosen-action-idx = self.current-index;
                                                                             }
                                                                         }
-                                                                        HorizontalLayout {
-                                                                            alignment: end;
-                                                                            padding-right: 8px;
-                                                                            Button {
-                                                                                text: "Add Connection";
-                                                                                primary: true;
-                                                                                clicked => {
-                                                                                    root.signal-connection-add(sig.name, chosen-target-idx, chosen-action-idx);
-                                                                                    expanded = false;
-                                                                                    chosen-target-idx = 0;
-                                                                                    chosen-action-idx = 0;
-                                                                                }
+                                                                    }
+                                                                    HorizontalLayout {
+                                                                        alignment: end;
+                                                                        Button {
+                                                                            text: "Add";
+                                                                            primary: true;
+                                                                            clicked => {
+                                                                                root.signal-connection-add(sig.name, chosen-target-idx, chosen-action-idx);
+                                                                                chosen-target-idx = 0;
+                                                                                chosen-action-idx = 0;
                                                                             }
                                                                         }
                                                                     }
@@ -3015,12 +2973,12 @@ export component AppWindow inherits Window {
                                                             }
                                                         }
                                                     }
-                                                }
 
-                                                if !root.has-selection : Text {
-                                                    text: "Select a component to view its signals.";
-                                                    color: Palette.foreground.transparentize(60%);
-                                                    font-size: 11px;
+                                                    if !root.has-selection : Text {
+                                                        text: "Select a component to view its signals.";
+                                                        color: Palette.foreground.transparentize(60%);
+                                                        font-size: 11px;
+                                                    }
                                                 }
                                             }
                                         }

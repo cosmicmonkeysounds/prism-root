@@ -563,6 +563,34 @@ mod tests {
     }
 
     #[test]
+    fn create_connection_then_fire_applies_action() {
+        use crate::panels::signals::SignalsPanel;
+
+        let mut doc = test_doc();
+        let conn = SignalsPanel::create_connection(
+            "new-conn",
+            "btn",
+            "clicked",
+            "modal",
+            ActionKind::SetProperty {
+                key: "color".into(),
+                value: json!("red"),
+            },
+        );
+        doc.connections.push(conn);
+
+        let results = SignalRuntime::fire_simple("btn", "clicked", &doc.connections);
+        assert!(results.len() >= 3);
+
+        for r in &results {
+            SignalRuntime::apply_result(r, &mut doc);
+        }
+        let modal = find_node_mut(&mut doc.root, "modal").unwrap();
+        assert_eq!(modal.props.get("color"), Some(&json!("red")));
+        assert_eq!(modal.props.get("title"), Some(&json!("Opened!")));
+    }
+
+    #[test]
     fn event_listeners_ignores_non_listeners() {
         use prism_core::language::visual::{ScriptNode, ScriptNodeKind};
 
