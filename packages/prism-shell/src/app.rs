@@ -8,7 +8,7 @@
 //! `Rc<RefCell<ShellInner>>` so Slint closures can borrow it.
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
@@ -153,6 +153,8 @@ pub struct AppState {
     next_toast_id: u64,
     next_node_id: u64,
     next_app_id: u64,
+    #[serde(default)]
+    pub runtime_overrides: HashMap<String, serde_json::Map<String, serde_json::Value>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -299,6 +301,7 @@ impl Default for AppState {
             next_toast_id: 0,
             next_node_id: 100,
             next_app_id: 10,
+            runtime_overrides: HashMap::new(),
         }
     }
 }
@@ -667,30 +670,73 @@ impl ShellInner {
         let mut custom_handlers: Vec<(String, serde_json::Map<String, serde_json::Value>)> =
             Vec::new();
         self.store.mutate(|state| {
-            if let Some(doc) = state.active_app_mut().and_then(|a| a.active_document_mut()) {
-                for result in &results {
-                    match result {
-                        DispatchResult::EmitSignal {
-                            target_node,
-                            signal,
-                        } => {
-                            cascading.push((target_node.clone(), signal.clone()));
-                        }
-                        DispatchResult::NavigateTo { target } => {
-                            navigate_target = Some(target.clone());
-                        }
-                        DispatchResult::Custom { handler, payload } => {
-                            custom_handlers.push((handler.clone(), payload.clone()));
-                        }
-                        _ => {
-                            SignalRuntime::apply_result(result, doc);
-                        }
+            for result in &results {
+                match result {
+                    DispatchResult::SetProperty {
+                        target_node,
+                        key,
+                        value,
+                    } => {
+                        state
+                            .runtime_overrides
+                            .entry(target_node.clone())
+                            .or_default()
+                            .insert(key.clone(), value.clone());
+                    }
+                    DispatchResult::ToggleVisibility { target_node } => {
+                        let current = state
+                            .runtime_overrides
+                            .get(target_node.as_str())
+                            .and_then(|m| m.get("visible"))
+                            .and_then(|v| v.as_bool())
+                            .or_else(|| {
+                                state
+                                    .builder_document
+                                    .root
+                                    .as_ref()
+                                    .and_then(|r| r.find(target_node))
+                                    .and_then(|n| n.props.get("visible"))
+                                    .and_then(|v| v.as_bool())
+                            })
+                            .unwrap_or(true);
+                        state
+                            .runtime_overrides
+                            .entry(target_node.clone())
+                            .or_default()
+                            .insert("visible".into(), serde_json::Value::from(!current));
+                    }
+                    DispatchResult::PlayAnimation {
+                        target_node,
+                        animation,
+                    } => {
+                        let entry = state
+                            .runtime_overrides
+                            .entry(target_node.clone())
+                            .or_default();
+                        entry.insert("animating".into(), serde_json::Value::from(true));
+                        entry.insert(
+                            "animation".into(),
+                            serde_json::Value::from(animation.as_str()),
+                        );
+                    }
+                    DispatchResult::EmitSignal {
+                        target_node,
+                        signal,
+                    } => {
+                        cascading.push((target_node.clone(), signal.clone()));
+                    }
+                    DispatchResult::NavigateTo { target } => {
+                        navigate_target = Some(target.clone());
+                    }
+                    DispatchResult::Custom { handler, payload } => {
+                        custom_handlers.push((handler.clone(), payload.clone()));
                     }
                 }
             }
         });
         if let Some(route) = navigate_target {
             self.store.mutate(|state| {
+                state.runtime_overrides.clear();
                 if let Some(app) = state.active_app_mut() {
                     if let Some(idx) = app.pages.iter().position(|p| p.route == route) {
                         app.active_page = idx;
@@ -710,6 +756,34 @@ impl ShellInner {
                 break;
             }
             self.fire_signal(&target, &sig, serde_json::Map::new());
+        }
+    }
+
+    fn apply_runtime_overrides_to_doc(
+        doc: &mut BuilderDocument,
+        overrides: &HashMap<String, serde_json::Map<String, serde_json::Value>>,
+    ) {
+        if overrides.is_empty() {
+            return;
+        }
+        if let Some(ref mut root) = doc.root {
+            Self::apply_overrides_to_tree(root, overrides);
+        }
+    }
+
+    fn apply_overrides_to_tree(
+        node: &mut Node,
+        overrides: &HashMap<String, serde_json::Map<String, serde_json::Value>>,
+    ) {
+        if let Some(node_overrides) = overrides.get(&node.id) {
+            if let Some(obj) = node.props.as_object_mut() {
+                for (key, value) in node_overrides {
+                    obj.insert(key.clone(), value.clone());
+                }
+            }
+        }
+        for child in &mut node.children {
+            Self::apply_overrides_to_tree(child, overrides);
         }
     }
 
@@ -833,6 +907,9 @@ impl ShellInner {
     }
 
     fn load_active_page(&mut self) {
+        self.store.mutate(|state| {
+            state.runtime_overrides.clear();
+        });
         let state = self.store.state();
         if let Some(app) = state.active_app() {
             if let Some(page) = app.pages.get(app.active_page) {
@@ -862,6 +939,7 @@ impl ShellInner {
                 if let Some(app_doc) = state.active_app().and_then(|a| a.active_document()) {
                     doc.connections = app_doc.connections.clone();
                 }
+                Self::apply_runtime_overrides_to_doc(&mut doc, &state.runtime_overrides);
                 state.builder_document = doc;
                 state.sync_document_to_app();
             });
@@ -877,6 +955,7 @@ impl ShellInner {
                 if let Some(app_doc) = state.active_app().and_then(|a| a.active_document()) {
                     doc.connections = app_doc.connections.clone();
                 }
+                Self::apply_runtime_overrides_to_doc(&mut doc, &state.runtime_overrides);
                 state.builder_document = doc;
                 if state.editor_state.text() != source {
                     let cursor = state.editor_state.cursor.position;
@@ -3096,6 +3175,25 @@ impl Shell {
                             .map(|t| t.node_id.clone())
                             .unwrap_or_else(|| source.clone())
                     };
+                    let has_duplicate = s
+                        .store
+                        .state()
+                        .active_app()
+                        .and_then(|a| a.active_document())
+                        .map(|doc| {
+                            crate::panels::signals::SignalsPanel::has_duplicate(
+                                doc, &source, &sig, &target,
+                            )
+                        })
+                        .unwrap_or(false);
+                    if has_duplicate {
+                        s.add_toast(
+                            "Duplicate connection",
+                            "A connection with the same source signal and target already exists.",
+                            "warning",
+                        );
+                        return;
+                    }
                     let action = crate::panels::signals::action_kind_from_index(action_idx, &sig);
                     let conn_id = format!("conn-{}", s.store.state().next_node_id);
                     s.push_undo("Add signal connection");
@@ -3939,15 +4037,26 @@ fn push_property_sections(
     }
 
     let flat = PropertiesPanel::flatten_sections(&sections);
-    if let Some(tx) = flat.iter().find(|r| r.key == "transform.x") {
-        eprintln!("[push-props] transform.x value={:?}", tx.value);
-    }
     let rows: Vec<FieldRow> = flat
         .into_iter()
         .map(|r| field_row_data_to_slint(&r))
         .collect();
     let count = sync_model(&models.property_rows, &rows);
     window.set_property_rows_count(count);
+
+    if let Some(selected_id) = &selected {
+        if let Some(node) = doc.root.as_ref().and_then(|n| n.find(selected_id)) {
+            let t = &node.transform;
+            window.set_transform_pos_x(t.position[0]);
+            window.set_transform_pos_y(t.position[1]);
+            window.set_transform_rotation_deg(t.rotation.to_degrees());
+            window.set_node_scale_x(t.scale[0]);
+            window.set_node_scale_y(t.scale[1]);
+            window.set_transform_anchor_value(SharedString::from(
+                crate::panels::properties::format_anchor(t.anchor),
+            ));
+        }
+    }
 }
 
 // ── Context menu items ─────────────────────────────────────────────

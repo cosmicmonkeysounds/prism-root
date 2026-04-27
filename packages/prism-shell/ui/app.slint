@@ -513,6 +513,257 @@ component SectionHeader inherits Rectangle {
     }
 }
 
+component DragNumberField inherits Rectangle {
+    in property <string> label: "";
+    in property <color> label-color: Palette.foreground.transparentize(40%);
+    in-out property <float> value: 0;
+    in property <float> step: 1.0;
+    in property <float> minimum: -99999;
+    in property <float> maximum: 99999;
+    in property <string> key: "";
+    callback changed(string, float);
+    callback committed(string, string);
+
+    property <bool> editing: false;
+    property <bool> dragging: false;
+    property <float> anchorx: 0;
+    property <float> anchorv: 0;
+
+    height: 24px;
+    horizontal-stretch: 1;
+    background: root.dragging ? Palette.background.darker(8%) : Palette.background.darker(3%);
+    border-radius: 3px;
+
+    if !root.editing : Rectangle {
+        background: transparent;
+        HorizontalLayout {
+            padding-left: 6px; padding-right: 6px; spacing: 2px;
+            if root.label != "" : Text {
+                text: root.label;
+                color: root.label-color;
+                font-size: 11px;
+                font-weight: 700;
+                vertical-alignment: center;
+            }
+            Text {
+                text: Math.round(root.value * 100) / 100;
+                color: Palette.foreground;
+                font-size: 11px;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+            }
+        }
+        TouchArea {
+            mouse-cursor: ew-resize;
+            double-clicked => {
+                root.editing = true;
+            }
+            pointer-event(event) => {
+                if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                    root.dragging = true;
+                    root.anchorx = self.mouse-x / 1px;
+                    root.anchorv = root.value;
+                }
+                if event.kind == PointerEventKind.up {
+                    root.dragging = false;
+                }
+            }
+            moved => {
+                if root.dragging {
+                    root.changed(root.key,
+                        Math.max(root.minimum, Math.min(root.maximum,
+                            root.anchorv + (self.mouse-x / 1px - root.anchorx) * root.step)));
+                }
+            }
+        }
+    }
+
+    if root.editing : LineEdit {
+        text: Math.round(root.value * 100) / 100;
+        font-size: 11px;
+        accepted(text) => {
+            root.editing = false;
+            root.committed(root.key, text);
+        }
+    }
+}
+
+component TransformEditor inherits VerticalLayout {
+    in property <float> pos-x;
+    in property <float> pos-y;
+    in property <float> rotation;
+    in property <float> scale-x;
+    in property <float> scale-y;
+    in property <string> anchor;
+    callback field-edited(string, string);
+    callback field-edited-number(string, float);
+
+    property <bool> anchor-open: false;
+
+    spacing: 2px;
+    padding-top: 4px;
+    padding-bottom: 4px;
+    padding-left: 4px;
+    padding-right: 4px;
+
+    HorizontalLayout {
+        spacing: 4px;
+        Text {
+            text: "Position";
+            color: Palette.foreground.transparentize(40%);
+            font-size: 10px;
+            vertical-alignment: center;
+            width: 52px;
+        }
+        DragNumberField {
+            label: "x";
+            label-color: #e06060;
+            value: root.pos-x;
+            step: 1.0;
+            minimum: -4000;
+            maximum: 4000;
+            key: "transform.x";
+            changed(k, val) => { root.field-edited-number(k, val); }
+            committed(k, val) => { root.field-edited(k, val); }
+        }
+        DragNumberField {
+            label: "y";
+            label-color: #60c060;
+            value: root.pos-y;
+            step: 1.0;
+            minimum: -4000;
+            maximum: 4000;
+            key: "transform.y";
+            changed(k, val) => { root.field-edited-number(k, val); }
+            committed(k, val) => { root.field-edited(k, val); }
+        }
+    }
+
+    HorizontalLayout {
+        spacing: 4px;
+        Text {
+            text: "Rotation";
+            color: Palette.foreground.transparentize(40%);
+            font-size: 10px;
+            vertical-alignment: center;
+            width: 52px;
+        }
+        DragNumberField {
+            value: root.rotation;
+            step: 0.5;
+            minimum: -360;
+            maximum: 360;
+            key: "transform.rotation";
+            changed(k, val) => { root.field-edited-number(k, val); }
+            committed(k, val) => { root.field-edited(k, val); }
+        }
+    }
+
+    HorizontalLayout {
+        spacing: 4px;
+        Text {
+            text: "Scale";
+            color: Palette.foreground.transparentize(40%);
+            font-size: 10px;
+            vertical-alignment: center;
+            width: 52px;
+        }
+        DragNumberField {
+            label: "x";
+            label-color: #e06060;
+            value: root.scale-x;
+            step: 0.01;
+            minimum: 0.01;
+            maximum: 10.0;
+            key: "transform.scale_x";
+            changed(k, val) => { root.field-edited-number(k, val); }
+            committed(k, val) => { root.field-edited(k, val); }
+        }
+        DragNumberField {
+            label: "y";
+            label-color: #60c060;
+            value: root.scale-y;
+            step: 0.01;
+            minimum: 0.01;
+            maximum: 10.0;
+            key: "transform.scale_y";
+            changed(k, val) => { root.field-edited-number(k, val); }
+            committed(k, val) => { root.field-edited(k, val); }
+        }
+    }
+
+    HorizontalLayout {
+        spacing: 4px;
+        Text {
+            text: "Anchor";
+            color: Palette.foreground.transparentize(40%);
+            font-size: 10px;
+            vertical-alignment: center;
+            width: 52px;
+        }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 0px;
+            Rectangle {
+                height: 24px;
+                border-radius: 3px;
+                border-width: 1px;
+                border-color: root.anchor-open ? Palette.accent-background : Palette.foreground.transparentize(75%);
+                background: Palette.background.darker(3%);
+                HorizontalLayout {
+                    padding-left: 6px; padding-right: 6px;
+                    Text {
+                        text: root.anchor;
+                        color: Palette.foreground;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                    Image {
+                        source: root.anchor-open
+                            ? @image-url("icons/chevron-down.svg")
+                            : @image-url("icons/chevron-left.svg");
+                        width: 10px; height: 10px;
+                        colorize: Palette.foreground.transparentize(40%);
+                        vertical-alignment: center;
+                    }
+                }
+                TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.anchor-open = !root.anchor-open; }
+                }
+            }
+            if root.anchor-open : VerticalLayout {
+                spacing: 0px;
+                Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
+                for opt in ["top-left", "top-center", "top-right", "center-left", "center", "center-right", "bottom-left", "bottom-center", "bottom-right", "stretch"] : Rectangle {
+                    height: 24px;
+                    border-radius: 2px;
+                    background: opt == root.anchor
+                        ? Palette.accent-background.transparentize(85%)
+                        : (anchor-opt-ta.has-hover ? Palette.control-background : transparent);
+                    HorizontalLayout {
+                        padding-left: 6px; padding-right: 6px;
+                        Text {
+                            text: opt;
+                            color: opt == root.anchor ? Palette.accent-foreground : Palette.foreground;
+                            font-size: 11px;
+                            vertical-alignment: center;
+                        }
+                    }
+                    anchor-opt-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            root.field-edited("transform.anchor", opt);
+                            root.anchor-open = false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 component FieldEditor inherits VerticalLayout {
     in property <string> key;
     in property <string> label;
@@ -1223,6 +1474,12 @@ export component AppWindow inherits Window {
     callback property-field-edited-number(string, float);
     callback property-section-toggled(string);
     callback file-browse-requested(string);
+    in property <float> transform-pos-x: 0;
+    in property <float> transform-pos-y: 0;
+    in property <float> transform-rotation-deg: 0;
+    in property <float> node-scale-x: 1;
+    in property <float> node-scale-y: 1;
+    in property <string> transform-anchor-value: "top-left";
 
     // Tabbed MDI
     in property <[TabItem]> tabs: [];
@@ -2604,12 +2861,24 @@ export component AppWindow inherits Window {
 
                                                     for row[i] in root.property-rows : VerticalLayout {
                                                         visible: i < root.property-rows-count;
+                                                        vertical-stretch: 0;
 
                                                         if row.kind == "section" : SectionHeader {
                                                             label: row.label;
                                                             collapsed: row.value == "collapsed";
                                                             section-id: row.key;
                                                             section-toggled(id) => { root.property-section-toggled(id); }
+                                                        }
+
+                                                        if row.kind == "section" && row.key == "transform" && row.value == "expanded" : TransformEditor {
+                                                            pos-x: root.transform-pos-x;
+                                                            pos-y: root.transform-pos-y;
+                                                            rotation: root.transform-rotation-deg;
+                                                            scale-x: root.transform-scale-x;
+                                                            scale-y: root.transform-scale-y;
+                                                            anchor: root.transform-anchor-value;
+                                                            field-edited(key, val) => { root.property-field-edited(key, val); }
+                                                            field-edited-number(key, val) => { root.property-field-edited-number(key, val); }
                                                         }
 
                                                         if row.kind != "section" : FieldEditor {
@@ -2911,12 +3180,11 @@ export component AppWindow inherits Window {
                                                                             Text { text: conn-touch.has-hover ? conn.action-summary : conn.action-kind; color: Palette.foreground.transparentize(50%); font-size: 9px; vertical-alignment: center; }
                                                                             Rectangle {
                                                                                 width: 18px; height: 18px;
-                                                                                visible: conn-touch.has-hover;
                                                                                 border-radius: 3px;
                                                                                 background: conn-rm.has-hover ? Palette.foreground.transparentize(85%) : transparent;
                                                                                 conn-rm := TouchArea {
                                                                                     clicked => { root.signal-connection-remove(conn.id); }
-                                                                                    Text { text: "×"; color: Palette.foreground.transparentize(40%); font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
+                                                                                    Text { text: "×"; color: conn-rm.has-hover ? Palette.foreground.transparentize(20%) : Palette.foreground.transparentize(60%); font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
                                                                                 }
                                                                             }
                                                                         }

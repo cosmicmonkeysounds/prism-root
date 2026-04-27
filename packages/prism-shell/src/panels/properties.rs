@@ -407,7 +407,7 @@ impl PropertiesPanel {
                 has_bounds: false,
                 options: vec![section.icon.clone()],
             });
-            if !section.collapsed {
+            if !section.collapsed && section.id != "transform" {
                 for row in &section.rows {
                     flat.push(row.clone());
                 }
@@ -1017,7 +1017,7 @@ fn format_justify(j: JustifyOption) -> String {
     .into()
 }
 
-fn format_anchor(a: prism_core::foundation::spatial::Anchor) -> String {
+pub fn format_anchor(a: prism_core::foundation::spatial::Anchor) -> String {
     use prism_core::foundation::spatial::Anchor;
     match a {
         Anchor::TopLeft => "top-left",

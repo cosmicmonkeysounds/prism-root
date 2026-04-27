@@ -164,6 +164,18 @@ impl SignalsPanel {
         targets
     }
 
+    /// Check if a connection with the same source, signal, and target already exists.
+    pub fn has_duplicate(
+        doc: &BuilderDocument,
+        source_node: &str,
+        signal: &str,
+        target_node: &str,
+    ) -> bool {
+        doc.connections.iter().any(|c| {
+            c.source_node == source_node && c.signal == signal && c.target_node == target_node
+        })
+    }
+
     /// Create a new connection and return it. The caller is responsible
     /// for appending it to `doc.connections`.
     pub fn create_connection(
@@ -801,5 +813,19 @@ mod tests {
         for i in 0..ACTION_KIND_LABELS.len() {
             let _ = action_kind_from_index(i as i32, "test");
         }
+    }
+
+    #[test]
+    fn has_duplicate_detects_same_source_signal_target() {
+        let doc = test_doc();
+        assert!(SignalsPanel::has_duplicate(&doc, "btn", "clicked", "modal"));
+        assert!(SignalsPanel::has_duplicate(&doc, "btn", "clicked", "label"));
+        assert!(!SignalsPanel::has_duplicate(&doc, "btn", "clicked", "btn"));
+        assert!(!SignalsPanel::has_duplicate(
+            &doc, "btn", "hovered", "modal"
+        ));
+        assert!(!SignalsPanel::has_duplicate(
+            &doc, "modal", "clicked", "modal"
+        ));
     }
 }
