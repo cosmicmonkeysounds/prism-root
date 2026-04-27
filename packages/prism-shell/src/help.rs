@@ -16,6 +16,7 @@ use crate::panels::builder::BuilderPanel;
 use crate::panels::identity::IdentityPanel;
 use crate::panels::inspector::InspectorPanel;
 use crate::panels::properties::PropertiesPanel;
+use crate::panels::signals::SignalsPanel;
 use crate::panels::Panel;
 
 /// Populate `registry` from all distributed help sources.
@@ -45,6 +46,7 @@ fn panels() -> Vec<Box<dyn Panel>> {
         Box::new(BuilderPanel::new()),
         Box::new(InspectorPanel::new()),
         Box::new(PropertiesPanel::new()),
+        Box::new(SignalsPanel::new()),
     ]
 }
 
@@ -294,7 +296,14 @@ mod tests {
     #[test]
     fn all_panels_registered() {
         let (reg, _) = setup();
-        for panel in ["identity", "builder", "inspector", "properties", "editor"] {
+        for panel in [
+            "identity",
+            "builder",
+            "inspector",
+            "properties",
+            "editor",
+            "signals",
+        ] {
             let id = format!("shell.panels.{panel}");
             assert!(reg.get(&id).is_some(), "missing panel entry: {id}");
         }

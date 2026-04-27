@@ -7,7 +7,7 @@ the dock tree; this crate only manages the layout state.
 
 ## Build & Test
 - `cargo build -p prism-dock`
-- `cargo test -p prism-dock` — 80 unit tests.
+- `cargo test -p prism-dock` — 80+ unit tests.
 - `cargo clippy -p prism-dock -- -D warnings`
 
 ## Public surface
@@ -35,9 +35,9 @@ the dock tree; this crate only manages the layout state.
 
 ### Panel registry
 - `PanelId` — string alias.
-- `PanelKind` — enum of 11 known panel types (Builder, Inspector,
+- `PanelKind` — enum of 12 known panel types (Builder, Inspector,
   Properties, Explorer, CodeEditor, Identity, Timeline, NodeGraph,
-  AssetBrowser, ComponentPalette, Console).
+  AssetBrowser, ComponentPalette, Console, Signals).
 - `PanelKind::ALL` — const slice of all variants.
 - `PanelKind::from_id(&str)` — reverse lookup from kebab-case string.
 - `PanelKind::id()` — kebab-case string from the enum variant.

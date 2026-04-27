@@ -24,8 +24,8 @@ use prism_builder::{
     },
     path_from_string, preview_component_factory, render_document_slint_preview_with_assets,
     starter::{builtin_prefab, materialize_prefab, register_builtins},
-    BuilderDocument, CellEdge, ComponentRegistry, FieldKind, GridCell, LiveDocument, Node, NodeId,
-    StyleProperties,
+    ActionKind, BuilderDocument, CellEdge, ComponentRegistry, DispatchResult, FieldKind, GridCell,
+    LiveDocument, Node, NodeId, StyleProperties,
 };
 use prism_core::design_tokens::{DesignTokens, DEFAULT_TOKENS};
 use prism_core::editor::EditorState;
@@ -119,6 +119,9 @@ persistent_models! {
     actions: ButtonSpec,
     menu_defs: MenuDef,
     editor_lines: EditorLine,
+    signal_connections: crate::SignalConnectionItem,
+    signal_list: crate::SignalItem,
+    signal_target_nodes: crate::TargetNodeItem,
 }
 
 // ── Reloadable state ───────────────────────────────────────────────
@@ -659,13 +662,174 @@ impl ShellInner {
         if results.is_empty() {
             return;
         }
+        let mut cascading: Vec<(String, String)> = Vec::new();
+        let mut navigate_target: Option<String> = None;
+        let mut custom_handlers: Vec<(String, serde_json::Map<String, serde_json::Value>)> =
+            Vec::new();
         self.store.mutate(|state| {
             if let Some(doc) = state.active_app_mut().and_then(|a| a.active_document_mut()) {
                 for result in &results {
-                    SignalRuntime::apply_result(result, doc);
+                    match result {
+                        DispatchResult::EmitSignal {
+                            target_node,
+                            signal,
+                        } => {
+                            cascading.push((target_node.clone(), signal.clone()));
+                        }
+                        DispatchResult::NavigateTo { target } => {
+                            navigate_target = Some(target.clone());
+                        }
+                        DispatchResult::Custom { handler, payload } => {
+                            custom_handlers.push((handler.clone(), payload.clone()));
+                        }
+                        _ => {
+                            SignalRuntime::apply_result(result, doc);
+                        }
+                    }
                 }
             }
         });
+        if let Some(route) = navigate_target {
+            self.store.mutate(|state| {
+                if let Some(app) = state.active_app_mut() {
+                    if let Some(idx) = app.pages.iter().position(|p| p.route == route) {
+                        app.active_page = idx;
+                    }
+                }
+                state.sync_document_from_app();
+            });
+            self.load_active_page();
+        }
+        #[cfg(feature = "native")]
+        if !custom_handlers.is_empty() {
+            self.exec_custom_handlers(&custom_handlers, source_node, signal);
+        }
+        const MAX_CASCADE_DEPTH: usize = 8;
+        for (i, (target, sig)) in cascading.into_iter().enumerate() {
+            if i >= MAX_CASCADE_DEPTH {
+                break;
+            }
+            self.fire_signal(&target, &sig, serde_json::Map::new());
+        }
+    }
+
+    #[cfg(feature = "native")]
+    fn exec_custom_handlers(
+        &mut self,
+        handlers: &[(String, serde_json::Map<String, serde_json::Value>)],
+        source_node: &str,
+        signal: &str,
+    ) {
+        let page_source = self
+            .store
+            .state()
+            .active_app()
+            .and_then(|a| a.pages.get(a.active_page))
+            .map(|p| p.source.clone())
+            .unwrap_or_default();
+        for (handler_name, payload) in handlers {
+            let mut args = payload.clone();
+            args.insert("_source_node".into(), serde_json::Value::from(source_node));
+            args.insert("_signal".into(), serde_json::Value::from(signal));
+            let script = build_handler_script(&page_source, handler_name);
+            let mut call_args = serde_json::Map::new();
+            call_args.insert("event".into(), serde_json::Value::Object(args));
+            match prism_daemon::modules::luau_module::exec(&script, Some(&call_args)) {
+                Ok(result) => {
+                    self.apply_luau_result(&result);
+                }
+                Err(e) => {
+                    self.add_toast(
+                        &format!("Signal handler '{handler_name}' error"),
+                        &e,
+                        "error",
+                    );
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "native")]
+    fn apply_luau_result(&mut self, result: &serde_json::Value) {
+        use serde_json::Value;
+        let Some(obj) = result.as_object() else {
+            return;
+        };
+        let mut needs_sync = false;
+        if let Some(Value::Array(actions)) = obj.get("_actions") {
+            for action in actions {
+                let Some(action_obj) = action.as_object() else {
+                    continue;
+                };
+                match action_obj.get("type").and_then(|v| v.as_str()) {
+                    Some("set_property") => {
+                        let node_id = action_obj.get("node_id").and_then(|v| v.as_str());
+                        let key = action_obj.get("key").and_then(|v| v.as_str());
+                        let value = action_obj.get("value");
+                        if let (Some(node_id), Some(key), Some(value)) = (node_id, key, value) {
+                            if let Some(ref mut live) = self.live {
+                                let formatted = match value {
+                                    Value::String(s) => format!(
+                                        "\"{}\"",
+                                        prism_builder::slint_source::escape_slint_string(s)
+                                    ),
+                                    Value::Bool(b) => b.to_string(),
+                                    Value::Number(n) => n.to_string(),
+                                    _ => continue,
+                                };
+                                let _ = live.edit_prop_in_source(node_id, key, &formatted);
+                                needs_sync = true;
+                            }
+                        }
+                    }
+                    Some("toggle_visibility") => {
+                        let node_id = action_obj.get("node_id").and_then(|v| v.as_str());
+                        if let Some(node_id) = node_id {
+                            self.store.mutate(|state| {
+                                if let Some(doc) =
+                                    state.active_app_mut().and_then(|a| a.active_document_mut())
+                                {
+                                    let result = DispatchResult::ToggleVisibility {
+                                        target_node: node_id.into(),
+                                    };
+                                    SignalRuntime::apply_result(&result, doc);
+                                }
+                            });
+                            needs_sync = true;
+                        }
+                    }
+                    Some("navigate") => {
+                        let route = action_obj.get("route").and_then(|v| v.as_str());
+                        if let Some(route) = route {
+                            let route = route.to_string();
+                            self.store.mutate(|state| {
+                                if let Some(app) = state.active_app_mut() {
+                                    if let Some(idx) =
+                                        app.pages.iter().position(|p| p.route == route)
+                                    {
+                                        app.active_page = idx;
+                                    }
+                                }
+                                state.sync_document_from_app();
+                            });
+                            self.load_active_page();
+                            return;
+                        }
+                    }
+                    Some("emit_signal") => {
+                        let node_id = action_obj.get("node_id").and_then(|v| v.as_str());
+                        let sig = action_obj.get("signal").and_then(|v| v.as_str());
+                        if let (Some(node_id), Some(sig)) = (node_id, sig) {
+                            self.fire_signal(node_id, sig, serde_json::Map::new());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if needs_sync {
+            self.sync_builder_document();
+        }
     }
 
     fn load_active_page(&mut self) {
@@ -797,6 +961,17 @@ impl Shell {
         bind_model!(set_actions, actions, ButtonSpec);
         bind_model!(set_menu_defs, menu_defs, MenuDef);
         bind_model!(set_editor_lines, editor_lines, EditorLine);
+        bind_model!(
+            set_signal_connections,
+            signal_connections,
+            crate::SignalConnectionItem
+        );
+        bind_model!(set_signal_list, signal_list, crate::SignalItem);
+        bind_model!(
+            set_signal_target_nodes,
+            signal_target_nodes,
+            crate::TargetNodeItem
+        );
 
         let inner = Rc::new(RefCell::new(ShellInner {
             store: Store::new(state),
@@ -1139,6 +1314,31 @@ impl Shell {
             }
         });
 
+        // Builder node hovered — fire hovered signal with pointer coords
+        self.window.on_builder_node_hovered({
+            let inner = Rc::clone(&inner);
+            move |node_id, x, y| {
+                let nid = node_id.to_string();
+                let mut s = inner.borrow_mut();
+                s.fire_signal(&nid, "hovered", {
+                    let mut p = serde_json::Map::new();
+                    p.insert("x".into(), serde_json::Value::from(x as f64));
+                    p.insert("y".into(), serde_json::Value::from(y as f64));
+                    p
+                });
+            }
+        });
+
+        // Builder node hover ended — fire hover-ended signal
+        self.window.on_builder_node_hover_ended({
+            let inner = Rc::clone(&inner);
+            move |node_id| {
+                let nid = node_id.to_string();
+                let mut s = inner.borrow_mut();
+                s.fire_signal(&nid, "hover-ended", serde_json::Map::new());
+            }
+        });
+
         // Inline text editing in builder
         self.window.on_builder_text_edited({
             let inner = Rc::clone(&inner);
@@ -1193,6 +1393,7 @@ impl Shell {
                     } else {
                         node_id.to_string()
                     };
+                    s.fire_signal(&nid, "deleted", serde_json::Map::new());
                     s.push_undo("Delete node");
                     if let Some(ref mut live) = s.live {
                         let _ = live.remove_node_from_source(&nid);
@@ -1219,6 +1420,7 @@ impl Shell {
                     s.push_undo(&format!("Add {ct}"));
                     let parent_id = s.store.state().selection.primary().cloned();
 
+                    let mounted_id;
                     if let Some(prefab_def) = builtin_prefab(&ct) {
                         let mut counter = s.store.state().next_node_id;
                         let tree = materialize_prefab(&prefab_def, &mut counter);
@@ -1226,6 +1428,7 @@ impl Shell {
                         if let Some(ref mut live) = s.live {
                             let _ = live.insert_tree_in_source(parent_id.as_deref(), &tree, None);
                         }
+                        mounted_id = root_id.clone();
                         s.store.mutate(|state| {
                             state.next_node_id = counter;
                             state.selection.select(root_id);
@@ -1242,6 +1445,7 @@ impl Shell {
                                 None,
                             );
                         }
+                        mounted_id = node_id.clone();
                         let nid = node_id.clone();
                         s.store.mutate(|state| {
                             state.next_node_id += 1;
@@ -1249,6 +1453,7 @@ impl Shell {
                         });
                     }
                     s.sync_builder_document();
+                    s.fire_signal(&mounted_id, "mounted", serde_json::Map::new());
                 }
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
@@ -2838,6 +3043,86 @@ impl Shell {
             }
         });
 
+        // Remove a signal connection by id
+        self.window.on_signal_connection_remove({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |connection_id| {
+                {
+                    let mut s = inner.borrow_mut();
+                    let cid = connection_id.to_string();
+                    s.push_undo("Remove signal connection");
+                    s.store.mutate(|state| {
+                        if let Some(doc) =
+                            state.active_app_mut().and_then(|a| a.active_document_mut())
+                        {
+                            crate::panels::signals::SignalsPanel::remove_connection(doc, &cid);
+                        }
+                    });
+                    s.sync_builder_document();
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Add a signal connection from the signals panel quick-add
+        self.window.on_signal_connection_add({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |signal_name, target_node_id, action_kind| {
+                {
+                    let mut s = inner.borrow_mut();
+                    let source = match s.store.state().selection.primary().cloned() {
+                        Some(id) => id,
+                        None => return,
+                    };
+                    let sig = signal_name.to_string();
+                    let target = if target_node_id.is_empty() {
+                        source.clone()
+                    } else {
+                        target_node_id.to_string()
+                    };
+                    let action = match action_kind.as_str() {
+                        "toggle-visibility" => ActionKind::ToggleVisibility,
+                        "set-property" => ActionKind::SetProperty {
+                            key: "visible".into(),
+                            value: serde_json::json!(true),
+                        },
+                        "navigate" => ActionKind::NavigateTo { target: "/".into() },
+                        "emit-signal" => ActionKind::EmitSignal {
+                            signal: "custom".into(),
+                        },
+                        "play-animation" => ActionKind::PlayAnimation {
+                            animation: "default".into(),
+                        },
+                        "custom" => ActionKind::Custom {
+                            handler: format!("on_{}", sig.replace('-', "_")),
+                        },
+                        _ => ActionKind::ToggleVisibility,
+                    };
+                    let conn_id = format!("conn-{}", s.store.state().next_node_id);
+                    s.push_undo("Add signal connection");
+                    s.store.mutate(|state| {
+                        state.next_node_id += 1;
+                        if let Some(doc) =
+                            state.active_app_mut().and_then(|a| a.active_document_mut())
+                        {
+                            let conn = crate::panels::signals::SignalsPanel::create_connection(
+                                &conn_id, &source, &sig, &target, action,
+                            );
+                            doc.connections.push(conn);
+                        }
+                    });
+                    s.sync_builder_document();
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
         // Viewport preset changed
         self.window.on_viewport_preset_changed({
             let inner = Rc::clone(&inner);
@@ -3101,6 +3386,13 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
             &state.selection,
             state.active_app(),
             &inner.toggled_sections,
+        );
+        push_signal_panel_data(
+            &inner.models,
+            window,
+            &state.builder_document,
+            &inner.registry,
+            &state.selection,
         );
         push_breadcrumbs(
             &inner.models,
@@ -3885,6 +4177,7 @@ fn execute_command(
             let mut s = shared.borrow_mut();
             let selected_id = s.store.state().selection.primary().cloned();
             if let Some(ref target_id) = selected_id {
+                s.fire_signal(target_id, "deleted", serde_json::Map::new());
                 s.push_undo("Delete node");
                 if let Some(ref mut live) = s.live {
                     let _ = live.remove_node_from_source(target_id);
@@ -4292,6 +4585,99 @@ fn collect_split_bounds(
             }
         }
     }
+}
+
+fn push_signal_panel_data(
+    models: &PersistentModels,
+    window: &AppWindow,
+    doc: &BuilderDocument,
+    registry: &ComponentRegistry,
+    selection: &SelectionModel,
+) {
+    use crate::panels::signals::SignalsPanel;
+
+    let selected = selection.as_option();
+    let conn_rows = match &selected {
+        Some(node_id) => SignalsPanel::connections_for_node(doc, node_id),
+        None => SignalsPanel::connection_rows(doc),
+    };
+    let conn_items: Vec<crate::SignalConnectionItem> = conn_rows
+        .iter()
+        .map(|r| crate::SignalConnectionItem {
+            id: SharedString::from(r.id.as_str()),
+            source_label: SharedString::from(r.source_label.as_str()),
+            signal: SharedString::from(r.signal.as_str()),
+            target_label: SharedString::from(r.target_label.as_str()),
+            action_kind: SharedString::from(r.action_kind.as_str()),
+            action_summary: SharedString::from(r.action_summary.as_str()),
+        })
+        .collect();
+    let count = sync_model(&models.signal_connections, &conn_items);
+    window.set_signal_connections_count(count);
+
+    let sig_items: Vec<crate::SignalItem> = if let Some(node_id) = &selected {
+        let available = SignalsPanel::available_signals(node_id, doc, registry);
+        available
+            .iter()
+            .map(|s| crate::SignalItem {
+                name: SharedString::from(s.signal_name.as_str()),
+                description: SharedString::from(s.description.as_str()),
+                payload_summary: SharedString::from(s.payload_summary.as_str()),
+            })
+            .collect()
+    } else {
+        vec![]
+    };
+    let count = sync_model(&models.signal_list, &sig_items);
+    window.set_signal_list_count(count);
+
+    let target_items: Vec<crate::TargetNodeItem> = SignalsPanel::available_targets(doc)
+        .iter()
+        .map(|t| crate::TargetNodeItem {
+            node_id: SharedString::from(t.node_id.as_str()),
+            label: SharedString::from(t.label.as_str()),
+            component: SharedString::from(t.component.as_str()),
+        })
+        .collect();
+    let count = sync_model(&models.signal_target_nodes, &target_items);
+    window.set_signal_target_nodes_count(count);
+}
+
+/// Build a Luau script that includes the signal handler stdlib, the
+/// page source (which defines the handler functions), and a call to
+/// the target handler. The stdlib collects actions into `_actions`
+/// which the shell reads back after execution.
+#[cfg(feature = "native")]
+fn build_handler_script(page_source: &str, handler_name: &str) -> String {
+    format!(
+        r#"local _actions = {{}}
+
+function set_property(node_id, key, value)
+    table.insert(_actions, {{ type = "set_property", node_id = node_id, key = key, value = value }})
+end
+
+function toggle_visibility(node_id)
+    table.insert(_actions, {{ type = "toggle_visibility", node_id = node_id }})
+end
+
+function navigate(route)
+    table.insert(_actions, {{ type = "navigate", route = route }})
+end
+
+function emit_signal(node_id, signal)
+    table.insert(_actions, {{ type = "emit_signal", node_id = node_id, signal = signal }})
+end
+
+{page_source}
+
+local _result = {handler_name}(event)
+if type(_result) == "table" then
+    _result._actions = _actions
+    return _result
+end
+return {{ _actions = _actions }}
+"#
+    )
 }
 
 fn push_dock_layout(

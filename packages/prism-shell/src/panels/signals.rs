@@ -5,7 +5,9 @@
 //! Luau code editor and the visual builder as "another lens" on the
 //! same document-level `Connection` data.
 
+use prism_builder::registry::FieldKind;
 use prism_builder::{ActionKind, BuilderDocument, ComponentRegistry, Connection, Node};
+use prism_core::foundation::object_model::types::EntityFieldType;
 use prism_core::help::HelpEntry;
 use serde_json::json;
 
@@ -171,6 +173,132 @@ impl SignalsPanel {
         };
         prism_builder::signal_contexts(&signals)
     }
+
+    /// Build a `SchemaContext` with signal definitions populated for the
+    /// given node. Ready for the editor completion/diagnostics pipeline
+    /// to consume — the Luau and Slint syntax providers use `ctx.signals`
+    /// for signal-aware `on_*` handler completions and hover.
+    pub fn build_schema_context(
+        node_id: &str,
+        doc: &BuilderDocument,
+        registry: &ComponentRegistry,
+    ) -> prism_core::language::syntax::SchemaContext {
+        let signals = Self::signal_contexts_for_node(node_id, doc, registry);
+        use prism_core::foundation::object_model::types::EntityFieldDef;
+        let fields = find_node(doc, node_id)
+            .map(|node| match registry.get(&node.component) {
+                Some(comp) => comp
+                    .schema()
+                    .iter()
+                    .map(|f| EntityFieldDef {
+                        id: f.key.clone(),
+                        field_type: field_kind_to_entity_field_type(&f.kind),
+                        label: Some(f.label.clone()),
+                        description: f.help.clone(),
+                        required: None,
+                        default: None,
+                        expression: None,
+                        enum_options: None,
+                        ref_types: None,
+                        lookup_relation: None,
+                        lookup_field: None,
+                        rollup_relation: None,
+                        rollup_field: None,
+                        rollup_function: None,
+                        ui: None,
+                    })
+                    .collect(),
+                None => vec![],
+            })
+            .unwrap_or_default();
+        prism_core::language::syntax::SchemaContext {
+            object_type: find_node(doc, node_id)
+                .map(|n| n.component.clone())
+                .unwrap_or_default(),
+            fields,
+            signals,
+        }
+    }
+
+    /// Generate a Luau handler stub for a Custom connection. This is the
+    /// code the user would write to handle the signal — the panel and
+    /// the code editor are two views on the same thing.
+    pub fn generate_handler_stub(conn: &Connection, doc: &BuilderDocument) -> Option<String> {
+        let ActionKind::Custom { handler } = &conn.action else {
+            return None;
+        };
+        let source_label = node_label(doc, &conn.source_node);
+        let signal = &conn.signal;
+        Some(format!(
+            "function {handler}(event)\n  -- Handler for '{signal}' on {source_label}\n  -- event._source_node, event._signal, plus payload fields\nend"
+        ))
+    }
+
+    /// Generate Luau code for all Custom handlers in the document.
+    pub fn generate_all_handler_stubs(doc: &BuilderDocument) -> String {
+        let mut stubs: Vec<String> = Vec::new();
+        for conn in &doc.connections {
+            if let Some(stub) = Self::generate_handler_stub(conn, doc) {
+                stubs.push(stub);
+            }
+        }
+        stubs.join("\n\n")
+    }
+
+    /// Generate a Luau `on_*` handler for a non-Custom connection.
+    /// This shows what the connection does in Luau syntax, making the
+    /// panel and code two lenses on the same behavior.
+    pub fn connection_as_luau(conn: &Connection) -> String {
+        match &conn.action {
+            ActionKind::SetProperty { key, value } => {
+                let val_str = match value {
+                    serde_json::Value::String(s) => format!("\"{s}\""),
+                    other => other.to_string(),
+                };
+                format!(
+                    "-- {}: on '{}', set {}.{} = {}\nset_property(\"{}\", \"{}\", {})",
+                    conn.id,
+                    conn.signal,
+                    conn.target_node,
+                    key,
+                    val_str,
+                    conn.target_node,
+                    key,
+                    val_str
+                )
+            }
+            ActionKind::ToggleVisibility => {
+                format!(
+                    "-- {}: on '{}', toggle {}.visible\ntoggle_visibility(\"{}\")",
+                    conn.id, conn.signal, conn.target_node, conn.target_node
+                )
+            }
+            ActionKind::NavigateTo { target } => {
+                format!(
+                    "-- {}: on '{}', navigate to {}\nnavigate(\"{}\")",
+                    conn.id, conn.signal, target, target
+                )
+            }
+            ActionKind::EmitSignal { signal } => {
+                format!(
+                    "-- {}: on '{}', emit '{}' on {}\nemit_signal(\"{}\", \"{}\")",
+                    conn.id, conn.signal, signal, conn.target_node, conn.target_node, signal
+                )
+            }
+            ActionKind::PlayAnimation { animation } => {
+                format!(
+                    "-- {}: on '{}', play animation '{}'\nplay_animation(\"{}\", \"{}\")",
+                    conn.id, conn.signal, animation, conn.target_node, animation
+                )
+            }
+            ActionKind::Custom { handler } => {
+                format!(
+                    "-- {}: on '{}', call {handler}(event)\n{handler}(event)",
+                    conn.id, conn.signal
+                )
+            }
+        }
+    }
 }
 
 impl Panel for SignalsPanel {
@@ -188,7 +316,7 @@ impl Panel for SignalsPanel {
     }
     fn help_entry(&self) -> Option<HelpEntry> {
         Some(HelpEntry {
-            id: "panel.signals".into(),
+            id: "shell.panels.signals".into(),
             title: "Signals Panel".into(),
             summary: "Author and inspect signal connections between components. \
                       Each connection wires a source signal to a target action."
@@ -197,6 +325,18 @@ impl Panel for SignalsPanel {
             doc_path: None,
             doc_anchor: None,
         })
+    }
+}
+
+fn field_kind_to_entity_field_type(kind: &FieldKind) -> EntityFieldType {
+    match kind {
+        FieldKind::Text | FieldKind::TextArea => EntityFieldType::String,
+        FieldKind::Color => EntityFieldType::Color,
+        FieldKind::Select { .. } => EntityFieldType::Enum,
+        FieldKind::Number { .. } => EntityFieldType::Float,
+        FieldKind::Integer { .. } => EntityFieldType::Int,
+        FieldKind::Boolean => EntityFieldType::Bool,
+        FieldKind::File { .. } => EntityFieldType::File,
     }
 }
 
@@ -432,5 +572,159 @@ mod tests {
         });
         assert_eq!(kind, "emit-signal");
         assert!(summary.contains("done"));
+    }
+
+    #[test]
+    fn generate_handler_stub_for_custom_action() {
+        let doc = test_doc();
+        let conn = &doc.connections[2]; // c3: custom handler onModalClose
+        let stub = SignalsPanel::generate_handler_stub(conn, &doc).unwrap();
+        assert!(stub.contains("function onModalClose(event)"));
+        assert!(stub.contains("deleted"));
+    }
+
+    #[test]
+    fn generate_handler_stub_returns_none_for_non_custom() {
+        let doc = test_doc();
+        let conn = &doc.connections[0]; // c1: toggle visibility
+        assert!(SignalsPanel::generate_handler_stub(conn, &doc).is_none());
+    }
+
+    #[test]
+    fn generate_all_handler_stubs_includes_custom_only() {
+        let doc = test_doc();
+        let stubs = SignalsPanel::generate_all_handler_stubs(&doc);
+        assert!(stubs.contains("function onModalClose(event)"));
+        assert!(!stubs.contains("toggle"));
+    }
+
+    #[test]
+    fn connection_as_luau_set_property() {
+        let doc = test_doc();
+        let luau = SignalsPanel::connection_as_luau(&doc.connections[1]);
+        assert!(luau.contains("set_property"));
+        assert!(luau.contains("\"text\""));
+    }
+
+    #[test]
+    fn connection_as_luau_toggle_visibility() {
+        let doc = test_doc();
+        let luau = SignalsPanel::connection_as_luau(&doc.connections[0]);
+        assert!(luau.contains("toggle_visibility"));
+        assert!(luau.contains("modal"));
+    }
+
+    #[test]
+    fn connection_as_luau_custom_handler() {
+        let doc = test_doc();
+        let luau = SignalsPanel::connection_as_luau(&doc.connections[2]);
+        assert!(luau.contains("onModalClose(event)"));
+    }
+
+    #[test]
+    fn signal_contexts_for_node_with_builtins() {
+        let doc = test_doc();
+        let mut registry = ComponentRegistry::new();
+        prism_builder::register_builtins(&mut registry).unwrap();
+        let contexts = SignalsPanel::signal_contexts_for_node("btn", &doc, &registry);
+        assert!(!contexts.is_empty());
+        assert!(contexts.iter().any(|c| c.name == "clicked"));
+    }
+
+    #[test]
+    fn signal_contexts_for_missing_node_empty() {
+        let doc = test_doc();
+        let registry = ComponentRegistry::new();
+        let contexts = SignalsPanel::signal_contexts_for_node("nonexistent", &doc, &registry);
+        assert!(contexts.is_empty());
+    }
+
+    #[test]
+    fn connection_as_luau_navigate() {
+        let conn = Connection {
+            id: "nav1".into(),
+            source_node: "btn".into(),
+            signal: "clicked".into(),
+            target_node: "btn".into(),
+            action: ActionKind::NavigateTo {
+                target: "/settings".into(),
+            },
+            params: json!({}),
+        };
+        let luau = SignalsPanel::connection_as_luau(&conn);
+        assert!(luau.contains("navigate"));
+        assert!(luau.contains("/settings"));
+    }
+
+    #[test]
+    fn connection_as_luau_emit_signal() {
+        let conn = Connection {
+            id: "emit1".into(),
+            source_node: "btn".into(),
+            signal: "clicked".into(),
+            target_node: "modal".into(),
+            action: ActionKind::EmitSignal {
+                signal: "opened".into(),
+            },
+            params: json!({}),
+        };
+        let luau = SignalsPanel::connection_as_luau(&conn);
+        assert!(luau.contains("emit_signal"));
+        assert!(luau.contains("opened"));
+        assert!(luau.contains("modal"));
+    }
+
+    #[test]
+    fn create_and_remove_roundtrip() {
+        let mut doc = test_doc();
+        let initial = doc.connections.len();
+        let conn = SignalsPanel::create_connection(
+            "roundtrip-1",
+            "btn",
+            "hovered",
+            "label",
+            ActionKind::SetProperty {
+                key: "text".into(),
+                value: json!("Hovering!"),
+            },
+        );
+        doc.connections.push(conn);
+        assert_eq!(doc.connections.len(), initial + 1);
+
+        let removed = SignalsPanel::remove_connection(&mut doc, "roundtrip-1");
+        assert!(removed);
+        assert_eq!(doc.connections.len(), initial);
+    }
+
+    #[test]
+    fn build_schema_context_populates_signals() {
+        let doc = test_doc();
+        let mut registry = ComponentRegistry::new();
+        prism_builder::register_builtins(&mut registry).unwrap();
+        let ctx = SignalsPanel::build_schema_context("btn", &doc, &registry);
+        assert_eq!(ctx.object_type, "button");
+        assert!(!ctx.signals.is_empty());
+        assert!(ctx.signals.iter().any(|s| s.name == "clicked"));
+        assert!(ctx.signals.iter().any(|s| s.name == "hovered"));
+    }
+
+    #[test]
+    fn build_schema_context_populates_fields() {
+        let doc = test_doc();
+        let mut registry = ComponentRegistry::new();
+        prism_builder::register_builtins(&mut registry).unwrap();
+        let ctx = SignalsPanel::build_schema_context("btn", &doc, &registry);
+        assert!(!ctx.fields.is_empty());
+        assert!(ctx.fields.iter().any(|f| f.id == "text"));
+    }
+
+    #[test]
+    fn build_schema_context_missing_node_empty() {
+        let doc = test_doc();
+        let registry = ComponentRegistry::new();
+        let ctx = SignalsPanel::build_schema_context("nonexistent", &doc, &registry);
+        assert!(ctx.signals.is_empty());
+        assert!(ctx.fields.is_empty());
+        assert!(ctx.object_type.is_empty());
     }
 }

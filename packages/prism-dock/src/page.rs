@@ -27,7 +27,11 @@ impl WorkflowPage {
             DockNode::hsplit(
                 0.72,
                 DockNode::tab(PanelKind::Builder.id()),
-                DockNode::tabs(vec![PanelKind::Properties.id(), PanelKind::CodeEditor.id()]),
+                DockNode::tabs(vec![
+                    PanelKind::Properties.id(),
+                    PanelKind::Signals.id(),
+                    PanelKind::CodeEditor.id(),
+                ]),
             ),
         ));
         Self {
@@ -130,7 +134,8 @@ mod tests {
         assert!(page.dock.contains_panel("builder"));
         assert!(page.dock.contains_panel("properties"));
         assert!(page.dock.contains_panel("code-editor"));
-        assert_eq!(page.dock.tab_count(), 6);
+        assert!(page.dock.contains_panel("signals"));
+        assert_eq!(page.dock.tab_count(), 7);
     }
 
     #[test]

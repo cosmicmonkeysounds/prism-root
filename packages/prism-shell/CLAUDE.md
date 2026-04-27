@@ -193,17 +193,39 @@ From `src/lib.rs`:
 - `InputAction` — serialisable `Action<AppState>` wrapper around
   `InputEvent`.
 - `panels` — data-provider structs (one per panel) that feed Slint
-  properties. Five panels: Identity, Builder, Inspector, Properties,
-  Signals.
+  properties. Six panels: Identity, Builder, Inspector, Properties,
+  Signals, CodeEditor.
 - `signals` (`src/signals.rs`) — `SignalRuntime` bridges builder signal
   dispatch to the shell. `fire`, `fire_simple`, `fire_pointer`,
   `fire_changed` create `SignalEvent`s and evaluate connections.
-  `apply_result` mutates `BuilderDocument` for SetProperty and
-  ToggleVisibility actions. 7 unit tests.
+  `apply_result` mutates `BuilderDocument` for SetProperty,
+  ToggleVisibility, and PlayAnimation actions. PlayAnimation sets
+  `animating` + `animation` props on the target node for the Slint
+  render walker to pick up. Shell-side `fire_signal` handles
+  cascading `EmitSignal` dispatch (max depth 8), `NavigateTo`
+  page navigation, and `Custom` handler Luau execution via
+  `prism_daemon::modules::luau_module::exec`. Luau return values
+  with `set_properties` or `navigate` keys are applied back to the
+  document. Signals fired from shell callbacks: clicked, hovered,
+  hover-ended, drag-started, drag-ended, changed, deleted, mounted.
+  Visual language bridge: `connections_to_event_listeners` converts
+  `Connection` list to `ScriptGraph` `EventListener` nodes;
+  `event_listeners_to_connections` converts back. 17 unit tests.
 - `panels::signals` (`src/panels/signals.rs`) — `SignalsPanel` for
   authoring signal connections. `connection_rows`, `connections_for_node`,
   `available_signals`, `available_targets`, `create_connection`,
-  `remove_connection`, `signal_contexts_for_node`. 11 unit tests.
+  `remove_connection`, `signal_contexts_for_node`,
+  `build_schema_context`, `generate_handler_stub`,
+  `generate_all_handler_stubs`, `connection_as_luau`. The panel and
+  Luau code editor are two lenses on the same `Connection` data —
+  `connection_as_luau` renders any connection as executable Luau, and
+  `generate_handler_stub` creates editable Custom handler stubs.
+  `build_schema_context` produces a `SchemaContext` with both field
+  definitions and signal contexts populated, ready for the Luau/Slint
+  syntax provider completion pipeline. The Slint signals panel UI
+  includes a richer create-connection flow with target node picker
+  and action kind ComboBox (all 6 action kinds supported).
+  20 unit tests.
 - `help` (`src/help.rs`) — `register_help_entries(&mut HelpRegistry,
   &ComponentRegistry)` coordinates distributed help registration.
   Component entries come from `Component::help_entry()` via
