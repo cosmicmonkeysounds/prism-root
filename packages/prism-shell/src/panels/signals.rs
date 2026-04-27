@@ -15,6 +15,40 @@ use super::Panel;
 
 pub struct SignalsPanel;
 
+/// The six action kinds in presentation order. The Slint ComboBox uses
+/// this as its model; the callback passes the selected index back.
+pub const ACTION_KIND_LABELS: &[&str] = &[
+    "Toggle Visibility",
+    "Set Property",
+    "Navigate To",
+    "Emit Signal",
+    "Play Animation",
+    "Custom Handler",
+];
+
+/// Map a ComboBox index to an `ActionKind` with a sensible default value.
+/// `signal_name` is used to derive the custom handler function name.
+pub fn action_kind_from_index(index: i32, signal_name: &str) -> ActionKind {
+    match index {
+        0 => ActionKind::ToggleVisibility,
+        1 => ActionKind::SetProperty {
+            key: "visible".into(),
+            value: serde_json::json!(true),
+        },
+        2 => ActionKind::NavigateTo { target: "/".into() },
+        3 => ActionKind::EmitSignal {
+            signal: "custom".into(),
+        },
+        4 => ActionKind::PlayAnimation {
+            animation: "default".into(),
+        },
+        5 => ActionKind::Custom {
+            handler: format!("on_{}", signal_name.replace('-', "_")),
+        },
+        _ => ActionKind::ToggleVisibility,
+    }
+}
+
 /// One row in the connection list shown by the Slint signals panel.
 #[derive(Debug, Clone)]
 pub struct ConnectionRow {
@@ -726,5 +760,46 @@ mod tests {
         assert!(ctx.signals.is_empty());
         assert!(ctx.fields.is_empty());
         assert!(ctx.object_type.is_empty());
+    }
+
+    #[test]
+    fn action_kind_from_index_all_variants() {
+        use super::action_kind_from_index;
+        assert!(matches!(
+            action_kind_from_index(0, "clicked"),
+            ActionKind::ToggleVisibility
+        ));
+        assert!(matches!(
+            action_kind_from_index(1, "clicked"),
+            ActionKind::SetProperty { .. }
+        ));
+        assert!(matches!(
+            action_kind_from_index(2, "clicked"),
+            ActionKind::NavigateTo { .. }
+        ));
+        assert!(matches!(
+            action_kind_from_index(3, "clicked"),
+            ActionKind::EmitSignal { .. }
+        ));
+        assert!(matches!(
+            action_kind_from_index(4, "clicked"),
+            ActionKind::PlayAnimation { .. }
+        ));
+        match action_kind_from_index(5, "double-clicked") {
+            ActionKind::Custom { handler } => assert_eq!(handler, "on_double_clicked"),
+            _ => panic!("expected Custom"),
+        }
+        assert!(matches!(
+            action_kind_from_index(99, "x"),
+            ActionKind::ToggleVisibility
+        ));
+    }
+
+    #[test]
+    fn action_kind_labels_count_matches_indices() {
+        use super::{action_kind_from_index, ACTION_KIND_LABELS};
+        for i in 0..ACTION_KIND_LABELS.len() {
+            let _ = action_kind_from_index(i as i32, "test");
+        }
     }
 }

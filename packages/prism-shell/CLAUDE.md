@@ -207,10 +207,13 @@ From `src/lib.rs`:
   `prism_daemon::modules::luau_module::exec`. Luau return values
   with `set_properties` or `navigate` keys are applied back to the
   document. Signals fired from shell callbacks: clicked, hovered,
-  hover-ended, drag-started, drag-ended, changed, deleted, mounted.
+  hover-ended, focused, blurred, drag-started, drag-ended, changed,
+  deleted, mounted. Focused/blurred fire on selection change in
+  `sync_ui_from_shared` — "focused" = node selected, "blurred" =
+  previously selected node deselected.
   Visual language bridge: `connections_to_event_listeners` converts
   `Connection` list to `ScriptGraph` `EventListener` nodes;
-  `event_listeners_to_connections` converts back. 17 unit tests.
+  `event_listeners_to_connections` converts back. 16 unit tests.
 - `panels::signals` (`src/panels/signals.rs`) — `SignalsPanel` for
   authoring signal connections. `connection_rows`, `connections_for_node`,
   `available_signals`, `available_targets`, `create_connection`,
@@ -225,7 +228,12 @@ From `src/lib.rs`:
   syntax provider completion pipeline. The Slint signals panel UI
   includes a richer create-connection flow with target node picker
   and action kind ComboBox (all 6 action kinds supported).
-  20 unit tests.
+  `ACTION_KIND_LABELS` const and `action_kind_from_index` map
+  ComboBox integer indices to typed `ActionKind` variants — the
+  callback signature is `(string, int, int)` (signal name, target
+  index, action index). Target labels are pushed as a
+  `signal-target-labels` `[string]` model from Rust.
+  27 unit tests.
 - `help` (`src/help.rs`) — `register_help_entries(&mut HelpRegistry,
   &ComponentRegistry)` coordinates distributed help registration.
   Component entries come from `Component::help_entry()` via

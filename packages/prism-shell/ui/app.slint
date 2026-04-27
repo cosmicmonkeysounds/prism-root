@@ -1443,9 +1443,11 @@ export component AppWindow inherits Window {
     in property <int> signal-list-count: 0;
     in property <[TargetNodeItem]> signal-target-nodes: [];
     in property <int> signal-target-nodes-count: 0;
+    in property <[string]> signal-target-labels: ["(self)"];
 
     callback signal-connection-remove(string /* connection id */);
-    callback signal-connection-add(string /* signal name */, string /* target node id */, string /* action kind */);
+    callback signal-connection-add(string /* signal name */, int /* target index: 0 = self, 1..N = signal-target-nodes[i-1] */, int /* action kind index */);
+    in property <[string]> signal-action-labels: ["Toggle Visibility", "Set Property", "Navigate To", "Emit Signal", "Play Animation", "Custom Handler"];
 
     // Shell chrome visibility
     in property <bool> show-activity-bar: true;
@@ -2932,8 +2934,8 @@ export component AppWindow inherits Window {
                                                         spacing: 2px;
                                                         for sig[si] in root.signal-list : Rectangle {
                                                             property <bool> expanded: false;
-                                                            property <string> chosen-target: "";
-                                                            property <string> chosen-action: "toggle-visibility";
+                                                            property <int> chosen-target-idx: 0;
+                                                            property <int> chosen-action-idx: 0;
                                                             visible: si < root.signal-list-count;
                                                             height: expanded ? 110px : (sig-touch.has-hover ? 40px : 28px);
                                                             background: sig-touch.has-hover || expanded ? Palette.control-background : transparent;
@@ -2972,12 +2974,12 @@ export component AppWindow inherits Window {
                                                                             padding-left: 8px; padding-right: 8px; spacing: 6px;
                                                                             Text { text: "Target"; color: Palette.foreground.transparentize(40%); font-size: 9px; vertical-alignment: center; width: 36px; }
                                                                             ComboBox {
-                                                                                model: ["(self)", "Pick target..."];
-                                                                                current-value: "(self)";
+                                                                                model: root.signal-target-labels;
+                                                                                current-index: chosen-target-idx;
                                                                                 height: 22px;
                                                                                 horizontal-stretch: 1;
                                                                                 selected(val) => {
-                                                                                    chosen-target = val == "(self)" ? "" : val;
+                                                                                    chosen-target-idx = self.current-index;
                                                                                 }
                                                                             }
                                                                         }
@@ -2985,12 +2987,12 @@ export component AppWindow inherits Window {
                                                                             padding-left: 8px; padding-right: 8px; spacing: 6px;
                                                                             Text { text: "Action"; color: Palette.foreground.transparentize(40%); font-size: 9px; vertical-alignment: center; width: 36px; }
                                                                             ComboBox {
-                                                                                model: ["toggle-visibility", "set-property", "navigate", "emit-signal", "play-animation", "custom"];
-                                                                                current-value: "toggle-visibility";
+                                                                                model: root.signal-action-labels;
+                                                                                current-index: chosen-action-idx;
                                                                                 height: 22px;
                                                                                 horizontal-stretch: 1;
                                                                                 selected(val) => {
-                                                                                    chosen-action = val;
+                                                                                    chosen-action-idx = self.current-index;
                                                                                 }
                                                                             }
                                                                         }
@@ -3001,10 +3003,10 @@ export component AppWindow inherits Window {
                                                                                 text: "Add Connection";
                                                                                 primary: true;
                                                                                 clicked => {
-                                                                                    root.signal-connection-add(sig.name, chosen-target, chosen-action);
+                                                                                    root.signal-connection-add(sig.name, chosen-target-idx, chosen-action-idx);
                                                                                     expanded = false;
-                                                                                    chosen-target = "";
-                                                                                    chosen-action = "toggle-visibility";
+                                                                                    chosen-target-idx = 0;
+                                                                                    chosen-action-idx = 0;
                                                                                 }
                                                                             }
                                                                         }

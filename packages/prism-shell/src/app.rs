@@ -24,7 +24,7 @@ use prism_builder::{
     },
     path_from_string, preview_component_factory, render_document_slint_preview_with_assets,
     starter::{builtin_prefab, materialize_prefab, register_builtins},
-    ActionKind, BuilderDocument, CellEdge, ComponentRegistry, DispatchResult, FieldKind, GridCell,
+    BuilderDocument, CellEdge, ComponentRegistry, DispatchResult, FieldKind, GridCell,
     LiveDocument, Node, NodeId, StyleProperties,
 };
 use prism_core::design_tokens::{DesignTokens, DEFAULT_TOKENS};
@@ -3071,7 +3071,7 @@ impl Shell {
         self.window.on_signal_connection_add({
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
-            move |signal_name, target_node_id, action_kind| {
+            move |signal_name, target_idx, action_idx| {
                 {
                     let mut s = inner.borrow_mut();
                     let source = match s.store.state().selection.primary().cloned() {
@@ -3079,29 +3079,18 @@ impl Shell {
                         None => return,
                     };
                     let sig = signal_name.to_string();
-                    let target = if target_node_id.is_empty() {
+                    let target = if target_idx <= 0 {
                         source.clone()
                     } else {
-                        target_node_id.to_string()
+                        let doc = &s.store.state().builder_document;
+                        let targets = crate::panels::signals::SignalsPanel::available_targets(doc);
+                        let ti = (target_idx - 1) as usize;
+                        targets
+                            .get(ti)
+                            .map(|t| t.node_id.clone())
+                            .unwrap_or_else(|| source.clone())
                     };
-                    let action = match action_kind.as_str() {
-                        "toggle-visibility" => ActionKind::ToggleVisibility,
-                        "set-property" => ActionKind::SetProperty {
-                            key: "visible".into(),
-                            value: serde_json::json!(true),
-                        },
-                        "navigate" => ActionKind::NavigateTo { target: "/".into() },
-                        "emit-signal" => ActionKind::EmitSignal {
-                            signal: "custom".into(),
-                        },
-                        "play-animation" => ActionKind::PlayAnimation {
-                            animation: "default".into(),
-                        },
-                        "custom" => ActionKind::Custom {
-                            handler: format!("on_{}", sig.replace('-', "_")),
-                        },
-                        _ => ActionKind::ToggleVisibility,
-                    };
+                    let action = crate::panels::signals::action_kind_from_index(action_idx, &sig);
                     let conn_id = format!("conn-{}", s.store.state().next_node_id);
                     s.push_undo("Add signal connection");
                     s.store.mutate(|state| {
@@ -3181,6 +3170,14 @@ fn sync_ui_from_shared(shared: &Rc<RefCell<ShellInner>>, window: &AppWindow) {
         inner.input.set_context("commandPaletteOpen", palette_open);
         let current_selected = inner.store.state().selection.as_option();
         if current_selected != inner.last_selected_node {
+            let prev = inner.last_selected_node.clone();
+            let curr = current_selected.clone();
+            if let Some(prev) = prev {
+                inner.fire_signal(&prev, "blurred", serde_json::Map::new());
+            }
+            if let Some(curr) = curr {
+                inner.fire_signal(&curr, "focused", serde_json::Map::new());
+            }
             inner.toggled_sections.clear();
             inner.last_selected_node = current_selected;
         }
@@ -4631,7 +4628,8 @@ fn push_signal_panel_data(
     let count = sync_model(&models.signal_list, &sig_items);
     window.set_signal_list_count(count);
 
-    let target_items: Vec<crate::TargetNodeItem> = SignalsPanel::available_targets(doc)
+    let targets = SignalsPanel::available_targets(doc);
+    let target_items: Vec<crate::TargetNodeItem> = targets
         .iter()
         .map(|t| crate::TargetNodeItem {
             node_id: SharedString::from(t.node_id.as_str()),
@@ -4641,6 +4639,14 @@ fn push_signal_panel_data(
         .collect();
     let count = sync_model(&models.signal_target_nodes, &target_items);
     window.set_signal_target_nodes_count(count);
+
+    let mut target_labels: Vec<SharedString> = Vec::with_capacity(targets.len() + 1);
+    target_labels.push(SharedString::from("(self)"));
+    for t in &targets {
+        target_labels.push(SharedString::from(format!("{} [{}]", t.label, t.component)));
+    }
+    let target_label_model = std::rc::Rc::new(slint::VecModel::from(target_labels));
+    window.set_signal_target_labels(slint::ModelRc::from(target_label_model));
 }
 
 /// Build a Luau script that includes the signal handler stdlib, the
