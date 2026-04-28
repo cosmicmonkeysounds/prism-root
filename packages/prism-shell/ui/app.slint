@@ -2119,7 +2119,7 @@ export component AppWindow inherits Window {
                                                                 Rectangle { visible: root.page-layout.margin-top > 0.0; x: 0px; y: root.page-layout.margin-top * root.canvas-zoom * 1px; width: parent.width; height: 1px; background: Palette.accent-background.transparentize(82%); }
                                                                 Rectangle { visible: root.page-layout.margin-bottom > 0.0; x: 0px; y: parent.height - root.page-layout.margin-bottom * root.canvas-zoom * 1px; width: parent.width; height: 1px; background: Palette.accent-background.transparentize(82%); }
                                                                 for cg[i] in root.column-gutters : Rectangle {
-                                                                    visible: i < root.column-gutters-count;
+                                                                    visible: i < root.column-gutters-count && !root.preview-mode;
                                                                     x: cg.offset * root.canvas-zoom * 1px + root.page-layout.margin-left * root.canvas-zoom * 1px;
                                                                     y: root.page-layout.margin-top * root.canvas-zoom * 1px;
                                                                     width: cg.size * root.canvas-zoom * 1px;
@@ -2129,7 +2129,7 @@ export component AppWindow inherits Window {
                                                                     Rectangle { x: parent.width - 1px; y: 0px; width: 1px; height: parent.height; background: Palette.accent-background.transparentize(78%); }
                                                                 }
                                                                 for rg[i] in root.row-gutters : Rectangle {
-                                                                    visible: i < root.row-gutters-count;
+                                                                    visible: i < root.row-gutters-count && !root.preview-mode;
                                                                     x: root.page-layout.margin-left * root.canvas-zoom * 1px;
                                                                     y: rg.offset * root.canvas-zoom * 1px + root.page-layout.margin-top * root.canvas-zoom * 1px;
                                                                     width: parent.width - root.page-layout.margin-left * root.canvas-zoom * 1px - root.page-layout.margin-right * root.canvas-zoom * 1px;
@@ -2144,7 +2144,7 @@ export component AppWindow inherits Window {
                                                             Rectangle {
                                                                 // Grid cells (interactive page grid — inline to avoid component recursion)
                                                                 for cell[i] in root.grid-cells : Rectangle {
-                                                                    visible: i < root.grid-cells-count;
+                                                                    visible: i < root.grid-cells-count && !root.preview-mode;
                                                                     x: (root.page-layout.margin-left + cell.x) * root.canvas-zoom * 1px;
                                                                     y: (root.page-layout.margin-top + cell.y) * root.canvas-zoom * 1px;
                                                                     width: cell.width * root.canvas-zoom * 1px;
@@ -2163,7 +2163,7 @@ export component AppWindow inherits Window {
                                                                             : transparent);
 
                                                                     VerticalLayout {
-                                                                        visible: cell.is-empty;
+                                                                        visible: cell.is-empty && !root.preview-mode;
                                                                         alignment: center;
                                                                         HorizontalLayout {
                                                                             alignment: center;
@@ -2239,9 +2239,9 @@ export component AppWindow inherits Window {
                                                                     }
                                                                 }
 
-                                                                // Contextual edge "+" handles — appear on hover at cell boundaries
+                                                                // Contextual edge "+" handles — appear on hover at cell boundaries (hidden in preview)
                                                                 for handle[hi] in root.grid-edge-handles : Rectangle {
-                                                                    visible: hi < root.grid-edge-handles-count;
+                                                                    visible: hi < root.grid-edge-handles-count && !root.preview-mode;
                                                                     x: (root.page-layout.margin-left + handle.x) * root.canvas-zoom * 1px;
                                                                     y: (root.page-layout.margin-top + handle.y) * root.canvas-zoom * 1px;
                                                                     width: max(handle.width * root.canvas-zoom * 1px, 14px);
@@ -2596,10 +2596,45 @@ export component AppWindow inherits Window {
                                                                 }
 
                                                                 VerticalLayout {
-                                                                    visible: root.builder-node-count == 0 && root.grid-cells-count == 0;
+                                                                    visible: !root.preview-mode && root.builder-node-count == 0 && root.grid-cells-count == 0;
                                                                     alignment: center; spacing: 8px; padding-top: 80px;
                                                                     Text { text: "Empty document"; color: Palette.foreground.transparentize(50%); font-size: 16px; horizontal-alignment: center; }
                                                                     Text { text: "Add a component from the palette to get started."; color: Palette.foreground.transparentize(60%); font-size: 12px; horizontal-alignment: center; }
+                                                                }
+                                                            }
+
+                                                            // Preview-mode interactive overlay — topmost layer for click-to-fire-signal
+                                                            if root.preview-mode && root.preview-nodes-count > 0 : Rectangle {
+                                                                x: 0px; y: 0px;
+                                                                width: parent.width;
+                                                                height: parent.height;
+
+                                                                for pn[i] in root.preview-nodes : Rectangle {
+                                                                    visible: i < root.preview-nodes-count;
+                                                                    x: pn.x * root.canvas-zoom * 1px;
+                                                                    y: pn.y * root.canvas-zoom * 1px;
+                                                                    width: pn.w * root.canvas-zoom * 1px;
+                                                                    height: pn.h * root.canvas-zoom * 1px;
+                                                                    border-radius: pn.border-radius * 1px;
+                                                                    background: preview-hit.has-hover
+                                                                        ? Palette.accent-background.transparentize(88%)
+                                                                        : transparent;
+
+                                                                    preview-hit := TouchArea {
+                                                                        property <bool> was-hovered: false;
+                                                                        mouse-cursor: pointer;
+                                                                        clicked => { root.builder-node-clicked(pn.id); }
+                                                                        moved => {
+                                                                            if self.has-hover && !was-hovered {
+                                                                                was-hovered = true;
+                                                                                root.builder-node-hovered(pn.id, self.mouse-x / 1px, self.mouse-y / 1px);
+                                                                            }
+                                                                            if !self.has-hover && was-hovered {
+                                                                                was-hovered = false;
+                                                                                root.builder-node-hover-ended(pn.id);
+                                                                            }
+                                                                        }
+                                                                    }
                                                                 }
                                                             }
                                                         }
@@ -3151,7 +3186,14 @@ export component AppWindow inherits Window {
                                                     HorizontalLayout {
                                                         spacing: 8px; alignment: start;
                                                         Text { text: "Signals"; color: Palette.foreground.transparentize(20%); font-size: 12px; font-weight: 600; vertical-alignment: center; }
-                                                        Text { text: root.signal-connections-count > 0 ? root.signal-connections-count + " connected" : ""; color: Palette.foreground.transparentize(50%); font-size: 11px; vertical-alignment: center; }
+                                                        if root.has-selection && root.selected-component != "" : Text {
+                                                            text: root.selected-component;
+                                                            color: Palette.accent-foreground.transparentize(20%);
+                                                            font-size: 10px;
+                                                            vertical-alignment: center;
+                                                        }
+                                                        Rectangle { horizontal-stretch: 1; }
+                                                        Text { text: root.signal-connections-count > 0 ? root.signal-connections-count + " connected" : ""; color: Palette.foreground.transparentize(50%); font-size: 10px; vertical-alignment: center; }
                                                     }
 
                                                     // Each signal with its connections inline

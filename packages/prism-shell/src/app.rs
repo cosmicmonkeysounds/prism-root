@@ -656,7 +656,9 @@ impl ShellInner {
         signal: &str,
         payload: serde_json::Map<String, serde_json::Value>,
     ) {
-        if !is_preview_mode(&self.store.state().workspace) {
+        let is_preview = is_preview_mode(&self.store.state().workspace);
+        eprintln!("[signal] fire_signal source={source_node} signal={signal} preview={is_preview}");
+        if !is_preview {
             return;
         }
         let connections = self
@@ -666,10 +668,12 @@ impl ShellInner {
             .and_then(|a| a.active_document())
             .map(|d| d.connections.clone())
             .unwrap_or_default();
+        eprintln!("[signal] connections count={}", connections.len());
         if connections.is_empty() {
             return;
         }
         let results = SignalRuntime::fire(source_node, signal, payload, &connections);
+        eprintln!("[signal] dispatch results={}", results.len());
         if results.is_empty() {
             return;
         }
@@ -1388,26 +1392,25 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |node_id| {
+                eprintln!("[click] builder_node_clicked id={node_id}");
                 {
                     let mut s = inner.borrow_mut();
                     let nid = node_id.to_string();
+                    s.store.mutate(|state| {
+                        state.selection.select(nid.clone());
+                    });
                     if is_preview_mode(&s.store.state().workspace) {
                         s.fire_signal(&nid, "clicked", serde_json::Map::new());
-                    } else {
-                        s.store.mutate(|state| {
-                            state.selection.select(nid.clone());
-                        });
-                        if let Some(ref live) = s.live {
-                            if let Some(sel) = live.select_node(&nid) {
-                                s.store.mutate(|state| {
-                                    state
-                                        .editor_state
-                                        .set_cursor_position(sel.start_line, sel.start_col);
-                                    state
-                                        .editor_state
-                                        .extend_selection_to(sel.end_line, sel.end_col);
-                                });
-                            }
+                    } else if let Some(ref live) = s.live {
+                        if let Some(sel) = live.select_node(&nid) {
+                            s.store.mutate(|state| {
+                                state
+                                    .editor_state
+                                    .set_cursor_position(sel.start_line, sel.start_col);
+                                state
+                                    .editor_state
+                                    .extend_selection_to(sel.end_line, sel.end_col);
+                            });
                         }
                     }
                 }
@@ -1446,6 +1449,9 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |node_id, value| {
+                if is_preview_mode(&inner.borrow().store.state().workspace) {
+                    return;
+                }
                 let node_id = node_id.to_string();
                 let value = value.to_string();
                 {
@@ -1485,6 +1491,9 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |node_id| {
+                if is_preview_mode(&inner.borrow().store.state().workspace) {
+                    return;
+                }
                 {
                     let mut s = inner.borrow_mut();
                     let nid = if node_id.is_empty() {
@@ -1516,6 +1525,9 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |component_type| {
+                if is_preview_mode(&inner.borrow().store.state().workspace) {
+                    return;
+                }
                 let ct = component_type.to_string();
                 {
                     let mut s = inner.borrow_mut();
@@ -1644,6 +1656,9 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |key, value| {
+                if is_preview_mode(&inner.borrow().store.state().workspace) {
+                    return;
+                }
                 eprintln!(
                     "[property-edit] key={key:?} value={value:?} syncing={}",
                     inner.borrow().syncing.get()
@@ -1738,6 +1753,9 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |key, val| {
+                if is_preview_mode(&inner.borrow().store.state().workspace) {
+                    return;
+                }
                 eprintln!(
                     "[property-edit-number] key={key:?} val={val} syncing={}",
                     inner.borrow().syncing.get()
@@ -1888,6 +1906,9 @@ impl Shell {
             direction: i32,
             label: &str,
         ) {
+            if is_preview_mode(&inner.borrow().store.state().workspace) {
+                return;
+            }
             {
                 let mut s = inner.borrow_mut();
                 let nid = if node_id.is_empty() {
@@ -2212,6 +2233,9 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move || {
+                if is_preview_mode(&inner.borrow().store.state().workspace) {
+                    return;
+                }
                 inner.borrow_mut().perform_undo();
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
@@ -2222,6 +2246,9 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move || {
+                if is_preview_mode(&inner.borrow().store.state().workspace) {
+                    return;
+                }
                 inner.borrow_mut().perform_redo();
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
@@ -2676,6 +2703,9 @@ impl Shell {
         self.window.on_node_drag_started({
             let inner = Rc::clone(&inner);
             move |node_id| {
+                if is_preview_mode(&inner.borrow().store.state().workspace) {
+                    return;
+                }
                 let nid = node_id.to_string();
                 let mut s = inner.borrow_mut();
                 if let Some(ref mut live) = s.live {
@@ -2702,6 +2732,9 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |node_id, tool, dx, dy, shift| {
+                if is_preview_mode(&inner.borrow().store.state().workspace) {
+                    return;
+                }
                 if inner.borrow().syncing.get() {
                     return;
                 }
@@ -2732,6 +2765,9 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |node_id, _tool, _dx, _dy, _shift| {
+                if is_preview_mode(&inner.borrow().store.state().workspace) {
+                    return;
+                }
                 if inner.borrow().syncing.get() {
                     return;
                 }
@@ -2771,6 +2807,9 @@ impl Shell {
         self.window.on_node_resize_started({
             let inner = Rc::clone(&inner);
             move |node_id, _handle| {
+                if is_preview_mode(&inner.borrow().store.state().workspace) {
+                    return;
+                }
                 use prism_core::foundation::geometry::Size2;
                 let nid = node_id.to_string();
                 let mut s = inner.borrow_mut();
@@ -2798,6 +2837,9 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |node_id, handle, dx, dy, shift| {
+                if is_preview_mode(&inner.borrow().store.state().workspace) {
+                    return;
+                }
                 if inner.borrow().syncing.get() {
                     return;
                 }
@@ -2828,6 +2870,9 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |node_id, handle, dx, dy, shift| {
+                if is_preview_mode(&inner.borrow().store.state().workspace) {
+                    return;
+                }
                 if inner.borrow().syncing.get() {
                     return;
                 }
@@ -2861,6 +2906,9 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |path| {
+                if is_preview_mode(&inner.borrow().store.state().workspace) {
+                    return;
+                }
                 {
                     let mut s = inner.borrow_mut();
                     let occupant_id = {
@@ -2889,6 +2937,9 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |cell_path, edge| {
+                if is_preview_mode(&inner.borrow().store.state().workspace) {
+                    return;
+                }
                 {
                     let mut s = inner.borrow_mut();
                     s.push_undo("Add cell");
@@ -2918,6 +2969,9 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |id| {
+                if is_preview_mode(&inner.borrow().store.state().workspace) {
+                    return;
+                }
                 let id_str = id.as_str();
                 if let Some(path_str) = id_str.strip_prefix("cell:") {
                     let path = path_from_string(path_str);
@@ -2940,6 +2994,9 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |component_type, path| {
+                if is_preview_mode(&inner.borrow().store.state().workspace) {
+                    return;
+                }
                 let ct = component_type.to_string();
                 let path_str = path.to_string();
                 {
@@ -3002,6 +3059,9 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |path, x, y| {
+                if is_preview_mode(&inner.borrow().store.state().workspace) {
+                    return;
+                }
                 {
                     let mut s = inner.borrow_mut();
                     s.pending_picker = Some((path.to_string(), x, y));
@@ -3031,6 +3091,9 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |component_type| {
+                if is_preview_mode(&inner.borrow().store.state().workspace) {
+                    return;
+                }
                 {
                     let mut s = inner.borrow_mut();
                     if s.drag_component_type == component_type.as_str() {
@@ -4728,6 +4791,11 @@ fn push_signal_panel_data(
     use crate::panels::signals::SignalsPanel;
 
     let selected = selection.as_option();
+    eprintln!(
+        "[signals-panel] selected={:?} doc_connections={}",
+        selected,
+        doc.connections.len()
+    );
     let conn_rows = match &selected {
         Some(node_id) => SignalsPanel::connections_for_node(doc, node_id),
         None => SignalsPanel::connection_rows(doc),
