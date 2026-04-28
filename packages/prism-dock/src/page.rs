@@ -116,8 +116,24 @@ impl WorkflowPage {
         }
     }
 
+    pub fn preview() -> Self {
+        let dock = DockState::new(DockNode::tab(PanelKind::Builder.id()));
+        Self {
+            id: "preview".into(),
+            label: "Preview".into(),
+            icon_hint: "preview".into(),
+            dock,
+        }
+    }
+
     pub fn builtins() -> Vec<Self> {
-        vec![Self::edit(), Self::design(), Self::code(), Self::fusion()]
+        vec![
+            Self::edit(),
+            Self::design(),
+            Self::code(),
+            Self::fusion(),
+            Self::preview(),
+        ]
     }
 }
 
@@ -166,11 +182,18 @@ mod tests {
     }
 
     #[test]
-    fn builtins_returns_four_pages() {
+    fn preview_preset_has_builder_only() {
+        let page = WorkflowPage::preview();
+        assert!(page.dock.contains_panel("builder"));
+        assert_eq!(page.dock.tab_count(), 1);
+    }
+
+    #[test]
+    fn builtins_returns_five_pages() {
         let pages = WorkflowPage::builtins();
-        assert_eq!(pages.len(), 4);
+        assert_eq!(pages.len(), 5);
         let ids: Vec<&str> = pages.iter().map(|p| p.id.as_str()).collect();
-        assert_eq!(ids, &["edit", "design", "code", "fusion"]);
+        assert_eq!(ids, &["edit", "design", "code", "fusion", "preview"]);
     }
 
     #[test]

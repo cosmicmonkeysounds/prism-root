@@ -289,7 +289,7 @@ mod tests {
     fn cycle_page_wraps() {
         let mut ws = DockWorkspace::with_builtins();
         ws.cycle_page(false);
-        assert_eq!(ws.active_page().id, "fusion");
+        assert_eq!(ws.active_page().id, "preview");
         ws.cycle_page(true);
         assert_eq!(ws.active_page().id, "edit");
     }
@@ -304,7 +304,7 @@ mod tests {
             dock: DockState::single("builder".into()),
         };
         ws.add_page(page);
-        assert_eq!(ws.pages().len(), 5);
+        assert_eq!(ws.pages().len(), 6);
         assert!(ws.switch_page_by_id("custom"));
     }
 
@@ -313,7 +313,7 @@ mod tests {
         let mut ws = DockWorkspace::with_builtins();
         let removed = ws.remove_page(3);
         assert_eq!(removed.unwrap().id, "fusion");
-        assert_eq!(ws.pages().len(), 3);
+        assert_eq!(ws.pages().len(), 4);
     }
 
     #[test]

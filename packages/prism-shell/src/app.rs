@@ -261,8 +261,13 @@ pub fn page_id_for_panel(panel: &str) -> &str {
         "explorer" => "edit",
         "design" => "design",
         "fusion" => "fusion",
+        "preview" => "preview",
         _ => "edit",
     }
+}
+
+pub fn is_preview_mode(workspace: &prism_dock::DockWorkspace) -> bool {
+    workspace.active_page().id == "preview"
 }
 
 impl Default for AppState {
@@ -651,6 +656,9 @@ impl ShellInner {
         signal: &str,
         payload: serde_json::Map<String, serde_json::Value>,
     ) {
+        if !is_preview_mode(&self.store.state().workspace) {
+            return;
+        }
         let connections = self
             .store
             .state()
@@ -1311,9 +1319,16 @@ impl Shell {
                 {
                     let mut s = inner.borrow_mut();
                     let pid = page_id.to_string();
+                    let was_preview = is_preview_mode(&s.store.state().workspace);
                     s.store.mutate(|state| {
                         state.workspace.switch_page_by_id(&pid);
                     });
+                    if was_preview && !is_preview_mode(&s.store.state().workspace) {
+                        s.store.mutate(|state| {
+                            state.runtime_overrides.clear();
+                        });
+                        s.sync_builder_document();
+                    }
                     s.dock_dirty.set(true);
                     let panel_id = panel_id_for_slint(&s.store.state().workspace);
                     update_panel_schemes(&mut s.input, panel_id);
@@ -1368,7 +1383,7 @@ impl Shell {
             }
         });
 
-        // Builder node selection (+ highlight source in code editor)
+        // Builder node clicked — select in edit mode, fire signal in preview mode
         self.window.on_builder_node_clicked({
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
@@ -1376,22 +1391,25 @@ impl Shell {
                 {
                     let mut s = inner.borrow_mut();
                     let nid = node_id.to_string();
-                    s.store.mutate(|state| {
-                        state.selection.select(nid.clone());
-                    });
-                    if let Some(ref live) = s.live {
-                        if let Some(sel) = live.select_node(&nid) {
-                            s.store.mutate(|state| {
-                                state
-                                    .editor_state
-                                    .set_cursor_position(sel.start_line, sel.start_col);
-                                state
-                                    .editor_state
-                                    .extend_selection_to(sel.end_line, sel.end_col);
-                            });
+                    if is_preview_mode(&s.store.state().workspace) {
+                        s.fire_signal(&nid, "clicked", serde_json::Map::new());
+                    } else {
+                        s.store.mutate(|state| {
+                            state.selection.select(nid.clone());
+                        });
+                        if let Some(ref live) = s.live {
+                            if let Some(sel) = live.select_node(&nid) {
+                                s.store.mutate(|state| {
+                                    state
+                                        .editor_state
+                                        .set_cursor_position(sel.start_line, sel.start_col);
+                                    state
+                                        .editor_state
+                                        .extend_selection_to(sel.end_line, sel.end_col);
+                                });
+                            }
                         }
                     }
-                    s.fire_signal(&nid, "clicked", serde_json::Map::new());
                 }
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
@@ -1399,7 +1417,7 @@ impl Shell {
             }
         });
 
-        // Builder node hovered — fire hovered signal with pointer coords
+        // Builder node hovered — fire hovered signal (preview mode only)
         self.window.on_builder_node_hovered({
             let inner = Rc::clone(&inner);
             move |node_id, x, y| {
@@ -1414,7 +1432,6 @@ impl Shell {
             }
         });
 
-        // Builder node hover ended — fire hover-ended signal
         self.window.on_builder_node_hover_ended({
             let inner = Rc::clone(&inner);
             move |node_id| {
@@ -3351,6 +3368,7 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
     // Launchpad vs App view
     let is_launchpad = state.shell_view.is_launchpad();
     window.set_is_launchpad(is_launchpad);
+    window.set_preview_mode(is_preview_mode(&state.workspace));
 
     if is_launchpad {
         push_app_cards(&inner.models, window, &state.apps);
@@ -4615,6 +4633,7 @@ fn panel_metadata_from_workspace(
         }
         "design" => ("Design", "Design components and layouts."),
         "fusion" => ("Fusion", "Node-based creative composition."),
+        "preview" => ("Preview", "Interactive preview with live signals."),
         _ => ("Editor", "Build your page visually."),
     }
 }
@@ -6340,14 +6359,14 @@ mod tests {
     #[test]
     fn workspace_pages_available() {
         let state = AppState::default();
-        assert_eq!(state.workspace.pages().len(), 4);
+        assert_eq!(state.workspace.pages().len(), 5);
         let ids: Vec<&str> = state
             .workspace
             .pages()
             .iter()
             .map(|p| p.id.as_str())
             .collect();
-        assert_eq!(ids, &["edit", "design", "code", "fusion"]);
+        assert_eq!(ids, &["edit", "design", "code", "fusion", "preview"]);
     }
 
     #[test]
@@ -6358,6 +6377,18 @@ mod tests {
         assert_eq!(panel_id_for_slint(&state.workspace), 2);
         state.workspace.switch_page_by_id("fusion");
         assert_eq!(panel_id_for_slint(&state.workspace), 1);
+        state.workspace.switch_page_by_id("preview");
+        assert_eq!(panel_id_for_slint(&state.workspace), 1);
+    }
+
+    #[test]
+    fn preview_mode_only_on_preview_page() {
+        let mut state = AppState::default();
+        assert!(!is_preview_mode(&state.workspace));
+        state.workspace.switch_page_by_id("preview");
+        assert!(is_preview_mode(&state.workspace));
+        state.workspace.switch_page_by_id("edit");
+        assert!(!is_preview_mode(&state.workspace));
     }
 
     #[test]

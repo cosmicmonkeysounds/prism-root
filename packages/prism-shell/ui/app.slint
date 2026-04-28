@@ -1638,6 +1638,7 @@ export component AppWindow inherits Window {
 
     // Launchpad / App navigation
     in property <bool> is-launchpad: true;
+    in property <bool> preview-mode: false;
     in property <[AppCardItem]> app-cards: [];
     in property <string> active-app-name: "";
     in property <string> active-page-name: "";
@@ -1896,8 +1897,8 @@ export component AppWindow inherits Window {
                                         // BUILDER
                                         // ════════════════════════════════════
                                         if panel.panel-id == "builder" : VerticalLayout {
-                                            // Toolbar
-                                            Rectangle {
+                                            // Toolbar (hidden in preview mode)
+                                            if !root.preview-mode : Rectangle {
                                                 height: 28px;
                                                 background: Palette.background;
                                                 Rectangle { x: 0px; y: parent.height - 1px; width: parent.width; height: 1px; background: Palette.foreground.transparentize(90%); }
@@ -2009,6 +2010,18 @@ export component AppWindow inherits Window {
                                                     if root.page-layout.cell-count > 1 : Text { text: root.page-layout.cell-count + " cells"; color: Palette.foreground.transparentize(50%); font-size: 11px; vertical-alignment: center; }
                                                     if root.page-layout.cell-count > 1 : Text { text: "\u{00B7}"; color: Palette.foreground.transparentize(60%); font-size: 11px; vertical-alignment: center; }
                                                     Text { text: root.builder-node-count + " nodes"; color: Palette.foreground.transparentize(50%); font-size: 11px; vertical-alignment: center; }
+                                                }
+                                            }
+
+                                            // Preview mode indicator
+                                            if root.preview-mode : Rectangle {
+                                                height: 28px;
+                                                background: Palette.accent-background.transparentize(85%);
+                                                Rectangle { x: 0px; y: parent.height - 1px; width: parent.width; height: 1px; background: Palette.accent-background.transparentize(60%); }
+                                                HorizontalLayout {
+                                                    alignment: center; spacing: 8px;
+                                                    Text { text: "Preview Mode"; color: Palette.accent-foreground; font-size: 11px; font-weight: 600; vertical-alignment: center; }
+                                                    Text { text: "Click components to test signals"; color: Palette.accent-foreground.transparentize(40%); font-size: 10px; vertical-alignment: center; }
                                                 }
                                             }
 
@@ -2261,8 +2274,8 @@ export component AppWindow inherits Window {
                                                                     }
                                                                 }
 
-                                                                // Positioned (absolute/free) node overlays — always visible so users can interact
-                                                                if root.preview-factory-ready && root.preview-nodes-count > 0 : Rectangle {
+                                                                // Positioned (absolute/free) node overlays — hidden in preview mode
+                                                                if !root.preview-mode && root.preview-factory-ready && root.preview-nodes-count > 0 : Rectangle {
                                                                     vertical-stretch: 1;
                                                                     for pn[i] in root.preview-nodes : Rectangle {
                                                                         visible: i < root.preview-nodes-count && pn.positioned && !pn.selected;
@@ -2325,8 +2338,8 @@ export component AppWindow inherits Window {
                                                                     }
                                                                 }
 
-                                                                // Selection overlays on top of the WYSIWYG preview
-                                                                if root.preview-factory-ready && root.preview-nodes-count > 0 : Rectangle {
+                                                                // Selection overlays on top of the WYSIWYG preview (hidden in preview mode)
+                                                                if !root.preview-mode && root.preview-factory-ready && root.preview-nodes-count > 0 : Rectangle {
                                                                     vertical-stretch: 1;
                                                                     for pn[i] in root.preview-nodes : Rectangle {
                                                                         property <bool> shift-held: false;
@@ -2874,8 +2887,8 @@ export component AppWindow inherits Window {
                                                             pos-x: root.transform-pos-x;
                                                             pos-y: root.transform-pos-y;
                                                             rotation: root.transform-rotation-deg;
-                                                            scale-x: root.transform-scale-x;
-                                                            scale-y: root.transform-scale-y;
+                                                            scale-x: root.node-scale-x;
+                                                            scale-y: root.node-scale-y;
                                                             anchor: root.transform-anchor-value;
                                                             field-edited(key, val) => { root.property-field-edited(key, val); }
                                                             field-edited-number(key, val) => { root.property-field-edited-number(key, val); }
