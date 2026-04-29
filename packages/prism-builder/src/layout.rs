@@ -188,6 +188,10 @@ pub struct EdgeHandle {
     pub y: f32,
     pub width: f32,
     pub height: f32,
+    pub is_gap: bool,
+    pub parent_path: Vec<usize>,
+    pub gap_index: usize,
+    pub orientation: SplitDirection,
 }
 
 use crate::document::{BuilderDocument, Node, NodeId};
@@ -318,9 +322,66 @@ impl PageLayout {
         let mut out = Vec::new();
         if let Some(grid) = &self.grid {
             let mut path = Vec::new();
-            flatten_edges_rec(grid, 0.0, 0.0, content_w, content_h, &mut path, &mut out);
+            flatten_edges_rec(
+                grid,
+                0.0,
+                0.0,
+                content_w,
+                content_h,
+                &mut path,
+                EdgeSuppression::default(),
+                &mut out,
+            );
         }
         out
+    }
+
+    pub fn resize_gap(
+        &mut self,
+        parent_path: &[usize],
+        gap_index: usize,
+        delta: f32,
+        available: f32,
+    ) -> Result<(), GridEditError> {
+        let grid = self.grid.as_mut().ok_or(GridEditError::NoGrid)?;
+        let parent = if parent_path.is_empty() {
+            grid
+        } else {
+            grid.at_mut(parent_path)
+                .ok_or(GridEditError::IndexOutOfBounds(0))?
+        };
+
+        match parent {
+            GridCell::Split { tracks, gap, .. } => {
+                if gap_index + 1 >= tracks.len() {
+                    return Err(GridEditError::IndexOutOfBounds(gap_index));
+                }
+
+                let sizes = compute_track_sizes(tracks, *gap, available);
+                let size_a = sizes[gap_index];
+                let size_b = sizes[gap_index + 1];
+                let min_size = 20.0_f32;
+                let total = size_a + size_b;
+
+                let new_a = (size_a + delta).clamp(min_size, total - min_size);
+                let new_b = total - new_a;
+
+                let total_fr = match (&tracks[gap_index], &tracks[gap_index + 1]) {
+                    (TrackSize::Fr { value: a }, TrackSize::Fr { value: b }) => a + b,
+                    _ => 2.0,
+                };
+
+                tracks[gap_index] = TrackSize::Fr {
+                    value: total_fr * new_a / total,
+                };
+                tracks[gap_index + 1] = TrackSize::Fr {
+                    value: total_fr * new_b / total,
+                };
+
+                Ok(())
+            }
+            _ => Err(GridEditError::IndexOutOfBounds(0)),
+        }
     }
 
     pub fn insert_at_edge(
@@ -537,6 +598,26 @@ fn flatten_cells_rec(
     }
 }
 
+#[derive(Default, Clone, Copy)]
+struct EdgeSuppression {
+    top: bool,
+    bottom: bool,
+    left: bool,
+    right: bool,
+}
+
+impl EdgeSuppression {
+    fn is_suppressed(self, edge: CellEdge) -> bool {
+        match edge {
+            CellEdge::Top => self.top,
+            CellEdge::Bottom => self.bottom,
+            CellEdge::Left => self.left,
+            CellEdge::Right => self.right,
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn flatten_edges_rec(
     cell: &GridCell,
     x: f32,
@@ -544,6 +625,7 @@ fn flatten_edges_rec(
     w: f32,
     h: f32,
     path: &mut Vec<usize>,
+    suppress: EdgeSuppression,
     out: &mut Vec<EdgeHandle>,
 ) {
     let handle_zone = 12.0_f32;
@@ -555,6 +637,9 @@ fn flatten_edges_rec(
                 CellEdge::Left,
                 CellEdge::Right,
             ] {
+                if suppress.is_suppressed(edge) {
+                    continue;
+                }
                 let (hx, hy, hw, hh) = match edge {
                     CellEdge::Top => (x, y - handle_zone / 2.0, w, handle_zone),
                     CellEdge::Bottom => (x, y + h - handle_zone / 2.0, w, handle_zone),
@@ -568,6 +653,10 @@ fn flatten_edges_rec(
                     y: hy,
                     width: hw,
                     height: hh,
+                    is_gap: false,
+                    parent_path: Vec::new(),
+                    gap_index: 0,
+                    orientation: SplitDirection::Horizontal,
                 });
             }
         }
@@ -583,19 +672,73 @@ fn flatten_edges_rec(
             };
             let sizes = compute_track_sizes(tracks, *gap, available);
             let mut offset = 0.0;
+            let gap_val = *gap;
+
             for (i, child) in children.iter().enumerate() {
                 let sz = sizes.get(i).copied().unwrap_or(0.0);
+
+                let mut child_suppress = suppress;
+                match direction {
+                    SplitDirection::Horizontal => {
+                        if i > 0 {
+                            child_suppress.left = true;
+                        }
+                        if i < children.len() - 1 {
+                            child_suppress.right = true;
+                        }
+                    }
+                    SplitDirection::Vertical => {
+                        if i > 0 {
+                            child_suppress.top = true;
+                        }
+                        if i < children.len() - 1 {
+                            child_suppress.bottom = true;
+                        }
+                    }
+                }
+
                 path.push(i);
                 match direction {
                     SplitDirection::Horizontal => {
-                        flatten_edges_rec(child, x + offset, y, sz, h, path, out);
+                        flatten_edges_rec(child, x + offset, y, sz, h, path, child_suppress, out);
                     }
                     SplitDirection::Vertical => {
-                        flatten_edges_rec(child, x, y + offset, w, sz, path, out);
+                        flatten_edges_rec(child, x, y + offset, w, sz, path, child_suppress, out);
                     }
                 }
                 path.pop();
-                offset += sz + gap;
+
+                if i < children.len() - 1 {
+                    let mut add_path = path.clone();
+                    add_path.push(i);
+                    let (add_edge, gx, gy, gw, gh) = match direction {
+                        SplitDirection::Horizontal => {
+                            let center_x = x + offset + sz + gap_val / 2.0;
+                            let zone_w = gap_val.max(handle_zone);
+                            (CellEdge::Right, center_x - zone_w / 2.0, y, zone_w, h)
+                        }
+                        SplitDirection::Vertical => {
+                            let center_y = y + offset + sz + gap_val / 2.0;
+                            let zone_h = gap_val.max(handle_zone);
+                            (CellEdge::Bottom, x, center_y - zone_h / 2.0, w, zone_h)
+                        }
+                    };
+
+                    out.push(EdgeHandle {
+                        cell_path: add_path,
+                        edge: add_edge,
+                        x: gx,
+                        y: gy,
+                        width: gw,
+                        height: gh,
+                        is_gap: true,
+                        parent_path: path.clone(),
+                        gap_index: i,
+                        orientation: *direction,
+                    });
+                }
+
+                offset += sz + gap_val;
             }
         }
     }
@@ -1875,5 +2018,217 @@ mod tests {
         let abs = AbsoluteProps::fixed(200.0, 100.0);
         assert_eq!(abs.width, Dimension::Px { value: 200.0 });
         assert_eq!(abs.height, Dimension::Px { value: 100.0 });
+    }
+
+    // ── Gap handle deduplication tests ─────────────────────────────
+
+    #[test]
+    fn edge_handles_single_leaf_has_four_outer() {
+        let layout = PageLayout {
+            grid: Some(GridCell::leaf()),
+            ..Default::default()
+        };
+        let handles = layout.flatten_edge_handles(200.0, 100.0);
+        assert_eq!(handles.len(), 4);
+        assert!(handles.iter().all(|h| !h.is_gap));
+    }
+
+    #[test]
+    fn edge_handles_horizontal_split_deduplicates() {
+        let layout = PageLayout {
+            grid: Some(GridCell::split(
+                SplitDirection::Horizontal,
+                vec![TrackSize::Fr { value: 1.0 }; 2],
+                16.0,
+                vec![GridCell::leaf(), GridCell::leaf()],
+            )),
+            column_gap: 16.0,
+            ..Default::default()
+        };
+        let handles = layout.flatten_edge_handles(200.0, 100.0);
+        let gaps: Vec<_> = handles.iter().filter(|h| h.is_gap).collect();
+        let outer: Vec<_> = handles.iter().filter(|h| !h.is_gap).collect();
+        assert_eq!(gaps.len(), 1);
+        assert_eq!(gaps[0].gap_index, 0);
+        assert_eq!(gaps[0].orientation, SplitDirection::Horizontal);
+        // 2 cells × 4 edges = 8, minus 2 suppressed (A.right, B.left) = 6 outer
+        assert_eq!(outer.len(), 6);
+    }
+
+    #[test]
+    fn edge_handles_three_columns_has_two_gaps() {
+        let layout = PageLayout {
+            grid: Some(GridCell::split(
+                SplitDirection::Horizontal,
+                vec![TrackSize::Fr { value: 1.0 }; 3],
+                8.0,
+                vec![GridCell::leaf(), GridCell::leaf(), GridCell::leaf()],
+            )),
+            ..Default::default()
+        };
+        let handles = layout.flatten_edge_handles(300.0, 100.0);
+        let gaps: Vec<_> = handles.iter().filter(|h| h.is_gap).collect();
+        assert_eq!(gaps.len(), 2);
+        assert_eq!(gaps[0].gap_index, 0);
+        assert_eq!(gaps[1].gap_index, 1);
+    }
+
+    #[test]
+    fn edge_handles_vertical_split_gap_orientation() {
+        let layout = PageLayout {
+            grid: Some(GridCell::split(
+                SplitDirection::Vertical,
+                vec![TrackSize::Fr { value: 1.0 }; 2],
+                12.0,
+                vec![GridCell::leaf(), GridCell::leaf()],
+            )),
+            ..Default::default()
+        };
+        let handles = layout.flatten_edge_handles(200.0, 200.0);
+        let gaps: Vec<_> = handles.iter().filter(|h| h.is_gap).collect();
+        assert_eq!(gaps.len(), 1);
+        assert_eq!(gaps[0].orientation, SplitDirection::Vertical);
+    }
+
+    #[test]
+    fn edge_handles_nested_suppresses_inner() {
+        let layout = PageLayout {
+            grid: Some(GridCell::split(
+                SplitDirection::Horizontal,
+                vec![TrackSize::Fr { value: 1.0 }; 2],
+                16.0,
+                vec![
+                    GridCell::split(
+                        SplitDirection::Vertical,
+                        vec![TrackSize::Fr { value: 1.0 }; 2],
+                        8.0,
+                        vec![GridCell::leaf(), GridCell::leaf()],
+                    ),
+                    GridCell::leaf(),
+                ],
+            )),
+            ..Default::default()
+        };
+        let handles = layout.flatten_edge_handles(400.0, 200.0);
+        let gaps: Vec<_> = handles.iter().filter(|h| h.is_gap).collect();
+        // 1 horizontal gap (between the vertical split and the leaf)
+        // + 1 vertical gap (between the two leaves inside the vertical split)
+        assert_eq!(gaps.len(), 2);
+        // No leaf should have a Right edge on child 0 or Left edge on child 1
+        let outer: Vec<_> = handles.iter().filter(|h| !h.is_gap).collect();
+        for h in &outer {
+            let path_str = path_to_string(&h.cell_path);
+            if path_str == "0.0" || path_str == "0.1" {
+                assert_ne!(
+                    h.edge,
+                    CellEdge::Right,
+                    "inner right edge should be suppressed"
+                );
+            }
+            if path_str == "1" {
+                assert_ne!(
+                    h.edge,
+                    CellEdge::Left,
+                    "inner left edge should be suppressed"
+                );
+            }
+        }
+    }
+
+    // ── Resize gap tests ───────────────────────────────────────────
+
+    #[test]
+    fn resize_gap_adjusts_fr_tracks() {
+        let mut layout = PageLayout {
+            grid: Some(GridCell::split(
+                SplitDirection::Horizontal,
+                vec![TrackSize::Fr { value: 1.0 }, TrackSize::Fr { value: 1.0 }],
+                0.0,
+                vec![GridCell::leaf(), GridCell::leaf()],
+            )),
+            ..Default::default()
+        };
+        // Each track is 100px. Move 20px to the right.
+        layout.resize_gap(&[], 0, 20.0, 200.0).unwrap();
+        match &layout.grid {
+            Some(GridCell::Split { tracks, .. }) => {
+                if let (TrackSize::Fr { value: a }, TrackSize::Fr { value: b }) =
+                    (&tracks[0], &tracks[1])
+                {
+                    assert!((a - 1.2).abs() < 0.01, "track 0 should grow: {a}");
+                    assert!((b - 0.8).abs() < 0.01, "track 1 should shrink: {b}");
+                } else {
+                    panic!("expected Fr tracks");
+                }
+            }
+            _ => panic!("expected split"),
+        }
+    }
+
+    #[test]
+    fn resize_gap_respects_minimum_size() {
+        let mut layout = PageLayout {
+            grid: Some(GridCell::split(
+                SplitDirection::Horizontal,
+                vec![TrackSize::Fr { value: 1.0 }, TrackSize::Fr { value: 1.0 }],
+                0.0,
+                vec![GridCell::leaf(), GridCell::leaf()],
+            )),
+            ..Default::default()
+        };
+        // Try to push 90px in a 200px space — second track would go to 10px,
+        // but minimum is 20px.
+        layout.resize_gap(&[], 0, 90.0, 200.0).unwrap();
+        match &layout.grid {
+            Some(GridCell::Split { tracks, .. }) => {
+                let sizes = compute_track_sizes(tracks, 0.0, 200.0);
+                assert!(
+                    sizes[1] >= 19.9,
+                    "track 1 should respect minimum: {}",
+                    sizes[1]
+                );
+            }
+            _ => panic!("expected split"),
+        }
+    }
+
+    #[test]
+    fn resize_gap_nested_split() {
+        let mut layout = PageLayout {
+            grid: Some(GridCell::split(
+                SplitDirection::Horizontal,
+                vec![TrackSize::Fr { value: 1.0 }; 2],
+                0.0,
+                vec![
+                    GridCell::split(
+                        SplitDirection::Vertical,
+                        vec![TrackSize::Fr { value: 1.0 }, TrackSize::Fr { value: 1.0 }],
+                        0.0,
+                        vec![GridCell::leaf(), GridCell::leaf()],
+                    ),
+                    GridCell::leaf(),
+                ],
+            )),
+            ..Default::default()
+        };
+        // Resize the vertical gap inside the first child
+        layout.resize_gap(&[0], 0, 10.0, 100.0).unwrap();
+        let inner = layout.grid.as_ref().unwrap().at(&[0]).unwrap();
+        match inner {
+            GridCell::Split { tracks, .. } => {
+                let sizes = compute_track_sizes(tracks, 0.0, 100.0);
+                assert!(
+                    (sizes[0] - 60.0).abs() < 1.0,
+                    "top track should be ~60px: {}",
+                    sizes[0]
+                );
+                assert!(
+                    (sizes[1] - 40.0).abs() < 1.0,
+                    "bottom track should be ~40px: {}",
+                    sizes[1]
+                );
+            }
+            _ => panic!("expected split"),
+        }
     }
 }

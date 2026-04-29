@@ -572,6 +572,7 @@ struct ShellInner {
     drag_component_type: String,
     drag_initial_transform: Option<DragSnapshot>,
     resize_initial: Option<ResizeSnapshot>,
+    gap_resize_snapshot: Option<GapResizeSnapshot>,
     pending_picker: Option<(String, f32, f32)>,
     pending_context_menu: Option<ContextMenuState>,
     vfs: VfsManager,
@@ -655,11 +656,11 @@ impl ShellInner {
         source_node: &str,
         signal: &str,
         payload: serde_json::Map<String, serde_json::Value>,
-    ) {
+    ) -> bool {
         let is_preview = is_preview_mode(&self.store.state().workspace);
         eprintln!("[signal] fire_signal source={source_node} signal={signal} preview={is_preview}");
         if !is_preview {
-            return;
+            return false;
         }
         let connections = self
             .store
@@ -670,12 +671,12 @@ impl ShellInner {
             .unwrap_or_default();
         eprintln!("[signal] connections count={}", connections.len());
         if connections.is_empty() {
-            return;
+            return false;
         }
         let results = SignalRuntime::fire(source_node, signal, payload, &connections);
         eprintln!("[signal] dispatch results={}", results.len());
         if results.is_empty() {
-            return;
+            return false;
         }
         let mut cascading: Vec<(String, String)> = Vec::new();
         let mut navigate_target: Option<String> = None;
@@ -769,6 +770,13 @@ impl ShellInner {
             }
             self.fire_signal(&target, &sig, serde_json::Map::new());
         }
+        self.store.mutate(|state| {
+            Self::apply_runtime_overrides_to_doc(
+                &mut state.builder_document,
+                &state.runtime_overrides,
+            );
+        });
+        true
     }
 
     fn apply_runtime_overrides_to_doc(
@@ -1092,6 +1100,7 @@ impl Shell {
             drag_component_type: String::new(),
             drag_initial_transform: None,
             resize_initial: None,
+            gap_resize_snapshot: None,
             pending_picker: None,
             pending_context_menu: None,
             vfs: VfsManager::new(),
@@ -1420,27 +1429,61 @@ impl Shell {
             }
         });
 
+        // Builder node double-clicked — fire double-clicked signal in preview mode
+        self.window.on_builder_node_double_clicked({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |node_id| {
+                {
+                    let nid = node_id.to_string();
+                    let mut s = inner.borrow_mut();
+                    if is_preview_mode(&s.store.state().workspace) {
+                        s.fire_signal(&nid, "double-clicked", serde_json::Map::new());
+                    }
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
         // Builder node hovered — fire hovered signal (preview mode only)
         self.window.on_builder_node_hovered({
             let inner = Rc::clone(&inner);
+            let weak = weak.clone();
             move |node_id, x, y| {
-                let nid = node_id.to_string();
-                let mut s = inner.borrow_mut();
-                s.fire_signal(&nid, "hovered", {
-                    let mut p = serde_json::Map::new();
-                    p.insert("x".into(), serde_json::Value::from(x as f64));
-                    p.insert("y".into(), serde_json::Value::from(y as f64));
-                    p
-                });
+                let dispatched = {
+                    let nid = node_id.to_string();
+                    let mut s = inner.borrow_mut();
+                    s.fire_signal(&nid, "hovered", {
+                        let mut p = serde_json::Map::new();
+                        p.insert("x".into(), serde_json::Value::from(x as f64));
+                        p.insert("y".into(), serde_json::Value::from(y as f64));
+                        p
+                    })
+                };
+                if dispatched {
+                    if let Some(w) = weak.upgrade() {
+                        sync_ui_from_shared(&inner, &w);
+                    }
+                }
             }
         });
 
         self.window.on_builder_node_hover_ended({
             let inner = Rc::clone(&inner);
+            let weak = weak.clone();
             move |node_id| {
-                let nid = node_id.to_string();
-                let mut s = inner.borrow_mut();
-                s.fire_signal(&nid, "hover-ended", serde_json::Map::new());
+                let dispatched = {
+                    let nid = node_id.to_string();
+                    let mut s = inner.borrow_mut();
+                    s.fire_signal(&nid, "hover-ended", serde_json::Map::new())
+                };
+                if dispatched {
+                    if let Some(w) = weak.upgrade() {
+                        sync_ui_from_shared(&inner, &w);
+                    }
+                }
             }
         });
 
@@ -2961,6 +3004,112 @@ impl Shell {
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
                 }
+            }
+        });
+
+        // Gap resize — snapshot track sizes on press
+        self.window.on_grid_gap_resize_started({
+            let inner = Rc::clone(&inner);
+            move |parent_path, gap_index| {
+                if is_preview_mode(&inner.borrow().store.state().workspace) {
+                    return;
+                }
+                let mut s = inner.borrow_mut();
+                s.push_undo("Resize gap");
+                let pp = path_from_string(parent_path.as_str());
+                let gi = gap_index as usize;
+                let doc = &s.store.state().builder_document;
+                let resolved = doc.page_layout.resolved_size();
+                let vw = s.store.state().viewport_width;
+                let (pw, ph) = resolved
+                    .map(|sz| (sz.width, sz.height))
+                    .unwrap_or((vw, vw * 0.625));
+                let content_w = pw - doc.page_layout.margins.left - doc.page_layout.margins.right;
+                let content_h = ph - doc.page_layout.margins.top - doc.page_layout.margins.bottom;
+
+                if let Some(grid) = &doc.page_layout.grid {
+                    let parent = if pp.is_empty() {
+                        Some(grid)
+                    } else {
+                        grid.at(&pp)
+                    };
+                    if let Some(prism_builder::GridCell::Split {
+                        direction, tracks, ..
+                    }) = parent
+                    {
+                        if gi + 1 < tracks.len() {
+                            let available = match direction {
+                                prism_builder::SplitDirection::Horizontal => content_w,
+                                prism_builder::SplitDirection::Vertical => content_h,
+                            };
+                            s.gap_resize_snapshot = Some(GapResizeSnapshot {
+                                parent_path: pp,
+                                gap_index: gi,
+                                track_a: tracks[gi],
+                                track_b: tracks[gi + 1],
+                                available,
+                            });
+                        }
+                    }
+                }
+            }
+        });
+
+        // Gap resize — live update while dragging (cumulative delta from press)
+        self.window.on_grid_gap_resize_moved({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |_parent_path, _gap_index, delta| {
+                if is_preview_mode(&inner.borrow().store.state().workspace) {
+                    return;
+                }
+                if inner.borrow().syncing.get() {
+                    return;
+                }
+                {
+                    let mut s = inner.borrow_mut();
+                    let snap = s.gap_resize_snapshot.clone();
+                    if let Some(ref snap) = snap {
+                        s.store.mutate(|state| {
+                            let layout = &mut state.builder_document.page_layout;
+                            let grid = match layout.grid.as_mut() {
+                                Some(g) => g,
+                                None => return,
+                            };
+                            let parent = if snap.parent_path.is_empty() {
+                                grid
+                            } else {
+                                match grid.at_mut(&snap.parent_path) {
+                                    Some(p) => p,
+                                    None => return,
+                                }
+                            };
+                            if let prism_builder::GridCell::Split { tracks, .. } = parent {
+                                if snap.gap_index + 1 < tracks.len() {
+                                    tracks[snap.gap_index] = snap.track_a;
+                                    tracks[snap.gap_index + 1] = snap.track_b;
+                                }
+                            }
+                            let _ = layout.resize_gap(
+                                &snap.parent_path,
+                                snap.gap_index,
+                                delta,
+                                snap.available,
+                            );
+                        });
+                    }
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Gap resize — finished
+        self.window.on_grid_gap_resize_finished({
+            let inner = Rc::clone(&inner);
+            move || {
+                inner.borrow_mut().gap_resize_snapshot = None;
             }
         });
 
@@ -5627,6 +5776,15 @@ struct ResizeSnapshot {
     height: f32,
 }
 
+#[derive(Clone)]
+struct GapResizeSnapshot {
+    parent_path: Vec<usize>,
+    gap_index: usize,
+    track_a: prism_builder::TrackSize,
+    track_b: prism_builder::TrackSize,
+    available: f32,
+}
+
 fn find_node_layout_size(
     root: &Node,
     target: &str,
@@ -6224,9 +6382,17 @@ fn push_grid_edge_handles(
                 CellEdge::Left => "left",
                 CellEdge::Right => "right",
             };
+            let orientation_str = match eh.orientation {
+                prism_builder::SplitDirection::Horizontal => "horizontal",
+                prism_builder::SplitDirection::Vertical => "vertical",
+            };
             GridEdgeHandle {
                 cell_path: SharedString::from(prism_builder::path_to_string(&eh.cell_path)),
                 edge: SharedString::from(edge_str),
+                parent_path: SharedString::from(prism_builder::path_to_string(&eh.parent_path)),
+                gap_index: eh.gap_index as i32,
+                is_gap: eh.is_gap,
+                orientation: SharedString::from(orientation_str),
                 x: eh.x,
                 y: eh.y,
                 width: eh.width,

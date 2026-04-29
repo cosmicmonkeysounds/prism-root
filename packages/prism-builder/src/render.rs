@@ -328,6 +328,7 @@ pub fn render_document_slint_preview_with_assets(
                             &root.children,
                             &mut ctx,
                             out,
+                            1.0,
                         )
                     })
                 } else {
@@ -356,15 +357,20 @@ fn emit_grid_cell(
     children: &[crate::document::Node],
     ctx: &mut RenderSlintContext<'_>,
     out: &mut SlintEmitter,
+    stretch: f32,
 ) -> Result<(), RenderError> {
+    let stretch_str = format!("{stretch:.6}")
+        .trim_end_matches('0')
+        .trim_end_matches('.')
+        .to_string();
     match cell {
         GridCell::Leaf { node_id } => {
             if let Some(id) = node_id {
                 if let Some(&idx) = child_by_id.get(id.as_str()) {
                     let child = &children[idx];
                     out.block("Rectangle", |out| {
-                        out.line("horizontal-stretch: 1;");
-                        out.line("vertical-stretch: 1;");
+                        out.line(format!("horizontal-stretch: {stretch_str};"));
+                        out.line(format!("vertical-stretch: {stretch_str};"));
                         if RenderSlintContext::child_emits_position(child) {
                             ctx.render_child(child, out)
                         } else {
@@ -376,15 +382,15 @@ fn emit_grid_cell(
                     })
                 } else {
                     out.block("Rectangle", |out| {
-                        out.line("horizontal-stretch: 1;");
-                        out.line("vertical-stretch: 1;");
+                        out.line(format!("horizontal-stretch: {stretch_str};"));
+                        out.line(format!("vertical-stretch: {stretch_str};"));
                         Ok(())
                     })
                 }
             } else {
                 out.block("Rectangle", |out| {
-                    out.line("horizontal-stretch: 1;");
-                    out.line("vertical-stretch: 1;");
+                    out.line(format!("horizontal-stretch: {stretch_str};"));
+                    out.line(format!("vertical-stretch: {stretch_str};"));
                     Ok(())
                 })
             }
@@ -392,19 +398,25 @@ fn emit_grid_cell(
         GridCell::Split {
             direction,
             gap,
+            tracks,
             children: cells,
-            ..
         } => {
             let layout = match direction {
                 SplitDirection::Horizontal => "HorizontalLayout",
                 SplitDirection::Vertical => "VerticalLayout",
             };
             out.block(layout, |out| {
+                out.line(format!("horizontal-stretch: {stretch_str};"));
+                out.line(format!("vertical-stretch: {stretch_str};"));
                 if *gap > 0.0 {
                     out.prop_px("spacing", *gap as f64);
                 }
-                for cell in cells {
-                    emit_grid_cell(cell, child_by_id, children, ctx, out)?;
+                for (i, cell) in cells.iter().enumerate() {
+                    let child_stretch = match tracks.get(i) {
+                        Some(crate::layout::TrackSize::Fr { value }) => *value,
+                        _ => 1.0,
+                    };
+                    emit_grid_cell(cell, child_by_id, children, ctx, out, child_stretch)?;
                 }
                 Ok(())
             })

@@ -50,7 +50,7 @@ pub use html_starter::register_html_builtins;
 pub use layout::{
     compute_layout, compute_track_sizes, path_from_string, path_to_string, AbsoluteProps, CellEdge,
     ComputedLayout, EdgeHandle, FlatCell, FlowProps, GridCell, GridEditError, GridPlacement,
-    LayoutMode, NodeLayout, PageLayout, PageSize, SplitDirection,
+    LayoutMode, NodeLayout, PageLayout, PageSize, SplitDirection, TrackSize,
 };
 pub use modifier::{Modifier, ModifierKind};
 pub use prefab::{ExposedSlot, PrefabComponent, PrefabDef, PrefabHtmlBlock};

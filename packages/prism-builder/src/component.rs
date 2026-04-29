@@ -134,6 +134,9 @@ impl<'a> RenderSlintContext<'a> {
     }
 
     pub fn render_child(&self, child: &Node, out: &mut SlintEmitter) -> Result<(), RenderError> {
+        if child.props.get("visible").and_then(|v| v.as_bool()) == Some(false) {
+            return Ok(());
+        }
         if self.skip_positioned.get() && Self::child_emits_position(child) {
             return Ok(());
         }

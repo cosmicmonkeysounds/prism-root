@@ -56,6 +56,10 @@ struct InspectorNode {
 struct GridEdgeHandle {
     cell-path: string,
     edge: string,
+    parent-path: string,
+    gap-index: int,
+    is-gap: bool,
+    orientation: string,
     x: float,
     y: float,
     width: float,
@@ -1447,6 +1451,7 @@ export component AppWindow inherits Window {
     in property <bool> preview-factory-ready: false;
     in property <component-factory> preview-factory;
     callback builder-node-clicked(string);
+    callback builder-node-double-clicked(string);
     callback builder-node-hovered(string /* node-id */, float /* x */, float /* y */);
     callback builder-node-hover-ended(string /* node-id */);
     callback builder-text-edited(string, string);
@@ -1620,6 +1625,9 @@ export component AppWindow inherits Window {
     callback picker-dismiss();
     callback palette-drag-toggle(string /* component-type */);
     callback grid-add-at-edge(string /* cell-path */, string /* edge */);
+    callback grid-gap-resize-started(string /* parent-path */, int /* gap-index */);
+    callback grid-gap-resize-moved(string /* parent-path */, int /* gap-index */, float /* delta */);
+    callback grid-gap-resize-finished();
 
     // Context menu
     in property <[MenuItem]> context-menu-items: [];
@@ -2239,7 +2247,8 @@ export component AppWindow inherits Window {
                                                                     }
                                                                 }
 
-                                                                // Contextual edge "+" handles — appear on hover at cell boundaries (hidden in preview)
+                                                                // Contextual gap / edge tools — appear on hover at cell boundaries (hidden in preview).
+                                                                // Single TouchArea per handle to avoid nested-hover flickering.
                                                                 for handle[hi] in root.grid-edge-handles : Rectangle {
                                                                     visible: hi < root.grid-edge-handles-count && !root.preview-mode;
                                                                     x: (root.page-layout.margin-left + handle.x) * root.canvas-zoom * 1px;
@@ -2248,15 +2257,25 @@ export component AppWindow inherits Window {
                                                                     height: max(handle.height * root.canvas-zoom * 1px, 14px);
                                                                     background: transparent;
 
+                                                                    property <bool> gap-resizing: false;
+                                                                    property <float> resize-press-abs-x: 0;
+                                                                    property <float> resize-press-abs-y: 0;
+                                                                    property <bool> over-resize: false;
+
+                                                                    // Resize grip center offsets from parent center
+                                                                    property <length> grip-off-x: handle.orientation == "horizontal" ? 14px : 0px;
+                                                                    property <length> grip-off-y: handle.orientation == "vertical" ? 14px : 0px;
+
+                                                                    // "+" button visual — anchored at midpoint (no own TouchArea)
                                                                     Rectangle {
-                                                                        visible: edge-handle-touch.has-hover;
+                                                                        visible: edge-ta.has-hover || gap-resizing;
                                                                         width: 20px; height: 20px; border-radius: 10px;
-                                                                        background: Palette.accent-background;
-                                                                        x: handle.edge == "top" || handle.edge == "bottom"
-                                                                            ? min(max(0px, edge-handle-touch.mouse-x - 10px), parent.width - self.width)
+                                                                        background: (!over-resize || !handle.is-gap) ? Palette.accent-background : Palette.accent-background.transparentize(30%);
+                                                                        x: handle.is-gap
+                                                                            ? (parent.width - self.width) / 2 - grip-off-x
                                                                             : (parent.width - self.width) / 2;
-                                                                        y: handle.edge == "left" || handle.edge == "right"
-                                                                            ? min(max(0px, edge-handle-touch.mouse-y - 10px), parent.height - self.height)
+                                                                        y: handle.is-gap
+                                                                            ? (parent.height - self.height) / 2 - grip-off-y
                                                                             : (parent.height - self.height) / 2;
                                                                         Text {
                                                                             text: "+";
@@ -2266,10 +2285,75 @@ export component AppWindow inherits Window {
                                                                         }
                                                                     }
 
-                                                                    edge-handle-touch := TouchArea {
-                                                                        mouse-cursor: pointer;
+                                                                    // Resize grip visual — only for gaps (no own TouchArea)
+                                                                    Rectangle {
+                                                                        visible: handle.is-gap && (edge-ta.has-hover || gap-resizing);
+                                                                        width: 20px; height: 20px; border-radius: 10px;
+                                                                        background: (gap-resizing || over-resize) ? Palette.accent-background : Palette.accent-background.transparentize(30%);
+                                                                        x: (parent.width - self.width) / 2 + grip-off-x;
+                                                                        y: (parent.height - self.height) / 2 + grip-off-y;
+                                                                        Rectangle {
+                                                                            x: handle.orientation == "horizontal" ? 7px : 4px;
+                                                                            y: handle.orientation == "horizontal" ? 4px : 7px;
+                                                                            width: handle.orientation == "horizontal" ? 2px : 12px;
+                                                                            height: handle.orientation == "horizontal" ? 12px : 2px;
+                                                                            background: Palette.accent-foreground;
+                                                                            border-radius: 1px;
+                                                                        }
+                                                                        Rectangle {
+                                                                            x: handle.orientation == "horizontal" ? 11px : 4px;
+                                                                            y: handle.orientation == "horizontal" ? 4px : 11px;
+                                                                            width: handle.orientation == "horizontal" ? 2px : 12px;
+                                                                            height: handle.orientation == "horizontal" ? 12px : 2px;
+                                                                            background: Palette.accent-foreground;
+                                                                            border-radius: 1px;
+                                                                        }
+                                                                    }
+
+                                                                    // Single master TouchArea — hit tests by mouse position
+                                                                    edge-ta := TouchArea {
+                                                                        mouse-cursor: gap-resizing ? (handle.orientation == "horizontal" ? col-resize : row-resize)
+                                                                            : over-resize ? (handle.orientation == "horizontal" ? col-resize : row-resize)
+                                                                            : pointer;
+
+                                                                        moved => {
+                                                                            if gap-resizing {
+                                                                                root.grid-gap-resize-moved(
+                                                                                    handle.parent-path,
+                                                                                    handle.gap-index,
+                                                                                    handle.orientation == "horizontal"
+                                                                                        ? ((self.absolute-position.x + self.mouse-x) / 1px - resize-press-abs-x) / root.canvas-zoom
+                                                                                        : ((self.absolute-position.y + self.mouse-y) / 1px - resize-press-abs-y) / root.canvas-zoom
+                                                                                );
+                                                                            }
+                                                                            if handle.is-gap {
+                                                                                over-resize = handle.orientation == "horizontal"
+                                                                                    ? self.mouse-x > parent.width / 2 + 4px
+                                                                                    : self.mouse-y > parent.height / 2 + 4px;
+                                                                            }
+                                                                        }
+
+                                                                        pointer-event(event) => {
+                                                                            if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                                                                                if handle.is-gap && over-resize {
+                                                                                    gap-resizing = true;
+                                                                                    resize-press-abs-x = (self.absolute-position.x + self.mouse-x) / 1px;
+                                                                                    resize-press-abs-y = (self.absolute-position.y + self.mouse-y) / 1px;
+                                                                                    root.grid-gap-resize-started(handle.parent-path, handle.gap-index);
+                                                                                }
+                                                                            }
+                                                                            if event.kind == PointerEventKind.up && event.button == PointerEventButton.left {
+                                                                                if gap-resizing {
+                                                                                    gap-resizing = false;
+                                                                                    root.grid-gap-resize-finished();
+                                                                                }
+                                                                            }
+                                                                        }
+
                                                                         clicked => {
-                                                                            root.grid-add-at-edge(handle.cell-path, handle.edge);
+                                                                            if !gap-resizing && !over-resize {
+                                                                                root.grid-add-at-edge(handle.cell-path, handle.edge);
+                                                                            }
                                                                         }
                                                                     }
                                                                 }
@@ -2624,6 +2708,7 @@ export component AppWindow inherits Window {
                                                                         property <bool> was-hovered: false;
                                                                         mouse-cursor: pointer;
                                                                         clicked => { root.builder-node-clicked(pn.id); }
+                                                                        double-clicked => { root.builder-node-double-clicked(pn.id); }
                                                                         moved => {
                                                                             if self.has-hover && !was-hovered {
                                                                                 was-hovered = true;

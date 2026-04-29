@@ -27,6 +27,9 @@ pub struct HtmlRenderContext<'a> {
 
 impl<'a> HtmlRenderContext<'a> {
     pub fn render_child(&self, child: &Node, out: &mut Html) -> Result<(), RenderError> {
+        if child.props.get("visible").and_then(|v| v.as_bool()) == Some(false) {
+            return Ok(());
+        }
         let block = self
             .registry
             .get(&child.component)
