@@ -122,6 +122,13 @@ From `src/lib.rs`:
   three levels; most-specific non-None wins.
 - `PrismApp`, `Page`, and `Node` all carry
   `#[serde(default)] style: StyleProperties`.
+- `PrismApp` — multi-page application container. Pages are
+  `Vec<Page>` with `active_page: usize`. Page management:
+  `add_page`, `remove_page` (adjusts active_page, prevents
+  removing last page), `find_page_by_route`, `find_page_by_id`.
+  `active_document()` / `active_document_mut()` access the current
+  page's `BuilderDocument`. `NavigationConfig` holds the
+  `NavigationStyle` (Tabs/Sidebar/BottomBar/None).
 
 ### Composition patterns (ADR-004)
 - `Modifier`, `ModifierKind`, `modifier_schema(kind)` — attachable
@@ -229,6 +236,12 @@ Seventeen modules in `src/`:
   `FacetHtmlBlock` (HTML). Render-time expansion: resolves data source,
   clones prefab N times with bindings applied. `facet_schema()` field
   spec. 13 unit tests.
+- `project.rs` — `ProjectFile`, `SavedApp`, `SavedPage`,
+  `FILE_EXTENSION`, `FORMAT_VERSION`. Portable `.prism` file format
+  with `from_apps`/`into_apps` conversion. `SavedPage` serializes
+  source + all sidecar data (page_layout, resources, connections,
+  prefabs, facets) that `Page.document` would lose via `skip_serializing`.
+  5 unit tests.
 - `resource.rs` — `ResourceDef`, `ResourceKind`, `resolve_resource_refs`.
   7 unit tests.
 - `signal.rs` — `SignalDef`, `Connection`, `ActionKind`, `SignalEvent`,

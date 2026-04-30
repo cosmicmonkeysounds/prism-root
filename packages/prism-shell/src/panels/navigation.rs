@@ -87,7 +87,10 @@ impl NavigationPanel {
     }
 
     pub fn create_page(app: &mut PrismApp) -> usize {
-        let num = app.pages.len() + 1;
+        let mut num = app.pages.len() + 1;
+        while app.pages.iter().any(|p| p.id == format!("page-{num}")) {
+            num += 1;
+        }
         let page = Page {
             id: format!("page-{num}"),
             title: format!("Page {num}"),
@@ -97,7 +100,9 @@ impl NavigationPanel {
             style: StyleProperties::default(),
         };
         app.add_page(page);
-        app.pages.len() - 1
+        let idx = app.pages.len() - 1;
+        app.active_page = idx;
+        idx
     }
 
     pub fn delete_page(app: &mut PrismApp, index: usize) -> bool {
@@ -431,9 +436,26 @@ mod tests {
         let idx = NavigationPanel::create_page(&mut app);
         assert_eq!(idx, 2);
         assert_eq!(app.page_count(), 3);
+        assert_eq!(app.active_page, 2);
 
         assert!(NavigationPanel::delete_page(&mut app, 2));
         assert_eq!(app.page_count(), 2);
+    }
+
+    #[test]
+    fn create_page_avoids_id_collision() {
+        let mut app = test_app();
+        // test_app has p1 and p2. Create page-3, then delete it, then create again.
+        let idx = NavigationPanel::create_page(&mut app);
+        assert_eq!(app.pages[idx].id, "page-3");
+        NavigationPanel::delete_page(&mut app, idx);
+        // Now there are 2 pages (p1, p2). create_page would try page-3
+        // again but should still produce page-3 since it was deleted.
+        let idx2 = NavigationPanel::create_page(&mut app);
+        assert_eq!(app.pages[idx2].id, "page-3");
+        // Create another — page-3 exists now, so it should skip to page-4
+        let idx3 = NavigationPanel::create_page(&mut app);
+        assert_eq!(app.pages[idx3].id, "page-4");
     }
 
     #[test]

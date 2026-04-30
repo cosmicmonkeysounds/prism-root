@@ -13,6 +13,7 @@ use prism_builder::ComponentRegistry;
 use prism_core::help::{HelpEntry, HelpRegistry};
 
 use crate::panels::builder::BuilderPanel;
+use crate::panels::editor::CodeEditorPanel;
 use crate::panels::identity::IdentityPanel;
 use crate::panels::inspector::InspectorPanel;
 use crate::panels::navigation::NavigationPanel;
@@ -49,6 +50,7 @@ fn panels() -> Vec<Box<dyn Panel>> {
         Box::new(PropertiesPanel::new()),
         Box::new(SignalsPanel::new()),
         Box::new(NavigationPanel::new()),
+        Box::new(CodeEditorPanel::new()),
     ]
 }
 
@@ -307,6 +309,7 @@ mod tests {
             "editor",
             "signals",
             "navigation",
+            "code-editor",
         ] {
             let id = format!("shell.panels.{panel}");
             assert!(reg.get(&id).is_some(), "missing panel entry: {id}");

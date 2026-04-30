@@ -23,7 +23,7 @@ licence requires.
   after the cargo step to emit the JS loader next to
   `web/index.html`. `prism build --target web` wires this up as
   one command.
-- `cargo test -p prism-shell` — unit + insta snapshot tests (203+).
+- `cargo test -p prism-shell` — unit + insta snapshot tests (280+).
   Slint tests that need a platform backend gracefully skip if none is
   available (CI-friendly).
 - `prism dev shell` — native bin at `src/bin/native.rs`. Supports CLI
@@ -84,7 +84,7 @@ licence requires.
   absolutely-positioned `DockPanelRect` and `DockDividerRect`
   models. Each panel is routed by `panel.panel-id` to its content
   (builder, component-palette, inspector, explorer, properties,
-  code-editor, console, etc.). Dividers are draggable with ratio
+  navigation, code-editor, console, etc.). Dividers are draggable with ratio
   updates flowing through `dock-divider-dragged`.
   **Chrome layout** (DaVinci Resolve / UE5 style): unified top bar
   (28px `MenuBarRow` with menu labels + page tabs + app name),
@@ -235,14 +235,28 @@ From `src/lib.rs`:
   `signal-target-labels` `[string]` model from Rust.
   27 unit tests.
 - `panels::navigation` (`src/panels/navigation.rs`) — `NavigationPanel`
-  for page management. `page_rows` lists all pages as `NavPageRow`
-  items (id, title, route, nav_style). `graph_nodes` / `graph_edges`
-  provide pre-computed geometry for the Slint nav-graph canvas —
-  nodes carry pixel position + label, edges carry start/end
-  coordinates and a pre-computed angle for line rotation. CRUD: 
-  `create_page`, `delete_page`, `rename_page`, `set_route`,
-  `move_page_up` / `move_page_down`. `cycle_nav_style` rotates
-  through `Push`, `Modal`, `Replace`, and `Tab` styles. 15 unit tests.
+  for page management and visual link authoring. `page_rows` lists
+  all pages as `PageRow` items (index, id, title, route, is_active,
+  node_count, link_count). `graph_nodes` / `graph_edges` provide
+  positioned `GraphNode` / `GraphEdge` data for the Slint nav-graph
+  canvas — nodes carry pixel position in a 3-column grid layout,
+  edges carry source/target page indices and a kind (`"href"` or
+  `"signal"`); line endpoints are computed in `push_navigation_panel_data`
+  from node centers. CRUD: `create_page` (collision-safe IDs, activates
+  new page), `delete_page`, `rename_page`, `set_page_route`,
+  `move_page_up` / `move_page_down`, `set_navigation_style`. Link
+  scanning: `graph_edges` walks all pages for `href` prop links
+  (via `collect_href_targets`) and `NavigateTo` signal connections.
+  `intra_app_links` returns href links on the active page only.
+  All mutations push undo snapshots. 14 unit tests.
+- `persistence` (`src/persistence.rs`) — `ProjectPersistence` tracks
+  the current `.prism` file path for Save/Save As/Open/New. Uses
+  `rfd::FileDialog` (native feature) for OS file pickers. File format
+  is `prism_builder::ProjectFile` (JSON with version, apps, sidecar
+  data). Four commands wired in `execute_command`: `file.save` (falls
+  through to `file.save_as` when no path), `file.save_as` (rfd dialog),
+  `file.open` (replaces apps, returns to launchpad), `file.new` (resets
+  to sample apps). Keyboard shortcuts: Ctrl+N/O/S/Shift+S. 4 unit tests.
 - `help` (`src/help.rs`) — `register_help_entries(&mut HelpRegistry,
   &ComponentRegistry)` coordinates distributed help registration.
   Component entries come from `Component::help_entry()` via
@@ -464,6 +478,24 @@ shell framework features are implemented:
   Toolbar zoom controls (−, %, +) and keyboard shortcuts (Ctrl+=/−/0).
   Page surface, margins, grid overlays, and gutters all scale by zoom.
   Flickable-based pan with explicit viewport dimensions.
+- **Navigation panel**: Dedicated workflow page for multi-page app
+  management. Split layout: top half is a visual node graph showing
+  pages as positioned cards and cross-page links as directed edges
+  (both `href` prop links and `NavigateTo` signal connections).
+  Click-to-link interaction: click a page's link handle to start,
+  click a target page to create a `NavigateTo` connection. Click an
+  edge to remove it. Bottom half is the page list with inline
+  `LineEdit` editing for titles and routes, reorder buttons, delete,
+  navigation style cycling (Tabs/Sidebar/BottomBar/None), and add
+  page. All mutations push undo snapshots. `panel.navigation` and
+  `add_page` commands registered in the command palette.
+- **Project persistence**: Save/Save As/Open/New project via `.prism`
+  JSON files. `ProjectPersistence` on `ShellInner` tracks the current
+  file path. Save flushes the active page then serializes all apps
+  through `ProjectFile` (preserves source + sidecar data). Open
+  replaces apps and returns to launchpad. File dialogs via `rfd`
+  (native only). Keyboard shortcuts Ctrl+N/O/S/Shift+S. File menu
+  with New/Open separator Save/Save As.
 - **Visual testing harness**: `src/testing.rs` — 8 predefined scenes,
   `TestHarness` for state assertions + input simulation,
   `ShellScreenshot` for platform screenshot capture. CLI flags

@@ -989,6 +989,8 @@ impl ShellInner {
                 if let Some(app_doc) = state.active_app().and_then(|a| a.active_document()) {
                     doc.connections = app_doc.connections.clone();
                     doc.facets = app_doc.facets.clone();
+                    doc.resources = app_doc.resources.clone();
+                    doc.prefabs = app_doc.prefabs.clone();
                 }
                 Self::apply_runtime_overrides_to_doc(&mut doc, &state.runtime_overrides);
                 state.builder_document = doc;
@@ -1006,6 +1008,8 @@ impl ShellInner {
                 if let Some(app_doc) = state.active_app().and_then(|a| a.active_document()) {
                     doc.connections = app_doc.connections.clone();
                     doc.facets = app_doc.facets.clone();
+                    doc.resources = app_doc.resources.clone();
+                    doc.prefabs = app_doc.prefabs.clone();
                 }
                 Self::apply_runtime_overrides_to_doc(&mut doc, &state.runtime_overrides);
                 state.builder_document = doc;
@@ -1019,6 +1023,19 @@ impl ShellInner {
                 }
             });
         }
+    }
+
+    fn switch_to_page(&mut self, page_index: usize) {
+        self.save_to_active_page();
+        self.store.mutate(|state| {
+            if let Some(app) = state.active_app_mut() {
+                app.active_page = page_index;
+            }
+            state.selection.clear();
+            state.sync_document_from_app();
+        });
+        self.load_active_page();
+        self.dock_dirty.set(true);
     }
 
     fn add_toast(&mut self, title: &str, body: &str, kind: &str) {
@@ -2278,19 +2295,7 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |page_index| {
-                {
-                    let mut s = inner.borrow_mut();
-                    s.save_to_active_page();
-                    s.store.mutate(|state| {
-                        if let Some(app) = state.active_app_mut() {
-                            app.active_page = page_index as usize;
-                        }
-                        state.selection.clear();
-                        state.sync_document_from_app();
-                    });
-                    s.load_active_page();
-                    s.dock_dirty.set(true);
-                }
+                inner.borrow_mut().switch_to_page(page_index as usize);
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
                 }
@@ -2302,23 +2307,7 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move || {
-                {
-                    let mut s = inner.borrow_mut();
-                    s.save_to_active_page();
-                    s.push_undo("Add page");
-                    s.store.mutate(|state| {
-                        if let Some(app) = state.active_app_mut() {
-                            crate::panels::navigation::NavigationPanel::create_page(app);
-                        }
-                        state.selection.clear();
-                        state.sync_document_from_app();
-                    });
-                    s.load_active_page();
-                    s.dock_dirty.set(true);
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
+                execute_command(&inner, &weak, "add_page");
             }
         });
 
@@ -3551,23 +3540,7 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move || {
-                {
-                    let mut s = inner.borrow_mut();
-                    s.save_to_active_page();
-                    s.push_undo("Add page");
-                    s.store.mutate(|state| {
-                        if let Some(app) = state.active_app_mut() {
-                            crate::panels::navigation::NavigationPanel::create_page(app);
-                        }
-                        state.selection.clear();
-                        state.sync_document_from_app();
-                    });
-                    s.load_active_page();
-                    s.dock_dirty.set(true);
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
+                execute_command(&inner, &weak, "add_page");
             }
         });
         self.window.on_nav_delete_page({
@@ -3687,18 +3660,7 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |page_index| {
-                {
-                    let mut s = inner.borrow_mut();
-                    s.save_to_active_page();
-                    s.store.mutate(|state| {
-                        if let Some(app) = state.active_app_mut() {
-                            app.active_page = page_index as usize;
-                        }
-                        state.selection.clear();
-                        state.sync_document_from_app();
-                    });
-                    s.load_active_page();
-                }
+                inner.borrow_mut().switch_to_page(page_index as usize);
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
                 }
@@ -3710,6 +3672,7 @@ impl Shell {
             move || {
                 {
                     let mut s = inner.borrow_mut();
+                    s.push_undo("Change navigation style");
                     s.store.mutate(|state| {
                         if let Some(app) = state.active_app_mut() {
                             use prism_builder::app::NavigationStyle;
@@ -3736,19 +3699,7 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |page_index| {
-                {
-                    let mut s = inner.borrow_mut();
-                    s.save_to_active_page();
-                    s.store.mutate(|state| {
-                        if let Some(app) = state.active_app_mut() {
-                            app.active_page = page_index as usize;
-                        }
-                        state.selection.clear();
-                        state.sync_document_from_app();
-                    });
-                    s.load_active_page();
-                    s.dock_dirty.set(true);
-                }
+                inner.borrow_mut().switch_to_page(page_index as usize);
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
                 }

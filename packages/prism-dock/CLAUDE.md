@@ -35,9 +35,9 @@ the dock tree; this crate only manages the layout state.
 
 ### Panel registry
 - `PanelId` — string alias.
-- `PanelKind` — enum of 12 known panel types (Builder, Inspector,
+- `PanelKind` — enum of 14 known panel types (Builder, Inspector,
   Properties, Explorer, CodeEditor, Identity, Timeline, NodeGraph,
-  AssetBrowser, ComponentPalette, Console, Signals).
+  AssetBrowser, ComponentPalette, Console, Signals, Navigation).
 - `PanelKind::ALL` — const slice of all variants.
 - `PanelKind::from_id(&str)` — reverse lookup from kebab-case string.
 - `PanelKind::id()` — kebab-case string from the enum variant.
@@ -76,7 +76,7 @@ rearrangement.
 Page-level management for workflow switching (like Resolve's page bar).
 - `DockWorkspace` — holds `Vec<WorkflowPage>` + active index +
   per-page customization overrides.
-- `with_builtins()` — four built-in pages (Edit, Design, Code, Fusion).
+- `with_builtins()` — six built-in pages (Edit, Design, Code, Fusion, Navigation, Preview).
 - `switch_page(index)`, `switch_page_by_id(id)`, `cycle_page(forward)`.
 - `active_page()`, `active_dock()`, `active_dock_mut()`.
 - `toggle_panel(id)`, `ensure_panel_visible(id)`,
@@ -97,7 +97,9 @@ Page-level management for workflow switching (like Resolve's page bar).
 - `WorkflowPage::code()` — 2-column: Explorer | CodeEditor over
   Console.
 - `WorkflowPage::fusion()` — quad layout with NodeGraph + Timeline.
-- `WorkflowPage::builtins()` — returns all four presets.
+- `WorkflowPage::navigation()` — 2-column: Navigation (40%) | Builder (60%).
+- `WorkflowPage::preview()` — full-page Builder preview.
+- `WorkflowPage::builtins()` — returns all six presets.
 
 ## Architecture
 
