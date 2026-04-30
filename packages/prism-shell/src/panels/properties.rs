@@ -836,9 +836,18 @@ impl PropertiesPanel {
             }];
         };
 
-        let item_count = match &def.data {
-            FacetDataSource::Static { items } => items.len(),
-            FacetDataSource::Resource { .. } => 0,
+        let (source_kind, item_count_label, source_id, filter_val, sort_val) = match &def.data {
+            FacetDataSource::Static { items } => {
+                ("static", format!("{} items", items.len()), String::new(), String::new(), String::new())
+            }
+            FacetDataSource::Resource { id } => {
+                ("resource", "resource".into(), id.clone(), String::new(), String::new())
+            }
+            FacetDataSource::Query { source, filter, sort_by } => {
+                let f = filter.as_deref().unwrap_or("").to_string();
+                let s = sort_by.as_deref().unwrap_or("").to_string();
+                ("query", "query".into(), source.clone(), f, s)
+            }
         };
 
         let direction_label = match def.layout.direction {
@@ -846,7 +855,7 @@ impl PropertiesPanel {
             FacetDirection::Column => "column",
         };
 
-        vec![
+        let mut rows = vec![
             FieldRowData {
                 key: "facet.prefab_id".into(),
                 label: "Prefab template".into(),
@@ -858,6 +867,59 @@ impl PropertiesPanel {
                 has_bounds: false,
                 options: vec![],
             },
+            FieldRowData {
+                key: "facet.source_kind".into(),
+                label: "Data source".into(),
+                kind: "select".into(),
+                value: source_kind.to_string(),
+                required: false,
+                min: 0.0,
+                max: 0.0,
+                has_bounds: false,
+                options: vec!["static".into(), "resource".into(), "query".into()],
+            },
+        ];
+
+        if source_kind != "static" {
+            rows.push(FieldRowData {
+                key: "facet.source_id".into(),
+                label: "Source resource ID".into(),
+                kind: "text".into(),
+                value: source_id,
+                required: false,
+                min: 0.0,
+                max: 0.0,
+                has_bounds: false,
+                options: vec![],
+            });
+        }
+
+        if source_kind == "query" {
+            rows.push(FieldRowData {
+                key: "facet.filter".into(),
+                label: "Filter expression".into(),
+                kind: "text".into(),
+                value: filter_val,
+                required: false,
+                min: 0.0,
+                max: 0.0,
+                has_bounds: false,
+                options: vec![],
+            });
+            rows.push(FieldRowData {
+                key: "facet.sort_by".into(),
+                label: "Sort by field".into(),
+                kind: "text".into(),
+                value: sort_val,
+                required: false,
+                min: 0.0,
+                max: 0.0,
+                has_bounds: false,
+                options: vec![],
+            });
+        }
+
+        rows.extend([
             FieldRowData {
                 key: "facet.direction".into(),
                 label: "Direction".into(),
@@ -884,14 +946,15 @@ impl PropertiesPanel {
                 key: "facet.item_count".into(),
                 label: "Items".into(),
                 kind: "text".into(),
-                value: format!("{item_count} static items"),
+                value: item_count_label,
                 required: false,
                 min: 0.0,
                 max: 0.0,
                 has_bounds: false,
                 options: vec![],
             },
-        ]
+        ]);
+        rows
     }
 
     pub fn rows(

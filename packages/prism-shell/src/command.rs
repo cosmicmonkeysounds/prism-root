@@ -168,6 +168,17 @@ impl CommandRegistry {
             "Go to Navigation",
             "Panel",
         ));
+        // Facet management
+        reg.register(CommandEntry::new(
+            "facet.add_item",
+            "Add Facet Item",
+            "Facet",
+        ));
+        reg.register(CommandEntry::new(
+            "facet.clear_items",
+            "Clear Facet Items",
+            "Facet",
+        ));
         for n in 1..=9 {
             reg.register(
                 CommandEntry::new(
@@ -362,5 +373,20 @@ mod tests {
             reg.get("file.save_as").unwrap().shortcut,
             Some("Ctrl+Shift+S".to_string())
         );
+    }
+
+    #[test]
+    fn with_builtins_has_facet_commands() {
+        let reg = CommandRegistry::with_builtins();
+        assert!(reg.get("facet.add_item").is_some());
+        assert!(reg.get("facet.clear_items").is_some());
+        assert_eq!(reg.get("facet.add_item").unwrap().category, "Facet");
+    }
+
+    #[test]
+    fn with_builtins_has_page_commands() {
+        let reg = CommandRegistry::with_builtins();
+        assert!(reg.get("add_page").is_some());
+        assert!(reg.get("panel.navigation").is_some());
     }
 }

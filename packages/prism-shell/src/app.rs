@@ -3550,18 +3550,23 @@ impl Shell {
                 {
                     let mut s = inner.borrow_mut();
                     s.save_to_active_page();
-                    s.push_undo("Delete page");
-                    s.store.mutate(|state| {
-                        if let Some(app) = state.active_app_mut() {
-                            crate::panels::navigation::NavigationPanel::delete_page(
-                                app,
-                                page_index as usize,
-                            );
-                        }
-                        state.selection.clear();
-                        state.sync_document_from_app();
+                    let deleted = s.store.state().active_app().is_some_and(|app| {
+                        app.pages.len() > 1 && (page_index as usize) < app.pages.len()
                     });
-                    s.load_active_page();
+                    if deleted {
+                        s.push_undo("Delete page");
+                        s.store.mutate(|state| {
+                            if let Some(app) = state.active_app_mut() {
+                                crate::panels::navigation::NavigationPanel::delete_page(
+                                    app,
+                                    page_index as usize,
+                                );
+                            }
+                            state.selection.clear();
+                            state.sync_document_from_app();
+                        });
+                        s.load_active_page();
+                    }
                 }
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
@@ -4699,14 +4704,28 @@ impl ContextMenuItemDef {
 fn build_context_menu_items(
     inner: &ShellInner,
     target_kind: &str,
-    _target_id: &str,
+    target_id: &str,
 ) -> Vec<ContextMenuItemDef> {
     let has_selection = !inner.store.state().selection.is_empty();
     let has_clipboard = inner.clipboard.is_some();
 
+    let selected_component = if !target_id.is_empty() {
+        inner
+            .store
+            .state()
+            .builder_document
+            .root
+            .as_ref()
+            .and_then(|r| r.find(target_id))
+            .map(|n| n.component.clone())
+    } else {
+        None
+    };
+    let is_facet = selected_component.as_deref() == Some("facet");
+
     match target_kind {
         "inspector-node" | "grid-cell" | "builder-node" => {
-            vec![
+            let mut items = vec![
                 ContextMenuItemDef::action("Cut", "edit.cut", "Ctrl+X", has_selection),
                 ContextMenuItemDef::action("Copy", "edit.copy", "Ctrl+C", has_selection),
                 ContextMenuItemDef::action("Paste", "edit.paste", "Ctrl+V", has_clipboard),
@@ -4721,7 +4740,23 @@ fn build_context_menu_items(
                 ),
                 ContextMenuItemDef::separator(),
                 ContextMenuItemDef::action("Delete", "selection.delete", "", has_selection),
-            ]
+            ];
+            if is_facet {
+                items.push(ContextMenuItemDef::separator());
+                items.push(ContextMenuItemDef::action(
+                    "Add Item",
+                    "facet.add_item",
+                    "",
+                    true,
+                ));
+                items.push(ContextMenuItemDef::action(
+                    "Clear Items",
+                    "facet.clear_items",
+                    "",
+                    true,
+                ));
+            }
+            items
         }
         "inspector-row" => {
             vec![ContextMenuItemDef::action(
@@ -5590,17 +5625,16 @@ fn push_navigation_panel_data(
     // Graph edges — pre-compute line endpoints from node centers
     let graph_edges: Vec<crate::NavGraphEdge> = app
         .map(|app| {
-            let nodes = NavigationPanel::graph_nodes(app);
             NavigationPanel::graph_edges(app)
                 .into_iter()
                 .map(|e| {
-                    let (x1, y1) = nodes
+                    let (x1, y1) = graph_nodes
                         .get(e.source_page_index)
-                        .map(|n| (n.x + n.width / 2.0, n.y + n.height / 2.0))
+                        .map(|n| (n.x + n.w / 2.0, n.y + n.h / 2.0))
                         .unwrap_or((0.0, 0.0));
-                    let (x2, y2) = nodes
+                    let (x2, y2) = graph_nodes
                         .get(e.target_page_index)
-                        .map(|n| (n.x + n.width / 2.0, n.y + n.height / 2.0))
+                        .map(|n| (n.x + n.w / 2.0, n.y + n.h / 2.0))
                         .unwrap_or((0.0, 0.0));
                     crate::NavGraphEdge {
                         id: SharedString::from(&e.id),
@@ -5623,7 +5657,9 @@ fn push_navigation_panel_data(
 
 fn clear_href_on_node(node: &mut prism_builder::document::Node, target_id: &str) {
     if node.id == target_id {
-        node.props.as_object_mut().map(|m| m.remove("href"));
+        if let Some(m) = node.props.as_object_mut() {
+            m.remove("href");
+        }
         return;
     }
     for child in &mut node.children {
@@ -6214,6 +6250,54 @@ fn apply_facet_edit(def: &mut FacetDef, key: &str, value: &str) {
         "gap" => {
             if let Ok(v) = value.parse::<f32>() {
                 def.layout.gap = v;
+            }
+        }
+        "source_kind" => {
+            def.data = match value {
+                "resource" => {
+                    let id = match &def.data {
+                        FacetDataSource::Resource { id } => id.clone(),
+                        FacetDataSource::Query { source, .. } => source.clone(),
+                        _ => String::new(),
+                    };
+                    FacetDataSource::Resource { id }
+                }
+                "query" => {
+                    let source = match &def.data {
+                        FacetDataSource::Resource { id } => id.clone(),
+                        FacetDataSource::Query { source, .. } => source.clone(),
+                        _ => String::new(),
+                    };
+                    FacetDataSource::Query {
+                        source,
+                        filter: None,
+                        sort_by: None,
+                    }
+                }
+                _ => FacetDataSource::Static { items: vec![] },
+            };
+        }
+        "source_id" => match &mut def.data {
+            FacetDataSource::Resource { id } => *id = value.to_string(),
+            FacetDataSource::Query { source, .. } => *source = value.to_string(),
+            _ => {}
+        },
+        "filter" => {
+            if let FacetDataSource::Query { filter, .. } = &mut def.data {
+                *filter = if value.is_empty() {
+                    None
+                } else {
+                    Some(value.to_string())
+                };
+            }
+        }
+        "sort_by" => {
+            if let FacetDataSource::Query { sort_by, .. } = &mut def.data {
+                *sort_by = if value.is_empty() {
+                    None
+                } else {
+                    Some(value.to_string())
+                };
             }
         }
         _ => {}

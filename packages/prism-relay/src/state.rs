@@ -149,6 +149,7 @@ mod tests {
             "table",
             "tabs",
             "accordion",
+            "facet",
         ] {
             assert!(state.registry.get(id).is_some(), "missing builtin: {id}");
             assert!(

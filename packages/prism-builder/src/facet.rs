@@ -52,6 +52,18 @@ pub enum FacetDataSource {
     Static { items: Vec<Value> },
     /// Reference to a `DataSource` resource whose `data` field is a JSON array.
     Resource { id: ResourceId },
+    /// Filter and sort a resource array without mutating the underlying resource.
+    /// `filter` is an optional expression: `"field_path == value"`,
+    /// `"field_path != value"`, or just `"field_path"` (truthy check).
+    /// `sort_by` is an optional dot-notation field path; sort is ascending
+    /// string order. Prepend `-` (e.g. `"-date"`) for descending.
+    Query {
+        source: ResourceId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        filter: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sort_by: Option<String>,
+    },
 }
 
 impl Default for FacetDataSource {
@@ -72,6 +84,44 @@ impl FacetDataSource {
                 .and_then(|r| r.data.as_array())
                 .cloned()
                 .unwrap_or_default(),
+            FacetDataSource::Query {
+                source,
+                filter,
+                sort_by,
+            } => {
+                let mut items: Vec<Value> = resources
+                    .get(source)
+                    .and_then(|r| r.data.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+
+                if let Some(expr) = filter {
+                    items.retain(|item| evaluate_filter(item, expr));
+                }
+
+                if let Some(key) = sort_by {
+                    let (descending, path) = if let Some(stripped) = key.strip_prefix('-') {
+                        (true, stripped)
+                    } else {
+                        (false, key.as_str())
+                    };
+                    items.sort_by(|a, b| {
+                        let va = get_field(a, path)
+                            .map(value_sort_key)
+                            .unwrap_or_default();
+                        let vb = get_field(b, path)
+                            .map(value_sort_key)
+                            .unwrap_or_default();
+                        if descending {
+                            vb.cmp(&va)
+                        } else {
+                            va.cmp(&vb)
+                        }
+                    });
+                }
+
+                items
+            }
         }
     }
 }
@@ -110,6 +160,51 @@ fn get_field(item: &Value, path: &str) -> Option<Value> {
         current = current.get(segment)?;
     }
     Some(current.clone())
+}
+
+/// Stringify a JSON value for stable string-based sorting.
+fn value_sort_key(v: Value) -> String {
+    match v {
+        Value::String(s) => s,
+        Value::Number(n) => {
+            if let Some(f) = n.as_f64() {
+                format!("{f:020.6}")
+            } else {
+                n.to_string()
+            }
+        }
+        Value::Bool(b) => (if b { "1" } else { "0" }).into(),
+        Value::Null => String::new(),
+        other => other.to_string(),
+    }
+}
+
+/// Evaluate a simple filter expression against a data item.
+///
+/// Supported forms:
+/// - `"field"` — truthy check (non-null, non-empty string, non-false, non-zero)
+/// - `"field == value"` — equality (string comparison after serialising both sides)
+/// - `"field != value"` — inequality
+fn evaluate_filter(item: &Value, expr: &str) -> bool {
+    let expr = expr.trim();
+    if let Some((lhs, rhs)) = expr.split_once("!=") {
+        let field_val = get_field(item, lhs.trim()).map(value_sort_key).unwrap_or_default();
+        let rhs_str = rhs.trim().trim_matches('\'').trim_matches('"');
+        return field_val != rhs_str;
+    }
+    if let Some((lhs, rhs)) = expr.split_once("==") {
+        let field_val = get_field(item, lhs.trim()).map(value_sort_key).unwrap_or_default();
+        let rhs_str = rhs.trim().trim_matches('\'').trim_matches('"');
+        return field_val == rhs_str;
+    }
+    // Truthy check
+    match get_field(item, expr) {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(false)) => false,
+        Some(Value::Number(n)) => n.as_f64().map(|f| f != 0.0).unwrap_or(false),
+        Some(Value::String(s)) => !s.is_empty(),
+        Some(_) => true,
+    }
 }
 
 /// Apply all facet bindings to a cloned prefab root node.
@@ -493,5 +588,154 @@ mod tests {
         let schema = facet_schema();
         let facet_id_spec = schema.iter().find(|s| s.key == "facet_id").unwrap();
         assert!(facet_id_spec.required);
+    }
+
+    fn sample_resources() -> IndexMap<String, crate::resource::ResourceDef> {
+        use crate::resource::{ResourceDef, ResourceKind};
+        let mut resources = IndexMap::new();
+        resources.insert(
+            "products".into(),
+            ResourceDef {
+                id: "products".into(),
+                kind: ResourceKind::DataSource,
+                label: "Products".into(),
+                description: String::new(),
+                data: json!([
+                    { "name": "Apple", "status": "active", "price": 1.5 },
+                    { "name": "Banana", "status": "inactive", "price": 0.5 },
+                    { "name": "Cherry", "status": "active", "price": 3.0 },
+                ]),
+            },
+        );
+        resources
+    }
+
+    #[test]
+    fn query_source_no_filter_no_sort_returns_all() {
+        let resources = sample_resources();
+        let src = FacetDataSource::Query {
+            source: "products".into(),
+            filter: None,
+            sort_by: None,
+        };
+        let items = src.resolve(&resources);
+        assert_eq!(items.len(), 3);
+    }
+
+    #[test]
+    fn query_source_equality_filter() {
+        let resources = sample_resources();
+        let src = FacetDataSource::Query {
+            source: "products".into(),
+            filter: Some("status == active".into()),
+            sort_by: None,
+        };
+        let items = src.resolve(&resources);
+        assert_eq!(items.len(), 2);
+        assert!(items.iter().all(|i| i["status"] == "active"));
+    }
+
+    #[test]
+    fn query_source_inequality_filter() {
+        let resources = sample_resources();
+        let src = FacetDataSource::Query {
+            source: "products".into(),
+            filter: Some("status != active".into()),
+            sort_by: None,
+        };
+        let items = src.resolve(&resources);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["name"], "Banana");
+    }
+
+    #[test]
+    fn query_source_truthy_filter() {
+        let resources = sample_resources();
+        let src = FacetDataSource::Query {
+            source: "products".into(),
+            filter: Some("status".into()),
+            sort_by: None,
+        };
+        let items = src.resolve(&resources);
+        assert_eq!(items.len(), 3);
+    }
+
+    #[test]
+    fn query_source_sort_ascending() {
+        let resources = sample_resources();
+        let src = FacetDataSource::Query {
+            source: "products".into(),
+            filter: None,
+            sort_by: Some("name".into()),
+        };
+        let items = src.resolve(&resources);
+        assert_eq!(items[0]["name"], "Apple");
+        assert_eq!(items[1]["name"], "Banana");
+        assert_eq!(items[2]["name"], "Cherry");
+    }
+
+    #[test]
+    fn query_source_sort_descending() {
+        let resources = sample_resources();
+        let src = FacetDataSource::Query {
+            source: "products".into(),
+            filter: None,
+            sort_by: Some("-name".into()),
+        };
+        let items = src.resolve(&resources);
+        assert_eq!(items[0]["name"], "Cherry");
+        assert_eq!(items[2]["name"], "Apple");
+    }
+
+    #[test]
+    fn query_source_filter_and_sort() {
+        let resources = sample_resources();
+        let src = FacetDataSource::Query {
+            source: "products".into(),
+            filter: Some("status == active".into()),
+            sort_by: Some("-price".into()),
+        };
+        let items = src.resolve(&resources);
+        assert_eq!(items.len(), 2);
+        // Cherry (3.0) before Apple (1.5) for descending price
+        assert_eq!(items[0]["name"], "Cherry");
+        assert_eq!(items[1]["name"], "Apple");
+    }
+
+    #[test]
+    fn query_source_serde_round_trip() {
+        let src = FacetDataSource::Query {
+            source: "data".into(),
+            filter: Some("active == true".into()),
+            sort_by: Some("name".into()),
+        };
+        let json = serde_json::to_string(&src).unwrap();
+        let back: FacetDataSource = serde_json::from_str(&json).unwrap();
+        match back {
+            FacetDataSource::Query { source, filter, sort_by } => {
+                assert_eq!(source, "data");
+                assert_eq!(filter, Some("active == true".into()));
+                assert_eq!(sort_by, Some("name".into()));
+            }
+            _ => panic!("expected Query"),
+        }
+    }
+
+    #[test]
+    fn evaluate_filter_truthy_empty_string_is_false() {
+        let item = json!({ "name": "" });
+        assert!(!evaluate_filter(&item, "name"));
+    }
+
+    #[test]
+    fn evaluate_filter_truthy_null_is_false() {
+        let item = json!({ "name": null });
+        assert!(!evaluate_filter(&item, "name"));
+    }
+
+    #[test]
+    fn evaluate_filter_truthy_missing_field_is_false() {
+        let item = json!({ "other": 1 });
+        assert!(!evaluate_filter(&item, "name"));
     }
 }

@@ -7,7 +7,7 @@ the dock tree; this crate only manages the layout state.
 
 ## Build & Test
 - `cargo build -p prism-dock`
-- `cargo test -p prism-dock` — 80+ unit tests.
+- `cargo test -p prism-dock` — 82+ unit tests.
 - `cargo clippy -p prism-dock -- -D warnings`
 
 ## Public surface

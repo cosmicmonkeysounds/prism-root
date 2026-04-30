@@ -44,8 +44,11 @@ Static  { items: Vec<Value> }    // inline JSON array — hand-authored or impor
 Resource { id: ResourceId }      // reference to a DataSource resource whose `data` is an array
 ```
 
-Future Phase 2: `Query { source: ResourceId, filter: String, sort_by: String }` for filtering and
-sorting without changing the underlying resource.
+**Phase 2 (landed):** `Query { source: ResourceId, filter: Option<String>, sort_by: Option<String> }`
+— filter and sort a resource array without mutating it. `filter` accepts
+`"field == value"`, `"field != value"`, or `"field"` (truthy check). `sort_by` is a
+dot-notation path; prefix with `-` for descending (e.g. `"-date"`). Full serde round-trip,
+13 unit tests, properties panel exposes filter + sort fields when source kind is `query`.
 
 ### `FacetBinding`
 
@@ -130,7 +133,7 @@ packages/prism-builder/src/
 
 | Phase | Scope |
 |-------|-------|
-| 1 (now) | `Static` + `Resource` data sources, `Row`/`Column` layout, full Slint + HTML render |
-| 2 | `Query` data source with filter/sort expressions |
+| 1 ✅ | `Static` + `Resource` data sources, `Row`/`Column` layout, full Slint + HTML render |
+| 2 ✅ | `Query` data source with filter/sort expressions |
 | 3 | Live data refresh in Studio (reload resource, re-render facet in place) |
 | 4 | Facet-level variant overrides (e.g. alternate card style for "featured" items) |

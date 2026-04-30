@@ -3461,6 +3461,15 @@ export component AppWindow inherits Window {
                                                     background: Palette.background;
                                                     border-width: 0; border-color: Palette.foreground.transparentize(90%);
 
+                                                    // Empty state
+                                                    if root.nav-graph-nodes-count == 0 : Text {
+                                                        text: "No pages yet. Add a page below.";
+                                                        color: Palette.foreground.transparentize(60%);
+                                                        font-size: 11px;
+                                                        horizontal-alignment: center;
+                                                        vertical-alignment: center;
+                                                    }
+
                                                     // Edge lines (drawn behind nodes)
                                                     for edge[ei] in root.nav-graph-edges : Rectangle {
                                                         property <float> dx: edge.x2 - edge.x1;
@@ -3470,10 +3479,12 @@ export component AppWindow inherits Window {
                                                         x: edge.x1 * 1px;
                                                         y: edge.y1 * 1px - 1px;
                                                         width: Math.max(len * 1px, 1px);
-                                                        height: 2px;
-                                                        background: edge.kind == "signal"
-                                                            ? Palette.accent-background.transparentize(30%)
-                                                            : Palette.foreground.transparentize(50%);
+                                                        height: edge-touch.has-hover ? 4px : 2px;
+                                                        background: edge-touch.has-hover
+                                                            ? Palette.accent-background
+                                                            : (edge.kind == "signal"
+                                                                ? Palette.accent-background.transparentize(30%)
+                                                                : Palette.foreground.transparentize(50%));
                                                         transform-origin: {x: 0, y: 0};
                                                         transform-rotation: Math.atan2(dy, dx);
 
@@ -3485,6 +3496,27 @@ export component AppWindow inherits Window {
                                                             height: 8px;
                                                             border-radius: 4px;
                                                             background: parent.background;
+                                                        }
+
+                                                        // Edge label (counter-rotated so text stays horizontal)
+                                                        if edge-touch.has-hover : Rectangle {
+                                                            x: parent.width / 2 - edge-label.preferred-width / 2 - 4px;
+                                                            y: -18px;
+                                                            width: edge-label.preferred-width + 8px;
+                                                            height: 16px;
+                                                            border-radius: 3px;
+                                                            background: Palette.alternate-background;
+                                                            border-width: 1px;
+                                                            border-color: Palette.foreground.transparentize(75%);
+                                                            transform-origin: { x: edge-label.preferred-width / 2 + 4px, y: 8px };
+                                                            transform-rotation: -Math.atan2(dy, dx);
+                                                            edge-label := Text {
+                                                                text: edge.label;
+                                                                color: Palette.foreground.transparentize(20%);
+                                                                font-size: 9px;
+                                                                horizontal-alignment: center;
+                                                                vertical-alignment: center;
+                                                            }
                                                         }
 
                                                         // Edge hover / remove

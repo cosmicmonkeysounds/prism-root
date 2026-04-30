@@ -13,10 +13,9 @@ property-panel field factories.
   path (`compile_slint_source` / `instantiate_document`) is
   available. `prism-shell` and `prism-studio` flip this on; the
   relay leaves it off so its dep graph stays Slint-free.
-- `cargo test -p prism-builder` — 172 unit tests (baseline).
+- `cargo test -p prism-builder` — 230+ unit tests.
 - `cargo test -p prism-builder --features interpreter` — adds
-  live document, syntax provider, and compile round-trip tests
-  (222 tests total).
+  live document, syntax provider, and compile round-trip tests.
 
 ## Public surface
 From `src/lib.rs`:
@@ -196,8 +195,11 @@ From `src/lib.rs`:
 - `SlintEmitter`, `SlintIdent` — `.slint` DSL emitter.
 
 ## Architecture
-Seventeen modules in `src/`:
+Twenty-five modules in `src/` (excluding `lib.rs`):
 
+- `app.rs` — `PrismApp`, `Page`, `AppIcon`, `NavigationConfig`,
+  `NavigationStyle`. Multi-page app container with page CRUD and
+  active-document accessors. 7 unit tests.
 - `asset.rs` — `AssetSource` enum (URL vs VFS), prop parsing,
   `collect_vfs_hashes`, `FileFieldConfig`. 10 unit tests.
 - `component.rs` — the `Component` trait (Slint-only) + `RenderError`
@@ -231,11 +233,13 @@ Seventeen modules in `src/`:
   `modifier_schema(kind)`. 6 unit tests.
 - `prefab.rs` — `PrefabDef`, `ExposedSlot`, `PrefabComponent`
   (implements `Component`), `apply_prop_to_node`. 5 unit tests.
-- `facet.rs` — `FacetDef`, `FacetDataSource` (Static/Resource),
+- `facet.rs` — `FacetDef`, `FacetDataSource` (Static/Resource/Query),
   `FacetBinding`, `FacetLayout`, `FacetComponent` (Slint),
   `FacetHtmlBlock` (HTML). Render-time expansion: resolves data source,
-  clones prefab N times with bindings applied. `facet_schema()` field
-  spec. 13 unit tests.
+  clones prefab N times with bindings applied. `Query` variant filters
+  (`"field == val"`, `"field != val"`, `"field"` truthy) and sorts
+  (ascending `"field"` or descending `"-field"`) a resource array
+  without mutating it. `facet_schema()` field spec. 23 unit tests.
 - `project.rs` — `ProjectFile`, `SavedApp`, `SavedPage`,
   `FILE_EXTENSION`, `FORMAT_VERSION`. Portable `.prism` file format
   with `from_apps`/`into_apps` conversion. `SavedPage` serializes
@@ -244,11 +248,17 @@ Seventeen modules in `src/`:
   5 unit tests.
 - `resource.rs` — `ResourceDef`, `ResourceKind`, `resolve_resource_refs`.
   7 unit tests.
+- `schemas.rs` — shared component field definitions (field specs for
+  common props like body, href, src, level) used by both Slint and
+  HTML render paths.
 - `signal.rs` — `SignalDef`, `Connection`, `ActionKind`, `SignalEvent`,
   `DispatchResult`, `dispatch_signal`, `common_signals` (12 universal),
   `with_common_signals` (merge/dedup), `signal_symbols` (codegen),
   `generate_signal_type_stubs` (full registry → `.d.luau`),
   `signal_contexts` (builder→syntax bridge). 20 unit tests.
+- `style.rs` — `StyleProperties` (10-field all-`Option` struct),
+  `resolve_cascade(app, page, node)`. Three-level CSS-like cascade:
+  component > page > app; most-specific non-None field wins. 6 unit tests.
 - `variant.rs` — `VariantAxis`, `VariantOption`, `apply_variant_overrides`,
   `apply_variant_defaults`. 6 unit tests.
 - `source_map.rs` — `SourceMap`, `SourceSpan`, `PropSpan`,
