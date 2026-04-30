@@ -13,6 +13,7 @@ use clap::{Parser, Subcommand};
 use crate::workspace::Workspace;
 
 pub mod build;
+pub mod clean;
 pub mod dev;
 pub mod e2e;
 pub mod fmt;
@@ -60,6 +61,8 @@ pub enum Command {
     /// Run end-to-end tests — automated input sequences + state
     /// assertions through the same code paths a human uses.
     E2e(e2e::E2eArgs),
+    /// Run `cargo clean` to remove all build artefacts.
+    Clean,
 }
 
 /// Dispatch a parsed [`Cli`] to the right subcommand.
@@ -74,6 +77,7 @@ pub fn run(cli: &Cli, workspace: &Workspace) -> Result<u8> {
         Command::Fmt { check } => fmt::run(*check, workspace, cli.dry_run),
         Command::Visual(args) => visual::run(args, workspace, cli.dry_run),
         Command::E2e(args) => e2e::run(args, workspace, cli.dry_run),
+        Command::Clean => clean::run(workspace, cli.dry_run),
     }
 }
 

@@ -1462,7 +1462,11 @@ component AppCard inherits Rectangle {
 // ── Root component ─────────────────────────────────────────────────
 
 export component AppWindow inherits Window {
-    title: "Prism Studio";
+    in property <string> project-name: "";
+    in property <bool> project-dirty: false;
+    title: root.project-name == ""
+        ? "Prism Studio"
+        : (root.project-dirty ? "● " : "") + root.project-name + " — Prism Studio";
     preferred-width: 1280px;
     preferred-height: 800px;
 
@@ -1850,9 +1854,9 @@ export component AppWindow inherits Window {
                                 alignment: start;
                                 max-width: 900px;
 
-                                Text { text: "Prism Studio"; color: Palette.foreground; font-size: 28px; font-weight: 800; }
+                                Text { text: root.project-name == "" ? "Prism Studio" : root.project-name; color: Palette.foreground; font-size: 28px; font-weight: 800; }
                                 Rectangle { height: 6px; }
-                                Text { text: "Create, build, and ship rich multi-page apps."; color: Palette.foreground.transparentize(40%); font-size: 14px; }
+                                Text { text: root.project-name == "" ? "Create, build, and ship rich multi-page apps." : "Select an app to start editing, or create a new one."; color: Palette.foreground.transparentize(40%); font-size: 14px; }
                                 Rectangle { height: 32px; }
 
                                 HorizontalLayout {
@@ -3454,6 +3458,13 @@ export component AppWindow inherits Window {
                                             background: Palette.alternate-background;
                                             vertical-stretch: 1;
                                             VerticalLayout {
+                                                // ── Graph header ──────────────
+                                                HorizontalLayout {
+                                                    padding-left: 12px; padding-right: 12px; padding-top: 8px; padding-bottom: 4px;
+                                                    Text { text: "Navigation Graph"; color: Palette.foreground.transparentize(20%); font-size: 12px; font-weight: 600; }
+                                                    Rectangle { horizontal-stretch: 1; }
+                                                    Text { text: root.nav-graph-edges-count + " links"; color: Palette.foreground.transparentize(50%); font-size: 10px; vertical-alignment: center; }
+                                                }
                                                 // ── Graph canvas ──────────────
                                                 Rectangle {
                                                     vertical-stretch: 2;
@@ -3830,7 +3841,7 @@ export component AppWindow inherits Window {
                             if root.active-panel-id == 2 : Text { text: root.editor-language; color: Palette.foreground.transparentize(40%); font-size: 11px; vertical-alignment: center; }
                             if root.active-panel-id == 2 : Text { text: "\u{00B7}"; color: Palette.foreground.transparentize(60%); font-size: 11px; vertical-alignment: center; }
                             Text { text: "\u{00B7}"; color: Palette.foreground.transparentize(60%); font-size: 11px; vertical-alignment: center; }
-                            Text { text: "Prism Studio"; color: Palette.foreground.transparentize(50%); font-size: 11px; vertical-alignment: center; }
+                            Text { text: root.project-name == "" ? "Prism Studio" : (root.project-dirty ? "● " : "") + root.project-name; color: Palette.foreground.transparentize(50%); font-size: 11px; vertical-alignment: center; }
                         }
                     }
                 }

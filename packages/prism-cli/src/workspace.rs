@@ -104,6 +104,13 @@ impl Workspace {
     pub fn studio_src_dir(&self) -> PathBuf {
         self.package("prism-studio").join("src-tauri").join("src")
     }
+
+    /// The workspace-local `target/` directory where cargo deposits
+    /// build artefacts. All profiles (`debug`, `release`, …) and
+    /// cross-compilation targets live under here.
+    pub fn target_dir(&self) -> PathBuf {
+        self.root.join("target")
+    }
 }
 
 fn is_prism_workspace_manifest(path: &Path) -> Result<bool> {
@@ -176,5 +183,11 @@ mod tests {
             ws.shell_wasm_artifact(true),
             PathBuf::from("/tmp/fake-root/target/wasm32-unknown-unknown/release/prism_shell.wasm")
         );
+    }
+
+    #[test]
+    fn target_dir_is_root_slash_target() {
+        let ws = Workspace::new("/tmp/fake-root");
+        assert_eq!(ws.target_dir(), PathBuf::from("/tmp/fake-root/target"));
     }
 }

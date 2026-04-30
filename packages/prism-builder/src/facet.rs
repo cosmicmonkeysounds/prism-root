@@ -106,12 +106,8 @@ impl FacetDataSource {
                         (false, key.as_str())
                     };
                     items.sort_by(|a, b| {
-                        let va = get_field(a, path)
-                            .map(value_sort_key)
-                            .unwrap_or_default();
-                        let vb = get_field(b, path)
-                            .map(value_sort_key)
-                            .unwrap_or_default();
+                        let va = get_field(a, path).map(value_sort_key).unwrap_or_default();
+                        let vb = get_field(b, path).map(value_sort_key).unwrap_or_default();
                         if descending {
                             vb.cmp(&va)
                         } else {
@@ -188,12 +184,16 @@ fn value_sort_key(v: Value) -> String {
 fn evaluate_filter(item: &Value, expr: &str) -> bool {
     let expr = expr.trim();
     if let Some((lhs, rhs)) = expr.split_once("!=") {
-        let field_val = get_field(item, lhs.trim()).map(value_sort_key).unwrap_or_default();
+        let field_val = get_field(item, lhs.trim())
+            .map(value_sort_key)
+            .unwrap_or_default();
         let rhs_str = rhs.trim().trim_matches('\'').trim_matches('"');
         return field_val != rhs_str;
     }
     if let Some((lhs, rhs)) = expr.split_once("==") {
-        let field_val = get_field(item, lhs.trim()).map(value_sort_key).unwrap_or_default();
+        let field_val = get_field(item, lhs.trim())
+            .map(value_sort_key)
+            .unwrap_or_default();
         let rhs_str = rhs.trim().trim_matches('\'').trim_matches('"');
         return field_val == rhs_str;
     }
@@ -712,7 +712,11 @@ mod tests {
         let json = serde_json::to_string(&src).unwrap();
         let back: FacetDataSource = serde_json::from_str(&json).unwrap();
         match back {
-            FacetDataSource::Query { source, filter, sort_by } => {
+            FacetDataSource::Query {
+                source,
+                filter,
+                sort_by,
+            } => {
                 assert_eq!(source, "data");
                 assert_eq!(filter, Some("active == true".into()));
                 assert_eq!(sort_by, Some("name".into()));

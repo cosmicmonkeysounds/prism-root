@@ -120,11 +120,27 @@ expanded argv without executing anything.
   (requires `prism-shell/e2e` feature + display + accessibility).
 - No flags → runs all 12 built-in tests. Exit code 1 if any fail.
 
+### `prism clean`
+`cargo clean` — removes the entire `target/` tree. Use this when
+artefacts have grown large or when a build is behaving unexpectedly.
+For routine housekeeping, rely on the automatic GC described below.
+
 ### `prism lint`
 `cargo clippy --workspace --all-targets -- -D warnings`.
 
 ### `prism fmt [--check]`
 `cargo fmt --all`, optionally `--check`.
+
+## Automatic build-artefact GC
+After every successful `prism build`, `prism test`, or `prism dev`
+(web preflight), the CLI runs a lightweight sweep
+(`gc::trim_incremental`) that removes per-session directories inside
+`target/{debug,release}/incremental/` and cross-compilation targets
+like `target/wasm32-unknown-unknown/*/incremental/` that haven't been
+modified in the last 7 days. Incremental session data is always
+regenerable on the next compile, so this is safe to run automatically.
+The sweep is silent and best-effort — individual removal errors are
+ignored. Use `prism clean` when you need a full wipe.
 
 ## Library surface
 The crate is split into a library + a thin binary so tests and
@@ -158,7 +174,13 @@ sibling crates can reach into it without going through `std::process`.
   has a store-preserving reload path. Tests in `src/watch.rs`
   cover a tempfile round-trip, an idle non-block, and a quiet-dir
   timeout.
-- `commands::{test, build, dev, lint, fmt}` — each exposes a
+- `gc::trim_incremental(target_dir)` — post-build GC that removes
+  incremental session directories older than 7 days from both native
+  (`target/{debug,release}/incremental/`) and cross-compilation
+  (`target/<triple>/*/incremental/`) directories. Called automatically
+  on successful `build`, `test`, and `dev` (web preflight) runs;
+  see § Automatic build-artefact GC.
+- `commands::{test, build, dev, lint, fmt, clean}` — each exposes a
   `plan(args, workspace) -> Vec<CommandBuilder>` pure function
   and a `run(...)` wrapper. Everything shell-worthy funnels
   through `commands::execute_plan` so `--dry-run` lives in one

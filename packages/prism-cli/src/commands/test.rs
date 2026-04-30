@@ -43,7 +43,11 @@ pub fn plan(args: &TestArgs, workspace: &Workspace) -> Vec<CommandBuilder> {
 /// Run the resolved plan.
 pub fn run(args: &TestArgs, workspace: &Workspace, dry_run: bool) -> Result<u8> {
     let plan = plan(args, workspace);
-    super::execute_plan(&plan, dry_run)
+    let code = super::execute_plan(&plan, dry_run)?;
+    if code == 0 {
+        crate::gc::trim_incremental(&workspace.target_dir());
+    }
+    Ok(code)
 }
 
 #[cfg(test)]

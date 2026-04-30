@@ -18,15 +18,16 @@ use prism_builder::AssetSource;
 use prism_builder::{
     app::{AppIcon, NavigationConfig, Page, PrismApp},
     compile_slint_preview, compute_layout,
+    facet::FacetBinding,
     facet::{FacetDataSource, FacetDef, FacetDirection, FacetLayout},
     layout::{
         AbsoluteProps, AlignOption, Dimension, FlexDirection, FlowDisplay, FlowProps,
         GridPlacement, JustifyOption, LayoutMode, PageSize, TrackSize,
     },
     path_from_string, preview_component_factory, render_document_slint_preview_with_assets,
-    starter::{builtin_prefab, materialize_prefab, register_builtins},
-    BuilderDocument, CellEdge, ComponentRegistry, DispatchResult, FieldKind, GridCell,
-    LiveDocument, Node, NodeId, StyleProperties,
+    starter::{builtin_prefab, card_prefab_def, materialize_prefab, register_builtins},
+    BuilderDocument, CellEdge, ComponentRegistry, DispatchResult, ExposedSlot, FieldKind,
+    FieldSpec, GridCell, LiveDocument, Node, NodeId, PrefabDef, StyleProperties,
 };
 use prism_core::design_tokens::{DesignTokens, DEFAULT_TOKENS};
 use prism_core::editor::EditorState;
@@ -607,6 +608,7 @@ impl ShellInner {
         if self.undo_past.len() > 100 {
             self.undo_past.remove(0);
         }
+        self.persistence.mark_dirty();
     }
 
     fn perform_undo(&mut self) {
@@ -1289,6 +1291,31 @@ impl Shell {
         Ok(())
     }
 
+    pub fn load_project_file(&self, path: &std::path::Path) -> Result<(), String> {
+        let mut s = self.inner.borrow_mut();
+        match s.persistence.open_path(path) {
+            Ok(apps) => {
+                let name = s
+                    .persistence
+                    .project_name()
+                    .unwrap_or_else(|| "project".into());
+                s.store.mutate(|state| {
+                    state.apps = apps;
+                    state.shell_view = ShellView::Launchpad;
+                    state.selection.clear();
+                });
+                s.live = None;
+                s.undo_past.clear();
+                s.undo_future.clear();
+                s.add_toast("Opened", &format!("Loaded {name}"), "success");
+                drop(s);
+                sync_ui_from_shared(&self.inner, &self.window);
+                Ok(())
+            }
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
     pub fn add_notification(&self, title: &str, body: &str, kind: &str) {
         self.inner.borrow_mut().add_toast(title, body, kind);
         sync_ui_from_shared(&self.inner, &self.window);
@@ -1314,6 +1341,17 @@ impl Shell {
         }) {
             eprintln!("prism-shell: first-paint telemetry unavailable on this backend: {err}");
         }
+
+        let close_inner = Rc::clone(&self.inner);
+        self.window.window().on_close_requested(move || {
+            let is_dirty = close_inner.borrow().persistence.is_dirty();
+            if is_dirty && !crate::persistence::confirm_discard_changes() {
+                slint::CloseRequestResponse::KeepWindowShown
+            } else {
+                slint::CloseRequestResponse::HideWindow
+            }
+        });
+
         self.window.run()
     }
 
@@ -1631,8 +1669,12 @@ impl Shell {
                     s.push_undo(&format!("Add {ct}"));
                     let parent_id = s.store.state().selection.primary().cloned();
 
+                    // Look up user-defined prefabs from the live document.
+                    let user_prefab = s.store.state().builder_document.prefabs.get(&ct).cloned();
+                    let prefab_def = builtin_prefab(&ct).or(user_prefab);
+
                     let mounted_id;
-                    if let Some(prefab_def) = builtin_prefab(&ct) {
+                    if let Some(prefab_def) = prefab_def {
                         let mut counter = s.store.state().next_node_id;
                         let tree = materialize_prefab(&prefab_def, &mut counter);
                         let root_id = tree.id.clone();
@@ -1666,6 +1708,10 @@ impl Shell {
                             if let Some(doc) =
                                 state.active_app_mut().and_then(|a| a.active_document_mut())
                             {
+                                // Ensure "card" prefab is available for facet rendering.
+                                doc.prefabs
+                                    .entry("card".into())
+                                    .or_insert_with(card_prefab_def);
                                 doc.facets.insert(
                                     facet_id.clone(),
                                     FacetDef {
@@ -3242,7 +3288,9 @@ impl Shell {
                     let mut s = inner.borrow_mut();
                     s.push_undo(&format!("Add {ct} at {path_str}"));
 
-                    if let Some(prefab_def) = builtin_prefab(&ct) {
+                    let user_prefab_grid =
+                        s.store.state().builder_document.prefabs.get(&ct).cloned();
+                    if let Some(prefab_def) = builtin_prefab(&ct).or(user_prefab_grid) {
                         let mut counter = s.store.state().next_node_id;
                         let tree = materialize_prefab(&prefab_def, &mut counter);
                         let root_id = tree.id.clone();
@@ -3977,6 +4025,12 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
         ));
     }
 
+    // Project name and dirty state
+    window.set_project_name(SharedString::from(
+        inner.persistence.project_name().unwrap_or_default(),
+    ));
+    window.set_project_dirty(inner.persistence.is_dirty());
+
     // Shell chrome visibility
     window.set_show_activity_bar(state.show_activity_bar);
     window.set_show_left_sidebar(state.show_left_sidebar);
@@ -4314,7 +4368,7 @@ fn push_app_cards(models: &PersistentModels, window: &AppWindow, apps: &[PrismAp
 fn push_builder_preview(models: &PersistentModels, window: &AppWindow, doc: &BuilderDocument) {
     let node_count = count_nodes(doc.root.as_ref());
     window.set_builder_node_count(node_count);
-    let palette = component_palette_items();
+    let palette = component_palette_items(doc);
     let count = sync_model(&models.component_palette, &palette);
     window.set_component_palette_count(count);
 }
@@ -4752,6 +4806,14 @@ fn build_context_menu_items(
                 items.push(ContextMenuItemDef::action(
                     "Clear Items",
                     "facet.clear_items",
+                    "",
+                    true,
+                ));
+            } else if has_selection {
+                items.push(ContextMenuItemDef::separator());
+                items.push(ContextMenuItemDef::action(
+                    "Save as Prefab",
+                    "prefab.save_from_selection",
                     "",
                     true,
                 ));
@@ -5218,7 +5280,10 @@ fn execute_command(
             let result = s.persistence.save(&apps, &reg, &tokens);
             match result {
                 Ok(path) => {
-                    let name = path.display().to_string();
+                    let name = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| path.display().to_string());
                     s.add_toast("Saved", &format!("Project saved to {name}"), "success");
                 }
                 Err(PersistenceError::NoPath) => {
@@ -5238,7 +5303,10 @@ fn execute_command(
             let tokens = s.store.state().tokens;
             match s.persistence.save_as(&apps, &reg, &tokens) {
                 Ok(path) => {
-                    let name = path.display().to_string();
+                    let name = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| path.display().to_string());
                     s.add_toast("Saved", &format!("Project saved to {name}"), "success");
                 }
                 Err(PersistenceError::Cancelled) => {}
@@ -5246,6 +5314,12 @@ fn execute_command(
             }
         }
         "file.open" => {
+            {
+                let s = shared.borrow();
+                if s.persistence.is_dirty() && !crate::persistence::confirm_discard_changes() {
+                    return;
+                }
+            }
             let mut s = shared.borrow_mut();
             s.save_to_active_page();
             match s.persistence.open() {
@@ -5269,6 +5343,12 @@ fn execute_command(
             }
         }
         "file.new" => {
+            {
+                let s = shared.borrow();
+                if s.persistence.is_dirty() && !crate::persistence::confirm_discard_changes() {
+                    return;
+                }
+            }
             let mut s = shared.borrow_mut();
             s.persistence.clear_path();
             s.store.mutate(|state| {
@@ -5280,6 +5360,42 @@ fn execute_command(
             s.undo_past.clear();
             s.undo_future.clear();
             s.add_toast("New Project", "Started a new project", "info");
+        }
+        "file.revert" => {
+            let mut s = shared.borrow_mut();
+            let path = s.persistence.current_path().cloned();
+            match path {
+                Some(p) => {
+                    if !s.persistence.is_dirty() {
+                        s.add_toast("Revert", "No changes to revert", "info");
+                        return;
+                    }
+                    if !crate::persistence::confirm_discard_changes() {
+                        return;
+                    }
+                    match s.persistence.open_path(&p) {
+                        Ok(apps) => {
+                            let name = s
+                                .persistence
+                                .project_name()
+                                .unwrap_or_else(|| "project".into());
+                            s.store.mutate(|state| {
+                                state.apps = apps;
+                                state.shell_view = ShellView::Launchpad;
+                                state.selection.clear();
+                            });
+                            s.live = None;
+                            s.undo_past.clear();
+                            s.undo_future.clear();
+                            s.add_toast("Reverted", &format!("Reloaded {name}"), "success");
+                        }
+                        Err(e) => s.add_toast("Revert failed", &e.to_string(), "error"),
+                    }
+                }
+                None => {
+                    s.add_toast("Revert", "No saved file to revert to", "info");
+                }
+            }
         }
         "facet.add_item" => {
             let mut s = shared.borrow_mut();
@@ -5346,6 +5462,60 @@ fn execute_command(
                         }
                     });
                     s.sync_builder_document();
+                }
+            }
+        }
+        "prefab.save_from_selection" => {
+            let mut s = shared.borrow_mut();
+            let selected = s.store.state().selection.primary().cloned();
+            if let Some(ref node_id) = selected {
+                let node_snapshot = s
+                    .store
+                    .state()
+                    .builder_document
+                    .root
+                    .as_ref()
+                    .and_then(|r| r.find(node_id))
+                    .cloned();
+                if let Some(node) = node_snapshot {
+                    let counter = s.store.state().next_node_id;
+                    let prefab_id = format!("prefab:n{counter}");
+                    let label = {
+                        let c = &node.component;
+                        let mut chars = c.chars();
+                        match chars.next() {
+                            Some(first) => {
+                                first.to_uppercase().collect::<String>() + chars.as_str()
+                            }
+                            None => c.clone(),
+                        }
+                    };
+                    let label = format!("{label} Prefab");
+                    let exposed = auto_expose_slots(&node);
+                    let def = PrefabDef {
+                        id: prefab_id.clone(),
+                        label: label.clone(),
+                        description: String::new(),
+                        root: node,
+                        exposed,
+                        variants: vec![],
+                        thumbnail: None,
+                    };
+                    s.push_undo("Save as prefab");
+                    s.store.mutate(|state| {
+                        state.next_node_id += 1;
+                        if let Some(doc) =
+                            state.active_app_mut().and_then(|a| a.active_document_mut())
+                        {
+                            doc.prefabs.insert(prefab_id, def);
+                        }
+                    });
+                    s.sync_builder_document();
+                    s.add_toast(
+                        "Prefab saved",
+                        &format!("'{label}' saved to Prefabs"),
+                        "success",
+                    );
                 }
             }
         }
@@ -6039,11 +6209,26 @@ fn default_props_for_component(component: &str) -> serde_json::Value {
     }
 }
 
-fn component_palette_items() -> Vec<ComponentPaletteItem> {
+fn component_palette_items(doc: &BuilderDocument) -> Vec<ComponentPaletteItem> {
     let mut items = Vec::new();
 
+    let make_header = |cat: &str| ComponentPaletteItem {
+        component_type: SharedString::default(),
+        label: SharedString::from(cat),
+        description: SharedString::default(),
+        category: SharedString::from(cat),
+        is_header: true,
+    };
+    let make_item = |ty: &str, label: &str, desc: &str, cat: &str| ComponentPaletteItem {
+        component_type: SharedString::from(ty),
+        label: SharedString::from(label),
+        description: SharedString::from(desc),
+        category: SharedString::from(cat),
+        is_header: false,
+    };
+
     #[allow(clippy::type_complexity)]
-    let categories: &[(&str, &[(&str, &str, &str)])] = &[
+    let static_categories: &[(&str, &[(&str, &str, &str)])] = &[
         (
             "CONTENT",
             &[
@@ -6078,38 +6263,42 @@ fn component_palette_items() -> Vec<ComponentPaletteItem> {
                 ("spacer", "Spacer", "Vertical spacing element"),
             ],
         ),
-        (
-            "PREFABS",
-            &[("card", "Card", "Bordered card with title and body")],
-        ),
-        (
-            "PROGRAMMATIC",
-            &[(
-                "facet",
-                "Facet",
-                "Repeat a prefab template over a data source",
-            )],
-        ),
     ];
 
-    for (category, components) in categories {
-        items.push(ComponentPaletteItem {
-            component_type: SharedString::default(),
-            label: SharedString::from(*category),
-            description: SharedString::default(),
-            category: SharedString::from(*category),
-            is_header: true,
-        });
+    for (category, components) in static_categories {
+        items.push(make_header(category));
         for (ty, label, desc) in *components {
-            items.push(ComponentPaletteItem {
-                component_type: SharedString::from(*ty),
-                label: SharedString::from(*label),
-                description: SharedString::from(*desc),
-                category: SharedString::from(*category),
-                is_header: false,
-            });
+            items.push(make_item(ty, label, desc, category));
         }
     }
+
+    // PREFABS section: builtin "card" + user-defined prefabs
+    items.push(make_header("PREFABS"));
+    items.push(make_item(
+        "card",
+        "Card",
+        "Bordered card with title and body",
+        "PREFABS",
+    ));
+    for (id, def) in &doc.prefabs {
+        if id != "card" {
+            let desc = if def.description.is_empty() {
+                format!("User prefab: {}", def.label)
+            } else {
+                def.description.clone()
+            };
+            items.push(make_item(id.as_str(), &def.label, &desc, "PREFABS"));
+        }
+    }
+
+    // PROGRAMMATIC section
+    items.push(make_header("PROGRAMMATIC"));
+    items.push(make_item(
+        "facet",
+        "Facet",
+        "Repeat a prefab template over a data source",
+        "PROGRAMMATIC",
+    ));
 
     items
 }
@@ -6300,8 +6489,48 @@ fn apply_facet_edit(def: &mut FacetDef, key: &str, value: &str) {
                 };
             }
         }
+        key if key.starts_with("binding.") => {
+            let slot_key = &key["binding.".len()..];
+            if !slot_key.is_empty() {
+                if let Some(existing) = def.bindings.iter_mut().find(|b| b.slot_key == slot_key) {
+                    existing.item_field = value.to_string();
+                } else if !value.is_empty() {
+                    def.bindings.push(FacetBinding {
+                        slot_key: slot_key.to_string(),
+                        item_field: value.to_string(),
+                    });
+                }
+                def.bindings.retain(|b| !b.item_field.is_empty());
+            }
+        }
         _ => {}
     }
+}
+
+/// Build exposed slots from all string props on the root node.
+/// Provides a starting-point binding surface when saving as a prefab.
+fn auto_expose_slots(node: &Node) -> Vec<ExposedSlot> {
+    let mut slots = Vec::new();
+    if let Some(obj) = node.props.as_object() {
+        for (key, val) in obj {
+            if val.is_string() && !key.starts_with('_') {
+                let label = {
+                    let mut chars = key.chars();
+                    match chars.next() {
+                        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                        None => key.clone(),
+                    }
+                };
+                slots.push(ExposedSlot {
+                    key: key.clone(),
+                    target_node: node.id.clone(),
+                    target_prop: key.clone(),
+                    spec: FieldSpec::text(key.as_str(), label.as_str()),
+                });
+            }
+        }
+    }
+    slots
 }
 
 fn apply_style_edit(style: &mut StyleProperties, key: &str, value: &str) {
@@ -7457,7 +7686,8 @@ mod tests {
 
     #[test]
     fn component_palette_has_categorized_items() {
-        let items = component_palette_items();
+        let doc = BuilderDocument::default();
+        let items = component_palette_items(&doc);
         let headers: Vec<_> = items.iter().filter(|i| i.is_header).collect();
         let components: Vec<_> = items.iter().filter(|i| !i.is_header).collect();
         assert_eq!(headers.len(), 6);
@@ -7469,6 +7699,74 @@ mod tests {
         assert_eq!(headers[3].label.as_str(), "DECORATION");
         assert_eq!(headers[4].label.as_str(), "PREFABS");
         assert_eq!(headers[5].label.as_str(), "PROGRAMMATIC");
+    }
+
+    #[test]
+    fn user_prefabs_appear_in_palette() {
+        let mut doc = BuilderDocument::default();
+        doc.prefabs.insert(
+            "prefab:hero".into(),
+            PrefabDef {
+                id: "prefab:hero".into(),
+                label: "Hero".into(),
+                description: "Hero section".into(),
+                root: Node {
+                    id: "hero".into(),
+                    component: "container".into(),
+                    ..Default::default()
+                },
+                exposed: vec![],
+                variants: vec![],
+                thumbnail: None,
+            },
+        );
+        let items = component_palette_items(&doc);
+        let prefab_items: Vec<_> = items
+            .iter()
+            .filter(|i| !i.is_header && i.category.as_str() == "PREFABS")
+            .collect();
+        assert_eq!(prefab_items.len(), 2);
+        assert!(prefab_items
+            .iter()
+            .any(|i| i.component_type.as_str() == "prefab:hero"));
+    }
+
+    #[test]
+    fn apply_facet_edit_binding_creates_and_updates() {
+        use prism_builder::facet::{FacetDataSource, FacetDef, FacetLayout};
+        let mut def = FacetDef {
+            id: "facet:test".into(),
+            label: "Test".into(),
+            description: String::new(),
+            prefab_id: "card".into(),
+            data: FacetDataSource::Static { items: vec![] },
+            bindings: vec![],
+            layout: FacetLayout::default(),
+        };
+        apply_facet_edit(&mut def, "binding.title", "name");
+        assert_eq!(def.bindings.len(), 1);
+        assert_eq!(def.bindings[0].slot_key, "title");
+        assert_eq!(def.bindings[0].item_field, "name");
+        apply_facet_edit(&mut def, "binding.title", "full_name");
+        assert_eq!(def.bindings.len(), 1);
+        assert_eq!(def.bindings[0].item_field, "full_name");
+        apply_facet_edit(&mut def, "binding.title", "");
+        assert_eq!(def.bindings.len(), 0);
+    }
+
+    #[test]
+    fn auto_expose_slots_extracts_string_props() {
+        let node = Node {
+            id: "n1".into(),
+            component: "text".into(),
+            props: serde_json::json!({ "body": "Hello", "level": "h1", "count": 5 }),
+            ..Default::default()
+        };
+        let slots = auto_expose_slots(&node);
+        assert_eq!(slots.len(), 2);
+        assert!(slots.iter().any(|s| s.key == "body"));
+        assert!(slots.iter().any(|s| s.key == "level"));
+        assert!(slots.iter().all(|s| s.target_node == "n1"));
     }
 
     #[test]

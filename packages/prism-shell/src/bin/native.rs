@@ -25,6 +25,10 @@ use prism_shell::{AppState, Shell};
     about = "Prism Shell — native dev binary with test harness and e2e support."
 )]
 struct Args {
+    /// Open a .prism project file at startup.
+    #[arg(long)]
+    open: Option<String>,
+
     /// Jump directly into a named app (case-insensitive match on app
     /// name). Skips the launchpad.
     #[arg(long)]
@@ -161,6 +165,18 @@ fn main() -> Result<(), slint::PlatformError> {
     }
 
     let shell = Shell::from_state(state)?;
+
+    if let Some(ref project_path) = args.open {
+        let path = std::path::Path::new(project_path);
+        if !path.exists() {
+            eprintln!("File not found: {project_path}");
+            std::process::exit(1);
+        }
+        if let Err(e) = shell.load_project_file(path) {
+            eprintln!("Failed to open project: {e}");
+            std::process::exit(1);
+        }
+    }
 
     if let Some(zoom) = args.zoom {
         shell.window().set_canvas_zoom(zoom);

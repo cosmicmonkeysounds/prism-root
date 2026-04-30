@@ -59,7 +59,7 @@ fn help_lists_every_subcommand() {
     let out = run(&["--help"]);
     assert!(out.status.success());
     let help = stdout(&out);
-    for expected in ["test", "build", "dev", "lint", "fmt"] {
+    for expected in ["test", "build", "dev", "lint", "fmt", "clean"] {
         assert!(
             help.contains(expected),
             "--help output missing `{expected}`: {help}"
@@ -238,6 +238,17 @@ fn fmt_check_dry_run() {
     let out = run(&["--dry-run", "fmt", "--check"]);
     assert!(out.status.success());
     assert!(stdout(&out).contains("cargo fmt --all -- --check"));
+}
+
+#[test]
+fn clean_dry_run_prints_cargo_clean() {
+    let out = run(&["--dry-run", "clean"]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(stdout(&out).contains("cargo clean"));
 }
 
 #[test]

@@ -21,6 +21,7 @@ this list can be audited with e.g. `prism --dry-run test`.
 - `cargo run -p prism-cli -- dev [shell|studio|web|relay|all]` — run one or many dev servers. `dev web` runs the cargo + wasm-bindgen preflight, then serves `packages/prism-shell/web/` via `python3 -m http.server 1420`. `all` goes through the process supervisor.
 - `cargo run -p prism-cli -- lint` — `cargo clippy --workspace --all-targets -- -D warnings`.
 - `cargo run -p prism-cli -- fmt [--check]` — `cargo fmt --all`.
+- `cargo run -p prism-cli -- clean` — `cargo clean` to remove the entire `target/` tree. For routine housekeeping, `build`, `test`, and `dev` (web preflight) automatically trim stale incremental compilation sessions older than 7 days after every successful run.
 
 The root `package.json` exposes the same surface via pnpm scripts
 (`pnpm test`, `pnpm dev`, `pnpm build`, `pnpm lint`, `pnpm format`) for users

@@ -8,6 +8,7 @@
 //! where section headers and field rows are interleaved. One
 //! unified edit callback routes by key prefix.
 
+use prism_builder::card_prefab_def;
 use prism_builder::facet::{FacetDataSource, FacetDirection};
 use prism_builder::layout::{
     AlignOption, Dimension, FlexDirection, FlowDisplay, GridPlacement, JustifyOption, LayoutMode,
@@ -815,6 +816,10 @@ impl PropertiesPanel {
     /// selected or the component is missing from the registry.
     /// Facet-specific property rows. Shows the FacetDef fields (prefab,
     /// layout, item count) for a selected `facet` component node.
+    pub fn facet_rows_pub(doc: &BuilderDocument, node: &Node) -> Vec<FieldRowData> {
+        Self::facet_rows(doc, node)
+    }
+
     fn facet_rows(doc: &BuilderDocument, node: &Node) -> Vec<FieldRowData> {
         let facet_id = node
             .props
@@ -837,13 +842,25 @@ impl PropertiesPanel {
         };
 
         let (source_kind, item_count_label, source_id, filter_val, sort_val) = match &def.data {
-            FacetDataSource::Static { items } => {
-                ("static", format!("{} items", items.len()), String::new(), String::new(), String::new())
-            }
-            FacetDataSource::Resource { id } => {
-                ("resource", "resource".into(), id.clone(), String::new(), String::new())
-            }
-            FacetDataSource::Query { source, filter, sort_by } => {
+            FacetDataSource::Static { items } => (
+                "static",
+                format!("{} items", items.len()),
+                String::new(),
+                String::new(),
+                String::new(),
+            ),
+            FacetDataSource::Resource { id } => (
+                "resource",
+                "resource".into(),
+                id.clone(),
+                String::new(),
+                String::new(),
+            ),
+            FacetDataSource::Query {
+                source,
+                filter,
+                sort_by,
+            } => {
                 let f = filter.as_deref().unwrap_or("").to_string();
                 let s = sort_by.as_deref().unwrap_or("").to_string();
                 ("query", "query".into(), source.clone(), f, s)
@@ -855,17 +872,25 @@ impl PropertiesPanel {
             FacetDirection::Column => "column",
         };
 
+        // Build list of available prefab IDs: "card" always available plus all user prefabs.
+        let mut prefab_options: Vec<String> = vec!["card".into()];
+        for id in doc.prefabs.keys() {
+            if id != "card" {
+                prefab_options.push(id.clone());
+            }
+        }
+
         let mut rows = vec![
             FieldRowData {
                 key: "facet.prefab_id".into(),
                 label: "Prefab template".into(),
-                kind: "text".into(),
+                kind: "select".into(),
                 value: def.prefab_id.clone(),
                 required: true,
                 min: 0.0,
                 max: 0.0,
                 has_bounds: false,
-                options: vec![],
+                options: prefab_options,
             },
             FieldRowData {
                 key: "facet.source_kind".into(),
@@ -954,6 +979,52 @@ impl PropertiesPanel {
                 options: vec![],
             },
         ]);
+
+        // Bindings: one row per exposed slot on the referenced prefab.
+        let prefab_exposed = if def.prefab_id == "card" {
+            doc.prefabs
+                .get("card")
+                .map(|p| p.exposed.clone())
+                .unwrap_or_else(|| card_prefab_def().exposed)
+        } else {
+            doc.prefabs
+                .get(&def.prefab_id)
+                .map(|p| p.exposed.clone())
+                .unwrap_or_default()
+        };
+        if !prefab_exposed.is_empty() {
+            rows.push(FieldRowData {
+                key: "facet.bindings_header".into(),
+                label: "── Bindings ──".into(),
+                kind: "text".into(),
+                value: String::new(),
+                required: false,
+                min: 0.0,
+                max: 0.0,
+                has_bounds: false,
+                options: vec![],
+            });
+            for slot in &prefab_exposed {
+                let bound_field = def
+                    .bindings
+                    .iter()
+                    .find(|b| b.slot_key == slot.key)
+                    .map(|b| b.item_field.clone())
+                    .unwrap_or_default();
+                rows.push(FieldRowData {
+                    key: format!("facet.binding.{}", slot.key),
+                    label: format!("Bind: {}", slot.key),
+                    kind: "text".into(),
+                    value: bound_field,
+                    required: false,
+                    min: 0.0,
+                    max: 0.0,
+                    has_bounds: false,
+                    options: vec![],
+                });
+            }
+        }
+
         rows
     }
 
@@ -1786,5 +1857,47 @@ mod tests {
             !ids.contains(&"signals"),
             "signals belong in the dedicated Signals panel, not Properties"
         );
+    }
+
+    #[test]
+    fn facet_rows_show_prefab_select_and_bindings() {
+        use prism_builder::facet::{FacetDataSource, FacetDef, FacetLayout};
+
+        let mut doc = BuilderDocument::default();
+        let facet_id = "facet:f1".to_string();
+        // Use card prefab (add it to doc.prefabs so look-up works)
+        doc.prefabs
+            .insert("card".into(), prism_builder::card_prefab_def());
+        doc.facets.insert(
+            facet_id.clone(),
+            FacetDef {
+                id: facet_id.clone(),
+                label: "Test".into(),
+                description: String::new(),
+                prefab_id: "card".into(),
+                data: FacetDataSource::Static { items: vec![] },
+                bindings: vec![],
+                layout: FacetLayout::default(),
+            },
+        );
+        let node = Node {
+            id: "n1".into(),
+            component: "facet".into(),
+            props: serde_json::json!({ "facet_id": facet_id }),
+            ..Default::default()
+        };
+        let rows = PropertiesPanel::facet_rows_pub(&doc, &node);
+        // prefab_id row should be select kind
+        let prefab_row = rows.iter().find(|r| r.key == "facet.prefab_id").unwrap();
+        assert_eq!(prefab_row.kind, "select");
+        assert!(prefab_row.options.contains(&"card".to_string()));
+        // Should have binding rows for "title" and "body" slots
+        let binding_rows: Vec<_> = rows
+            .iter()
+            .filter(|r| r.key.starts_with("facet.binding."))
+            .collect();
+        assert_eq!(binding_rows.len(), 2);
+        assert!(binding_rows.iter().any(|r| r.key == "facet.binding.title"));
+        assert!(binding_rows.iter().any(|r| r.key == "facet.binding.body"));
     }
 }

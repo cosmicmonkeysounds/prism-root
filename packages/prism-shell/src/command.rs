@@ -65,6 +65,7 @@ impl CommandRegistry {
         reg.register(
             CommandEntry::new("file.save_as", "Save As...", "File").with_shortcut("Ctrl+Shift+S"),
         );
+        reg.register(CommandEntry::new("file.revert", "Revert to Saved", "File"));
         reg.register(CommandEntry::new("search.focus", "Search", "View").with_shortcut("Ctrl+F"));
         reg.register(CommandEntry::new("edit.copy", "Copy", "Edit").with_shortcut("Ctrl+C"));
         reg.register(CommandEntry::new("edit.paste", "Paste", "Edit").with_shortcut("Ctrl+V"));
@@ -178,6 +179,12 @@ impl CommandRegistry {
             "facet.clear_items",
             "Clear Facet Items",
             "Facet",
+        ));
+        // Prefab management
+        reg.register(CommandEntry::new(
+            "prefab.save_from_selection",
+            "Save Selection as Prefab",
+            "Prefabs",
         ));
         for n in 1..=9 {
             reg.register(
@@ -388,5 +395,15 @@ mod tests {
         let reg = CommandRegistry::with_builtins();
         assert!(reg.get("add_page").is_some());
         assert!(reg.get("panel.navigation").is_some());
+    }
+
+    #[test]
+    fn with_builtins_has_prefab_commands() {
+        let reg = CommandRegistry::with_builtins();
+        assert!(reg.get("prefab.save_from_selection").is_some());
+        assert_eq!(
+            reg.get("prefab.save_from_selection").unwrap().category,
+            "Prefabs"
+        );
     }
 }

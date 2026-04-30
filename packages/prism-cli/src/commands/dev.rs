@@ -199,6 +199,7 @@ pub fn run(args: &DevArgs, workspace: &Workspace, dry_run: bool) -> Result<u8> {
         let (build_cmd, bindgen_cmd, serve_cmd) = single_web_trio(&plan);
         run_cmd_sync(build_cmd)?;
         run_cmd_sync(bindgen_cmd)?;
+        crate::gc::trim_incremental(&workspace.target_dir());
         return exec_foreground(serve_cmd);
     }
 
@@ -236,6 +237,7 @@ pub fn run(args: &DevArgs, workspace: &Workspace, dry_run: bool) -> Result<u8> {
                 _ => remaining.push(cmd),
             }
         }
+        crate::gc::trim_incremental(&workspace.target_dir());
         remaining
     } else {
         plan

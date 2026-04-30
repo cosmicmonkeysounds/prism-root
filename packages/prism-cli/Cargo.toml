@@ -23,4 +23,5 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "io
 notify = { workspace = true }
 
 [dev-dependencies]
+filetime = "0.2"
 tempfile = "3"

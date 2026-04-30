@@ -144,7 +144,11 @@ pub(crate) fn web_bindgen_builder(workspace: &Workspace, release: bool) -> Comma
 
 pub fn run(args: &BuildArgs, workspace: &Workspace, dry_run: bool) -> Result<u8> {
     let plan = plan(args, workspace);
-    super::execute_plan(&plan, dry_run)
+    let code = super::execute_plan(&plan, dry_run)?;
+    if code == 0 {
+        crate::gc::trim_incremental(&workspace.target_dir());
+    }
+    Ok(code)
 }
 
 #[cfg(test)]
