@@ -8,6 +8,7 @@
 //! where section headers and field rows are interleaved. One
 //! unified edit callback routes by key prefix.
 
+use prism_builder::facet::{FacetDataSource, FacetDirection};
 use prism_builder::layout::{
     AlignOption, Dimension, FlexDirection, FlowDisplay, GridPlacement, JustifyOption, LayoutMode,
 };
@@ -210,6 +211,18 @@ impl PropertiesPanel {
                     rows: variant_rows,
                 });
             }
+        }
+
+        // ── Facet Data (only when component is "facet") ───────
+        if node.component == "facet" {
+            let facet_rows = Self::facet_rows(doc, node);
+            sections.push(PropertySection {
+                id: "facet-data".into(),
+                label: "Facet Data".into(),
+                icon: "layers".into(),
+                collapsed: false,
+                rows: facet_rows,
+            });
         }
 
         sections
@@ -800,6 +813,87 @@ impl PropertiesPanel {
     /// Produce one [`FieldRowData`] per entry in the selected
     /// component's schema. Returns an empty list if nothing is
     /// selected or the component is missing from the registry.
+    /// Facet-specific property rows. Shows the FacetDef fields (prefab,
+    /// layout, item count) for a selected `facet` component node.
+    fn facet_rows(doc: &BuilderDocument, node: &Node) -> Vec<FieldRowData> {
+        let facet_id = node
+            .props
+            .get("facet_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        let Some(def) = doc.facets.get(facet_id) else {
+            return vec![FieldRowData {
+                key: "facet.facet_id".into(),
+                label: "Facet ID (not found)".into(),
+                kind: "text".into(),
+                value: facet_id.to_string(),
+                required: true,
+                min: 0.0,
+                max: 0.0,
+                has_bounds: false,
+                options: vec![],
+            }];
+        };
+
+        let item_count = match &def.data {
+            FacetDataSource::Static { items } => items.len(),
+            FacetDataSource::Resource { .. } => 0,
+        };
+
+        let direction_label = match def.layout.direction {
+            FacetDirection::Row => "row",
+            FacetDirection::Column => "column",
+        };
+
+        vec![
+            FieldRowData {
+                key: "facet.prefab_id".into(),
+                label: "Prefab template".into(),
+                kind: "text".into(),
+                value: def.prefab_id.clone(),
+                required: true,
+                min: 0.0,
+                max: 0.0,
+                has_bounds: false,
+                options: vec![],
+            },
+            FieldRowData {
+                key: "facet.direction".into(),
+                label: "Direction".into(),
+                kind: "select".into(),
+                value: direction_label.to_string(),
+                required: false,
+                min: 0.0,
+                max: 0.0,
+                has_bounds: false,
+                options: vec!["column".into(), "row".into()],
+            },
+            FieldRowData {
+                key: "facet.gap".into(),
+                label: "Gap (px)".into(),
+                kind: "integer".into(),
+                value: format!("{}", def.layout.gap as u32),
+                required: false,
+                min: 0.0,
+                max: 128.0,
+                has_bounds: true,
+                options: vec![],
+            },
+            FieldRowData {
+                key: "facet.item_count".into(),
+                label: "Items".into(),
+                kind: "text".into(),
+                value: format!("{item_count} static items"),
+                required: false,
+                min: 0.0,
+                max: 0.0,
+                has_bounds: false,
+                options: vec![],
+            },
+        ]
+    }
+
     pub fn rows(
         doc: &BuilderDocument,
         registry: &ComponentRegistry,

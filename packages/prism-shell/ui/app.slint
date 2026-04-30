@@ -279,6 +279,43 @@ struct TargetNodeItem {
     component: string,
 }
 
+struct NavPageItem {
+    index: int,
+    id: string,
+    title: string,
+    route: string,
+    is-active: bool,
+    node-count: int,
+    link-count: int,
+}
+
+struct NavGraphNode {
+    page-index: int,
+    id: string,
+    title: string,
+    route: string,
+    is-active: bool,
+    node-count: int,
+    link-count: int,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+}
+
+struct NavGraphEdge {
+    id: string,
+    source-page-index: int,
+    target-page-index: int,
+    label: string,
+    kind: string,
+    // Pre-computed line geometry (filled by Rust)
+    x1: float,
+    y1: float,
+    x2: float,
+    y2: float,
+}
+
 // ── Icon button ───────────────────────────────────────────────────
 
 component IconButton inherits Rectangle {
@@ -341,7 +378,6 @@ component MenuBarRow inherits Rectangle {
     in property <int> tabs-count: 0;
     callback item-clicked(string);
     callback tab-activated(int);
-    callback tab-closed(int);
     callback add-page();
 
     height: 28px;
@@ -412,9 +448,8 @@ component MenuBarRow inherits Rectangle {
                 background: tab.active ? Palette.background : transparent;
                 Rectangle { x: 0px; y: parent.height - 2px; width: parent.width; height: 2px; background: tab.active ? Palette.accent-background : transparent; }
                 HorizontalLayout {
-                    padding-left: 10px; padding-right: 6px; spacing: 6px; alignment: start;
+                    padding-left: 10px; padding-right: 10px; spacing: 6px; alignment: start;
                     Text { text: tab.title; color: tab.active ? Palette.foreground : Palette.foreground.transparentize(40%); font-size: 11px; vertical-alignment: center; overflow: elide; }
-                    IconButton { icon: @image-url("icons/x.svg"); clicked => { root.tab-closed(tab.id); } }
                 }
                 TouchArea { clicked => { root.tab-activated(i); } }
             }
@@ -1488,8 +1523,6 @@ export component AppWindow inherits Window {
 
     // Tabbed MDI
     in property <[TabItem]> tabs: [];
-    callback tab-activated(int);
-    callback tab-closed(int);
 
     // Command palette
     in property <bool> command-palette-visible: false;
@@ -1715,6 +1748,29 @@ export component AppWindow inherits Window {
     callback signal-connection-add(string /* signal name */, int /* target index: 0 = self, 1..N = signal-target-nodes[i-1] */, int /* action kind index */);
     in property <[string]> signal-action-labels: ["Toggle Visibility", "Set Property", "Navigate To", "Emit Signal", "Play Animation", "Custom Handler"];
 
+    // ── Navigation panel ─────────────────────────────────────────
+    in property <[NavPageItem]> nav-pages: [];
+    in property <int> nav-pages-count: 0;
+    in property <string> nav-style-label: "Tabs";
+    callback nav-add-page();
+    callback nav-delete-page(int /* page index */);
+    callback nav-rename-page(int /* page index */, string /* new title */);
+    callback nav-set-route(int /* page index */, string /* new route */);
+    callback nav-move-page-up(int /* page index */);
+    callback nav-move-page-down(int /* page index */);
+    callback nav-select-page(int /* page index */);
+    callback nav-cycle-style();
+
+    // Navigation graph
+    in property <[NavGraphNode]> nav-graph-nodes: [];
+    in property <int> nav-graph-nodes-count: 0;
+    in property <[NavGraphEdge]> nav-graph-edges: [];
+    in property <int> nav-graph-edges-count: 0;
+    callback nav-graph-node-clicked(int /* page index */);
+    callback nav-graph-link-start(int /* source page index */);
+    callback nav-graph-link-end(int /* target page index */);
+    callback nav-graph-link-remove(string /* edge id */);
+
     // Shell chrome visibility
     in property <bool> show-activity-bar: true;
     in property <bool> show-left-sidebar: true;
@@ -1750,7 +1806,6 @@ export component AppWindow inherits Window {
                 show-tabs: !root.is-launchpad;
                 item-clicked(cmd) => { root.menu-command(cmd); fs.menu-active-index = -1; }
                 tab-activated(i) => { root.switch-page(i); }
-                tab-closed(id) => { root.tab-closed(id); }
                 add-page => { root.add-page(); }
             }
 
@@ -3386,6 +3441,232 @@ export component AppWindow inherits Window {
                                                         text: "Select a component to view its signals.";
                                                         color: Palette.foreground.transparentize(60%);
                                                         font-size: 11px;
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        // ════════════════════════════════════
+                                        // NAVIGATION
+                                        // ════════════════════════════════════
+                                        if panel.panel-id == "navigation" : Rectangle {
+                                            property <int> linking-from: -1;
+                                            background: Palette.alternate-background;
+                                            vertical-stretch: 1;
+                                            VerticalLayout {
+                                                // ── Graph canvas ──────────────
+                                                Rectangle {
+                                                    vertical-stretch: 2;
+                                                    clip: true;
+                                                    background: Palette.background;
+                                                    border-width: 0; border-color: Palette.foreground.transparentize(90%);
+
+                                                    // Edge lines (drawn behind nodes)
+                                                    for edge[ei] in root.nav-graph-edges : Rectangle {
+                                                        property <float> dx: edge.x2 - edge.x1;
+                                                        property <float> dy: edge.y2 - edge.y1;
+                                                        property <float> len: Math.sqrt(dx * dx + dy * dy);
+                                                        visible: ei < root.nav-graph-edges-count;
+                                                        x: edge.x1 * 1px;
+                                                        y: edge.y1 * 1px - 1px;
+                                                        width: Math.max(len * 1px, 1px);
+                                                        height: 2px;
+                                                        background: edge.kind == "signal"
+                                                            ? Palette.accent-background.transparentize(30%)
+                                                            : Palette.foreground.transparentize(50%);
+                                                        transform-origin: {x: 0, y: 0};
+                                                        transform-rotation: Math.atan2(dy, dx);
+
+                                                        // Arrow head indicator at the end
+                                                        Rectangle {
+                                                            x: parent.width - 8px;
+                                                            y: -3px;
+                                                            width: 8px;
+                                                            height: 8px;
+                                                            border-radius: 4px;
+                                                            background: parent.background;
+                                                        }
+
+                                                        // Edge hover / remove
+                                                        edge-touch := TouchArea {
+                                                            mouse-cursor: pointer;
+                                                            clicked => { root.nav-graph-link-remove(edge.id); }
+                                                        }
+                                                    }
+
+                                                    // Page nodes
+                                                    for gn[gi] in root.nav-graph-nodes : Rectangle {
+                                                        visible: gi < root.nav-graph-nodes-count;
+                                                        x: gn.x * 1px;
+                                                        y: gn.y * 1px;
+                                                        width: gn.w * 1px;
+                                                        height: gn.h * 1px;
+                                                        border-radius: 8px;
+                                                        border-width: gn.is-active ? 2px : 1px;
+                                                        border-color: gn.is-active
+                                                            ? Palette.accent-background
+                                                            : (linking-from >= 0 && linking-from != gn.page-index
+                                                                ? Palette.accent-background.transparentize(40%)
+                                                                : Palette.foreground.transparentize(75%));
+                                                        background: gn-touch.has-hover
+                                                            ? Palette.control-background
+                                                            : Palette.alternate-background;
+
+                                                        VerticalLayout {
+                                                            padding: 8px; spacing: 3px;
+                                                            alignment: center;
+                                                            Text {
+                                                                text: gn.title;
+                                                                color: gn.is-active ? Palette.foreground : Palette.foreground.transparentize(15%);
+                                                                font-size: 12px;
+                                                                font-weight: gn.is-active ? 700 : 500;
+                                                                horizontal-alignment: center;
+                                                                overflow: elide;
+                                                            }
+                                                            Text {
+                                                                text: gn.route;
+                                                                color: Palette.foreground.transparentize(55%);
+                                                                font-size: 9px;
+                                                                horizontal-alignment: center;
+                                                                overflow: elide;
+                                                            }
+                                                            HorizontalLayout {
+                                                                alignment: center; spacing: 6px;
+                                                                Text { text: gn.node-count + "n"; color: Palette.foreground.transparentize(65%); font-size: 9px; }
+                                                                if gn.link-count > 0 : Text { text: gn.link-count + " links"; color: Palette.accent-foreground.transparentize(40%); font-size: 9px; }
+                                                            }
+                                                        }
+
+                                                        gn-touch := TouchArea {
+                                                            mouse-cursor: pointer;
+                                                            clicked => {
+                                                                if (linking-from >= 0 && linking-from != gn.page-index) {
+                                                                    root.nav-graph-link-end(gn.page-index);
+                                                                    linking-from = -1;
+                                                                } else {
+                                                                    root.nav-graph-node-clicked(gn.page-index);
+                                                                    linking-from = -1;
+                                                                }
+                                                            }
+                                                        }
+
+                                                        // Link handle (small circle at right edge)
+                                                        Rectangle {
+                                                            x: parent.width - 10px;
+                                                            y: parent.height / 2 - 7px;
+                                                            width: 14px;
+                                                            height: 14px;
+                                                            border-radius: 7px;
+                                                            background: link-handle-touch.has-hover
+                                                                ? Palette.accent-background
+                                                                : Palette.accent-background.transparentize(60%);
+                                                            border-width: 1px;
+                                                            border-color: Palette.accent-background.transparentize(30%);
+                                                            Text { text: "→"; color: white; font-size: 8px; horizontal-alignment: center; vertical-alignment: center; }
+                                                            link-handle-touch := TouchArea {
+                                                                mouse-cursor: pointer;
+                                                                clicked => {
+                                                                    root.nav-graph-link-start(gn.page-index);
+                                                                    linking-from = gn.page-index;
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+
+                                                    // Linking-from indicator
+                                                    if linking-from >= 0 : Rectangle {
+                                                        y: 4px; x: 4px;
+                                                        height: 20px;
+                                                        width: link-hint-text.preferred-width + 16px;
+                                                        border-radius: 4px;
+                                                        background: Palette.accent-background.transparentize(20%);
+                                                        link-hint-text := Text {
+                                                            text: "Click a target page to link…";
+                                                            color: white;
+                                                            font-size: 10px;
+                                                            horizontal-alignment: center;
+                                                            vertical-alignment: center;
+                                                        }
+                                                        TouchArea { clicked => { linking-from = -1; } }
+                                                    }
+                                                }
+
+                                                // Separator
+                                                Rectangle { height: 1px; background: Palette.foreground.transparentize(88%); }
+
+                                                // ── Page list ─────────────────
+                                                ScrollView {
+                                                    vertical-stretch: 1;
+                                                    VerticalLayout {
+                                                        padding: 12px; spacing: 10px; alignment: start;
+                                                        HorizontalLayout {
+                                                            spacing: 8px; alignment: start;
+                                                            Text { text: "Pages"; color: Palette.foreground.transparentize(20%); font-size: 12px; font-weight: 600; vertical-alignment: center; }
+                                                            Rectangle { horizontal-stretch: 1; }
+                                                            Text { text: root.nav-pages-count + " pages"; color: Palette.foreground.transparentize(50%); font-size: 10px; vertical-alignment: center; }
+                                                        }
+
+                                                        HorizontalLayout {
+                                                            spacing: 8px; alignment: start;
+                                                            Text { text: "Style:"; color: Palette.foreground.transparentize(40%); font-size: 11px; vertical-alignment: center; }
+                                                            Rectangle {
+                                                                height: 24px;
+                                                                min-width: 80px;
+                                                                border-radius: 4px;
+                                                                background: nav-style-touch.has-hover ? Palette.control-background : Palette.alternate-background;
+                                                                border-width: 1px;
+                                                                border-color: Palette.foreground.transparentize(80%);
+                                                                Text { text: root.nav-style-label; color: Palette.foreground.transparentize(20%); font-size: 11px; vertical-alignment: center; horizontal-alignment: center; }
+                                                                nav-style-touch := TouchArea { mouse-cursor: pointer; clicked => { root.nav-cycle-style(); } }
+                                                            }
+                                                        }
+
+                                                        for pg[pi] in root.nav-pages : Rectangle {
+                                                            visible: pi < root.nav-pages-count;
+                                                            height: pi < root.nav-pages-count ? 60px : 0;
+                                                            border-radius: 6px;
+                                                            background: pg.is-active ? Palette.accent-background.transparentize(90%) : (nav-pg-touch.has-hover ? Palette.control-background.transparentize(50%) : transparent);
+                                                            border-width: pg.is-active ? 1px : 0;
+                                                            border-color: Palette.accent-background.transparentize(60%);
+                                                            VerticalLayout {
+                                                                padding: 8px; spacing: 4px;
+                                                                HorizontalLayout {
+                                                                    spacing: 6px;
+                                                                    Text {
+                                                                        text: pg.title;
+                                                                        color: pg.is-active ? Palette.foreground : Palette.foreground.transparentize(20%);
+                                                                        font-size: 12px;
+                                                                        font-weight: pg.is-active ? 600 : 400;
+                                                                        vertical-alignment: center;
+                                                                    }
+                                                                    Rectangle { horizontal-stretch: 1; }
+                                                                    IconButton { icon: @image-url("icons/chevron-up.svg"); clicked => { root.nav-move-page-up(pg.index); } }
+                                                                    IconButton { icon: @image-url("icons/chevron-down.svg"); clicked => { root.nav-move-page-down(pg.index); } }
+                                                                    IconButton { icon: @image-url("icons/x.svg"); clicked => { root.nav-delete-page(pg.index); } }
+                                                                }
+                                                                HorizontalLayout {
+                                                                    spacing: 8px;
+                                                                    Text { text: pg.route; color: Palette.foreground.transparentize(50%); font-size: 10px; vertical-alignment: center; }
+                                                                    Text { text: pg.node-count + " nodes"; color: Palette.foreground.transparentize(60%); font-size: 10px; vertical-alignment: center; }
+                                                                    if pg.link-count > 0 : Text { text: pg.link-count + " links"; color: Palette.accent-foreground.transparentize(30%); font-size: 10px; vertical-alignment: center; }
+                                                                }
+                                                            }
+                                                            nav-pg-touch := TouchArea { mouse-cursor: pointer; clicked => { root.nav-select-page(pg.index); } }
+                                                        }
+
+                                                        Rectangle {
+                                                            height: 32px;
+                                                            border-radius: 6px;
+                                                            background: nav-add-touch.has-hover ? Palette.control-background : transparent;
+                                                            border-width: 1px;
+                                                            border-color: Palette.foreground.transparentize(80%);
+                                                            HorizontalLayout {
+                                                                alignment: center; spacing: 6px;
+                                                                Image { source: @image-url("icons/plus.svg"); width: 12px; height: 12px; colorize: Palette.foreground.transparentize(40%); }
+                                                                Text { text: "Add Page"; color: Palette.foreground.transparentize(40%); font-size: 11px; vertical-alignment: center; }
+                                                            }
+                                                            nav-add-touch := TouchArea { mouse-cursor: pointer; clicked => { root.nav-add-page(); } }
+                                                        }
                                                     }
                                                 }
                                             }

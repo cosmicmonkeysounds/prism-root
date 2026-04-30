@@ -18,6 +18,7 @@ use prism_builder::AssetSource;
 use prism_builder::{
     app::{AppIcon, NavigationConfig, Page, PrismApp},
     compile_slint_preview, compute_layout,
+    facet::{FacetDataSource, FacetDef, FacetDirection, FacetLayout},
     layout::{
         AbsoluteProps, AlignOption, Dimension, FlexDirection, FlowDisplay, FlowProps,
         GridPlacement, JustifyOption, LayoutMode, PageSize, TrackSize,
@@ -42,6 +43,7 @@ use crate::help::register_help_entries;
 use crate::input::{combo_from_slint, update_panel_schemes, FocusRegion, InputManager};
 use crate::keybindings::UserKeybindings;
 use crate::panels::{editor::CodeEditorPanel, properties::PropertiesPanel, Panel};
+use crate::persistence::{PersistenceError, ProjectPersistence};
 use crate::search::SearchIndex;
 use crate::selection::SelectionModel;
 use crate::telemetry::FirstPaint;
@@ -122,6 +124,9 @@ persistent_models! {
     signal_connections: crate::SignalConnectionItem,
     signal_list: crate::SignalItem,
     signal_target_nodes: crate::TargetNodeItem,
+    nav_pages: crate::NavPageItem,
+    nav_graph_nodes: crate::NavGraphNode,
+    nav_graph_edges: crate::NavGraphEdge,
 }
 
 // ── Reloadable state ───────────────────────────────────────────────
@@ -580,6 +585,8 @@ struct ShellInner {
     user_color_swatches: Vec<String>,
     toggled_sections: std::collections::HashSet<String>,
     last_selected_node: Option<String>,
+    nav_link_source: Option<usize>,
+    persistence: ProjectPersistence,
 }
 
 impl ShellInner {
@@ -747,11 +754,32 @@ impl ShellInner {
                 }
             }
         });
+        // If no explicit NavigateTo from connections, check for href prop on clicked nodes
+        if navigate_target.is_none() && signal == "clicked" {
+            let href = self
+                .store
+                .state()
+                .builder_document
+                .root
+                .as_ref()
+                .and_then(|r| r.find(source_node))
+                .and_then(|n| n.props.get("href"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+            if let Some(h) = href {
+                navigate_target = Some(h);
+            }
+        }
         if let Some(route) = navigate_target {
             self.store.mutate(|state| {
                 state.runtime_overrides.clear();
                 if let Some(app) = state.active_app_mut() {
-                    if let Some(idx) = app.pages.iter().position(|p| p.route == route) {
+                    // Match by route first, then by page ID
+                    let idx = app
+                        .find_page_by_route(&route)
+                        .or_else(|| app.find_page_by_id(&route));
+                    if let Some(idx) = idx {
                         app.active_page = idx;
                     }
                 }
@@ -898,9 +926,10 @@ impl ShellInner {
                             let route = route.to_string();
                             self.store.mutate(|state| {
                                 if let Some(app) = state.active_app_mut() {
-                                    if let Some(idx) =
-                                        app.pages.iter().position(|p| p.route == route)
-                                    {
+                                    let idx = app
+                                        .find_page_by_route(&route)
+                                        .or_else(|| app.find_page_by_id(&route));
+                                    if let Some(idx) = idx {
                                         app.active_page = idx;
                                     }
                                 }
@@ -958,6 +987,7 @@ impl ShellInner {
                 doc.page_layout = state.builder_document.page_layout.clone();
                 if let Some(app_doc) = state.active_app().and_then(|a| a.active_document()) {
                     doc.connections = app_doc.connections.clone();
+                    doc.facets = app_doc.facets.clone();
                 }
                 Self::apply_runtime_overrides_to_doc(&mut doc, &state.runtime_overrides);
                 state.builder_document = doc;
@@ -974,6 +1004,7 @@ impl ShellInner {
                 doc.page_layout = state.builder_document.page_layout.clone();
                 if let Some(app_doc) = state.active_app().and_then(|a| a.active_document()) {
                     doc.connections = app_doc.connections.clone();
+                    doc.facets = app_doc.facets.clone();
                 }
                 Self::apply_runtime_overrides_to_doc(&mut doc, &state.runtime_overrides);
                 state.builder_document = doc;
@@ -1077,6 +1108,9 @@ impl Shell {
             signal_target_nodes,
             crate::TargetNodeItem
         );
+        bind_model!(set_nav_pages, nav_pages, crate::NavPageItem);
+        bind_model!(set_nav_graph_nodes, nav_graph_nodes, crate::NavGraphNode);
+        bind_model!(set_nav_graph_edges, nav_graph_edges, crate::NavGraphEdge);
 
         let inner = Rc::new(RefCell::new(ShellInner {
             store: Store::new(state),
@@ -1108,6 +1142,8 @@ impl Shell {
             user_color_swatches: Vec::new(),
             toggled_sections: std::collections::HashSet::new(),
             last_selected_node: None,
+            nav_link_source: None,
+            persistence: ProjectPersistence::new(),
         }));
         {
             let mut s = inner.borrow_mut();
@@ -1590,6 +1626,42 @@ impl Shell {
                             state.next_node_id = counter;
                             state.selection.select(root_id);
                         });
+                    } else if ct == "facet" {
+                        let counter = s.store.state().next_node_id;
+                        let facet_id = format!("facet:n{counter}");
+                        let node_id = format!("n{counter}");
+                        let props = json!({ "facet_id": facet_id });
+                        if let Some(ref mut live) = s.live {
+                            let _ = live.insert_node_in_source(
+                                parent_id.as_deref(),
+                                &ct,
+                                &node_id,
+                                &props,
+                                None,
+                            );
+                        }
+                        mounted_id = node_id.clone();
+                        let nid = node_id.clone();
+                        s.store.mutate(|state| {
+                            state.next_node_id += 1;
+                            state.selection.select(nid);
+                            if let Some(doc) =
+                                state.active_app_mut().and_then(|a| a.active_document_mut())
+                            {
+                                doc.facets.insert(
+                                    facet_id.clone(),
+                                    FacetDef {
+                                        id: facet_id.clone(),
+                                        label: "New Facet".into(),
+                                        description: String::new(),
+                                        prefab_id: "card".into(),
+                                        data: FacetDataSource::Static { items: vec![] },
+                                        bindings: vec![],
+                                        layout: FacetLayout::default(),
+                                    },
+                                );
+                            }
+                        });
                     } else {
                         let node_id = format!("n{}", s.store.state().next_node_id);
                         let props = default_props_for_component(&ct);
@@ -1768,6 +1840,34 @@ impl Shell {
                                 }
                             });
                         }
+                    } else if key.starts_with("facet.") {
+                        if let Some(ref target_id) = selected_id {
+                            let facet_id = s
+                                .store
+                                .state()
+                                .builder_document
+                                .root
+                                .as_ref()
+                                .and_then(|r| r.find(target_id))
+                                .and_then(|n| n.props.get("facet_id"))
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string());
+                            if let Some(fid) = facet_id {
+                                s.push_undo(&format!("Edit {key}"));
+                                let fkey = key.strip_prefix("facet.").unwrap_or(&key).to_string();
+                                let val = value.clone();
+                                s.store.mutate(|state| {
+                                    if let Some(doc) =
+                                        state.active_app_mut().and_then(|a| a.active_document_mut())
+                                    {
+                                        if let Some(def) = doc.facets.get_mut(&fid) {
+                                            apply_facet_edit(def, &fkey, &val);
+                                        }
+                                    }
+                                });
+                                s.sync_builder_document();
+                            }
+                        }
                     } else if let Some(ref target_id) = selected_id {
                         let kind = field_kind_for_key(&s, &key);
                         let (source_key, formatted) =
@@ -1884,6 +1984,33 @@ impl Shell {
                                     }
                                 }
                             });
+                        }
+                    } else if key.starts_with("facet.") {
+                        if let Some(ref target_id) = selected_id {
+                            let facet_id = s
+                                .store
+                                .state()
+                                .builder_document
+                                .root
+                                .as_ref()
+                                .and_then(|r| r.find(target_id))
+                                .and_then(|n| n.props.get("facet_id"))
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string());
+                            if let Some(fid) = facet_id {
+                                s.push_undo(&format!("Edit {key}"));
+                                let fkey = key.strip_prefix("facet.").unwrap_or(&key).to_string();
+                                s.store.mutate(|state| {
+                                    if let Some(doc) =
+                                        state.active_app_mut().and_then(|a| a.active_document_mut())
+                                    {
+                                        if let Some(def) = doc.facets.get_mut(&fid) {
+                                            apply_facet_edit(def, &fkey, &format!("{val}"));
+                                        }
+                                    }
+                                });
+                                s.sync_builder_document();
+                            }
                         }
                     } else {
                         if let Some(ref target_id) = selected_id {
@@ -2195,26 +2322,6 @@ impl Shell {
                     });
                     s.load_active_page();
                 }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
-            }
-        });
-
-        // Tab management (close a page tab)
-        self.window.on_tab_activated({
-            let inner = Rc::clone(&inner);
-            let weak = weak.clone();
-            move |_tab_id| {
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
-            }
-        });
-        self.window.on_tab_closed({
-            let inner = Rc::clone(&inner);
-            let weak = weak.clone();
-            move |_tab_id| {
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
                 }
@@ -3445,6 +3552,317 @@ impl Shell {
             }
         });
 
+        // ── Navigation panel callbacks ──────────────────────────────
+        self.window.on_nav_add_page({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move || {
+                {
+                    let mut s = inner.borrow_mut();
+                    s.save_to_active_page();
+                    s.store.mutate(|state| {
+                        if let Some(app) = state.active_app_mut() {
+                            crate::panels::navigation::NavigationPanel::create_page(app);
+                        }
+                    });
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+        self.window.on_nav_delete_page({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |page_index| {
+                {
+                    let mut s = inner.borrow_mut();
+                    s.save_to_active_page();
+                    s.push_undo("Delete page");
+                    s.store.mutate(|state| {
+                        if let Some(app) = state.active_app_mut() {
+                            crate::panels::navigation::NavigationPanel::delete_page(
+                                app,
+                                page_index as usize,
+                            );
+                        }
+                        state.selection.clear();
+                        state.sync_document_from_app();
+                    });
+                    s.load_active_page();
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+        self.window.on_nav_rename_page({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |page_index, new_title| {
+                {
+                    let mut s = inner.borrow_mut();
+                    s.store.mutate(|state| {
+                        if let Some(app) = state.active_app_mut() {
+                            crate::panels::navigation::NavigationPanel::rename_page(
+                                app,
+                                page_index as usize,
+                                &new_title,
+                            );
+                        }
+                    });
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+        self.window.on_nav_set_route({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |page_index, new_route| {
+                {
+                    let mut s = inner.borrow_mut();
+                    s.store.mutate(|state| {
+                        if let Some(app) = state.active_app_mut() {
+                            crate::panels::navigation::NavigationPanel::set_page_route(
+                                app,
+                                page_index as usize,
+                                &new_route,
+                            );
+                        }
+                    });
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+        self.window.on_nav_move_page_up({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |page_index| {
+                {
+                    let mut s = inner.borrow_mut();
+                    s.save_to_active_page();
+                    s.store.mutate(|state| {
+                        if let Some(app) = state.active_app_mut() {
+                            crate::panels::navigation::NavigationPanel::move_page_up(
+                                app,
+                                page_index as usize,
+                            );
+                        }
+                    });
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+        self.window.on_nav_move_page_down({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |page_index| {
+                {
+                    let mut s = inner.borrow_mut();
+                    s.save_to_active_page();
+                    s.store.mutate(|state| {
+                        if let Some(app) = state.active_app_mut() {
+                            crate::panels::navigation::NavigationPanel::move_page_down(
+                                app,
+                                page_index as usize,
+                            );
+                        }
+                    });
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+        self.window.on_nav_select_page({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |page_index| {
+                {
+                    let mut s = inner.borrow_mut();
+                    s.save_to_active_page();
+                    s.store.mutate(|state| {
+                        if let Some(app) = state.active_app_mut() {
+                            app.active_page = page_index as usize;
+                        }
+                        state.selection.clear();
+                        state.sync_document_from_app();
+                    });
+                    s.load_active_page();
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+        self.window.on_nav_cycle_style({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move || {
+                {
+                    let mut s = inner.borrow_mut();
+                    s.store.mutate(|state| {
+                        if let Some(app) = state.active_app_mut() {
+                            use prism_builder::app::NavigationStyle;
+                            let next = match app.navigation.style {
+                                NavigationStyle::Tabs => NavigationStyle::Sidebar,
+                                NavigationStyle::Sidebar => NavigationStyle::BottomBar,
+                                NavigationStyle::BottomBar => NavigationStyle::None,
+                                NavigationStyle::None => NavigationStyle::Tabs,
+                            };
+                            crate::panels::navigation::NavigationPanel::set_navigation_style(
+                                app, next,
+                            );
+                        }
+                    });
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Navigation graph: click node = select page
+        self.window.on_nav_graph_node_clicked({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |page_index| {
+                {
+                    let mut s = inner.borrow_mut();
+                    s.save_to_active_page();
+                    s.store.mutate(|state| {
+                        if let Some(app) = state.active_app_mut() {
+                            app.active_page = page_index as usize;
+                        }
+                        state.selection.clear();
+                        state.sync_document_from_app();
+                    });
+                    s.load_active_page();
+                    s.dock_dirty.set(true);
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Navigation graph: begin link drag
+        self.window.on_nav_graph_link_start({
+            let inner = Rc::clone(&inner);
+            move |source_idx| {
+                inner.borrow_mut().nav_link_source = Some(source_idx as usize);
+            }
+        });
+
+        // Navigation graph: complete link (add NavigateTo connection)
+        self.window.on_nav_graph_link_end({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |target_idx| {
+                let source_idx;
+                {
+                    let mut s = inner.borrow_mut();
+                    source_idx = s.nav_link_source.take();
+                }
+                let Some(src) = source_idx else { return };
+                let tgt = target_idx as usize;
+                if src == tgt {
+                    return;
+                }
+                {
+                    let mut s = inner.borrow_mut();
+                    let target_route = s
+                        .store
+                        .state()
+                        .active_app()
+                        .and_then(|app| app.pages.get(tgt))
+                        .map(|p| p.route.clone());
+                    if let Some(route) = target_route {
+                        use prism_builder::signal::{ActionKind, Connection};
+                        let conn_id = format!("nav-{src}-{tgt}");
+                        s.store.mutate(|state| {
+                            if let Some(app) = state.active_app_mut() {
+                                if let Some(page) = app.pages.get_mut(src) {
+                                    let already = page.document.connections.iter().any(|c| {
+                                        matches!(&c.action, ActionKind::NavigateTo { target } if target == &route)
+                                    });
+                                    if !already {
+                                        let source_node = page
+                                            .document
+                                            .root
+                                            .as_ref()
+                                            .map(|r| r.id.clone())
+                                            .unwrap_or_default();
+                                        page.document.connections.push(Connection {
+                                            id: conn_id,
+                                            source_node,
+                                            signal: "clicked".into(),
+                                            target_node: String::new(),
+                                            action: ActionKind::NavigateTo {
+                                                target: route,
+                                            },
+                                            params: serde_json::Value::Null,
+                                        });
+                                    }
+                                }
+                            }
+                        });
+                    }
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
+        // Navigation graph: remove a link edge
+        self.window.on_nav_graph_link_remove({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |edge_id| {
+                let edge_id = edge_id.to_string();
+                {
+                    let mut s = inner.borrow_mut();
+                    if edge_id.starts_with("href:") {
+                        // href:<page_idx>:<node_id> — clear the href prop
+                        let parts: Vec<&str> = edge_id.splitn(3, ':').collect();
+                        if parts.len() == 3 {
+                            if let Ok(page_idx) = parts[1].parse::<usize>() {
+                                let node_id = parts[2].to_string();
+                                s.store.mutate(|state| {
+                                    if let Some(app) = state.active_app_mut() {
+                                        if let Some(page) = app.pages.get_mut(page_idx) {
+                                            if let Some(root) = &mut page.document.root {
+                                                clear_href_on_node(root, &node_id);
+                                            }
+                                        }
+                                    }
+                                });
+                            }
+                        }
+                    } else {
+                        // Signal connection — remove by connection ID
+                        s.store.mutate(|state| {
+                            if let Some(app) = state.active_app_mut() {
+                                for page in &mut app.pages {
+                                    page.document.connections.retain(|c| c.id != edge_id);
+                                }
+                            }
+                        });
+                    }
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
         // Viewport preset changed
         self.window.on_viewport_preset_changed({
             let inner = Rc::clone(&inner);
@@ -3725,6 +4143,7 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
             &inner.registry,
             &state.selection,
         );
+        push_navigation_panel_data(&inner.models, window, state.active_app());
         push_breadcrumbs(
             &inner.models,
             window,
@@ -4515,6 +4934,29 @@ fn execute_command(
             let panel_id = panel_id_for_slint(&s.store.state().workspace);
             update_panel_schemes(&mut s.input, panel_id);
         }
+        "add_page" => {
+            let mut s = shared.borrow_mut();
+            s.save_to_active_page();
+            s.store.mutate(|state| {
+                if let Some(app) = state.active_app_mut() {
+                    let page_num = app.pages.len() + 1;
+                    app.pages.push(Page {
+                        id: format!("page-{page_num}"),
+                        title: format!("Page {page_num}"),
+                        route: format!("/page-{page_num}"),
+                        source: String::new(),
+                        document: BuilderDocument::page_shell(),
+                        style: StyleProperties::default(),
+                    });
+                    app.active_page = app.pages.len() - 1;
+                }
+                state.selection.clear();
+                state.sync_document_from_app();
+                state.workspace.switch_page_by_id("navigation");
+            });
+            s.load_active_page();
+            s.dock_dirty.set(true);
+        }
         "selection.delete" => {
             let mut s = shared.borrow_mut();
             let selected_id = s.store.state().selection.primary().cloned();
@@ -4785,7 +5227,146 @@ fn execute_command(
                 .store
                 .mutate(|s| s.transform_tool = TransformTool::Scale);
         }
-        "file.save" => {}
+        "file.save" => {
+            let mut s = shared.borrow_mut();
+            s.save_to_active_page();
+            let apps = s.store.state().apps.clone();
+            let reg = Arc::clone(&s.registry);
+            let tokens = s.store.state().tokens;
+            let result = s.persistence.save(&apps, &reg, &tokens);
+            match result {
+                Ok(path) => {
+                    let name = path.display().to_string();
+                    s.add_toast("Saved", &format!("Project saved to {name}"), "success");
+                }
+                Err(PersistenceError::NoPath) => {
+                    drop(s);
+                    execute_command(shared, weak, "file.save_as");
+                    return;
+                }
+                Err(PersistenceError::Cancelled) => {}
+                Err(e) => s.add_toast("Save failed", &e.to_string(), "error"),
+            }
+        }
+        "file.save_as" => {
+            let mut s = shared.borrow_mut();
+            s.save_to_active_page();
+            let apps = s.store.state().apps.clone();
+            let reg = Arc::clone(&s.registry);
+            let tokens = s.store.state().tokens;
+            match s.persistence.save_as(&apps, &reg, &tokens) {
+                Ok(path) => {
+                    let name = path.display().to_string();
+                    s.add_toast("Saved", &format!("Project saved to {name}"), "success");
+                }
+                Err(PersistenceError::Cancelled) => {}
+                Err(e) => s.add_toast("Save failed", &e.to_string(), "error"),
+            }
+        }
+        "file.open" => {
+            let mut s = shared.borrow_mut();
+            s.save_to_active_page();
+            match s.persistence.open() {
+                Ok(apps) => {
+                    let name = s
+                        .persistence
+                        .project_name()
+                        .unwrap_or_else(|| "project".into());
+                    s.store.mutate(|state| {
+                        state.apps = apps;
+                        state.shell_view = ShellView::Launchpad;
+                        state.selection.clear();
+                    });
+                    s.live = None;
+                    s.undo_past.clear();
+                    s.undo_future.clear();
+                    s.add_toast("Opened", &format!("Loaded {name}"), "success");
+                }
+                Err(PersistenceError::Cancelled) => {}
+                Err(e) => s.add_toast("Open failed", &e.to_string(), "error"),
+            }
+        }
+        "file.new" => {
+            let mut s = shared.borrow_mut();
+            s.persistence.clear_path();
+            s.store.mutate(|state| {
+                state.apps = sample_apps();
+                state.shell_view = ShellView::Launchpad;
+                state.selection.clear();
+            });
+            s.live = None;
+            s.undo_past.clear();
+            s.undo_future.clear();
+            s.add_toast("New Project", "Started a new project", "info");
+        }
+        "facet.add_item" => {
+            let mut s = shared.borrow_mut();
+            let selected = s.store.state().selection.primary().cloned();
+            if let Some(ref node_id) = selected {
+                let facet_id = s
+                    .store
+                    .state()
+                    .builder_document
+                    .root
+                    .as_ref()
+                    .and_then(|r| r.find(node_id))
+                    .and_then(|n| n.props.get("facet_id"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                if let Some(fid) = facet_id {
+                    s.push_undo("Add facet item");
+                    s.store.mutate(|state| {
+                        if let Some(doc) =
+                            state.active_app_mut().and_then(|a| a.active_document_mut())
+                        {
+                            if let Some(def) = doc.facets.get_mut(&fid) {
+                                if let prism_builder::facet::FacetDataSource::Static {
+                                    ref mut items,
+                                } = def.data
+                                {
+                                    items.push(serde_json::json!({}));
+                                }
+                            }
+                        }
+                    });
+                    s.sync_builder_document();
+                }
+            }
+        }
+        "facet.clear_items" => {
+            let mut s = shared.borrow_mut();
+            let selected = s.store.state().selection.primary().cloned();
+            if let Some(ref node_id) = selected {
+                let facet_id = s
+                    .store
+                    .state()
+                    .builder_document
+                    .root
+                    .as_ref()
+                    .and_then(|r| r.find(node_id))
+                    .and_then(|n| n.props.get("facet_id"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                if let Some(fid) = facet_id {
+                    s.push_undo("Clear facet items");
+                    s.store.mutate(|state| {
+                        if let Some(doc) =
+                            state.active_app_mut().and_then(|a| a.active_document_mut())
+                        {
+                            if let Some(def) = doc.facets.get_mut(&fid) {
+                                if let prism_builder::facet::FacetDataSource::Static {
+                                    ref mut items,
+                                } = def.data
+                                {
+                                    items.clear();
+                                }
+                            }
+                        }
+                    });
+                    s.sync_builder_document();
+                }
+            }
+        }
         other => {
             if let Some(n) = other
                 .strip_prefix("navigate.tab.")
@@ -4998,6 +5579,109 @@ fn push_signal_panel_data(
     }
     let target_label_model = std::rc::Rc::new(slint::VecModel::from(target_labels));
     window.set_signal_target_labels(slint::ModelRc::from(target_label_model));
+}
+
+fn push_navigation_panel_data(
+    models: &PersistentModels,
+    window: &AppWindow,
+    app: Option<&PrismApp>,
+) {
+    let nav_items: Vec<crate::NavPageItem> = app
+        .map(|app| {
+            crate::panels::navigation::NavigationPanel::page_rows(app)
+                .into_iter()
+                .map(|row| crate::NavPageItem {
+                    index: row.index as i32,
+                    id: SharedString::from(&row.id),
+                    title: SharedString::from(&row.title),
+                    route: SharedString::from(&row.route),
+                    is_active: row.is_active,
+                    node_count: row.node_count as i32,
+                    link_count: row.link_count as i32,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let count = sync_model(&models.nav_pages, &nav_items);
+    window.set_nav_pages_count(count);
+
+    let nav_style_label = app
+        .map(|app| match app.navigation.style {
+            prism_builder::app::NavigationStyle::Tabs => "Tabs",
+            prism_builder::app::NavigationStyle::Sidebar => "Sidebar",
+            prism_builder::app::NavigationStyle::BottomBar => "Bottom Bar",
+            prism_builder::app::NavigationStyle::None => "None",
+        })
+        .unwrap_or("Tabs");
+    window.set_nav_style_label(SharedString::from(nav_style_label));
+
+    // Graph nodes
+    use crate::panels::navigation::NavigationPanel;
+    let graph_nodes: Vec<crate::NavGraphNode> = app
+        .map(|app| {
+            NavigationPanel::graph_nodes(app)
+                .into_iter()
+                .map(|n| crate::NavGraphNode {
+                    page_index: n.page_index as i32,
+                    id: SharedString::from(&n.id),
+                    title: SharedString::from(&n.title),
+                    route: SharedString::from(&n.route),
+                    is_active: n.is_active,
+                    node_count: n.node_count as i32,
+                    link_count: n.link_count as i32,
+                    x: n.x,
+                    y: n.y,
+                    w: n.width,
+                    h: n.height,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let gn_count = sync_model(&models.nav_graph_nodes, &graph_nodes);
+    window.set_nav_graph_nodes_count(gn_count);
+
+    // Graph edges — pre-compute line endpoints from node centers
+    let graph_edges: Vec<crate::NavGraphEdge> = app
+        .map(|app| {
+            let nodes = NavigationPanel::graph_nodes(app);
+            NavigationPanel::graph_edges(app)
+                .into_iter()
+                .map(|e| {
+                    let (x1, y1) = nodes
+                        .get(e.source_page_index)
+                        .map(|n| (n.x + n.width / 2.0, n.y + n.height / 2.0))
+                        .unwrap_or((0.0, 0.0));
+                    let (x2, y2) = nodes
+                        .get(e.target_page_index)
+                        .map(|n| (n.x + n.width / 2.0, n.y + n.height / 2.0))
+                        .unwrap_or((0.0, 0.0));
+                    crate::NavGraphEdge {
+                        id: SharedString::from(&e.id),
+                        source_page_index: e.source_page_index as i32,
+                        target_page_index: e.target_page_index as i32,
+                        label: SharedString::from(&e.label),
+                        kind: SharedString::from(&e.kind),
+                        x1,
+                        y1,
+                        x2,
+                        y2,
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let ge_count = sync_model(&models.nav_graph_edges, &graph_edges);
+    window.set_nav_graph_edges_count(ge_count);
+}
+
+fn clear_href_on_node(node: &mut prism_builder::document::Node, target_id: &str) {
+    if node.id == target_id {
+        node.props.as_object_mut().map(|m| m.remove("href"));
+        return;
+    }
+    for child in &mut node.children {
+        clear_href_on_node(child, target_id);
+    }
 }
 
 /// Build a Luau script that includes the signal handler stdlib, the
@@ -5367,6 +6051,7 @@ fn default_props_for_component(component: &str) -> serde_json::Value {
         "table" => json!({ "headers": "Column 1, Column 2" }),
         "tabs" => json!({ "labels": "Tab 1, Tab 2" }),
         "accordion" => json!({ "title": "Section", "open": true }),
+        "facet" => json!({ "facet_id": "" }),
         _ => json!({}),
     }
 }
@@ -5413,6 +6098,14 @@ fn component_palette_items() -> Vec<ComponentPaletteItem> {
         (
             "PREFABS",
             &[("card", "Card", "Bordered card with title and body")],
+        ),
+        (
+            "PROGRAMMATIC",
+            &[(
+                "facet",
+                "Facet",
+                "Repeat a prefab template over a data source",
+            )],
         ),
     ];
 
@@ -5559,6 +6252,25 @@ fn push_page_layout_data(
     window.set_column_gutters_count(0);
     sync_model(&models.row_gutters, &[]);
     window.set_row_gutters_count(0);
+}
+
+fn apply_facet_edit(def: &mut FacetDef, key: &str, value: &str) {
+    match key {
+        "prefab_id" => def.prefab_id = value.to_string(),
+        "label" => def.label = value.to_string(),
+        "direction" => {
+            def.layout.direction = match value {
+                "row" | "Row" => FacetDirection::Row,
+                _ => FacetDirection::Column,
+            };
+        }
+        "gap" => {
+            if let Ok(v) = value.parse::<f32>() {
+                def.layout.gap = v;
+            }
+        }
+        _ => {}
+    }
 }
 
 fn apply_style_edit(style: &mut StyleProperties, key: &str, value: &str) {
@@ -6593,14 +7305,17 @@ mod tests {
     #[test]
     fn workspace_pages_available() {
         let state = AppState::default();
-        assert_eq!(state.workspace.pages().len(), 5);
+        assert_eq!(state.workspace.pages().len(), 6);
         let ids: Vec<&str> = state
             .workspace
             .pages()
             .iter()
             .map(|p| p.id.as_str())
             .collect();
-        assert_eq!(ids, &["edit", "design", "code", "fusion", "preview"]);
+        assert_eq!(
+            ids,
+            &["edit", "design", "code", "fusion", "navigation", "preview"]
+        );
     }
 
     #[test]
@@ -6714,14 +7429,15 @@ mod tests {
         let items = component_palette_items();
         let headers: Vec<_> = items.iter().filter(|i| i.is_header).collect();
         let components: Vec<_> = items.iter().filter(|i| !i.is_header).collect();
-        assert_eq!(headers.len(), 5);
-        assert_eq!(components.len(), 15);
-        assert_eq!(items.len(), 20);
+        assert_eq!(headers.len(), 6);
+        assert_eq!(components.len(), 16);
+        assert_eq!(items.len(), 22);
         assert_eq!(headers[0].label.as_str(), "CONTENT");
         assert_eq!(headers[1].label.as_str(), "LAYOUT");
         assert_eq!(headers[2].label.as_str(), "FORM");
         assert_eq!(headers[3].label.as_str(), "DECORATION");
         assert_eq!(headers[4].label.as_str(), "PREFABS");
+        assert_eq!(headers[5].label.as_str(), "PROGRAMMATIC");
     }
 
     #[test]

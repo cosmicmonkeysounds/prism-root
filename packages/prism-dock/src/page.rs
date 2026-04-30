@@ -126,12 +126,27 @@ impl WorkflowPage {
         }
     }
 
+    pub fn navigation() -> Self {
+        let dock = DockState::new(DockNode::hsplit(
+            0.4,
+            DockNode::tab(PanelKind::Navigation.id()),
+            DockNode::tab(PanelKind::Builder.id()),
+        ));
+        Self {
+            id: "navigation".into(),
+            label: "Navigation".into(),
+            icon_hint: "navigation".into(),
+            dock,
+        }
+    }
+
     pub fn builtins() -> Vec<Self> {
         vec![
             Self::edit(),
             Self::design(),
             Self::code(),
             Self::fusion(),
+            Self::navigation(),
             Self::preview(),
         ]
     }
@@ -189,11 +204,21 @@ mod tests {
     }
 
     #[test]
-    fn builtins_returns_five_pages() {
+    fn navigation_preset_has_navigation_and_builder() {
+        let page = WorkflowPage::navigation();
+        assert!(page.dock.contains_panel("navigation"));
+        assert!(page.dock.contains_panel("builder"));
+    }
+
+    #[test]
+    fn builtins_returns_six_pages() {
         let pages = WorkflowPage::builtins();
-        assert_eq!(pages.len(), 5);
+        assert_eq!(pages.len(), 6);
         let ids: Vec<&str> = pages.iter().map(|p| p.id.as_str()).collect();
-        assert_eq!(ids, &["edit", "design", "code", "fusion", "preview"]);
+        assert_eq!(
+            ids,
+            &["edit", "design", "code", "fusion", "navigation", "preview"]
+        );
     }
 
     #[test]

@@ -33,7 +33,10 @@ impl MenuRegistry {
         let mut reg = Self::new();
 
         // File
-        reg.add("file.save", "File", 1, 1);
+        reg.add("file.new", "File", 1, 1);
+        reg.add("file.open", "File", 1, 2);
+        reg.add("file.save", "File", 2, 1);
+        reg.add("file.save_as", "File", 2, 2);
 
         // Edit
         reg.add("edit.undo", "Edit", 1, 1);

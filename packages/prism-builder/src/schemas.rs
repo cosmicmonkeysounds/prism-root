@@ -41,6 +41,7 @@ pub fn image() -> Vec<FieldSpec> {
             ],
         )
         .with_default(Value::from("cover")),
+        FieldSpec::text("href", "Link URL"),
     ]
 }
 
@@ -115,6 +116,7 @@ pub fn button() -> Vec<FieldSpec> {
         )
         .with_default(Value::from("submit")),
         FieldSpec::boolean("disabled", "Disabled"),
+        FieldSpec::text("href", "Link URL"),
     ]
 }
 
@@ -162,5 +164,16 @@ pub fn accordion() -> Vec<FieldSpec> {
     vec![
         FieldSpec::text("title", "Section title").required(),
         FieldSpec::boolean("open", "Initially open"),
+    ]
+}
+
+pub fn facet() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("facet_id", "Facet ID").required(),
+        FieldSpec::integer(
+            "max_items",
+            "Max items",
+            NumericBounds::min_max(1.0, 10_000.0),
+        ),
     ]
 }

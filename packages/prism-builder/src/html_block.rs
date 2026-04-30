@@ -23,6 +23,8 @@ pub struct HtmlRenderContext<'a> {
     pub registry: &'a HtmlRegistry,
     pub resources:
         &'a indexmap::IndexMap<crate::resource::ResourceId, crate::resource::ResourceDef>,
+    pub prefabs: &'a indexmap::IndexMap<String, crate::prefab::PrefabDef>,
+    pub facets: &'a indexmap::IndexMap<String, crate::facet::FacetDef>,
 }
 
 impl<'a> HtmlRenderContext<'a> {

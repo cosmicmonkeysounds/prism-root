@@ -22,12 +22,14 @@ pub mod app;
 pub mod asset;
 pub mod component;
 pub mod document;
+pub mod facet;
 pub mod html;
 pub mod html_block;
 pub mod html_starter;
 pub mod layout;
 pub mod modifier;
 pub mod prefab;
+pub mod project;
 pub mod registry;
 pub mod render;
 pub mod resource;
@@ -44,6 +46,7 @@ pub use app::{AppIcon, AppId, NavigationConfig, NavigationStyle, Page, PrismApp}
 pub use asset::{collect_vfs_hashes, AssetSource};
 pub use component::{Component, ComponentId, RenderContext, RenderError, RenderSlintContext};
 pub use document::{BuilderDocument, Node, NodeId};
+pub use facet::{FacetBinding, FacetDataSource, FacetDef, FacetDirection, FacetLayout};
 pub use html::{escape_attr, escape_text, Html};
 pub use html_block::{HtmlBlock, HtmlRegistry, HtmlRenderContext};
 pub use html_starter::register_html_builtins;
@@ -54,6 +57,7 @@ pub use layout::{
 };
 pub use modifier::{Modifier, ModifierKind};
 pub use prefab::{ExposedSlot, PrefabComponent, PrefabDef, PrefabHtmlBlock};
+pub use project::{ProjectFile, FILE_EXTENSION, FORMAT_VERSION};
 pub use registry::{
     ComponentRegistry, FieldKind, FieldSpec, FieldValue, FileFieldConfig, NumericBounds,
     RegistryError, SelectOption,

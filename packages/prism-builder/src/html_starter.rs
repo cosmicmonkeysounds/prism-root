@@ -11,6 +11,7 @@ use serde_json::Value;
 use crate::asset::AssetSource;
 use crate::component::{ComponentId, RenderError};
 use crate::document::Node;
+use crate::facet::FacetHtmlBlock;
 use crate::html::Html;
 use crate::html_block::{HtmlBlock, HtmlRegistry, HtmlRenderContext};
 use crate::prefab::PrefabHtmlBlock;
@@ -46,6 +47,7 @@ pub fn register_html_builtins(reg: &mut HtmlRegistry) -> Result<(), RegistryErro
     reg.register(Arc::new(HtmlAccordion {
         id: "accordion".into(),
     }))?;
+    reg.register(Arc::new(FacetHtmlBlock::new()))?;
     Ok(())
 }
 
@@ -112,13 +114,20 @@ impl HtmlBlock for HtmlImage {
     ) -> Result<(), RenderError> {
         let alt = prop_str(props, "alt", "");
         let fit = prop_str(props, "fit", "cover");
+        let href = prop_str(props, "href", "");
         let src = props
             .get("src")
             .and_then(AssetSource::from_prop)
             .map(|s| s.to_html_src())
             .unwrap_or_default();
         let style = format!("object-fit:{fit}");
+        if !href.is_empty() {
+            out.open_attrs("a", &[("href", href)]);
+        }
         out.void("img", &[("src", &src), ("alt", alt), ("style", &style)]);
+        if !href.is_empty() {
+            out.close("a");
+        }
         Ok(())
     }
 }
@@ -266,14 +275,21 @@ impl HtmlBlock for HtmlButton {
     ) -> Result<(), RenderError> {
         let text = prop_str(props, "text", "Submit");
         let btn_type = prop_str(props, "type", "submit");
+        let href = prop_str(props, "href", "");
         let disabled = prop_bool(props, "disabled");
-        let mut attrs = vec![("type", btn_type)];
-        if disabled {
-            attrs.push(("disabled", "disabled"));
+        if !href.is_empty() {
+            out.open_attrs("a", &[("href", href), ("role", "button")]);
+            out.text(text);
+            out.close("a");
+        } else {
+            let mut attrs = vec![("type", btn_type)];
+            if disabled {
+                attrs.push(("disabled", "disabled"));
+            }
+            out.open_attrs("button", &attrs);
+            out.text(text);
+            out.close("button");
         }
-        out.open_attrs("button", &attrs);
-        out.text(text);
-        out.close("button");
         Ok(())
     }
 }

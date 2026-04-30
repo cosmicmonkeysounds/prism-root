@@ -131,8 +131,8 @@ mod tests {
     #[test]
     fn new_registers_builtins() {
         let state = AppState::new();
-        assert_eq!(state.registry.len(), 15);
-        assert_eq!(state.html_registry.len(), 15);
+        assert_eq!(state.registry.len(), 16);
+        assert_eq!(state.html_registry.len(), 16);
         for id in [
             "text",
             "image",

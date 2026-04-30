@@ -23,7 +23,9 @@ use serde_json::Value;
 use thiserror::Error;
 
 use crate::document::Node;
+use crate::facet::FacetDef;
 use crate::layout::{Dimension, FlexDirection, FlowDisplay, FlowProps, GridPlacement, LayoutMode};
+use crate::prefab::PrefabDef;
 use crate::registry::{ComponentRegistry, FieldSpec};
 use crate::signal::SignalDef;
 use crate::slint_source::SlintEmitter;
@@ -77,6 +79,8 @@ pub struct RenderSlintContext<'a> {
     pub registry: &'a ComponentRegistry,
     pub resources:
         &'a indexmap::IndexMap<crate::resource::ResourceId, crate::resource::ResourceDef>,
+    pub prefabs: &'a indexmap::IndexMap<String, PrefabDef>,
+    pub facets: &'a indexmap::IndexMap<String, FacetDef>,
     /// When true, emit `// @node-start` / `// @node-end` marker
     /// comments around each node for source map construction (ADR-006).
     pub emit_markers: bool,
@@ -104,12 +108,16 @@ impl<'a> RenderSlintContext<'a> {
             crate::resource::ResourceId,
             crate::resource::ResourceDef,
         >,
+        prefabs: &'a indexmap::IndexMap<String, PrefabDef>,
+        facets: &'a indexmap::IndexMap<String, FacetDef>,
         emit_markers: bool,
     ) -> Self {
         Self {
             tokens,
             registry,
             resources,
+            prefabs,
+            facets,
             emit_markers,
             current_style: RefCell::new(StyleProperties::default()),
             asset_paths: HashMap::new(),

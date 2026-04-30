@@ -17,6 +17,7 @@ pub enum PanelKind {
     ComponentPalette,
     Console,
     Signals,
+    Navigation,
 }
 
 impl PanelKind {
@@ -33,6 +34,7 @@ impl PanelKind {
         Self::ComponentPalette,
         Self::Console,
         Self::Signals,
+        Self::Navigation,
     ];
 
     pub fn from_id(id: &str) -> Option<Self> {
@@ -149,6 +151,14 @@ impl PanelKind {
                 min_height: 100.0,
                 allow_multiple: false,
             },
+            Self::Navigation => PanelMeta {
+                kind: self,
+                label: "Navigation",
+                icon_hint: "navigation",
+                min_width: 200.0,
+                min_height: 200.0,
+                allow_multiple: false,
+            },
         }
     }
 
@@ -189,7 +199,7 @@ mod tests {
 
     #[test]
     fn all_constant_matches_variant_count() {
-        assert_eq!(PanelKind::ALL.len(), 12);
+        assert_eq!(PanelKind::ALL.len(), 13);
     }
 
     #[test]

@@ -16,6 +16,7 @@ pub mod builder;
 pub mod editor;
 pub mod identity;
 pub mod inspector;
+pub mod navigation;
 pub mod properties;
 pub mod signals;
 

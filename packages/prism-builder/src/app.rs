@@ -46,6 +46,33 @@ impl PrismApp {
     pub fn page_count(&self) -> usize {
         self.pages.len()
     }
+
+    pub fn add_page(&mut self, page: Page) {
+        self.pages.push(page);
+    }
+
+    /// Remove a page by index. Returns the removed page, or `None` if
+    /// the index is out of bounds or removing would leave zero pages.
+    pub fn remove_page(&mut self, index: usize) -> Option<Page> {
+        if self.pages.len() <= 1 || index >= self.pages.len() {
+            return None;
+        }
+        let removed = self.pages.remove(index);
+        if self.active_page >= self.pages.len() {
+            self.active_page = self.pages.len() - 1;
+        } else if self.active_page > index {
+            self.active_page -= 1;
+        }
+        Some(removed)
+    }
+
+    pub fn find_page_by_route(&self, route: &str) -> Option<usize> {
+        self.pages.iter().position(|p| p.route == route)
+    }
+
+    pub fn find_page_by_id(&self, id: &str) -> Option<usize> {
+        self.pages.iter().position(|p| p.id == id)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -192,5 +219,129 @@ mod tests {
         assert_eq!(AppIcon::Cube.label(), "cube");
         assert_eq!(AppIcon::Music.label(), "music");
         assert!(!AppIcon::Globe.accent_color().is_empty());
+    }
+
+    fn three_page_app() -> PrismApp {
+        PrismApp {
+            id: "test".into(),
+            name: "Test".into(),
+            description: String::new(),
+            icon: AppIcon::Cube,
+            pages: vec![
+                Page {
+                    id: "p1".into(),
+                    title: "Home".into(),
+                    route: "/".into(),
+                    source: String::new(),
+                    document: BuilderDocument::default(),
+                    style: StyleProperties::default(),
+                },
+                Page {
+                    id: "p2".into(),
+                    title: "About".into(),
+                    route: "/about".into(),
+                    source: String::new(),
+                    document: BuilderDocument::default(),
+                    style: StyleProperties::default(),
+                },
+                Page {
+                    id: "p3".into(),
+                    title: "Contact".into(),
+                    route: "/contact".into(),
+                    source: String::new(),
+                    document: BuilderDocument::default(),
+                    style: StyleProperties::default(),
+                },
+            ],
+            active_page: 1,
+            navigation: NavigationConfig::default(),
+            style: StyleProperties::default(),
+        }
+    }
+
+    #[test]
+    fn add_page() {
+        let mut app = three_page_app();
+        assert_eq!(app.page_count(), 3);
+        app.add_page(Page {
+            id: "p4".into(),
+            title: "New".into(),
+            route: "/new".into(),
+            source: String::new(),
+            document: BuilderDocument::default(),
+            style: StyleProperties::default(),
+        });
+        assert_eq!(app.page_count(), 4);
+        assert_eq!(app.pages[3].title, "New");
+    }
+
+    #[test]
+    fn remove_page_middle() {
+        let mut app = three_page_app();
+        app.active_page = 2;
+        let removed = app.remove_page(1);
+        assert!(removed.is_some());
+        assert_eq!(removed.unwrap().title, "About");
+        assert_eq!(app.page_count(), 2);
+        assert_eq!(app.active_page, 1);
+    }
+
+    #[test]
+    fn remove_page_before_active_adjusts_index() {
+        let mut app = three_page_app();
+        app.active_page = 2;
+        app.remove_page(0);
+        assert_eq!(app.active_page, 1);
+    }
+
+    #[test]
+    fn remove_active_page_clamps() {
+        let mut app = three_page_app();
+        app.active_page = 2;
+        app.remove_page(2);
+        assert_eq!(app.active_page, 1);
+    }
+
+    #[test]
+    fn remove_last_remaining_page_fails() {
+        let mut app = PrismApp {
+            id: "t".into(),
+            name: "T".into(),
+            description: String::new(),
+            icon: AppIcon::Cube,
+            pages: vec![Page {
+                id: "only".into(),
+                title: "Only".into(),
+                route: "/".into(),
+                source: String::new(),
+                document: BuilderDocument::default(),
+                style: StyleProperties::default(),
+            }],
+            active_page: 0,
+            navigation: NavigationConfig::default(),
+            style: StyleProperties::default(),
+        };
+        assert!(app.remove_page(0).is_none());
+        assert_eq!(app.page_count(), 1);
+    }
+
+    #[test]
+    fn remove_page_out_of_bounds() {
+        let mut app = three_page_app();
+        assert!(app.remove_page(99).is_none());
+    }
+
+    #[test]
+    fn find_page_by_route() {
+        let app = three_page_app();
+        assert_eq!(app.find_page_by_route("/about"), Some(1));
+        assert_eq!(app.find_page_by_route("/missing"), None);
+    }
+
+    #[test]
+    fn find_page_by_id() {
+        let app = three_page_app();
+        assert_eq!(app.find_page_by_id("p3"), Some(2));
+        assert_eq!(app.find_page_by_id("missing"), None);
     }
 }

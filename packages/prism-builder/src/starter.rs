@@ -20,6 +20,7 @@ use serde_json::json;
 use crate::asset::AssetSource;
 use crate::component::{Component, ComponentId, RenderError, RenderSlintContext};
 use crate::document::Node;
+use crate::facet::FacetComponent;
 use crate::prefab::{ExposedSlot, PrefabComponent, PrefabDef};
 use crate::registry::{prop_f64, prop_str, ComponentRegistry, FieldSpec, RegistryError};
 use crate::schemas;
@@ -58,6 +59,7 @@ pub fn register_builtins(reg: &mut ComponentRegistry) -> Result<(), RegistryErro
     reg.register(Arc::new(AccordionComponent {
         id: "accordion".into(),
     }))?;
+    reg.register(Arc::new(FacetComponent::new()))?;
     Ok(())
 }
 
@@ -188,6 +190,7 @@ impl Component for ImageComponent {
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
         let fit = prop_str(props, "fit", "cover");
+        let href = prop_str(props, "href", "");
         let source = props.get("src").and_then(AssetSource::from_prop);
 
         let slint_fit = match fit {
@@ -211,6 +214,11 @@ impl Component for ImageComponent {
                 out.line("clip: true;");
                 out.line("horizontal-stretch: 1;");
                 out.line("vertical-stretch: 1;");
+                if !href.is_empty() {
+                    out.line("border-width: 2px;");
+                    out.line("border-color: #5aa0ff;");
+                    out.line("border-radius: 4px;");
+                }
                 out.block("Image", |out| {
                     out.line(format!(
                         "source: @image-url(\"{}\");",
@@ -223,8 +231,6 @@ impl Component for ImageComponent {
                 })
             })
         } else {
-            // No visible placeholder — the grid cell overlay already
-            // shows the component type label.
             out.block("Rectangle", |out| {
                 out.line("horizontal-stretch: 1;");
                 Ok(())
@@ -1002,19 +1008,31 @@ impl Component for ButtonComponent {
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
         let text = prop_str(props, "text", "Submit");
+        let href = prop_str(props, "href", "");
         out.block("Rectangle", |out| {
             out.prop_px("height", 36.0);
             out.prop_px("min-width", 80.0);
             out.line("background: #3b82f6;");
             out.line("border-radius: 6px;");
-            out.block("Text", |out| {
-                out.prop_string("text", text);
-                out.prop_px("font-size", 14.0);
-                out.line("color: #ffffff;");
-                out.line("font-weight: 600;");
-                out.line("horizontal-alignment: center;");
-                out.line("vertical-alignment: center;");
-                Ok(())
+            out.block("HorizontalLayout", |out| {
+                out.line("alignment: center;");
+                out.prop_px("spacing", 4.0);
+                if !href.is_empty() {
+                    out.block("Text", |out| {
+                        out.prop_string("text", "🔗");
+                        out.prop_px("font-size", 12.0);
+                        out.line("vertical-alignment: center;");
+                        Ok(())
+                    })?;
+                }
+                out.block("Text", |out| {
+                    out.prop_string("text", text);
+                    out.prop_px("font-size", 14.0);
+                    out.line("color: #ffffff;");
+                    out.line("font-weight: 600;");
+                    out.line("vertical-alignment: center;");
+                    Ok(())
+                })
             })
         })
     }
