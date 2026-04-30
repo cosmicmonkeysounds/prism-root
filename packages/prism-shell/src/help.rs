@@ -15,6 +15,7 @@ use prism_core::help::{HelpEntry, HelpRegistry};
 use crate::panels::builder::BuilderPanel;
 use crate::panels::identity::IdentityPanel;
 use crate::panels::inspector::InspectorPanel;
+use crate::panels::navigation::NavigationPanel;
 use crate::panels::properties::PropertiesPanel;
 use crate::panels::signals::SignalsPanel;
 use crate::panels::Panel;
@@ -47,6 +48,7 @@ fn panels() -> Vec<Box<dyn Panel>> {
         Box::new(InspectorPanel::new()),
         Box::new(PropertiesPanel::new()),
         Box::new(SignalsPanel::new()),
+        Box::new(NavigationPanel::new()),
     ]
 }
 
@@ -249,7 +251,7 @@ mod tests {
     }
 
     #[test]
-    fn all_fifteen_components_registered() {
+    fn all_sixteen_components_registered() {
         let (reg, _) = setup();
         let components = [
             "text",
@@ -267,6 +269,7 @@ mod tests {
             "table",
             "tabs",
             "accordion",
+            "facet",
         ];
         for ct in components {
             let id = format!("builder.components.{ct}");
@@ -303,6 +306,7 @@ mod tests {
             "properties",
             "editor",
             "signals",
+            "navigation",
         ] {
             let id = format!("shell.panels.{panel}");
             assert!(reg.get(&id).is_some(), "missing panel entry: {id}");

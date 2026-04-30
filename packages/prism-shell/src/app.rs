@@ -266,6 +266,7 @@ pub fn page_id_for_panel(panel: &str) -> &str {
         "explorer" => "edit",
         "design" => "design",
         "fusion" => "fusion",
+        "navigation" => "navigation",
         "preview" => "preview",
         _ => "edit",
     }
@@ -2304,23 +2305,16 @@ impl Shell {
                 {
                     let mut s = inner.borrow_mut();
                     s.save_to_active_page();
+                    s.push_undo("Add page");
                     s.store.mutate(|state| {
                         if let Some(app) = state.active_app_mut() {
-                            let page_num = app.pages.len() + 1;
-                            app.pages.push(Page {
-                                id: format!("page-{page_num}"),
-                                title: format!("Page {page_num}"),
-                                route: format!("/page-{page_num}"),
-                                source: String::new(),
-                                document: BuilderDocument::page_shell(),
-                                style: StyleProperties::default(),
-                            });
-                            app.active_page = app.pages.len() - 1;
+                            crate::panels::navigation::NavigationPanel::create_page(app);
                         }
                         state.selection.clear();
                         state.sync_document_from_app();
                     });
                     s.load_active_page();
+                    s.dock_dirty.set(true);
                 }
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
@@ -3560,11 +3554,16 @@ impl Shell {
                 {
                     let mut s = inner.borrow_mut();
                     s.save_to_active_page();
+                    s.push_undo("Add page");
                     s.store.mutate(|state| {
                         if let Some(app) = state.active_app_mut() {
                             crate::panels::navigation::NavigationPanel::create_page(app);
                         }
+                        state.selection.clear();
+                        state.sync_document_from_app();
                     });
+                    s.load_active_page();
+                    s.dock_dirty.set(true);
                 }
                 if let Some(w) = weak.upgrade() {
                     sync_ui_from_shared(&inner, &w);
@@ -3602,6 +3601,7 @@ impl Shell {
             move |page_index, new_title| {
                 {
                     let mut s = inner.borrow_mut();
+                    s.push_undo("Rename page");
                     s.store.mutate(|state| {
                         if let Some(app) = state.active_app_mut() {
                             crate::panels::navigation::NavigationPanel::rename_page(
@@ -3623,6 +3623,7 @@ impl Shell {
             move |page_index, new_route| {
                 {
                     let mut s = inner.borrow_mut();
+                    s.push_undo("Set page route");
                     s.store.mutate(|state| {
                         if let Some(app) = state.active_app_mut() {
                             crate::panels::navigation::NavigationPanel::set_page_route(
@@ -3645,6 +3646,7 @@ impl Shell {
                 {
                     let mut s = inner.borrow_mut();
                     s.save_to_active_page();
+                    s.push_undo("Move page up");
                     s.store.mutate(|state| {
                         if let Some(app) = state.active_app_mut() {
                             crate::panels::navigation::NavigationPanel::move_page_up(
@@ -3666,6 +3668,7 @@ impl Shell {
                 {
                     let mut s = inner.borrow_mut();
                     s.save_to_active_page();
+                    s.push_undo("Move page down");
                     s.store.mutate(|state| {
                         if let Some(app) = state.active_app_mut() {
                             crate::panels::navigation::NavigationPanel::move_page_down(
@@ -3786,6 +3789,7 @@ impl Shell {
                     if let Some(route) = target_route {
                         use prism_builder::signal::{ActionKind, Connection};
                         let conn_id = format!("nav-{src}-{tgt}");
+                        s.push_undo("Add navigation link");
                         s.store.mutate(|state| {
                             if let Some(app) = state.active_app_mut() {
                                 if let Some(page) = app.pages.get_mut(src) {
@@ -3829,6 +3833,7 @@ impl Shell {
                 let edge_id = edge_id.to_string();
                 {
                     let mut s = inner.borrow_mut();
+                    s.push_undo("Remove navigation link");
                     if edge_id.starts_with("href:") {
                         // href:<page_idx>:<node_id> — clear the href prop
                         let parts: Vec<&str> = edge_id.splitn(3, ':').collect();
@@ -4909,7 +4914,7 @@ fn execute_command(
             }
         }
         "panel.identity" | "panel.edit" | "panel.builder" | "panel.inspector"
-        | "panel.properties" | "panel.explorer" | "view.file_explorer" => {
+        | "panel.properties" | "panel.explorer" | "panel.navigation" | "view.file_explorer" => {
             let page_id = page_id_for_panel(
                 command_id
                     .strip_prefix("panel.")
@@ -4937,22 +4942,13 @@ fn execute_command(
         "add_page" => {
             let mut s = shared.borrow_mut();
             s.save_to_active_page();
+            s.push_undo("Add page");
             s.store.mutate(|state| {
                 if let Some(app) = state.active_app_mut() {
-                    let page_num = app.pages.len() + 1;
-                    app.pages.push(Page {
-                        id: format!("page-{page_num}"),
-                        title: format!("Page {page_num}"),
-                        route: format!("/page-{page_num}"),
-                        source: String::new(),
-                        document: BuilderDocument::page_shell(),
-                        style: StyleProperties::default(),
-                    });
-                    app.active_page = app.pages.len() - 1;
+                    crate::panels::navigation::NavigationPanel::create_page(app);
                 }
                 state.selection.clear();
                 state.sync_document_from_app();
-                state.workspace.switch_page_by_id("navigation");
             });
             s.load_active_page();
             s.dock_dirty.set(true);

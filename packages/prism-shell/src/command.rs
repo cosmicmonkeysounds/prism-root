@@ -161,6 +161,13 @@ impl CommandRegistry {
             "Go to Explorer",
             "Panel",
         ));
+        // Page management
+        reg.register(CommandEntry::new("add_page", "Add Page", "Page"));
+        reg.register(CommandEntry::new(
+            "panel.navigation",
+            "Go to Navigation",
+            "Panel",
+        ));
         for n in 1..=9 {
             reg.register(
                 CommandEntry::new(
@@ -338,5 +345,22 @@ mod tests {
         reg.register(CommandEntry::new("x", "New", ""));
         assert_eq!(reg.get("x").unwrap().label, "New");
         assert_eq!(reg.len(), 1);
+    }
+
+    #[test]
+    fn with_builtins_has_file_commands() {
+        let reg = CommandRegistry::with_builtins();
+        assert!(reg.get("file.new").is_some());
+        assert!(reg.get("file.open").is_some());
+        assert!(reg.get("file.save").is_some());
+        assert!(reg.get("file.save_as").is_some());
+        assert_eq!(
+            reg.get("file.new").unwrap().shortcut,
+            Some("Ctrl+N".to_string())
+        );
+        assert_eq!(
+            reg.get("file.save_as").unwrap().shortcut,
+            Some("Ctrl+Shift+S".to_string())
+        );
     }
 }

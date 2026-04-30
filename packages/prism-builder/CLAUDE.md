@@ -32,7 +32,7 @@ From `src/lib.rs`:
   Implements `HelpProvider` — collects help entries from all
   registered components via `Component::help_entry()`.
 - `starter::register_builtins(&mut ComponentRegistry)` — seeds the
-  17-component Slint catalog.
+  16-component Slint catalog.
 - `render_document_slint_source(doc, registry, tokens)` — walks a
   document and returns a self-contained `.slint` source string.
 - `render_document_slint_source_mapped(doc, registry, tokens)` —
@@ -59,7 +59,7 @@ From `src/lib.rs`:
 - `HtmlBlock`, `HtmlRegistry`, `HtmlRenderContext` — separate trait
   + registry for HTML rendering. Decoupled from `Component` so the
   relay's dep graph stays Slint-free.
-- `register_html_builtins(&mut HtmlRegistry)` — seeds the 17-block
+- `register_html_builtins(&mut HtmlRegistry)` — seeds the 16-block
   HTML catalog (same component IDs as the Slint side).
 - `render_document_html(doc, html_registry, tokens)` — walks a
   document against an `HtmlRegistry` and returns an HTML fragment.
@@ -181,7 +181,7 @@ From `src/lib.rs`:
 - `BuilderDocument`, `Node`, `NodeId` — the serializable document
   tree (extended with layout + transform fields per ADR-003, modifiers
   per ADR-004). `BuilderDocument` also carries `resources`, `connections`,
-  and `prefabs`.
+  `prefabs`, and `facets`.
 - `FieldSpec`, `FieldKind`, `NumericBounds`, `SelectOption`,
   `FieldValue` — the property-panel field factories. `FieldKind::File`
   enables file/asset picker UI with MIME filtering.
@@ -189,7 +189,7 @@ From `src/lib.rs`:
 - `SlintEmitter`, `SlintIdent` — `.slint` DSL emitter.
 
 ## Architecture
-Sixteen modules in `src/`:
+Seventeen modules in `src/`:
 
 - `asset.rs` — `AssetSource` enum (URL vs VFS), prop parsing,
   `collect_vfs_hashes`, `FileFieldConfig`. 10 unit tests.
@@ -212,7 +212,7 @@ Sixteen modules in `src/`:
   `AbsoluteProps`, `compute_layout`. 34 unit tests.
 - `html_block.rs` — the `HtmlBlock` trait + `HtmlRegistry` +
   `HtmlRenderContext`. Independent from `component.rs`.
-- `html_starter.rs` — 17 built-in HTML blocks + `register_html_builtins`.
+- `html_starter.rs` — 16 built-in HTML blocks + `register_html_builtins`.
 - `registry.rs` — `ComponentRegistry` + field-factory primitives.
 - `html.rs` — `Html` buffer + escape helpers.
 - `slint_source.rs` — `SlintEmitter` wrapping `SourceBuilder`.
@@ -224,6 +224,11 @@ Sixteen modules in `src/`:
   `modifier_schema(kind)`. 6 unit tests.
 - `prefab.rs` — `PrefabDef`, `ExposedSlot`, `PrefabComponent`
   (implements `Component`), `apply_prop_to_node`. 5 unit tests.
+- `facet.rs` — `FacetDef`, `FacetDataSource` (Static/Resource),
+  `FacetBinding`, `FacetLayout`, `FacetComponent` (Slint),
+  `FacetHtmlBlock` (HTML). Render-time expansion: resolves data source,
+  clones prefab N times with bindings applied. `facet_schema()` field
+  spec. 13 unit tests.
 - `resource.rs` — `ResourceDef`, `ResourceKind`, `resolve_resource_refs`.
   7 unit tests.
 - `signal.rs` — `SignalDef`, `Connection`, `ActionKind`, `SignalEvent`,
@@ -256,7 +261,7 @@ Sixteen modules in `src/`:
   `slint-interpreter::Compiler` diagnostics, `SourceMap`-aware
   `ComponentRegistry` schema completions, and component `help_entry()`
   hover. 9 unit tests.
-- `starter.rs` — 17 built-in Slint components + `register_builtins`.
+- `starter.rs` — 16 built-in Slint components + `register_builtins`.
   Button, Form, Input, Link, Tabs, Accordion declare signals; Button
   declares a variant axis.
 

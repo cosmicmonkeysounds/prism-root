@@ -15,6 +15,18 @@ use super::Panel;
 
 pub struct NavigationPanel;
 
+impl NavigationPanel {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for NavigationPanel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Panel for NavigationPanel {
     fn id(&self) -> i32 {
         6
@@ -30,7 +42,7 @@ impl Panel for NavigationPanel {
     }
     fn help_entry(&self) -> Option<HelpEntry> {
         Some(HelpEntry::new(
-            "panel.navigation",
+            "shell.panels.navigation",
             "Navigation",
             "Manage the pages in your app. Add, remove, rename, and reorder pages. Configure navigation style (tabs, sidebar, bottom bar). View and create intra-app links.",
         ))

@@ -193,8 +193,8 @@ From `src/lib.rs`:
 - `InputAction` — serialisable `Action<AppState>` wrapper around
   `InputEvent`.
 - `panels` — data-provider structs (one per panel) that feed Slint
-  properties. Six panels: Identity, Builder, Inspector, Properties,
-  Signals, CodeEditor.
+  properties. Seven panels: Identity, Builder, Inspector, Properties,
+  Signals, Navigation, CodeEditor.
 - `signals` (`src/signals.rs`) — `SignalRuntime` bridges builder signal
   dispatch to the shell. `fire`, `fire_simple`, `fire_pointer`,
   `fire_changed` create `SignalEvent`s and evaluate connections.
@@ -234,6 +234,15 @@ From `src/lib.rs`:
   index, action index). Target labels are pushed as a
   `signal-target-labels` `[string]` model from Rust.
   27 unit tests.
+- `panels::navigation` (`src/panels/navigation.rs`) — `NavigationPanel`
+  for page management. `page_rows` lists all pages as `NavPageRow`
+  items (id, title, route, nav_style). `graph_nodes` / `graph_edges`
+  provide pre-computed geometry for the Slint nav-graph canvas —
+  nodes carry pixel position + label, edges carry start/end
+  coordinates and a pre-computed angle for line rotation. CRUD: 
+  `create_page`, `delete_page`, `rename_page`, `set_route`,
+  `move_page_up` / `move_page_down`. `cycle_nav_style` rotates
+  through `Push`, `Modal`, `Replace`, and `Tab` styles. 15 unit tests.
 - `help` (`src/help.rs`) — `register_help_entries(&mut HelpRegistry,
   &ComponentRegistry)` coordinates distributed help registration.
   Component entries come from `Component::help_entry()` via

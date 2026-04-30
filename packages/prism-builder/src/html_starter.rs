@@ -666,7 +666,7 @@ mod tests {
     }
 
     #[test]
-    fn register_html_builtins_seeds_fifteen_blocks() {
+    fn register_html_builtins_seeds_sixteen_blocks() {
         let (reg, _) = setup();
         for id in [
             "text",
@@ -684,6 +684,7 @@ mod tests {
             "table",
             "tabs",
             "accordion",
+            "facet",
         ] {
             assert!(reg.get(id).is_some(), "missing html block: {id}");
         }

@@ -182,4 +182,26 @@ mod tests {
         assert_eq!(non_sep[0].label, "Undo");
         assert_eq!(non_sep[1].label, "Redo");
     }
+
+    #[test]
+    fn file_menu_has_new_open_save_save_as() {
+        let menu_reg = MenuRegistry::with_builtins();
+        let cmd_reg = CommandRegistry::with_builtins();
+        let items = menu_reg.items_for_menu("File", &cmd_reg);
+        let non_sep: Vec<_> = items.iter().filter(|i| !i.is_separator).collect();
+        assert_eq!(non_sep.len(), 4);
+        assert_eq!(non_sep[0].label, "New Project");
+        assert_eq!(non_sep[1].label, "Open Project");
+        assert_eq!(non_sep[2].label, "Save");
+        assert_eq!(non_sep[3].label, "Save As...");
+    }
+
+    #[test]
+    fn file_menu_has_separator_between_groups() {
+        let menu_reg = MenuRegistry::with_builtins();
+        let cmd_reg = CommandRegistry::with_builtins();
+        let items = menu_reg.items_for_menu("File", &cmd_reg);
+        let sep_count = items.iter().filter(|i| i.is_separator).count();
+        assert_eq!(sep_count, 1);
+    }
 }
