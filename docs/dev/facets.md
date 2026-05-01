@@ -354,5 +354,5 @@ packages/prism-shell/src/
 | 6 ✅ | Object graph data resolution for ObjectQuery + Lookup — `resolve_facet_data` queries `CollectionStore` via `ObjectFilter`/`EdgeFilter`, reuses `evaluate_filter`/`value_sort_key` for expression-based filter+sort. |
 | 7 ✅ | Calculation fields with expression evaluation — `evaluate_calculations()` in `facet.rs` evaluates `SchemaFieldKind::Calculation { formula }` fields via `prism_core::language::expression::evaluate_expression`. Wired into `resolve_items()` when a schema is set. |
 | 8 ✅ | Live data refresh in Studio — `facet.refresh` command re-triggers `sync_builder_document()`, which re-runs `resolve_facet_data` for Script/ObjectQuery/Lookup kinds and re-renders. Available in command palette and facet context menu. |
-| 9 | Facet-level variant overrides (e.g. alternate card style for "featured" items) |
-| 10 | Visual graph authoring for Script facets (Prism Syntax / codegen) |
+| 9 ✅ | Facet-level variant overrides — `FacetVariantRule` maps data field conditions to prefab variant axis selections. `evaluate_variant_rules()` sets axis key props on cloned prefab roots per item; existing `apply_variant_defaults` picks them up. Properties panel exposes rule CRUD. |
+| 10 ✅ | Visual graph authoring for Script facets — `ScriptLanguage::VisualGraph` variant stores a `ScriptGraph` on the facet. `sync_script_language()` bidirectionally decompiles/compiles via `LuauVisualLanguage`. Properties panel shows language selector, graph info, and compiled source preview. |

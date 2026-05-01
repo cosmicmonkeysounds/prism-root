@@ -49,8 +49,9 @@ pub use document::{BuilderDocument, Node, NodeId};
 pub use facet::{
     apply_aggregate, evaluate_calculations, evaluate_filter, get_field, value_sort_key,
     AggregateOp, FacetBinding, FacetDataSource, FacetDef, FacetDirection, FacetKind, FacetLayout,
-    FacetRecord, FacetSchema, FacetSchemaId, ResolvedFacetData, SchemaField, SchemaFieldKind,
-    SchemaSelectOption, ScriptLanguage, ValidationError, AGGREGATE_OP_TAGS, FACET_KIND_TAGS,
+    FacetRecord, FacetSchema, FacetSchemaId, FacetVariantRule, ResolvedFacetData, SchemaField,
+    SchemaFieldKind, SchemaSelectOption, ScriptLanguage, ValidationError, AGGREGATE_OP_TAGS,
+    FACET_KIND_TAGS,
 };
 pub use html::{escape_attr, escape_text, Html};
 pub use html_block::{HtmlBlock, HtmlRegistry, HtmlRenderContext};

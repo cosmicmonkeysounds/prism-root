@@ -269,5 +269,51 @@ mod tests {
         assert_eq!(ExplorerNodeKind::App.as_str(), "app");
         assert_eq!(ExplorerNodeKind::Page.as_str(), "page");
         assert_eq!(ExplorerNodeKind::Node.as_str(), "node");
+        assert_eq!(ExplorerNodeKind::ProjectHeader.as_str(), "project-header");
+        assert_eq!(ExplorerNodeKind::File.as_str(), "file");
+    }
+
+    #[test]
+    fn project_files_collapsed_by_default() {
+        let files = vec![
+            ProjectFileEntry {
+                id: "abc".into(),
+                name: "readme.md".into(),
+                extension: "md".into(),
+            },
+            ProjectFileEntry {
+                id: "def".into(),
+                name: "photo.png".into(),
+                extension: "png".into(),
+            },
+        ];
+        let nodes = build_project_file_nodes(&files, &HashSet::new());
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].kind, ExplorerNodeKind::ProjectHeader);
+        assert_eq!(nodes[0].label, "Project Files (2)");
+        assert!(!nodes[0].expanded);
+    }
+
+    #[test]
+    fn project_files_expanded_shows_children() {
+        let files = vec![ProjectFileEntry {
+            id: "abc".into(),
+            name: "readme.md".into(),
+            extension: "md".into(),
+        }];
+        let mut expanded = HashSet::new();
+        expanded.insert("project:files".into());
+        let nodes = build_project_file_nodes(&files, &expanded);
+        assert_eq!(nodes.len(), 2);
+        assert!(nodes[0].expanded);
+        assert_eq!(nodes[1].kind, ExplorerNodeKind::File);
+        assert_eq!(nodes[1].label, "readme.md");
+        assert_eq!(nodes[1].id, "file:abc");
+    }
+
+    #[test]
+    fn project_files_empty_returns_nothing() {
+        let nodes = build_project_file_nodes(&[], &HashSet::new());
+        assert!(nodes.is_empty());
     }
 }

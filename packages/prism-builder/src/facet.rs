@@ -14,6 +14,7 @@ use serde_json::Value;
 
 use prism_core::help::HelpEntry;
 use prism_core::language::expression::{evaluate_expression, ExprValue};
+use prism_core::language::visual::ScriptGraph;
 
 use crate::component::{Component, ComponentId, RenderError, RenderSlintContext};
 use crate::document::Node;
@@ -246,6 +247,8 @@ pub enum FacetKind {
         source: String,
         #[serde(default)]
         language: ScriptLanguage,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        graph: Option<ScriptGraph>,
     },
     Aggregate {
         #[serde(default)]
@@ -295,6 +298,7 @@ impl FacetKind {
             "script" => Self::Script {
                 source: String::new(),
                 language: ScriptLanguage::default(),
+                graph: None,
             },
             "aggregate" => Self::Aggregate {
                 operation: AggregateOp::default(),
@@ -317,6 +321,7 @@ pub const FACET_KIND_TAGS: &[&str] = &["list", "object-query", "script", "aggreg
 pub enum ScriptLanguage {
     #[default]
     Luau,
+    VisualGraph,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -563,6 +568,17 @@ pub struct FacetBinding {
     pub item_field: String,
 }
 
+/// Conditionally applies a variant axis value based on a data item field match.
+/// When the item's `field` equals `value`, the prefab's `axis_key` prop is set
+/// to `axis_value`, triggering the variant system's `apply_variant_defaults`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FacetVariantRule {
+    pub field: String,
+    pub value: String,
+    pub axis_key: String,
+    pub axis_value: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FacetDef {
     pub id: String,
@@ -579,6 +595,8 @@ pub struct FacetDef {
     pub data: FacetDataSource,
     #[serde(default)]
     pub bindings: Vec<FacetBinding>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub variant_rules: Vec<FacetVariantRule>,
     #[serde(default)]
     pub layout: FacetLayout,
     /// Pre-resolved data from the shell layer. ObjectQuery, Script, and
@@ -701,6 +719,28 @@ fn apply_bindings(root: &mut Node, prefab: &PrefabDef, bindings: &[FacetBinding]
         if let Some(slot) = prefab.exposed.iter().find(|s| s.key == binding.slot_key) {
             if let Some(value) = get_field(item, &binding.item_field) {
                 apply_prop_to_node(root, &slot.target_node, &slot.target_prop, value);
+            }
+        }
+    }
+}
+
+/// Apply variant rules to a cloned prefab root. For each matching rule,
+/// sets the axis key prop so the variant system picks it up during render.
+fn evaluate_variant_rules(root: &mut Node, rules: &[FacetVariantRule], item: &Value) {
+    for rule in rules {
+        let raw = get_field(item, &rule.field);
+        let sort_key = raw.clone().map(value_sort_key).unwrap_or_default();
+        let matches = sort_key == rule.value
+            || raw
+                .as_ref()
+                .map(|v| v.to_string().trim_matches('"') == rule.value)
+                .unwrap_or(false);
+        if matches {
+            if let Value::Object(ref mut map) = root.props {
+                map.insert(
+                    rule.axis_key.clone(),
+                    Value::String(rule.axis_value.clone()),
+                );
             }
         }
     }
@@ -869,6 +909,7 @@ impl Component for FacetComponent {
             for item in &items {
                 let mut root = prefab.root.clone();
                 apply_bindings(&mut root, prefab, &facet.bindings, item);
+                evaluate_variant_rules(&mut root, &facet.variant_rules, item);
                 ctx.render_child(&root, out)?;
             }
             Ok(())
@@ -969,6 +1010,7 @@ impl HtmlBlock for FacetHtmlBlock {
         for item in &items {
             let mut root = prefab.root.clone();
             apply_bindings(&mut root, prefab, &facet.bindings, item);
+            evaluate_variant_rules(&mut root, &facet.variant_rules, item);
             ctx.render_child(&root, out)?;
         }
         out.close("div");
@@ -1026,6 +1068,7 @@ mod tests {
                 slot_key: "title".into(),
                 item_field: "name".into(),
             }],
+            variant_rules: vec![],
             layout: FacetLayout {
                 direction: FacetDirection::Column,
                 gap: 8.0,
@@ -1502,6 +1545,7 @@ mod tests {
             prefab_id: "card".into(),
             data: FacetDataSource::default(),
             bindings: vec![],
+            variant_rules: vec![],
             layout: FacetLayout::default(),
             resolved_data: None,
         };
@@ -1521,6 +1565,7 @@ mod tests {
             prefab_id: "card".into(),
             data: FacetDataSource::default(),
             bindings: vec![],
+            variant_rules: vec![],
             layout: FacetLayout::default(),
             resolved_data: None,
         };
@@ -1575,11 +1620,14 @@ mod tests {
         def.kind = FacetKind::Script {
             source: "return {}".into(),
             language: ScriptLanguage::Luau,
+            graph: None,
         };
         let json = serde_json::to_string(&def).unwrap();
         let back: FacetDef = serde_json::from_str(&json).unwrap();
         match &back.kind {
-            FacetKind::Script { source, language } => {
+            FacetKind::Script {
+                source, language, ..
+            } => {
                 assert_eq!(source, "return {}");
                 assert_eq!(*language, ScriptLanguage::Luau);
             }
@@ -1995,5 +2043,170 @@ mod tests {
             }
             _ => panic!("expected Single"),
         }
+    }
+
+    // ── Visual graph / ScriptLanguage tests ──────────────────────
+
+    #[test]
+    fn script_language_visual_graph_serde() {
+        let lang = ScriptLanguage::VisualGraph;
+        let json = serde_json::to_string(&lang).unwrap();
+        assert_eq!(json, "\"visual-graph\"");
+        let back: ScriptLanguage = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, ScriptLanguage::VisualGraph);
+    }
+
+    #[test]
+    fn script_kind_with_graph_serde() {
+        use prism_core::language::visual::{ScriptGraph, ScriptNode, ScriptNodeKind};
+
+        let mut graph = ScriptGraph::new("facet-graph", "Facet Script");
+        graph.add_node(ScriptNode::new("entry", ScriptNodeKind::Entry, "Entry"));
+        graph.add_node(ScriptNode::new("ret", ScriptNodeKind::Return, "return {}"));
+
+        let mut def = sample_facet();
+        def.kind = FacetKind::Script {
+            source: String::new(),
+            language: ScriptLanguage::VisualGraph,
+            graph: Some(graph),
+        };
+
+        let json = serde_json::to_string(&def).unwrap();
+        let back: FacetDef = serde_json::from_str(&json).unwrap();
+        match &back.kind {
+            FacetKind::Script {
+                language, graph, ..
+            } => {
+                assert_eq!(*language, ScriptLanguage::VisualGraph);
+                let g = graph.as_ref().unwrap();
+                assert_eq!(g.nodes.len(), 2);
+                assert_eq!(g.id, "facet-graph");
+            }
+            _ => panic!("expected Script"),
+        }
+    }
+
+    #[test]
+    fn script_kind_graph_none_omitted_in_json() {
+        let mut def = sample_facet();
+        def.kind = FacetKind::Script {
+            source: "return {}".into(),
+            language: ScriptLanguage::Luau,
+            graph: None,
+        };
+        let json = serde_json::to_string(&def).unwrap();
+        assert!(!json.contains("\"graph\""));
+    }
+
+    #[test]
+    fn script_kind_backward_compat_missing_graph() {
+        let json = r#"{
+            "id": "facet:old-script",
+            "label": "Old Script",
+            "prefab_id": "card",
+            "kind": { "type": "script", "source": "return {}", "language": "luau" },
+            "data": { "kind": "static", "items": [] },
+            "bindings": [],
+            "layout": {}
+        }"#;
+        let def: FacetDef = serde_json::from_str(json).unwrap();
+        match &def.kind {
+            FacetKind::Script { graph, .. } => assert!(graph.is_none()),
+            _ => panic!("expected Script"),
+        }
+    }
+
+    // ── Variant rule tests ──────────────────────────────────────
+
+    #[test]
+    fn evaluate_variant_rules_sets_axis_prop() {
+        let mut root = Node {
+            id: "r".into(),
+            component: "text".into(),
+            props: json!({}),
+            children: vec![],
+            ..Default::default()
+        };
+        let rules = vec![FacetVariantRule {
+            field: "featured".into(),
+            value: "true".into(),
+            axis_key: "variant".into(),
+            axis_value: "highlight".into(),
+        }];
+        let item = json!({"featured": true});
+        evaluate_variant_rules(&mut root, &rules, &item);
+        assert_eq!(root.props["variant"], "highlight");
+    }
+
+    #[test]
+    fn evaluate_variant_rules_no_match_no_change() {
+        let mut root = Node {
+            id: "r".into(),
+            component: "text".into(),
+            props: json!({"variant": "default"}),
+            children: vec![],
+            ..Default::default()
+        };
+        let rules = vec![FacetVariantRule {
+            field: "featured".into(),
+            value: "true".into(),
+            axis_key: "variant".into(),
+            axis_value: "highlight".into(),
+        }];
+        let item = json!({"featured": false});
+        evaluate_variant_rules(&mut root, &rules, &item);
+        assert_eq!(root.props["variant"], "default");
+    }
+
+    #[test]
+    fn evaluate_variant_rules_multiple_rules() {
+        let mut root = Node {
+            id: "r".into(),
+            component: "text".into(),
+            props: json!({}),
+            children: vec![],
+            ..Default::default()
+        };
+        let rules = vec![
+            FacetVariantRule {
+                field: "status".into(),
+                value: "active".into(),
+                axis_key: "variant".into(),
+                axis_value: "primary".into(),
+            },
+            FacetVariantRule {
+                field: "size".into(),
+                value: "large".into(),
+                axis_key: "size".into(),
+                axis_value: "lg".into(),
+            },
+        ];
+        let item = json!({"status": "active", "size": "large"});
+        evaluate_variant_rules(&mut root, &rules, &item);
+        assert_eq!(root.props["variant"], "primary");
+        assert_eq!(root.props["size"], "lg");
+    }
+
+    #[test]
+    fn facet_def_variant_rules_serde() {
+        let mut def = sample_facet();
+        def.variant_rules = vec![FacetVariantRule {
+            field: "featured".into(),
+            value: "true".into(),
+            axis_key: "variant".into(),
+            axis_value: "highlight".into(),
+        }];
+        let json = serde_json::to_string(&def).unwrap();
+        let back: FacetDef = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.variant_rules.len(), 1);
+        assert_eq!(back.variant_rules[0].field, "featured");
+        assert_eq!(back.variant_rules[0].axis_value, "highlight");
+    }
+
+    #[test]
+    fn facet_def_variant_rules_omitted_when_empty() {
+        let def = sample_facet();
+        let json = serde_json::to_string(&def).unwrap();
+        assert!(!json.contains("variant_rules"));
     }
 }

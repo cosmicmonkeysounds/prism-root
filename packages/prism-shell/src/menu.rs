@@ -194,11 +194,13 @@ mod tests {
         let non_sep: Vec<_> = items.iter().filter(|i| !i.is_separator).collect();
         assert_eq!(non_sep[0].label, "New Project");
         assert_eq!(non_sep[1].label, "Open Project");
-        assert_eq!(non_sep[2].label, "Save");
-        assert_eq!(non_sep[3].label, "Save As...");
+        assert_eq!(non_sep[2].label, "Open Folder...");
+        assert_eq!(non_sep[3].label, "Close Folder");
+        assert_eq!(non_sep[4].label, "Save");
+        assert_eq!(non_sep[5].label, "Save As...");
         assert!(
-            non_sep.len() >= 4,
-            "File menu must have at least New/Open/Save/Save As"
+            non_sep.len() >= 6,
+            "File menu must have at least New/Open/Open Folder/Close Folder/Save/Save As"
         );
     }
 

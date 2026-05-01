@@ -514,7 +514,16 @@ shell framework features are implemented:
   through `ProjectFile` (preserves source + sidecar data). Open
   replaces apps and returns to launchpad. File dialogs via `rfd`
   (native only). Keyboard shortcuts Ctrl+N/O/S/Shift+S. File menu
-  with New/Open separator Save/Save As.
+  with New/Open/Open Folder/Close Folder separator Save/Save As.
+- **Project vault**: File → Open Folder (Ctrl+Shift+O) opens a
+  project directory via `ProjectManager`, scans files into the object
+  graph as `GraphObject` entities with type `"file"`, and persists
+  Loro snapshots via `FileSystemAdapter`. File → Close Folder clears
+  the project. `file.save` also saves the vault when a project is
+  open. Project folder name and dirty state display in the title bar
+  and status bar. Explorer panel shows a "Project Files" section
+  (collapsible) listing files from the object graph. 10 ProjectManager
+  tests + 3 explorer file-node tests.
 - **Visual testing harness**: `src/testing.rs` — 8 predefined scenes,
   `TestHarness` for state assertions + input simulation,
   `ShellScreenshot` for platform screenshot capture. CLI flags

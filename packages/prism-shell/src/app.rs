@@ -25,8 +25,9 @@ use prism_builder::{
     path_from_string, preview_component_factory, render_document_slint_preview_with_assets,
     starter::{builtin_prefab, card_prefab_def, materialize_prefab, register_builtins},
     AggregateOp, BuilderDocument, CellEdge, ComponentRegistry, DispatchResult, ExposedSlot,
-    FacetBinding, FacetDataSource, FacetDef, FacetDirection, FacetKind, FacetLayout, FieldKind,
-    FieldSpec, GridCell, LiveDocument, Node, NodeId, PrefabDef, StyleProperties,
+    FacetBinding, FacetDataSource, FacetDef, FacetDirection, FacetKind, FacetLayout,
+    FacetVariantRule, FieldKind, FieldSpec, GridCell, LiveDocument, Node, NodeId, PrefabDef,
+    ScriptLanguage, StyleProperties,
 };
 use prism_core::design_tokens::{DesignTokens, DEFAULT_TOKENS};
 use prism_core::editor::EditorState;
@@ -1793,6 +1794,7 @@ impl Shell {
                                             records: vec![],
                                         },
                                         bindings: vec![],
+                                        variant_rules: vec![],
                                         layout: FacetLayout::default(),
                                         resolved_data: None,
                                     },
@@ -6288,12 +6290,36 @@ fn resolve_facet_data(doc: &mut BuilderDocument, collection: &CollectionStore) {
 
     for facet in doc.facets.values_mut() {
         match &facet.kind {
-            FacetKind::Script { ref source, .. } => {
-                if source.is_empty() {
+            FacetKind::Script {
+                ref source,
+                ref language,
+                ref graph,
+            } => {
+                let effective_source = match language {
+                    ScriptLanguage::VisualGraph => {
+                        if let Some(g) = graph {
+                            use prism_core::language::luau::LuauVisualLanguage;
+                            use prism_core::language::visual::VisualLanguage;
+                            match LuauVisualLanguage::new().compile(g) {
+                                Ok(compiled) => compiled,
+                                Err(e) => {
+                                    eprintln!("[facet] graph compile error: {}", e.message);
+                                    facet.resolved_data = None;
+                                    continue;
+                                }
+                            }
+                        } else {
+                            facet.resolved_data = None;
+                            continue;
+                        }
+                    }
+                    ScriptLanguage::Luau => source.clone(),
+                };
+                if effective_source.is_empty() {
                     facet.resolved_data = None;
                     continue;
                 }
-                match prism_daemon::modules::luau_module::exec(source, None) {
+                match prism_daemon::modules::luau_module::exec(&effective_source, None) {
                     Ok(result) => {
                         if let Some(arr) = result.as_array() {
                             facet.resolved_data = Some(arr.clone());
@@ -7123,6 +7149,18 @@ fn apply_facet_edit(def: &mut FacetDef, key: &str, value: &str) {
                 *source = value.to_string();
             }
         }
+        "script_language" => {
+            if let FacetKind::Script {
+                ref mut language, ..
+            } = def.kind
+            {
+                *language = match value {
+                    "visual-graph" => ScriptLanguage::VisualGraph,
+                    _ => ScriptLanguage::Luau,
+                };
+            }
+            sync_script_language(def);
+        }
         // Aggregate fields
         "agg_operation" => {
             if let FacetKind::Aggregate {
@@ -7220,7 +7258,68 @@ fn apply_facet_edit(def: &mut FacetDef, key: &str, value: &str) {
                 }
             }
         }
+        "add_variant_rule" => {
+            def.variant_rules.push(FacetVariantRule {
+                field: String::new(),
+                value: String::new(),
+                axis_key: String::new(),
+                axis_value: String::new(),
+            });
+        }
+        key if key.starts_with("remove_variant_rule.") => {
+            if let Ok(idx) = key["remove_variant_rule.".len()..].parse::<usize>() {
+                if idx < def.variant_rules.len() {
+                    def.variant_rules.remove(idx);
+                }
+            }
+        }
+        key if key.starts_with("variant_rule.") => {
+            let rest = &key["variant_rule.".len()..];
+            if let Some((idx_str, field_name)) = rest.split_once('.') {
+                if let Ok(idx) = idx_str.parse::<usize>() {
+                    if let Some(rule) = def.variant_rules.get_mut(idx) {
+                        match field_name {
+                            "field" => rule.field = value.to_string(),
+                            "value" => rule.value = value.to_string(),
+                            "axis_key" => rule.axis_key = value.to_string(),
+                            "axis_value" => rule.axis_value = value.to_string(),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
         _ => {}
+    }
+}
+
+fn sync_script_language(def: &mut FacetDef) {
+    if let FacetKind::Script {
+        ref mut source,
+        ref language,
+        ref mut graph,
+    } = def.kind
+    {
+        match language {
+            ScriptLanguage::VisualGraph => {
+                if !source.is_empty() && graph.is_none() {
+                    use prism_core::language::luau::LuauVisualLanguage;
+                    use prism_core::language::visual::VisualLanguage;
+                    if let Ok(g) = LuauVisualLanguage::new().decompile(source) {
+                        *graph = Some(g);
+                    }
+                }
+            }
+            ScriptLanguage::Luau => {
+                if let Some(g) = graph.take() {
+                    use prism_core::language::luau::LuauVisualLanguage;
+                    use prism_core::language::visual::VisualLanguage;
+                    if let Ok(s) = LuauVisualLanguage::new().compile(&g) {
+                        *source = s;
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -8471,6 +8570,7 @@ mod tests {
                 records: vec![],
             },
             bindings: vec![],
+            variant_rules: vec![],
             layout: FacetLayout::default(),
             resolved_data: None,
         };
@@ -9142,6 +9242,7 @@ mod tests {
                 prefab_id: "card".into(),
                 data: FacetDataSource::default(),
                 bindings: vec![],
+                variant_rules: vec![],
                 layout: FacetLayout::default(),
                 resolved_data: None,
             },
@@ -9191,6 +9292,7 @@ mod tests {
                 prefab_id: "card".into(),
                 data: FacetDataSource::default(),
                 bindings: vec![],
+                variant_rules: vec![],
                 layout: FacetLayout::default(),
                 resolved_data: None,
             },
@@ -9258,6 +9360,7 @@ mod tests {
                 prefab_id: "card".into(),
                 data: FacetDataSource::default(),
                 bindings: vec![],
+                variant_rules: vec![],
                 layout: FacetLayout::default(),
                 resolved_data: None,
             },
@@ -9300,6 +9403,7 @@ mod tests {
                 prefab_id: "card".into(),
                 data: FacetDataSource::default(),
                 bindings: vec![],
+                variant_rules: vec![],
                 layout: FacetLayout::default(),
                 resolved_data: None,
             },
@@ -9329,11 +9433,13 @@ mod tests {
                     }"#
                     .into(),
                     language: ScriptLanguage::default(),
+                    graph: None,
                 },
                 schema_id: None,
                 prefab_id: "card".into(),
                 data: FacetDataSource::default(),
                 bindings: vec![],
+                variant_rules: vec![],
                 layout: FacetLayout::default(),
                 resolved_data: None,
             },

@@ -955,19 +955,68 @@ impl PropertiesPanel {
                 });
                 Self::push_layout_rows(&mut rows, def);
             }
-            FacetKind::Script { source, language } => {
-                let _ = language;
+            FacetKind::Script {
+                source,
+                language,
+                graph,
+            } => {
                 rows.push(FieldRowData {
-                    key: "facet.script_source".into(),
-                    label: "Luau script".into(),
-                    kind: "textarea".into(),
-                    value: source.clone(),
+                    key: "facet.script_language".into(),
+                    label: "Language".into(),
+                    kind: "select".into(),
+                    value: match language {
+                        prism_builder::ScriptLanguage::Luau => "luau".to_string(),
+                        prism_builder::ScriptLanguage::VisualGraph => "visual-graph".to_string(),
+                    },
                     required: false,
                     min: 0.0,
                     max: 0.0,
                     has_bounds: false,
-                    options: vec![],
+                    options: vec!["luau".into(), "visual-graph".into()],
                 });
+                match language {
+                    prism_builder::ScriptLanguage::Luau => {
+                        rows.push(FieldRowData {
+                            key: "facet.script_source".into(),
+                            label: "Luau script".into(),
+                            kind: "textarea".into(),
+                            value: source.clone(),
+                            required: false,
+                            min: 0.0,
+                            max: 0.0,
+                            has_bounds: false,
+                            options: vec![],
+                        });
+                    }
+                    prism_builder::ScriptLanguage::VisualGraph => {
+                        let node_count = graph.as_ref().map(|g| g.nodes.len()).unwrap_or(0);
+                        let edge_count = graph.as_ref().map(|g| g.edges.len()).unwrap_or(0);
+                        rows.push(FieldRowData {
+                            key: "facet.graph_info".into(),
+                            label: "Graph".into(),
+                            kind: "text".into(),
+                            value: format!("{node_count} nodes, {edge_count} edges"),
+                            required: false,
+                            min: 0.0,
+                            max: 0.0,
+                            has_bounds: false,
+                            options: vec![],
+                        });
+                        if !source.is_empty() {
+                            rows.push(FieldRowData {
+                                key: "facet.graph_source_preview".into(),
+                                label: "Compiled source".into(),
+                                kind: "textarea".into(),
+                                value: source.clone(),
+                                required: false,
+                                min: 0.0,
+                                max: 0.0,
+                                has_bounds: false,
+                                options: vec![],
+                            });
+                        }
+                    }
+                }
                 Self::push_layout_rows(&mut rows, def);
             }
             FacetKind::Aggregate { operation, field } => {
@@ -1054,6 +1103,9 @@ impl PropertiesPanel {
 
         // ── Bindings (all kinds) ──────────────────────────────
         Self::push_binding_rows(&mut rows, doc, def, schema);
+
+        // ── Variant Rules ────────────────────────────────────
+        Self::push_variant_rule_rows(&mut rows, def);
 
         // ── Records (List + static source + schema) ───────────
         if matches!(def.kind, FacetKind::List) {
@@ -1267,6 +1319,105 @@ impl PropertiesPanel {
                 });
             }
         }
+    }
+
+    fn push_variant_rule_rows(rows: &mut Vec<FieldRowData>, def: &prism_builder::FacetDef) {
+        if def.variant_rules.is_empty() {
+            rows.push(FieldRowData {
+                key: "facet.add_variant_rule".into(),
+                label: "+ Add variant rule".into(),
+                kind: "text".into(),
+                value: String::new(),
+                required: false,
+                min: 0.0,
+                max: 0.0,
+                has_bounds: false,
+                options: vec![],
+            });
+            return;
+        }
+
+        rows.push(FieldRowData {
+            key: "facet.variant_rules_header".into(),
+            label: "── Variant Rules ──".into(),
+            kind: "text".into(),
+            value: String::new(),
+            required: false,
+            min: 0.0,
+            max: 0.0,
+            has_bounds: false,
+            options: vec![],
+        });
+
+        for (i, rule) in def.variant_rules.iter().enumerate() {
+            rows.push(FieldRowData {
+                key: format!("facet.variant_rule.{i}.field"),
+                label: "When field".into(),
+                kind: "text".into(),
+                value: rule.field.clone(),
+                required: true,
+                min: 0.0,
+                max: 0.0,
+                has_bounds: false,
+                options: vec![],
+            });
+            rows.push(FieldRowData {
+                key: format!("facet.variant_rule.{i}.value"),
+                label: "equals".into(),
+                kind: "text".into(),
+                value: rule.value.clone(),
+                required: true,
+                min: 0.0,
+                max: 0.0,
+                has_bounds: false,
+                options: vec![],
+            });
+            rows.push(FieldRowData {
+                key: format!("facet.variant_rule.{i}.axis_key"),
+                label: "set axis".into(),
+                kind: "text".into(),
+                value: rule.axis_key.clone(),
+                required: true,
+                min: 0.0,
+                max: 0.0,
+                has_bounds: false,
+                options: vec![],
+            });
+            rows.push(FieldRowData {
+                key: format!("facet.variant_rule.{i}.axis_value"),
+                label: "to".into(),
+                kind: "text".into(),
+                value: rule.axis_value.clone(),
+                required: true,
+                min: 0.0,
+                max: 0.0,
+                has_bounds: false,
+                options: vec![],
+            });
+            rows.push(FieldRowData {
+                key: format!("facet.remove_variant_rule.{i}"),
+                label: "Remove rule".into(),
+                kind: "text".into(),
+                value: String::new(),
+                required: false,
+                min: 0.0,
+                max: 0.0,
+                has_bounds: false,
+                options: vec![],
+            });
+        }
+
+        rows.push(FieldRowData {
+            key: "facet.add_variant_rule".into(),
+            label: "+ Add variant rule".into(),
+            kind: "text".into(),
+            value: String::new(),
+            required: false,
+            min: 0.0,
+            max: 0.0,
+            has_bounds: false,
+            options: vec![],
+        });
     }
 
     fn push_record_rows(
@@ -2221,6 +2372,7 @@ mod tests {
                     records: vec![],
                 },
                 bindings: vec![],
+                variant_rules: vec![],
                 layout: FacetLayout::default(),
                 resolved_data: None,
             },
