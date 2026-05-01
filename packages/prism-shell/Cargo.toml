@@ -92,6 +92,9 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+chrono = { workspace = true }
 
 [build-dependencies]
 # Compiles `ui/app.slint` into Rust code at build time. The generated

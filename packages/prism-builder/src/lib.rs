@@ -47,6 +47,7 @@ pub use asset::{collect_vfs_hashes, AssetSource};
 pub use component::{Component, ComponentId, RenderContext, RenderError, RenderSlintContext};
 pub use document::{BuilderDocument, Node, NodeId};
 pub use facet::{
+    apply_aggregate, evaluate_calculations, evaluate_filter, get_field, value_sort_key,
     AggregateOp, FacetBinding, FacetDataSource, FacetDef, FacetDirection, FacetKind, FacetLayout,
     FacetRecord, FacetSchema, FacetSchemaId, ResolvedFacetData, SchemaField, SchemaFieldKind,
     SchemaSelectOption, ScriptLanguage, ValidationError, AGGREGATE_OP_TAGS, FACET_KIND_TAGS,

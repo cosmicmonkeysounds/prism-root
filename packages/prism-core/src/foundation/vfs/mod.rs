@@ -14,9 +14,11 @@
 //!   Forking Protocol on top of any `VfsAdapter`.
 //! * [`compute_binary_hash`] — standalone SHA-256 helper.
 
+pub mod fs_adapter;
 pub mod store;
 pub mod types;
 
+pub use fs_adapter::FileSystemVfsAdapter;
 pub use store::{compute_binary_hash, create_memory_vfs_adapter, MemoryVfsAdapter, VfsManager};
 pub use types::{
     BinaryLock, BinaryRef, FileStat, VfsAdapter, VfsError, VfsManagerOptions, VfsResult,

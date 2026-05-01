@@ -9,7 +9,7 @@
 //! unified edit callback routes by key prefix.
 
 use prism_builder::card_prefab_def;
-use prism_builder::facet::{
+use prism_builder::{
     AggregateOp, FacetDataSource, FacetDirection, FacetKind, SchemaFieldKind, AGGREGATE_OP_TAGS,
     FACET_KIND_TAGS,
 };
@@ -814,11 +814,7 @@ impl PropertiesPanel {
         ]
     }
 
-    /// Produce one [`FieldRowData`] per entry in the selected
-    /// component's schema. Returns an empty list if nothing is
-    /// selected or the component is missing from the registry.
-    /// Facet-specific property rows. Shows the FacetDef fields (prefab,
-    /// layout, item count) for a selected `facet` component node.
+    /// Facet-specific property rows for a selected `facet` component node.
     pub fn facet_rows_pub(doc: &BuilderDocument, node: &Node) -> Vec<FieldRowData> {
         Self::facet_rows(doc, node)
     }
@@ -2204,7 +2200,7 @@ mod tests {
 
     #[test]
     fn facet_rows_show_prefab_select_and_bindings() {
-        use prism_builder::facet::{FacetDataSource, FacetDef, FacetKind, FacetLayout};
+        use prism_builder::{FacetDataSource, FacetDef, FacetKind, FacetLayout};
 
         let mut doc = BuilderDocument::default();
         let facet_id = "facet:f1".to_string();

@@ -260,6 +260,31 @@ FacetSchema {
 `SchemaField` kinds: Text, Number, Integer, Boolean, Date, Color, Image, Url,
 Select, Calculation.
 
+### Calculation fields
+
+`SchemaFieldKind::Calculation { formula }` fields are evaluated at resolve time
+via `prism_core::language::expression::evaluate_expression`. The formula can
+reference sibling fields by name — bare identifiers are automatically wrapped
+by `wrap_bare_identifiers` so they resolve through the expression evaluator's
+`ContextStore`.
+
+```rust
+// Schema field: { key: "total", kind: Calculation { formula: "price * qty" } }
+// Item: { "price": 10.0, "qty": 3 }
+// → After evaluate_calculations: { "price": 10.0, "qty": 3, "total": 30.0 }
+```
+
+The evaluation pipeline:
+1. `FacetDef::resolve_items()` resolves data items as before (List/ObjectQuery/etc.)
+2. If the facet has a `schema_id` pointing to a schema with Calculation fields,
+   `evaluate_calculations(&mut items, &schema)` runs over each item
+3. For each item, a `HashMap<String, ExprValue>` context is built from the item's fields
+4. Each Calculation field's formula is evaluated and the result stored back into the item
+5. All 26+ built-in expression functions are available (concat, sum, avg, abs, round, etc.)
+
+Calculation fields participate in Aggregate reduction — e.g. you can sum a
+calculated "total" field across all items.
+
 ## Render pipeline
 
 The render pipeline is kind-agnostic. Every facet kind ultimately produces a
@@ -277,6 +302,22 @@ FacetKind → resolve to Vec<Value>
 
 The exception is `Aggregate`, which produces a single value and renders one
 prefab instance with the aggregate result bound.
+
+## Live data refresh
+
+The `facet.refresh` command triggers a full data re-resolution cycle:
+
+1. `sync_builder_document()` is called on the shell
+2. For Script/ObjectQuery/Lookup kinds, `resolve_facet_data` re-executes
+   scripts, re-queries the object graph, and re-follows lookup edges
+3. For List/Aggregate kinds with Resource data sources, the resource data
+   is re-read from `doc.resources`
+4. Calculation fields are re-evaluated
+5. The render walker re-expands prefabs with the fresh data
+
+The command is accessible via:
+- Command palette: "Refresh Facet Data"
+- Context menu: right-click a facet component → "Refresh Data"
 
 ## File layout
 
@@ -310,8 +351,8 @@ packages/prism-shell/src/
 | 3 ✅ | `FacetSchema` + `FacetRecord` + Schema Designer workflow page + validated bindings |
 | 4 ✅ | `FacetKind` enum: List, ObjectQuery, Script, Aggregate, Lookup. Kind-aware properties panel. Serde backward compat. |
 | 5 ✅ | Luau script execution for Script facets — `resolve_facet_data()` in shell calls `luau_module::exec`, populates `FacetDef.resolved_data` before the render walker. |
-| 6 | Object graph data resolution for ObjectQuery + Lookup (wired to `CollectionStore`) |
-| 7 | Calculation fields with expression evaluation |
-| 8 | Live data refresh in Studio (reload resource, re-render facet in place) |
+| 6 ✅ | Object graph data resolution for ObjectQuery + Lookup — `resolve_facet_data` queries `CollectionStore` via `ObjectFilter`/`EdgeFilter`, reuses `evaluate_filter`/`value_sort_key` for expression-based filter+sort. |
+| 7 ✅ | Calculation fields with expression evaluation — `evaluate_calculations()` in `facet.rs` evaluates `SchemaFieldKind::Calculation { formula }` fields via `prism_core::language::expression::evaluate_expression`. Wired into `resolve_items()` when a schema is set. |
+| 8 ✅ | Live data refresh in Studio — `facet.refresh` command re-triggers `sync_builder_document()`, which re-runs `resolve_facet_data` for Script/ObjectQuery/Lookup kinds and re-renders. Available in command palette and facet context menu. |
 | 9 | Facet-level variant overrides (e.g. alternate card style for "featured" items) |
 | 10 | Visual graph authoring for Script facets (Prism Syntax / codegen) |

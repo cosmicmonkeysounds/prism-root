@@ -81,6 +81,7 @@ pub struct RenderSlintContext<'a> {
         &'a indexmap::IndexMap<crate::resource::ResourceId, crate::resource::ResourceDef>,
     pub prefabs: &'a indexmap::IndexMap<String, PrefabDef>,
     pub facets: &'a indexmap::IndexMap<String, FacetDef>,
+    pub facet_schemas: &'a indexmap::IndexMap<String, crate::facet::FacetSchema>,
     /// When true, emit `// @node-start` / `// @node-end` marker
     /// comments around each node for source map construction (ADR-006).
     pub emit_markers: bool,
@@ -110,6 +111,7 @@ impl<'a> RenderSlintContext<'a> {
         >,
         prefabs: &'a indexmap::IndexMap<String, PrefabDef>,
         facets: &'a indexmap::IndexMap<String, FacetDef>,
+        facet_schemas: &'a indexmap::IndexMap<String, crate::facet::FacetSchema>,
         emit_markers: bool,
     ) -> Self {
         Self {
@@ -118,6 +120,7 @@ impl<'a> RenderSlintContext<'a> {
             resources,
             prefabs,
             facets,
+            facet_schemas,
             emit_markers,
             current_style: RefCell::new(StyleProperties::default()),
             asset_paths: HashMap::new(),

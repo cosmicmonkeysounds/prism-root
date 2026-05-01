@@ -239,14 +239,25 @@ impl LocalVfsBackend {
 
 impl VfsBackend for LocalVfsBackend {
     fn put(&self, hash: &str, bytes: &[u8]) -> Result<(), String> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static WRITE_SEQ: AtomicU64 = AtomicU64::new(0);
+
         let final_path = self.path_for(hash);
-        // Atomic write: temp file in the same dir, then rename. Same
-        // dir is important so the rename never crosses a filesystem.
-        let tmp = final_path.with_extension("tmp");
+        // Unique tmp name (PID + per-process sequence) so concurrent
+        // writers — whether multiple threads with different VfsManager
+        // instances or multiple processes — never clobber each other's
+        // temp files. The rename would fail with ENOENT if two writers
+        // shared the same .tmp path and one renamed it first.
+        let seq = WRITE_SEQ.fetch_add(1, Ordering::Relaxed);
+        let tmp = self
+            .root
+            .join(format!("{hash}.{}.{seq}.tmp", std::process::id()));
         fs::write(&tmp, bytes)
             .map_err(|e| format!("failed to write temp {}: {e}", tmp.display()))?;
-        fs::rename(&tmp, &final_path)
-            .map_err(|e| format!("failed to rename temp into place: {e}"))?;
+        if let Err(e) = fs::rename(&tmp, &final_path) {
+            let _ = fs::remove_file(&tmp);
+            return Err(format!("failed to rename temp into place: {e}"));
+        }
         Ok(())
     }
 
@@ -433,9 +444,11 @@ impl DaemonModule for VfsModule {
         let manager = builder
             .vfs_manager_slot()
             .get_or_insert_with(|| {
-                let root = std::env::temp_dir().join("prism-daemon-vfs");
-                // A failure here would only happen if the temp dir is
-                // un-writable, which we can't recover from anyway.
+                // Include the PID so parallel test-binary invocations
+                // (e.g. two concurrent CI jobs) each get an isolated
+                // directory and can't delete each other's blobs.
+                let root =
+                    std::env::temp_dir().join(format!("prism-daemon-vfs-{}", std::process::id()));
                 Arc::new(VfsManager::new(root).expect("default vfs root must be writable"))
             })
             .clone();

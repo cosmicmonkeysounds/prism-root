@@ -6,11 +6,14 @@
 //!
 //! See `docs/dev/facets.md` for the full design rationale.
 
+use std::collections::HashMap;
+
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use prism_core::help::HelpEntry;
+use prism_core::language::expression::{evaluate_expression, ExprValue};
 
 use crate::component::{Component, ComponentId, RenderError, RenderSlintContext};
 use crate::document::Node;
@@ -187,6 +190,9 @@ impl FacetSchema {
     pub fn default_record(&self, id: impl Into<String>) -> FacetRecord {
         let mut fields = IndexMap::new();
         for field in &self.fields {
+            if matches!(field.kind, SchemaFieldKind::Calculation { .. }) {
+                continue;
+            }
             let val = field
                 .default_value
                 .clone()
@@ -451,7 +457,6 @@ pub struct FacetLayout {
     pub gap: f32,
     #[serde(default)]
     pub wrap: bool,
-    /// Reserved for Phase 2: fixed column count for grid layouts.
     #[serde(default)]
     pub columns: Option<u32>,
 }
@@ -594,17 +599,35 @@ impl FacetDef {
     /// Resolve this facet's data items based on its kind.
     /// ObjectQuery, Script, and Lookup use `resolved_data` if the shell
     /// pre-populated it; otherwise they return empty.
+    /// When `facet_schemas` is provided and this facet has a `schema_id`,
+    /// `Calculation` fields in the schema are evaluated against each item.
     pub fn resolve_items(
         &self,
         resources: &IndexMap<ResourceId, crate::resource::ResourceDef>,
+        facet_schemas: &IndexMap<FacetSchemaId, FacetSchema>,
     ) -> ResolvedFacetData {
+        let schema = self.schema_id.as_ref().and_then(|id| facet_schemas.get(id));
+
         match &self.kind {
-            FacetKind::List => ResolvedFacetData::Items(self.data.resolve(resources)),
+            FacetKind::List => {
+                let mut items = self.data.resolve(resources);
+                if let Some(s) = schema {
+                    evaluate_calculations(&mut items, s);
+                }
+                ResolvedFacetData::Items(items)
+            }
             FacetKind::ObjectQuery { .. } | FacetKind::Script { .. } | FacetKind::Lookup { .. } => {
-                ResolvedFacetData::Items(self.resolved_data.clone().unwrap_or_default())
+                let mut items = self.resolved_data.clone().unwrap_or_default();
+                if let Some(s) = schema {
+                    evaluate_calculations(&mut items, s);
+                }
+                ResolvedFacetData::Items(items)
             }
             FacetKind::Aggregate { operation, field } => {
-                let items = self.data.resolve(resources);
+                let mut items = self.data.resolve(resources);
+                if let Some(s) = schema {
+                    evaluate_calculations(&mut items, s);
+                }
                 let result = apply_aggregate(&items, operation, field.as_deref());
                 ResolvedFacetData::Single(result)
             }
@@ -683,6 +706,62 @@ fn apply_bindings(root: &mut Node, prefab: &PrefabDef, bindings: &[FacetBinding]
     }
 }
 
+/// Evaluate `Calculation` fields in a schema against each data item.
+///
+/// For every `SchemaFieldKind::Calculation { formula }` field, builds an
+/// expression context from the item's other fields and runs
+/// `evaluate_expression`. The result is stored back into the item.
+pub fn evaluate_calculations(items: &mut [Value], schema: &FacetSchema) {
+    let calc_fields: Vec<(&str, &str)> = schema
+        .fields
+        .iter()
+        .filter_map(|f| match &f.kind {
+            SchemaFieldKind::Calculation { formula } if !formula.is_empty() => {
+                Some((f.key.as_str(), formula.as_str()))
+            }
+            _ => None,
+        })
+        .collect();
+
+    if calc_fields.is_empty() {
+        return;
+    }
+
+    for item in items.iter_mut() {
+        let obj = match item.as_object_mut() {
+            Some(o) => o,
+            None => continue,
+        };
+
+        let mut ctx: HashMap<String, ExprValue> = HashMap::new();
+        for (key, val) in obj.iter() {
+            let expr_val = match val {
+                Value::Number(n) => ExprValue::Number(n.as_f64().unwrap_or(0.0)),
+                Value::Bool(b) => ExprValue::Boolean(*b),
+                Value::String(s) => {
+                    if let Ok(n) = s.parse::<f64>() {
+                        ExprValue::Number(n)
+                    } else {
+                        ExprValue::String(s.clone())
+                    }
+                }
+                _ => ExprValue::String(val.to_string()),
+            };
+            ctx.insert(key.clone(), expr_val);
+        }
+
+        for (key, formula) in &calc_fields {
+            let result = evaluate_expression(formula, &ctx);
+            let json_val = match result.result {
+                ExprValue::Number(n) => Value::from(n),
+                ExprValue::Boolean(b) => Value::Bool(b),
+                ExprValue::String(s) => Value::String(s),
+            };
+            obj.insert((*key).to_string(), json_val);
+        }
+    }
+}
+
 // ── Slint component ───────────────────────────────────────────────────────────
 
 pub struct FacetComponent {
@@ -754,7 +833,7 @@ impl Component for FacetComponent {
             RenderError::Failed(format!("prefab '{}' not found", facet.prefab_id))
         })?;
 
-        let resolved = facet.resolve_items(ctx.resources);
+        let resolved = facet.resolve_items(ctx.resources, ctx.facet_schemas);
         let items = match resolved {
             ResolvedFacetData::Items(mut items) => {
                 if let Some(max) = props.get("max_items").and_then(|v| v.as_u64()) {
@@ -846,7 +925,7 @@ impl HtmlBlock for FacetHtmlBlock {
             RenderError::Failed(format!("prefab '{}' not found", facet.prefab_id))
         })?;
 
-        let resolved = facet.resolve_items(ctx.resources);
+        let resolved = facet.resolve_items(ctx.resources, ctx.facet_schemas);
         let items = match resolved {
             ResolvedFacetData::Items(mut items) => {
                 if let Some(max) = props.get("max_items").and_then(|v| v.as_u64()) {
@@ -1307,6 +1386,40 @@ mod tests {
     }
 
     #[test]
+    fn schema_default_record_excludes_calculation_fields() {
+        let schema = FacetSchema {
+            id: "s:calc".into(),
+            label: "With Calc".into(),
+            description: String::new(),
+            fields: vec![
+                SchemaField {
+                    key: "price".into(),
+                    label: "Price".into(),
+                    kind: SchemaFieldKind::Number {
+                        min: None,
+                        max: None,
+                    },
+                    required: false,
+                    default_value: None,
+                },
+                SchemaField {
+                    key: "total".into(),
+                    label: "Total".into(),
+                    kind: SchemaFieldKind::Calculation {
+                        formula: "price * 2".into(),
+                    },
+                    required: false,
+                    default_value: None,
+                },
+            ],
+        };
+        let rec = schema.default_record("rec:1");
+        assert_eq!(rec.fields.len(), 1);
+        assert!(rec.fields.contains_key("price"));
+        assert!(!rec.fields.contains_key("total"));
+    }
+
+    #[test]
     fn schema_validate_record_catches_missing_required() {
         let schema = test_schema();
         let rec = FacetRecord {
@@ -1615,7 +1728,8 @@ mod tests {
     fn resolve_items_list_kind() {
         let def = sample_facet();
         let resources = IndexMap::new();
-        match def.resolve_items(&resources) {
+        let schemas = IndexMap::new();
+        match def.resolve_items(&resources, &schemas) {
             ResolvedFacetData::Items(items) => assert_eq!(items.len(), 2),
             _ => panic!("expected Items"),
         }
@@ -1629,7 +1743,8 @@ mod tests {
             field: None,
         };
         let resources = IndexMap::new();
-        match def.resolve_items(&resources) {
+        let schemas = IndexMap::new();
+        match def.resolve_items(&resources, &schemas) {
             ResolvedFacetData::Single(val) => assert_eq!(val, json!(2)),
             _ => panic!("expected Single"),
         }
@@ -1639,5 +1754,246 @@ mod tests {
     fn schema_field_kind_default_is_text() {
         let kind = SchemaFieldKind::default();
         assert!(matches!(kind, SchemaFieldKind::Text));
+    }
+
+    // ── Calculation field tests ──────────────────────────────────────
+
+    #[test]
+    fn evaluate_calculations_basic_arithmetic() {
+        let schema = FacetSchema {
+            id: "s1".into(),
+            label: "Test".into(),
+            description: String::new(),
+            fields: vec![
+                SchemaField {
+                    key: "price".into(),
+                    label: "Price".into(),
+                    kind: SchemaFieldKind::Number {
+                        min: None,
+                        max: None,
+                    },
+                    required: false,
+                    default_value: None,
+                },
+                SchemaField {
+                    key: "qty".into(),
+                    label: "Quantity".into(),
+                    kind: SchemaFieldKind::Integer {
+                        min: None,
+                        max: None,
+                    },
+                    required: false,
+                    default_value: None,
+                },
+                SchemaField {
+                    key: "total".into(),
+                    label: "Total".into(),
+                    kind: SchemaFieldKind::Calculation {
+                        formula: "price * qty".into(),
+                    },
+                    required: false,
+                    default_value: None,
+                },
+            ],
+        };
+
+        let mut items = vec![
+            json!({"price": 10.0, "qty": 3}),
+            json!({"price": 5.5, "qty": 2}),
+        ];
+
+        evaluate_calculations(&mut items, &schema);
+
+        assert_eq!(items[0]["total"], json!(30.0));
+        assert_eq!(items[1]["total"], json!(11.0));
+    }
+
+    #[test]
+    fn evaluate_calculations_string_concat() {
+        let schema = FacetSchema {
+            id: "s2".into(),
+            label: "Test".into(),
+            description: String::new(),
+            fields: vec![
+                SchemaField {
+                    key: "first".into(),
+                    label: "First".into(),
+                    kind: SchemaFieldKind::Text,
+                    required: false,
+                    default_value: None,
+                },
+                SchemaField {
+                    key: "last".into(),
+                    label: "Last".into(),
+                    kind: SchemaFieldKind::Text,
+                    required: false,
+                    default_value: None,
+                },
+                SchemaField {
+                    key: "full".into(),
+                    label: "Full Name".into(),
+                    kind: SchemaFieldKind::Calculation {
+                        formula: "concat(first, \" \", last)".into(),
+                    },
+                    required: false,
+                    default_value: None,
+                },
+            ],
+        };
+
+        let mut items = vec![json!({"first": "Alice", "last": "Smith"})];
+        evaluate_calculations(&mut items, &schema);
+        assert_eq!(items[0]["full"], json!("Alice Smith"));
+    }
+
+    #[test]
+    fn evaluate_calculations_empty_formula_skipped() {
+        let schema = FacetSchema {
+            id: "s3".into(),
+            label: "Test".into(),
+            description: String::new(),
+            fields: vec![SchemaField {
+                key: "calc".into(),
+                label: "Calc".into(),
+                kind: SchemaFieldKind::Calculation {
+                    formula: String::new(),
+                },
+                required: false,
+                default_value: None,
+            }],
+        };
+
+        let mut items = vec![json!({"x": 1})];
+        evaluate_calculations(&mut items, &schema);
+        assert!(items[0].get("calc").is_none());
+    }
+
+    #[test]
+    fn evaluate_calculations_no_calc_fields_is_noop() {
+        let schema = FacetSchema {
+            id: "s4".into(),
+            label: "Test".into(),
+            description: String::new(),
+            fields: vec![SchemaField {
+                key: "name".into(),
+                label: "Name".into(),
+                kind: SchemaFieldKind::Text,
+                required: false,
+                default_value: None,
+            }],
+        };
+
+        let mut items = vec![json!({"name": "x"})];
+        let original = items.clone();
+        evaluate_calculations(&mut items, &schema);
+        assert_eq!(items, original);
+    }
+
+    #[test]
+    fn evaluate_calculations_non_object_items_skipped() {
+        let schema = FacetSchema {
+            id: "s5".into(),
+            label: "Test".into(),
+            description: String::new(),
+            fields: vec![SchemaField {
+                key: "calc".into(),
+                label: "Calc".into(),
+                kind: SchemaFieldKind::Calculation {
+                    formula: "1 + 1".into(),
+                },
+                required: false,
+                default_value: None,
+            }],
+        };
+
+        let mut items = vec![json!(42), json!("hello"), json!(null)];
+        let original = items.clone();
+        evaluate_calculations(&mut items, &schema);
+        assert_eq!(items, original);
+    }
+
+    #[test]
+    fn resolve_items_with_calculations() {
+        let mut def = sample_facet();
+        def.schema_id = Some("s1".into());
+        def.data = FacetDataSource::Static {
+            items: vec![
+                json!({"name": "A", "price": 10.0, "qty": 2}),
+                json!({"name": "B", "price": 5.0, "qty": 4}),
+            ],
+            records: vec![],
+        };
+
+        let resources = IndexMap::new();
+        let mut schemas = IndexMap::new();
+        schemas.insert(
+            "s1".to_string(),
+            FacetSchema {
+                id: "s1".into(),
+                label: "Products".into(),
+                description: String::new(),
+                fields: vec![SchemaField {
+                    key: "total".into(),
+                    label: "Total".into(),
+                    kind: SchemaFieldKind::Calculation {
+                        formula: "price * qty".into(),
+                    },
+                    required: false,
+                    default_value: None,
+                }],
+            },
+        );
+
+        match def.resolve_items(&resources, &schemas) {
+            ResolvedFacetData::Items(items) => {
+                assert_eq!(items[0]["total"], json!(20.0));
+                assert_eq!(items[1]["total"], json!(20.0));
+            }
+            _ => panic!("expected Items"),
+        }
+    }
+
+    #[test]
+    fn resolve_items_aggregate_with_calculations() {
+        let mut def = sample_facet();
+        def.kind = FacetKind::Aggregate {
+            operation: AggregateOp::Sum,
+            field: Some("total".into()),
+        };
+        def.schema_id = Some("s1".into());
+        def.data = FacetDataSource::Static {
+            items: vec![
+                json!({"price": 10.0, "qty": 2}),
+                json!({"price": 5.0, "qty": 3}),
+            ],
+            records: vec![],
+        };
+
+        let resources = IndexMap::new();
+        let mut schemas = IndexMap::new();
+        schemas.insert(
+            "s1".to_string(),
+            FacetSchema {
+                id: "s1".into(),
+                label: "Products".into(),
+                description: String::new(),
+                fields: vec![SchemaField {
+                    key: "total".into(),
+                    label: "Total".into(),
+                    kind: SchemaFieldKind::Calculation {
+                        formula: "price * qty".into(),
+                    },
+                    required: false,
+                    default_value: None,
+                }],
+            },
+        );
+
+        match def.resolve_items(&resources, &schemas) {
+            ResolvedFacetData::Single(val) => {
+                assert_eq!(val, json!(35.0));
+            }
+            _ => panic!("expected Single"),
+        }
     }
 }

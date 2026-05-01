@@ -40,6 +40,7 @@ pub fn render_document_html(
         resources: &doc.resources,
         prefabs: &doc.prefabs,
         facets: &doc.facets,
+        facet_schemas: &doc.facet_schemas,
     };
     let mut out = Html::with_capacity(512);
     if let Some(root) = &doc.root {
@@ -70,6 +71,7 @@ pub fn render_document_slint_source(
         &doc.resources,
         &doc.prefabs,
         &doc.facets,
+        &doc.facet_schemas,
         false,
     );
     let mut out = SlintEmitter::new();
@@ -130,6 +132,7 @@ pub fn render_document_slint_source_mapped(
         &doc.resources,
         &doc.prefabs,
         &doc.facets,
+        &doc.facet_schemas,
         true,
     );
     let mut out = SlintEmitter::new();
@@ -312,6 +315,7 @@ pub fn render_document_slint_preview_with_assets(
         &doc.resources,
         &doc.prefabs,
         &doc.facets,
+        &doc.facet_schemas,
         false,
     );
     ctx.asset_paths = asset_paths;

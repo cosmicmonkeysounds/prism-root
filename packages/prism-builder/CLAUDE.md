@@ -13,7 +13,7 @@ property-panel field factories.
   path (`compile_slint_source` / `instantiate_document`) is
   available. `prism-shell` and `prism-studio` flip this on; the
   relay leaves it off so its dep graph stays Slint-free.
-- `cargo test -p prism-builder` — 290+ unit tests.
+- `cargo test -p prism-builder` — 277+ unit tests.
 - `cargo test -p prism-builder --features interpreter` — adds
   live document, syntax provider, and compile round-trip tests.
 
@@ -240,14 +240,18 @@ Twenty-five modules in `src/` (excluding `lib.rs`):
   `FacetHtmlBlock` (HTML), `ResolvedFacetData` (Items/Single).
   Each kind resolves data differently: List uses FacetDataSource,
   Aggregate reduces to a single value via `apply_aggregate`,
-  ObjectQuery/Script/Lookup are stubs for phases 5–6. `Query`
-  variant filters (`"field == val"`, `"field != val"`, `"field"`
-  truthy) and sorts (ascending `"field"` or descending `"-field"`)
-  a resource array without mutating it. `FacetSchema`, `SchemaField`,
-  `SchemaFieldKind`, `FacetRecord`, `ValidationError` — typed schema
-  system with validation and default record generation.
-  `FACET_KIND_TAGS`, `AGGREGATE_OP_TAGS` — string constants for
-  UI dropdowns. 51 unit tests.
+  ObjectQuery/Script/Lookup use pre-resolved `resolved_data` from
+  the shell layer. `Query` variant filters (`"field == val"`,
+  `"field != val"`, `"field"` truthy) and sorts (ascending `"field"`
+  or descending `"-field"`) a resource array without mutating it.
+  `evaluate_calculations(&mut items, &schema)` evaluates
+  `SchemaFieldKind::Calculation { formula }` fields via
+  `prism_core::language::expression::evaluate_expression`, wired
+  into `resolve_items()` when a schema with calc fields is set.
+  `FacetSchema`, `SchemaField`, `SchemaFieldKind`, `FacetRecord`,
+  `ValidationError` — typed schema system with validation and
+  default record generation. `FACET_KIND_TAGS`, `AGGREGATE_OP_TAGS`
+  — string constants for UI dropdowns. 59 unit tests.
 - `project.rs` — `ProjectFile`, `SavedApp`, `SavedPage`,
   `FILE_EXTENSION`, `FORMAT_VERSION`. Portable `.prism` file format
   with `from_apps`/`into_apps` conversion. `SavedPage` serializes

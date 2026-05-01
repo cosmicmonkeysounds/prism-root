@@ -33,10 +33,12 @@
 //! change listeners from the same call site.
 
 mod collection_store;
+mod fs_adapter;
 mod vault_manager;
 
 pub use collection_store::{
     CollectionChange, CollectionChangeKind, CollectionStore, CollectionStoreOptions, EdgeFilter,
     ObjectFilter, PersistenceError, Subscription,
 };
+pub use fs_adapter::FileSystemAdapter;
 pub use vault_manager::{MemoryAdapter, PersistenceAdapter, VaultManager, VaultManagerOptions};

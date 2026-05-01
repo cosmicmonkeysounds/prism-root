@@ -23,7 +23,7 @@ licence requires.
   after the cargo step to emit the JS loader next to
   `web/index.html`. `prism build --target web` wires this up as
   one command.
-- `cargo test -p prism-shell` — unit + insta snapshot tests (295+).
+- `cargo test -p prism-shell` — unit + insta snapshot tests (316+).
   Slint tests that need a platform backend gracefully skip if none is
   available (CI-friendly).
 - `prism dev shell` — native bin at `src/bin/native.rs`. Supports CLI
@@ -147,7 +147,12 @@ From `src/lib.rs`:
   `Shell::add_notification` pushes toast notifications.
   `Shell::with_collection(f)` (native only) borrows the inner
   `CollectionStore` mutably — hosts use this to populate objects
-  and edges that ObjectQuery/Lookup facets resolve against.
+  and edges that ObjectQuery/Lookup facets resolve against. When a
+  project is open, delegates to the project's collection.
+  `Shell::open_project(path)` (native only) opens a project folder,
+  scans files into the object graph, and syncs into the shell's
+  collection. `Shell::close_project()`, `Shell::save_project()`,
+  `Shell::has_project()` manage the project lifecycle.
 - `FirstPaint` — boot telemetry slot (`src/telemetry.rs`).
 - `AppState` — the reloadable root state. Panel/page state lives in
   `workspace: prism_dock::DockWorkspace` on `AppState`.
@@ -254,6 +259,15 @@ From `src/lib.rs`:
   (via `collect_href_targets`) and `NavigateTo` signal connections.
   `intra_app_links` returns href links on the active page only.
   All mutations push undo snapshots. 14 unit tests.
+- `project` (`src/project.rs`) — `ProjectManager` (native only)
+  opens a project folder on disk, reads/creates `.prism.json` manifest,
+  initialises a `VaultManager<FileSystemAdapter>` and `VfsManager` with
+  `FileSystemVfsAdapter`. `open()` scans all files into the object graph
+  as `GraphObject` entities with type `"file"` and deterministic IDs
+  (`sha256("file:" + relative_path)`). `ingest_file()` / `remove_file()`
+  for incremental updates. `save()` persists vault collections to disk.
+  `ProjectError` enum. Skip patterns: dotfiles, `data/`, `node_modules/`,
+  `target/`, `.git`. 10 unit tests.
 - `persistence` (`src/persistence.rs`) — `ProjectPersistence` tracks
   the current `.prism` file path for Save/Save As/Open/New. Uses
   `rfd::FileDialog` (native feature) for OS file pickers. File format

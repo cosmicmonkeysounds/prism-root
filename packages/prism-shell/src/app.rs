@@ -18,15 +18,14 @@ use prism_builder::AssetSource;
 use prism_builder::{
     app::{AppIcon, NavigationConfig, Page, PrismApp},
     compile_slint_preview, compute_layout,
-    facet::FacetBinding,
-    facet::{AggregateOp, FacetDataSource, FacetDef, FacetDirection, FacetKind, FacetLayout},
     layout::{
         AbsoluteProps, AlignOption, Dimension, FlexDirection, FlowDisplay, FlowProps,
         GridPlacement, JustifyOption, LayoutMode, PageSize, TrackSize,
     },
     path_from_string, preview_component_factory, render_document_slint_preview_with_assets,
     starter::{builtin_prefab, card_prefab_def, materialize_prefab, register_builtins},
-    BuilderDocument, CellEdge, ComponentRegistry, DispatchResult, ExposedSlot, FieldKind,
+    AggregateOp, BuilderDocument, CellEdge, ComponentRegistry, DispatchResult, ExposedSlot,
+    FacetBinding, FacetDataSource, FacetDef, FacetDirection, FacetKind, FacetLayout, FieldKind,
     FieldSpec, GridCell, LiveDocument, Node, NodeId, PrefabDef, StyleProperties,
 };
 use prism_core::design_tokens::{DesignTokens, DEFAULT_TOKENS};
@@ -597,6 +596,8 @@ struct ShellInner {
     persistence: ProjectPersistence,
     #[cfg(feature = "native")]
     collection: CollectionStore,
+    #[cfg(feature = "native")]
+    project: Option<crate::project::ProjectManager>,
 }
 
 impl ShellInner {
@@ -1175,6 +1176,8 @@ impl Shell {
             persistence: ProjectPersistence::new(),
             #[cfg(feature = "native")]
             collection: CollectionStore::new(),
+            #[cfg(feature = "native")]
+            project: None,
         }));
         {
             let mut s = inner.borrow_mut();
@@ -1271,7 +1274,51 @@ impl Shell {
         F: FnOnce(&mut CollectionStore) -> R,
     {
         let mut inner = self.inner.borrow_mut();
-        f(&mut inner.collection)
+        if let Some(ref mut proj) = inner.project {
+            f(proj.collection())
+        } else {
+            f(&mut inner.collection)
+        }
+    }
+
+    #[cfg(feature = "native")]
+    pub fn open_project(
+        &self,
+        path: impl Into<std::path::PathBuf>,
+    ) -> Result<(), crate::project::ProjectError> {
+        let mut proj = crate::project::ProjectManager::open(path)?;
+        let mut inner = self.inner.borrow_mut();
+        let objects = proj.collection().list_objects(None);
+        for obj in &objects {
+            let _ = inner.collection.put_object(obj);
+        }
+        let edges = proj.collection().list_edges(None);
+        for edge in &edges {
+            let _ = inner.collection.put_edge(edge);
+        }
+        inner.project = Some(proj);
+        Ok(())
+    }
+
+    #[cfg(feature = "native")]
+    pub fn close_project(&self) {
+        let mut inner = self.inner.borrow_mut();
+        inner.project = None;
+    }
+
+    #[cfg(feature = "native")]
+    pub fn save_project(&self) -> Result<Vec<String>, crate::project::ProjectError> {
+        let mut inner = self.inner.borrow_mut();
+        if let Some(ref mut proj) = inner.project {
+            proj.save()
+        } else {
+            Ok(Vec::new())
+        }
+    }
+
+    #[cfg(feature = "native")]
+    pub fn has_project(&self) -> bool {
+        self.inner.borrow().project.is_some()
     }
 
     pub fn select_page(&self, page_id: &str) {
@@ -4944,6 +4991,12 @@ fn build_context_menu_items(
                     "",
                     true,
                 ));
+                items.push(ContextMenuItemDef::action(
+                    "Refresh Data",
+                    "facet.refresh",
+                    "",
+                    true,
+                ));
             } else if has_selection {
                 items.push(ContextMenuItemDef::separator());
                 items.push(ContextMenuItemDef::action(
@@ -5553,7 +5606,7 @@ fn execute_command(
                             state.active_app_mut().and_then(|a| a.active_document_mut())
                         {
                             if let Some(def) = doc.facets.get_mut(&fid) {
-                                if let prism_builder::facet::FacetDataSource::Static {
+                                if let FacetDataSource::Static {
                                     ref mut items,
                                     ref mut records,
                                 } = def.data
@@ -5597,7 +5650,7 @@ fn execute_command(
                             state.active_app_mut().and_then(|a| a.active_document_mut())
                         {
                             if let Some(def) = doc.facets.get_mut(&fid) {
-                                if let prism_builder::facet::FacetDataSource::Static {
+                                if let FacetDataSource::Static {
                                     ref mut items,
                                     ref mut records,
                                 } = def.data
@@ -5611,6 +5664,11 @@ fn execute_command(
                     s.sync_builder_document();
                 }
             }
+        }
+        "facet.refresh" => {
+            let mut s = shared.borrow_mut();
+            s.sync_builder_document();
+            s.add_toast("Facet", "Data refreshed", "success");
         }
         "schema.create" => {
             let mut s = shared.borrow_mut();
@@ -6134,7 +6192,7 @@ fn clear_href_on_node(node: &mut prism_builder::document::Node, target_id: &str)
 /// `FacetDef::resolve_items` can read `resolved_data`.
 #[cfg(feature = "native")]
 fn resolve_facet_data(doc: &mut BuilderDocument, collection: &CollectionStore) {
-    use prism_builder::facet::{evaluate_filter, get_field, value_sort_key};
+    use prism_builder::{evaluate_filter, get_field, value_sort_key};
 
     for facet in doc.facets.values_mut() {
         match &facet.kind {
@@ -6519,7 +6577,7 @@ fn field_kind_for_key(inner: &ShellInner, key: &str) -> Option<String> {
     )
 }
 
-fn mime_from_extension(ext: &str) -> &'static str {
+pub(crate) fn mime_from_extension(ext: &str) -> &'static str {
     match ext.to_ascii_lowercase().as_str() {
         "png" => "image/png",
         "jpg" | "jpeg" => "image/jpeg",
@@ -8308,7 +8366,7 @@ mod tests {
 
     #[test]
     fn apply_facet_edit_binding_creates_and_updates() {
-        use prism_builder::facet::{FacetDataSource, FacetDef, FacetKind, FacetLayout};
+        use prism_builder::{FacetDataSource, FacetDef, FacetKind, FacetLayout};
         let mut def = FacetDef {
             id: "facet:test".into(),
             label: "Test".into(),
@@ -8956,5 +9014,249 @@ mod tests {
             }
             _ => panic!("expected Absolute after resize of Free node"),
         }
+    }
+
+    #[test]
+    fn resolve_facet_data_object_query() {
+        use prism_builder::{FacetDataSource, FacetDef, FacetLayout};
+        use prism_core::foundation::object_model::types::GraphObject;
+        use prism_core::foundation::persistence::CollectionStore;
+
+        let mut store = CollectionStore::new();
+        let mut a = GraphObject::new("obj:1", "Task", "Alpha");
+        a.data.insert("priority".into(), serde_json::json!(1));
+        let mut b = GraphObject::new("obj:2", "Task", "Beta");
+        b.data.insert("priority".into(), serde_json::json!(3));
+        let mut c = GraphObject::new("obj:3", "Note", "Gamma");
+        c.data.insert("priority".into(), serde_json::json!(2));
+        store.put_object(&a).unwrap();
+        store.put_object(&b).unwrap();
+        store.put_object(&c).unwrap();
+
+        let mut doc = BuilderDocument::default();
+        doc.facets.insert(
+            "facet:q".into(),
+            FacetDef {
+                id: "facet:q".into(),
+                label: "Tasks".into(),
+                description: String::new(),
+                kind: FacetKind::ObjectQuery {
+                    entity_type: "Task".into(),
+                    filter: None,
+                    sort_by: Some("-data.priority".into()),
+                    limit: None,
+                },
+                schema_id: None,
+                prefab_id: "card".into(),
+                data: FacetDataSource::default(),
+                bindings: vec![],
+                layout: FacetLayout::default(),
+                resolved_data: None,
+            },
+        );
+
+        resolve_facet_data(&mut doc, &store);
+        let resolved = doc
+            .facets
+            .get("facet:q")
+            .unwrap()
+            .resolved_data
+            .as_ref()
+            .unwrap();
+        assert_eq!(resolved.len(), 2);
+        assert_eq!(resolved[0]["name"], "Beta");
+        assert_eq!(resolved[1]["name"], "Alpha");
+    }
+
+    #[test]
+    fn resolve_facet_data_object_query_with_filter_and_limit() {
+        use prism_builder::{FacetDataSource, FacetDef, FacetLayout};
+        use prism_core::foundation::object_model::types::GraphObject;
+        use prism_core::foundation::persistence::CollectionStore;
+
+        let mut store = CollectionStore::new();
+        for i in 0..5 {
+            let mut obj = GraphObject::new(format!("obj:{i}"), "Item", format!("Item {i}"));
+            obj.data
+                .insert("active".into(), serde_json::json!(i % 2 == 0));
+            store.put_object(&obj).unwrap();
+        }
+
+        let mut doc = BuilderDocument::default();
+        doc.facets.insert(
+            "facet:f".into(),
+            FacetDef {
+                id: "facet:f".into(),
+                label: "Active Items".into(),
+                description: String::new(),
+                kind: FacetKind::ObjectQuery {
+                    entity_type: "Item".into(),
+                    filter: Some("data.active".into()),
+                    sort_by: None,
+                    limit: Some(2),
+                },
+                schema_id: None,
+                prefab_id: "card".into(),
+                data: FacetDataSource::default(),
+                bindings: vec![],
+                layout: FacetLayout::default(),
+                resolved_data: None,
+            },
+        );
+
+        resolve_facet_data(&mut doc, &store);
+        let resolved = doc
+            .facets
+            .get("facet:f")
+            .unwrap()
+            .resolved_data
+            .as_ref()
+            .unwrap();
+        assert_eq!(resolved.len(), 2);
+    }
+
+    #[test]
+    fn resolve_facet_data_lookup() {
+        use prism_builder::{FacetDataSource, FacetDef, FacetLayout};
+        use prism_core::foundation::object_model::types::{GraphObject, ObjectEdge};
+        use prism_core::foundation::persistence::CollectionStore;
+
+        let mut store = CollectionStore::new();
+        let proj = GraphObject::new("proj:1", "Project", "Prism");
+        let user_a = GraphObject::new("user:1", "User", "Alice");
+        let user_b = GraphObject::new("user:2", "User", "Bob");
+        let note = GraphObject::new("note:1", "Note", "Irrelevant");
+        store.put_object(&proj).unwrap();
+        store.put_object(&user_a).unwrap();
+        store.put_object(&user_b).unwrap();
+        store.put_object(&note).unwrap();
+
+        let edge1: ObjectEdge = serde_json::from_value(serde_json::json!({
+            "id": "e1", "sourceId": "proj:1", "targetId": "user:1",
+            "relation": "has_member", "createdAt": "2026-01-01T00:00:00Z", "data": {}
+        }))
+        .unwrap();
+        let edge2: ObjectEdge = serde_json::from_value(serde_json::json!({
+            "id": "e2", "sourceId": "proj:1", "targetId": "user:2",
+            "relation": "has_member", "createdAt": "2026-01-01T00:00:00Z", "data": {}
+        }))
+        .unwrap();
+        let edge3: ObjectEdge = serde_json::from_value(serde_json::json!({
+            "id": "e3", "sourceId": "proj:1", "targetId": "note:1",
+            "relation": "has_note", "createdAt": "2026-01-01T00:00:00Z", "data": {}
+        }))
+        .unwrap();
+        store.put_edge(&edge1).unwrap();
+        store.put_edge(&edge2).unwrap();
+        store.put_edge(&edge3).unwrap();
+
+        let mut doc = BuilderDocument::default();
+        doc.facets.insert(
+            "facet:l".into(),
+            FacetDef {
+                id: "facet:l".into(),
+                label: "Members".into(),
+                description: String::new(),
+                kind: FacetKind::Lookup {
+                    source_entity: "Project".into(),
+                    edge_type: "has_member".into(),
+                    target_entity: "User".into(),
+                },
+                schema_id: None,
+                prefab_id: "card".into(),
+                data: FacetDataSource::default(),
+                bindings: vec![],
+                layout: FacetLayout::default(),
+                resolved_data: None,
+            },
+        );
+
+        resolve_facet_data(&mut doc, &store);
+        let resolved = doc
+            .facets
+            .get("facet:l")
+            .unwrap()
+            .resolved_data
+            .as_ref()
+            .unwrap();
+        assert_eq!(resolved.len(), 2);
+        let names: Vec<&str> = resolved.iter().filter_map(|v| v["name"].as_str()).collect();
+        assert!(names.contains(&"Alice"));
+        assert!(names.contains(&"Bob"));
+    }
+
+    #[test]
+    fn resolve_facet_data_empty_entity_type_skips() {
+        use prism_builder::{FacetDataSource, FacetDef, FacetLayout};
+        use prism_core::foundation::persistence::CollectionStore;
+
+        let store = CollectionStore::new();
+        let mut doc = BuilderDocument::default();
+        doc.facets.insert(
+            "facet:e".into(),
+            FacetDef {
+                id: "facet:e".into(),
+                label: "Empty".into(),
+                description: String::new(),
+                kind: FacetKind::ObjectQuery {
+                    entity_type: String::new(),
+                    filter: None,
+                    sort_by: None,
+                    limit: None,
+                },
+                schema_id: None,
+                prefab_id: "card".into(),
+                data: FacetDataSource::default(),
+                bindings: vec![],
+                layout: FacetLayout::default(),
+                resolved_data: None,
+            },
+        );
+
+        resolve_facet_data(&mut doc, &store);
+        assert!(doc.facets.get("facet:e").unwrap().resolved_data.is_none());
+    }
+
+    #[test]
+    fn resolve_facet_data_script_returns_array() {
+        use prism_builder::{FacetDataSource, FacetDef, FacetLayout, ScriptLanguage};
+        use prism_core::foundation::persistence::CollectionStore;
+
+        let store = CollectionStore::new();
+        let mut doc = BuilderDocument::default();
+        doc.facets.insert(
+            "facet:s".into(),
+            FacetDef {
+                id: "facet:s".into(),
+                label: "Scripted".into(),
+                description: String::new(),
+                kind: FacetKind::Script {
+                    source: r#"return {
+                        { name = "X", value = 1 },
+                        { name = "Y", value = 2 },
+                    }"#
+                    .into(),
+                    language: ScriptLanguage::default(),
+                },
+                schema_id: None,
+                prefab_id: "card".into(),
+                data: FacetDataSource::default(),
+                bindings: vec![],
+                layout: FacetLayout::default(),
+                resolved_data: None,
+            },
+        );
+
+        resolve_facet_data(&mut doc, &store);
+        let resolved = doc
+            .facets
+            .get("facet:s")
+            .unwrap()
+            .resolved_data
+            .as_ref()
+            .unwrap();
+        assert_eq!(resolved.len(), 2);
+        assert_eq!(resolved[0]["name"], "X");
+        assert_eq!(resolved[1]["name"], "Y");
     }
 }

@@ -5738,10 +5738,12 @@ dependencies = [
 name = "prism-shell"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "clap",
  "console_error_panic_hook",
  "enigo",
  "getrandom 0.2.17",
+ "hex",
  "image",
  "insta",
  "prism-builder",
@@ -5751,6 +5753,7 @@ dependencies = [
  "rfd",
  "serde",
  "serde_json",
+ "sha2",
  "slint",
  "slint-build",
  "thiserror 2.0.18",

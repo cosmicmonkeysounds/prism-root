@@ -1,4 +1,4 @@
-use prism_builder::facet::{FacetSchema, SchemaFieldKind};
+use prism_builder::{FacetSchema, SchemaFieldKind};
 use prism_builder::BuilderDocument;
 
 use super::properties::FieldRowData;
@@ -99,6 +99,19 @@ impl SchemaDesignerPanel {
                 has_bounds: false,
                 options: vec![],
             });
+            if let SchemaFieldKind::Calculation { formula } = &field.kind {
+                rows.push(FieldRowData {
+                    key: format!("schema.field.{i}.formula"),
+                    label: "Formula".into(),
+                    kind: "text".into(),
+                    value: formula.clone(),
+                    required: true,
+                    min: 0.0,
+                    max: 0.0,
+                    has_bounds: false,
+                    options: vec![],
+                });
+            }
         }
 
         rows
@@ -177,6 +190,13 @@ pub fn apply_schema_edit(schema: &mut FacetSchema, key: &str, value: &str) {
                             "label" => field.label = value.to_string(),
                             "kind" => field.kind = kind_from_string(value),
                             "required" => field.required = value == "true",
+                            "formula" => {
+                                if let SchemaFieldKind::Calculation { ref mut formula } =
+                                    field.kind
+                                {
+                                    *formula = value.to_string();
+                                }
+                            }
                             _ => {}
                         }
                     }
@@ -190,7 +210,7 @@ pub fn apply_schema_edit(schema: &mut FacetSchema, key: &str, value: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prism_builder::facet::SchemaField;
+    use prism_builder::SchemaField;
 
     fn test_schema() -> FacetSchema {
         FacetSchema {
@@ -284,5 +304,52 @@ mod tests {
         let rows = SchemaDesignerPanel::schema_list_rows(&doc);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id, "schema:test");
+    }
+
+    #[test]
+    fn field_rows_shows_formula_for_calculation_fields() {
+        let schema = FacetSchema {
+            id: "s:calc".into(),
+            label: "Calc".into(),
+            description: String::new(),
+            fields: vec![SchemaField {
+                key: "total".into(),
+                label: "Total".into(),
+                kind: SchemaFieldKind::Calculation {
+                    formula: "price * qty".into(),
+                },
+                required: false,
+                default_value: None,
+            }],
+        };
+        let rows = SchemaDesignerPanel::field_rows(&schema);
+        let formula_row = rows.iter().find(|r| r.key == "schema.field.0.formula");
+        assert!(formula_row.is_some());
+        assert_eq!(formula_row.unwrap().value, "price * qty");
+    }
+
+    #[test]
+    fn apply_schema_edit_updates_formula() {
+        let mut schema = FacetSchema {
+            id: "s:calc".into(),
+            label: "Calc".into(),
+            description: String::new(),
+            fields: vec![SchemaField {
+                key: "total".into(),
+                label: "Total".into(),
+                kind: SchemaFieldKind::Calculation {
+                    formula: "a + b".into(),
+                },
+                required: false,
+                default_value: None,
+            }],
+        };
+        apply_schema_edit(&mut schema, "field.0.formula", "price * qty");
+        match &schema.fields[0].kind {
+            SchemaFieldKind::Calculation { formula } => {
+                assert_eq!(formula, "price * qty");
+            }
+            _ => panic!("expected Calculation kind"),
+        }
     }
 }

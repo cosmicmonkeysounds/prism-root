@@ -25,6 +25,7 @@ pub struct HtmlRenderContext<'a> {
         &'a indexmap::IndexMap<crate::resource::ResourceId, crate::resource::ResourceDef>,
     pub prefabs: &'a indexmap::IndexMap<String, crate::prefab::PrefabDef>,
     pub facets: &'a indexmap::IndexMap<String, crate::facet::FacetDef>,
+    pub facet_schemas: &'a indexmap::IndexMap<String, crate::facet::FacetSchema>,
 }
 
 impl<'a> HtmlRenderContext<'a> {

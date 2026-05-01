@@ -180,6 +180,11 @@ impl CommandRegistry {
             "Clear Facet Items",
             "Facet",
         ));
+        reg.register(CommandEntry::new(
+            "facet.refresh",
+            "Refresh Facet Data",
+            "Facet",
+        ));
         // Schema management
         reg.register(CommandEntry::new(
             "schema.create",

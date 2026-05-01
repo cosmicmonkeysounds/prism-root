@@ -30,6 +30,7 @@ pub mod keyboard;
 pub mod menu;
 pub mod panels;
 pub mod persistence;
+pub mod project;
 pub mod search;
 pub mod selection;
 pub mod signals;
