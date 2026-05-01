@@ -18,6 +18,7 @@ pub enum PanelKind {
     Console,
     Signals,
     Navigation,
+    SchemaDesigner,
 }
 
 impl PanelKind {
@@ -35,6 +36,7 @@ impl PanelKind {
         Self::Console,
         Self::Signals,
         Self::Navigation,
+        Self::SchemaDesigner,
     ];
 
     pub fn from_id(id: &str) -> Option<Self> {
@@ -159,6 +161,14 @@ impl PanelKind {
                 min_height: 200.0,
                 allow_multiple: false,
             },
+            Self::SchemaDesigner => PanelMeta {
+                kind: self,
+                label: "Schema Designer",
+                icon_hint: "schema",
+                min_width: 300.0,
+                min_height: 200.0,
+                allow_multiple: false,
+            },
         }
     }
 
@@ -199,7 +209,7 @@ mod tests {
 
     #[test]
     fn all_constant_matches_variant_count() {
-        assert_eq!(PanelKind::ALL.len(), 13);
+        assert_eq!(PanelKind::ALL.len(), 14);
     }
 
     #[test]

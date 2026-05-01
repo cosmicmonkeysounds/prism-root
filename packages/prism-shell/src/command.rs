@@ -180,6 +180,32 @@ impl CommandRegistry {
             "Clear Facet Items",
             "Facet",
         ));
+        // Schema management
+        reg.register(CommandEntry::new(
+            "schema.create",
+            "Create Schema",
+            "Schema",
+        ));
+        reg.register(CommandEntry::new(
+            "schema.delete",
+            "Delete Schema",
+            "Schema",
+        ));
+        reg.register(CommandEntry::new(
+            "schema.add_field",
+            "Add Schema Field",
+            "Schema",
+        ));
+        reg.register(CommandEntry::new(
+            "schema.delete_field",
+            "Delete Schema Field",
+            "Schema",
+        ));
+        reg.register(CommandEntry::new(
+            "panel.schema_designer",
+            "Go to Data",
+            "Panel",
+        ));
         // Prefab management
         reg.register(CommandEntry::new(
             "prefab.save_from_selection",

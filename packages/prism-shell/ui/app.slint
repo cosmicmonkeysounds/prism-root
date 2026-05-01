@@ -3718,6 +3718,76 @@ export component AppWindow inherits Window {
                                             }
                                         }
                                     }
+
+                                        // ════════════════════════════════════
+                                        // SCHEMA DESIGNER
+                                        // ════════════════════════════════════
+                                        if panel.panel-id == "schema-designer" : Rectangle {
+                                            background: Palette.alternate-background;
+                                            vertical-stretch: 1;
+                                            ScrollView {
+                                                vertical-stretch: 1;
+                                                VerticalLayout {
+                                                    padding: 12px; spacing: 6px; alignment: start;
+                                                    HorizontalLayout {
+                                                        spacing: 8px; alignment: start;
+                                                        Text { text: "Schema Designer"; color: Palette.foreground.transparentize(20%); font-size: 12px; font-weight: 600; vertical-alignment: center; }
+                                                        Rectangle { horizontal-stretch: 1; }
+                                                        Rectangle {
+                                                            width: 80px; height: 24px; border-radius: 4px;
+                                                            background: sd-create-touch.has-hover ? Palette.accent-background : Palette.control-background;
+                                                            Text { text: "+ Schema"; color: sd-create-touch.has-hover ? Palette.accent-foreground : Palette.foreground; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+                                                            sd-create-touch := TouchArea { mouse-cursor: pointer; clicked => { root.menu-command("schema.create"); } }
+                                                        }
+                                                    }
+                                                    Rectangle { height: 1px; background: Palette.foreground.transparentize(85%); }
+
+                                                    Text {
+                                                        text: "Define the shape of your facet data. Schemas provide typed fields\nthat replace freeform JSON in facet records.";
+                                                        color: Palette.foreground.transparentize(50%);
+                                                        font-size: 11px;
+                                                        wrap: word-wrap;
+                                                    }
+
+                                                    Rectangle { height: 8px; }
+
+                                                    Text {
+                                                        text: "Edit schema fields in the Properties panel →";
+                                                        color: Palette.foreground.transparentize(40%);
+                                                        font-size: 11px;
+                                                        font-weight: 600;
+                                                    }
+
+                                                    Rectangle { height: 8px; }
+
+                                                    HorizontalLayout {
+                                                        spacing: 8px;
+                                                        Rectangle {
+                                                            width: 80px; height: 24px; border-radius: 4px;
+                                                            background: sd-add-field-touch.has-hover ? Palette.control-background : transparent;
+                                                            border-width: 1px; border-color: Palette.foreground.transparentize(80%);
+                                                            Text { text: "+ Field"; color: Palette.foreground.transparentize(40%); font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+                                                            sd-add-field-touch := TouchArea { mouse-cursor: pointer; clicked => { root.menu-command("schema.add_field"); } }
+                                                        }
+                                                        Rectangle {
+                                                            width: 80px; height: 24px; border-radius: 4px;
+                                                            background: sd-del-field-touch.has-hover ? Palette.control-background : transparent;
+                                                            border-width: 1px; border-color: Palette.foreground.transparentize(80%);
+                                                            Text { text: "- Field"; color: Palette.foreground.transparentize(40%); font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+                                                            sd-del-field-touch := TouchArea { mouse-cursor: pointer; clicked => { root.menu-command("schema.delete_field"); } }
+                                                        }
+                                                        Rectangle {
+                                                            width: 80px; height: 24px; border-radius: 4px;
+                                                            background: sd-del-schema-touch.has-hover ? #ff4444 : transparent;
+                                                            border-width: 1px; border-color: Palette.foreground.transparentize(80%);
+                                                            Text { text: "Delete"; color: sd-del-schema-touch.has-hover ? white : Palette.foreground.transparentize(40%); font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+                                                            sd-del-schema-touch := TouchArea { mouse-cursor: pointer; clicked => { root.menu-command("schema.delete"); } }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
                                 }
                             }
 

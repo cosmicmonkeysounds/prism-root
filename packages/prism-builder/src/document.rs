@@ -7,7 +7,7 @@ use prism_core::foundation::spatial::Transform2D;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::facet::FacetDef;
+use crate::facet::{FacetDef, FacetSchema, FacetSchemaId};
 use crate::layout::{LayoutMode, PageLayout};
 use crate::modifier::Modifier;
 use crate::prefab::PrefabDef;
@@ -134,6 +134,8 @@ pub struct BuilderDocument {
     pub connections: Vec<Connection>,
     #[serde(default)]
     pub prefabs: IndexMap<String, PrefabDef>,
+    #[serde(default)]
+    pub facet_schemas: IndexMap<FacetSchemaId, FacetSchema>,
     #[serde(default)]
     pub facets: IndexMap<String, FacetDef>,
 }

@@ -22,6 +22,207 @@ use crate::resource::ResourceId;
 use crate::signal::{common_signals, SignalDef};
 use crate::slint_source::SlintEmitter;
 
+// ── Schema types ─────────────────────────────────────────────────────────────
+
+pub type FacetSchemaId = String;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FacetSchema {
+    pub id: FacetSchemaId,
+    pub label: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub fields: Vec<SchemaField>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SchemaField {
+    pub key: String,
+    pub label: String,
+    pub kind: SchemaFieldKind,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_value: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+pub enum SchemaFieldKind {
+    Text,
+    Number {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        min: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max: Option<f64>,
+    },
+    Integer {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        min: Option<i64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max: Option<i64>,
+    },
+    Boolean,
+    Date,
+    Color,
+    Image,
+    Url,
+    Select {
+        options: Vec<SchemaSelectOption>,
+    },
+    Calculation {
+        formula: String,
+    },
+}
+
+impl Default for SchemaFieldKind {
+    fn default() -> Self {
+        Self::Text
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SchemaSelectOption {
+    pub value: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FacetRecord {
+    pub id: String,
+    #[serde(default)]
+    pub fields: IndexMap<String, Value>,
+}
+
+impl FacetRecord {
+    pub fn to_value(&self) -> Value {
+        Value::Object(
+            self.fields
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+        )
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ValidationError {
+    pub field: String,
+    pub message: String,
+}
+
+impl FacetSchema {
+    pub fn validate_record(&self, record: &FacetRecord) -> Vec<ValidationError> {
+        let mut errors = Vec::new();
+        for field in &self.fields {
+            let val = record.fields.get(&field.key);
+            if field.required {
+                let missing = match val {
+                    None | Some(Value::Null) => true,
+                    Some(Value::String(s)) => s.is_empty(),
+                    _ => false,
+                };
+                if missing {
+                    errors.push(ValidationError {
+                        field: field.key.clone(),
+                        message: format!("{} is required", field.label),
+                    });
+                }
+            }
+            if let Some(val) = val {
+                match &field.kind {
+                    SchemaFieldKind::Number { min, max } => {
+                        if let Some(n) = val.as_f64() {
+                            if let Some(lo) = min {
+                                if n < *lo {
+                                    errors.push(ValidationError {
+                                        field: field.key.clone(),
+                                        message: format!("must be >= {lo}"),
+                                    });
+                                }
+                            }
+                            if let Some(hi) = max {
+                                if n > *hi {
+                                    errors.push(ValidationError {
+                                        field: field.key.clone(),
+                                        message: format!("must be <= {hi}"),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    SchemaFieldKind::Integer { min, max } => {
+                        if let Some(n) = val.as_i64() {
+                            if let Some(lo) = min {
+                                if n < *lo {
+                                    errors.push(ValidationError {
+                                        field: field.key.clone(),
+                                        message: format!("must be >= {lo}"),
+                                    });
+                                }
+                            }
+                            if let Some(hi) = max {
+                                if n > *hi {
+                                    errors.push(ValidationError {
+                                        field: field.key.clone(),
+                                        message: format!("must be <= {hi}"),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    SchemaFieldKind::Select { options } => {
+                        if let Some(s) = val.as_str() {
+                            if !s.is_empty() && !options.iter().any(|o| o.value == s) {
+                                errors.push(ValidationError {
+                                    field: field.key.clone(),
+                                    message: format!("'{s}' is not a valid option"),
+                                });
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        errors
+    }
+
+    pub fn default_record(&self, id: impl Into<String>) -> FacetRecord {
+        let mut fields = IndexMap::new();
+        for field in &self.fields {
+            let val = field
+                .default_value
+                .clone()
+                .unwrap_or_else(|| default_for_kind(&field.kind));
+            fields.insert(field.key.clone(), val);
+        }
+        FacetRecord {
+            id: id.into(),
+            fields,
+        }
+    }
+}
+
+fn default_for_kind(kind: &SchemaFieldKind) -> Value {
+    match kind {
+        SchemaFieldKind::Text | SchemaFieldKind::Date | SchemaFieldKind::Url => {
+            Value::String(String::new())
+        }
+        SchemaFieldKind::Number { .. } => Value::from(0.0),
+        SchemaFieldKind::Integer { .. } => Value::from(0),
+        SchemaFieldKind::Boolean => Value::Bool(false),
+        SchemaFieldKind::Color => Value::String("#000000".into()),
+        SchemaFieldKind::Image => Value::Null,
+        SchemaFieldKind::Select { options } => options
+            .first()
+            .map(|o| Value::String(o.value.clone()))
+            .unwrap_or(Value::String(String::new())),
+        SchemaFieldKind::Calculation { .. } => Value::Null,
+    }
+}
+
 // ── Data types ────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -49,7 +250,14 @@ pub struct FacetLayout {
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum FacetDataSource {
     /// Hand-authored inline array. Always available, no external dep.
-    Static { items: Vec<Value> },
+    /// `records` holds structured data (when a schema is set); `items` holds
+    /// legacy untyped JSON values. Both are resolved into `Vec<Value>`.
+    Static {
+        #[serde(default)]
+        items: Vec<Value>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        records: Vec<FacetRecord>,
+    },
     /// Reference to a `DataSource` resource whose `data` field is a JSON array.
     Resource { id: ResourceId },
     /// Filter and sort a resource array without mutating the underlying resource.
@@ -68,7 +276,10 @@ pub enum FacetDataSource {
 
 impl Default for FacetDataSource {
     fn default() -> Self {
-        Self::Static { items: vec![] }
+        Self::Static {
+            items: vec![],
+            records: vec![],
+        }
     }
 }
 
@@ -78,7 +289,13 @@ impl FacetDataSource {
         resources: &IndexMap<ResourceId, crate::resource::ResourceDef>,
     ) -> Vec<Value> {
         match self {
-            FacetDataSource::Static { items } => items.clone(),
+            FacetDataSource::Static { items, records } => {
+                if !records.is_empty() {
+                    records.iter().map(FacetRecord::to_value).collect()
+                } else {
+                    items.clone()
+                }
+            }
             FacetDataSource::Resource { id } => resources
                 .get(id)
                 .and_then(|r| r.data.as_array())
@@ -137,6 +354,8 @@ pub struct FacetDef {
     pub label: String,
     #[serde(default)]
     pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema_id: Option<FacetSchemaId>,
     /// ID of the `PrefabDef` used as the item template.
     pub prefab_id: ComponentId,
     #[serde(default)]
@@ -446,9 +665,11 @@ mod tests {
             id: "facet:heroes".into(),
             label: "Heroes".into(),
             description: String::new(),
+            schema_id: None,
             prefab_id: "prefab:hero".into(),
             data: FacetDataSource::Static {
                 items: vec![json!({ "name": "Alpha" }), json!({ "name": "Beta" })],
+                records: vec![],
             },
             bindings: vec![FacetBinding {
                 slot_key: "title".into(),
@@ -486,6 +707,7 @@ mod tests {
         let resources = IndexMap::new();
         let src = FacetDataSource::Static {
             items: vec![json!("a"), json!("b")],
+            records: vec![],
         };
         let resolved = src.resolve(&resources);
         assert_eq!(resolved.len(), 2);
@@ -561,11 +783,12 @@ mod tests {
     fn facet_data_source_serde_static() {
         let src = FacetDataSource::Static {
             items: vec![json!({"a": 1})],
+            records: vec![],
         };
         let json = serde_json::to_string(&src).unwrap();
         let back: FacetDataSource = serde_json::from_str(&json).unwrap();
         match back {
-            FacetDataSource::Static { items } => assert_eq!(items.len(), 1),
+            FacetDataSource::Static { items, .. } => assert_eq!(items.len(), 1),
             _ => panic!("expected Static"),
         }
     }

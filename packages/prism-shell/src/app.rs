@@ -1718,8 +1718,12 @@ impl Shell {
                                         id: facet_id.clone(),
                                         label: "New Facet".into(),
                                         description: String::new(),
+                                        schema_id: None,
                                         prefab_id: "card".into(),
-                                        data: FacetDataSource::Static { items: vec![] },
+                                        data: FacetDataSource::Static {
+                                            items: vec![],
+                                            records: vec![],
+                                        },
                                         bindings: vec![],
                                         layout: FacetLayout::default(),
                                     },
@@ -1932,6 +1936,20 @@ impl Shell {
                                 s.sync_builder_document();
                             }
                         }
+                    } else if key.starts_with("schema.") {
+                        let skey = key.strip_prefix("schema.").unwrap_or(&key).to_string();
+                        let val = value.clone();
+                        s.push_undo(&format!("Edit {key}"));
+                        s.store.mutate(|state| {
+                            if let Some(doc) =
+                                state.active_app_mut().and_then(|a| a.active_document_mut())
+                            {
+                                if let Some(schema) = doc.facet_schemas.values_mut().last() {
+                                    crate::panels::schema::apply_schema_edit(schema, &skey, &val);
+                                }
+                            }
+                        });
+                        s.sync_builder_document();
                     } else if let Some(ref target_id) = selected_id {
                         let kind = field_kind_for_key(&s, &key);
                         let (source_key, formatted) =
@@ -2076,6 +2094,23 @@ impl Shell {
                                 s.sync_builder_document();
                             }
                         }
+                    } else if key.starts_with("schema.") {
+                        let skey = key.strip_prefix("schema.").unwrap_or(&key).to_string();
+                        s.push_undo(&format!("Edit {key}"));
+                        s.store.mutate(|state| {
+                            if let Some(doc) =
+                                state.active_app_mut().and_then(|a| a.active_document_mut())
+                            {
+                                if let Some(schema) = doc.facet_schemas.values_mut().last() {
+                                    crate::panels::schema::apply_schema_edit(
+                                        schema,
+                                        &skey,
+                                        &format_slider_value(val),
+                                    );
+                                }
+                            }
+                        });
+                        s.sync_builder_document();
                     } else {
                         if let Some(ref target_id) = selected_id {
                             let kind = field_kind_for_key(&s, &key);
@@ -4150,6 +4185,7 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
             &state.selection,
             state.active_app(),
             &inner.toggled_sections,
+            Some(&state.workspace),
         );
         push_signal_panel_data(
             &inner.models,
@@ -4687,10 +4723,27 @@ fn push_property_sections(
     selection: &SelectionModel,
     app: Option<&PrismApp>,
     toggled_sections: &std::collections::HashSet<String>,
+    workspace: Option<&prism_dock::DockWorkspace>,
 ) {
     let selected = selection.as_option();
     let component_id = PropertiesPanel::selected_component(doc, &selected);
     window.set_selected_component(SharedString::from(component_id));
+
+    if let Some(ws) = workspace {
+        if ws.active_page().id == "data" {
+            if let Some(schema) = doc.facet_schemas.values().last() {
+                let schema_rows =
+                    crate::panels::schema::SchemaDesignerPanel::field_rows(schema);
+                let rows: Vec<FieldRow> = schema_rows
+                    .into_iter()
+                    .map(|r| field_row_data_to_slint(&r))
+                    .collect();
+                let count = sync_model(&models.property_rows, &rows);
+                window.set_property_rows_count(count);
+                return;
+            }
+        }
+    }
 
     let mut sections = PropertiesPanel::sections(doc, registry, &selected, app);
 
@@ -5420,9 +5473,22 @@ fn execute_command(
                             if let Some(def) = doc.facets.get_mut(&fid) {
                                 if let prism_builder::facet::FacetDataSource::Static {
                                     ref mut items,
+                                    ref mut records,
                                 } = def.data
                                 {
-                                    items.push(serde_json::json!({}));
+                                    if let Some(schema_id) = &def.schema_id {
+                                        if let Some(schema) =
+                                            doc.facet_schemas.get(schema_id)
+                                        {
+                                            let rec_id =
+                                                format!("rec:{}", records.len() + 1);
+                                            records.push(schema.default_record(rec_id));
+                                        } else {
+                                            items.push(serde_json::json!({}));
+                                        }
+                                    } else {
+                                        items.push(serde_json::json!({}));
+                                    }
                                 }
                             }
                         }
@@ -5454,9 +5520,11 @@ fn execute_command(
                             if let Some(def) = doc.facets.get_mut(&fid) {
                                 if let prism_builder::facet::FacetDataSource::Static {
                                     ref mut items,
+                                    ref mut records,
                                 } = def.data
                                 {
                                     items.clear();
+                                    records.clear();
                                 }
                             }
                         }
@@ -5464,6 +5532,130 @@ fn execute_command(
                     s.sync_builder_document();
                 }
             }
+        }
+        "schema.create" => {
+            let mut s = shared.borrow_mut();
+            let counter = s.store.state().next_node_id;
+            let schema_id = format!("schema:n{counter}");
+            s.push_undo("Create schema");
+            let sid = schema_id.clone();
+            s.store.mutate(|state| {
+                state.next_node_id += 1;
+                if let Some(doc) =
+                    state.active_app_mut().and_then(|a| a.active_document_mut())
+                {
+                    doc.facet_schemas.insert(
+                        sid.clone(),
+                        prism_builder::FacetSchema {
+                            id: sid,
+                            label: "New Schema".into(),
+                            description: String::new(),
+                            fields: vec![
+                                prism_builder::SchemaField {
+                                    key: "title".into(),
+                                    label: "Title".into(),
+                                    kind: prism_builder::SchemaFieldKind::Text,
+                                    required: true,
+                                    default_value: None,
+                                },
+                            ],
+                        },
+                    );
+                }
+            });
+            s.sync_builder_document();
+            s.add_toast("Schema created", &schema_id, "success");
+        }
+        "schema.delete" => {
+            let mut s = shared.borrow_mut();
+            if let Some(doc) = s
+                .store
+                .state()
+                .active_app()
+                .and_then(|a| a.active_document())
+            {
+                if let Some(last_id) = doc.facet_schemas.keys().last().cloned() {
+                    let sid = last_id.clone();
+                    s.push_undo("Delete schema");
+                    s.store.mutate(|state| {
+                        if let Some(doc) =
+                            state.active_app_mut().and_then(|a| a.active_document_mut())
+                        {
+                            doc.facet_schemas.swap_remove(&sid);
+                            for facet in doc.facets.values_mut() {
+                                if facet.schema_id.as_deref() == Some(sid.as_str()) {
+                                    facet.schema_id = None;
+                                }
+                            }
+                        }
+                    });
+                    s.sync_builder_document();
+                    s.add_toast("Schema deleted", &last_id, "success");
+                }
+            }
+        }
+        "schema.add_field" => {
+            let mut s = shared.borrow_mut();
+            if let Some(doc) = s
+                .store
+                .state()
+                .active_app()
+                .and_then(|a| a.active_document())
+            {
+                if let Some(last_id) = doc.facet_schemas.keys().last().cloned() {
+                    let sid = last_id;
+                    s.push_undo("Add schema field");
+                    s.store.mutate(|state| {
+                        if let Some(doc) =
+                            state.active_app_mut().and_then(|a| a.active_document_mut())
+                        {
+                            if let Some(schema) = doc.facet_schemas.get_mut(&sid) {
+                                let n = schema.fields.len() + 1;
+                                schema.fields.push(prism_builder::SchemaField {
+                                    key: format!("field_{n}"),
+                                    label: format!("Field {n}"),
+                                    kind: prism_builder::SchemaFieldKind::Text,
+                                    required: false,
+                                    default_value: None,
+                                });
+                            }
+                        }
+                    });
+                    s.sync_builder_document();
+                }
+            }
+        }
+        "schema.delete_field" => {
+            let mut s = shared.borrow_mut();
+            if let Some(doc) = s
+                .store
+                .state()
+                .active_app()
+                .and_then(|a| a.active_document())
+            {
+                if let Some(last_id) = doc.facet_schemas.keys().last().cloned() {
+                    let sid = last_id;
+                    s.push_undo("Delete schema field");
+                    s.store.mutate(|state| {
+                        if let Some(doc) =
+                            state.active_app_mut().and_then(|a| a.active_document_mut())
+                        {
+                            if let Some(schema) = doc.facet_schemas.get_mut(&sid) {
+                                if schema.fields.len() > 1 {
+                                    schema.fields.pop();
+                                }
+                            }
+                        }
+                    });
+                    s.sync_builder_document();
+                }
+            }
+        }
+        "panel.schema_designer" => {
+            let mut s = shared.borrow_mut();
+            s.store.mutate(|state| {
+                state.workspace.switch_page_by_id("data");
+            });
         }
         "prefab.save_from_selection" => {
             let mut s = shared.borrow_mut();
@@ -6463,7 +6655,10 @@ fn apply_facet_edit(def: &mut FacetDef, key: &str, value: &str) {
                         sort_by: None,
                     }
                 }
-                _ => FacetDataSource::Static { items: vec![] },
+                _ => FacetDataSource::Static {
+                    items: vec![],
+                    records: vec![],
+                },
             };
         }
         "source_id" => match &mut def.data {
@@ -6489,6 +6684,13 @@ fn apply_facet_edit(def: &mut FacetDef, key: &str, value: &str) {
                 };
             }
         }
+        "schema_id" => {
+            def.schema_id = if value.is_empty() || value == "(none)" {
+                None
+            } else {
+                Some(value.to_string())
+            };
+        }
         key if key.starts_with("binding.") => {
             let slot_key = &key["binding.".len()..];
             if !slot_key.is_empty() {
@@ -6501,6 +6703,35 @@ fn apply_facet_edit(def: &mut FacetDef, key: &str, value: &str) {
                     });
                 }
                 def.bindings.retain(|b| !b.item_field.is_empty());
+            }
+        }
+        key if key.starts_with("record.") => {
+            let rest = &key["record.".len()..];
+            if let Some((idx_str, field_key)) = rest.split_once('.') {
+                if let Ok(idx) = idx_str.parse::<usize>() {
+                    if let FacetDataSource::Static {
+                        ref mut records, ..
+                    } = def.data
+                    {
+                        if let Some(rec) = records.get_mut(idx) {
+                            let parsed: serde_json::Value =
+                                serde_json::from_str(value).unwrap_or_else(|_| {
+                                    if value.is_empty() {
+                                        serde_json::Value::Null
+                                    } else if value == "true" {
+                                        serde_json::Value::Bool(true)
+                                    } else if value == "false" {
+                                        serde_json::Value::Bool(false)
+                                    } else if let Ok(n) = value.parse::<f64>() {
+                                        serde_json::json!(n)
+                                    } else {
+                                        serde_json::Value::String(value.to_string())
+                                    }
+                                });
+                            rec.fields.insert(field_key.to_string(), parsed);
+                        }
+                    }
+                }
             }
         }
         _ => {}
@@ -7738,8 +7969,12 @@ mod tests {
             id: "facet:test".into(),
             label: "Test".into(),
             description: String::new(),
+            schema_id: None,
             prefab_id: "card".into(),
-            data: FacetDataSource::Static { items: vec![] },
+            data: FacetDataSource::Static {
+                items: vec![],
+                records: vec![],
+            },
             bindings: vec![],
             layout: FacetLayout::default(),
         };

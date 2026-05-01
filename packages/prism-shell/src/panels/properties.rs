@@ -9,7 +9,7 @@
 //! unified edit callback routes by key prefix.
 
 use prism_builder::card_prefab_def;
-use prism_builder::facet::{FacetDataSource, FacetDirection};
+use prism_builder::facet::{FacetDataSource, FacetDirection, SchemaFieldKind};
 use prism_builder::layout::{
     AlignOption, Dimension, FlexDirection, FlowDisplay, GridPlacement, JustifyOption, LayoutMode,
 };
@@ -841,14 +841,26 @@ impl PropertiesPanel {
             }];
         };
 
+        let schema = def
+            .schema_id
+            .as_ref()
+            .and_then(|sid| doc.facet_schemas.get(sid));
+
         let (source_kind, item_count_label, source_id, filter_val, sort_val) = match &def.data {
-            FacetDataSource::Static { items } => (
-                "static",
-                format!("{} items", items.len()),
-                String::new(),
-                String::new(),
-                String::new(),
-            ),
+            FacetDataSource::Static { items, records } => {
+                let count = if records.is_empty() {
+                    items.len()
+                } else {
+                    records.len()
+                };
+                (
+                    "static",
+                    format!("{count} items"),
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                )
+            }
             FacetDataSource::Resource { id } => (
                 "resource",
                 "resource".into(),
@@ -872,7 +884,18 @@ impl PropertiesPanel {
             FacetDirection::Column => "column",
         };
 
-        // Build list of available prefab IDs: "card" always available plus all user prefabs.
+        // Schema selection dropdown
+        let mut schema_options: Vec<String> = vec!["(none)".into()];
+        for sid in doc.facet_schemas.keys() {
+            schema_options.push(sid.clone());
+        }
+        let schema_value = def
+            .schema_id
+            .as_deref()
+            .unwrap_or("(none)")
+            .to_string();
+
+        // Build list of available prefab IDs
         let mut prefab_options: Vec<String> = vec!["card".into()];
         for id in doc.prefabs.keys() {
             if id != "card" {
@@ -881,6 +904,17 @@ impl PropertiesPanel {
         }
 
         let mut rows = vec![
+            FieldRowData {
+                key: "facet.schema_id".into(),
+                label: "Schema".into(),
+                kind: "select".into(),
+                value: schema_value,
+                required: false,
+                min: 0.0,
+                max: 0.0,
+                has_bounds: false,
+                options: schema_options,
+            },
             FieldRowData {
                 key: "facet.prefab_id".into(),
                 label: "Prefab template".into(),
@@ -981,6 +1015,7 @@ impl PropertiesPanel {
         ]);
 
         // Bindings: one row per exposed slot on the referenced prefab.
+        // When a schema is set, binding values are dropdowns of schema field keys.
         let prefab_exposed = if def.prefab_id == "card" {
             doc.prefabs
                 .get("card")
@@ -1004,6 +1039,15 @@ impl PropertiesPanel {
                 has_bounds: false,
                 options: vec![],
             });
+
+            let schema_field_options: Vec<String> = if let Some(s) = &schema {
+                let mut opts = vec!["".into()];
+                opts.extend(s.fields.iter().map(|f| f.key.clone()));
+                opts
+            } else {
+                vec![]
+            };
+
             for slot in &prefab_exposed {
                 let bound_field = def
                     .bindings
@@ -1011,17 +1055,137 @@ impl PropertiesPanel {
                     .find(|b| b.slot_key == slot.key)
                     .map(|b| b.item_field.clone())
                     .unwrap_or_default();
-                rows.push(FieldRowData {
-                    key: format!("facet.binding.{}", slot.key),
-                    label: format!("Bind: {}", slot.key),
-                    kind: "text".into(),
-                    value: bound_field,
-                    required: false,
-                    min: 0.0,
-                    max: 0.0,
-                    has_bounds: false,
-                    options: vec![],
-                });
+
+                if schema_field_options.is_empty() {
+                    rows.push(FieldRowData {
+                        key: format!("facet.binding.{}", slot.key),
+                        label: format!("Bind: {}", slot.key),
+                        kind: "text".into(),
+                        value: bound_field,
+                        required: false,
+                        min: 0.0,
+                        max: 0.0,
+                        has_bounds: false,
+                        options: vec![],
+                    });
+                } else {
+                    rows.push(FieldRowData {
+                        key: format!("facet.binding.{}", slot.key),
+                        label: format!("Bind: {}", slot.key),
+                        kind: "select".into(),
+                        value: bound_field,
+                        required: false,
+                        min: 0.0,
+                        max: 0.0,
+                        has_bounds: false,
+                        options: schema_field_options.clone(),
+                    });
+                }
+            }
+        }
+
+        // Records: when static source + schema, show structured record editing.
+        if source_kind == "static" {
+            if let Some(s) = &schema {
+                if let FacetDataSource::Static { records, .. } = &def.data {
+                    if !records.is_empty() {
+                        rows.push(FieldRowData {
+                            key: "facet.records_header".into(),
+                            label: "── Records ──".into(),
+                            kind: "text".into(),
+                            value: String::new(),
+                            required: false,
+                            min: 0.0,
+                            max: 0.0,
+                            has_bounds: false,
+                            options: vec![],
+                        });
+                        for (ri, rec) in records.iter().enumerate() {
+                            rows.push(FieldRowData {
+                                key: format!("facet.record_header.{ri}"),
+                                label: format!("Record {} ({})", ri + 1, rec.id),
+                                kind: "text".into(),
+                                value: String::new(),
+                                required: false,
+                                min: 0.0,
+                                max: 0.0,
+                                has_bounds: false,
+                                options: vec![],
+                            });
+                            for field in &s.fields {
+                                if matches!(field.kind, SchemaFieldKind::Calculation { .. }) {
+                                    continue;
+                                }
+                                let val = rec
+                                    .fields
+                                    .get(&field.key)
+                                    .map(|v| match v {
+                                        serde_json::Value::String(s) => s.clone(),
+                                        serde_json::Value::Null => String::new(),
+                                        other => other.to_string(),
+                                    })
+                                    .unwrap_or_default();
+
+                                let (kind, opts, min, max, has_bounds) = match &field.kind {
+                                    SchemaFieldKind::Text
+                                    | SchemaFieldKind::Date
+                                    | SchemaFieldKind::Url
+                                    | SchemaFieldKind::Image => {
+                                        ("text", vec![], 0.0, 0.0, false)
+                                    }
+                                    SchemaFieldKind::Number {
+                                        min: lo,
+                                        max: hi,
+                                    } => (
+                                        "number",
+                                        vec![],
+                                        lo.unwrap_or(0.0) as f32,
+                                        hi.unwrap_or(0.0) as f32,
+                                        lo.is_some() || hi.is_some(),
+                                    ),
+                                    SchemaFieldKind::Integer {
+                                        min: lo,
+                                        max: hi,
+                                    } => (
+                                        "integer",
+                                        vec![],
+                                        lo.unwrap_or(0) as f32,
+                                        hi.unwrap_or(0) as f32,
+                                        lo.is_some() || hi.is_some(),
+                                    ),
+                                    SchemaFieldKind::Boolean => {
+                                        ("boolean", vec![], 0.0, 0.0, false)
+                                    }
+                                    SchemaFieldKind::Color => {
+                                        ("color", vec![], 0.0, 0.0, false)
+                                    }
+                                    SchemaFieldKind::Select { options } => (
+                                        "select",
+                                        options.iter().map(|o| o.value.clone()).collect(),
+                                        0.0,
+                                        0.0,
+                                        false,
+                                    ),
+                                    SchemaFieldKind::Calculation { .. } => {
+                                        unreachable!()
+                                    }
+                                };
+
+                                rows.push(FieldRowData {
+                                    key: format!("facet.record.{}.{}", ri, field.key),
+                                    label: field.label.clone(),
+                                    kind: kind.into(),
+                                    value: val,
+                                    required: field.required,
+                                    min,
+                                    max,
+                                    has_bounds,
+                                    options: opts,
+                                });
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -1874,8 +2038,12 @@ mod tests {
                 id: facet_id.clone(),
                 label: "Test".into(),
                 description: String::new(),
+                schema_id: None,
                 prefab_id: "card".into(),
-                data: FacetDataSource::Static { items: vec![] },
+                data: FacetDataSource::Static {
+                    items: vec![],
+                    records: vec![],
+                },
                 bindings: vec![],
                 layout: FacetLayout::default(),
             },

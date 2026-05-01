@@ -140,6 +140,20 @@ impl WorkflowPage {
         }
     }
 
+    pub fn data() -> Self {
+        let dock = DockState::new(DockNode::hsplit(
+            0.65,
+            DockNode::tab(PanelKind::SchemaDesigner.id()),
+            DockNode::tab(PanelKind::Properties.id()),
+        ));
+        Self {
+            id: "data".into(),
+            label: "Data".into(),
+            icon_hint: "schema".into(),
+            dock,
+        }
+    }
+
     pub fn builtins() -> Vec<Self> {
         vec![
             Self::edit(),
@@ -147,6 +161,7 @@ impl WorkflowPage {
             Self::code(),
             Self::fusion(),
             Self::navigation(),
+            Self::data(),
             Self::preview(),
         ]
     }
@@ -211,13 +226,20 @@ mod tests {
     }
 
     #[test]
-    fn builtins_returns_six_pages() {
+    fn data_preset_has_schema_designer() {
+        let page = WorkflowPage::data();
+        assert!(page.dock.contains_panel("schema-designer"));
+        assert!(page.dock.contains_panel("properties"));
+    }
+
+    #[test]
+    fn builtins_returns_seven_pages() {
         let pages = WorkflowPage::builtins();
-        assert_eq!(pages.len(), 6);
+        assert_eq!(pages.len(), 7);
         let ids: Vec<&str> = pages.iter().map(|p| p.id.as_str()).collect();
         assert_eq!(
             ids,
-            &["edit", "design", "code", "fusion", "navigation", "preview"]
+            &["edit", "design", "code", "fusion", "navigation", "data", "preview"]
         );
     }
 

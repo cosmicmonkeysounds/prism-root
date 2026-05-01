@@ -46,7 +46,10 @@ pub use app::{AppIcon, AppId, NavigationConfig, NavigationStyle, Page, PrismApp}
 pub use asset::{collect_vfs_hashes, AssetSource};
 pub use component::{Component, ComponentId, RenderContext, RenderError, RenderSlintContext};
 pub use document::{BuilderDocument, Node, NodeId};
-pub use facet::{FacetBinding, FacetDataSource, FacetDef, FacetDirection, FacetLayout};
+pub use facet::{
+    FacetBinding, FacetDataSource, FacetDef, FacetDirection, FacetLayout, FacetRecord, FacetSchema,
+    FacetSchemaId, SchemaField, SchemaFieldKind, SchemaSelectOption, ValidationError,
+};
 pub use html::{escape_attr, escape_text, Html};
 pub use html_block::{HtmlBlock, HtmlRegistry, HtmlRenderContext};
 pub use html_starter::register_html_builtins;

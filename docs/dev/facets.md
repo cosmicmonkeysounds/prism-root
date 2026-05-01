@@ -129,11 +129,151 @@ packages/prism-builder/src/
   lib.rs             ← pub mod facet + re-exports
 ```
 
+## Phase 3: Facet Schemas (FileMaker-inspired structured data)
+
+### Problem
+
+Facet IDs are freeform strings. Bindings map `slot_key → item_field` as arbitrary
+strings — nothing validates that a field exists, that its type matches the prefab slot,
+or that records contain the expected keys. The properties panel can't offer structured
+editing because it doesn't know the shape of the data. Adding items pushes empty `{}`
+JSON objects. The result: Facets exist in the type system but can't produce anything
+useful without hand-authoring raw JSON.
+
+### Solution: FacetSchema
+
+Inspired by FileMaker Pro's Manage Database dialog. A **FacetSchema** defines the shape
+of a facet's data — typed fields with names, defaults, validation, and value lists. Each
+`FacetDef` references a schema by ID, and bindings become validated mappings between
+schema fields and prefab slots. Records are structured objects validated against their
+schema, and the properties panel renders proper field editors per type.
+
+### `FacetSchema`
+
+```rust
+FacetSchema {
+    id: FacetSchemaId,              // e.g. "schema:portfolio"
+    label: String,                  // "Portfolio Item"
+    description: String,
+    fields: Vec<SchemaField>,       // ordered field definitions
+}
+```
+
+### `SchemaField`
+
+```rust
+SchemaField {
+    key: String,                    // "title", "due_date", "status"
+    label: String,                  // "Title", "Due Date", "Status"
+    kind: SchemaFieldKind,          // typed discriminator
+    required: bool,
+    default_value: Option<Value>,   // serde_json::Value
+}
+```
+
+### `SchemaFieldKind`
+
+```
+Text                              // single-line string
+Number { min, max }               // f64 with optional bounds
+Integer { min, max }              // i64 with optional bounds
+Boolean                           // true/false toggle
+Date                              // ISO 8601 date string
+Color                             // hex color "#RRGGBB"
+Image                             // URL or VFS asset reference
+Url                               // validated URL string
+Select { options }                // value list (like FileMaker)
+Calculation { formula }           // derived value (formula over sibling fields)
+```
+
+### `FacetRecord`
+
+Replaces `Vec<Value>` in `FacetDataSource::Static`:
+
+```rust
+FacetRecord {
+    id: String,                     // unique record ID (e.g. "rec:1")
+    fields: IndexMap<String, Value>, // key → value, validated against schema
+}
+```
+
+### Updated `FacetDef`
+
+```rust
+FacetDef {
+    id: String,
+    label: String,
+    description: String,
+    schema_id: Option<FacetSchemaId>,  // references a FacetSchema (None = legacy untyped)
+    prefab_id: ComponentId,
+    data: FacetDataSource,
+    bindings: Vec<FacetBinding>,
+    layout: FacetLayout,
+}
+```
+
+### Updated `BuilderDocument`
+
+```rust
+BuilderDocument {
+    ...
+    facet_schemas: IndexMap<FacetSchemaId, FacetSchema>,  // new
+    facets: IndexMap<String, FacetDef>,
+}
+```
+
+### Schema Designer workflow page
+
+A new DaVinci Resolve-style bottom-bar mode ("Data" page) with a dedicated panel layout:
+
+- **Left panel**: Schema list — all `FacetSchema`s in the document. Click to select,
+  buttons to create/delete.
+- **Center panel**: Field definition table — add, edit, reorder, delete fields. Each row
+  shows key, label, kind (dropdown), required (toggle), default value.
+- **Right panel**: Record editor — when a schema is selected, shows all records as a
+  scrollable form. Each record renders proper field editors per `SchemaFieldKind`
+  (text inputs, number spinners, color pickers, select dropdowns, etc.).
+
+The Schema Designer panel (`PanelKind::SchemaDesigner`) renders all three zones in one
+panel via the dock system.
+
+### Updated properties panel
+
+When a `facet` component is selected:
+
+1. **Schema** dropdown — select from defined schemas (not freeform text)
+2. **Bindings** — schema fields → prefab slots as paired dropdowns (both sides enumerated)
+3. **Record count** — with Add/Clear actions that create schema-validated records
+4. **Validation** — indicators when records have missing required fields
+
+### Validation
+
+`FacetSchema::validate_record(record) -> Vec<ValidationError>` checks:
+- Required fields present and non-null
+- Number/Integer within bounds
+- Select value is one of the defined options
+
+Validation runs at edit time (properties panel highlights errors) and at render time
+(invalid records are skipped with a warning, not a hard error).
+
+### Calculation fields
+
+`SchemaFieldKind::Calculation { formula }` defines derived fields. The formula is a
+simple expression language supporting:
+- Field references: `{field_key}` (e.g. `{price}`, `{quantity}`)
+- Arithmetic: `+`, `-`, `*`, `/`
+- String concatenation: `{first_name} + " " + {last_name}`
+- Numeric formatting: `format({price}, "$0.00")`
+
+Calculation fields are read-only in the record editor and computed at render time.
+
 ## Phase plan
 
 | Phase | Scope |
 |-------|-------|
 | 1 ✅ | `Static` + `Resource` data sources, `Row`/`Column` layout, full Slint + HTML render |
 | 2 ✅ | `Query` data source with filter/sort expressions |
-| 3 | Live data refresh in Studio (reload resource, re-render facet in place) |
-| 4 | Facet-level variant overrides (e.g. alternate card style for "featured" items) |
+| 3 ✅ | `FacetSchema` + `FacetRecord` + Schema Designer workflow page + validated bindings |
+| 4 | Live data refresh in Studio (reload resource, re-render facet in place) |
+| 5 | Facet-level variant overrides (e.g. alternate card style for "featured" items) |
+| 6 | Calculation fields with expression evaluation |
