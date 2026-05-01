@@ -239,7 +239,15 @@ mod tests {
         let ids: Vec<&str> = pages.iter().map(|p| p.id.as_str()).collect();
         assert_eq!(
             ids,
-            &["edit", "design", "code", "fusion", "navigation", "data", "preview"]
+            &[
+                "edit",
+                "design",
+                "code",
+                "fusion",
+                "navigation",
+                "data",
+                "preview"
+            ]
         );
     }
 

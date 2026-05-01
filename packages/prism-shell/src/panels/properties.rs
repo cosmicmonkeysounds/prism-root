@@ -9,7 +9,10 @@
 //! unified edit callback routes by key prefix.
 
 use prism_builder::card_prefab_def;
-use prism_builder::facet::{FacetDataSource, FacetDirection, SchemaFieldKind};
+use prism_builder::facet::{
+    AggregateOp, FacetDataSource, FacetDirection, FacetKind, SchemaFieldKind, AGGREGATE_OP_TAGS,
+    FACET_KIND_TAGS,
+};
 use prism_builder::layout::{
     AlignOption, Dimension, FlexDirection, FlowDisplay, GridPlacement, JustifyOption, LayoutMode,
 };
@@ -846,6 +849,225 @@ impl PropertiesPanel {
             .as_ref()
             .and_then(|sid| doc.facet_schemas.get(sid));
 
+        // Schema selection dropdown
+        let mut schema_options: Vec<String> = vec!["(none)".into()];
+        for sid in doc.facet_schemas.keys() {
+            schema_options.push(sid.clone());
+        }
+        let schema_value = def.schema_id.as_deref().unwrap_or("(none)").to_string();
+
+        // Prefab dropdown
+        let mut prefab_options: Vec<String> = vec!["card".into()];
+        for id in doc.prefabs.keys() {
+            if id != "card" {
+                prefab_options.push(id.clone());
+            }
+        }
+
+        // ── Common header (all kinds) ─────────────────────────
+        let mut rows = vec![
+            FieldRowData {
+                key: "facet.kind".into(),
+                label: "Kind".into(),
+                kind: "select".into(),
+                value: def.kind.tag().to_string(),
+                required: true,
+                min: 0.0,
+                max: 0.0,
+                has_bounds: false,
+                options: FACET_KIND_TAGS.iter().map(|s| (*s).into()).collect(),
+            },
+            FieldRowData {
+                key: "facet.schema_id".into(),
+                label: "Schema".into(),
+                kind: "select".into(),
+                value: schema_value,
+                required: false,
+                min: 0.0,
+                max: 0.0,
+                has_bounds: false,
+                options: schema_options,
+            },
+            FieldRowData {
+                key: "facet.prefab_id".into(),
+                label: "Prefab template".into(),
+                kind: "select".into(),
+                value: def.prefab_id.clone(),
+                required: true,
+                min: 0.0,
+                max: 0.0,
+                has_bounds: false,
+                options: prefab_options,
+            },
+        ];
+
+        // ── Kind-specific sections ────────────────────────────
+        match &def.kind {
+            FacetKind::List => {
+                Self::push_data_source_rows(&mut rows, def);
+                Self::push_layout_rows(&mut rows, def);
+            }
+            FacetKind::ObjectQuery {
+                entity_type,
+                filter,
+                sort_by,
+                limit,
+            } => {
+                rows.push(FieldRowData {
+                    key: "facet.entity_type".into(),
+                    label: "Entity type".into(),
+                    kind: "text".into(),
+                    value: entity_type.clone(),
+                    required: true,
+                    min: 0.0,
+                    max: 0.0,
+                    has_bounds: false,
+                    options: vec![],
+                });
+                rows.push(FieldRowData {
+                    key: "facet.oq_filter".into(),
+                    label: "Filter".into(),
+                    kind: "text".into(),
+                    value: filter.as_deref().unwrap_or("").into(),
+                    required: false,
+                    min: 0.0,
+                    max: 0.0,
+                    has_bounds: false,
+                    options: vec![],
+                });
+                rows.push(FieldRowData {
+                    key: "facet.oq_sort_by".into(),
+                    label: "Sort by".into(),
+                    kind: "text".into(),
+                    value: sort_by.as_deref().unwrap_or("").into(),
+                    required: false,
+                    min: 0.0,
+                    max: 0.0,
+                    has_bounds: false,
+                    options: vec![],
+                });
+                rows.push(FieldRowData {
+                    key: "facet.oq_limit".into(),
+                    label: "Limit".into(),
+                    kind: "integer".into(),
+                    value: limit.map(|l| l.to_string()).unwrap_or_default(),
+                    required: false,
+                    min: 0.0,
+                    max: 10000.0,
+                    has_bounds: true,
+                    options: vec![],
+                });
+                Self::push_layout_rows(&mut rows, def);
+            }
+            FacetKind::Script { source, language } => {
+                let _ = language;
+                rows.push(FieldRowData {
+                    key: "facet.script_source".into(),
+                    label: "Luau script".into(),
+                    kind: "textarea".into(),
+                    value: source.clone(),
+                    required: false,
+                    min: 0.0,
+                    max: 0.0,
+                    has_bounds: false,
+                    options: vec![],
+                });
+                Self::push_layout_rows(&mut rows, def);
+            }
+            FacetKind::Aggregate { operation, field } => {
+                Self::push_data_source_rows(&mut rows, def);
+                rows.push(FieldRowData {
+                    key: "facet.agg_operation".into(),
+                    label: "Operation".into(),
+                    kind: "select".into(),
+                    value: operation.tag().to_string(),
+                    required: true,
+                    min: 0.0,
+                    max: 0.0,
+                    has_bounds: false,
+                    options: AGGREGATE_OP_TAGS.iter().map(|s| (*s).into()).collect(),
+                });
+                if !matches!(operation, AggregateOp::Count) {
+                    rows.push(FieldRowData {
+                        key: "facet.agg_field".into(),
+                        label: "Field".into(),
+                        kind: "text".into(),
+                        value: field.as_deref().unwrap_or("").into(),
+                        required: true,
+                        min: 0.0,
+                        max: 0.0,
+                        has_bounds: false,
+                        options: vec![],
+                    });
+                }
+                if let AggregateOp::Join { separator } = operation {
+                    rows.push(FieldRowData {
+                        key: "facet.agg_separator".into(),
+                        label: "Separator".into(),
+                        kind: "text".into(),
+                        value: separator.clone(),
+                        required: false,
+                        min: 0.0,
+                        max: 0.0,
+                        has_bounds: false,
+                        options: vec![],
+                    });
+                }
+            }
+            FacetKind::Lookup {
+                source_entity,
+                edge_type,
+                target_entity,
+            } => {
+                rows.push(FieldRowData {
+                    key: "facet.lookup_source".into(),
+                    label: "Source entity".into(),
+                    kind: "text".into(),
+                    value: source_entity.clone(),
+                    required: true,
+                    min: 0.0,
+                    max: 0.0,
+                    has_bounds: false,
+                    options: vec![],
+                });
+                rows.push(FieldRowData {
+                    key: "facet.lookup_edge".into(),
+                    label: "Edge type".into(),
+                    kind: "text".into(),
+                    value: edge_type.clone(),
+                    required: true,
+                    min: 0.0,
+                    max: 0.0,
+                    has_bounds: false,
+                    options: vec![],
+                });
+                rows.push(FieldRowData {
+                    key: "facet.lookup_target".into(),
+                    label: "Target entity".into(),
+                    kind: "text".into(),
+                    value: target_entity.clone(),
+                    required: true,
+                    min: 0.0,
+                    max: 0.0,
+                    has_bounds: false,
+                    options: vec![],
+                });
+                Self::push_layout_rows(&mut rows, def);
+            }
+        }
+
+        // ── Bindings (all kinds) ──────────────────────────────
+        Self::push_binding_rows(&mut rows, doc, def, schema);
+
+        // ── Records (List + static source + schema) ───────────
+        if matches!(def.kind, FacetKind::List) {
+            Self::push_record_rows(&mut rows, def, schema);
+        }
+
+        rows
+    }
+
+    fn push_data_source_rows(rows: &mut Vec<FieldRowData>, def: &prism_builder::FacetDef) {
         let (source_kind, item_count_label, source_id, filter_val, sort_val) = match &def.data {
             FacetDataSource::Static { items, records } => {
                 let count = if records.is_empty() {
@@ -879,65 +1101,17 @@ impl PropertiesPanel {
             }
         };
 
-        let direction_label = match def.layout.direction {
-            FacetDirection::Row => "row",
-            FacetDirection::Column => "column",
-        };
-
-        // Schema selection dropdown
-        let mut schema_options: Vec<String> = vec!["(none)".into()];
-        for sid in doc.facet_schemas.keys() {
-            schema_options.push(sid.clone());
-        }
-        let schema_value = def
-            .schema_id
-            .as_deref()
-            .unwrap_or("(none)")
-            .to_string();
-
-        // Build list of available prefab IDs
-        let mut prefab_options: Vec<String> = vec!["card".into()];
-        for id in doc.prefabs.keys() {
-            if id != "card" {
-                prefab_options.push(id.clone());
-            }
-        }
-
-        let mut rows = vec![
-            FieldRowData {
-                key: "facet.schema_id".into(),
-                label: "Schema".into(),
-                kind: "select".into(),
-                value: schema_value,
-                required: false,
-                min: 0.0,
-                max: 0.0,
-                has_bounds: false,
-                options: schema_options,
-            },
-            FieldRowData {
-                key: "facet.prefab_id".into(),
-                label: "Prefab template".into(),
-                kind: "select".into(),
-                value: def.prefab_id.clone(),
-                required: true,
-                min: 0.0,
-                max: 0.0,
-                has_bounds: false,
-                options: prefab_options,
-            },
-            FieldRowData {
-                key: "facet.source_kind".into(),
-                label: "Data source".into(),
-                kind: "select".into(),
-                value: source_kind.to_string(),
-                required: false,
-                min: 0.0,
-                max: 0.0,
-                has_bounds: false,
-                options: vec!["static".into(), "resource".into(), "query".into()],
-            },
-        ];
+        rows.push(FieldRowData {
+            key: "facet.source_kind".into(),
+            label: "Data source".into(),
+            kind: "select".into(),
+            value: source_kind.to_string(),
+            required: false,
+            min: 0.0,
+            max: 0.0,
+            has_bounds: false,
+            options: vec!["static".into(), "resource".into(), "query".into()],
+        });
 
         if source_kind != "static" {
             rows.push(FieldRowData {
@@ -978,6 +1152,24 @@ impl PropertiesPanel {
             });
         }
 
+        rows.push(FieldRowData {
+            key: "facet.item_count".into(),
+            label: "Items".into(),
+            kind: "text".into(),
+            value: item_count_label,
+            required: false,
+            min: 0.0,
+            max: 0.0,
+            has_bounds: false,
+            options: vec![],
+        });
+    }
+
+    fn push_layout_rows(rows: &mut Vec<FieldRowData>, def: &prism_builder::FacetDef) {
+        let direction_label = match def.layout.direction {
+            FacetDirection::Row => "row",
+            FacetDirection::Column => "column",
+        };
         rows.extend([
             FieldRowData {
                 key: "facet.direction".into(),
@@ -1001,21 +1193,15 @@ impl PropertiesPanel {
                 has_bounds: true,
                 options: vec![],
             },
-            FieldRowData {
-                key: "facet.item_count".into(),
-                label: "Items".into(),
-                kind: "text".into(),
-                value: item_count_label,
-                required: false,
-                min: 0.0,
-                max: 0.0,
-                has_bounds: false,
-                options: vec![],
-            },
         ]);
+    }
 
-        // Bindings: one row per exposed slot on the referenced prefab.
-        // When a schema is set, binding values are dropdowns of schema field keys.
+    fn push_binding_rows(
+        rows: &mut Vec<FieldRowData>,
+        doc: &BuilderDocument,
+        def: &prism_builder::FacetDef,
+        schema: Option<&prism_builder::FacetSchema>,
+    ) {
         let prefab_exposed = if def.prefab_id == "card" {
             doc.prefabs
                 .get("card")
@@ -1027,10 +1213,96 @@ impl PropertiesPanel {
                 .map(|p| p.exposed.clone())
                 .unwrap_or_default()
         };
-        if !prefab_exposed.is_empty() {
+        if prefab_exposed.is_empty() {
+            return;
+        }
+
+        rows.push(FieldRowData {
+            key: "facet.bindings_header".into(),
+            label: "── Bindings ──".into(),
+            kind: "text".into(),
+            value: String::new(),
+            required: false,
+            min: 0.0,
+            max: 0.0,
+            has_bounds: false,
+            options: vec![],
+        });
+
+        let schema_field_options: Vec<String> = if let Some(s) = schema {
+            let mut opts = vec!["".into()];
+            opts.extend(s.fields.iter().map(|f| f.key.clone()));
+            opts
+        } else {
+            vec![]
+        };
+
+        for slot in &prefab_exposed {
+            let bound_field = def
+                .bindings
+                .iter()
+                .find(|b| b.slot_key == slot.key)
+                .map(|b| b.item_field.clone())
+                .unwrap_or_default();
+
+            if schema_field_options.is_empty() {
+                rows.push(FieldRowData {
+                    key: format!("facet.binding.{}", slot.key),
+                    label: format!("Bind: {}", slot.key),
+                    kind: "text".into(),
+                    value: bound_field,
+                    required: false,
+                    min: 0.0,
+                    max: 0.0,
+                    has_bounds: false,
+                    options: vec![],
+                });
+            } else {
+                rows.push(FieldRowData {
+                    key: format!("facet.binding.{}", slot.key),
+                    label: format!("Bind: {}", slot.key),
+                    kind: "select".into(),
+                    value: bound_field,
+                    required: false,
+                    min: 0.0,
+                    max: 0.0,
+                    has_bounds: false,
+                    options: schema_field_options.clone(),
+                });
+            }
+        }
+    }
+
+    fn push_record_rows(
+        rows: &mut Vec<FieldRowData>,
+        def: &prism_builder::FacetDef,
+        schema: Option<&prism_builder::FacetSchema>,
+    ) {
+        let FacetDataSource::Static { records, .. } = &def.data else {
+            return;
+        };
+        let Some(s) = schema else {
+            return;
+        };
+        if records.is_empty() {
+            return;
+        }
+
+        rows.push(FieldRowData {
+            key: "facet.records_header".into(),
+            label: "── Records ──".into(),
+            kind: "text".into(),
+            value: String::new(),
+            required: false,
+            min: 0.0,
+            max: 0.0,
+            has_bounds: false,
+            options: vec![],
+        });
+        for (ri, rec) in records.iter().enumerate() {
             rows.push(FieldRowData {
-                key: "facet.bindings_header".into(),
-                label: "── Bindings ──".into(),
+                key: format!("facet.record_header.{ri}"),
+                label: format!("Record {} ({})", ri + 1, rec.id),
                 kind: "text".into(),
                 value: String::new(),
                 required: false,
@@ -1039,157 +1311,64 @@ impl PropertiesPanel {
                 has_bounds: false,
                 options: vec![],
             });
-
-            let schema_field_options: Vec<String> = if let Some(s) = &schema {
-                let mut opts = vec!["".into()];
-                opts.extend(s.fields.iter().map(|f| f.key.clone()));
-                opts
-            } else {
-                vec![]
-            };
-
-            for slot in &prefab_exposed {
-                let bound_field = def
-                    .bindings
-                    .iter()
-                    .find(|b| b.slot_key == slot.key)
-                    .map(|b| b.item_field.clone())
+            for field in &s.fields {
+                if matches!(field.kind, SchemaFieldKind::Calculation { .. }) {
+                    continue;
+                }
+                let val = rec
+                    .fields
+                    .get(&field.key)
+                    .map(|v| match v {
+                        serde_json::Value::String(s) => s.clone(),
+                        serde_json::Value::Null => String::new(),
+                        other => other.to_string(),
+                    })
                     .unwrap_or_default();
 
-                if schema_field_options.is_empty() {
-                    rows.push(FieldRowData {
-                        key: format!("facet.binding.{}", slot.key),
-                        label: format!("Bind: {}", slot.key),
-                        kind: "text".into(),
-                        value: bound_field,
-                        required: false,
-                        min: 0.0,
-                        max: 0.0,
-                        has_bounds: false,
-                        options: vec![],
-                    });
-                } else {
-                    rows.push(FieldRowData {
-                        key: format!("facet.binding.{}", slot.key),
-                        label: format!("Bind: {}", slot.key),
-                        kind: "select".into(),
-                        value: bound_field,
-                        required: false,
-                        min: 0.0,
-                        max: 0.0,
-                        has_bounds: false,
-                        options: schema_field_options.clone(),
-                    });
-                }
+                let (kind, opts, min, max, has_bounds) = match &field.kind {
+                    SchemaFieldKind::Text
+                    | SchemaFieldKind::Date
+                    | SchemaFieldKind::Url
+                    | SchemaFieldKind::Image => ("text", vec![], 0.0, 0.0, false),
+                    SchemaFieldKind::Number { min: lo, max: hi } => (
+                        "number",
+                        vec![],
+                        lo.unwrap_or(0.0) as f32,
+                        hi.unwrap_or(0.0) as f32,
+                        lo.is_some() || hi.is_some(),
+                    ),
+                    SchemaFieldKind::Integer { min: lo, max: hi } => (
+                        "integer",
+                        vec![],
+                        lo.unwrap_or(0) as f32,
+                        hi.unwrap_or(0) as f32,
+                        lo.is_some() || hi.is_some(),
+                    ),
+                    SchemaFieldKind::Boolean => ("boolean", vec![], 0.0, 0.0, false),
+                    SchemaFieldKind::Color => ("color", vec![], 0.0, 0.0, false),
+                    SchemaFieldKind::Select { options } => (
+                        "select",
+                        options.iter().map(|o| o.value.clone()).collect(),
+                        0.0,
+                        0.0,
+                        false,
+                    ),
+                    SchemaFieldKind::Calculation { .. } => unreachable!(),
+                };
+
+                rows.push(FieldRowData {
+                    key: format!("facet.record.{}.{}", ri, field.key),
+                    label: field.label.clone(),
+                    kind: kind.into(),
+                    value: val,
+                    required: field.required,
+                    min,
+                    max,
+                    has_bounds,
+                    options: opts,
+                });
             }
         }
-
-        // Records: when static source + schema, show structured record editing.
-        if source_kind == "static" {
-            if let Some(s) = &schema {
-                if let FacetDataSource::Static { records, .. } = &def.data {
-                    if !records.is_empty() {
-                        rows.push(FieldRowData {
-                            key: "facet.records_header".into(),
-                            label: "── Records ──".into(),
-                            kind: "text".into(),
-                            value: String::new(),
-                            required: false,
-                            min: 0.0,
-                            max: 0.0,
-                            has_bounds: false,
-                            options: vec![],
-                        });
-                        for (ri, rec) in records.iter().enumerate() {
-                            rows.push(FieldRowData {
-                                key: format!("facet.record_header.{ri}"),
-                                label: format!("Record {} ({})", ri + 1, rec.id),
-                                kind: "text".into(),
-                                value: String::new(),
-                                required: false,
-                                min: 0.0,
-                                max: 0.0,
-                                has_bounds: false,
-                                options: vec![],
-                            });
-                            for field in &s.fields {
-                                if matches!(field.kind, SchemaFieldKind::Calculation { .. }) {
-                                    continue;
-                                }
-                                let val = rec
-                                    .fields
-                                    .get(&field.key)
-                                    .map(|v| match v {
-                                        serde_json::Value::String(s) => s.clone(),
-                                        serde_json::Value::Null => String::new(),
-                                        other => other.to_string(),
-                                    })
-                                    .unwrap_or_default();
-
-                                let (kind, opts, min, max, has_bounds) = match &field.kind {
-                                    SchemaFieldKind::Text
-                                    | SchemaFieldKind::Date
-                                    | SchemaFieldKind::Url
-                                    | SchemaFieldKind::Image => {
-                                        ("text", vec![], 0.0, 0.0, false)
-                                    }
-                                    SchemaFieldKind::Number {
-                                        min: lo,
-                                        max: hi,
-                                    } => (
-                                        "number",
-                                        vec![],
-                                        lo.unwrap_or(0.0) as f32,
-                                        hi.unwrap_or(0.0) as f32,
-                                        lo.is_some() || hi.is_some(),
-                                    ),
-                                    SchemaFieldKind::Integer {
-                                        min: lo,
-                                        max: hi,
-                                    } => (
-                                        "integer",
-                                        vec![],
-                                        lo.unwrap_or(0) as f32,
-                                        hi.unwrap_or(0) as f32,
-                                        lo.is_some() || hi.is_some(),
-                                    ),
-                                    SchemaFieldKind::Boolean => {
-                                        ("boolean", vec![], 0.0, 0.0, false)
-                                    }
-                                    SchemaFieldKind::Color => {
-                                        ("color", vec![], 0.0, 0.0, false)
-                                    }
-                                    SchemaFieldKind::Select { options } => (
-                                        "select",
-                                        options.iter().map(|o| o.value.clone()).collect(),
-                                        0.0,
-                                        0.0,
-                                        false,
-                                    ),
-                                    SchemaFieldKind::Calculation { .. } => {
-                                        unreachable!()
-                                    }
-                                };
-
-                                rows.push(FieldRowData {
-                                    key: format!("facet.record.{}.{}", ri, field.key),
-                                    label: field.label.clone(),
-                                    kind: kind.into(),
-                                    value: val,
-                                    required: field.required,
-                                    min,
-                                    max,
-                                    has_bounds,
-                                    options: opts,
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        rows
     }
 
     pub fn rows(
@@ -2025,7 +2204,7 @@ mod tests {
 
     #[test]
     fn facet_rows_show_prefab_select_and_bindings() {
-        use prism_builder::facet::{FacetDataSource, FacetDef, FacetLayout};
+        use prism_builder::facet::{FacetDataSource, FacetDef, FacetKind, FacetLayout};
 
         let mut doc = BuilderDocument::default();
         let facet_id = "facet:f1".to_string();
@@ -2038,6 +2217,7 @@ mod tests {
                 id: facet_id.clone(),
                 label: "Test".into(),
                 description: String::new(),
+                kind: FacetKind::List,
                 schema_id: None,
                 prefab_id: "card".into(),
                 data: FacetDataSource::Static {
@@ -2046,6 +2226,7 @@ mod tests {
                 },
                 bindings: vec![],
                 layout: FacetLayout::default(),
+                resolved_data: None,
             },
         );
         let node = Node {

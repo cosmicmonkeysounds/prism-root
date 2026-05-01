@@ -112,7 +112,16 @@ pub struct SchemaListRow {
 }
 
 const FIELD_KIND_OPTIONS: &[&str] = &[
-    "text", "number", "integer", "boolean", "date", "color", "image", "url", "select",
+    "text",
+    "number",
+    "integer",
+    "boolean",
+    "date",
+    "color",
+    "image",
+    "url",
+    "select",
+    "calculation",
 ];
 
 fn kind_to_string(kind: &SchemaFieldKind) -> String {
@@ -147,6 +156,9 @@ pub fn kind_from_string(s: &str) -> SchemaFieldKind {
         "image" => SchemaFieldKind::Image,
         "url" => SchemaFieldKind::Url,
         "select" => SchemaFieldKind::Select { options: vec![] },
+        "calculation" => SchemaFieldKind::Calculation {
+            formula: String::new(),
+        },
         _ => SchemaFieldKind::Text,
     }
 }
@@ -242,7 +254,10 @@ mod tests {
     fn apply_schema_edit_changes_field_kind() {
         let mut schema = test_schema();
         apply_schema_edit(&mut schema, "field.0.kind", "number");
-        assert!(matches!(schema.fields[0].kind, SchemaFieldKind::Number { .. }));
+        assert!(matches!(
+            schema.fields[0].kind,
+            SchemaFieldKind::Number { .. }
+        ));
     }
 
     #[test]
@@ -265,8 +280,7 @@ mod tests {
     #[test]
     fn schema_list_rows_returns_all_schemas() {
         let mut doc = BuilderDocument::default();
-        doc.facet_schemas
-            .insert("s1".into(), test_schema());
+        doc.facet_schemas.insert("s1".into(), test_schema());
         let rows = SchemaDesignerPanel::schema_list_rows(&doc);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id, "schema:test");

@@ -1,8 +1,8 @@
-//! Facets — programmatic list generators backed by a prefab template.
+//! Facets — data-driven content generators backed by a prefab template.
 //!
-//! A `FacetDef` pairs a [`PrefabDef`] template with a data source and a
-//! set of bindings that map item fields to prefab exposed slots. At render
-//! time the facet expands into one prefab instance per data item.
+//! A `FacetDef` pairs a [`PrefabDef`] template with a [`FacetKind`] that
+//! determines how data is produced. Each kind resolves to `Vec<Value>`,
+//! which feeds into the standard prefab expansion pipeline (clone + bind).
 //!
 //! See `docs/dev/facets.md` for the full design rationale.
 
@@ -17,7 +17,7 @@ use crate::document::Node;
 use crate::html::Html;
 use crate::html_block::{HtmlBlock, HtmlRenderContext};
 use crate::prefab::{apply_prop_to_node, PrefabDef};
-use crate::registry::{FieldSpec, NumericBounds};
+use crate::registry::FieldSpec;
 use crate::resource::ResourceId;
 use crate::signal::{common_signals, SignalDef};
 use crate::slint_source::SlintEmitter;
@@ -47,9 +47,10 @@ pub struct SchemaField {
     pub default_value: Option<Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum SchemaFieldKind {
+    #[default]
     Text,
     Number {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -74,12 +75,6 @@ pub enum SchemaFieldKind {
     Calculation {
         formula: String,
     },
-}
-
-impl Default for SchemaFieldKind {
-    fn default() -> Self {
-        Self::Text
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -223,6 +218,221 @@ fn default_for_kind(kind: &SchemaFieldKind) -> Value {
     }
 }
 
+// ── Facet kinds ──────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+pub enum FacetKind {
+    #[default]
+    List,
+    ObjectQuery {
+        #[serde(default)]
+        entity_type: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        filter: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sort_by: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<usize>,
+    },
+    Script {
+        #[serde(default)]
+        source: String,
+        #[serde(default)]
+        language: ScriptLanguage,
+    },
+    Aggregate {
+        #[serde(default)]
+        operation: AggregateOp,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        field: Option<String>,
+    },
+    Lookup {
+        #[serde(default)]
+        source_entity: String,
+        #[serde(default)]
+        edge_type: String,
+        #[serde(default)]
+        target_entity: String,
+    },
+}
+
+impl FacetKind {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::List => "List",
+            Self::ObjectQuery { .. } => "Object Query",
+            Self::Script { .. } => "Script",
+            Self::Aggregate { .. } => "Aggregate",
+            Self::Lookup { .. } => "Lookup",
+        }
+    }
+
+    pub fn tag(&self) -> &'static str {
+        match self {
+            Self::List => "list",
+            Self::ObjectQuery { .. } => "object-query",
+            Self::Script { .. } => "script",
+            Self::Aggregate { .. } => "aggregate",
+            Self::Lookup { .. } => "lookup",
+        }
+    }
+
+    pub fn from_tag(tag: &str) -> Self {
+        match tag {
+            "object-query" => Self::ObjectQuery {
+                entity_type: String::new(),
+                filter: None,
+                sort_by: None,
+                limit: None,
+            },
+            "script" => Self::Script {
+                source: String::new(),
+                language: ScriptLanguage::default(),
+            },
+            "aggregate" => Self::Aggregate {
+                operation: AggregateOp::default(),
+                field: None,
+            },
+            "lookup" => Self::Lookup {
+                source_entity: String::new(),
+                edge_type: String::new(),
+                target_entity: String::new(),
+            },
+            _ => Self::List,
+        }
+    }
+}
+
+pub const FACET_KIND_TAGS: &[&str] = &["list", "object-query", "script", "aggregate", "lookup"];
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ScriptLanguage {
+    #[default]
+    Luau,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum AggregateOp {
+    #[default]
+    Count,
+    Sum,
+    Min,
+    Max,
+    Avg,
+    Join {
+        #[serde(default)]
+        separator: String,
+    },
+}
+
+impl AggregateOp {
+    pub fn tag(&self) -> &'static str {
+        match self {
+            Self::Count => "count",
+            Self::Sum => "sum",
+            Self::Min => "min",
+            Self::Max => "max",
+            Self::Avg => "avg",
+            Self::Join { .. } => "join",
+        }
+    }
+
+    pub fn from_tag(tag: &str) -> Self {
+        match tag {
+            "sum" => Self::Sum,
+            "min" => Self::Min,
+            "max" => Self::Max,
+            "avg" => Self::Avg,
+            "join" => Self::Join {
+                separator: ", ".into(),
+            },
+            _ => Self::Count,
+        }
+    }
+}
+
+pub const AGGREGATE_OP_TAGS: &[&str] = &["count", "sum", "min", "max", "avg", "join"];
+
+/// Apply an aggregate operation to a list of values.
+pub fn apply_aggregate(items: &[Value], op: &AggregateOp, field: Option<&str>) -> Value {
+    match op {
+        AggregateOp::Count => Value::from(items.len()),
+        AggregateOp::Sum => {
+            let sum: f64 = items
+                .iter()
+                .filter_map(|item| {
+                    field
+                        .and_then(|f| get_field(item, f))
+                        .and_then(|v| v.as_f64())
+                })
+                .sum();
+            serde_json::json!(sum)
+        }
+        AggregateOp::Min => {
+            let min = items
+                .iter()
+                .filter_map(|item| {
+                    field
+                        .and_then(|f| get_field(item, f))
+                        .and_then(|v| v.as_f64())
+                })
+                .fold(f64::INFINITY, f64::min);
+            if min.is_infinite() {
+                Value::Null
+            } else {
+                serde_json::json!(min)
+            }
+        }
+        AggregateOp::Max => {
+            let max = items
+                .iter()
+                .filter_map(|item| {
+                    field
+                        .and_then(|f| get_field(item, f))
+                        .and_then(|v| v.as_f64())
+                })
+                .fold(f64::NEG_INFINITY, f64::max);
+            if max.is_infinite() {
+                Value::Null
+            } else {
+                serde_json::json!(max)
+            }
+        }
+        AggregateOp::Avg => {
+            let mut count = 0usize;
+            let sum: f64 = items
+                .iter()
+                .filter_map(|item| {
+                    field
+                        .and_then(|f| get_field(item, f))
+                        .and_then(|v| v.as_f64())
+                })
+                .inspect(|_| count += 1)
+                .sum();
+            if count == 0 {
+                Value::Null
+            } else {
+                serde_json::json!(sum / count as f64)
+            }
+        }
+        AggregateOp::Join { separator } => {
+            let parts: Vec<String> = items
+                .iter()
+                .filter_map(|item| {
+                    field.and_then(|f| get_field(item, f)).map(|v| match v {
+                        Value::String(s) => s,
+                        other => other.to_string(),
+                    })
+                })
+                .collect();
+            Value::String(parts.join(separator))
+        }
+    }
+}
+
 // ── Data types ────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -354,6 +564,8 @@ pub struct FacetDef {
     pub label: String,
     #[serde(default)]
     pub description: String,
+    #[serde(default)]
+    pub kind: FacetKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schema_id: Option<FacetSchemaId>,
     /// ID of the `PrefabDef` used as the item template.
@@ -364,12 +576,46 @@ pub struct FacetDef {
     pub bindings: Vec<FacetBinding>,
     #[serde(default)]
     pub layout: FacetLayout,
+    /// Pre-resolved data from the shell layer. ObjectQuery, Script, and
+    /// Lookup kinds populate this before render so the render walker
+    /// doesn't need access to the daemon or graph store.
+    #[serde(skip)]
+    pub resolved_data: Option<Vec<Value>>,
+}
+
+/// Result of resolving a facet's data. `Items` produces N prefab instances;
+/// `Single` produces one instance with the aggregate value bound.
+pub enum ResolvedFacetData {
+    Items(Vec<Value>),
+    Single(Value),
+}
+
+impl FacetDef {
+    /// Resolve this facet's data items based on its kind.
+    /// ObjectQuery, Script, and Lookup use `resolved_data` if the shell
+    /// pre-populated it; otherwise they return empty.
+    pub fn resolve_items(
+        &self,
+        resources: &IndexMap<ResourceId, crate::resource::ResourceDef>,
+    ) -> ResolvedFacetData {
+        match &self.kind {
+            FacetKind::List => ResolvedFacetData::Items(self.data.resolve(resources)),
+            FacetKind::ObjectQuery { .. } | FacetKind::Script { .. } | FacetKind::Lookup { .. } => {
+                ResolvedFacetData::Items(self.resolved_data.clone().unwrap_or_default())
+            }
+            FacetKind::Aggregate { operation, field } => {
+                let items = self.data.resolve(resources);
+                let result = apply_aggregate(&items, operation, field.as_deref());
+                ResolvedFacetData::Single(result)
+            }
+        }
+    }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /// Dot-notation field access into a JSON value (e.g. `"meta.title"`).
-fn get_field(item: &Value, path: &str) -> Option<Value> {
+pub fn get_field(item: &Value, path: &str) -> Option<Value> {
     let mut current = item;
     for segment in path.split('.') {
         current = current.get(segment)?;
@@ -378,7 +624,7 @@ fn get_field(item: &Value, path: &str) -> Option<Value> {
 }
 
 /// Stringify a JSON value for stable string-based sorting.
-fn value_sort_key(v: Value) -> String {
+pub fn value_sort_key(v: Value) -> String {
     match v {
         Value::String(s) => s,
         Value::Number(n) => {
@@ -400,7 +646,7 @@ fn value_sort_key(v: Value) -> String {
 /// - `"field"` — truthy check (non-null, non-empty string, non-false, non-zero)
 /// - `"field == value"` — equality (string comparison after serialising both sides)
 /// - `"field != value"` — inequality
-fn evaluate_filter(item: &Value, expr: &str) -> bool {
+pub fn evaluate_filter(item: &Value, expr: &str) -> bool {
     let expr = expr.trim();
     if let Some((lhs, rhs)) = expr.split_once("!=") {
         let field_val = get_field(item, lhs.trim())
@@ -508,10 +754,28 @@ impl Component for FacetComponent {
             RenderError::Failed(format!("prefab '{}' not found", facet.prefab_id))
         })?;
 
-        let mut items = facet.data.resolve(ctx.resources);
-        if let Some(max) = props.get("max_items").and_then(|v| v.as_u64()) {
-            items.truncate(max as usize);
-        }
+        let resolved = facet.resolve_items(ctx.resources);
+        let items = match resolved {
+            ResolvedFacetData::Items(mut items) => {
+                if let Some(max) = props.get("max_items").and_then(|v| v.as_u64()) {
+                    items.truncate(max as usize);
+                }
+                items
+            }
+            ResolvedFacetData::Single(val) => {
+                let mut root = prefab.root.clone();
+                if let Some(first_binding) = facet.bindings.first() {
+                    if let Some(slot) = prefab
+                        .exposed
+                        .iter()
+                        .find(|s| s.key == first_binding.slot_key)
+                    {
+                        apply_prop_to_node(&mut root, &slot.target_node, &slot.target_prop, val);
+                    }
+                }
+                return ctx.render_child(&root, out);
+            }
+        };
 
         let layout_tag = match facet.layout.direction {
             FacetDirection::Row => "HorizontalLayout",
@@ -582,15 +846,32 @@ impl HtmlBlock for FacetHtmlBlock {
             RenderError::Failed(format!("prefab '{}' not found", facet.prefab_id))
         })?;
 
-        let mut items = facet.data.resolve(ctx.resources);
-        if let Some(max) = props.get("max_items").and_then(|v| v.as_u64()) {
-            items.truncate(max as usize);
-        }
-
-        let tag = match facet.layout.direction {
-            FacetDirection::Row => "div",
-            FacetDirection::Column => "div",
+        let resolved = facet.resolve_items(ctx.resources);
+        let items = match resolved {
+            ResolvedFacetData::Items(mut items) => {
+                if let Some(max) = props.get("max_items").and_then(|v| v.as_u64()) {
+                    items.truncate(max as usize);
+                }
+                items
+            }
+            ResolvedFacetData::Single(val) => {
+                let mut root = prefab.root.clone();
+                if let Some(first_binding) = facet.bindings.first() {
+                    if let Some(slot) = prefab
+                        .exposed
+                        .iter()
+                        .find(|s| s.key == first_binding.slot_key)
+                    {
+                        apply_prop_to_node(&mut root, &slot.target_node, &slot.target_prop, val);
+                    }
+                }
+                out.open_attrs("div", &[("data-facet", facet_id)]);
+                ctx.render_child(&root, out)?;
+                out.close("div");
+                return Ok(());
+            }
         };
+
         let style = match facet.layout.direction {
             FacetDirection::Row => format!(
                 "display:flex;flex-direction:row;gap:{}px",
@@ -602,28 +883,18 @@ impl HtmlBlock for FacetHtmlBlock {
             ),
         };
 
-        out.open_attrs(tag, &[("style", style.as_str()), ("data-facet", facet_id)]);
+        out.open_attrs(
+            "div",
+            &[("style", style.as_str()), ("data-facet", facet_id)],
+        );
         for item in &items {
             let mut root = prefab.root.clone();
             apply_bindings(&mut root, prefab, &facet.bindings, item);
             ctx.render_child(&root, out)?;
         }
-        out.close(tag);
+        out.close("div");
         Ok(())
     }
-}
-
-// ── Schema helper (also registered in schemas.rs) ────────────────────────────
-
-pub fn facet_schema() -> Vec<FieldSpec> {
-    vec![
-        FieldSpec::text("facet_id", "Facet ID").required(),
-        FieldSpec::integer(
-            "max_items",
-            "Max items",
-            NumericBounds::min_max(1.0, 10_000.0),
-        ),
-    ]
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -665,6 +936,7 @@ mod tests {
             id: "facet:heroes".into(),
             label: "Heroes".into(),
             description: String::new(),
+            kind: FacetKind::List,
             schema_id: None,
             prefab_id: "prefab:hero".into(),
             data: FacetDataSource::Static {
@@ -680,6 +952,7 @@ mod tests {
                 gap: 8.0,
                 ..Default::default()
             },
+            resolved_data: None,
         }
     }
 
@@ -808,7 +1081,7 @@ mod tests {
 
     #[test]
     fn facet_schema_has_required_facet_id() {
-        let schema = facet_schema();
+        let schema = crate::schemas::facet();
         let facet_id_spec = schema.iter().find(|s| s.key == "facet_id").unwrap();
         assert!(facet_id_spec.required);
     }
@@ -964,5 +1237,407 @@ mod tests {
     fn evaluate_filter_truthy_missing_field_is_false() {
         let item = json!({ "other": 1 });
         assert!(!evaluate_filter(&item, "name"));
+    }
+
+    // ── Schema tests ─────────────────────────────────────────────
+
+    fn test_schema() -> FacetSchema {
+        FacetSchema {
+            id: "schema:test".into(),
+            label: "Test Schema".into(),
+            description: String::new(),
+            fields: vec![
+                SchemaField {
+                    key: "title".into(),
+                    label: "Title".into(),
+                    kind: SchemaFieldKind::Text,
+                    required: true,
+                    default_value: None,
+                },
+                SchemaField {
+                    key: "count".into(),
+                    label: "Count".into(),
+                    kind: SchemaFieldKind::Integer {
+                        min: Some(0),
+                        max: Some(100),
+                    },
+                    required: false,
+                    default_value: Some(json!(0)),
+                },
+                SchemaField {
+                    key: "status".into(),
+                    label: "Status".into(),
+                    kind: SchemaFieldKind::Select {
+                        options: vec![
+                            SchemaSelectOption {
+                                value: "active".into(),
+                                label: "Active".into(),
+                            },
+                            SchemaSelectOption {
+                                value: "archived".into(),
+                                label: "Archived".into(),
+                            },
+                        ],
+                    },
+                    required: false,
+                    default_value: None,
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn schema_serde_round_trip() {
+        let schema = test_schema();
+        let json = serde_json::to_string(&schema).unwrap();
+        let back: FacetSchema = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.id, "schema:test");
+        assert_eq!(back.fields.len(), 3);
+    }
+
+    #[test]
+    fn schema_default_record_has_all_fields() {
+        let schema = test_schema();
+        let rec = schema.default_record("rec:1");
+        assert_eq!(rec.id, "rec:1");
+        assert_eq!(rec.fields.len(), 3);
+        assert_eq!(rec.fields["title"], json!(""));
+        assert_eq!(rec.fields["count"], json!(0));
+        assert_eq!(rec.fields["status"], json!("active"));
+    }
+
+    #[test]
+    fn schema_validate_record_catches_missing_required() {
+        let schema = test_schema();
+        let rec = FacetRecord {
+            id: "rec:1".into(),
+            fields: IndexMap::new(),
+        };
+        let errors = schema.validate_record(&rec);
+        assert!(errors.iter().any(|e| e.field == "title"));
+    }
+
+    #[test]
+    fn schema_validate_record_catches_out_of_bounds() {
+        let schema = test_schema();
+        let mut rec = schema.default_record("rec:1");
+        rec.fields.insert("count".into(), json!(200));
+        let errors = schema.validate_record(&rec);
+        assert!(errors.iter().any(|e| e.field == "count"));
+    }
+
+    #[test]
+    fn schema_validate_record_catches_invalid_select() {
+        let schema = test_schema();
+        let mut rec = schema.default_record("rec:1");
+        rec.fields.insert("title".into(), json!("ok"));
+        rec.fields.insert("status".into(), json!("nonexistent"));
+        let errors = schema.validate_record(&rec);
+        assert!(errors.iter().any(|e| e.field == "status"));
+    }
+
+    #[test]
+    fn schema_validate_record_passes_valid() {
+        let schema = test_schema();
+        let mut rec = schema.default_record("rec:1");
+        rec.fields.insert("title".into(), json!("My Item"));
+        rec.fields.insert("count".into(), json!(42));
+        rec.fields.insert("status".into(), json!("active"));
+        let errors = schema.validate_record(&rec);
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn facet_record_to_value() {
+        let mut fields = IndexMap::new();
+        fields.insert("name".into(), json!("Alpha"));
+        fields.insert("age".into(), json!(25));
+        let rec = FacetRecord {
+            id: "rec:1".into(),
+            fields,
+        };
+        let val = rec.to_value();
+        assert_eq!(val["name"], "Alpha");
+        assert_eq!(val["age"], 25);
+    }
+
+    #[test]
+    fn static_source_prefers_records_over_items() {
+        let resources = IndexMap::new();
+        let mut fields = IndexMap::new();
+        fields.insert("name".into(), json!("FromRecord"));
+        let src = FacetDataSource::Static {
+            items: vec![json!({"name": "FromItem"})],
+            records: vec![FacetRecord {
+                id: "r1".into(),
+                fields,
+            }],
+        };
+        let resolved = src.resolve(&resources);
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0]["name"], "FromRecord");
+    }
+
+    #[test]
+    fn facet_def_schema_id_round_trips() {
+        let def = FacetDef {
+            id: "facet:test".into(),
+            label: "Test".into(),
+            description: String::new(),
+            kind: FacetKind::List,
+            schema_id: Some("schema:projects".into()),
+            prefab_id: "card".into(),
+            data: FacetDataSource::default(),
+            bindings: vec![],
+            layout: FacetLayout::default(),
+            resolved_data: None,
+        };
+        let json = serde_json::to_string(&def).unwrap();
+        let back: FacetDef = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.schema_id, Some("schema:projects".into()));
+    }
+
+    #[test]
+    fn facet_def_schema_id_none_omitted_in_json() {
+        let def = FacetDef {
+            id: "facet:test".into(),
+            label: "Test".into(),
+            description: String::new(),
+            kind: FacetKind::List,
+            schema_id: None,
+            prefab_id: "card".into(),
+            data: FacetDataSource::default(),
+            bindings: vec![],
+            layout: FacetLayout::default(),
+            resolved_data: None,
+        };
+        let json = serde_json::to_string(&def).unwrap();
+        assert!(!json.contains("schema_id"));
+    }
+
+    #[test]
+    fn facet_kind_default_is_list() {
+        let kind = FacetKind::default();
+        assert!(matches!(kind, FacetKind::List));
+    }
+
+    #[test]
+    fn facet_kind_serde_list() {
+        let def = sample_facet();
+        let json = serde_json::to_string(&def).unwrap();
+        let back: FacetDef = serde_json::from_str(&json).unwrap();
+        assert!(matches!(back.kind, FacetKind::List));
+    }
+
+    #[test]
+    fn facet_kind_serde_object_query() {
+        let mut def = sample_facet();
+        def.kind = FacetKind::ObjectQuery {
+            entity_type: "BlogPost".into(),
+            filter: Some("status == published".into()),
+            sort_by: Some("-created_at".into()),
+            limit: Some(10),
+        };
+        let json = serde_json::to_string(&def).unwrap();
+        let back: FacetDef = serde_json::from_str(&json).unwrap();
+        match &back.kind {
+            FacetKind::ObjectQuery {
+                entity_type,
+                filter,
+                sort_by,
+                limit,
+            } => {
+                assert_eq!(entity_type, "BlogPost");
+                assert_eq!(filter.as_deref(), Some("status == published"));
+                assert_eq!(sort_by.as_deref(), Some("-created_at"));
+                assert_eq!(*limit, Some(10));
+            }
+            _ => panic!("expected ObjectQuery"),
+        }
+    }
+
+    #[test]
+    fn facet_kind_serde_script() {
+        let mut def = sample_facet();
+        def.kind = FacetKind::Script {
+            source: "return {}".into(),
+            language: ScriptLanguage::Luau,
+        };
+        let json = serde_json::to_string(&def).unwrap();
+        let back: FacetDef = serde_json::from_str(&json).unwrap();
+        match &back.kind {
+            FacetKind::Script { source, language } => {
+                assert_eq!(source, "return {}");
+                assert_eq!(*language, ScriptLanguage::Luau);
+            }
+            _ => panic!("expected Script"),
+        }
+    }
+
+    #[test]
+    fn facet_kind_serde_aggregate() {
+        let mut def = sample_facet();
+        def.kind = FacetKind::Aggregate {
+            operation: AggregateOp::Sum,
+            field: Some("price".into()),
+        };
+        let json = serde_json::to_string(&def).unwrap();
+        let back: FacetDef = serde_json::from_str(&json).unwrap();
+        match &back.kind {
+            FacetKind::Aggregate { operation, field } => {
+                assert!(matches!(operation, AggregateOp::Sum));
+                assert_eq!(field.as_deref(), Some("price"));
+            }
+            _ => panic!("expected Aggregate"),
+        }
+    }
+
+    #[test]
+    fn facet_kind_serde_lookup() {
+        let mut def = sample_facet();
+        def.kind = FacetKind::Lookup {
+            source_entity: "Project".into(),
+            edge_type: "has_member".into(),
+            target_entity: "User".into(),
+        };
+        let json = serde_json::to_string(&def).unwrap();
+        let back: FacetDef = serde_json::from_str(&json).unwrap();
+        match &back.kind {
+            FacetKind::Lookup {
+                source_entity,
+                edge_type,
+                target_entity,
+            } => {
+                assert_eq!(source_entity, "Project");
+                assert_eq!(edge_type, "has_member");
+                assert_eq!(target_entity, "User");
+            }
+            _ => panic!("expected Lookup"),
+        }
+    }
+
+    #[test]
+    fn facet_kind_backward_compat_missing_kind_defaults_to_list() {
+        let json = r#"{
+            "id": "facet:old",
+            "label": "Old Facet",
+            "prefab_id": "card",
+            "data": { "kind": "static", "items": [] },
+            "bindings": [],
+            "layout": {}
+        }"#;
+        let def: FacetDef = serde_json::from_str(json).unwrap();
+        assert!(matches!(def.kind, FacetKind::List));
+    }
+
+    #[test]
+    fn facet_kind_tag_round_trip() {
+        for tag in FACET_KIND_TAGS {
+            let kind = FacetKind::from_tag(tag);
+            assert_eq!(kind.tag(), *tag);
+        }
+    }
+
+    #[test]
+    fn aggregate_count() {
+        let items = vec![json!({"x": 1}), json!({"x": 2}), json!({"x": 3})];
+        let result = apply_aggregate(&items, &AggregateOp::Count, None);
+        assert_eq!(result, json!(3));
+    }
+
+    #[test]
+    fn aggregate_sum() {
+        let items = vec![json!({"x": 10}), json!({"x": 20}), json!({"x": 30})];
+        let result = apply_aggregate(&items, &AggregateOp::Sum, Some("x"));
+        assert_eq!(result, json!(60.0));
+    }
+
+    #[test]
+    fn aggregate_min_max() {
+        let items = vec![json!({"v": 5}), json!({"v": 2}), json!({"v": 8})];
+        assert_eq!(
+            apply_aggregate(&items, &AggregateOp::Min, Some("v")),
+            json!(2.0)
+        );
+        assert_eq!(
+            apply_aggregate(&items, &AggregateOp::Max, Some("v")),
+            json!(8.0)
+        );
+    }
+
+    #[test]
+    fn aggregate_avg() {
+        let items = vec![json!({"v": 10}), json!({"v": 20}), json!({"v": 30})];
+        let result = apply_aggregate(&items, &AggregateOp::Avg, Some("v"));
+        assert_eq!(result, json!(20.0));
+    }
+
+    #[test]
+    fn aggregate_join() {
+        let items = vec![
+            json!({"name": "Alice"}),
+            json!({"name": "Bob"}),
+            json!({"name": "Carol"}),
+        ];
+        let result = apply_aggregate(
+            &items,
+            &AggregateOp::Join {
+                separator: ", ".into(),
+            },
+            Some("name"),
+        );
+        assert_eq!(result, json!("Alice, Bob, Carol"));
+    }
+
+    #[test]
+    fn aggregate_empty_items() {
+        let items: Vec<Value> = vec![];
+        assert_eq!(apply_aggregate(&items, &AggregateOp::Count, None), json!(0));
+        assert_eq!(
+            apply_aggregate(&items, &AggregateOp::Avg, Some("x")),
+            Value::Null
+        );
+        assert_eq!(
+            apply_aggregate(&items, &AggregateOp::Min, Some("x")),
+            Value::Null
+        );
+    }
+
+    #[test]
+    fn aggregate_op_tag_round_trip() {
+        for tag in AGGREGATE_OP_TAGS {
+            let op = AggregateOp::from_tag(tag);
+            assert_eq!(op.tag(), *tag);
+        }
+    }
+
+    #[test]
+    fn resolve_items_list_kind() {
+        let def = sample_facet();
+        let resources = IndexMap::new();
+        match def.resolve_items(&resources) {
+            ResolvedFacetData::Items(items) => assert_eq!(items.len(), 2),
+            _ => panic!("expected Items"),
+        }
+    }
+
+    #[test]
+    fn resolve_items_aggregate_kind() {
+        let mut def = sample_facet();
+        def.kind = FacetKind::Aggregate {
+            operation: AggregateOp::Count,
+            field: None,
+        };
+        let resources = IndexMap::new();
+        match def.resolve_items(&resources) {
+            ResolvedFacetData::Single(val) => assert_eq!(val, json!(2)),
+            _ => panic!("expected Single"),
+        }
+    }
+
+    #[test]
+    fn schema_field_kind_default_is_text() {
+        let kind = SchemaFieldKind::default();
+        assert!(matches!(kind, SchemaFieldKind::Text));
     }
 }

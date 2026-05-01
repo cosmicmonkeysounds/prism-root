@@ -19,7 +19,7 @@ use prism_builder::{
     app::{AppIcon, NavigationConfig, Page, PrismApp},
     compile_slint_preview, compute_layout,
     facet::FacetBinding,
-    facet::{FacetDataSource, FacetDef, FacetDirection, FacetLayout},
+    facet::{AggregateOp, FacetDataSource, FacetDef, FacetDirection, FacetKind, FacetLayout},
     layout::{
         AbsoluteProps, AlignOption, Dimension, FlexDirection, FlowDisplay, FlowProps,
         GridPlacement, JustifyOption, LayoutMode, PageSize, TrackSize,
@@ -31,6 +31,8 @@ use prism_builder::{
 };
 use prism_core::design_tokens::{DesignTokens, DEFAULT_TOKENS};
 use prism_core::editor::EditorState;
+#[cfg(feature = "native")]
+use prism_core::foundation::persistence::{CollectionStore, EdgeFilter, ObjectFilter};
 use prism_core::foundation::vfs::VfsManager;
 use prism_core::help::HelpRegistry;
 use prism_core::shell_mode::{Permission, ShellMode, ShellModeContext};
@@ -128,6 +130,7 @@ persistent_models! {
     nav_pages: crate::NavPageItem,
     nav_graph_nodes: crate::NavGraphNode,
     nav_graph_edges: crate::NavGraphEdge,
+    schema_list: crate::SchemaListItem,
 }
 
 // ── Reloadable state ───────────────────────────────────────────────
@@ -161,6 +164,8 @@ pub struct AppState {
     next_app_id: u64,
     #[serde(default)]
     pub runtime_overrides: HashMap<String, serde_json::Map<String, serde_json::Value>>,
+    #[serde(default)]
+    pub selected_schema_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -314,6 +319,7 @@ impl Default for AppState {
             next_node_id: 100,
             next_app_id: 10,
             runtime_overrides: HashMap::new(),
+            selected_schema_id: None,
         }
     }
 }
@@ -589,6 +595,8 @@ struct ShellInner {
     last_selected_node: Option<String>,
     nav_link_source: Option<usize>,
     persistence: ProjectPersistence,
+    #[cfg(feature = "native")]
+    collection: CollectionStore,
 }
 
 impl ShellInner {
@@ -1131,6 +1139,7 @@ impl Shell {
         bind_model!(set_nav_pages, nav_pages, crate::NavPageItem);
         bind_model!(set_nav_graph_nodes, nav_graph_nodes, crate::NavGraphNode);
         bind_model!(set_nav_graph_edges, nav_graph_edges, crate::NavGraphEdge);
+        bind_model!(set_schema_list, schema_list, crate::SchemaListItem);
 
         let inner = Rc::new(RefCell::new(ShellInner {
             store: Store::new(state),
@@ -1164,6 +1173,8 @@ impl Shell {
             last_selected_node: None,
             nav_link_source: None,
             persistence: ProjectPersistence::new(),
+            #[cfg(feature = "native")]
+            collection: CollectionStore::new(),
         }));
         {
             let mut s = inner.borrow_mut();
@@ -1252,6 +1263,15 @@ impl Shell {
 
     pub fn telemetry(&self) -> FirstPaint {
         self.telemetry.clone()
+    }
+
+    #[cfg(feature = "native")]
+    pub fn with_collection<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut CollectionStore) -> R,
+    {
+        let mut inner = self.inner.borrow_mut();
+        f(&mut inner.collection)
     }
 
     pub fn select_page(&self, page_id: &str) {
@@ -1718,6 +1738,7 @@ impl Shell {
                                         id: facet_id.clone(),
                                         label: "New Facet".into(),
                                         description: String::new(),
+                                        kind: FacetKind::List,
                                         schema_id: None,
                                         prefab_id: "card".into(),
                                         data: FacetDataSource::Static {
@@ -1726,6 +1747,7 @@ impl Shell {
                                         },
                                         bindings: vec![],
                                         layout: FacetLayout::default(),
+                                        resolved_data: None,
                                     },
                                 );
                             }
@@ -1941,11 +1963,16 @@ impl Shell {
                         let val = value.clone();
                         s.push_undo(&format!("Edit {key}"));
                         s.store.mutate(|state| {
-                            if let Some(doc) =
-                                state.active_app_mut().and_then(|a| a.active_document_mut())
-                            {
-                                if let Some(schema) = doc.facet_schemas.values_mut().last() {
-                                    crate::panels::schema::apply_schema_edit(schema, &skey, &val);
+                            let sid = resolve_schema_id(state);
+                            if let Some(sid) = sid {
+                                if let Some(doc) =
+                                    state.active_app_mut().and_then(|a| a.active_document_mut())
+                                {
+                                    if let Some(schema) = doc.facet_schemas.get_mut(&sid) {
+                                        crate::panels::schema::apply_schema_edit(
+                                            schema, &skey, &val,
+                                        );
+                                    }
                                 }
                             }
                         });
@@ -2098,15 +2125,18 @@ impl Shell {
                         let skey = key.strip_prefix("schema.").unwrap_or(&key).to_string();
                         s.push_undo(&format!("Edit {key}"));
                         s.store.mutate(|state| {
-                            if let Some(doc) =
-                                state.active_app_mut().and_then(|a| a.active_document_mut())
-                            {
-                                if let Some(schema) = doc.facet_schemas.values_mut().last() {
-                                    crate::panels::schema::apply_schema_edit(
-                                        schema,
-                                        &skey,
-                                        &format_slider_value(val),
-                                    );
+                            let sid = resolve_schema_id(state);
+                            if let Some(sid) = sid {
+                                if let Some(doc) =
+                                    state.active_app_mut().and_then(|a| a.active_document_mut())
+                                {
+                                    if let Some(schema) = doc.facet_schemas.get_mut(&sid) {
+                                        crate::panels::schema::apply_schema_edit(
+                                            schema,
+                                            &skey,
+                                            &format_slider_value(val),
+                                        );
+                                    }
                                 }
                             }
                         });
@@ -3907,6 +3937,21 @@ impl Shell {
             }
         });
 
+        // Schema designer: select a schema
+        self.window.on_schema_select({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |schema_id| {
+                let sid = schema_id.to_string();
+                inner.borrow_mut().store.mutate(|state| {
+                    state.selected_schema_id = if sid.is_empty() { None } else { Some(sid) };
+                });
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
         // Viewport preset changed
         self.window.on_viewport_preset_changed({
             let inner = Rc::clone(&inner);
@@ -4157,9 +4202,35 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
     if !is_launchpad {
         push_editor_data(&inner.models, window, &state.editor_state);
         push_builder_preview(&inner.models, window, &state.builder_document);
+
+        // Resolve facet data (Script/ObjectQuery/Lookup kinds) before the
+        // render walker, which reads `resolved_data` on each FacetDef.
+        #[cfg(feature = "native")]
+        let resolved_doc = {
+            let needs = state.builder_document.facets.values().any(|f| {
+                matches!(
+                    &f.kind,
+                    FacetKind::Script { .. }
+                        | FacetKind::ObjectQuery { .. }
+                        | FacetKind::Lookup { .. }
+                )
+            });
+            if needs {
+                let mut doc = state.builder_document.clone();
+                resolve_facet_data(&mut doc, &inner.collection);
+                Some(doc)
+            } else {
+                None
+            }
+        };
+        #[cfg(feature = "native")]
+        let preview_doc = resolved_doc.as_ref().unwrap_or(&state.builder_document);
+        #[cfg(not(feature = "native"))]
+        let preview_doc = &state.builder_document;
+
         push_wysiwyg_preview(
             window,
-            &state.builder_document,
+            preview_doc,
             &inner.registry,
             &state.tokens,
             &inner.vfs,
@@ -4186,6 +4257,7 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
             state.active_app(),
             &inner.toggled_sections,
             Some(&state.workspace),
+            state.selected_schema_id.as_deref(),
         );
         push_signal_panel_data(
             &inner.models,
@@ -4195,6 +4267,12 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
             &state.selection,
         );
         push_navigation_panel_data(&inner.models, window, state.active_app());
+        push_schema_list(
+            &inner.models,
+            window,
+            &state.builder_document,
+            state.selected_schema_id.as_deref(),
+        );
         push_breadcrumbs(
             &inner.models,
             window,
@@ -4715,6 +4793,7 @@ fn parse_hex_color(hex: &str) -> slint::Color {
     slint::Color::from_argb_u8(a, r, g, b)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn push_property_sections(
     models: &PersistentModels,
     window: &AppWindow,
@@ -4724,6 +4803,7 @@ fn push_property_sections(
     app: Option<&PrismApp>,
     toggled_sections: &std::collections::HashSet<String>,
     workspace: Option<&prism_dock::DockWorkspace>,
+    selected_schema_id: Option<&str>,
 ) {
     let selected = selection.as_option();
     let component_id = PropertiesPanel::selected_component(doc, &selected);
@@ -4731,9 +4811,11 @@ fn push_property_sections(
 
     if let Some(ws) = workspace {
         if ws.active_page().id == "data" {
-            if let Some(schema) = doc.facet_schemas.values().last() {
-                let schema_rows =
-                    crate::panels::schema::SchemaDesignerPanel::field_rows(schema);
+            let schema = selected_schema_id
+                .and_then(|id| doc.facet_schemas.get(id))
+                .or_else(|| doc.facet_schemas.values().next());
+            if let Some(schema) = schema {
+                let schema_rows = crate::panels::schema::SchemaDesignerPanel::field_rows(schema);
                 let rows: Vec<FieldRow> = schema_rows
                     .into_iter()
                     .map(|r| field_row_data_to_slint(&r))
@@ -5477,11 +5559,8 @@ fn execute_command(
                                 } = def.data
                                 {
                                     if let Some(schema_id) = &def.schema_id {
-                                        if let Some(schema) =
-                                            doc.facet_schemas.get(schema_id)
-                                        {
-                                            let rec_id =
-                                                format!("rec:{}", records.len() + 1);
+                                        if let Some(schema) = doc.facet_schemas.get(schema_id) {
+                                            let rec_id = format!("rec:{}", records.len() + 1);
                                             records.push(schema.default_record(rec_id));
                                         } else {
                                             items.push(serde_json::json!({}));
@@ -5541,114 +5620,110 @@ fn execute_command(
             let sid = schema_id.clone();
             s.store.mutate(|state| {
                 state.next_node_id += 1;
-                if let Some(doc) =
-                    state.active_app_mut().and_then(|a| a.active_document_mut())
-                {
+                if let Some(doc) = state.active_app_mut().and_then(|a| a.active_document_mut()) {
                     doc.facet_schemas.insert(
                         sid.clone(),
                         prism_builder::FacetSchema {
-                            id: sid,
+                            id: sid.clone(),
                             label: "New Schema".into(),
                             description: String::new(),
-                            fields: vec![
-                                prism_builder::SchemaField {
-                                    key: "title".into(),
-                                    label: "Title".into(),
-                                    kind: prism_builder::SchemaFieldKind::Text,
-                                    required: true,
-                                    default_value: None,
-                                },
-                            ],
+                            fields: vec![prism_builder::SchemaField {
+                                key: "title".into(),
+                                label: "Title".into(),
+                                kind: prism_builder::SchemaFieldKind::Text,
+                                required: true,
+                                default_value: None,
+                            }],
                         },
                     );
                 }
+                state.selected_schema_id = Some(sid);
             });
             s.sync_builder_document();
             s.add_toast("Schema created", &schema_id, "success");
         }
         "schema.delete" => {
             let mut s = shared.borrow_mut();
-            if let Some(doc) = s
-                .store
-                .state()
-                .active_app()
-                .and_then(|a| a.active_document())
-            {
-                if let Some(last_id) = doc.facet_schemas.keys().last().cloned() {
-                    let sid = last_id.clone();
-                    s.push_undo("Delete schema");
-                    s.store.mutate(|state| {
-                        if let Some(doc) =
-                            state.active_app_mut().and_then(|a| a.active_document_mut())
-                        {
-                            doc.facet_schemas.swap_remove(&sid);
-                            for facet in doc.facets.values_mut() {
-                                if facet.schema_id.as_deref() == Some(sid.as_str()) {
-                                    facet.schema_id = None;
-                                }
+            let target_id = s.store.state().selected_schema_id.clone().or_else(|| {
+                s.store
+                    .state()
+                    .active_app()
+                    .and_then(|a| a.active_document())
+                    .and_then(|doc| doc.facet_schemas.keys().next().cloned())
+            });
+            if let Some(sid) = target_id {
+                let label = sid.clone();
+                s.push_undo("Delete schema");
+                s.store.mutate(|state| {
+                    if let Some(doc) = state.active_app_mut().and_then(|a| a.active_document_mut())
+                    {
+                        doc.facet_schemas.shift_remove(&sid);
+                        for facet in doc.facets.values_mut() {
+                            if facet.schema_id.as_deref() == Some(sid.as_str()) {
+                                facet.schema_id = None;
                             }
                         }
-                    });
-                    s.sync_builder_document();
-                    s.add_toast("Schema deleted", &last_id, "success");
-                }
+                    }
+                    state.selected_schema_id = state
+                        .active_app()
+                        .and_then(|a| a.active_document())
+                        .and_then(|doc| doc.facet_schemas.keys().next().cloned());
+                });
+                s.sync_builder_document();
+                s.add_toast("Schema deleted", &label, "success");
             }
         }
         "schema.add_field" => {
             let mut s = shared.borrow_mut();
-            if let Some(doc) = s
-                .store
-                .state()
-                .active_app()
-                .and_then(|a| a.active_document())
-            {
-                if let Some(last_id) = doc.facet_schemas.keys().last().cloned() {
-                    let sid = last_id;
-                    s.push_undo("Add schema field");
-                    s.store.mutate(|state| {
-                        if let Some(doc) =
-                            state.active_app_mut().and_then(|a| a.active_document_mut())
-                        {
-                            if let Some(schema) = doc.facet_schemas.get_mut(&sid) {
-                                let n = schema.fields.len() + 1;
-                                schema.fields.push(prism_builder::SchemaField {
-                                    key: format!("field_{n}"),
-                                    label: format!("Field {n}"),
-                                    kind: prism_builder::SchemaFieldKind::Text,
-                                    required: false,
-                                    default_value: None,
-                                });
-                            }
+            let sid = s.store.state().selected_schema_id.clone().or_else(|| {
+                s.store
+                    .state()
+                    .active_app()
+                    .and_then(|a| a.active_document())
+                    .and_then(|doc| doc.facet_schemas.keys().next().cloned())
+            });
+            if let Some(sid) = sid {
+                s.push_undo("Add schema field");
+                s.store.mutate(|state| {
+                    if let Some(doc) = state.active_app_mut().and_then(|a| a.active_document_mut())
+                    {
+                        if let Some(schema) = doc.facet_schemas.get_mut(&sid) {
+                            let n = schema.fields.len() + 1;
+                            schema.fields.push(prism_builder::SchemaField {
+                                key: format!("field_{n}"),
+                                label: format!("Field {n}"),
+                                kind: prism_builder::SchemaFieldKind::Text,
+                                required: false,
+                                default_value: None,
+                            });
                         }
-                    });
-                    s.sync_builder_document();
-                }
+                    }
+                });
+                s.sync_builder_document();
             }
         }
         "schema.delete_field" => {
             let mut s = shared.borrow_mut();
-            if let Some(doc) = s
-                .store
-                .state()
-                .active_app()
-                .and_then(|a| a.active_document())
-            {
-                if let Some(last_id) = doc.facet_schemas.keys().last().cloned() {
-                    let sid = last_id;
-                    s.push_undo("Delete schema field");
-                    s.store.mutate(|state| {
-                        if let Some(doc) =
-                            state.active_app_mut().and_then(|a| a.active_document_mut())
-                        {
-                            if let Some(schema) = doc.facet_schemas.get_mut(&sid) {
-                                if schema.fields.len() > 1 {
-                                    schema.fields.pop();
-                                }
+            let sid = s.store.state().selected_schema_id.clone().or_else(|| {
+                s.store
+                    .state()
+                    .active_app()
+                    .and_then(|a| a.active_document())
+                    .and_then(|doc| doc.facet_schemas.keys().next().cloned())
+            });
+            if let Some(sid) = sid {
+                s.push_undo("Delete schema field");
+                s.store.mutate(|state| {
+                    if let Some(doc) = state.active_app_mut().and_then(|a| a.active_document_mut())
+                    {
+                        if let Some(schema) = doc.facet_schemas.get_mut(&sid) {
+                            if schema.fields.len() > 1 {
+                                schema.fields.pop();
                             }
                         }
-                    });
-                    s.sync_builder_document();
-                }
+                    }
+                });
+                s.sync_builder_document();
             }
         }
         "panel.schema_designer" => {
@@ -5925,6 +6000,31 @@ fn push_signal_panel_data(
     window.set_signal_target_labels(slint::ModelRc::from(target_label_model));
 }
 
+fn push_schema_list(
+    models: &PersistentModels,
+    window: &AppWindow,
+    doc: &BuilderDocument,
+    selected_id: Option<&str>,
+) {
+    let items: Vec<crate::SchemaListItem> = doc
+        .facet_schemas
+        .values()
+        .map(|s| crate::SchemaListItem {
+            id: SharedString::from(&s.id),
+            label: SharedString::from(&s.label),
+            field_count: s.fields.len() as i32,
+            selected: selected_id == Some(s.id.as_str()),
+        })
+        .collect();
+    let count = sync_model(&models.schema_list, &items);
+    window.set_schema_list_count(count);
+    let label = selected_id
+        .and_then(|id| doc.facet_schemas.get(id))
+        .map(|s| s.label.as_str())
+        .unwrap_or("");
+    window.set_selected_schema_label(SharedString::from(label));
+}
+
 fn push_navigation_panel_data(
     models: &PersistentModels,
     window: &AppWindow,
@@ -6026,6 +6126,124 @@ fn clear_href_on_node(node: &mut prism_builder::document::Node, target_id: &str)
     }
     for child in &mut node.children {
         clear_href_on_node(child, target_id);
+    }
+}
+
+/// Resolve facet data for kinds that need external execution (Script,
+/// ObjectQuery, Lookup). Called before the render walker so
+/// `FacetDef::resolve_items` can read `resolved_data`.
+#[cfg(feature = "native")]
+fn resolve_facet_data(doc: &mut BuilderDocument, collection: &CollectionStore) {
+    use prism_builder::facet::{evaluate_filter, get_field, value_sort_key};
+
+    for facet in doc.facets.values_mut() {
+        match &facet.kind {
+            FacetKind::Script { ref source, .. } => {
+                if source.is_empty() {
+                    facet.resolved_data = None;
+                    continue;
+                }
+                match prism_daemon::modules::luau_module::exec(source, None) {
+                    Ok(result) => {
+                        if let Some(arr) = result.as_array() {
+                            facet.resolved_data = Some(arr.clone());
+                        } else {
+                            facet.resolved_data = Some(vec![result]);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("[facet] script error: {e}");
+                        facet.resolved_data = None;
+                    }
+                }
+            }
+            FacetKind::ObjectQuery {
+                entity_type,
+                filter,
+                sort_by,
+                limit,
+            } => {
+                if entity_type.is_empty() {
+                    facet.resolved_data = None;
+                    continue;
+                }
+                let objects = collection.list_objects(Some(&ObjectFilter {
+                    types: Some(vec![entity_type.clone()]),
+                    exclude_deleted: true,
+                    ..Default::default()
+                }));
+                let mut items: Vec<serde_json::Value> = objects
+                    .iter()
+                    .filter_map(|obj| serde_json::to_value(obj).ok())
+                    .collect();
+
+                if let Some(expr) = filter {
+                    items.retain(|item| evaluate_filter(item, expr));
+                }
+                if let Some(key) = sort_by {
+                    let (descending, path) = if let Some(stripped) = key.strip_prefix('-') {
+                        (true, stripped)
+                    } else {
+                        (false, key.as_str())
+                    };
+                    items.sort_by(|a, b| {
+                        let va = get_field(a, path).map(value_sort_key).unwrap_or_default();
+                        let vb = get_field(b, path).map(value_sort_key).unwrap_or_default();
+                        if descending {
+                            vb.cmp(&va)
+                        } else {
+                            va.cmp(&vb)
+                        }
+                    });
+                }
+                if let Some(lim) = limit {
+                    items.truncate(*lim);
+                }
+                facet.resolved_data = if items.is_empty() { None } else { Some(items) };
+            }
+            FacetKind::Lookup {
+                source_entity,
+                edge_type,
+                target_entity,
+            } => {
+                if source_entity.is_empty() || edge_type.is_empty() || target_entity.is_empty() {
+                    facet.resolved_data = None;
+                    continue;
+                }
+                let sources = collection.list_objects(Some(&ObjectFilter {
+                    types: Some(vec![source_entity.clone()]),
+                    exclude_deleted: true,
+                    ..Default::default()
+                }));
+                let mut seen = std::collections::HashSet::new();
+                let mut targets = Vec::new();
+                for src in &sources {
+                    let edges = collection.list_edges(Some(&EdgeFilter {
+                        source_id: Some(src.id.clone()),
+                        relation: Some(edge_type.clone()),
+                        ..Default::default()
+                    }));
+                    for edge in &edges {
+                        if !seen.insert(edge.target_id.as_str().to_string()) {
+                            continue;
+                        }
+                        if let Some(obj) = collection.get_object(&edge.target_id) {
+                            if obj.type_name == *target_entity && obj.deleted_at.is_none() {
+                                if let Ok(val) = serde_json::to_value(&obj) {
+                                    targets.push(val);
+                                }
+                            }
+                        }
+                    }
+                }
+                facet.resolved_data = if targets.is_empty() {
+                    None
+                } else {
+                    Some(targets)
+                };
+            }
+            _ => {}
+        }
     }
 }
 
@@ -6318,6 +6536,25 @@ fn mime_from_extension(ext: &str) -> &'static str {
         "ogg" => "audio/ogg",
         _ => "application/octet-stream",
     }
+}
+
+fn resolve_schema_id(state: &AppState) -> Option<String> {
+    state
+        .selected_schema_id
+        .clone()
+        .filter(|id| {
+            state
+                .active_app()
+                .and_then(|a| a.active_document())
+                .map(|doc| doc.facet_schemas.contains_key(id))
+                .unwrap_or(false)
+        })
+        .or_else(|| {
+            state
+                .active_app()
+                .and_then(|a| a.active_document())
+                .and_then(|doc| doc.facet_schemas.keys().next().cloned())
+        })
 }
 
 fn format_slider_value(val: f32) -> String {
@@ -6620,6 +6857,9 @@ fn push_page_layout_data(
 
 fn apply_facet_edit(def: &mut FacetDef, key: &str, value: &str) {
     match key {
+        "kind" => {
+            def.kind = FacetKind::from_tag(value);
+        }
         "prefab_id" => def.prefab_id = value.to_string(),
         "label" => def.label = value.to_string(),
         "direction" => {
@@ -6691,6 +6931,102 @@ fn apply_facet_edit(def: &mut FacetDef, key: &str, value: &str) {
                 Some(value.to_string())
             };
         }
+        // ObjectQuery fields
+        "entity_type" => {
+            if let FacetKind::ObjectQuery {
+                ref mut entity_type,
+                ..
+            } = def.kind
+            {
+                *entity_type = value.to_string();
+            }
+        }
+        "oq_filter" => {
+            if let FacetKind::ObjectQuery { ref mut filter, .. } = def.kind {
+                *filter = if value.is_empty() {
+                    None
+                } else {
+                    Some(value.to_string())
+                };
+            }
+        }
+        "oq_sort_by" => {
+            if let FacetKind::ObjectQuery {
+                ref mut sort_by, ..
+            } = def.kind
+            {
+                *sort_by = if value.is_empty() {
+                    None
+                } else {
+                    Some(value.to_string())
+                };
+            }
+        }
+        "oq_limit" => {
+            if let FacetKind::ObjectQuery { ref mut limit, .. } = def.kind {
+                *limit = value.parse::<usize>().ok().filter(|&n| n > 0);
+            }
+        }
+        // Script fields
+        "script_source" => {
+            if let FacetKind::Script { ref mut source, .. } = def.kind {
+                *source = value.to_string();
+            }
+        }
+        // Aggregate fields
+        "agg_operation" => {
+            if let FacetKind::Aggregate {
+                ref mut operation, ..
+            } = def.kind
+            {
+                *operation = AggregateOp::from_tag(value);
+            }
+        }
+        "agg_field" => {
+            if let FacetKind::Aggregate { ref mut field, .. } = def.kind {
+                *field = if value.is_empty() {
+                    None
+                } else {
+                    Some(value.to_string())
+                };
+            }
+        }
+        "agg_separator" => {
+            if let FacetKind::Aggregate {
+                operation: AggregateOp::Join { ref mut separator },
+                ..
+            } = def.kind
+            {
+                *separator = value.to_string();
+            }
+        }
+        // Lookup fields
+        "lookup_source" => {
+            if let FacetKind::Lookup {
+                ref mut source_entity,
+                ..
+            } = def.kind
+            {
+                *source_entity = value.to_string();
+            }
+        }
+        "lookup_edge" => {
+            if let FacetKind::Lookup {
+                ref mut edge_type, ..
+            } = def.kind
+            {
+                *edge_type = value.to_string();
+            }
+        }
+        "lookup_target" => {
+            if let FacetKind::Lookup {
+                ref mut target_entity,
+                ..
+            } = def.kind
+            {
+                *target_entity = value.to_string();
+            }
+        }
         key if key.starts_with("binding.") => {
             let slot_key = &key["binding.".len()..];
             if !slot_key.is_empty() {
@@ -6714,8 +7050,8 @@ fn apply_facet_edit(def: &mut FacetDef, key: &str, value: &str) {
                     } = def.data
                     {
                         if let Some(rec) = records.get_mut(idx) {
-                            let parsed: serde_json::Value =
-                                serde_json::from_str(value).unwrap_or_else(|_| {
+                            let parsed: serde_json::Value = serde_json::from_str(value)
+                                .unwrap_or_else(|_| {
                                     if value.is_empty() {
                                         serde_json::Value::Null
                                     } else if value == "true" {
@@ -7796,7 +8132,7 @@ mod tests {
     #[test]
     fn workspace_pages_available() {
         let state = AppState::default();
-        assert_eq!(state.workspace.pages().len(), 6);
+        assert_eq!(state.workspace.pages().len(), 7);
         let ids: Vec<&str> = state
             .workspace
             .pages()
@@ -7805,7 +8141,15 @@ mod tests {
             .collect();
         assert_eq!(
             ids,
-            &["edit", "design", "code", "fusion", "navigation", "preview"]
+            &[
+                "edit",
+                "design",
+                "code",
+                "fusion",
+                "navigation",
+                "data",
+                "preview"
+            ]
         );
     }
 
@@ -7964,11 +8308,12 @@ mod tests {
 
     #[test]
     fn apply_facet_edit_binding_creates_and_updates() {
-        use prism_builder::facet::{FacetDataSource, FacetDef, FacetLayout};
+        use prism_builder::facet::{FacetDataSource, FacetDef, FacetKind, FacetLayout};
         let mut def = FacetDef {
             id: "facet:test".into(),
             label: "Test".into(),
             description: String::new(),
+            kind: FacetKind::List,
             schema_id: None,
             prefab_id: "card".into(),
             data: FacetDataSource::Static {
@@ -7977,6 +8322,7 @@ mod tests {
             },
             bindings: vec![],
             layout: FacetLayout::default(),
+            resolved_data: None,
         };
         apply_facet_edit(&mut def, "binding.title", "name");
         assert_eq!(def.bindings.len(), 1);

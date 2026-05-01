@@ -23,7 +23,7 @@ licence requires.
   after the cargo step to emit the JS loader next to
   `web/index.html`. `prism build --target web` wires this up as
   one command.
-- `cargo test -p prism-shell` — unit + insta snapshot tests (280+).
+- `cargo test -p prism-shell` — unit + insta snapshot tests (295+).
   Slint tests that need a platform backend gracefully skip if none is
   available (CI-friendly).
 - `prism dev shell` — native bin at `src/bin/native.rs`. Supports CLI
@@ -101,8 +101,10 @@ licence requires.
 ## Features
 - `native` (default) — on-desktop stack. Pulls in `slint` (with the
   default winit + femtovg backend) plus `prism-daemon` with `crdt`
-  / `luau` / `vfs` / `crypto`. The daemon is kept as a *native*
-  dependency only; the browser build talks to a remote relay.
+  / `luau` / `vfs` / `crypto`, and enables `prism-core/crdt` so
+  `CollectionStore` is available for facet ObjectQuery/Lookup
+  resolution. The daemon is kept as a *native* dependency only;
+  the browser build talks to a remote relay.
 - `web` — browser target. Pulls in `wasm-bindgen`,
   `console_error_panic_hook`, and `getrandom = { features = ["js"] }`
   so Slint's wasm dep chain resolves. The `#[wasm_bindgen(start)]`
@@ -143,6 +145,9 @@ From `src/lib.rs`:
   control to Slint's event loop. `sync_ui_from_shared` saves source
   to the active page and pushes current state into Slint properties.
   `Shell::add_notification` pushes toast notifications.
+  `Shell::with_collection(f)` (native only) borrows the inner
+  `CollectionStore` mutably — hosts use this to populate objects
+  and edges that ObjectQuery/Lookup facets resolve against.
 - `FirstPaint` — boot telemetry slot (`src/telemetry.rs`).
 - `AppState` — the reloadable root state. Panel/page state lives in
   `workspace: prism_dock::DockWorkspace` on `AppState`.

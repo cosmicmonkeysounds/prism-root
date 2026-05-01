@@ -42,7 +42,7 @@ required-features = ["native"]
 # default (env var + `--features live-preview`); `prism build` leaves
 # it off so release binaries don't pull in the interpreter.
 default = ["native"]
-native = ["dep:prism-daemon", "dep:rfd"]
+native = ["dep:prism-daemon", "dep:rfd", "prism-core/crdt"]
 live-preview = ["slint/live-preview"]
 web = ["dep:wasm-bindgen", "dep:console_error_panic_hook", "dep:getrandom", "uuid/js"]
 e2e = ["dep:image", "dep:enigo"]
