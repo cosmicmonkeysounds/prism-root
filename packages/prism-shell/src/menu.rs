@@ -35,6 +35,8 @@ impl MenuRegistry {
         // File
         reg.add("file.new", "File", 1, 1);
         reg.add("file.open", "File", 1, 2);
+        reg.add("project.open_folder", "File", 1, 3);
+        reg.add("project.close", "File", 1, 4);
         reg.add("file.save", "File", 2, 1);
         reg.add("file.save_as", "File", 2, 2);
         reg.add("file.revert", "File", 2, 3);

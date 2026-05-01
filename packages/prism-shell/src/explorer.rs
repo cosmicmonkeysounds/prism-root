@@ -11,6 +11,8 @@ pub enum ExplorerNodeKind {
     App,
     Page,
     Node,
+    ProjectHeader,
+    File,
 }
 
 impl ExplorerNodeKind {
@@ -19,6 +21,8 @@ impl ExplorerNodeKind {
             Self::App => "app",
             Self::Page => "page",
             Self::Node => "node",
+            Self::ProjectHeader => "project-header",
+            Self::File => "file",
         }
     }
 }
@@ -83,6 +87,49 @@ pub fn build_explorer_tree(
                     }
                 }
             }
+        }
+    }
+
+    nodes
+}
+
+pub struct ProjectFileEntry {
+    pub id: String,
+    pub name: String,
+    pub extension: String,
+}
+
+pub fn build_project_file_nodes(
+    files: &[ProjectFileEntry],
+    expanded: &HashSet<String>,
+) -> Vec<ExplorerNode> {
+    let mut nodes = Vec::new();
+    if files.is_empty() {
+        return nodes;
+    }
+
+    let header_key = "project:files";
+    let is_expanded = expanded.contains(header_key);
+
+    nodes.push(ExplorerNode {
+        id: header_key.into(),
+        label: format!("Project Files ({})", files.len()),
+        kind: ExplorerNodeKind::ProjectHeader,
+        depth: 0,
+        expanded: is_expanded,
+        is_active: false,
+    });
+
+    if is_expanded {
+        for file in files {
+            nodes.push(ExplorerNode {
+                id: format!("file:{}", file.id),
+                label: file.name.clone(),
+                kind: ExplorerNodeKind::File,
+                depth: 1,
+                expanded: false,
+                is_active: false,
+            });
         }
     }
 

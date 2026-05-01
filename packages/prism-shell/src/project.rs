@@ -346,7 +346,6 @@ pub enum ProjectError {
     Io(std::io::Error),
     Manifest(serde_json::Error),
     Persistence(PersistenceError),
-    Vfs(String),
 }
 
 #[cfg(feature = "native")]
@@ -357,7 +356,6 @@ impl std::fmt::Display for ProjectError {
             Self::Io(e) => write!(f, "I/O error: {e}"),
             Self::Manifest(e) => write!(f, "Manifest error: {e}"),
             Self::Persistence(e) => write!(f, "Persistence error: {e}"),
-            Self::Vfs(e) => write!(f, "VFS error: {e}"),
         }
     }
 }

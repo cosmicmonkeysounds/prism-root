@@ -3021,7 +3021,7 @@ export component AppWindow inherits Window {
                                                         border-radius: 4px;
                                                         HorizontalLayout {
                                                             padding-left: enode.depth * 16px + 8px; spacing: 6px; alignment: start;
-                                                            if enode.kind == "app" || enode.kind == "page" : Image {
+                                                            if enode.kind == "app" || enode.kind == "page" || enode.kind == "project-header" : Image {
                                                                 source: enode.expanded ? @image-url("icons/chevron-down.svg") : @image-url("icons/chevron-left.svg");
                                                                 width: 10px; height: 10px; colorize: Palette.foreground.transparentize(40%); y: 2px;
                                                                 TouchArea { mouse-cursor: pointer; clicked => { root.explorer-toggle-expand(enode.id); } }
@@ -3029,6 +3029,8 @@ export component AppWindow inherits Window {
                                                             if enode.kind == "app" : Image { source: @image-url("icons/box.svg"); width: 14px; height: 14px; colorize: enode.is-active ? Palette.accent-background : Palette.foreground.transparentize(40%); }
                                                             if enode.kind == "page" : Image { source: @image-url("icons/layout.svg"); width: 14px; height: 14px; colorize: enode.is-active ? Palette.accent-background : Palette.foreground.transparentize(40%); }
                                                             if enode.kind == "node" : Image { source: @image-url("icons/grip.svg"); width: 12px; height: 12px; colorize: Palette.foreground.transparentize(50%); }
+                                                            if enode.kind == "project-header" : Image { source: @image-url("icons/box.svg"); width: 14px; height: 14px; colorize: Palette.foreground.transparentize(30%); }
+                                                            if enode.kind == "file" : Image { source: @image-url("icons/layout.svg"); width: 12px; height: 12px; colorize: Palette.foreground.transparentize(50%); }
                                                             Text { text: enode.label; color: enode.is-active ? Palette.accent-foreground : Palette.foreground; font-size: 12px; font-weight: enode.is-active ? 600 : 400; vertical-alignment: center; overflow: elide; }
                                                         }
                                                         exp-touch := TouchArea {

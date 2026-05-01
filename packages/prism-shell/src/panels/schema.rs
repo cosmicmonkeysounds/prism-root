@@ -1,5 +1,5 @@
-use prism_builder::{FacetSchema, SchemaFieldKind};
 use prism_builder::BuilderDocument;
+use prism_builder::{FacetSchema, SchemaFieldKind};
 
 use super::properties::FieldRowData;
 
@@ -191,8 +191,7 @@ pub fn apply_schema_edit(schema: &mut FacetSchema, key: &str, value: &str) {
                             "kind" => field.kind = kind_from_string(value),
                             "required" => field.required = value == "true",
                             "formula" => {
-                                if let SchemaFieldKind::Calculation { ref mut formula } =
-                                    field.kind
+                                if let SchemaFieldKind::Calculation { ref mut formula } = field.kind
                                 {
                                     *formula = value.to_string();
                                 }

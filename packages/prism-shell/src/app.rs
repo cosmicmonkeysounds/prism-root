@@ -4153,10 +4153,24 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
     }
 
     // Project name and dirty state
-    window.set_project_name(SharedString::from(
-        inner.persistence.project_name().unwrap_or_default(),
-    ));
-    window.set_project_dirty(inner.persistence.is_dirty());
+    let mut proj_name = inner.persistence.project_name().unwrap_or_default();
+    #[cfg(feature = "native")]
+    if proj_name.is_empty() {
+        if let Some(ref proj) = inner.project {
+            proj_name = proj
+                .root()
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+        }
+    }
+    window.set_project_name(SharedString::from(proj_name));
+    let mut is_dirty = inner.persistence.is_dirty();
+    #[cfg(feature = "native")]
+    if let Some(ref proj) = inner.project {
+        is_dirty = is_dirty || proj.is_dirty();
+    }
+    window.set_project_dirty(is_dirty);
 
     // Shell chrome visibility
     window.set_show_activity_bar(state.show_activity_bar);
@@ -4348,12 +4362,37 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
             vw,
         );
         push_grid_edge_handles(&inner.models, window, &state.builder_document, vw);
+        #[cfg(feature = "native")]
+        let project_files = {
+            use prism_core::foundation::persistence::ObjectFilter;
+            let file_objects = inner.collection.list_objects(Some(&ObjectFilter {
+                types: Some(vec!["file".into()]),
+                exclude_deleted: true,
+                ..Default::default()
+            }));
+            file_objects
+                .into_iter()
+                .map(|o| crate::explorer::ProjectFileEntry {
+                    id: o.id.as_str().to_string(),
+                    extension: o
+                        .data
+                        .get("extension")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    name: o.name,
+                })
+                .collect::<Vec<_>>()
+        };
+        #[cfg(not(feature = "native"))]
+        let project_files = Vec::<crate::explorer::ProjectFileEntry>::new();
         push_explorer_nodes(
             &inner.models,
             window,
             &state.apps,
             &state.shell_view,
             &state.explorer_expanded,
+            &project_files,
         );
     }
 
@@ -4461,8 +4500,11 @@ fn push_explorer_nodes(
     apps: &[PrismApp],
     shell_view: &ShellView,
     expanded: &HashSet<String>,
+    project_files: &[crate::explorer::ProjectFileEntry],
 ) {
-    let tree = crate::explorer::build_explorer_tree(apps, shell_view, expanded);
+    let mut tree = crate::explorer::build_explorer_tree(apps, shell_view, expanded);
+    let file_nodes = crate::explorer::build_project_file_nodes(project_files, expanded);
+    tree.extend(file_nodes);
     let items: Vec<ExplorerNodeItem> = tree
         .into_iter()
         .map(|n| ExplorerNodeItem {
@@ -5462,6 +5504,13 @@ fn execute_command(
         "file.save" => {
             let mut s = shared.borrow_mut();
             s.save_to_active_page();
+            #[cfg(feature = "native")]
+            if let Some(ref mut proj) = s.project {
+                match proj.save() {
+                    Ok(_) => {}
+                    Err(e) => s.add_toast("Vault save failed", &e.to_string(), "error"),
+                }
+            }
             let apps = s.store.state().apps.clone();
             let reg = Arc::clone(&s.registry);
             let tokens = s.store.state().tokens;
@@ -5583,6 +5632,49 @@ fn execute_command(
                 None => {
                     s.add_toast("Revert", "No saved file to revert to", "info");
                 }
+            }
+        }
+        #[cfg(feature = "native")]
+        "project.open_folder" => {
+            let folder = rfd::FileDialog::new()
+                .set_title("Open Project Folder")
+                .pick_folder();
+            if let Some(path) = folder {
+                let mut s = shared.borrow_mut();
+                match crate::project::ProjectManager::open(&path) {
+                    Ok(mut proj) => {
+                        let objects = proj.collection().list_objects(None);
+                        for obj in &objects {
+                            let _ = s.collection.put_object(obj);
+                        }
+                        let edges = proj.collection().list_edges(None);
+                        for edge in &edges {
+                            let _ = s.collection.put_edge(edge);
+                        }
+                        let name = path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| path.display().to_string());
+                        s.project = Some(proj);
+                        s.add_toast(
+                            "Folder opened",
+                            &format!("{name} — {} files", objects.len()),
+                            "success",
+                        );
+                    }
+                    Err(e) => {
+                        s.add_toast("Open folder failed", &e.to_string(), "error");
+                    }
+                }
+            }
+        }
+        #[cfg(feature = "native")]
+        "project.close" => {
+            let mut s = shared.borrow_mut();
+            if s.project.is_some() {
+                s.project = None;
+                s.collection = CollectionStore::new();
+                s.add_toast("Folder closed", "Project folder closed", "info");
             }
         }
         "facet.add_item" => {

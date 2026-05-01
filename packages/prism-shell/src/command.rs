@@ -66,6 +66,11 @@ impl CommandRegistry {
             CommandEntry::new("file.save_as", "Save As...", "File").with_shortcut("Ctrl+Shift+S"),
         );
         reg.register(CommandEntry::new("file.revert", "Revert to Saved", "File"));
+        reg.register(
+            CommandEntry::new("project.open_folder", "Open Folder...", "File")
+                .with_shortcut("Ctrl+Shift+O"),
+        );
+        reg.register(CommandEntry::new("project.close", "Close Folder", "File"));
         reg.register(CommandEntry::new("search.focus", "Search", "View").with_shortcut("Ctrl+F"));
         reg.register(CommandEntry::new("edit.copy", "Copy", "Edit").with_shortcut("Ctrl+C"));
         reg.register(CommandEntry::new("edit.paste", "Paste", "Edit").with_shortcut("Ctrl+V"));

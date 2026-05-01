@@ -184,6 +184,7 @@ impl InputManager {
                 .bind("ctrl+o", "file.open")
                 .bind("ctrl+s", "file.save")
                 .bind("ctrl+shift+s", "file.save_as")
+                .bind("ctrl+shift+o", "project.open_folder")
                 .bind("ctrl+a", "selection.all")
                 .bind_when("ctrl+c", "edit.copy", "hasSelection")
                 .bind_when("ctrl+v", "edit.paste", "hasClipboard")
