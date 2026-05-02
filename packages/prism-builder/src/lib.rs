@@ -71,9 +71,10 @@ pub use registry::{
     RegistryError, SelectOption,
 };
 pub use render::{
-    build_source_map_from_markers, render_document_html, render_document_slint_preview,
-    render_document_slint_preview_with_assets, render_document_slint_preview_with_assets_and_data,
-    render_document_slint_source, render_document_slint_source_mapped,
+    build_source_map_from_markers, render_document_html, render_document_html_with_data,
+    render_document_slint_preview, render_document_slint_preview_with_assets,
+    render_document_slint_preview_with_assets_and_data, render_document_slint_source,
+    render_document_slint_source_mapped,
 };
 pub use resource::{ResourceDef, ResourceId, ResourceKind};
 pub use signal::{

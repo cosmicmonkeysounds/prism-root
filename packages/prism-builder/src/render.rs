@@ -34,6 +34,19 @@ pub fn render_document_html(
     registry: &HtmlRegistry,
     tokens: &DesignTokens,
 ) -> Result<String, RenderError> {
+    render_document_html_with_data(doc, registry, tokens, std::collections::HashMap::new())
+}
+
+/// Like [`render_document_html`] but also accepts pre-resolved widget data.
+/// Nodes whose ID appears in `widget_data` get the resolved data merged
+/// into their props before rendering — the HTML SSR equivalent of
+/// [`render_document_slint_preview_with_assets_and_data`].
+pub fn render_document_html_with_data(
+    doc: &BuilderDocument,
+    registry: &HtmlRegistry,
+    tokens: &DesignTokens,
+    widget_data: std::collections::HashMap<String, serde_json::Value>,
+) -> Result<String, RenderError> {
     let ctx = HtmlRenderContext {
         tokens,
         registry,
@@ -41,6 +54,7 @@ pub fn render_document_html(
         prefabs: &doc.prefabs,
         facets: &doc.facets,
         facet_schemas: &doc.facet_schemas,
+        widget_data,
     };
     let mut out = Html::with_capacity(512);
     if let Some(root) = &doc.root {

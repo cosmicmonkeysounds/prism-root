@@ -26,6 +26,7 @@ pub struct HtmlRenderContext<'a> {
     pub prefabs: &'a indexmap::IndexMap<String, crate::prefab::PrefabDef>,
     pub facets: &'a indexmap::IndexMap<String, crate::facet::FacetDef>,
     pub facet_schemas: &'a indexmap::IndexMap<String, crate::facet::FacetSchema>,
+    pub widget_data: std::collections::HashMap<String, Value>,
 }
 
 impl<'a> HtmlRenderContext<'a> {
@@ -38,7 +39,17 @@ impl<'a> HtmlRenderContext<'a> {
             .get(&child.component)
             .ok_or_else(|| RenderError::UnknownComponent(child.component.clone()))?;
 
-        let props = crate::resource::resolve_resource_refs(&child.props, self.resources);
+        let mut props = crate::resource::resolve_resource_refs(&child.props, self.resources);
+        if let Some(data) = self.widget_data.get(&child.id) {
+            if props.is_null() {
+                props = Value::Object(Default::default());
+            }
+            if let (Some(target), Some(source)) = (props.as_object_mut(), data.as_object()) {
+                for (k, v) in source {
+                    target.insert(k.clone(), v.clone());
+                }
+            }
+        }
         let props = crate::variant::apply_variant_defaults(&props, &block.variants());
 
         if child.modifiers.is_empty() {
