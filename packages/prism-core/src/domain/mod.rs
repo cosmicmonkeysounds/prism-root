@@ -21,16 +21,29 @@
 //! - [`spreadsheet`] — pure-data spreadsheet engine: selection,
 //!   virtual scrolling, clipboard TSV interop, CSV/JSON import-export,
 //!   and a focused formula engine.
+//! - [`goals`] — goal hierarchy, milestone tracking, progress rollup,
+//!   and deadline proximity alerts.
+//! - [`habits`] — streak computation, completion rates, and composite
+//!   wellness scoring.
+//! - [`fitness`] — MET-based calorie estimation and personal bests.
+//! - [`reminders`] — next occurrence computation (with RRULE),
+//!   notification payloads, overdue detection, and snooze support.
+//! - [`crm`] — deal pipeline stages, contract lifecycle, client
+//!   profitability, and deal/contract bridge functions.
+//! - [`focus_planner`] — daily context engine, planning methods,
+//!   check-ins, and brain dump.
 
 pub mod calendar;
 pub mod crm;
 pub mod fitness;
 pub mod flux;
 pub mod focus_planner;
+pub mod goals;
 pub mod graph_analysis;
 pub mod habits;
 pub mod ledger;
 pub mod projects;
+pub mod reminders;
 pub mod spreadsheet;
 pub mod timekeeping;
 pub mod timeline;

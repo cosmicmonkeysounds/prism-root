@@ -6,7 +6,7 @@
 > **Naming:** Helm → Prism, Flux → Flux (unchanged).
 
 **Created:** 2026-05-01
-**Last updated:** 2026-05-01
+**Last updated:** 2026-05-02
 
 ---
 
@@ -183,12 +183,15 @@ with cell-reference resolution rather than building a parallel engine.
 
 ---
 
-## Tier 2 — Domain Module Engines
+## Tier 2 — Domain Module Engines ✅
 
 Entity defs exist in plugin bundles. These engines add the
 **behavioral logic** that makes the entities useful.
 
-### 2.1 CRM Engine
+**Status:** All 7 core engines ported (2026-05-02). Finance module
+engine (2.8) deferred — extends `domain::ledger` when needed.
+
+### 2.1 CRM Engine ✅
 **Legacy:** `@helm/crm` — deal pipeline stages, contract lifecycle,
 e-signature tracking, deal→project bridge, client profitability.
 
@@ -199,7 +202,7 @@ e-signature tracking, deal→project bridge, client profitability.
 `ClientProfitability` (revenue - costs by client), bridge functions
 (`deal_to_project_seed`, `contract_to_kickoff_tasks`).
 
-### 2.2 Projects Engine
+### 2.2 Projects Engine ✅
 **Legacy:** `@helm/projects` — risk register, scope tracker, velocity,
 project health metrics, burndown data.
 
@@ -212,7 +215,7 @@ schedule/scope/risk), burndown/burnup data series generation.
 
 **Note:** CPM critical path already exists in `domain::graph_analysis`.
 
-### 2.3 Habits Engine
+### 2.3 Habits Engine ✅
 **Legacy:** `@helm/habits` — streak computation, completion rates,
 wellness summary + composite score.
 
@@ -222,7 +225,7 @@ wellness summary + composite score.
 `completion_rate(logs, period) -> f64`, `wellness_summary(habits) ->
 WellnessSummary` (composite score across habits, sleep, fitness).
 
-### 2.4 Fitness Engine
+### 2.4 Fitness Engine ✅
 **Legacy:** `@helm/fitness` — MET-based calorie estimation, personal
 bests tracking.
 
@@ -231,7 +234,7 @@ bests tracking.
 **Scope:** `estimate_calories(activity, duration, weight, met_value)`,
 `PersonalBests` tracker (per exercise, all-time and period-best).
 
-### 2.5 Goals Engine
+### 2.5 Goals Engine ✅
 **Legacy:** `@helm/goals` — goal hierarchy, milestone tracking,
 progress computation.
 
@@ -241,7 +244,7 @@ progress computation.
 traversal (parent goals roll up child progress), milestone status
 tracking, deadline proximity alerts.
 
-### 2.6 Reminders Engine
+### 2.6 Reminders Engine ✅
 **Legacy:** `@helm/reminders` — `computeNextOccurrence`, recurrence
 scheduling, delivery, `buildNotificationPayload`.
 
@@ -253,7 +256,7 @@ snooze support, overdue detection.
 
 **Depends on:** Calendar engine (Tier 1.1) for RRULE expansion.
 
-### 2.7 Focus Planner Engine
+### 2.7 Focus Planner Engine ✅
 **Legacy:** `@helm/focus-planner` — daily context engine, planning
 methods (MIT/3-things/duck), check-ins, brain dump.
 
@@ -410,18 +413,18 @@ the dock layout and consumes one or more Tier 1–2 engines.
 ## Recommended Implementation Order
 
 ```
-Phase A (Tier 1 — core engines, unblocks everything):
-  1. Calendar engine (RRULE, occurrence expansion)
-  2. Timekeeping engine (stopwatch FSM, time entries)
-  3. Comments engine (threads, reactions)
-  4. Dashboard engine (widget grid, presets)
-  5. Ledger engine (money, TVM, line items)
-  6. Spreadsheet engine (formulas, cell refs)
+Phase A (Tier 1 — core engines, unblocks everything): ✅
+  1. Calendar engine (RRULE, occurrence expansion) ✅
+  2. Timekeeping engine (stopwatch FSM, time entries) ✅
+  3. Comments engine (threads, reactions) ✅
+  4. Dashboard engine (widget grid, presets) ✅
+  5. Ledger engine (money, TVM, line items) ✅
+  6. Spreadsheet engine (formulas, cell refs) ✅
 
 Phase B (Tier 2 + 6 — domain logic + Flux wiring):
-  7. Habits / Goals / Fitness / Reminders engines
-  8. CRM / Projects engines
-  9. Focus Planner engine
+  7. Habits / Goals / Fitness / Reminders engines ✅
+  8. CRM / Projects engines ✅
+  9. Focus Planner engine ✅
  10. flux-bus (cross-module event wiring)
  11. Object Detail View
  12. Quick Create

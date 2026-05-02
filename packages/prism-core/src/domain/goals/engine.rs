@@ -98,10 +98,7 @@ pub fn compute_hierarchy_progress(
 
 fn topo_sort_goals(goals: &[Goal]) -> Vec<String> {
     let mut children_map: IndexMap<String, Vec<String>> = IndexMap::new();
-    let mut has_parent: IndexMap<String, bool> = IndexMap::new();
-
     for goal in goals {
-        has_parent.insert(goal.id.clone(), goal.parent_id.is_some());
         if let Some(pid) = &goal.parent_id {
             children_map
                 .entry(pid.clone())
@@ -109,21 +106,6 @@ fn topo_sort_goals(goals: &[Goal]) -> Vec<String> {
                 .push(goal.id.clone());
         }
     }
-
-    // BFS from leaves (no children) upward.
-    let all_ids: Vec<String> = goals.iter().map(|g| g.id.clone()).collect();
-    let has_children: IndexMap<&str, bool> = all_ids
-        .iter()
-        .map(|id| {
-            (
-                id.as_str(),
-                children_map
-                    .get(id.as_str())
-                    .map(|c| !c.is_empty())
-                    .unwrap_or(false),
-            )
-        })
-        .collect();
 
     let mut ordered = Vec::new();
     let mut visited: IndexMap<String, bool> = IndexMap::new();
