@@ -13,9 +13,7 @@ pub mod bus;
 pub mod engine;
 pub mod types;
 
-pub use bus::{
-    default_rules, event_type_str, resolve_actions, BusRule, FluxAction, FluxEvent,
-};
+pub use bus::{default_rules, event_type_str, resolve_actions, BusRule, FluxAction, FluxEvent};
 pub use engine::{create_flux_registry, FluxImportError, FluxRegistry};
 pub use types::{
     flux_categories, flux_edges, flux_types, FluxAutomationAction, FluxAutomationActionKind,

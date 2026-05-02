@@ -120,26 +120,22 @@ pub fn default_rules() -> Vec<BusRule> {
             label: "Deal Won → Create Project + Invoice".into(),
             enabled: true,
             event_type: "deal-won".into(),
-            actions: vec![
-                FluxAction::LogActivity {
-                    object_id: "{{deal_id}}".into(),
-                    verb: "won".into(),
-                    description: "Deal closed — creating project".into(),
-                },
-            ],
+            actions: vec![FluxAction::LogActivity {
+                object_id: "{{deal_id}}".into(),
+                verb: "won".into(),
+                description: "Deal closed — creating project".into(),
+            }],
         },
         BusRule {
             id: "contract-signed-kickoff".into(),
             label: "Contract Signed → Kickoff Tasks".into(),
             enabled: true,
             event_type: "contract-signed".into(),
-            actions: vec![
-                FluxAction::LogActivity {
-                    object_id: "{{contract_id}}".into(),
-                    verb: "signed".into(),
-                    description: "Contract signed — creating kickoff tasks".into(),
-                },
-            ],
+            actions: vec![FluxAction::LogActivity {
+                object_id: "{{contract_id}}".into(),
+                verb: "signed".into(),
+                description: "Contract signed — creating kickoff tasks".into(),
+            }],
         },
         BusRule {
             id: "task-completed-progress".into(),
@@ -160,24 +156,20 @@ pub fn default_rules() -> Vec<BusRule> {
             label: "Invoice Overdue → Send Reminder".into(),
             enabled: true,
             event_type: "invoice-overdue".into(),
-            actions: vec![
-                FluxAction::SendNotification {
-                    title: "Invoice Overdue".into(),
-                    body: "An invoice is past due".into(),
-                    object_id: Some("{{invoice_id}}".into()),
-                },
-            ],
+            actions: vec![FluxAction::SendNotification {
+                title: "Invoice Overdue".into(),
+                body: "An invoice is past due".into(),
+                object_id: Some("{{invoice_id}}".into()),
+            }],
         },
         BusRule {
             id: "reminder-due-notify".into(),
             label: "Reminder Due → Send Notification".into(),
             enabled: true,
             event_type: "reminder-due".into(),
-            actions: vec![
-                FluxAction::SendReminder {
-                    reminder_id: "{{reminder_id}}".into(),
-                },
-            ],
+            actions: vec![FluxAction::SendReminder {
+                reminder_id: "{{reminder_id}}".into(),
+            }],
         },
     ]
 }

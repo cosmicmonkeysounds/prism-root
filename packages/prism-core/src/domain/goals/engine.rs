@@ -15,10 +15,8 @@ pub fn compute_goal_progress(
     milestones: &[Milestone],
     child_progresses: &[f64],
 ) -> GoalProgress {
-    let goal_milestones: Vec<&Milestone> = milestones
-        .iter()
-        .filter(|m| m.goal_id == goal.id)
-        .collect();
+    let goal_milestones: Vec<&Milestone> =
+        milestones.iter().filter(|m| m.goal_id == goal.id).collect();
 
     let milestones_completed = goal_milestones.iter().filter(|m| m.completed).count() as u32;
     let milestones_total = goal_milestones.len() as u32;
@@ -54,18 +52,12 @@ pub fn compute_goal_progress(
     }
 }
 
-pub fn compute_hierarchy_progress(
-    goals: &[Goal],
-    milestones: &[Milestone],
-) -> Vec<GoalProgress> {
+pub fn compute_hierarchy_progress(goals: &[Goal], milestones: &[Milestone]) -> Vec<GoalProgress> {
     let goal_map: IndexMap<&str, &Goal> = goals.iter().map(|g| (g.id.as_str(), g)).collect();
     let mut children_map: IndexMap<&str, Vec<&str>> = IndexMap::new();
     for goal in goals {
         if let Some(pid) = &goal.parent_id {
-            children_map
-                .entry(pid.as_str())
-                .or_default()
-                .push(&goal.id);
+            children_map.entry(pid.as_str()).or_default().push(&goal.id);
         }
     }
 
@@ -130,12 +122,7 @@ fn topo_sort_goals(goals: &[Goal]) -> Vec<String> {
 
     // Start from roots, but post-order means leaves come first.
     for goal in goals {
-        visit(
-            &goal.id,
-            &children_map,
-            &mut visited,
-            &mut ordered,
-        );
+        visit(&goal.id, &children_map, &mut visited, &mut ordered);
     }
 
     ordered
@@ -180,9 +167,8 @@ pub fn milestone_completion_rate(milestones: &[Milestone]) -> f64 {
 
 pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
     use crate::widget::{
-        DataQuery, FieldSpec, LayoutDirection, NumericBounds, QuerySort, SignalSpec,
-        TemplateNode, ToolbarAction, WidgetCategory, WidgetContribution, WidgetSize,
-        WidgetTemplate,
+        DataQuery, FieldSpec, LayoutDirection, NumericBounds, QuerySort, SignalSpec, TemplateNode,
+        ToolbarAction, WidgetCategory, WidgetContribution, WidgetSize, WidgetTemplate,
     };
     use serde_json::json;
 
@@ -197,10 +183,8 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
                 FieldSpec::boolean("show_milestones", "Show Milestones"),
                 FieldSpec::boolean("show_children", "Show Child Goals"),
             ],
-            signals: vec![
-                SignalSpec::new("goal-selected", "A goal was selected")
-                    .with_payload(vec![FieldSpec::text("goal_id", "Goal ID")]),
-            ],
+            signals: vec![SignalSpec::new("goal-selected", "A goal was selected")
+                .with_payload(vec![FieldSpec::text("goal_id", "Goal ID")])],
             toolbar_actions: vec![ToolbarAction::signal("refresh", "Refresh", "refresh")],
             default_size: WidgetSize::new(2, 1),
             data_query: Some(DataQuery {
@@ -240,10 +224,8 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
             description: "Hierarchical goal overview with rollup progress".into(),
             icon: Some("git-branch".into()),
             category: WidgetCategory::Display,
-            signals: vec![
-                SignalSpec::new("goal-selected", "A goal was selected")
-                    .with_payload(vec![FieldSpec::text("goal_id", "Goal ID")]),
-            ],
+            signals: vec![SignalSpec::new("goal-selected", "A goal was selected")
+                .with_payload(vec![FieldSpec::text("goal_id", "Goal ID")])],
             toolbar_actions: vec![
                 ToolbarAction::signal("expand-all", "Expand All", "maximize"),
                 ToolbarAction::signal("collapse-all", "Collapse All", "minimize"),
@@ -288,9 +270,7 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
                 SignalSpec::new("milestone-toggled", "A milestone was toggled")
                     .with_payload(vec![FieldSpec::text("milestone_id", "Milestone ID")]),
             ],
-            toolbar_actions: vec![
-                ToolbarAction::signal("add-milestone", "Add", "plus"),
-            ],
+            toolbar_actions: vec![ToolbarAction::signal("add-milestone", "Add", "plus")],
             default_size: WidgetSize::new(2, 2),
             template: WidgetTemplate {
                 root: TemplateNode::Container {

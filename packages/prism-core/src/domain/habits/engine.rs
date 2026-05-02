@@ -151,9 +151,8 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
                         FieldSpec::text("date", "Date"),
                     ],
                 ),
-                SignalSpec::new("habit-uncompleted", "A habit completion was revoked").with_payload(
-                    vec![FieldSpec::text("habit_id", "Habit ID")],
-                ),
+                SignalSpec::new("habit-uncompleted", "A habit completion was revoked")
+                    .with_payload(vec![FieldSpec::text("habit_id", "Habit ID")]),
             ],
             toolbar_actions: vec![
                 ToolbarAction::signal("complete", "Complete", "check"),
@@ -243,11 +242,8 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
                 FieldSpec::text("habit_id", "Habit ID"),
                 FieldSpec::boolean("show_legend", "Show Legend"),
             ],
-            signals: vec![SignalSpec::new(
-                "date-selected",
-                "A date cell was selected",
-            )
-            .with_payload(vec![FieldSpec::text("date", "Date")])],
+            signals: vec![SignalSpec::new("date-selected", "A date cell was selected")
+                .with_payload(vec![FieldSpec::text("date", "Date")])],
             toolbar_actions: vec![
                 ToolbarAction::signal("prev-month", "Previous Month", "chevron-left"),
                 ToolbarAction::signal("next-month", "Next Month", "chevron-right"),
@@ -281,8 +277,8 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::types::WellnessCategory;
+    use super::*;
 
     // ── Helper ───────────────────────────────────────────────────
 
@@ -407,10 +403,7 @@ mod tests {
 
     #[test]
     fn streak_all_incomplete() {
-        let logs = vec![
-            log("2025-03-10", false),
-            log("2025-03-11", false),
-        ];
+        let logs = vec![log("2025-03-10", false), log("2025-03-11", false)];
         let info = compute_streak(&logs);
         assert_eq!(info.current_streak, 0);
         assert_eq!(info.longest_streak, 0);
@@ -459,10 +452,7 @@ mod tests {
 
     #[test]
     fn rate_partial_completion() {
-        let logs = vec![
-            log("2025-03-01", true),
-            log("2025-03-03", true),
-        ];
+        let logs = vec![log("2025-03-01", true), log("2025-03-03", true)];
         // 3 days in range, 2 completed
         let rate = completion_rate(&logs, &date("2025-03-01"), &date("2025-03-03"));
         let expected = 2.0 / 3.0;

@@ -123,10 +123,8 @@ pub fn client_profitability(deals: &[Deal], costs: &[(String, i64)]) -> Vec<Clie
     all_clients
         .into_iter()
         .map(|client_id| {
-            let (total_revenue, deal_count) = revenue_map
-                .get(&client_id)
-                .copied()
-                .unwrap_or((0, 0));
+            let (total_revenue, deal_count) =
+                revenue_map.get(&client_id).copied().unwrap_or((0, 0));
             let total_costs = cost_map.get(&client_id).copied().unwrap_or(0);
             ClientRevenue {
                 client_id,
@@ -243,10 +241,8 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
                 ),
                 FieldSpec::boolean("show_value", "Show Deal Value"),
             ],
-            signals: vec![
-                SignalSpec::new("deal-selected", "A deal was selected")
-                    .with_payload(vec![FieldSpec::text("deal_id", "Deal ID")]),
-            ],
+            signals: vec![SignalSpec::new("deal-selected", "A deal was selected")
+                .with_payload(vec![FieldSpec::text("deal_id", "Deal ID")])],
             toolbar_actions: vec![
                 ToolbarAction::signal("refresh", "Refresh", "refresh"),
                 ToolbarAction::signal("new-deal", "New Deal", "add"),
@@ -295,13 +291,9 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
             label: "Client Profitability".into(),
             description: "Revenue and cost breakdown by client".into(),
             category: WidgetCategory::Finance,
-            config_fields: vec![
-                FieldSpec::text("currency", "Currency").with_default(json!("USD")),
-            ],
-            signals: vec![
-                SignalSpec::new("client-selected", "A client was selected")
-                    .with_payload(vec![FieldSpec::text("client_id", "Client ID")]),
-            ],
+            config_fields: vec![FieldSpec::text("currency", "Currency").with_default(json!("USD"))],
+            signals: vec![SignalSpec::new("client-selected", "A client was selected")
+                .with_payload(vec![FieldSpec::text("client_id", "Client ID")])],
             toolbar_actions: vec![
                 ToolbarAction::signal("refresh", "Refresh", "refresh"),
                 ToolbarAction::signal("export", "Export", "export"),
@@ -350,21 +342,19 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
             label: "Contract Status".into(),
             description: "Contract lifecycle tracker".into(),
             category: WidgetCategory::Display,
-            config_fields: vec![
-                FieldSpec::select(
-                    "stage_filter",
-                    "Stage Filter",
-                    vec![
-                        SelectOption::new("all", "All Stages"),
-                        SelectOption::new("draft", "Draft"),
-                        SelectOption::new("sent", "Sent"),
-                        SelectOption::new("signed", "Signed"),
-                        SelectOption::new("active", "Active"),
-                        SelectOption::new("expired", "Expired"),
-                        SelectOption::new("cancelled", "Cancelled"),
-                    ],
-                ),
-            ],
+            config_fields: vec![FieldSpec::select(
+                "stage_filter",
+                "Stage Filter",
+                vec![
+                    SelectOption::new("all", "All Stages"),
+                    SelectOption::new("draft", "Draft"),
+                    SelectOption::new("sent", "Sent"),
+                    SelectOption::new("signed", "Signed"),
+                    SelectOption::new("active", "Active"),
+                    SelectOption::new("expired", "Expired"),
+                    SelectOption::new("cancelled", "Cancelled"),
+                ],
+            )],
             signals: vec![
                 SignalSpec::new("contract-selected", "A contract was selected")
                     .with_payload(vec![FieldSpec::text("contract_id", "Contract ID")]),
@@ -706,10 +696,7 @@ mod tests {
         assert_eq!(advance_contract_stage(&sent), Some(ContractStage::Signed));
 
         let signed = make_contract("ct3", ContractStage::Signed, "c1", 10_000);
-        assert_eq!(
-            advance_contract_stage(&signed),
-            Some(ContractStage::Active)
-        );
+        assert_eq!(advance_contract_stage(&signed), Some(ContractStage::Active));
 
         let active = make_contract("ct4", ContractStage::Active, "c1", 10_000);
         assert_eq!(

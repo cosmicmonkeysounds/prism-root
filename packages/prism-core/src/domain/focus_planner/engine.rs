@@ -17,9 +17,8 @@ pub fn generate_daily_context(
     reminders: &[DailyContextItem],
     date: &str,
 ) -> DailyContext {
-    let mut items: Vec<DailyContextItem> = Vec::with_capacity(
-        tasks.len() + events.len() + habits.len() + reminders.len(),
-    );
+    let mut items: Vec<DailyContextItem> =
+        Vec::with_capacity(tasks.len() + events.len() + habits.len() + reminders.len());
     items.extend_from_slice(tasks);
     items.extend_from_slice(events);
     items.extend_from_slice(habits);
@@ -44,14 +43,14 @@ pub fn generate_daily_context(
 /// within).
 pub fn sort_by_priority(items: &mut [DailyContextItem]) {
     items.sort_by(|a, b| {
-        a.priority.cmp(&b.priority).then_with(|| {
-            match (&a.time, &b.time) {
+        a.priority
+            .cmp(&b.priority)
+            .then_with(|| match (&a.time, &b.time) {
                 (Some(ta), Some(tb)) => ta.cmp(tb),
                 (Some(_), None) => std::cmp::Ordering::Less,
                 (None, Some(_)) => std::cmp::Ordering::Greater,
                 (None, None) => std::cmp::Ordering::Equal,
-            }
-        })
+            })
     });
 }
 
@@ -175,12 +174,15 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
             icon: Some("heart".into()),
             category: WidgetCategory::Input,
             config_fields: vec![],
-            signals: vec![SignalSpec::new("check-in-submitted", "A check-in was recorded")
-                .with_payload(vec![
-                    FieldSpec::number("energy", "Energy", NumericBounds::min_max(1.0, 5.0)),
-                    FieldSpec::number("focus", "Focus", NumericBounds::min_max(1.0, 5.0)),
-                    FieldSpec::number("mood", "Mood", NumericBounds::min_max(1.0, 5.0)),
-                ])],
+            signals: vec![
+                SignalSpec::new("check-in-submitted", "A check-in was recorded").with_payload(
+                    vec![
+                        FieldSpec::number("energy", "Energy", NumericBounds::min_max(1.0, 5.0)),
+                        FieldSpec::number("focus", "Focus", NumericBounds::min_max(1.0, 5.0)),
+                        FieldSpec::number("mood", "Mood", NumericBounds::min_max(1.0, 5.0)),
+                    ],
+                ),
+            ],
             toolbar_actions: vec![ToolbarAction::signal("submit", "Submit", "check")],
             default_size: WidgetSize::new(1, 1),
             template: WidgetTemplate {
@@ -269,7 +271,12 @@ mod tests {
 
     // ── Helpers ──────────────────────────────────────────────────
 
-    fn make_context_item(title: &str, source: ContextSource, priority: u8, time: Option<&str>) -> DailyContextItem {
+    fn make_context_item(
+        title: &str,
+        source: ContextSource,
+        priority: u8,
+        time: Option<&str>,
+    ) -> DailyContextItem {
         DailyContextItem {
             title: title.to_string(),
             source,
@@ -315,10 +322,30 @@ mod tests {
 
     #[test]
     fn daily_context_merges_all_sources() {
-        let tasks = vec![make_context_item("Write report", ContextSource::Task, 1, None)];
-        let events = vec![make_context_item("Standup", ContextSource::Event, 2, Some("09:00"))];
-        let habits = vec![make_context_item("Meditate", ContextSource::Habit, 3, Some("07:00"))];
-        let reminders = vec![make_context_item("Call dentist", ContextSource::Reminder, 2, None)];
+        let tasks = vec![make_context_item(
+            "Write report",
+            ContextSource::Task,
+            1,
+            None,
+        )];
+        let events = vec![make_context_item(
+            "Standup",
+            ContextSource::Event,
+            2,
+            Some("09:00"),
+        )];
+        let habits = vec![make_context_item(
+            "Meditate",
+            ContextSource::Habit,
+            3,
+            Some("07:00"),
+        )];
+        let reminders = vec![make_context_item(
+            "Call dentist",
+            ContextSource::Reminder,
+            2,
+            None,
+        )];
 
         let ctx = generate_daily_context(&tasks, &events, &habits, &reminders, "2026-05-02");
 
@@ -439,10 +466,7 @@ mod tests {
     fn score_plan_averages_multiple_check_ins() {
         let plan = make_plan(
             vec![make_plan_item("1", "A", 1, true)],
-            vec![
-                make_check_in(2, 4, 3),
-                make_check_in(4, 2, 5),
-            ],
+            vec![make_check_in(2, 4, 3), make_check_in(4, 2, 5)],
         );
         let score = score_plan(&plan);
         assert!((score.avg_energy - 3.0).abs() < f64::EPSILON);

@@ -1326,9 +1326,7 @@ fn emit_facet_html_layout(
     };
 
     let style = if let Some(cols) = layout.columns.filter(|&c| c > 1) {
-        format!(
-            "display:grid;grid-template-columns:repeat({cols},1fr);gap:{gap}px"
-        )
+        format!("display:grid;grid-template-columns:repeat({cols},1fr);gap:{gap}px")
     } else if layout.wrap {
         format!("display:flex;flex-direction:{direction};flex-wrap:wrap;gap:{gap}px")
     } else {

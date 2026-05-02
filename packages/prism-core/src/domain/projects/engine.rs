@@ -65,10 +65,8 @@ pub fn compute_velocity(sprints: &[SprintData]) -> VelocityStats {
     let trend = if velocities.len() >= 3 {
         let last_half = &velocities[velocities.len() / 2..];
         let first_half = &velocities[..velocities.len() / 2];
-        let first_avg: f64 =
-            first_half.iter().sum::<i32>() as f64 / first_half.len().max(1) as f64;
-        let last_avg: f64 =
-            last_half.iter().sum::<i32>() as f64 / last_half.len().max(1) as f64;
+        let first_avg: f64 = first_half.iter().sum::<i32>() as f64 / first_half.len().max(1) as f64;
+        let last_avg: f64 = last_half.iter().sum::<i32>() as f64 / last_half.len().max(1) as f64;
         let diff = last_avg - first_avg;
         if diff > 1.0 {
             VelocityTrend::Improving
@@ -177,8 +175,10 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
             description: "Composite health gauge from schedule, scope, and risk".into(),
             icon: Some("activity".into()),
             category: WidgetCategory::Display,
-            signals: vec![SignalSpec::new("axis-selected", "A health axis was selected")
-                .with_payload(vec![FieldSpec::text("axis", "Axis")])],
+            signals: vec![
+                SignalSpec::new("axis-selected", "A health axis was selected")
+                    .with_payload(vec![FieldSpec::text("axis", "Axis")]),
+            ],
             default_size: WidgetSize::new(2, 1),
             template: WidgetTemplate {
                 root: TemplateNode::Container {

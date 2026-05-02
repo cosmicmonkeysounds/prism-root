@@ -18,11 +18,7 @@ use super::types::{
 /// Estimate calories burned using the MET formula.
 ///
 /// Formula: `calories = MET * weight_kg * (duration_minutes / 60.0)`
-pub fn estimate_calories(
-    duration_minutes: f64,
-    weight_kg: f64,
-    met_value: f64,
-) -> CalorieEstimate {
+pub fn estimate_calories(duration_minutes: f64, weight_kg: f64, met_value: f64) -> CalorieEstimate {
     let calories = met_value * weight_kg * (duration_minutes / 60.0);
     CalorieEstimate {
         calories,
@@ -112,13 +108,15 @@ pub fn compute_personal_bests(logs: &[FitnessLog]) -> Vec<PersonalBest> {
 
     let mut result: Vec<PersonalBest> = bests
         .into_iter()
-        .map(|(exercise, (max_weight_kg, max_reps, max_volume, achieved_date))| PersonalBest {
-            exercise,
-            max_weight_kg,
-            max_reps,
-            max_volume,
-            achieved_date,
-        })
+        .map(
+            |(exercise, (max_weight_kg, max_reps, max_volume, achieved_date))| PersonalBest {
+                exercise,
+                max_weight_kg,
+                max_reps,
+                max_volume,
+                achieved_date,
+            },
+        )
         .collect();
 
     // Sort by exercise name for deterministic output.
@@ -141,7 +139,9 @@ pub fn fitness_summary(logs: &[FitnessLog], default_weight_kg: f64) -> FitnessSu
         total_duration_minutes += log.duration_minutes;
 
         let weight = log.weight_kg.unwrap_or(default_weight_kg);
-        let met = log.met_value.unwrap_or_else(|| lookup_met_value(&log.activity));
+        let met = log
+            .met_value
+            .unwrap_or_else(|| lookup_met_value(&log.activity));
         let est = estimate_calories(log.duration_minutes, weight, met);
         total_calories += est.calories;
     }
@@ -245,7 +245,11 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
             data_key: Some("personal_bests".into()),
             data_fields: vec![
                 FieldSpec::text("exercise", "Exercise"),
-                FieldSpec::number("max_weight_kg", "Max Weight (kg)", NumericBounds::unbounded()),
+                FieldSpec::number(
+                    "max_weight_kg",
+                    "Max Weight (kg)",
+                    NumericBounds::unbounded(),
+                ),
                 FieldSpec::number("max_reps", "Max Reps", NumericBounds::unbounded()),
                 FieldSpec::number("max_volume", "Max Volume", NumericBounds::unbounded()),
             ],
@@ -345,8 +349,16 @@ mod tests {
                 weight_kg: Some(80.0),
                 met_value: None,
                 sets: Some(vec![
-                    ExerciseSet { reps: 8, weight_kg: 60.0, duration_seconds: None },
-                    ExerciseSet { reps: 6, weight_kg: 80.0, duration_seconds: None },
+                    ExerciseSet {
+                        reps: 8,
+                        weight_kg: 60.0,
+                        duration_seconds: None,
+                    },
+                    ExerciseSet {
+                        reps: 6,
+                        weight_kg: 80.0,
+                        duration_seconds: None,
+                    },
                 ]),
                 notes: None,
             },
@@ -358,8 +370,16 @@ mod tests {
                 weight_kg: Some(80.0),
                 met_value: None,
                 sets: Some(vec![
-                    ExerciseSet { reps: 10, weight_kg: 70.0, duration_seconds: None },
-                    ExerciseSet { reps: 5, weight_kg: 90.0, duration_seconds: None },
+                    ExerciseSet {
+                        reps: 10,
+                        weight_kg: 70.0,
+                        duration_seconds: None,
+                    },
+                    ExerciseSet {
+                        reps: 5,
+                        weight_kg: 90.0,
+                        duration_seconds: None,
+                    },
                 ]),
                 notes: None,
             },
@@ -384,9 +404,11 @@ mod tests {
                 duration_minutes: 40.0,
                 weight_kg: None,
                 met_value: None,
-                sets: Some(vec![
-                    ExerciseSet { reps: 5, weight_kg: 120.0, duration_seconds: None },
-                ]),
+                sets: Some(vec![ExerciseSet {
+                    reps: 5,
+                    weight_kg: 120.0,
+                    duration_seconds: None,
+                }]),
                 notes: None,
             },
             FitnessLog {
@@ -396,9 +418,11 @@ mod tests {
                 duration_minutes: 30.0,
                 weight_kg: None,
                 met_value: None,
-                sets: Some(vec![
-                    ExerciseSet { reps: 3, weight_kg: 180.0, duration_seconds: None },
-                ]),
+                sets: Some(vec![ExerciseSet {
+                    reps: 3,
+                    weight_kg: 180.0,
+                    duration_seconds: None,
+                }]),
                 notes: None,
             },
         ];
@@ -526,9 +550,11 @@ mod tests {
             duration_minutes: 40.0,
             weight_kg: Some(85.0),
             met_value: Some(MET_WEIGHT_TRAINING),
-            sets: Some(vec![
-                ExerciseSet { reps: 5, weight_kg: 100.0, duration_seconds: None },
-            ]),
+            sets: Some(vec![ExerciseSet {
+                reps: 5,
+                weight_kg: 100.0,
+                duration_seconds: None,
+            }]),
             notes: None,
         }];
 

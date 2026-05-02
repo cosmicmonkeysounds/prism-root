@@ -40,10 +40,7 @@ pub fn compute_next_occurrence(reminder: &Reminder, after: &NaiveDate) -> Option
     }
 }
 
-pub fn build_notification_payload(
-    reminder: &Reminder,
-    today: &NaiveDate,
-) -> NotificationPayload {
+pub fn build_notification_payload(reminder: &Reminder, today: &NaiveDate) -> NotificationPayload {
     let due = parse_date_str(&reminder.due_date);
     let is_overdue = due.map(|d| d < *today).unwrap_or(false);
 
@@ -56,10 +53,7 @@ pub fn build_notification_payload(
             if days == 1 { "" } else { "s" }
         )
     } else {
-        reminder
-            .description
-            .clone()
-            .unwrap_or_default()
+        reminder.description.clone().unwrap_or_default()
     };
 
     NotificationPayload {
@@ -120,8 +114,8 @@ pub fn due_today<'a>(reminders: &'a [Reminder], today: &NaiveDate) -> Vec<&'a Re
 
 pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
     use crate::widget::{
-        DataQuery, FieldSpec, LayoutDirection, QuerySort, SignalSpec, TemplateNode,
-        ToolbarAction, WidgetCategory, WidgetContribution, WidgetSize, WidgetTemplate,
+        DataQuery, FieldSpec, LayoutDirection, QuerySort, SignalSpec, TemplateNode, ToolbarAction,
+        WidgetCategory, WidgetContribution, WidgetSize, WidgetTemplate,
     };
     use serde_json::json;
 
@@ -186,13 +180,11 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
             description: "Overdue reminders with urgency indicators".into(),
             icon: Some("alert-circle".into()),
             category: WidgetCategory::Display,
-            signals: vec![SignalSpec::new("reminder-selected", "A reminder was selected")
-                .with_payload(vec![FieldSpec::text("reminder_id", "Reminder ID")])],
-            toolbar_actions: vec![ToolbarAction::signal(
-                "dismiss-all",
-                "Dismiss All",
-                "x",
-            )],
+            signals: vec![
+                SignalSpec::new("reminder-selected", "A reminder was selected")
+                    .with_payload(vec![FieldSpec::text("reminder_id", "Reminder ID")]),
+            ],
+            toolbar_actions: vec![ToolbarAction::signal("dismiss-all", "Dismiss All", "x")],
             default_size: WidgetSize::new(2, 1),
             template: WidgetTemplate {
                 root: TemplateNode::Container {

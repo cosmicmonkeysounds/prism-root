@@ -5902,12 +5902,17 @@ fn execute_command(
         }
         "facet.promote" => {
             let mut s = shared.borrow_mut();
-            let info: Option<(String, String, prism_builder::Node)> = s.store.state().active_app()
+            let info: Option<(String, String, prism_builder::Node)> = s
+                .store
+                .state()
+                .active_app()
                 .and_then(|a| a.active_document())
                 .and_then(|doc| {
                     let selected = s.store.state().selection.primary()?;
                     let node = doc.root.as_ref()?.find(selected)?;
-                    if node.component != "facet" { return None; }
+                    if node.component != "facet" {
+                        return None;
+                    }
                     let fid = node.props.get("facet_id")?.as_str()?;
                     let def = doc.facets.get(fid)?;
                     if let prism_builder::FacetTemplate::Inline { root } = &def.template {
@@ -5922,10 +5927,12 @@ fn execute_command(
                 s.push_undo("Promote to component");
                 let cid = component_id.clone();
                 s.store.mutate(|state| {
-                    if let Some(doc) = state.active_app_mut().and_then(|a| a.active_document_mut()) {
+                    if let Some(doc) = state.active_app_mut().and_then(|a| a.active_document_mut())
+                    {
                         doc.prefabs.insert(cid.clone(), prefab);
                         if let Some(def) = doc.facets.get_mut(&fid) {
-                            def.template = prism_builder::FacetTemplate::ComponentRef { component_id: cid };
+                            def.template =
+                                prism_builder::FacetTemplate::ComponentRef { component_id: cid };
                             def.bindings = bindings;
                         }
                     }
