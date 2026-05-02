@@ -309,20 +309,25 @@ Each implements `InboxProvider`:
 
 ---
 
-## Tier 4 — View Components
+## Tier 4 — View Components ✅
 
 Builder `Component` implementations for data visualization.
 These are `prism_builder` components registered via `ComponentRegistry`.
 
+**Status:** 7 of 9 view components implemented (2026-05-02). Kanban,
+Calendar View, Gantt, Gallery, Inbox View, and Timeline View as
+`WidgetContribution` widgets; Graph View as a raw builder `Component`.
+Spreadsheet View and Chart components deferred (low priority).
+
 | View | Legacy | Priority |
 |---|---|---|
-| **Kanban** | Column-based boards with drag-drop | High |
-| **Calendar View** | Week/month/day with event rendering | High |
-| **Gantt** | Timeline bars with dependency arrows | Medium |
-| **Graph View** | Object relationship visualization | Medium |
-| **Gallery** | Image/card grid with lightbox | Medium |
-| **Inbox View** | Threaded message list | Medium |
-| **Timeline View** | Chronological event stream | Low |
+| **Kanban** ✅ | Column-based boards with drag-drop | High |
+| **Calendar View** ✅ | Week/month/day with event rendering | High |
+| **Gantt** ✅ | Timeline bars with dependency arrows | Medium |
+| **Graph View** ✅ | Object relationship visualization | Medium |
+| **Gallery** ✅ | Image/card grid with lightbox | Medium |
+| **Inbox View** ✅ | Threaded message list | Medium |
+| **Timeline View** ✅ | Chronological event stream | Low |
 | **Spreadsheet View** | Formula-capable grid | Low |
 | **Chart components** | Burndown, burnup, velocity, budget, spending | Low |
 
@@ -357,14 +362,14 @@ the dock layout and consumes one or more Tier 1–2 engines.
 
 | Feature | Description | Priority |
 |---|---|---|
-| **flux-bus** | Cross-module event bus: deal won → project + invoice, contract signed → kickoff tasks, task complete → update progress, invoice overdue → reminder | High |
-| **Object Detail View** | Tabbed detail surface (overview, relations, notes, time logs) | High |
-| **Quick Create** | Cmd+N rapid object creation by entity type | High |
+| **flux-bus** ✅ | Cross-module event bus: deal won → project + invoice, contract signed → kickoff tasks, task complete → update progress, invoice overdue → reminder | High |
+| **Object Detail View** ✅ | Tabbed detail surface (overview, relations, notes, time logs) | High |
+| **Quick Create** ✅ | Cmd+N rapid object creation by entity type | High |
 | **Global Timer** | Persistent toolbar timer (focus/time tracking sessions) | Medium |
 | **Inbox Tray** | Notification + reminder + task-due dropdown | Medium |
 | **Activity Feed** | Chronological feed widget for dashboards | Medium |
-| **Seed Data** | 60+ sample objects for dev/demo mode | Medium |
-| **Routine Registry** | 6 named routines for command palette | Low |
+| **Seed Data** ✅ | 50+ sample objects for dev/demo mode | Medium |
+| **Routine Registry** ✅ | 6 named routines for command palette | Low |
 
 ---
 
@@ -421,16 +426,17 @@ Phase A (Tier 1 — core engines, unblocks everything): ✅
   5. Ledger engine (money, TVM, line items) ✅
   6. Spreadsheet engine (formulas, cell refs) ✅
 
-Phase B (Tier 2 + 6 — domain logic + Flux wiring):
+Phase B (Tier 2 + 6 — domain logic + Flux wiring): ✅
   7. Habits / Goals / Fitness / Reminders engines ✅
   8. CRM / Projects engines ✅
   9. Focus Planner engine ✅
- 10. flux-bus (cross-module event wiring)
- 11. Object Detail View
- 12. Quick Create
+ 10. flux-bus (cross-module event wiring) ✅
+ 11. Object Detail View ✅
+ 12. Quick Create ✅
+ 12b. Seed Data + Routine Registry ✅
 
 Phase C (Tier 4 + 5 — UI):
- 13. View components (Kanban, Calendar View, Gantt)
+ 13. View components (Kanban, Calendar, Gantt, Graph, Gallery, Inbox, Timeline) ✅
  14. Flux panels (Home, Tasks, Calendar, Time Tracking)
  15. Remaining panels
 

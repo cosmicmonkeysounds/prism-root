@@ -156,7 +156,7 @@ mod tests {
             title: "Acme Corp".into(),
             client_id: "c1".into(),
             stage: DealStage::Proposal,
-            value: 500_00,
+            value: 50_000,
             probability: 0.6,
             expected_close: Some("2026-06-01".into()),
             created_at: "2026-01-01".into(),
@@ -174,13 +174,13 @@ mod tests {
             deal_id: Some("d1".into()),
             client_id: "c1".into(),
             stage: ContractStage::Active,
-            value: 100_000_00,
+            value: 10_000_000,
             start_date: Some("2026-01-15".into()),
             end_date: Some("2027-01-15".into()),
             signed_at: Some("2026-01-10".into()),
         };
         let json = serde_json::to_value(&contract).unwrap();
         assert_eq!(json["stage"], "active");
-        assert_eq!(json["value"], 100_000_00);
+        assert_eq!(json["value"], 10_000_000);
     }
 }

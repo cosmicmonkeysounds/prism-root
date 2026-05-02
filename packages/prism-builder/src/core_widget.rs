@@ -19,6 +19,8 @@ use prism_core::widget::{
 
 use crate::component::{Component, ComponentId, RenderError, RenderSlintContext};
 use crate::document::Node;
+use crate::html::Html;
+use crate::html_block::{HtmlBlock, HtmlRegistry, HtmlRenderContext};
 use crate::registry::{ComponentRegistry, FieldSpec, RegistryError};
 use crate::signal::{with_common_signals, SignalDef};
 use crate::slint_source::SlintEmitter;
@@ -238,17 +240,194 @@ fn merge_props(instance: &Value, template: &Value) -> Value {
     }
 }
 
+// ── HTML block ─────────────────────────────────────────────────
+
+/// HTML-side equivalent of [`CoreWidgetComponent`] for Sovereign
+/// Portal SSR rendering.
+pub struct CoreWidgetHtmlBlock {
+    contribution: WidgetContribution,
+}
+
+impl CoreWidgetHtmlBlock {
+    pub fn new(contribution: WidgetContribution) -> Self {
+        Self { contribution }
+    }
+}
+
+impl HtmlBlock for CoreWidgetHtmlBlock {
+    fn id(&self) -> &ComponentId {
+        &self.contribution.id
+    }
+
+    fn schema(&self) -> Vec<FieldSpec> {
+        self.contribution.config_fields.clone()
+    }
+
+    fn signals(&self) -> Vec<SignalDef> {
+        let mapped: Vec<SignalDef> = self
+            .contribution
+            .signals
+            .iter()
+            .map(map_signal_spec)
+            .collect();
+        with_common_signals(mapped)
+    }
+
+    fn variants(&self) -> Vec<VariantAxis> {
+        self.contribution
+            .variants
+            .iter()
+            .map(map_variant_spec)
+            .collect()
+    }
+
+    fn render_html(
+        &self,
+        ctx: &HtmlRenderContext<'_>,
+        props: &Value,
+        _children: &[Node],
+        out: &mut Html,
+    ) -> Result<(), RenderError> {
+        render_template_html(ctx, &self.contribution.template.root, props, out)
+    }
+}
+
+/// Walk a [`TemplateNode`] tree and emit HTML.
+fn render_template_html(
+    ctx: &HtmlRenderContext<'_>,
+    node: &TemplateNode,
+    props: &Value,
+    out: &mut Html,
+) -> Result<(), RenderError> {
+    match node {
+        TemplateNode::Container {
+            direction,
+            gap,
+            padding,
+            children,
+        } => {
+            let dir = match direction {
+                LayoutDirection::Horizontal => "row",
+                LayoutDirection::Vertical => "column",
+            };
+            let mut style = format!("display:flex;flex-direction:{dir}");
+            if let Some(g) = gap {
+                style.push_str(&format!(";gap:{g}px"));
+            }
+            if let Some(p) = padding {
+                style.push_str(&format!(";padding:{p}px"));
+            }
+            out.open_attrs("div", &[("style", style.as_str())]);
+            for child in children {
+                render_template_html(ctx, child, props, out)?;
+            }
+            out.close("div");
+            Ok(())
+        }
+
+        TemplateNode::Component {
+            component_id,
+            props: template_props,
+        } => {
+            let merged = merge_props(props, template_props);
+            let child_node = Node {
+                id: String::new(),
+                component: component_id.clone(),
+                props: merged,
+                ..Default::default()
+            };
+            ctx.render_child(&child_node, out)
+        }
+
+        TemplateNode::DataBinding {
+            field,
+            component_id,
+            prop_key,
+        } => {
+            let value = props.get(field).cloned().unwrap_or(Value::Null);
+            let binding_props = serde_json::json!({ prop_key: value });
+            let child_node = Node {
+                id: String::new(),
+                component: component_id.clone(),
+                props: binding_props,
+                ..Default::default()
+            };
+            ctx.render_child(&child_node, out)
+        }
+
+        TemplateNode::Repeater {
+            source,
+            item_template,
+            empty_label,
+        } => {
+            let items = props
+                .get(source.as_str())
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            if items.is_empty() {
+                let label = empty_label.as_deref().unwrap_or("No items");
+                out.open_attrs("p", &[("style", "font-size:12px;color:#888")]);
+                out.text(label);
+                out.close("p");
+                Ok(())
+            } else {
+                for item in &items {
+                    render_template_html(ctx, item_template, item, out)?;
+                }
+                Ok(())
+            }
+        }
+
+        TemplateNode::Conditional {
+            field,
+            child,
+            fallback,
+        } => {
+            let is_truthy = props
+                .get(field)
+                .map(|v| match v {
+                    Value::Bool(b) => *b,
+                    Value::Null => false,
+                    Value::String(s) => !s.is_empty(),
+                    Value::Number(n) => n.as_f64().unwrap_or(0.0) != 0.0,
+                    _ => true,
+                })
+                .unwrap_or(false);
+
+            if is_truthy {
+                render_template_html(ctx, child, props, out)
+            } else if let Some(fb) = fallback {
+                render_template_html(ctx, fb, props, out)
+            } else {
+                Ok(())
+            }
+        }
+    }
+}
+
 // ── Registration ────────────────────────────────────────────────
 
-/// Collect all widget contributions from the six Tier 1 core engines.
+/// Collect all widget contributions from core engines.
 pub fn collect_all_contributions() -> Vec<WidgetContribution> {
     let mut all = Vec::new();
+    // Tier 1
     all.extend(prism_core::domain::calendar::widget_contributions());
     all.extend(prism_core::domain::timekeeping::widget_contributions());
     all.extend(prism_core::domain::ledger::widget_contributions());
     all.extend(prism_core::domain::spreadsheet::widget_contributions());
     all.extend(prism_core::interaction::comments::widget_contributions());
     all.extend(prism_core::interaction::dashboard::widget_contributions());
+    // Tier 2
+    all.extend(prism_core::domain::habits::widget_contributions());
+    all.extend(prism_core::domain::goals::widget_contributions());
+    all.extend(prism_core::domain::fitness::widget_contributions());
+    all.extend(prism_core::domain::reminders::widget_contributions());
+    all.extend(prism_core::domain::crm::widget_contributions());
+    all.extend(prism_core::domain::projects::widget_contributions());
+    all.extend(prism_core::domain::focus_planner::widget_contributions());
+    // Views
+    all.extend(prism_core::widget::view_contributions());
     all
 }
 
@@ -258,6 +437,16 @@ pub fn collect_all_contributions() -> Vec<WidgetContribution> {
 pub fn register_core_widgets(registry: &mut ComponentRegistry) -> Result<(), RegistryError> {
     for contribution in collect_all_contributions() {
         registry.register(Arc::new(CoreWidgetComponent::new(contribution)))?;
+    }
+    Ok(())
+}
+
+/// HTML-side equivalent of [`register_core_widgets`]. Wraps each
+/// contribution in a [`CoreWidgetHtmlBlock`] and registers it into
+/// the [`HtmlRegistry`] so the relay SSR path can render them.
+pub fn register_core_html_widgets(registry: &mut HtmlRegistry) -> Result<(), RegistryError> {
+    for contribution in collect_all_contributions() {
+        registry.register(Arc::new(CoreWidgetHtmlBlock::new(contribution)))?;
     }
     Ok(())
 }
@@ -680,7 +869,7 @@ mod tests {
     #[test]
     fn collect_all_contributions_returns_all_engines() {
         let contributions = collect_all_contributions();
-        assert_eq!(contributions.len(), 20);
+        assert_eq!(contributions.len(), 45);
         assert!(contributions.iter().any(|c| c.id == "calendar-month-view"));
         assert!(contributions.iter().any(|c| c.id == "stopwatch"));
         assert!(contributions
@@ -883,5 +1072,57 @@ mod tests {
         ctx.render_child(&child, &mut out).unwrap();
         let source = out.build();
         assert!(source.contains("Nothing here"));
+    }
+
+    #[test]
+    fn register_core_html_widgets_populates_registry() {
+        let mut registry = HtmlRegistry::new();
+        register_core_html_widgets(&mut registry).unwrap();
+        let count = collect_all_contributions().len();
+        assert_eq!(registry.len(), count);
+    }
+
+    #[test]
+    fn html_block_renders_container() {
+        let mut html_registry = HtmlRegistry::new();
+        crate::html_starter::register_html_builtins(&mut html_registry).unwrap();
+
+        let tokens = prism_core::design_tokens::DesignTokens::default();
+        let resources = indexmap::IndexMap::new();
+        let prefabs = indexmap::IndexMap::new();
+        let facets = indexmap::IndexMap::new();
+        let facet_schemas = indexmap::IndexMap::new();
+        let ctx = HtmlRenderContext {
+            tokens: &tokens,
+            registry: &html_registry,
+            resources: &resources,
+            prefabs: &prefabs,
+            facets: &facets,
+            facet_schemas: &facet_schemas,
+            widget_data: std::collections::HashMap::new(),
+        };
+
+        let c = WidgetContribution {
+            id: "html-test".into(),
+            template: WidgetTemplate {
+                root: TemplateNode::Container {
+                    direction: LayoutDirection::Horizontal,
+                    gap: Some(8),
+                    padding: None,
+                    children: vec![TemplateNode::Component {
+                        component_id: "text".into(),
+                        props: json!({"body": "Hello"}),
+                    }],
+                },
+            },
+            ..Default::default()
+        };
+        let block = CoreWidgetHtmlBlock::new(c);
+        let mut out = Html::new();
+        block.render_html(&ctx, &json!({}), &[], &mut out).unwrap();
+        let html = out.into_string();
+        assert!(html.contains("display:flex"));
+        assert!(html.contains("flex-direction:row"));
+        assert!(html.contains("gap:8px"));
     }
 }

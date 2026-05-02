@@ -11,6 +11,7 @@
 
 pub mod contribution;
 pub mod field;
+pub mod views;
 
 pub use contribution::{
     get_json_field, json_sort_key, DataQuery, FilterOp, LayoutDirection, QueryFilter, QuerySort,
@@ -21,3 +22,4 @@ pub use field::{
     prop_bool, prop_f64, prop_str, prop_u64, FieldKind, FieldSpec, FieldValue, FileFieldConfig,
     NumericBounds, SelectOption,
 };
+pub use views::view_contributions;

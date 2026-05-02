@@ -192,10 +192,7 @@ fn field_label(key: &str) -> String {
 }
 
 fn type_label(object_type: &str) -> &str {
-    object_type
-        .rsplit(':')
-        .next()
-        .unwrap_or(object_type)
+    object_type.rsplit(':').next().unwrap_or(object_type)
 }
 
 // ── Tests ─────────────────────────────────────────────────────────

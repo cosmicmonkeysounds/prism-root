@@ -76,8 +76,7 @@ impl QuickCreateRegistry {
         self.entries
             .iter()
             .filter(|e| {
-                e.label.to_lowercase().contains(&q)
-                    || e.entity_type.to_lowercase().contains(&q)
+                e.label.to_lowercase().contains(&q) || e.entity_type.to_lowercase().contains(&q)
             })
             .collect()
     }
@@ -283,7 +282,11 @@ mod tests {
     fn task_has_required_name_field() {
         let reg = create_default_registry();
         let task = reg.get("flux:task").unwrap();
-        let name_field = task.default_fields.iter().find(|f| f.key == "name").unwrap();
+        let name_field = task
+            .default_fields
+            .iter()
+            .find(|f| f.key == "name")
+            .unwrap();
         assert!(name_field.required);
         assert_eq!(name_field.field_type, QuickCreateFieldType::Text);
     }
@@ -292,11 +295,12 @@ mod tests {
     fn task_has_default_status() {
         let reg = create_default_registry();
         let task = reg.get("flux:task").unwrap();
-        let status = task.default_fields.iter().find(|f| f.key == "status").unwrap();
-        assert_eq!(
-            status.default_value,
-            Some(Value::String("todo".into()))
-        );
+        let status = task
+            .default_fields
+            .iter()
+            .find(|f| f.key == "status")
+            .unwrap();
+        assert_eq!(status.default_value, Some(Value::String("todo".into())));
     }
 
     #[test]

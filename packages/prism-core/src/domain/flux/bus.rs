@@ -330,8 +330,8 @@ mod tests {
             source_deal_id: "d1".into(),
         };
         let json = serde_json::to_string(&action).unwrap();
-        let back: FluxAction = serde_json::from_str(&json).unwrap();
-        assert_eq!(json.contains("create-project"), true);
+        let _back: FluxAction = serde_json::from_str(&json).unwrap();
+        assert!(json.contains("create-project"));
     }
 
     #[test]

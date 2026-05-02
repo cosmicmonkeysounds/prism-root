@@ -21,4 +21,6 @@ pub mod activity;
 pub mod comments;
 pub mod dashboard;
 pub mod notification;
+pub mod object_detail;
 pub mod query;
+pub mod quick_create;

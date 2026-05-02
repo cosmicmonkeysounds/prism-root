@@ -33,6 +33,8 @@ impl AppState {
         register_builtins(&mut registry).expect("builtin components must register");
         let mut html_registry = HtmlRegistry::new();
         register_html_builtins(&mut html_registry).expect("html builtins must register");
+        prism_builder::register_core_html_widgets(&mut html_registry)
+            .expect("core html widgets must register");
         Self {
             portals: PortalStore::new(),
             registry,
@@ -131,8 +133,9 @@ mod tests {
     #[test]
     fn new_registers_builtins() {
         let state = AppState::new();
-        assert_eq!(state.registry.len(), 16);
-        assert_eq!(state.html_registry.len(), 16);
+        assert_eq!(state.registry.len(), 17);
+        let core_widget_count = prism_builder::collect_all_contributions().len();
+        assert_eq!(state.html_registry.len(), 16 + core_widget_count);
         for id in [
             "text",
             "image",

@@ -1090,6 +1090,8 @@ impl Shell {
         let window = AppWindow::new()?;
         let mut registry = ComponentRegistry::new();
         register_builtins(&mut registry).expect("starter components must register");
+        prism_builder::register_core_widgets(&mut registry)
+            .expect("core widget components must register");
         let mut help = HelpRegistry::new();
         register_help_entries(&mut help, &registry);
         let mut input = InputManager::with_defaults();
@@ -7058,7 +7060,17 @@ fn default_props_for_component(component: &str) -> serde_json::Value {
         "tabs" => json!({ "labels": "Tab 1, Tab 2" }),
         "accordion" => json!({ "title": "Section", "open": true }),
         "facet" => json!({ "facet_id": "" }),
-        _ => json!({}),
+        _ => {
+            for c in prism_builder::collect_all_contributions() {
+                if c.id == component {
+                    if !c.default_config.is_null() {
+                        return c.default_config;
+                    }
+                    break;
+                }
+            }
+            json!({})
+        }
     }
 }
 
@@ -7152,6 +7164,41 @@ fn component_palette_items(doc: &BuilderDocument) -> Vec<ComponentPaletteItem> {
         "Repeat a prefab template over a data source",
         "PROGRAMMATIC",
     ));
+
+    // Core engine widgets grouped by WidgetCategory
+    let contributions = prism_builder::collect_all_contributions();
+    let category_label = |cat: &prism_core::widget::WidgetCategory| -> &'static str {
+        use prism_core::widget::WidgetCategory;
+        match cat {
+            WidgetCategory::Display => "WIDGETS: DISPLAY",
+            WidgetCategory::Input => "WIDGETS: INPUT",
+            WidgetCategory::Navigation => "WIDGETS: NAVIGATION",
+            WidgetCategory::DataTable => "WIDGETS: DATA TABLE",
+            WidgetCategory::Temporal => "WIDGETS: TEMPORAL",
+            WidgetCategory::Communication => "WIDGETS: COMMUNICATION",
+            WidgetCategory::Finance => "WIDGETS: FINANCE",
+            WidgetCategory::Layout => "WIDGETS: LAYOUT",
+            WidgetCategory::Custom => "WIDGETS: CUSTOM",
+        }
+    };
+    let mut seen_categories = std::collections::HashSet::new();
+    let mut grouped: Vec<(&str, Vec<&prism_core::widget::WidgetContribution>)> = Vec::new();
+    for c in &contributions {
+        let label = category_label(&c.category);
+        if let Some(entry) = grouped.iter_mut().find(|(l, _)| *l == label) {
+            entry.1.push(c);
+        } else {
+            grouped.push((label, vec![c]));
+        }
+    }
+    for (cat_label, widgets) in &grouped {
+        if seen_categories.insert(*cat_label) {
+            items.push(make_header(cat_label));
+        }
+        for w in widgets {
+            items.push(make_item(&w.id, &w.label, &w.description, cat_label));
+        }
+    }
 
     items
 }
@@ -8831,9 +8878,12 @@ mod tests {
         let items = component_palette_items(&doc);
         let headers: Vec<_> = items.iter().filter(|i| i.is_header).collect();
         let components: Vec<_> = items.iter().filter(|i| !i.is_header).collect();
-        assert_eq!(headers.len(), 6);
-        assert_eq!(components.len(), 16);
-        assert_eq!(items.len(), 22);
+        let core_widget_count = prism_builder::collect_all_contributions().len();
+        // 6 static categories + widget categories
+        assert!(headers.len() >= 6);
+        // 16 static components + core widgets
+        assert_eq!(components.len(), 16 + core_widget_count);
+        assert_eq!(items.len(), headers.len() + components.len());
         assert_eq!(headers[0].label.as_str(), "CONTENT");
         assert_eq!(headers[1].label.as_str(), "LAYOUT");
         assert_eq!(headers[2].label.as_str(), "FORM");

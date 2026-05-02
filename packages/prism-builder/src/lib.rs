@@ -46,7 +46,10 @@ pub mod variant;
 pub use app::{AppIcon, AppId, NavigationConfig, NavigationStyle, Page, PrismApp};
 pub use asset::{collect_vfs_hashes, AssetSource};
 pub use component::{Component, ComponentId, RenderContext, RenderError, RenderSlintContext};
-pub use core_widget::{collect_all_contributions, register_core_widgets, CoreWidgetComponent};
+pub use core_widget::{
+    collect_all_contributions, register_core_html_widgets, register_core_widgets,
+    CoreWidgetComponent, CoreWidgetHtmlBlock,
+};
 pub use document::{BuilderDocument, Node, NodeId};
 pub use facet::{
     apply_aggregate, apply_scalar_bindings, collect_expression_fields, evaluate_calculations,

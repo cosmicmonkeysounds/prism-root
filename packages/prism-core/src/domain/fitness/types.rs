@@ -164,11 +164,16 @@ mod tests {
 
     #[test]
     fn met_constants_are_positive() {
-        assert!(MET_WALKING > 0.0);
-        assert!(MET_RUNNING > 0.0);
-        assert!(MET_CYCLING > 0.0);
-        assert!(MET_SWIMMING > 0.0);
-        assert!(MET_WEIGHT_TRAINING > 0.0);
-        assert!(MET_YOGA > 0.0);
+        let mets = [
+            MET_WALKING,
+            MET_RUNNING,
+            MET_CYCLING,
+            MET_SWIMMING,
+            MET_WEIGHT_TRAINING,
+            MET_YOGA,
+        ];
+        for met in mets {
+            assert!(met > 0.0);
+        }
     }
 }

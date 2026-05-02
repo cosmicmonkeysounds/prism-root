@@ -1,8 +1,8 @@
 //! Starter component catalog — the default Slint-side registry.
 //!
-//! Fifteen blocks land here: `text`, `image`, `container`, `form`,
+//! Seventeen blocks land here: `text`, `image`, `container`, `form`,
 //! `input`, `button`, `card` (prefab), `code`, `divider`, `spacer`,
-//! `columns`, `list`, `table`, `tabs`, and `accordion`.
+//! `columns`, `list`, `table`, `tabs`, `accordion`, and `graph-view`.
 //! Each implements [`Component`] with a `render_slint` method that
 //! emits `.slint` DSL via [`SlintEmitter`] for Studio's live builder
 //! panel.
@@ -22,7 +22,9 @@ use crate::component::{Component, ComponentId, RenderError, RenderSlintContext};
 use crate::document::Node;
 use crate::facet::FacetComponent;
 use crate::prefab::{ExposedSlot, PrefabComponent, PrefabDef};
-use crate::registry::{prop_f64, prop_str, ComponentRegistry, FieldSpec, RegistryError};
+use crate::registry::{
+    prop_f64, prop_str, ComponentRegistry, FieldSpec, NumericBounds, RegistryError, SelectOption,
+};
 use crate::schemas;
 use crate::signal::{with_common_signals, SignalDef};
 use crate::slint_source::{escape_slint_string, SlintEmitter};
@@ -60,6 +62,9 @@ pub fn register_builtins(reg: &mut ComponentRegistry) -> Result<(), RegistryErro
         id: "accordion".into(),
     }))?;
     reg.register(Arc::new(FacetComponent::new()))?;
+    reg.register(Arc::new(GraphViewComponent {
+        id: "graph-view".into(),
+    }))?;
     Ok(())
 }
 
@@ -1038,6 +1043,156 @@ impl Component for ButtonComponent {
     }
 }
 
+/// Interactive node-and-edge graph visualization. Renders nodes as
+/// positioned circles on a canvas with label text.
+pub struct GraphViewComponent {
+    pub id: ComponentId,
+}
+
+impl Component for GraphViewComponent {
+    fn id(&self) -> &ComponentId {
+        &self.id
+    }
+    fn schema(&self) -> Vec<FieldSpec> {
+        vec![
+            FieldSpec::text("node_label_field", "Node label field"),
+            FieldSpec::text("node_color_field", "Node color field"),
+            FieldSpec::boolean("edge_label", "Show edge labels"),
+            FieldSpec::select(
+                "layout",
+                "Layout algorithm",
+                vec![
+                    SelectOption::new("force", "Force-directed"),
+                    SelectOption::new("tree", "Tree"),
+                    SelectOption::new("radial", "Radial"),
+                    SelectOption::new("grid", "Grid"),
+                ],
+            )
+            .with_default(Value::from("force")),
+            FieldSpec::number(
+                "node_size",
+                "Node size (px)",
+                NumericBounds::min_max(20.0, 120.0),
+            )
+            .with_default(Value::from(48)),
+            FieldSpec::boolean("show_arrows", "Show arrows").with_default(Value::from(true)),
+        ]
+    }
+    fn help_entry(&self) -> Option<HelpEntry> {
+        Some(HelpEntry::new(
+            "builder.components.graph-view",
+            "Graph View",
+            "Interactive node-and-edge relationship visualization with configurable layout algorithms and node styling.",
+        ))
+    }
+    fn signals(&self) -> Vec<SignalDef> {
+        with_common_signals(vec![
+            SignalDef::new("node-clicked", "Fires when a graph node is clicked")
+                .with_payload(vec![FieldSpec::text("node_id", "Clicked node ID")]),
+            SignalDef::new("edge-clicked", "Fires when a graph edge is clicked").with_payload(
+                vec![
+                    FieldSpec::text("source_id", "Source node ID"),
+                    FieldSpec::text("target_id", "Target node ID"),
+                ],
+            ),
+            SignalDef::new(
+                "node-double-clicked",
+                "Fires when a graph node is double-clicked",
+            )
+            .with_payload(vec![FieldSpec::text("node_id", "Double-clicked node ID")]),
+        ])
+    }
+    fn render_slint(
+        &self,
+        ctx: &RenderSlintContext<'_>,
+        props: &Value,
+        _children: &[Node],
+        out: &mut SlintEmitter,
+    ) -> Result<(), RenderError> {
+        let label_field = prop_str(props, "node_label_field", "label");
+        let node_size = prop_f64(props, "node_size", 48.0);
+        let style = ctx.style();
+        let bg = style.background.as_deref().unwrap_or("#1e2533");
+
+        // Parse nodes from props — expected as a JSON array of objects
+        let nodes: Vec<&Value> = props
+            .get("nodes")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().collect())
+            .unwrap_or_default();
+
+        let node_count = nodes.len();
+        // Grid columns for simple layout
+        let cols = (node_count as f64).sqrt().ceil().max(1.0) as usize;
+
+        out.block("VerticalLayout", |out| {
+            out.prop_px("spacing", 0.0);
+            out.line("horizontal-stretch: 1;");
+            out.line("vertical-stretch: 1;");
+
+            // Header
+            out.block("Rectangle", |out| {
+                out.prop_px("height", 32.0);
+                out.prop_color("background", "#2e3440");
+                out.block("Text", |out| {
+                    let header = format!("Graph View ({node_count} nodes)");
+                    out.prop_string("text", &header);
+                    out.prop_px("font-size", 13.0);
+                    out.line("font-weight: 600;");
+                    out.line("vertical-alignment: center;");
+                    out.prop_px("x", 8.0);
+                    Ok(())
+                })
+            })?;
+
+            // Canvas area
+            out.block("Rectangle", |out| {
+                out.prop_color("background", bg);
+                out.line("horizontal-stretch: 1;");
+                out.line("vertical-stretch: 1;");
+
+                // Render each node at a grid position
+                for (i, node_val) in nodes.iter().enumerate() {
+                    let label = node_val
+                        .get(label_field)
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("?");
+                    let color = node_val
+                        .get("color")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("#5e81ac");
+
+                    let col = i % cols;
+                    let row = i / cols;
+                    let x = 24.0 + (col as f64) * (node_size + 32.0);
+                    let y = 24.0 + (row as f64) * (node_size + 32.0);
+                    let radius = node_size / 2.0;
+
+                    out.block("Rectangle", |out| {
+                        out.prop_px("x", x);
+                        out.prop_px("y", y);
+                        out.prop_px("width", node_size);
+                        out.prop_px("height", node_size);
+                        out.prop_px("border-radius", radius);
+                        out.prop_color("background", color);
+
+                        out.block("Text", |out| {
+                            out.prop_string("text", label);
+                            out.prop_px("font-size", 11.0);
+                            out.line("color: #eceff4;");
+                            out.line("horizontal-alignment: center;");
+                            out.line("vertical-alignment: center;");
+                            Ok(())
+                        })
+                    })?;
+                }
+
+                Ok(())
+            })
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1070,7 +1225,7 @@ mod tests {
     }
 
     #[test]
-    fn register_builtins_seeds_sixteen_components() {
+    fn register_builtins_seeds_seventeen_components() {
         let (reg, _) = setup();
         for id in [
             "text",
@@ -1089,6 +1244,7 @@ mod tests {
             "tabs",
             "accordion",
             "facet",
+            "graph-view",
         ] {
             assert!(reg.get(id).is_some(), "missing component: {id}");
         }
@@ -1280,5 +1436,86 @@ mod tests {
         assert!(source.contains(r#"text: "Read";"#));
         assert!(source.contains(r#"@image-url("/a.png")"#));
         assert!(source.contains("image-fit: cover;"));
+    }
+
+    #[test]
+    fn graph_view_id() {
+        let comp = GraphViewComponent {
+            id: "graph-view".into(),
+        };
+        assert_eq!(comp.id(), "graph-view");
+    }
+
+    #[test]
+    fn graph_view_schema_has_layout_options() {
+        let comp = GraphViewComponent {
+            id: "graph-view".into(),
+        };
+        let schema = comp.schema();
+        let layout_field = schema
+            .iter()
+            .find(|f| f.key == "layout")
+            .expect("missing layout field");
+        match &layout_field.kind {
+            crate::registry::FieldKind::Select(options) => {
+                assert_eq!(options.len(), 4);
+                let values: Vec<&str> = options.iter().map(|o| o.value.as_str()).collect();
+                assert!(values.contains(&"force"));
+                assert!(values.contains(&"tree"));
+                assert!(values.contains(&"radial"));
+                assert!(values.contains(&"grid"));
+            }
+            other => panic!("expected Select, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn graph_view_signals() {
+        let comp = GraphViewComponent {
+            id: "graph-view".into(),
+        };
+        let signals = comp.signals();
+        let names: Vec<&str> = signals.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"node-clicked"), "missing node-clicked");
+        assert!(names.contains(&"edge-clicked"), "missing edge-clicked");
+        assert!(
+            names.contains(&"node-double-clicked"),
+            "missing node-double-clicked"
+        );
+        // Should also include common signals
+        assert!(names.contains(&"clicked"));
+        assert!(names.contains(&"hovered"));
+    }
+
+    #[test]
+    fn graph_view_renders() {
+        let (reg, tokens) = setup();
+        let d = doc(Node {
+            id: "g".into(),
+            component: "graph-view".into(),
+            props: json!({
+                "node_label_field": "name",
+                "nodes": [
+                    { "name": "Alice", "color": "#88c0d0" },
+                    { "name": "Bob", "color": "#a3be8c" }
+                ],
+                "edges": [
+                    { "source": "Alice", "target": "Bob" }
+                ]
+            }),
+            children: vec![],
+            ..Default::default()
+        });
+        let source = render_document_slint_source(&d, &reg, &tokens).unwrap();
+        assert!(source.contains(r#"text: "Alice";"#), "missing Alice label");
+        assert!(source.contains(r#"text: "Bob";"#), "missing Bob label");
+        assert!(
+            source.contains("Graph View (2 nodes)"),
+            "missing header with node count"
+        );
+        assert!(
+            source.contains("border-radius:"),
+            "missing circular node shape"
+        );
     }
 }
