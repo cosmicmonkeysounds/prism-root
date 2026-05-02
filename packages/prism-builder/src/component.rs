@@ -176,6 +176,9 @@ impl<'a> RenderSlintContext<'a> {
 
         let mut props = crate::resource::resolve_resource_refs(&child.props, self.resources);
         if let Some(data) = self.widget_data.get(&child.id) {
+            if props.is_null() {
+                props = Value::Object(Default::default());
+            }
             if let (Some(target), Some(source)) = (props.as_object_mut(), data.as_object()) {
                 for (k, v) in source {
                     target.insert(k.clone(), v.clone());

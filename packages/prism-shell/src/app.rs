@@ -17,12 +17,13 @@ use crate::signals::SignalRuntime;
 use prism_builder::AssetSource;
 use prism_builder::{
     app::{AppIcon, NavigationConfig, Page, PrismApp},
-    compile_slint_preview, compute_layout, render_document_slint_preview_with_assets_and_data,
+    compile_slint_preview, compute_layout,
     layout::{
         AbsoluteProps, AlignOption, Dimension, FlexDirection, FlowDisplay, FlowProps,
         GridPlacement, JustifyOption, LayoutMode, PageSize, TrackSize,
     },
     path_from_string, preview_component_factory,
+    render_document_slint_preview_with_assets_and_data,
     starter::{builtin_prefab, card_prefab_def, materialize_prefab, register_builtins},
     AggregateOp, BuilderDocument, CellEdge, ComponentRegistry, DispatchResult, ExposedSlot,
     FacetBinding, FacetDataSource, FacetDef, FacetDirection, FacetKind, FacetLayout, FacetOutput,
@@ -6596,13 +6597,10 @@ fn resolve_widget_data(
             };
 
             query.apply(&mut items);
-            result.insert(
-                node.id.clone(),
-                serde_json::json!({ data_key: items }),
-            );
+            result.insert(node.id.clone(), serde_json::json!({ data_key: items }));
         }
         for child in &node.children {
-            walk_nodes(child, &contrib_map, collection, result);
+            walk_nodes(child, contrib_map, collection, result);
         }
     }
 
@@ -9721,6 +9719,61 @@ mod tests {
         assert_eq!(resolved.len(), 2);
         assert_eq!(resolved[0]["name"], "X");
         assert_eq!(resolved[1]["name"], "Y");
+    }
+
+    #[test]
+    fn resolve_widget_data_populates_matching_nodes() {
+        use prism_core::foundation::object_model::types::GraphObject;
+        use prism_core::foundation::persistence::CollectionStore;
+
+        let mut store = CollectionStore::new();
+        let mut e1 = GraphObject::new("ev:1", "event", "Standup");
+        e1.data
+            .insert("date".into(), serde_json::json!("2026-05-01"));
+        let mut e2 = GraphObject::new("ev:2", "event", "Retro");
+        e2.data
+            .insert("date".into(), serde_json::json!("2026-05-02"));
+        store.put_object(&e1).unwrap();
+        store.put_object(&e2).unwrap();
+
+        let doc = BuilderDocument {
+            root: Some(Node {
+                id: "root".into(),
+                component: "container".into(),
+                children: vec![Node {
+                    id: "cal-1".into(),
+                    component: "calendar-agenda".into(),
+                    ..Node::default()
+                }],
+                ..Node::default()
+            }),
+            ..BuilderDocument::default()
+        };
+
+        let data = resolve_widget_data(&doc, &store);
+        assert!(data.contains_key("cal-1"));
+        let val = &data["cal-1"];
+        let events = val["events"].as_array().unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0]["name"], "Standup");
+    }
+
+    #[test]
+    fn resolve_widget_data_skips_non_widget_nodes() {
+        use prism_core::foundation::persistence::CollectionStore;
+
+        let store = CollectionStore::new();
+        let doc = BuilderDocument {
+            root: Some(Node {
+                id: "root".into(),
+                component: "card".into(),
+                ..Node::default()
+            }),
+            ..BuilderDocument::default()
+        };
+
+        let data = resolve_widget_data(&doc, &store);
+        assert!(data.is_empty());
     }
 
     #[test]

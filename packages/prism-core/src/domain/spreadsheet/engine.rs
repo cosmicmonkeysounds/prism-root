@@ -1167,9 +1167,9 @@ fn json_to_cell_value(val: &Value) -> CellValue {
 
 pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
     use crate::widget::{
-        DataQuery, FieldSpec, LayoutDirection, NumericBounds, SelectOption, SignalSpec, TemplateNode,
-        ToolbarAction, VariantOptionSpec, VariantSpec, WidgetCategory, WidgetContribution,
-        WidgetSize, WidgetTemplate,
+        DataQuery, FieldSpec, LayoutDirection, NumericBounds, SelectOption, SignalSpec,
+        TemplateNode, ToolbarAction, VariantOptionSpec, VariantSpec, WidgetCategory,
+        WidgetContribution, WidgetSize, WidgetTemplate,
     };
     use serde_json::json;
 

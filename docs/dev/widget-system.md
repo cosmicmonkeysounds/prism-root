@@ -366,22 +366,44 @@ WidgetContribution {
 6. **Toolbar**: Shell reads `CoreWidgetComponent::toolbar_actions()`
    and renders the modal bottom toolbar.
 
+## Widget Data Resolution
+
+Widgets that need graph data declare `data_query` and `data_key` on
+their `WidgetContribution`. The shell resolves these before rendering:
+
+1. `resolve_widget_data(doc, collection)` walks the document tree.
+2. For each node whose component matches a contribution with
+   `data_query` + `data_key`, the shell queries `CollectionStore`
+   using `DataQuery::apply()` (same filter/sort/limit pipeline
+   facets use).
+3. Results are stored in a `HashMap<NodeId, Value>` keyed by node ID,
+   with the result array placed under the `data_key` prop name.
+4. The `RenderSlintContext.widget_data` map is passed to the render
+   walker, which merges resolved data into node props before template
+   rendering.
+
+This mirrors `resolve_facet_data` — both systems share `DataQuery` as
+the single structured data-resolution primitive and resolve against the
+same `CollectionStore`.
+
 ## Convergence with the Data Template System
 
-The widget system and facets are evolving toward shared primitives
+The widget system and facets share `DataQuery` and converge on the same
+data → template → expand → render child pipeline
 (see `docs/dev/data-template-system.md`):
 
-- **Engine widgets** use `WidgetTemplate` (declarative, code-authored).
+- **Engine widgets** use `WidgetTemplate` (declarative, code-authored)
+  with `data_query` + `data_key` for automatic data resolution.
 - **User facets** use `FacetTemplate` (inline or component-ref,
-  GUI-authored).
-- Both resolve to the same render pipeline: data → template → expand →
-  render child.
+  GUI-authored) with `FacetKind` for data resolution.
+- Both resolve through `DataQuery::apply()` against `CollectionStore`,
+  then feed the result into their template expansion.
 
-`DataQuery` is now the single structured data-resolution primitive
+`DataQuery` is the single structured data-resolution primitive
 shared by both systems. `FacetKind::ObjectQuery` and
 `FacetDataSource::Query` both carry a `DataQuery`, using the same
-`QueryFilter` matching and `QuerySort` ordering that engine widgets
-use via `WidgetContribution`.
+`QueryFilter` matching (8 operators) and `QuerySort` ordering that
+engine widgets use via `WidgetContribution.data_query`.
 
 Inline templates (`FacetTemplate::Inline`) use `{{field}}` expression
 binding directly in node props — the same concept as

@@ -755,4 +755,133 @@ mod tests {
         assert!(source.contains("HorizontalLayout"));
         assert!(source.contains("spacing: 4px"));
     }
+
+    #[test]
+    fn widget_data_merges_into_render_props() {
+        use crate::document::Node;
+        use std::collections::HashMap;
+
+        let mut registry = ComponentRegistry::new();
+        crate::starter::register_builtins(&mut registry).unwrap();
+
+        // Register a simple widget with a Repeater that reads "items"
+        let test_widget = WidgetContribution {
+            id: "test-data-widget".into(),
+            label: "Test".into(),
+            data_query: Some(prism_core::widget::DataQuery {
+                object_type: Some("task".into()),
+                ..Default::default()
+            }),
+            data_key: Some("items".into()),
+            template: WidgetTemplate {
+                root: TemplateNode::Repeater {
+                    source: "items".into(),
+                    item_template: Box::new(TemplateNode::DataBinding {
+                        field: "name".into(),
+                        component_id: "text".into(),
+                        prop_key: "body".into(),
+                    }),
+                    empty_label: Some("No items".into()),
+                },
+            },
+            ..Default::default()
+        };
+        registry
+            .register(Arc::new(CoreWidgetComponent::new(test_widget)))
+            .unwrap();
+
+        let tokens = prism_core::design_tokens::DesignTokens::default();
+        let resources = indexmap::IndexMap::new();
+        let prefabs = indexmap::IndexMap::new();
+        let facets = indexmap::IndexMap::new();
+        let facet_schemas = indexmap::IndexMap::new();
+        let mut ctx = RenderSlintContext::new(
+            &tokens,
+            &registry,
+            &resources,
+            &prefabs,
+            &facets,
+            &facet_schemas,
+            false,
+        );
+
+        // Simulate resolved widget data
+        let mut widget_data = HashMap::new();
+        widget_data.insert(
+            "node-1".to_string(),
+            json!({
+                "items": [
+                    {"name": "Alpha"},
+                    {"name": "Beta"}
+                ]
+            }),
+        );
+        ctx.widget_data = widget_data;
+
+        let child = Node {
+            id: "node-1".into(),
+            component: "test-data-widget".into(),
+            ..Node::default()
+        };
+
+        let mut out = SlintEmitter::new();
+        ctx.render_child(&child, &mut out).unwrap();
+        let source = out.build();
+        assert!(source.contains("Alpha"));
+        assert!(source.contains("Beta"));
+        assert!(!source.contains("No items"));
+    }
+
+    #[test]
+    fn widget_data_not_present_renders_empty() {
+        use crate::document::Node;
+
+        let mut registry = ComponentRegistry::new();
+        crate::starter::register_builtins(&mut registry).unwrap();
+
+        let test_widget = WidgetContribution {
+            id: "test-empty-widget".into(),
+            label: "Test".into(),
+            template: WidgetTemplate {
+                root: TemplateNode::Repeater {
+                    source: "items".into(),
+                    item_template: Box::new(TemplateNode::Component {
+                        component_id: "text".into(),
+                        props: json!({"body": "item"}),
+                    }),
+                    empty_label: Some("Nothing here".into()),
+                },
+            },
+            ..Default::default()
+        };
+        registry
+            .register(Arc::new(CoreWidgetComponent::new(test_widget)))
+            .unwrap();
+
+        let tokens = prism_core::design_tokens::DesignTokens::default();
+        let resources = indexmap::IndexMap::new();
+        let prefabs = indexmap::IndexMap::new();
+        let facets = indexmap::IndexMap::new();
+        let facet_schemas = indexmap::IndexMap::new();
+        let ctx = RenderSlintContext::new(
+            &tokens,
+            &registry,
+            &resources,
+            &prefabs,
+            &facets,
+            &facet_schemas,
+            false,
+        );
+
+        let child = Node {
+            id: "node-2".into(),
+            component: "test-empty-widget".into(),
+            ..Node::default()
+        };
+
+        let mut out = SlintEmitter::new();
+        ctx.render_child(&child, &mut out).unwrap();
+        let source = out.build();
+        assert!(source.contains("Nothing here"));
+    }
 }
