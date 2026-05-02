@@ -25,9 +25,9 @@ use prism_builder::{
     path_from_string, preview_component_factory, render_document_slint_preview_with_assets,
     starter::{builtin_prefab, card_prefab_def, materialize_prefab, register_builtins},
     AggregateOp, BuilderDocument, CellEdge, ComponentRegistry, DispatchResult, ExposedSlot,
-    FacetBinding, FacetDataSource, FacetDef, FacetDirection, FacetKind, FacetLayout,
-    FacetVariantRule, FieldKind, FieldSpec, GridCell, LiveDocument, Node, NodeId, PrefabDef,
-    ScriptLanguage, StyleProperties,
+    FacetBinding, FacetDataSource, FacetDef, FacetDirection, FacetKind, FacetLayout, FacetOutput,
+    FacetTemplate, FacetVariantRule, FieldKind, FieldSpec, GridCell, LiveDocument, Node, NodeId,
+    PrefabDef, ScriptLanguage, StyleProperties,
 };
 use prism_core::design_tokens::{DesignTokens, DEFAULT_TOKENS};
 use prism_core::editor::EditorState;
@@ -1796,7 +1796,8 @@ impl Shell {
                                         description: String::new(),
                                         kind: FacetKind::List,
                                         schema_id: None,
-                                        prefab_id: "card".into(),
+                                        template: FacetTemplate::default(),
+                                        output: FacetOutput::default(),
                                         data: FacetDataSource::Static {
                                             items: vec![],
                                             records: vec![],
@@ -4361,28 +4362,30 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
 
         // Resolve facet data (Script/ObjectQuery/Lookup kinds) before the
         // render walker, which reads `resolved_data` on each FacetDef.
-        #[cfg(feature = "native")]
-        let resolved_doc = {
-            let needs = state.builder_document.facets.values().any(|f| {
-                matches!(
-                    &f.kind,
-                    FacetKind::Script { .. }
-                        | FacetKind::ObjectQuery { .. }
-                        | FacetKind::Lookup { .. }
-                )
-            });
-            if needs {
-                let mut doc = state.builder_document.clone();
+        let has_dynamic_facets = state.builder_document.facets.values().any(|f| {
+            matches!(
+                &f.kind,
+                FacetKind::Script { .. } | FacetKind::ObjectQuery { .. } | FacetKind::Lookup { .. }
+            )
+        });
+        let has_scalar_facets = state
+            .builder_document
+            .facets
+            .values()
+            .any(|f| f.is_scalar());
+        let needs_clone = has_dynamic_facets || has_scalar_facets;
+        let resolved_doc = if needs_clone {
+            let mut doc = state.builder_document.clone();
+            #[cfg(feature = "native")]
+            if has_dynamic_facets {
                 resolve_facet_data(&mut doc, &inner.collection);
-                Some(doc)
-            } else {
-                None
             }
+            prism_builder::apply_scalar_bindings(&mut doc);
+            Some(doc)
+        } else {
+            None
         };
-        #[cfg(feature = "native")]
         let preview_doc = resolved_doc.as_ref().unwrap_or(&state.builder_document);
-        #[cfg(not(feature = "native"))]
-        let preview_doc = &state.builder_document;
 
         push_wysiwyg_preview(
             window,
@@ -7156,7 +7159,7 @@ fn apply_facet_edit(def: &mut FacetDef, key: &str, value: &str) {
         "kind" => {
             def.kind = FacetKind::from_tag(value);
         }
-        "prefab_id" => def.prefab_id = value.to_string(),
+        "prefab_id" => def.set_component_id(value),
         "label" => def.label = value.to_string(),
         "direction" => {
             def.layout.direction = match value {
@@ -7407,6 +7410,57 @@ fn apply_facet_edit(def: &mut FacetDef, key: &str, value: &str) {
                         }
                     }
                 }
+            }
+        }
+        "template_type" => match value {
+            "inline" => {
+                if !def.is_inline() {
+                    def.template = FacetTemplate::Inline {
+                        root: Box::new(Node {
+                            id: "inline-root".into(),
+                            component: "container".into(),
+                            ..Default::default()
+                        }),
+                    };
+                }
+            }
+            _ => {
+                if def.is_inline() {
+                    def.template = FacetTemplate::ComponentRef {
+                        component_id: "card".into(),
+                    };
+                }
+            }
+        },
+        "output_type" => match value {
+            "scalar" => {
+                if !def.is_scalar() {
+                    def.output = FacetOutput::Scalar {
+                        target_node: String::new(),
+                        target_prop: String::new(),
+                    };
+                }
+            }
+            _ => {
+                def.output = FacetOutput::Repeated;
+            }
+        },
+        "scalar_target_node" => {
+            if let FacetOutput::Scalar {
+                ref mut target_node,
+                ..
+            } = def.output
+            {
+                *target_node = value.to_string();
+            }
+        }
+        "scalar_target_prop" => {
+            if let FacetOutput::Scalar {
+                ref mut target_prop,
+                ..
+            } = def.output
+            {
+                *target_prop = value.to_string();
             }
         }
         _ => {}
@@ -8684,7 +8738,6 @@ mod tests {
             description: String::new(),
             kind: FacetKind::List,
             schema_id: None,
-            prefab_id: "card".into(),
             data: FacetDataSource::Static {
                 items: vec![],
                 records: vec![],
@@ -8692,6 +8745,8 @@ mod tests {
             bindings: vec![],
             variant_rules: vec![],
             layout: FacetLayout::default(),
+            template: FacetTemplate::default(),
+            output: FacetOutput::default(),
             resolved_data: None,
         };
         apply_facet_edit(&mut def, "binding.title", "name");
@@ -9359,11 +9414,12 @@ mod tests {
                     limit: None,
                 },
                 schema_id: None,
-                prefab_id: "card".into(),
                 data: FacetDataSource::default(),
                 bindings: vec![],
                 variant_rules: vec![],
                 layout: FacetLayout::default(),
+                template: FacetTemplate::default(),
+                output: FacetOutput::default(),
                 resolved_data: None,
             },
         );
@@ -9409,11 +9465,12 @@ mod tests {
                     limit: Some(2),
                 },
                 schema_id: None,
-                prefab_id: "card".into(),
                 data: FacetDataSource::default(),
                 bindings: vec![],
                 variant_rules: vec![],
                 layout: FacetLayout::default(),
+                template: FacetTemplate::default(),
+                output: FacetOutput::default(),
                 resolved_data: None,
             },
         );
@@ -9477,11 +9534,12 @@ mod tests {
                     target_entity: "User".into(),
                 },
                 schema_id: None,
-                prefab_id: "card".into(),
                 data: FacetDataSource::default(),
                 bindings: vec![],
                 variant_rules: vec![],
                 layout: FacetLayout::default(),
+                template: FacetTemplate::default(),
+                output: FacetOutput::default(),
                 resolved_data: None,
             },
         );
@@ -9520,11 +9578,12 @@ mod tests {
                     limit: None,
                 },
                 schema_id: None,
-                prefab_id: "card".into(),
                 data: FacetDataSource::default(),
                 bindings: vec![],
                 variant_rules: vec![],
                 layout: FacetLayout::default(),
+                template: FacetTemplate::default(),
+                output: FacetOutput::default(),
                 resolved_data: None,
             },
         );
@@ -9556,11 +9615,12 @@ mod tests {
                     graph: None,
                 },
                 schema_id: None,
-                prefab_id: "card".into(),
                 data: FacetDataSource::default(),
                 bindings: vec![],
                 variant_rules: vec![],
                 layout: FacetLayout::default(),
+                template: FacetTemplate::default(),
+                output: FacetOutput::default(),
                 resolved_data: None,
             },
         );
@@ -9587,11 +9647,12 @@ mod tests {
             description: String::new(),
             kind: FacetKind::List,
             schema_id: None,
-            prefab_id: "card".into(),
             data: FacetDataSource::default(),
             bindings: vec![],
             variant_rules: vec![],
             layout: FacetLayout::default(),
+            template: FacetTemplate::default(),
+            output: FacetOutput::default(),
             resolved_data: None,
         };
         assert!(def.variant_rules.is_empty());
@@ -9629,11 +9690,12 @@ mod tests {
                 graph: None,
             },
             schema_id: None,
-            prefab_id: "card".into(),
             data: FacetDataSource::default(),
             bindings: vec![],
             variant_rules: vec![],
             layout: FacetLayout::default(),
+            template: FacetTemplate::default(),
+            output: FacetOutput::default(),
             resolved_data: None,
         };
 
@@ -9668,11 +9730,12 @@ mod tests {
                 limit: None,
             },
             schema_id: None,
-            prefab_id: "card".into(),
             data: FacetDataSource::default(),
             bindings: vec![],
             variant_rules: vec![],
             layout: FacetLayout::default(),
+            template: FacetTemplate::default(),
+            output: FacetOutput::default(),
             resolved_data: None,
         };
 
@@ -9715,11 +9778,12 @@ mod tests {
                 field: None,
             },
             schema_id: None,
-            prefab_id: "card".into(),
             data: FacetDataSource::default(),
             bindings: vec![],
             variant_rules: vec![],
             layout: FacetLayout::default(),
+            template: FacetTemplate::default(),
+            output: FacetOutput::default(),
             resolved_data: None,
         };
 
@@ -9758,11 +9822,12 @@ mod tests {
                 target_entity: String::new(),
             },
             schema_id: None,
-            prefab_id: "card".into(),
             data: FacetDataSource::default(),
             bindings: vec![],
             variant_rules: vec![],
             layout: FacetLayout::default(),
+            template: FacetTemplate::default(),
+            output: FacetOutput::default(),
             resolved_data: None,
         };
 
@@ -9793,11 +9858,12 @@ mod tests {
             description: String::new(),
             kind: FacetKind::List,
             schema_id: None,
-            prefab_id: "card".into(),
             data: FacetDataSource::default(),
             bindings: vec![],
             variant_rules: vec![],
             layout: FacetLayout::default(),
+            template: FacetTemplate::default(),
+            output: FacetOutput::default(),
             resolved_data: None,
         };
 
@@ -9830,11 +9896,12 @@ mod tests {
                 graph: None,
             },
             schema_id: None,
-            prefab_id: "card".into(),
             data: FacetDataSource::default(),
             bindings: vec![],
             variant_rules: vec![],
             layout: FacetLayout::default(),
+            template: FacetTemplate::default(),
+            output: FacetOutput::default(),
             resolved_data: None,
         };
 

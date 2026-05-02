@@ -14,7 +14,8 @@ use prism_builder::layout::{
 };
 use prism_builder::style::StyleProperties;
 use prism_builder::{
-    AggregateOp, FacetDataSource, FacetDirection, FacetKind, AGGREGATE_OP_TAGS, FACET_KIND_TAGS,
+    AggregateOp, FacetDataSource, FacetDirection, FacetKind, FacetOutput, FacetTemplate,
+    AGGREGATE_OP_TAGS, FACET_KIND_TAGS,
 };
 use prism_builder::{
     BuilderDocument, ComponentRegistry, FieldKind, FieldSpec, FieldValue, Node, NodeId, PrismApp,
@@ -848,13 +849,25 @@ impl PropertiesPanel {
         }
         let schema_value = def.schema_id.as_deref().unwrap_or("(none)").to_string();
 
-        // Prefab dropdown
+        // Prefab dropdown (for ComponentRef template)
         let mut prefab_options: Vec<String> = vec!["card".into()];
         for id in doc.prefabs.keys() {
             if id != "card" {
                 prefab_options.push(id.clone());
             }
         }
+
+        // Template type
+        let template_value = match &def.template {
+            FacetTemplate::ComponentRef { .. } => "component-ref",
+            FacetTemplate::Inline { .. } => "inline",
+        };
+
+        // Output type
+        let output_value = match &def.output {
+            FacetOutput::Repeated => "repeated",
+            FacetOutput::Scalar { .. } => "scalar",
+        };
 
         // ── Common header (all kinds) ─────────────────────────
         let mut rows = vec![
@@ -881,17 +894,75 @@ impl PropertiesPanel {
                 options: schema_options,
             },
             FieldRowData {
+                key: "facet.template_type".into(),
+                label: "Template".into(),
+                kind: "select".into(),
+                value: template_value.to_string(),
+                required: true,
+                min: 0.0,
+                max: 0.0,
+                has_bounds: false,
+                options: vec!["component-ref".into(), "inline".into()],
+            },
+        ];
+
+        // Show prefab selector only for ComponentRef templates
+        if matches!(def.template, FacetTemplate::ComponentRef { .. }) {
+            rows.push(FieldRowData {
                 key: "facet.prefab_id".into(),
                 label: "Prefab template".into(),
                 kind: "select".into(),
-                value: def.prefab_id.clone(),
+                value: def.effective_component_id().unwrap_or("card").to_string(),
                 required: true,
                 min: 0.0,
                 max: 0.0,
                 has_bounds: false,
                 options: prefab_options,
-            },
-        ];
+            });
+        }
+
+        // Output type selector
+        rows.push(FieldRowData {
+            key: "facet.output_type".into(),
+            label: "Output".into(),
+            kind: "select".into(),
+            value: output_value.to_string(),
+            required: true,
+            min: 0.0,
+            max: 0.0,
+            has_bounds: false,
+            options: vec!["repeated".into(), "scalar".into()],
+        });
+
+        // Scalar target fields
+        if let FacetOutput::Scalar {
+            target_node,
+            target_prop,
+        } = &def.output
+        {
+            rows.push(FieldRowData {
+                key: "facet.scalar_target_node".into(),
+                label: "Target node".into(),
+                kind: "text".into(),
+                value: target_node.clone(),
+                required: true,
+                min: 0.0,
+                max: 0.0,
+                has_bounds: false,
+                options: vec![],
+            });
+            rows.push(FieldRowData {
+                key: "facet.scalar_target_prop".into(),
+                label: "Target prop".into(),
+                kind: "text".into(),
+                value: target_prop.clone(),
+                required: true,
+                min: 0.0,
+                max: 0.0,
+                has_bounds: false,
+                options: vec![],
+            });
+        }
 
         // ── Kind-specific sections ────────────────────────────
         match &def.kind {
@@ -1246,14 +1317,15 @@ impl PropertiesPanel {
         def: &prism_builder::FacetDef,
         schema: Option<&prism_builder::FacetSchema>,
     ) {
-        let prefab_exposed = if def.prefab_id == "card" {
+        let cid = def.effective_component_id().unwrap_or("card");
+        let prefab_exposed = if cid == "card" {
             doc.prefabs
                 .get("card")
                 .map(|p| p.exposed.clone())
                 .unwrap_or_else(|| card_prefab_def().exposed)
         } else {
             doc.prefabs
-                .get(&def.prefab_id)
+                .get(cid)
                 .map(|p| p.exposed.clone())
                 .unwrap_or_default()
         };
@@ -2423,7 +2495,6 @@ mod tests {
                 description: String::new(),
                 kind: FacetKind::List,
                 schema_id: None,
-                prefab_id: "card".into(),
                 data: FacetDataSource::Static {
                     items: vec![],
                     records: vec![],
@@ -2431,6 +2502,8 @@ mod tests {
                 bindings: vec![],
                 variant_rules: vec![],
                 layout: FacetLayout::default(),
+                template: FacetTemplate::default(),
+                output: FacetOutput::default(),
                 resolved_data: None,
             },
         );
@@ -2479,7 +2552,6 @@ mod tests {
                 description: String::new(),
                 kind: FacetKind::List,
                 schema_id: None,
-                prefab_id: "card".into(),
                 data: FacetDataSource::Static {
                     items: vec![],
                     records: vec![],
@@ -2487,6 +2559,8 @@ mod tests {
                 bindings: vec![],
                 variant_rules: vec![],
                 layout: FacetLayout::default(),
+                template: FacetTemplate::default(),
+                output: FacetOutput::default(),
                 resolved_data: None,
             },
         );
@@ -2502,7 +2576,7 @@ mod tests {
 
     #[test]
     fn facet_component_rows_hide_max_items_for_non_list() {
-        use prism_builder::{AggregateOp, FacetDataSource, FacetDef, FacetKind, FacetLayout};
+        use prism_builder::{AggregateOp, FacetDef, FacetKind};
 
         let mut reg = ComponentRegistry::new();
         register_builtins(&mut reg).unwrap();
@@ -2521,21 +2595,11 @@ mod tests {
             FacetDef {
                 id: facet_id.clone(),
                 label: "Sum".into(),
-                description: String::new(),
                 kind: FacetKind::Aggregate {
                     operation: AggregateOp::Count,
                     field: None,
                 },
-                schema_id: None,
-                prefab_id: "card".into(),
-                data: FacetDataSource::Static {
-                    items: vec![],
-                    records: vec![],
-                },
-                bindings: vec![],
-                variant_rules: vec![],
-                layout: FacetLayout::default(),
-                resolved_data: None,
+                ..Default::default()
             },
         );
         let rows = PropertiesPanel::rows(&doc, &reg, &Some("n1".into()));

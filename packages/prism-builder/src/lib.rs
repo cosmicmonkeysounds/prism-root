@@ -49,10 +49,12 @@ pub use component::{Component, ComponentId, RenderContext, RenderError, RenderSl
 pub use core_widget::{collect_all_contributions, register_core_widgets, CoreWidgetComponent};
 pub use document::{BuilderDocument, Node, NodeId};
 pub use facet::{
-    apply_aggregate, evaluate_calculations, evaluate_filter, get_field, value_sort_key,
-    AggregateOp, FacetBinding, FacetDataSource, FacetDef, FacetDirection, FacetKind, FacetLayout,
-    FacetRecord, FacetSchema, FacetSchemaId, FacetVariantRule, ResolvedFacetData, ScriptLanguage,
-    ValidationError, AGGREGATE_OP_TAGS, FACET_KIND_TAGS,
+    apply_aggregate, apply_scalar_bindings, collect_expression_fields, evaluate_calculations,
+    evaluate_filter, get_field, promote_inline_to_component, resolve_template_expressions,
+    value_sort_key, AggregateOp, FacetBinding, FacetDataSource, FacetDef, FacetDirection,
+    FacetKind, FacetLayout, FacetOutput, FacetRecord, FacetSchema, FacetSchemaId, FacetTemplate,
+    FacetVariantRule, ResolvedFacetData, ScriptLanguage, ValidationError, AGGREGATE_OP_TAGS,
+    FACET_KIND_TAGS,
 };
 pub use html::{escape_attr, escape_text, Html};
 pub use html_block::{HtmlBlock, HtmlRegistry, HtmlRenderContext};

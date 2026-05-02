@@ -13,7 +13,7 @@ property-panel field factories.
   path (`compile_slint_source` / `instantiate_document`) is
   available. `prism-shell` and `prism-studio` flip this on; the
   relay leaves it off so its dep graph stays Slint-free.
-- `cargo test -p prism-builder` — 277+ unit tests.
+- `cargo test -p prism-builder` — 367+ unit tests.
 - `cargo test -p prism-builder --features interpreter` — adds
   live document, syntax provider, and compile round-trip tests.
 
@@ -250,13 +250,17 @@ Twenty-five modules in `src/` (excluding `lib.rs`):
   filters (`"field == val"`, `"field != val"`, `"field"` truthy)
   and sorts (ascending `"field"` or descending `"-field"`) a
   resource array without mutating it.
-  `FacetTemplate` replaces the mandatory `prefab_id` indirection:
-  `Inline { root: Node }` owns the template subtree directly with
-  `{{field}}` expression bindings in node props; `ComponentRef`
-  points to a registered component (backward-compatible with the
-  existing prefab pipeline). `FacetOutput` separates repeated
-  (template-per-item) from scalar (bind single value to a target
-  widget prop) output — see `docs/dev/data-template-system.md`.
+  `FacetTemplate` replaces the legacy `prefab_id` field:
+  `Inline { root: Box<Node> }` owns the template subtree directly
+  with `{{field}}` expression bindings in node props; `ComponentRef`
+  points to a registered component. Custom deserializer migrates
+  old documents with `prefab_id` to `ComponentRef` automatically.
+  `FacetOutput` separates repeated (template-per-item) from scalar
+  (bind single value to a target widget prop) output.
+  `apply_scalar_bindings(doc)` pre-render pass resolves scalar facets
+  and injects values into target nodes. `promote_inline_to_component`
+  extracts inline `{{field}}` expressions into `ExposedSlot`s.
+  See `docs/dev/data-template-system.md`.
   `evaluate_calculations(&mut items, &schema)` evaluates
   `SchemaFieldKind::Calculation { formula }` fields via
   `prism_core::language::expression::evaluate_expression`, wired
@@ -267,7 +271,7 @@ Twenty-five modules in `src/` (excluding `lib.rs`):
   `FacetSchema`, `SchemaField`, `SchemaFieldKind`, `FacetRecord`,
   `ValidationError` — typed schema system with validation and
   default record generation. `FACET_KIND_TAGS`, `AGGREGATE_OP_TAGS`
-  — string constants for UI dropdowns. 68 unit tests.
+  — string constants for UI dropdowns. 94 unit tests.
 - `project.rs` — `ProjectFile`, `SavedApp`, `SavedPage`,
   `FILE_EXTENSION`, `FORMAT_VERSION`. Portable `.prism` file format
   with `from_apps`/`into_apps` conversion. `SavedPage` serializes
