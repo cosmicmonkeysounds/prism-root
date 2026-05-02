@@ -377,10 +377,11 @@ The widget system and facets are evolving toward shared primitives
 - Both resolve to the same render pipeline: data → template → expand →
   render child.
 
-The `DataQuery` in `WidgetContribution` is the engine-side equivalent
-of `FacetDataSource` + `FacetKind`. A future unification could make
-`DataQuery` the single data-resolution primitive, with facet kinds
-mapping onto it.
+`DataQuery` is now the single structured data-resolution primitive
+shared by both systems. `FacetKind::ObjectQuery` and
+`FacetDataSource::Query` both carry a `DataQuery`, using the same
+`QueryFilter` matching and `QuerySort` ordering that engine widgets
+use via `WidgetContribution`.
 
 Inline templates (`FacetTemplate::Inline`) use `{{field}}` expression
 binding directly in node props — the same concept as

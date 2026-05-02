@@ -909,8 +909,8 @@ impl PropertiesPanel {
         // Show prefab selector only for ComponentRef templates
         if matches!(def.template, FacetTemplate::ComponentRef { .. }) {
             rows.push(FieldRowData {
-                key: "facet.prefab_id".into(),
-                label: "Prefab template".into(),
+                key: "facet.component_id".into(),
+                label: "Component template".into(),
                 kind: "select".into(),
                 value: def.effective_component_id().unwrap_or("card").to_string(),
                 required: true,
@@ -2558,8 +2558,7 @@ mod tests {
             ..Default::default()
         };
         let rows = PropertiesPanel::facet_rows(&doc, &node);
-        // prefab_id row should be select kind
-        let prefab_row = rows.iter().find(|r| r.key == "facet.prefab_id").unwrap();
+        let prefab_row = rows.iter().find(|r| r.key == "facet.component_id").unwrap();
         assert_eq!(prefab_row.kind, "select");
         assert!(prefab_row.options.contains(&"card".to_string()));
         // Should have binding rows for "title" and "body" slots

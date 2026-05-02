@@ -7134,7 +7134,7 @@ fn apply_facet_edit(def: &mut FacetDef, key: &str, value: &str) {
         "kind" => {
             def.kind = FacetKind::from_tag(value);
         }
-        "prefab_id" => def.set_component_id(value),
+        "component_id" => def.set_component_id(value),
         "label" => def.label = value.to_string(),
         "direction" => {
             def.layout.direction = match value {

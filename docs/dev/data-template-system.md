@@ -208,34 +208,27 @@ feeds. The target widget shows a data-binding badge.
 
 ## Migration path
 
-### Phase 1: Add `FacetTemplate::Inline`
-- Add the `FacetTemplate` enum alongside the existing `prefab_id`.
-- New facets default to `Inline` with a card-like template.
-- Existing facets with `prefab_id` map to `ComponentRef`.
-- The render walker checks `template` first; falls back to
-  `prefab_id` for backward compatibility.
-- No breaking changes to `FacetDef` serialization (serde default).
+### Phase 1 ✅: Add `FacetTemplate::Inline`
+- `FacetTemplate` enum added. New facets default to `Inline` with a
+  card-like template. `ComponentRef` covers the reuse case.
 
-### Phase 2: Inline template editing on canvas
-- The builder canvas renders inline templates with sample data.
-- Template nodes are editable in the normal builder workflow.
+### Phase 2 ✅: Inline template editing on canvas
+- Builder canvas renders inline templates with sample data.
+- Template nodes editable in normal builder workflow.
 - `{{field}}` expression resolution in the render walker.
 
-### Phase 3: Scalar output for non-list facets
-- Add `FacetOutput::Scalar` for Aggregate/Lookup/Script facets.
+### Phase 3 ✅: Scalar output for non-list facets
+- `FacetOutput::Scalar` for Aggregate/Lookup/Script facets.
 - Scalar facets bind directly to target node props.
-- The facet component wrapper becomes optional.
 
-### Phase 4: Component promotion
-- "Save as Component" workflow for inline templates.
-- Auto-generate schema from `{{field}}` expressions.
-- Palette integration for user-defined components.
+### Phase 4 ✅: Component promotion
+- `promote_inline_to_component()` extracts inline `{{field}}`
+  expressions into `ExposedSlot`s and registers via `ComponentRegistry`.
 
-### Phase 5: Deprecate raw prefab_id
-- Remove `prefab_id` from `FacetDef`.
-- All existing prefab references migrate to `ComponentRef`.
-- `PrefabDef` remains as the internal storage for user-defined
-  components but is no longer directly referenced by facets.
+### Phase 5 ✅: Remove raw prefab_id
+- `prefab_id` removed from `FacetDef`. All references use
+  `FacetTemplate::ComponentRef { component_id }`.
+- `PrefabDef` remains as internal storage for user-defined components.
 
 ## Relationship to the Widget System
 

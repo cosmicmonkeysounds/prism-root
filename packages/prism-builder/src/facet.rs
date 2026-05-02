@@ -334,7 +334,7 @@ pub fn apply_aggregate(items: &[Value], op: &AggregateOp, field: Option<&str>) -
                 .iter()
                 .filter_map(|item| {
                     field
-                        .and_then(|f| get_field(item, f))
+                        .and_then(|f| get_json_field(item, f))
                         .and_then(|v| v.as_f64())
                 })
                 .sum();
@@ -345,7 +345,7 @@ pub fn apply_aggregate(items: &[Value], op: &AggregateOp, field: Option<&str>) -
                 .iter()
                 .filter_map(|item| {
                     field
-                        .and_then(|f| get_field(item, f))
+                        .and_then(|f| get_json_field(item, f))
                         .and_then(|v| v.as_f64())
                 })
                 .fold(f64::INFINITY, f64::min);
@@ -360,7 +360,7 @@ pub fn apply_aggregate(items: &[Value], op: &AggregateOp, field: Option<&str>) -
                 .iter()
                 .filter_map(|item| {
                     field
-                        .and_then(|f| get_field(item, f))
+                        .and_then(|f| get_json_field(item, f))
                         .and_then(|v| v.as_f64())
                 })
                 .fold(f64::NEG_INFINITY, f64::max);
@@ -376,7 +376,7 @@ pub fn apply_aggregate(items: &[Value], op: &AggregateOp, field: Option<&str>) -
                 .iter()
                 .filter_map(|item| {
                     field
-                        .and_then(|f| get_field(item, f))
+                        .and_then(|f| get_json_field(item, f))
                         .and_then(|v| v.as_f64())
                 })
                 .inspect(|_| count += 1)
@@ -391,10 +391,12 @@ pub fn apply_aggregate(items: &[Value], op: &AggregateOp, field: Option<&str>) -
             let parts: Vec<String> = items
                 .iter()
                 .filter_map(|item| {
-                    field.and_then(|f| get_field(item, f)).map(|v| match v {
-                        Value::String(s) => s,
-                        other => other.to_string(),
-                    })
+                    field
+                        .and_then(|f| get_json_field(item, f))
+                        .map(|v| match v {
+                            Value::String(s) => s,
+                            other => other.to_string(),
+                        })
                 })
                 .collect();
             Value::String(parts.join(separator))
@@ -690,18 +692,6 @@ pub fn apply_scalar_bindings(doc: &mut crate::document::BuilderDocument) {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/// Dot-notation field access into a JSON value (e.g. `"meta.title"`).
-/// Delegates to [`prism_core::widget::get_json_field`].
-pub fn get_field(item: &Value, path: &str) -> Option<Value> {
-    get_json_field(item, path)
-}
-
-/// Stringify a JSON value for stable string-based sorting.
-/// Delegates to [`prism_core::widget::json_sort_key`].
-pub fn value_sort_key(v: Value) -> String {
-    json_sort_key(v)
-}
-
 /// Parse a simple filter expression string into a [`QueryFilter`].
 ///
 /// Supported forms:
@@ -730,35 +720,11 @@ pub fn parse_filter_expr(expr: &str) -> Option<QueryFilter> {
     None
 }
 
-/// Evaluate a simple filter expression against a data item.
-///
-/// Supported forms:
-/// - `"field"` — truthy check (non-null, non-empty string, non-false, non-zero)
-/// - `"field == value"` — equality
-/// - `"field != value"` — inequality
-///
-/// For structured filtering, use [`DataQuery::apply_filters`] with
-/// [`QueryFilter`] directly.
-pub fn evaluate_filter(item: &Value, expr: &str) -> bool {
-    if let Some(qf) = parse_filter_expr(expr) {
-        return qf.matches(item);
-    }
-    // Truthy check (bare field name)
-    let expr = expr.trim();
-    match get_field(item, expr) {
-        None | Some(Value::Null) => false,
-        Some(Value::Bool(false)) => false,
-        Some(Value::Number(n)) => n.as_f64().is_some_and(|f| f != 0.0),
-        Some(Value::String(s)) => !s.is_empty(),
-        Some(_) => true,
-    }
-}
-
 /// Apply all facet bindings to a cloned prefab root node.
 fn apply_bindings(root: &mut Node, prefab: &PrefabDef, bindings: &[FacetBinding], item: &Value) {
     for binding in bindings {
         if let Some(slot) = prefab.exposed.iter().find(|s| s.key == binding.slot_key) {
-            if let Some(value) = get_field(item, &binding.item_field) {
+            if let Some(value) = get_json_field(item, &binding.item_field) {
                 apply_prop_to_node(root, &slot.target_node, &slot.target_prop, value);
             }
         }
@@ -769,8 +735,8 @@ fn apply_bindings(root: &mut Node, prefab: &PrefabDef, bindings: &[FacetBinding]
 /// sets the axis key prop so the variant system picks it up during render.
 fn evaluate_variant_rules(root: &mut Node, rules: &[FacetVariantRule], item: &Value) {
     for rule in rules {
-        let raw = get_field(item, &rule.field);
-        let sort_key = raw.clone().map(value_sort_key).unwrap_or_default();
+        let raw = get_json_field(item, &rule.field);
+        let sort_key = raw.clone().map(json_sort_key).unwrap_or_default();
         let matches = sort_key == rule.value
             || raw
                 .as_ref()
@@ -829,7 +795,7 @@ fn resolve_expression_string(s: &str, item: &Value) -> Option<Value> {
     if trimmed.starts_with("{{") && trimmed.ends_with("}}") && trimmed.matches("{{").count() == 1 {
         let path = trimmed[2..trimmed.len() - 2].trim();
         let path = path.strip_prefix("record.").unwrap_or(path);
-        return Some(get_field(item, path).unwrap_or(Value::Null));
+        return Some(get_json_field(item, path).unwrap_or(Value::Null));
     }
 
     // Mixed: interpolate all expressions as strings.
@@ -841,7 +807,7 @@ fn resolve_expression_string(s: &str, item: &Value) -> Option<Value> {
         if let Some(end) = after.find("}}") {
             let path = after[..end].trim();
             let path = path.strip_prefix("record.").unwrap_or(path);
-            match get_field(item, path) {
+            match get_json_field(item, path) {
                 Some(Value::String(v)) => result.push_str(&v),
                 Some(Value::Null) | None => {}
                 Some(v) => result.push_str(&v.to_string()),
@@ -1376,22 +1342,22 @@ mod tests {
     }
 
     #[test]
-    fn get_field_flat() {
+    fn json_field_flat() {
         let item = json!({ "name": "Alpha" });
-        assert_eq!(get_field(&item, "name"), Some(json!("Alpha")));
+        assert_eq!(get_json_field(&item, "name"), Some(json!("Alpha")));
     }
 
     #[test]
-    fn get_field_nested() {
+    fn json_field_nested() {
         let item = json!({ "meta": { "title": "Deep" } });
-        assert_eq!(get_field(&item, "meta.title"), Some(json!("Deep")));
+        assert_eq!(get_json_field(&item, "meta.title"), Some(json!("Deep")));
     }
 
     #[test]
-    fn get_field_missing_returns_none() {
+    fn json_field_missing_returns_none() {
         let item = json!({ "a": 1 });
-        assert!(get_field(&item, "b").is_none());
-        assert!(get_field(&item, "a.nested").is_none());
+        assert!(get_json_field(&item, "b").is_none());
+        assert!(get_json_field(&item, "a.nested").is_none());
     }
 
     #[test]
@@ -1573,7 +1539,10 @@ mod tests {
         let src = FacetDataSource::Query {
             source: "products".into(),
             query: DataQuery {
-                sort: vec![QuerySort { field: "name".into(), descending: false }],
+                sort: vec![QuerySort {
+                    field: "name".into(),
+                    descending: false,
+                }],
                 ..Default::default()
             },
         };
@@ -1590,7 +1559,10 @@ mod tests {
         let src = FacetDataSource::Query {
             source: "products".into(),
             query: DataQuery {
-                sort: vec![QuerySort { field: "name".into(), descending: true }],
+                sort: vec![QuerySort {
+                    field: "name".into(),
+                    descending: true,
+                }],
                 ..Default::default()
             },
         };
@@ -1607,7 +1579,10 @@ mod tests {
             source: "products".into(),
             query: DataQuery {
                 filters: vec![QueryFilter::new("status", FilterOp::Eq, json!("active"))],
-                sort: vec![QuerySort { field: "price".into(), descending: true }],
+                sort: vec![QuerySort {
+                    field: "price".into(),
+                    descending: true,
+                }],
                 ..Default::default()
             },
         };
@@ -1638,7 +1613,10 @@ mod tests {
             source: "data".into(),
             query: DataQuery {
                 filters: vec![QueryFilter::new("active", FilterOp::Eq, json!(true))],
-                sort: vec![QuerySort { field: "name".into(), descending: false }],
+                sort: vec![QuerySort {
+                    field: "name".into(),
+                    descending: false,
+                }],
                 ..Default::default()
             },
         };
@@ -1652,24 +1630,6 @@ mod tests {
             }
             _ => panic!("expected Query"),
         }
-    }
-
-    #[test]
-    fn evaluate_filter_truthy_empty_string_is_false() {
-        let item = json!({ "name": "" });
-        assert!(!evaluate_filter(&item, "name"));
-    }
-
-    #[test]
-    fn evaluate_filter_truthy_null_is_false() {
-        let item = json!({ "name": null });
-        assert!(!evaluate_filter(&item, "name"));
-    }
-
-    #[test]
-    fn evaluate_filter_truthy_missing_field_is_false() {
-        let item = json!({ "other": 1 });
-        assert!(!evaluate_filter(&item, "name"));
     }
 
     // ── Schema tests ─────────────────────────────────────────────
@@ -1867,7 +1827,10 @@ mod tests {
             query: DataQuery {
                 object_type: Some("BlogPost".into()),
                 filters: vec![QueryFilter::new("status", FilterOp::Eq, json!("published"))],
-                sort: vec![QuerySort { field: "created_at".into(), descending: true }],
+                sort: vec![QuerySort {
+                    field: "created_at".into(),
+                    descending: true,
+                }],
                 limit: Some(10),
             },
         };
@@ -1952,7 +1915,6 @@ mod tests {
         let json = r#"{
             "id": "facet:old",
             "label": "Old Facet",
-            "prefab_id": "card",
             "data": { "kind": "static", "items": [] },
             "bindings": [],
             "layout": {}
@@ -2290,7 +2252,6 @@ mod tests {
         let json = r#"{
             "id": "facet:old-script",
             "label": "Old Script",
-            "prefab_id": "card",
             "kind": { "type": "script", "source": "return {}", "language": "luau" },
             "data": { "kind": "static", "items": [] },
             "bindings": [],
@@ -2476,7 +2437,6 @@ mod tests {
         let json = r#"{
             "id": "facet:old",
             "label": "Old Facet",
-            "prefab_id": "card",
             "data": { "kind": "static", "items": [] },
             "bindings": [],
             "layout": {}

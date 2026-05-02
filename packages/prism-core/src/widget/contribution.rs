@@ -223,12 +223,8 @@ impl QueryFilter {
 fn json_values_eq(a: &Value, b: &Value) -> bool {
     match (a, b) {
         (Value::Number(na), Value::Number(nb)) => na.as_f64() == nb.as_f64(),
-        (Value::String(sa), Value::Number(nb)) => {
-            sa.parse::<f64>().ok() == nb.as_f64()
-        }
-        (Value::Number(na), Value::String(sb)) => {
-            na.as_f64() == sb.parse::<f64>().ok()
-        }
+        (Value::String(sa), Value::Number(nb)) => sa.parse::<f64>().ok() == nb.as_f64(),
+        (Value::Number(na), Value::String(sb)) => na.as_f64() == sb.parse::<f64>().ok(),
         _ => a == b,
     }
 }
@@ -601,13 +597,19 @@ mod tests {
     #[test]
     fn get_json_field_flat() {
         let item = serde_json::json!({"name": "Alpha"});
-        assert_eq!(get_json_field(&item, "name"), Some(serde_json::json!("Alpha")));
+        assert_eq!(
+            get_json_field(&item, "name"),
+            Some(serde_json::json!("Alpha"))
+        );
     }
 
     #[test]
     fn get_json_field_nested() {
         let item = serde_json::json!({"meta": {"title": "Deep"}});
-        assert_eq!(get_json_field(&item, "meta.title"), Some(serde_json::json!("Deep")));
+        assert_eq!(
+            get_json_field(&item, "meta.title"),
+            Some(serde_json::json!("Deep"))
+        );
     }
 
     #[test]
@@ -650,7 +652,11 @@ mod tests {
 
     #[test]
     fn query_filter_in() {
-        let f = QueryFilter::new("status", FilterOp::In, serde_json::json!(["active", "pending"]));
+        let f = QueryFilter::new(
+            "status",
+            FilterOp::In,
+            serde_json::json!(["active", "pending"]),
+        );
         assert!(f.matches(&serde_json::json!({"status": "active"})));
         assert!(f.matches(&serde_json::json!({"status": "pending"})));
         assert!(!f.matches(&serde_json::json!({"status": "deleted"})));
@@ -666,10 +672,15 @@ mod tests {
     #[test]
     fn data_query_apply_filters_and_sort() {
         let q = DataQuery {
-            filters: vec![
-                QueryFilter::new("status", FilterOp::Eq, serde_json::json!("active")),
-            ],
-            sort: vec![QuerySort { field: "name".into(), descending: false }],
+            filters: vec![QueryFilter::new(
+                "status",
+                FilterOp::Eq,
+                serde_json::json!("active"),
+            )],
+            sort: vec![QuerySort {
+                field: "name".into(),
+                descending: false,
+            }],
             ..Default::default()
         };
         let mut items = vec![
@@ -701,7 +712,10 @@ mod tests {
     #[test]
     fn data_query_apply_sort_descending() {
         let q = DataQuery {
-            sort: vec![QuerySort { field: "score".into(), descending: true }],
+            sort: vec![QuerySort {
+                field: "score".into(),
+                descending: true,
+            }],
             ..Default::default()
         };
         let mut items = vec![
