@@ -102,6 +102,13 @@ pbkdf2 = { version = "0.12", default-features = false }
 aes-gcm = "0.10"
 chacha20poly1305 = "0.10"
 
+# Financial / calendar crates recommended by flux-port-gap-analysis.md.
+rrule = "0.13"
+chrono-tz = "0.10"
+rust_decimal = { version = "1", features = ["serde-with-str"] }
+rusty-money = { version = "0.4", features = ["iso"] }
+financial = "1"
+
 # WASM glue — used by `prism-shell`'s web target (Slint on
 # wasm32-unknown-unknown). The crate compiles to a wasm-bindgen
 # module that `web/index.html` loads directly; no emscripten is

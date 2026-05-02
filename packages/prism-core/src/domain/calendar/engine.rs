@@ -1,10 +1,11 @@
 //! Calendar engine — date helpers, recurrence expansion, calendar queries.
 //!
-//! Port of `@core/calendar` logic. Hand-rolled RRULE subset — no
-//! external `rrule` crate.
+//! Port of `@core/calendar` logic. RRULE parsing and occurrence
+//! expansion delegated to the `rrule` crate (v0.13).
 
-use chrono::{Datelike, Days, Months, NaiveDate, Utc};
+use chrono::{Datelike, Days, NaiveDate, Utc};
 use indexmap::IndexMap;
+use rrule::{Frequency as RRuleFrequency, NWeekday, RRule, RRuleSet, Unvalidated};
 use serde_json::Value;
 
 use crate::foundation::object_model::types::GraphObject;
@@ -187,61 +188,64 @@ fn parse_recurrence_value(val: &Value) -> Option<RecurrenceRule> {
 }
 
 /// Parse an RRULE string (e.g. `FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE,FR`).
-pub fn parse_rrule_string(rrule: &str) -> Option<RecurrenceRule> {
+///
+/// Uses the `rrule` crate for parsing, then converts to our
+/// `RecurrenceRule` type. Falls back to manual parsing for UNTIL
+/// values in `YYYY-MM-DD` format (not supported by the RFC-strict
+/// rrule crate parser).
+pub fn parse_rrule_string(rrule_input: &str) -> Option<RecurrenceRule> {
     // Strip leading "RRULE:" if present.
-    let s = rrule.strip_prefix("RRULE:").unwrap_or(rrule);
+    let s = rrule_input.strip_prefix("RRULE:").unwrap_or(rrule_input);
 
-    let mut frequency: Option<Frequency> = None;
-    let mut interval: u32 = 1;
-    let mut count: Option<u32> = None;
-    let mut until: Option<NaiveDate> = None;
-    let mut by_day: Vec<Weekday> = Vec::new();
-    let mut by_month_day: Vec<u32> = Vec::new();
+    // The rrule crate requires RFC-compliant UNTIL (e.g. `20301231T000000Z`),
+    // but our tests use `YYYY-MM-DD`. Pre-process the UNTIL value.
+    let mut until_date: Option<NaiveDate> = None;
+    let processed = preprocess_rrule_for_parse(s, &mut until_date);
 
-    for part in s.split(';') {
-        let part = part.trim();
-        if part.is_empty() {
-            continue;
-        }
-        if let Some((key, value)) = part.split_once('=') {
-            match key {
-                "FREQ" => {
-                    frequency = match value {
-                        "DAILY" => Some(Frequency::Daily),
-                        "WEEKLY" => Some(Frequency::Weekly),
-                        "MONTHLY" => Some(Frequency::Monthly),
-                        "YEARLY" => Some(Frequency::Yearly),
-                        _ => None,
-                    };
-                }
-                "INTERVAL" => {
-                    interval = value.parse().unwrap_or(1);
-                }
-                "COUNT" => {
-                    count = value.parse().ok();
-                }
-                "UNTIL" => {
-                    until = parse_date_str(value);
-                }
-                "BYDAY" => {
-                    by_day = value
-                        .split(',')
-                        .filter_map(|d| Weekday::from_rrule_str(d.trim()))
-                        .collect();
-                }
-                "BYMONTHDAY" => {
-                    by_month_day = value
-                        .split(',')
-                        .filter_map(|d| d.trim().parse().ok())
-                        .collect();
-                }
-                _ => {}
-            }
-        }
-    }
+    let parsed: RRule<Unvalidated> = match processed.parse() {
+        Ok(r) => r,
+        Err(_) => return None,
+    };
+
+    let frequency = match parsed.get_freq() {
+        RRuleFrequency::Daily => Frequency::Daily,
+        RRuleFrequency::Weekly => Frequency::Weekly,
+        RRuleFrequency::Monthly => Frequency::Monthly,
+        RRuleFrequency::Yearly => Frequency::Yearly,
+        // Unsupported frequencies for our calendar model.
+        _ => return None,
+    };
+
+    let interval = parsed.get_interval() as u32;
+    let count = parsed.get_count();
+
+    // If the rrule crate parsed an UNTIL, use it; otherwise use
+    // any date we extracted during preprocessing.
+    let until = parsed
+        .get_until()
+        .map(|dt| dt.naive_utc().date())
+        .or(until_date);
+
+    let by_day: Vec<Weekday> = parsed
+        .get_by_weekday()
+        .iter()
+        .map(|nwd| {
+            let chrono_wd = match nwd {
+                NWeekday::Every(wd) => *wd,
+                NWeekday::Nth(_, wd) => *wd,
+            };
+            Weekday::from_chrono(chrono_wd)
+        })
+        .collect();
+
+    let by_month_day: Vec<u32> = parsed
+        .get_by_month_day()
+        .iter()
+        .filter_map(|&d| if d > 0 { Some(d as u32) } else { None })
+        .collect();
 
     Some(RecurrenceRule {
-        frequency: frequency?,
+        frequency,
         interval,
         count,
         until,
@@ -250,7 +254,68 @@ pub fn parse_rrule_string(rrule: &str) -> Option<RecurrenceRule> {
     })
 }
 
+/// Preprocess an RRULE string for the `rrule` crate parser.
+///
+/// The crate expects UNTIL in `YYYYMMDDTHHMMSSZ` format, but our
+/// system uses `YYYY-MM-DD`. This function rewrites UNTIL values
+/// and stores the extracted date.
+fn preprocess_rrule_for_parse(s: &str, until_out: &mut Option<NaiveDate>) -> String {
+    let parts: Vec<&str> = s.split(';').collect();
+    let mut rewritten_parts: Vec<String> = Vec::with_capacity(parts.len());
+
+    for part in &parts {
+        if let Some(val) = part.strip_prefix("UNTIL=") {
+            // Try to parse as our date format first.
+            if let Some(d) = parse_date_str(val) {
+                *until_out = Some(d);
+                // Rewrite to RFC format for the rrule crate.
+                rewritten_parts.push(format!("UNTIL={}T000000Z", d.format("%Y%m%d")));
+            } else {
+                // Already in a format the crate can handle.
+                rewritten_parts.push(part.to_string());
+            }
+        } else {
+            rewritten_parts.push(part.to_string());
+        }
+    }
+
+    rewritten_parts.join(";")
+}
+
 // ── Recurrence expansion ──────────────────────────────────────────
+
+/// Build an iCalendar-compatible RRULE string from our types,
+/// suitable for the `rrule` crate parser.
+fn build_rrule_string(event: &CalendarEvent, rule: &RecurrenceRule) -> String {
+    let dtstart = format!("DTSTART:{}T000000Z", event.start.format("%Y%m%d"));
+    let mut parts = vec![format!(
+        "FREQ={}",
+        match rule.frequency {
+            Frequency::Daily => "DAILY",
+            Frequency::Weekly => "WEEKLY",
+            Frequency::Monthly => "MONTHLY",
+            Frequency::Yearly => "YEARLY",
+        }
+    )];
+    if rule.interval > 1 {
+        parts.push(format!("INTERVAL={}", rule.interval));
+    }
+    if let Some(c) = rule.count {
+        parts.push(format!("COUNT={}", c));
+    }
+    if let Some(u) = rule.until {
+        parts.push(format!("UNTIL={}T000000Z", u.format("%Y%m%d")));
+    }
+    if !rule.by_day.is_empty() {
+        let days: Vec<&str> = rule.by_day.iter().map(|d| d.to_rrule_str()).collect();
+        parts.push(format!("BYDAY={}", days.join(",")));
+    }
+    if !rule.by_month_day.is_empty() {
+        let days: Vec<String> = rule.by_month_day.iter().map(|d| d.to_string()).collect();
+        parts.push(format!("BYMONTHDAY={}", days.join(",")));
+    }
+    format!("{}\nRRULE:{}", dtstart, parts.join(";"))
+}
 
 /// Expand a recurring event into individual occurrences within a
 /// date range. Respects `count` (total occurrences, not just
@@ -260,184 +325,38 @@ pub fn expand_recurring(
     rule: &RecurrenceRule,
     range: &DateRange,
 ) -> Vec<EventOccurrence> {
+    let rrule_str = build_rrule_string(event, rule);
+    let rrule_set: RRuleSet = match rrule_str.parse() {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+
+    // Determine how many occurrences to request. The rrule crate's
+    // `all(limit)` takes a u16. We need at most MAX_OCCURRENCES but
+    // that exceeds u16::MAX, so cap at u16::MAX which is 65535 (still
+    // well above our 10k cap that we enforce separately).
+    let limit = MAX_OCCURRENCES.min(u16::MAX as usize) as u16;
+    let result = rrule_set.all(limit);
+
+    // Convert DateTime<Tz> → NaiveDate and filter by our date range.
     let mut results = Vec::new();
-    let mut total_count: usize = 0;
-    let max_count = rule.count.map(|c| c as usize).unwrap_or(MAX_OCCURRENCES);
-    let effective_max = max_count.min(MAX_OCCURRENCES);
-
-    match rule.frequency {
-        Frequency::Daily => {
-            let mut current = event.start;
-            while total_count < effective_max {
-                if let Some(u) = rule.until {
-                    if current > u {
-                        break;
-                    }
-                }
-                if current > range.to {
-                    break;
-                }
-                if current >= range.from {
-                    results.push(make_occurrence(
-                        event,
-                        current,
-                        total_count == 0,
-                        false, // set later
-                    ));
-                }
-                total_count += 1;
-                current = advance_days(current, rule.interval);
-            }
+    let mut is_first = true;
+    for dt in &result.dates {
+        if results.len() >= MAX_OCCURRENCES {
+            break;
         }
-        Frequency::Weekly => {
-            if rule.by_day.is_empty() {
-                // Simple weekly: recur on the same day of the week.
-                let mut current = event.start;
-                while total_count < effective_max {
-                    if let Some(u) = rule.until {
-                        if current > u {
-                            break;
-                        }
-                    }
-                    if current > range.to {
-                        break;
-                    }
-                    if current >= range.from {
-                        results.push(make_occurrence(event, current, total_count == 0, false));
-                    }
-                    total_count += 1;
-                    current = advance_days(current, 7 * rule.interval);
-                }
-            } else {
-                // Weekly with by_day: iterate day-by-day within each
-                // interval-week, keeping only days that match by_day.
-                let mut week_start = iso_week_start(event.start);
-                while total_count < effective_max {
-                    if let Some(u) = rule.until {
-                        if week_start > u {
-                            break;
-                        }
-                    }
-                    // Check if entire week is past range.
-                    let week_end = advance_days(week_start, 6);
-                    if week_start > range.to {
-                        break;
-                    }
-
-                    for day_offset in 0..7u32 {
-                        if total_count >= effective_max {
-                            break;
-                        }
-                        let day = advance_days(week_start, day_offset);
-                        if day < event.start {
-                            continue;
-                        }
-                        if let Some(u) = rule.until {
-                            if day > u {
-                                break;
-                            }
-                        }
-                        let wd = Weekday::from_chrono(day.weekday());
-                        if rule.by_day.contains(&wd) {
-                            if day >= range.from && day <= range.to {
-                                results.push(make_occurrence(event, day, total_count == 0, false));
-                            }
-                            total_count += 1;
-                        }
-                    }
-                    // Advance by interval weeks.
-                    week_start = advance_days(week_start, 7 * rule.interval);
-                    let _ = week_end; // used only for the break check above
-                }
-            }
+        let date = dt.naive_utc().date();
+        if date > range.to {
+            break;
         }
-        Frequency::Monthly => {
-            let mut month_offset: u32 = 0;
-            while total_count < effective_max {
-                let candidate = add_months(event.start, month_offset);
-                if let Some(current) = candidate {
-                    if let Some(u) = rule.until {
-                        if current > u {
-                            break;
-                        }
-                    }
-                    if current > range.to {
-                        break;
-                    }
-
-                    if rule.by_month_day.is_empty() {
-                        // Recur on the same day of the month.
-                        if current >= range.from {
-                            results.push(make_occurrence(event, current, total_count == 0, false));
-                        }
-                        total_count += 1;
-                    } else {
-                        // Only keep dates whose day-of-month is in by_month_day.
-                        for &md in &rule.by_month_day {
-                            if total_count >= effective_max {
-                                break;
-                            }
-                            if let Some(d) =
-                                NaiveDate::from_ymd_opt(current.year(), current.month(), md)
-                            {
-                                if let Some(u) = rule.until {
-                                    if d > u {
-                                        continue;
-                                    }
-                                }
-                                if d >= range.from && d <= range.to {
-                                    results.push(make_occurrence(
-                                        event,
-                                        d,
-                                        total_count == 0,
-                                        false,
-                                    ));
-                                }
-                                total_count += 1;
-                            }
-                        }
-                    }
-                } else {
-                    // Couldn't compute month — skip it.
-                    total_count += 1;
-                }
-                month_offset += rule.interval;
-            }
-        }
-        Frequency::Yearly => {
-            let mut year_offset: u32 = 0;
-            while total_count < effective_max {
-                let target_year = event.start.year() + year_offset as i32;
-                let candidate =
-                    NaiveDate::from_ymd_opt(target_year, event.start.month(), event.start.day());
-                if let Some(candidate) = candidate {
-                    if let Some(u) = rule.until {
-                        if candidate > u {
-                            break;
-                        }
-                    }
-                    if candidate > range.to {
-                        break;
-                    }
-                    if candidate >= range.from {
-                        results.push(make_occurrence(event, candidate, total_count == 0, false));
-                    }
-                    total_count += 1;
-                } else {
-                    // e.g. Feb 29 in a non-leap year — skip.
-                    total_count += 1;
-                }
-                year_offset += rule.interval;
-            }
+        if date >= range.from {
+            results.push(make_occurrence(event, date, is_first, false));
+            is_first = false;
         }
     }
 
-    // Mark the last occurrence.
+    // Mark the last occurrence if the series is bounded.
     if let Some(last) = results.last_mut() {
-        // If the series is bounded (count or until), mark the last one
-        // generated as `is_last`. We mark it only when the series
-        // actually terminated (hit count or until), not when it just
-        // exceeded the range window.
         let series_terminated = rule.count.is_some() || rule.until.is_some();
         if series_terminated {
             last.is_last = true;
@@ -586,10 +505,6 @@ fn make_occurrence(
 fn advance_days(date: NaiveDate, days: u32) -> NaiveDate {
     date.checked_add_days(Days::new(days as u64))
         .unwrap_or(date)
-}
-
-fn add_months(date: NaiveDate, months: u32) -> Option<NaiveDate> {
-    date.checked_add_months(Months::new(months))
 }
 
 fn iso_week_start(date: NaiveDate) -> NaiveDate {

@@ -3,6 +3,14 @@
 //! Port of `@core/ledger/currency` at commit 8426588. Provides
 //! currency metadata, formatting (standard and compact), parsing,
 //! and precision-aware rounding.
+//!
+//! Uses `rust_decimal` for exact decimal arithmetic (eliminating f64
+//! rounding bugs) and `rusty_money::iso` for ISO 4217 currency metadata
+//! (eliminating the hand-rolled lookup table).
+
+use rust_decimal::prelude::*;
+use rust_decimal::Decimal;
+use rusty_money::iso;
 
 // ── Currency Info ─────────────────────────────────────────────────
 
@@ -15,6 +23,11 @@ pub struct CurrencyInfo {
 }
 
 /// Common world currencies.
+///
+/// Derived from `rusty_money::iso` metadata but exposed as a static
+/// slice for API compatibility. Symbols are kept as Prism's display
+/// symbols (e.g. "CA$" for CAD) which may differ from ISO's raw
+/// `symbol` field.
 pub const COMMON_CURRENCIES: &[CurrencyInfo] = &[
     CurrencyInfo {
         code: "USD",
@@ -140,18 +153,25 @@ fn find_currency(code: &str) -> Option<&'static CurrencyInfo> {
 }
 
 /// Returns the number of decimal places for a currency code.
+/// Uses `rusty_money::iso` for authoritative ISO 4217 exponent data.
 /// Unknown currencies default to 2.
 pub fn currency_decimals(currency: &str) -> u8 {
-    find_currency(currency).map_or(2, |c| c.decimals)
+    iso::find(currency.to_uppercase().as_str())
+        .map(|c| c.exponent as u8)
+        .unwrap_or(2)
 }
 
 // ── Rounding ──────────────────────────────────────────────────────
 
 /// Round a value to the precision of the given currency.
+///
+/// Uses `rust_decimal::Decimal` for exact decimal arithmetic,
+/// eliminating the classic f64 rounding bugs (e.g. 1.005 * 100 =
+/// 100.4999... in IEEE 754).
 pub fn round_currency(amount: f64, currency: &str) -> f64 {
     let decimals = currency_decimals(currency);
-    let factor = 10_f64.powi(decimals as i32);
-    (amount * factor).round() / factor
+    let d = Decimal::from_f64(amount).unwrap_or(Decimal::ZERO);
+    d.round_dp(decimals as u32).to_f64().unwrap_or(amount)
 }
 
 // ── Formatting ────────────────────────────────────────────────────

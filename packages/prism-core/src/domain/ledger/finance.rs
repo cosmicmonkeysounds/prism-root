@@ -4,7 +4,7 @@
 //! are pure — no side effects or stored state. TVM functions are
 //! Excel-compatible.
 
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
 use serde_json::Value;
 
 use super::currency::round_currency;
@@ -62,23 +62,13 @@ pub fn calc_line_totals(items: &[LineItem], currency: Option<&str>) -> LineTotal
 
 /// Future value (Excel FV). `annuity_due` shifts payments to start
 /// of period.
-pub fn fv(rate: f64, nper: f64, pmt: f64, pv: f64, annuity_due: bool) -> f64 {
-    if rate == 0.0 {
-        return -(pv + pmt * nper);
-    }
-    let pow = (1.0 + rate).powf(nper);
-    let factor = if annuity_due { 1.0 + rate } else { 1.0 };
-    -(pv * pow + pmt * factor * (pow - 1.0) / rate)
+pub fn fv(rate: f64, nper: f64, pmt_val: f64, pv_val: f64, annuity_due: bool) -> f64 {
+    financial::fv(rate, nper, Some(pmt_val), Some(pv_val), Some(annuity_due))
 }
 
 /// Present value (Excel PV).
-pub fn pv(rate: f64, nper: f64, pmt: f64, fv_val: f64, annuity_due: bool) -> f64 {
-    if rate == 0.0 {
-        return -(fv_val + pmt * nper);
-    }
-    let pow = (1.0 + rate).powf(nper);
-    let factor = if annuity_due { 1.0 + rate } else { 1.0 };
-    -(fv_val + pmt * factor * (pow - 1.0) / rate) / pow
+pub fn pv(rate: f64, nper: f64, pmt_val: f64, fv_val: f64, annuity_due: bool) -> f64 {
+    financial::pv(rate, nper, Some(pmt_val), Some(fv_val), Some(annuity_due))
 }
 
 /// Payment (Excel PMT).
@@ -93,38 +83,12 @@ pub fn pmt(rate: f64, nper: f64, pv_val: f64, fv_val: f64, annuity_due: bool) ->
 
 /// Net present value (Excel NPV). `cash_flows[0]` is period 1.
 pub fn npv(rate: f64, cash_flows: &[f64]) -> f64 {
-    cash_flows
-        .iter()
-        .enumerate()
-        .map(|(i, cf)| cf / (1.0 + rate).powi(i as i32 + 1))
-        .sum()
+    financial::npv(rate, cash_flows)
 }
 
-/// Internal rate of return (Newton-Raphson, max 100 iterations).
+/// Internal rate of return (Newton-Raphson).
 pub fn irr(cash_flows: &[f64], guess: f64) -> Option<f64> {
-    let mut rate = guess;
-    for _ in 0..100 {
-        let mut npv_val = 0.0;
-        let mut d_npv = 0.0;
-        for (i, cf) in cash_flows.iter().enumerate() {
-            let t = i as f64;
-            let denom = (1.0 + rate).powf(t);
-            if denom == 0.0 {
-                return None;
-            }
-            npv_val += cf / denom;
-            d_npv -= t * cf / (1.0 + rate).powf(t + 1.0);
-        }
-        if d_npv.abs() < 1e-15 {
-            return None;
-        }
-        let new_rate = rate - npv_val / d_npv;
-        if (new_rate - rate).abs() < 1e-10 {
-            return Some(new_rate);
-        }
-        rate = new_rate;
-    }
-    None
+    financial::irr(cash_flows, Some(guess)).ok()
 }
 
 /// A cash flow with an associated date (for XNPV/XIRR).
@@ -139,14 +103,12 @@ pub fn xnpv(rate: f64, cash_flows: &[DatedCashFlow]) -> f64 {
     if cash_flows.is_empty() {
         return 0.0;
     }
-    let d0 = cash_flows[0].date;
-    cash_flows
+    let values: Vec<f64> = cash_flows.iter().map(|cf| cf.amount).collect();
+    let dates: Vec<DateTime<Utc>> = cash_flows
         .iter()
-        .map(|cf| {
-            let days = (cf.date - d0).num_days() as f64;
-            cf.amount / (1.0 + rate).powf(days / 365.0)
-        })
-        .sum()
+        .map(|cf| cf.date.and_hms_opt(0, 0, 0).unwrap().and_utc())
+        .collect();
+    financial::xnpv(rate, &values, &dates).unwrap_or(0.0)
 }
 
 /// Internal rate of return with irregular dates (Excel XIRR).
@@ -154,31 +116,12 @@ pub fn xirr(cash_flows: &[DatedCashFlow], guess: f64) -> Option<f64> {
     if cash_flows.is_empty() {
         return None;
     }
-    let d0 = cash_flows[0].date;
-    let mut rate = guess;
-
-    for _ in 0..100 {
-        let mut npv_val = 0.0;
-        let mut d_npv = 0.0;
-        for cf in cash_flows {
-            let t = (cf.date - d0).num_days() as f64 / 365.0;
-            let denom = (1.0 + rate).powf(t);
-            if denom == 0.0 {
-                return None;
-            }
-            npv_val += cf.amount / denom;
-            d_npv -= t * cf.amount / (1.0 + rate).powf(t + 1.0);
-        }
-        if d_npv.abs() < 1e-15 {
-            return None;
-        }
-        let new_rate = rate - npv_val / d_npv;
-        if (new_rate - rate).abs() < 1e-10 {
-            return Some(new_rate);
-        }
-        rate = new_rate;
-    }
-    None
+    let values: Vec<f64> = cash_flows.iter().map(|cf| cf.amount).collect();
+    let dates: Vec<DateTime<Utc>> = cash_flows
+        .iter()
+        .map(|cf| cf.date.and_hms_opt(0, 0, 0).unwrap().and_utc())
+        .collect();
+    financial::xirr(&values, &dates, Some(guess)).ok()
 }
 
 // ── Amortization ──────────────────────────────────────────────────
