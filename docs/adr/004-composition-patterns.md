@@ -74,7 +74,7 @@ User-authorable event wiring between nodes. Inspired by Godot signals.
   `form` emits `submitted`, `input` emits `changed`/`focused`/`blurred`,
   etc.
 
-### 5. Prefabs (Compound Components)
+### 5. Prefabs (Compound Components) → Inline Templates + Component Promotion
 
 User-authored component templates made from existing node subtrees.
 Inspired by Unity Prefabs / Godot Scenes-as-Resources.
@@ -90,6 +90,25 @@ Inspired by Unity Prefabs / Godot Scenes-as-Resources.
 - Registered into `ComponentRegistry` like any built-in — once
   registered, prefab instances are indistinguishable from built-in
   component nodes.
+
+**Evolution (see `docs/dev/data-template-system.md`):** The prefab
+system remains as internal storage, but the user-facing model is
+shifting. Facets no longer require a separate prefab as a mandatory
+intermediary. Instead:
+
+- **Inline templates** (`FacetTemplate::Inline`) let a facet own its
+  item template directly as a `Node` subtree, editable in-place on the
+  builder canvas. Bindings use `{{field}}` expressions in node props
+  instead of the three-layer `FacetBinding` → `ExposedSlot` → prop chain.
+- **Component promotion** ("Save as Component") extracts an inline
+  template into a registered component when reuse is needed. The facet
+  switches to `FacetTemplate::ComponentRef`.
+- **Scalar output** (`FacetOutput::Scalar`) lets non-list facets
+  (Aggregate, single-result Lookup/Script) bind a computed value
+  directly to a target widget prop without any template.
+
+`PrefabDef` and `ExposedSlot` remain as the implementation mechanism
+for promoted components — the user just never thinks in those terms.
 
 ## Consequences
 

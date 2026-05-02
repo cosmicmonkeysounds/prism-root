@@ -32,6 +32,7 @@ use crate::slint_source::SlintEmitter;
 use crate::style::StyleProperties;
 use crate::variant::VariantAxis;
 use prism_core::foundation::spatial::Transform2D;
+use prism_core::widget::ToolbarAction;
 
 /// Stable identifier for a component *type* (e.g. `"card"`, `"button"`).
 ///
@@ -445,6 +446,10 @@ pub trait Component: Send + Sync {
     }
 
     fn variants(&self) -> Vec<VariantAxis> {
+        vec![]
+    }
+
+    fn toolbar_actions(&self) -> Vec<ToolbarAction> {
         vec![]
     }
 

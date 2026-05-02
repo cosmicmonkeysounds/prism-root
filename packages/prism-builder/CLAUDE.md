@@ -235,6 +235,7 @@ Twenty-five modules in `src/` (excluding `lib.rs`):
   (implements `Component`), `apply_prop_to_node`. 5 unit tests.
 - `facet.rs` — `FacetDef`, `FacetKind` (List/ObjectQuery/Script/
   Aggregate/Lookup), `FacetDataSource` (Static/Resource/Query),
+  `FacetTemplate` (Inline/ComponentRef), `FacetOutput` (Repeated/Scalar),
   `FacetBinding`, `FacetLayout`, `AggregateOp` (Count/Sum/Min/Max/
   Avg/Join), `ScriptLanguage` (Luau/VisualGraph),
   `FacetVariantRule` (field condition → axis value mapping),
@@ -249,6 +250,13 @@ Twenty-five modules in `src/` (excluding `lib.rs`):
   filters (`"field == val"`, `"field != val"`, `"field"` truthy)
   and sorts (ascending `"field"` or descending `"-field"`) a
   resource array without mutating it.
+  `FacetTemplate` replaces the mandatory `prefab_id` indirection:
+  `Inline { root: Node }` owns the template subtree directly with
+  `{{field}}` expression bindings in node props; `ComponentRef`
+  points to a registered component (backward-compatible with the
+  existing prefab pipeline). `FacetOutput` separates repeated
+  (template-per-item) from scalar (bind single value to a target
+  widget prop) output — see `docs/dev/data-template-system.md`.
   `evaluate_calculations(&mut items, &schema)` evaluates
   `SchemaFieldKind::Calculation { formula }` fields via
   `prism_core::language::expression::evaluate_expression`, wired

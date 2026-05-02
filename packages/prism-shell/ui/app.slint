@@ -323,6 +323,12 @@ struct SchemaListItem {
     selected: bool,
 }
 
+struct WidgetToolbarItem {
+    action-id: string,
+    label: string,
+    group: string,
+}
+
 // ── Icon button ───────────────────────────────────────────────────
 
 component IconButton inherits Rectangle {
@@ -1788,6 +1794,11 @@ export component AppWindow inherits Window {
     in property <string> selected-schema-label: "";
     callback schema-select(string /* schema id */);
 
+    // Widget toolbar (context actions for core widget nodes)
+    in property <[WidgetToolbarItem]> widget-toolbar-items: [];
+    in property <int> widget-toolbar-count: 0;
+    callback widget-toolbar-action(string /* action_id */);
+
     // Shell chrome visibility
     in property <bool> show-activity-bar: true;
     in property <bool> show-left-sidebar: true;
@@ -2798,6 +2809,50 @@ export component AppWindow inherits Window {
                                                     }
                                                     } // canvas-zoom-area TouchArea
                                                 } // clip Rectangle (replaces Flickable)
+
+                                                // Widget toolbar — floating bar for core widget context actions
+                                                if root.widget-toolbar-count > 0 && root.has-selection && !root.preview-mode : Rectangle {
+                                                    y: parent.height - self.height - 8px;
+                                                    x: (parent.width - self.width) / 2;
+                                                    height: 36px;
+                                                    width: wt-layout.preferred-width + 16px;
+                                                    border-radius: 8px;
+                                                    background: Palette.background;
+                                                    border-width: 1px;
+                                                    border-color: Palette.foreground.transparentize(85%);
+                                                    drop-shadow-blur: 8px;
+                                                    drop-shadow-color: #00000018;
+
+                                                    wt-layout := HorizontalLayout {
+                                                        padding-left: 8px;
+                                                        padding-right: 8px;
+                                                        spacing: 2px;
+                                                        alignment: center;
+
+                                                        for wt-item[wti] in root.widget-toolbar-items : Rectangle {
+                                                            visible: wti < root.widget-toolbar-count;
+                                                            height: 28px;
+                                                            width: wt-btn-text.preferred-width + 16px;
+                                                            border-radius: 6px;
+                                                            background: wt-touch.has-hover ? Palette.control-background : transparent;
+
+                                                            wt-btn-text := Text {
+                                                                text: wt-item.label;
+                                                                font-size: 11px;
+                                                                color: wt-touch.has-hover ? Palette.foreground : Palette.foreground.transparentize(20%);
+                                                                vertical-alignment: center;
+                                                                horizontal-alignment: center;
+                                                            }
+
+                                                            wt-touch := TouchArea {
+                                                                mouse-cursor: pointer;
+                                                                clicked => {
+                                                                    root.widget-toolbar-action(wt-item.action-id);
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
                                         // COMPONENT PALETTE

@@ -366,10 +366,32 @@ WidgetContribution {
 6. **Toolbar**: Shell reads `CoreWidgetComponent::toolbar_actions()`
    and renders the modal bottom toolbar.
 
+## Convergence with the Data Template System
+
+The widget system and facets are evolving toward shared primitives
+(see `docs/dev/data-template-system.md`):
+
+- **Engine widgets** use `WidgetTemplate` (declarative, code-authored).
+- **User facets** use `FacetTemplate` (inline or component-ref,
+  GUI-authored).
+- Both resolve to the same render pipeline: data → template → expand →
+  render child.
+
+The `DataQuery` in `WidgetContribution` is the engine-side equivalent
+of `FacetDataSource` + `FacetKind`. A future unification could make
+`DataQuery` the single data-resolution primitive, with facet kinds
+mapping onto it.
+
+Inline templates (`FacetTemplate::Inline`) use `{{field}}` expression
+binding directly in node props — the same concept as
+`TemplateNode::DataBinding` but authored visually in the builder
+canvas rather than declared in code.
+
 ## What Stays Unchanged
 
 - `Component` trait — the Slint render contract.
-- `PrefabDef` / `FacetDef` — composition primitives.
+- `PrefabDef` — internal storage for user-promoted components (no
+  longer directly referenced by facets; see data-template-system.md).
 - `ComponentRegistry` — just gets more registrations.
 - Existing 16 built-in components — keep hand-written render.
 - `EntityFieldDef` — graph object schema, different purpose.

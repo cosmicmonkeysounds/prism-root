@@ -55,7 +55,7 @@ use crate::{
     ComponentPaletteItem, DockDividerRect, DockPanelRect, DockTabItem, DocsPanelData,
     EditorIndentGuide, EditorLine, EditorToken, ExplorerNodeItem, FieldRow, GridCellItem,
     GridEdgeHandle, GutterRect, HelpTooltipData, InspectorNode, MenuDef, MenuItem, PageLayoutData,
-    PreviewNode, SearchResultItem, TabItem, ToastItem, WorkflowPageItem,
+    PreviewNode, SearchResultItem, TabItem, ToastItem, WidgetToolbarItem, WorkflowPageItem,
 };
 
 // ── Persistent VecModels ───────────────────────────────────────────
@@ -131,6 +131,7 @@ persistent_models! {
     nav_graph_nodes: crate::NavGraphNode,
     nav_graph_edges: crate::NavGraphEdge,
     schema_list: crate::SchemaListItem,
+    widget_toolbar: crate::WidgetToolbarItem,
 }
 
 // ── Reloadable state ───────────────────────────────────────────────
@@ -1144,6 +1145,11 @@ impl Shell {
         bind_model!(set_nav_graph_nodes, nav_graph_nodes, crate::NavGraphNode);
         bind_model!(set_nav_graph_edges, nav_graph_edges, crate::NavGraphEdge);
         bind_model!(set_schema_list, schema_list, crate::SchemaListItem);
+        bind_model!(
+            set_widget_toolbar_items,
+            widget_toolbar,
+            crate::WidgetToolbarItem
+        );
 
         let inner = Rc::new(RefCell::new(ShellInner {
             store: Store::new(state),
@@ -4003,6 +4009,91 @@ impl Shell {
             }
         });
 
+        // Widget toolbar action
+        self.window.on_widget_toolbar_action({
+            let inner = Rc::clone(&inner);
+            let weak = weak.clone();
+            move |action_id| {
+                let action_id = action_id.to_string();
+                {
+                    let mut s = inner.borrow_mut();
+                    let sel = s.store.state().selection.clone();
+                    let Some(node_id) = sel.primary() else {
+                        return;
+                    };
+                    let node_id = node_id.clone();
+                    let comp = s
+                        .store
+                        .state()
+                        .builder_document
+                        .root
+                        .as_ref()
+                        .and_then(|n| n.find(&node_id))
+                        .and_then(|node| s.registry.get(&node.component));
+                    let Some(comp) = comp else {
+                        return;
+                    };
+                    let actions = comp.toolbar_actions();
+                    let Some(action) = actions.iter().find(|a| a.id == action_id) else {
+                        return;
+                    };
+                    use prism_core::widget::ToolbarActionKind;
+                    match &action.kind {
+                        ToolbarActionKind::Signal { signal } => {
+                            s.fire_signal(&node_id, signal, serde_json::Map::new());
+                        }
+                        ToolbarActionKind::SetConfig { key, value } => {
+                            s.push_undo("Set widget config");
+                            let key = key.clone();
+                            let value = value.clone();
+                            s.store.mutate(|state| {
+                                if let Some(node) = state
+                                    .builder_document
+                                    .root
+                                    .as_mut()
+                                    .and_then(|n| n.find_mut(&node_id))
+                                {
+                                    if let Some(obj) = node.props.as_object_mut() {
+                                        obj.insert(key, value);
+                                    }
+                                }
+                            });
+                        }
+                        ToolbarActionKind::ToggleConfig { key } => {
+                            s.push_undo("Toggle widget config");
+                            let key = key.clone();
+                            s.store.mutate(|state| {
+                                if let Some(node) = state
+                                    .builder_document
+                                    .root
+                                    .as_mut()
+                                    .and_then(|n| n.find_mut(&node_id))
+                                {
+                                    if let Some(obj) = node.props.as_object_mut() {
+                                        let current = obj
+                                            .get(&key)
+                                            .and_then(|v| v.as_bool())
+                                            .unwrap_or(false);
+                                        obj.insert(key, serde_json::Value::Bool(!current));
+                                    }
+                                }
+                            });
+                        }
+                        ToolbarActionKind::Custom { action_type } => {
+                            s.fire_signal(
+                                &node_id,
+                                &format!("custom:{action_type}"),
+                                serde_json::Map::new(),
+                            );
+                        }
+                    }
+                }
+                if let Some(w) = weak.upgrade() {
+                    sync_ui_from_shared(&inner, &w);
+                }
+            }
+        });
+
         // Viewport preset changed
         self.window.on_viewport_preset_changed({
             let inner = Rc::clone(&inner);
@@ -4324,6 +4415,13 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
             Some(&state.workspace),
             state.selected_schema_id.as_deref(),
         );
+        push_widget_toolbar(
+            &inner.models,
+            window,
+            &state.builder_document,
+            &inner.registry,
+            &state.selection,
+        );
         push_signal_panel_data(
             &inner.models,
             window,
@@ -4496,6 +4594,8 @@ fn clear_panel_slots(models: &PersistentModels, window: &AppWindow) {
     window.set_selected_component(SharedString::new());
     sync_model(&models.component_palette, &[]);
     window.set_component_palette_count(0);
+    sync_model(&models.widget_toolbar, &[]);
+    window.set_widget_toolbar_count(0);
 }
 
 fn push_explorer_nodes(
@@ -6145,6 +6245,31 @@ fn push_signal_panel_data(
     }
     let target_label_model = std::rc::Rc::new(slint::VecModel::from(target_labels));
     window.set_signal_target_labels(slint::ModelRc::from(target_label_model));
+}
+
+fn push_widget_toolbar(
+    models: &PersistentModels,
+    window: &AppWindow,
+    doc: &BuilderDocument,
+    registry: &ComponentRegistry,
+    selection: &SelectionModel,
+) {
+    let actions = selection
+        .primary()
+        .and_then(|sel_id| doc.root.as_ref().and_then(|n| n.find(sel_id)))
+        .and_then(|node| registry.get(&node.component))
+        .map(|comp| comp.toolbar_actions())
+        .unwrap_or_default();
+    let items: Vec<WidgetToolbarItem> = actions
+        .iter()
+        .map(|a| WidgetToolbarItem {
+            action_id: SharedString::from(&a.id),
+            label: SharedString::from(&a.label),
+            group: SharedString::from(a.group.as_deref().unwrap_or("")),
+        })
+        .collect();
+    let count = sync_model(&models.widget_toolbar, &items);
+    window.set_widget_toolbar_count(count);
 }
 
 fn push_schema_list(

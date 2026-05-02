@@ -204,7 +204,12 @@ From `src/lib.rs`:
   `InputEvent`.
 - `panels` — data-provider structs (one per panel) that feed Slint
   properties. Seven panels: Identity, Builder, Inspector, Properties,
-  Signals, Navigation, CodeEditor.
+  Signals, Navigation, CodeEditor. The Properties panel is kind-aware
+  for facet components: `facet_id` renders as a select dropdown
+  populated from the document's facet definitions, and kind-specific
+  fields (e.g. `max_items`) are conditionally shown based on the
+  selected facet's `FacetKind`. Schema changes in the Data workflow
+  page auto-sync to the Properties panel via `sync_builder_document`.
 - `signals` (`src/signals.rs`) — `SignalRuntime` bridges builder signal
   dispatch to the shell. `fire`, `fire_simple`, `fire_pointer`,
   `fire_changed` create `SignalEvent`s and evaluate connections.

@@ -36,13 +36,6 @@ impl CoreWidgetComponent {
     pub fn new(contribution: WidgetContribution) -> Self {
         Self { contribution }
     }
-
-    /// Access the underlying toolbar actions declared by the engine.
-    /// Not part of the `Component` trait — callers that need toolbar
-    /// metadata downcast or hold a typed reference.
-    pub fn toolbar_actions(&self) -> &[ToolbarAction] {
-        &self.contribution.toolbar_actions
-    }
 }
 
 impl Component for CoreWidgetComponent {
@@ -70,6 +63,10 @@ impl Component for CoreWidgetComponent {
             .iter()
             .map(map_variant_spec)
             .collect()
+    }
+
+    fn toolbar_actions(&self) -> Vec<ToolbarAction> {
+        self.contribution.toolbar_actions.clone()
     }
 
     fn render_slint(
@@ -175,20 +172,28 @@ fn render_template_node(
 
         TemplateNode::Repeater {
             source,
-            item_template: _,
+            item_template,
             empty_label,
         } => {
-            // TODO: Full repeater support requires Slint `for` syntax
-            // with data model integration. For now, emit a placeholder
-            // text showing the source field name so the layout is visible
-            // in the builder.
-            let label = empty_label.as_deref().unwrap_or(source.as_str());
-            out.block("Text", |out| {
-                out.prop_string("text", format!("[repeater: {label}]"));
-                out.prop_px("font-size", 12.0);
-                out.prop_color("color", "#888888");
+            let items = props
+                .get(source.as_str())
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            if items.is_empty() {
+                let label = empty_label.as_deref().unwrap_or("No items");
+                out.block("Text", |out| {
+                    out.prop_string("text", label);
+                    out.prop_px("font-size", 12.0);
+                    out.prop_color("color", "#888888");
+                    Ok(())
+                })
+            } else {
+                for item in &items {
+                    render_template_node(ctx, item_template, item, out)?;
+                }
                 Ok(())
-            })
+            }
         }
 
         TemplateNode::Conditional {
@@ -357,7 +362,7 @@ mod tests {
     #[test]
     fn toolbar_actions_are_accessible() {
         let comp = CoreWidgetComponent::new(test_contribution());
-        let actions = comp.toolbar_actions();
+        let actions = Component::toolbar_actions(&comp);
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0].id, "refresh");
         assert_eq!(actions[0].label, "Refresh");
@@ -440,7 +445,7 @@ mod tests {
     }
 
     #[test]
-    fn render_slint_repeater_placeholder() {
+    fn render_slint_repeater_empty() {
         let mut registry = ComponentRegistry::new();
         crate::starter::register_builtins(&mut registry).unwrap();
 
@@ -482,6 +487,61 @@ mod tests {
         let source = out.build();
         assert!(source.contains("Text"));
         assert!(source.contains("No items yet"));
+    }
+
+    #[test]
+    fn render_slint_repeater_with_data() {
+        let mut registry = ComponentRegistry::new();
+        crate::starter::register_builtins(&mut registry).unwrap();
+
+        let tokens = prism_core::design_tokens::DesignTokens::default();
+        let resources = indexmap::IndexMap::new();
+        let prefabs = indexmap::IndexMap::new();
+        let facets = indexmap::IndexMap::new();
+        let facet_schemas = indexmap::IndexMap::new();
+        let ctx = RenderSlintContext::new(
+            &tokens,
+            &registry,
+            &resources,
+            &prefabs,
+            &facets,
+            &facet_schemas,
+            false,
+        );
+
+        let contribution = WidgetContribution {
+            id: "repeater-data".into(),
+            label: "Repeater".into(),
+            template: WidgetTemplate {
+                root: TemplateNode::Repeater {
+                    source: "items".into(),
+                    item_template: Box::new(TemplateNode::DataBinding {
+                        field: "title".into(),
+                        component_id: "text".into(),
+                        prop_key: "body".into(),
+                    }),
+                    empty_label: Some("No items".into()),
+                },
+            },
+            ..Default::default()
+        };
+
+        let comp = CoreWidgetComponent::new(contribution);
+        let mut out = SlintEmitter::new();
+        let props = json!({
+            "items": [
+                {"title": "First"},
+                {"title": "Second"},
+                {"title": "Third"}
+            ]
+        });
+        comp.render_slint(&ctx, &props, &[], &mut out).unwrap();
+
+        let source = out.build();
+        assert!(source.contains("First"));
+        assert!(source.contains("Second"));
+        assert!(source.contains("Third"));
+        assert!(!source.contains("No items"));
     }
 
     #[test]

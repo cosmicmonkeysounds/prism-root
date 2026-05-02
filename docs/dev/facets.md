@@ -99,16 +99,25 @@ FacetDef {
     id: String,
     label: String,
     description: String,
-    kind: FacetKind,                      // NEW — determines behavior + panel UI
+    kind: FacetKind,                      // determines behavior + panel UI
     schema_id: Option<FacetSchemaId>,
-    prefab_id: ComponentId,
+    prefab_id: ComponentId,               // legacy — being replaced by FacetTemplate
+    template: FacetTemplate,              // Inline { root: Node } | ComponentRef { component_id }
     data: FacetDataSource,                // used by List + Aggregate; ignored by ObjectQuery/Script
-    bindings: Vec<FacetBinding>,
+    bindings: Vec<FacetBinding>,          // kept for ComponentRef; Inline uses {{field}} expressions
+    variant_rules: Vec<FacetVariantRule>,
     layout: FacetLayout,
     #[serde(skip)]
     resolved_data: Option<Vec<Value>>,    // pre-populated by shell before render
 }
 ```
+
+The `template` field (see `docs/dev/data-template-system.md`) replaces the
+mandatory `prefab_id` indirection. When `template` is `Inline`, bindings are
+expressed as `{{record.field}}` expressions directly in the template node props.
+When `template` is `ComponentRef`, the existing `FacetBinding` + `ExposedSlot`
+mechanism still works. The `prefab_id` field is deprecated and will be removed
+once all existing facets migrate to `FacetTemplate::ComponentRef`.
 
 ### Data resolution per kind
 
@@ -292,16 +301,26 @@ The render pipeline is kind-agnostic. Every facet kind ultimately produces a
 
 ```
 FacetKind → resolve to Vec<Value>
-  → apply max_items truncation
-  → for each item:
-      clone prefab root
-      apply bindings (slot_key → item value)
-      render child
-  → wrap in layout container (VerticalLayout / HorizontalLayout)
+  → match output:
+      Repeated:
+        → apply max_items truncation
+        → match template:
+            Inline:
+              → for each item: clone template, resolve {{field}} expressions, render
+            ComponentRef:
+              → for each item: clone prefab, apply bindings (slot_key → item value), render
+        → wrap in layout container
+      Scalar:
+        → resolve to single value
+        → set target_node.target_prop = value
+        → (no render output from the facet itself)
 ```
 
-The exception is `Aggregate`, which produces a single value and renders one
-prefab instance with the aggregate result bound.
+The `Aggregate` kind (and single-result `Lookup`/`Script` facets) can use
+either `Repeated` (renders one template instance with the result bound) or
+`Scalar` (binds the value directly to a sibling widget's prop, no template
+needed). See `docs/dev/data-template-system.md` for the full inline template
+and scalar output design.
 
 ## Live data refresh
 
@@ -324,22 +343,28 @@ The command is accessible via:
 ```
 packages/prism-builder/src/
   facet.rs           ← FacetDef, FacetKind, FacetDataSource, FacetLayout,
+                       FacetTemplate, FacetOutput,
                        AggregateOp, ScriptLanguage,
                        FacetComponent, FacetHtmlBlock,
                        FacetSchema, SchemaField, FacetRecord
   document.rs        ← +facet_schemas, +facets on BuilderDocument
-  component.rs       ← +prefabs, +facets on RenderSlintContext
+  component.rs       ← +prefabs, +facets on RenderSlintContext;
+                       render walker handles Inline + {{field}} expression resolution
   html_block.rs      ← +prefabs, +facets on HtmlRenderContext
-  render.rs          ← pass &doc.prefabs / &doc.facets to context constructors
+  render.rs          ← pass &doc.prefabs / &doc.facets to context constructors;
+                       Scalar output binding in document-level walker
+  prefab.rs          ← PrefabDef/ExposedSlot (internal storage for promoted components)
   schemas.rs         ← +facet() schema fn
   starter.rs         ← register FacetComponent
   html_starter.rs    ← register FacetHtmlBlock
   lib.rs             ← pub mod facet + re-exports
 
 packages/prism-shell/src/
-  panels/properties.rs  ← kind-aware facet_rows() with per-kind sections
+  panels/properties.rs  ← kind-aware facet_rows() with per-kind sections;
+                          inline template editing; scalar target picker
   panels/schema.rs      ← SchemaDesignerPanel (unchanged)
-  app.rs                ← apply_facet_edit handles kind-specific keys
+  app.rs                ← apply_facet_edit handles kind-specific keys;
+                          {{field}} expression resolution for inline templates
 ```
 
 ## Phase plan
@@ -356,3 +381,4 @@ packages/prism-shell/src/
 | 8 ✅ | Live data refresh in Studio — `facet.refresh` command re-triggers `sync_builder_document()`, which re-runs `resolve_facet_data` for Script/ObjectQuery/Lookup kinds and re-renders. Available in command palette and facet context menu. |
 | 9 ✅ | Facet-level variant overrides — `FacetVariantRule` maps data field conditions to prefab variant axis selections. `evaluate_variant_rules()` sets axis key props on cloned prefab roots per item; existing `apply_variant_defaults` picks them up. Properties panel exposes rule CRUD. |
 | 10 ✅ | Visual graph authoring for Script facets — `ScriptLanguage::VisualGraph` variant stores a `ScriptGraph` on the facet. `sync_script_language()` bidirectionally decompiles/compiles via `LuauVisualLanguage`. Properties panel shows language selector, graph info, and compiled source preview. |
+| 11 | Inline templates + scalar output + component promotion — see `docs/dev/data-template-system.md`. Replaces the mandatory prefab intermediary with `FacetTemplate` (Inline / ComponentRef) and `FacetOutput` (Repeated / Scalar). Inline templates use `{{field}}` expression binding directly in node props. Scalar output for Aggregate/Lookup/Script facets binds a single computed value to a target widget prop without a template. "Save as Component" promotes inline templates to registered components. |
