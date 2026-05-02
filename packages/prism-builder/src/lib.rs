@@ -50,11 +50,11 @@ pub use core_widget::{collect_all_contributions, register_core_widgets, CoreWidg
 pub use document::{BuilderDocument, Node, NodeId};
 pub use facet::{
     apply_aggregate, apply_scalar_bindings, collect_expression_fields, evaluate_calculations,
-    evaluate_filter, get_field, promote_inline_to_component, resolve_template_expressions,
-    value_sort_key, AggregateOp, FacetBinding, FacetDataSource, FacetDef, FacetDirection,
-    FacetKind, FacetLayout, FacetOutput, FacetRecord, FacetSchema, FacetSchemaId, FacetTemplate,
-    FacetVariantRule, ResolvedFacetData, ScriptLanguage, ValidationError, AGGREGATE_OP_TAGS,
-    FACET_KIND_TAGS,
+    evaluate_filter, get_field, parse_filter_expr, promote_inline_to_component,
+    resolve_template_expressions, value_sort_key, AggregateOp, FacetBinding, FacetDataSource,
+    FacetDef, FacetDirection, FacetKind, FacetLayout, FacetOutput, FacetRecord, FacetSchema,
+    FacetSchemaId, FacetTemplate, FacetVariantRule, ResolvedFacetData, ScriptLanguage,
+    ValidationError, AGGREGATE_OP_TAGS, FACET_KIND_TAGS,
 };
 pub use html::{escape_attr, escape_text, Html};
 pub use html_block::{HtmlBlock, HtmlRegistry, HtmlRenderContext};

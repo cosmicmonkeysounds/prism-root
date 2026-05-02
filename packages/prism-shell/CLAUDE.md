@@ -103,7 +103,9 @@ licence requires.
   default winit + femtovg backend) plus `prism-daemon` with `crdt`
   / `luau` / `vfs` / `crypto`, and enables `prism-core/crdt` so
   `CollectionStore` is available for facet ObjectQuery/Lookup
-  resolution. The daemon is kept as a *native* dependency only;
+  resolution. ObjectQuery and Query data sources use
+  `prism_core::widget::DataQuery::apply()` for structured
+  filter/sort/limit. The daemon is kept as a *native* dependency only;
   the browser build talks to a remote relay.
 - `web` — browser target. Pulls in `wasm-bindgen`,
   `console_error_panic_hook`, and `getrandom = { features = ["js"] }`

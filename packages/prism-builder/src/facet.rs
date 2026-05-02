@@ -16,6 +16,7 @@ use serde_json::Value;
 use prism_core::help::HelpEntry;
 use prism_core::language::expression::{evaluate_expression, ExprValue};
 use prism_core::language::visual::ScriptGraph;
+use prism_core::widget::{get_json_field, json_sort_key, DataQuery, FilterOp, QueryFilter};
 
 use crate::component::{Component, ComponentId, RenderError, RenderSlintContext};
 use crate::document::{Node, NodeId};
@@ -189,13 +190,7 @@ pub enum FacetKind {
     List,
     ObjectQuery {
         #[serde(default)]
-        entity_type: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        filter: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        sort_by: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        limit: Option<usize>,
+        query: DataQuery,
     },
     Script {
         #[serde(default)]
@@ -245,10 +240,7 @@ impl FacetKind {
     pub fn from_tag(tag: &str) -> Self {
         match tag {
             "object-query" => Self::ObjectQuery {
-                entity_type: String::new(),
-                filter: None,
-                sort_by: None,
-                limit: None,
+                query: DataQuery::default(),
             },
             "script" => Self::Script {
                 source: String::new(),
@@ -265,6 +257,17 @@ impl FacetKind {
                 target_entity: String::new(),
             },
             _ => Self::List,
+        }
+    }
+
+    /// Return a `DataQuery` for kinds that map onto one.
+    /// `ObjectQuery` → its embedded query directly.
+    /// `List` with `Query` source → not available here (lives on `FacetDataSource`).
+    /// `Lookup`/`Script` → `None` (different resolution model).
+    pub fn data_query(&self) -> Option<&DataQuery> {
+        match self {
+            Self::ObjectQuery { query } => Some(query),
+            _ => None,
         }
     }
 }
@@ -435,17 +438,11 @@ pub enum FacetDataSource {
     },
     /// Reference to a `DataSource` resource whose `data` field is a JSON array.
     Resource { id: ResourceId },
-    /// Filter and sort a resource array without mutating the underlying resource.
-    /// `filter` is an optional expression: `"field_path == value"`,
-    /// `"field_path != value"`, or just `"field_path"` (truthy check).
-    /// `sort_by` is an optional dot-notation field path; sort is ascending
-    /// string order. Prepend `-` (e.g. `"-date"`) for descending.
+    /// Filter and sort a resource array using structured `DataQuery` filters.
     Query {
         source: ResourceId,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        filter: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        sort_by: Option<String>,
+        #[serde(default)]
+        query: DataQuery,
     },
 }
 
@@ -476,38 +473,14 @@ impl FacetDataSource {
                 .and_then(|r| r.data.as_array())
                 .cloned()
                 .unwrap_or_default(),
-            FacetDataSource::Query {
-                source,
-                filter,
-                sort_by,
-            } => {
+            FacetDataSource::Query { source, query } => {
                 let mut items: Vec<Value> = resources
                     .get(source)
                     .and_then(|r| r.data.as_array())
                     .cloned()
                     .unwrap_or_default();
 
-                if let Some(expr) = filter {
-                    items.retain(|item| evaluate_filter(item, expr));
-                }
-
-                if let Some(key) = sort_by {
-                    let (descending, path) = if let Some(stripped) = key.strip_prefix('-') {
-                        (true, stripped)
-                    } else {
-                        (false, key.as_str())
-                    };
-                    items.sort_by(|a, b| {
-                        let va = get_field(a, path).map(value_sort_key).unwrap_or_default();
-                        let vb = get_field(b, path).map(value_sort_key).unwrap_or_default();
-                        if descending {
-                            vb.cmp(&va)
-                        } else {
-                            va.cmp(&vb)
-                        }
-                    });
-                }
-
+                query.apply(&mut items);
                 items
             }
         }
@@ -576,7 +549,7 @@ pub enum FacetOutput {
 
 // ── FacetDef ─────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FacetDef {
     pub id: String,
     pub label: String,
@@ -600,59 +573,6 @@ pub struct FacetDef {
     pub layout: FacetLayout,
     #[serde(skip)]
     pub resolved_data: Option<Vec<Value>>,
-}
-
-/// Custom deserializer: reads legacy `prefab_id` and migrates to
-/// `FacetTemplate::ComponentRef` when `template` is absent.
-impl<'de> Deserialize<'de> for FacetDef {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        #[derive(Deserialize)]
-        struct Raw {
-            id: String,
-            label: String,
-            #[serde(default)]
-            description: String,
-            #[serde(default)]
-            kind: FacetKind,
-            #[serde(default, skip_serializing_if = "Option::is_none")]
-            schema_id: Option<FacetSchemaId>,
-            #[serde(default)]
-            prefab_id: Option<String>,
-            #[serde(default)]
-            template: Option<FacetTemplate>,
-            #[serde(default)]
-            output: FacetOutput,
-            #[serde(default)]
-            data: FacetDataSource,
-            #[serde(default)]
-            bindings: Vec<FacetBinding>,
-            #[serde(default)]
-            variant_rules: Vec<FacetVariantRule>,
-            #[serde(default)]
-            layout: FacetLayout,
-        }
-        let raw = Raw::deserialize(deserializer)?;
-        let template = match raw.template {
-            Some(t) => t,
-            None => FacetTemplate::ComponentRef {
-                component_id: raw.prefab_id.unwrap_or_else(|| "card".into()),
-            },
-        };
-        Ok(FacetDef {
-            id: raw.id,
-            label: raw.label,
-            description: raw.description,
-            kind: raw.kind,
-            schema_id: raw.schema_id,
-            template,
-            output: raw.output,
-            data: raw.data,
-            bindings: raw.bindings,
-            variant_rules: raw.variant_rules,
-            layout: raw.layout,
-            resolved_data: None,
-        })
-    }
 }
 
 /// Result of resolving a facet's data. `Items` produces N prefab instances;
@@ -771,58 +691,64 @@ pub fn apply_scalar_bindings(doc: &mut crate::document::BuilderDocument) {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /// Dot-notation field access into a JSON value (e.g. `"meta.title"`).
+/// Delegates to [`prism_core::widget::get_json_field`].
 pub fn get_field(item: &Value, path: &str) -> Option<Value> {
-    let mut current = item;
-    for segment in path.split('.') {
-        current = current.get(segment)?;
-    }
-    Some(current.clone())
+    get_json_field(item, path)
 }
 
 /// Stringify a JSON value for stable string-based sorting.
+/// Delegates to [`prism_core::widget::json_sort_key`].
 pub fn value_sort_key(v: Value) -> String {
-    match v {
-        Value::String(s) => s,
-        Value::Number(n) => {
-            if let Some(f) = n.as_f64() {
-                format!("{f:020.6}")
-            } else {
-                n.to_string()
-            }
-        }
-        Value::Bool(b) => (if b { "1" } else { "0" }).into(),
-        Value::Null => String::new(),
-        other => other.to_string(),
+    json_sort_key(v)
+}
+
+/// Parse a simple filter expression string into a [`QueryFilter`].
+///
+/// Supported forms:
+/// - `"field == value"` → `QueryFilter { field, op: Eq, value }`
+/// - `"field != value"` → `QueryFilter { field, op: Neq, value }`
+/// - `"field"` (truthy) is not expressible as a single `QueryFilter`
+///   and returns `None`.
+pub fn parse_filter_expr(expr: &str) -> Option<QueryFilter> {
+    let expr = expr.trim();
+    if let Some((lhs, rhs)) = expr.split_once("!=") {
+        let val_str = rhs.trim().trim_matches('\'').trim_matches('"');
+        return Some(QueryFilter::new(
+            lhs.trim(),
+            FilterOp::Neq,
+            Value::String(val_str.to_string()),
+        ));
     }
+    if let Some((lhs, rhs)) = expr.split_once("==") {
+        let val_str = rhs.trim().trim_matches('\'').trim_matches('"');
+        return Some(QueryFilter::new(
+            lhs.trim(),
+            FilterOp::Eq,
+            Value::String(val_str.to_string()),
+        ));
+    }
+    None
 }
 
 /// Evaluate a simple filter expression against a data item.
 ///
 /// Supported forms:
 /// - `"field"` — truthy check (non-null, non-empty string, non-false, non-zero)
-/// - `"field == value"` — equality (string comparison after serialising both sides)
+/// - `"field == value"` — equality
 /// - `"field != value"` — inequality
+///
+/// For structured filtering, use [`DataQuery::apply_filters`] with
+/// [`QueryFilter`] directly.
 pub fn evaluate_filter(item: &Value, expr: &str) -> bool {
+    if let Some(qf) = parse_filter_expr(expr) {
+        return qf.matches(item);
+    }
+    // Truthy check (bare field name)
     let expr = expr.trim();
-    if let Some((lhs, rhs)) = expr.split_once("!=") {
-        let field_val = get_field(item, lhs.trim())
-            .map(value_sort_key)
-            .unwrap_or_default();
-        let rhs_str = rhs.trim().trim_matches('\'').trim_matches('"');
-        return field_val != rhs_str;
-    }
-    if let Some((lhs, rhs)) = expr.split_once("==") {
-        let field_val = get_field(item, lhs.trim())
-            .map(value_sort_key)
-            .unwrap_or_default();
-        let rhs_str = rhs.trim().trim_matches('\'').trim_matches('"');
-        return field_val == rhs_str;
-    }
-    // Truthy check
     match get_field(item, expr) {
         None | Some(Value::Null) => false,
         Some(Value::Bool(false)) => false,
-        Some(Value::Number(n)) => n.as_f64().map(|f| f != 0.0).unwrap_or(false),
+        Some(Value::Number(n)) => n.as_f64().is_some_and(|f| f != 0.0),
         Some(Value::String(s)) => !s.is_empty(),
         Some(_) => true,
     }
@@ -1604,8 +1530,7 @@ mod tests {
         let resources = sample_resources();
         let src = FacetDataSource::Query {
             source: "products".into(),
-            filter: None,
-            sort_by: None,
+            query: DataQuery::default(),
         };
         let items = src.resolve(&resources);
         assert_eq!(items.len(), 3);
@@ -1616,8 +1541,10 @@ mod tests {
         let resources = sample_resources();
         let src = FacetDataSource::Query {
             source: "products".into(),
-            filter: Some("status == active".into()),
-            sort_by: None,
+            query: DataQuery {
+                filters: vec![QueryFilter::new("status", FilterOp::Eq, json!("active"))],
+                ..Default::default()
+            },
         };
         let items = src.resolve(&resources);
         assert_eq!(items.len(), 2);
@@ -1629,8 +1556,10 @@ mod tests {
         let resources = sample_resources();
         let src = FacetDataSource::Query {
             source: "products".into(),
-            filter: Some("status != active".into()),
-            sort_by: None,
+            query: DataQuery {
+                filters: vec![QueryFilter::new("status", FilterOp::Neq, json!("active"))],
+                ..Default::default()
+            },
         };
         let items = src.resolve(&resources);
         assert_eq!(items.len(), 1);
@@ -1638,24 +1567,15 @@ mod tests {
     }
 
     #[test]
-    fn query_source_truthy_filter() {
-        let resources = sample_resources();
-        let src = FacetDataSource::Query {
-            source: "products".into(),
-            filter: Some("status".into()),
-            sort_by: None,
-        };
-        let items = src.resolve(&resources);
-        assert_eq!(items.len(), 3);
-    }
-
-    #[test]
     fn query_source_sort_ascending() {
+        use prism_core::widget::QuerySort;
         let resources = sample_resources();
         let src = FacetDataSource::Query {
             source: "products".into(),
-            filter: None,
-            sort_by: Some("name".into()),
+            query: DataQuery {
+                sort: vec![QuerySort { field: "name".into(), descending: false }],
+                ..Default::default()
+            },
         };
         let items = src.resolve(&resources);
         assert_eq!(items[0]["name"], "Apple");
@@ -1665,11 +1585,14 @@ mod tests {
 
     #[test]
     fn query_source_sort_descending() {
+        use prism_core::widget::QuerySort;
         let resources = sample_resources();
         let src = FacetDataSource::Query {
             source: "products".into(),
-            filter: None,
-            sort_by: Some("-name".into()),
+            query: DataQuery {
+                sort: vec![QuerySort { field: "name".into(), descending: true }],
+                ..Default::default()
+            },
         };
         let items = src.resolve(&resources);
         assert_eq!(items[0]["name"], "Cherry");
@@ -1678,37 +1601,54 @@ mod tests {
 
     #[test]
     fn query_source_filter_and_sort() {
+        use prism_core::widget::QuerySort;
         let resources = sample_resources();
         let src = FacetDataSource::Query {
             source: "products".into(),
-            filter: Some("status == active".into()),
-            sort_by: Some("-price".into()),
+            query: DataQuery {
+                filters: vec![QueryFilter::new("status", FilterOp::Eq, json!("active"))],
+                sort: vec![QuerySort { field: "price".into(), descending: true }],
+                ..Default::default()
+            },
         };
         let items = src.resolve(&resources);
         assert_eq!(items.len(), 2);
-        // Cherry (3.0) before Apple (1.5) for descending price
         assert_eq!(items[0]["name"], "Cherry");
         assert_eq!(items[1]["name"], "Apple");
     }
 
     #[test]
+    fn query_source_with_limit() {
+        let resources = sample_resources();
+        let src = FacetDataSource::Query {
+            source: "products".into(),
+            query: DataQuery {
+                limit: Some(2),
+                ..Default::default()
+            },
+        };
+        let items = src.resolve(&resources);
+        assert_eq!(items.len(), 2);
+    }
+
+    #[test]
     fn query_source_serde_round_trip() {
+        use prism_core::widget::QuerySort;
         let src = FacetDataSource::Query {
             source: "data".into(),
-            filter: Some("active == true".into()),
-            sort_by: Some("name".into()),
+            query: DataQuery {
+                filters: vec![QueryFilter::new("active", FilterOp::Eq, json!(true))],
+                sort: vec![QuerySort { field: "name".into(), descending: false }],
+                ..Default::default()
+            },
         };
-        let json = serde_json::to_string(&src).unwrap();
-        let back: FacetDataSource = serde_json::from_str(&json).unwrap();
+        let json_str = serde_json::to_string(&src).unwrap();
+        let back: FacetDataSource = serde_json::from_str(&json_str).unwrap();
         match back {
-            FacetDataSource::Query {
-                source,
-                filter,
-                sort_by,
-            } => {
+            FacetDataSource::Query { source, query } => {
                 assert_eq!(source, "data");
-                assert_eq!(filter, Some("active == true".into()));
-                assert_eq!(sort_by, Some("name".into()));
+                assert_eq!(query.filters.len(), 1);
+                assert_eq!(query.sort.len(), 1);
             }
             _ => panic!("expected Query"),
         }
@@ -1921,26 +1861,24 @@ mod tests {
 
     #[test]
     fn facet_kind_serde_object_query() {
+        use prism_core::widget::QuerySort;
         let mut def = sample_facet();
         def.kind = FacetKind::ObjectQuery {
-            entity_type: "BlogPost".into(),
-            filter: Some("status == published".into()),
-            sort_by: Some("-created_at".into()),
-            limit: Some(10),
+            query: DataQuery {
+                object_type: Some("BlogPost".into()),
+                filters: vec![QueryFilter::new("status", FilterOp::Eq, json!("published"))],
+                sort: vec![QuerySort { field: "created_at".into(), descending: true }],
+                limit: Some(10),
+            },
         };
         let json = serde_json::to_string(&def).unwrap();
         let back: FacetDef = serde_json::from_str(&json).unwrap();
         match &back.kind {
-            FacetKind::ObjectQuery {
-                entity_type,
-                filter,
-                sort_by,
-                limit,
-            } => {
-                assert_eq!(entity_type, "BlogPost");
-                assert_eq!(filter.as_deref(), Some("status == published"));
-                assert_eq!(sort_by.as_deref(), Some("-created_at"));
-                assert_eq!(*limit, Some(10));
+            FacetKind::ObjectQuery { query } => {
+                assert_eq!(query.object_type.as_deref(), Some("BlogPost"));
+                assert_eq!(query.filters.len(), 1);
+                assert!(query.sort[0].descending);
+                assert_eq!(query.limit, Some(10));
             }
             _ => panic!("expected ObjectQuery"),
         }
@@ -2022,52 +1960,6 @@ mod tests {
         let def: FacetDef = serde_json::from_str(json).unwrap();
         assert!(matches!(def.kind, FacetKind::List));
         assert_eq!(def.effective_component_id(), Some("card"));
-    }
-
-    #[test]
-    fn legacy_prefab_id_migrates_to_component_ref() {
-        let json = r#"{
-            "id": "facet:legacy",
-            "label": "Legacy",
-            "prefab_id": "hero",
-            "data": { "kind": "static", "items": [] },
-            "bindings": [],
-            "layout": {}
-        }"#;
-        let def: FacetDef = serde_json::from_str(json).unwrap();
-        assert_eq!(def.effective_component_id(), Some("hero"));
-        match &def.template {
-            FacetTemplate::ComponentRef { component_id } => {
-                assert_eq!(component_id, "hero");
-            }
-            _ => panic!("expected ComponentRef migrated from prefab_id"),
-        }
-    }
-
-    #[test]
-    fn template_field_takes_precedence_over_legacy_prefab_id() {
-        let json = r#"{
-            "id": "facet:both",
-            "label": "Both",
-            "prefab_id": "old-card",
-            "template": { "type": "component-ref", "component_id": "new-card" },
-            "data": { "kind": "static", "items": [] },
-            "bindings": [],
-            "layout": {}
-        }"#;
-        let def: FacetDef = serde_json::from_str(json).unwrap();
-        assert_eq!(def.effective_component_id(), Some("new-card"));
-    }
-
-    #[test]
-    fn serialized_facet_def_omits_prefab_id() {
-        let def = sample_facet();
-        let json = serde_json::to_string(&def).unwrap();
-        assert!(
-            !json.contains("prefab_id"),
-            "prefab_id should not be serialized"
-        );
-        assert!(json.contains("template"), "template should be serialized");
     }
 
     #[test]

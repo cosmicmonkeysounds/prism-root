@@ -152,6 +152,148 @@ pub struct QuerySort {
     pub descending: bool,
 }
 
+// ── Data resolution helpers ─────────────────────────────────────
+
+/// Dot-notation field access into a JSON value (e.g. `"meta.title"`).
+pub fn get_json_field(item: &Value, path: &str) -> Option<Value> {
+    let mut current = item;
+    for segment in path.split('.') {
+        current = current.get(segment)?;
+    }
+    Some(current.clone())
+}
+
+/// Stringify a JSON value for stable string-based sorting.
+pub fn json_sort_key(v: Value) -> String {
+    match v {
+        Value::String(s) => s,
+        Value::Number(n) => {
+            if let Some(f) = n.as_f64() {
+                format!("{f:020.6}")
+            } else {
+                n.to_string()
+            }
+        }
+        Value::Bool(b) => (if b { "1" } else { "0" }).into(),
+        Value::Null => String::new(),
+        other => other.to_string(),
+    }
+}
+
+impl QueryFilter {
+    pub fn new(field: impl Into<String>, op: FilterOp, value: Value) -> Self {
+        Self {
+            field: field.into(),
+            op,
+            value,
+        }
+    }
+
+    /// Test whether a JSON item matches this filter.
+    pub fn matches(&self, item: &Value) -> bool {
+        let field_val = match get_json_field(item, &self.field) {
+            Some(v) => v,
+            None => Value::Null,
+        };
+        match self.op {
+            FilterOp::Eq => json_values_eq(&field_val, &self.value),
+            FilterOp::Neq => !json_values_eq(&field_val, &self.value),
+            FilterOp::Gt => json_cmp(&field_val, &self.value).is_some_and(|o| o.is_gt()),
+            FilterOp::Gte => json_cmp(&field_val, &self.value).is_some_and(|o| o.is_ge()),
+            FilterOp::Lt => json_cmp(&field_val, &self.value).is_some_and(|o| o.is_lt()),
+            FilterOp::Lte => json_cmp(&field_val, &self.value).is_some_and(|o| o.is_le()),
+            FilterOp::Contains => {
+                if let (Some(haystack), Some(needle)) = (field_val.as_str(), self.value.as_str()) {
+                    haystack.contains(needle)
+                } else {
+                    false
+                }
+            }
+            FilterOp::In => {
+                if let Some(arr) = self.value.as_array() {
+                    arr.iter().any(|v| json_values_eq(&field_val, v))
+                } else {
+                    false
+                }
+            }
+        }
+    }
+}
+
+fn json_values_eq(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Number(na), Value::Number(nb)) => na.as_f64() == nb.as_f64(),
+        (Value::String(sa), Value::Number(nb)) => {
+            sa.parse::<f64>().ok() == nb.as_f64()
+        }
+        (Value::Number(na), Value::String(sb)) => {
+            na.as_f64() == sb.parse::<f64>().ok()
+        }
+        _ => a == b,
+    }
+}
+
+fn json_cmp(a: &Value, b: &Value) -> Option<std::cmp::Ordering> {
+    let fa = value_as_f64(a)?;
+    let fb = value_as_f64(b)?;
+    fa.partial_cmp(&fb)
+}
+
+fn value_as_f64(v: &Value) -> Option<f64> {
+    match v {
+        Value::Number(n) => n.as_f64(),
+        Value::String(s) => s.parse().ok(),
+        _ => None,
+    }
+}
+
+impl DataQuery {
+    /// Apply filters, sort, and limit to a mutable item list.
+    pub fn apply(&self, items: &mut Vec<Value>) {
+        self.apply_filters(items);
+        self.apply_sort(items);
+        self.apply_limit(items);
+    }
+
+    pub fn apply_filters(&self, items: &mut Vec<Value>) {
+        if self.filters.is_empty() {
+            return;
+        }
+        items.retain(|item| self.filters.iter().all(|f| f.matches(item)));
+    }
+
+    pub fn apply_sort(&self, items: &mut [Value]) {
+        if self.sort.is_empty() {
+            return;
+        }
+        items.sort_by(|a, b| {
+            for qs in &self.sort {
+                let va = get_json_field(a, &qs.field)
+                    .map(json_sort_key)
+                    .unwrap_or_default();
+                let vb = get_json_field(b, &qs.field)
+                    .map(json_sort_key)
+                    .unwrap_or_default();
+                let ord = if qs.descending {
+                    vb.cmp(&va)
+                } else {
+                    va.cmp(&vb)
+                };
+                if ord != std::cmp::Ordering::Equal {
+                    return ord;
+                }
+            }
+            std::cmp::Ordering::Equal
+        });
+    }
+
+    pub fn apply_limit(&self, items: &mut Vec<Value>) {
+        if let Some(lim) = self.limit {
+            items.truncate(lim);
+        }
+    }
+}
+
 // ── ToolbarAction ────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -452,5 +594,132 @@ mod tests {
         let json = serde_json::to_string(&node).unwrap();
         let back: TemplateNode = serde_json::from_str(&json).unwrap();
         assert!(matches!(back, TemplateNode::Conditional { .. }));
+    }
+
+    // ── DataQuery resolution tests ──────────────────────────────
+
+    #[test]
+    fn get_json_field_flat() {
+        let item = serde_json::json!({"name": "Alpha"});
+        assert_eq!(get_json_field(&item, "name"), Some(serde_json::json!("Alpha")));
+    }
+
+    #[test]
+    fn get_json_field_nested() {
+        let item = serde_json::json!({"meta": {"title": "Deep"}});
+        assert_eq!(get_json_field(&item, "meta.title"), Some(serde_json::json!("Deep")));
+    }
+
+    #[test]
+    fn get_json_field_missing() {
+        let item = serde_json::json!({"a": 1});
+        assert!(get_json_field(&item, "b").is_none());
+    }
+
+    #[test]
+    fn query_filter_eq() {
+        let f = QueryFilter::new("status", FilterOp::Eq, serde_json::json!("active"));
+        assert!(f.matches(&serde_json::json!({"status": "active"})));
+        assert!(!f.matches(&serde_json::json!({"status": "draft"})));
+    }
+
+    #[test]
+    fn query_filter_neq() {
+        let f = QueryFilter::new("status", FilterOp::Neq, serde_json::json!("deleted"));
+        assert!(f.matches(&serde_json::json!({"status": "active"})));
+        assert!(!f.matches(&serde_json::json!({"status": "deleted"})));
+    }
+
+    #[test]
+    fn query_filter_gt_lt() {
+        let gt = QueryFilter::new("price", FilterOp::Gt, serde_json::json!(10));
+        assert!(gt.matches(&serde_json::json!({"price": 15})));
+        assert!(!gt.matches(&serde_json::json!({"price": 5})));
+
+        let lt = QueryFilter::new("price", FilterOp::Lt, serde_json::json!(10));
+        assert!(lt.matches(&serde_json::json!({"price": 5})));
+        assert!(!lt.matches(&serde_json::json!({"price": 15})));
+    }
+
+    #[test]
+    fn query_filter_contains() {
+        let f = QueryFilter::new("name", FilterOp::Contains, serde_json::json!("pha"));
+        assert!(f.matches(&serde_json::json!({"name": "Alpha"})));
+        assert!(!f.matches(&serde_json::json!({"name": "Beta"})));
+    }
+
+    #[test]
+    fn query_filter_in() {
+        let f = QueryFilter::new("status", FilterOp::In, serde_json::json!(["active", "pending"]));
+        assert!(f.matches(&serde_json::json!({"status": "active"})));
+        assert!(f.matches(&serde_json::json!({"status": "pending"})));
+        assert!(!f.matches(&serde_json::json!({"status": "deleted"})));
+    }
+
+    #[test]
+    fn query_filter_numeric_eq() {
+        let f = QueryFilter::new("count", FilterOp::Eq, serde_json::json!(3));
+        assert!(f.matches(&serde_json::json!({"count": 3})));
+        assert!(!f.matches(&serde_json::json!({"count": 4})));
+    }
+
+    #[test]
+    fn data_query_apply_filters_and_sort() {
+        let q = DataQuery {
+            filters: vec![
+                QueryFilter::new("status", FilterOp::Eq, serde_json::json!("active")),
+            ],
+            sort: vec![QuerySort { field: "name".into(), descending: false }],
+            ..Default::default()
+        };
+        let mut items = vec![
+            serde_json::json!({"name": "Charlie", "status": "active"}),
+            serde_json::json!({"name": "Alpha", "status": "active"}),
+            serde_json::json!({"name": "Bravo", "status": "deleted"}),
+        ];
+        q.apply(&mut items);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["name"], "Alpha");
+        assert_eq!(items[1]["name"], "Charlie");
+    }
+
+    #[test]
+    fn data_query_apply_limit() {
+        let q = DataQuery {
+            limit: Some(2),
+            ..Default::default()
+        };
+        let mut items = vec![
+            serde_json::json!("a"),
+            serde_json::json!("b"),
+            serde_json::json!("c"),
+        ];
+        q.apply(&mut items);
+        assert_eq!(items.len(), 2);
+    }
+
+    #[test]
+    fn data_query_apply_sort_descending() {
+        let q = DataQuery {
+            sort: vec![QuerySort { field: "score".into(), descending: true }],
+            ..Default::default()
+        };
+        let mut items = vec![
+            serde_json::json!({"score": 10}),
+            serde_json::json!({"score": 30}),
+            serde_json::json!({"score": 20}),
+        ];
+        q.apply(&mut items);
+        assert_eq!(items[0]["score"], 30);
+        assert_eq!(items[1]["score"], 20);
+        assert_eq!(items[2]["score"], 10);
+    }
+
+    #[test]
+    fn data_query_empty_is_noop() {
+        let q = DataQuery::default();
+        let mut items = vec![serde_json::json!("a"), serde_json::json!("b")];
+        q.apply(&mut items);
+        assert_eq!(items.len(), 2);
     }
 }

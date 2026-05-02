@@ -970,17 +970,40 @@ impl PropertiesPanel {
                 Self::push_data_source_rows(&mut rows, def);
                 Self::push_layout_rows(&mut rows, def);
             }
-            FacetKind::ObjectQuery {
-                entity_type,
-                filter,
-                sort_by,
-                limit,
-            } => {
+            FacetKind::ObjectQuery { query } => {
+                let entity_type = query.object_type.as_deref().unwrap_or("");
+                let filter_str = query
+                    .filters
+                    .first()
+                    .map(|f| {
+                        let op_str = match f.op {
+                            prism_core::widget::FilterOp::Eq => "==",
+                            prism_core::widget::FilterOp::Neq => "!=",
+                            _ => "==",
+                        };
+                        let val = match &f.value {
+                            serde_json::Value::String(s) => s.clone(),
+                            other => other.to_string(),
+                        };
+                        format!("{} {} {}", f.field, op_str, val)
+                    })
+                    .unwrap_or_default();
+                let sort_str = query
+                    .sort
+                    .first()
+                    .map(|s| {
+                        if s.descending {
+                            format!("-{}", s.field)
+                        } else {
+                            s.field.clone()
+                        }
+                    })
+                    .unwrap_or_default();
                 rows.push(FieldRowData {
                     key: "facet.entity_type".into(),
                     label: "Entity type".into(),
                     kind: "text".into(),
-                    value: entity_type.clone(),
+                    value: entity_type.to_string(),
                     required: true,
                     min: 0.0,
                     max: 0.0,
@@ -991,7 +1014,7 @@ impl PropertiesPanel {
                     key: "facet.oq_filter".into(),
                     label: "Filter".into(),
                     kind: "text".into(),
-                    value: filter.as_deref().unwrap_or("").into(),
+                    value: filter_str,
                     required: false,
                     min: 0.0,
                     max: 0.0,
@@ -1002,7 +1025,7 @@ impl PropertiesPanel {
                     key: "facet.oq_sort_by".into(),
                     label: "Sort by".into(),
                     kind: "text".into(),
-                    value: sort_by.as_deref().unwrap_or("").into(),
+                    value: sort_str,
                     required: false,
                     min: 0.0,
                     max: 0.0,
@@ -1013,7 +1036,7 @@ impl PropertiesPanel {
                     key: "facet.oq_limit".into(),
                     label: "Limit".into(),
                     kind: "integer".into(),
-                    value: limit.map(|l| l.to_string()).unwrap_or_default(),
+                    value: query.limit.map(|l| l.to_string()).unwrap_or_default(),
                     required: false,
                     min: 0.0,
                     max: 10000.0,
@@ -1205,13 +1228,34 @@ impl PropertiesPanel {
                 String::new(),
                 String::new(),
             ),
-            FacetDataSource::Query {
-                source,
-                filter,
-                sort_by,
-            } => {
-                let f = filter.as_deref().unwrap_or("").to_string();
-                let s = sort_by.as_deref().unwrap_or("").to_string();
+            FacetDataSource::Query { source, query } => {
+                let f = query
+                    .filters
+                    .first()
+                    .map(|qf| {
+                        let op_str = match qf.op {
+                            prism_core::widget::FilterOp::Eq => "==",
+                            prism_core::widget::FilterOp::Neq => "!=",
+                            _ => "==",
+                        };
+                        let val = match &qf.value {
+                            serde_json::Value::String(s) => s.clone(),
+                            other => other.to_string(),
+                        };
+                        format!("{} {} {}", qf.field, op_str, val)
+                    })
+                    .unwrap_or_default();
+                let s = query
+                    .sort
+                    .first()
+                    .map(|qs| {
+                        if qs.descending {
+                            format!("-{}", qs.field)
+                        } else {
+                            qs.field.clone()
+                        }
+                    })
+                    .unwrap_or_default();
                 ("query", "query".into(), source.clone(), f, s)
             }
         };

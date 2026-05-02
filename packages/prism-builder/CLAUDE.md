@@ -246,15 +246,16 @@ Twenty-five modules in `src/` (excluding `lib.rs`):
   ObjectQuery/Script/Lookup use pre-resolved `resolved_data` from
   the shell layer. Script kind supports both Luau source and
   `VisualGraph` (stores a `ScriptGraph`, compiled to Luau at
-  resolution time via `LuauVisualLanguage`). `Query` variant
-  filters (`"field == val"`, `"field != val"`, `"field"` truthy)
-  and sorts (ascending `"field"` or descending `"-field"`) a
-  resource array without mutating it.
-  `FacetTemplate` replaces the legacy `prefab_id` field:
+  resolution time via `LuauVisualLanguage`). `ObjectQuery` and
+  `FacetDataSource::Query` both carry a `prism_core::widget::DataQuery`
+  as the single structured data-resolution primitive — `DataQuery::apply()`
+  handles `QueryFilter` matching (8 operators), `QuerySort` ordering,
+  and limit truncation. `parse_filter_expr` bridges string expressions
+  to structured `QueryFilter`s for UI compatibility.
+  `FacetTemplate` replaces the former `prefab_id` field:
   `Inline { root: Box<Node> }` owns the template subtree directly
   with `{{field}}` expression bindings in node props; `ComponentRef`
-  points to a registered component. Custom deserializer migrates
-  old documents with `prefab_id` to `ComponentRef` automatically.
+  points to a registered component.
   `FacetOutput` separates repeated (template-per-item) from scalar
   (bind single value to a target widget prop) output.
   `apply_scalar_bindings(doc)` pre-render pass resolves scalar facets

@@ -252,10 +252,18 @@ The two systems converge:
 - Both resolve to the same render pipeline: data → template → expand →
   render child.
 
-The `DataQuery` in `WidgetContribution` is the engine-side equivalent
-of `FacetDataSource` + `FacetKind`. A future unification could make
-`DataQuery` the single data-resolution primitive, with facet kinds
-mapping onto it.
+`DataQuery` (`prism_core::widget`) is now the single structured
+data-resolution primitive shared by both systems.
+`FacetKind::ObjectQuery` carries a `DataQuery` for entity-graph
+queries, and `FacetDataSource::Query` carries a `DataQuery` for
+resource-backed filter/sort. Both delegate to `DataQuery::apply()`
+for structured `QueryFilter` matching (8 operators: Eq, Neq, Gt,
+Gte, Lt, Lte, Contains, In), multi-field `QuerySort` ordering, and
+limit truncation — the same pipeline engine widgets use. The former
+string-based `filter`/`sort_by` fields and `evaluate_filter`/
+`value_sort_key` helpers are bridged through `parse_filter_expr`,
+which converts string expressions to `QueryFilter`s for backward
+compatibility in the properties panel UI.
 
 ## File layout
 

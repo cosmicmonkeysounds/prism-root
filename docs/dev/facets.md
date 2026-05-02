@@ -48,10 +48,7 @@ kinds swaps the property editor to show that kind's specific fields.
 enum FacetKind {
     List,
     ObjectQuery {
-        entity_type: String,
-        filter: Option<String>,
-        sort_by: Option<String>,
-        limit: Option<usize>,
+        query: DataQuery,          // structured query from prism_core::widget
     },
     Script {
         source: String,            // Luau source code
@@ -68,6 +65,13 @@ enum FacetKind {
     },
 }
 ```
+
+`ObjectQuery` uses `prism_core::widget::DataQuery` as the single structured
+data-resolution primitive. `DataQuery` carries `object_type`, `filters:
+Vec<QueryFilter>`, `sort: Vec<QuerySort>`, and `limit: Option<usize>`.
+`QueryFilter` supports 8 operators (Eq, Neq, Gt, Gte, Lt, Lte, Contains, In)
+with structured `field`/`op`/`value` triples. This replaces the previous
+string-based `entity_type`/`filter`/`sort_by`/`limit` fields.
 
 ### `AggregateOp`
 
@@ -101,7 +105,6 @@ FacetDef {
     description: String,
     kind: FacetKind,                      // determines behavior + panel UI
     schema_id: Option<FacetSchemaId>,
-    prefab_id: ComponentId,               // legacy — being replaced by FacetTemplate
     template: FacetTemplate,              // Inline { root: Node } | ComponentRef { component_id }
     data: FacetDataSource,                // used by List + Aggregate; ignored by ObjectQuery/Script
     bindings: Vec<FacetBinding>,          // kept for ComponentRef; Inline uses {{field}} expressions
@@ -113,11 +116,10 @@ FacetDef {
 ```
 
 The `template` field (see `docs/dev/data-template-system.md`) replaces the
-mandatory `prefab_id` indirection. When `template` is `Inline`, bindings are
+former `prefab_id` indirection. When `template` is `Inline`, bindings are
 expressed as `{{record.field}}` expressions directly in the template node props.
 When `template` is `ComponentRef`, the existing `FacetBinding` + `ExposedSlot`
-mechanism still works. The `prefab_id` field is deprecated and will be removed
-once all existing facets migrate to `FacetTemplate::ComponentRef`.
+mechanism still works.
 
 ### Data resolution per kind
 
@@ -129,13 +131,17 @@ once all existing facets migrate to `FacetTemplate::ComponentRef`.
 | `Aggregate` | `FacetDataSource` | Resolves source to `Vec<Value>`, applies operation, renders single prefab |
 | `Lookup` | Object graph edges | Follows edges from source entity, collects targets as `Vec<Value>` |
 
-### `FacetDataSource` (unchanged)
+### `FacetDataSource`
 
 ```
 Static  { items: Vec<Value>, records: Vec<FacetRecord> }
 Resource { id: ResourceId }
-Query { source: ResourceId, filter: Option<String>, sort_by: Option<String> }
+Query { source: ResourceId, query: DataQuery }
 ```
+
+`Query` now uses the same `DataQuery` struct as `FacetKind::ObjectQuery`,
+replacing the former string-based `filter`/`sort_by` fields. The `DataQuery`
+applies structured filters, sort, and limit via `query.apply()`.
 
 These remain the data sources for `List` and `Aggregate` kinds. `ObjectQuery`, `Script`,
 and `Lookup` carry their own data resolution logic inside `FacetKind`.
@@ -149,10 +155,9 @@ object graph. The shell layer resolves external data before the render walker ru
    iterates all facets and populates `resolved_data` for kinds that need external execution.
 2. **Script** → `luau_module::exec(source, None)`. The script's return value is stored as
    `resolved_data` (array returns become items; scalar returns wrap in a single-element vec).
-3. **ObjectQuery** → `CollectionStore::list_objects` filtered by `entity_type`, then the
-   same filter/sort expression syntax as `FacetDataSource::Query` (via `evaluate_filter` /
-   `value_sort_key`), truncated by `limit`. `GraphObject`s are serialized to `Value` via
-   `serde_json::to_value`.
+3. **ObjectQuery** → `CollectionStore::list_objects` filtered by `query.object_type`, then
+   `query.apply()` runs structured `QueryFilter` matching, `QuerySort` ordering, and limit
+   truncation. `GraphObject`s are serialized to `Value` via `serde_json::to_value`.
 4. **Lookup** → for each instance of `source_entity`, queries `list_edges` by `edge_type`,
    resolves targets via `get_object`, filters to `target_entity` type, deduplicates by
    target ID.
@@ -186,8 +191,8 @@ selected, the Properties panel renders a kind-aware editor:
 
 **ObjectQuery:**
 - Entity type selector (populated from object graph entity definitions)
-- Filter expression (field-based, same syntax as Query data source)
-- Sort field
+- Filter expression (parsed via `parse_filter_expr` into `QueryFilter`s on the underlying `DataQuery`)
+- Sort field (parsed into `QuerySort` entries on the `DataQuery`)
 - Limit
 - Bindings: entity field → prefab slot
 
@@ -382,3 +387,4 @@ packages/prism-shell/src/
 | 9 ✅ | Facet-level variant overrides — `FacetVariantRule` maps data field conditions to prefab variant axis selections. `evaluate_variant_rules()` sets axis key props on cloned prefab roots per item; existing `apply_variant_defaults` picks them up. Properties panel exposes rule CRUD. |
 | 10 ✅ | Visual graph authoring for Script facets — `ScriptLanguage::VisualGraph` variant stores a `ScriptGraph` on the facet. `sync_script_language()` bidirectionally decompiles/compiles via `LuauVisualLanguage`. Properties panel shows language selector, graph info, and compiled source preview. |
 | 11 ✅ | Inline templates + scalar output + component promotion — see `docs/dev/data-template-system.md`. `FacetTemplate` (Inline / ComponentRef) and `FacetOutput` (Repeated / Scalar) replace the mandatory prefab intermediary. Inline templates use `{{field}}` expression binding directly in node props. Scalar output binds a single computed value to a target widget prop. `promote_inline_to_component()` extracts expressions into `ExposedSlot`s. Shell properties panel and `apply_facet_edit` wired for template type, output type, and scalar target selection. |
+| 12 ✅ | Widget/facet DataQuery convergence — `prism_core::widget::DataQuery` is now the single structured data-resolution primitive. `FacetKind::ObjectQuery` carries `query: DataQuery` instead of loose `entity_type`/`filter`/`sort_by`/`limit` fields. `FacetDataSource::Query` carries `query: DataQuery` instead of string-based `filter`/`sort_by`. `DataQuery::apply()` handles `QueryFilter` matching (8 operators), `QuerySort` ordering, and limit truncation. `parse_filter_expr` bridges string expressions to structured filters for UI compatibility. Legacy `prefab_id` custom deserializer removed. |

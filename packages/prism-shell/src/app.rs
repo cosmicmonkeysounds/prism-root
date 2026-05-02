@@ -6409,8 +6409,6 @@ fn clear_href_on_node(node: &mut prism_builder::document::Node, target_id: &str)
 /// `FacetDef::resolve_items` can read `resolved_data`.
 #[cfg(feature = "native")]
 fn resolve_facet_data(doc: &mut BuilderDocument, collection: &CollectionStore) {
-    use prism_builder::{evaluate_filter, get_field, value_sort_key};
-
     for facet in doc.facets.values_mut() {
         match &facet.kind {
             FacetKind::Script {
@@ -6456,16 +6454,14 @@ fn resolve_facet_data(doc: &mut BuilderDocument, collection: &CollectionStore) {
                     }
                 }
             }
-            FacetKind::ObjectQuery {
-                entity_type,
-                filter,
-                sort_by,
-                limit,
-            } => {
-                if entity_type.is_empty() {
-                    facet.resolved_data = None;
-                    continue;
-                }
+            FacetKind::ObjectQuery { query } => {
+                let entity_type = match &query.object_type {
+                    Some(t) if !t.is_empty() => t,
+                    _ => {
+                        facet.resolved_data = None;
+                        continue;
+                    }
+                };
                 let objects = collection.list_objects(Some(&ObjectFilter {
                     types: Some(vec![entity_type.clone()]),
                     exclude_deleted: true,
@@ -6476,28 +6472,7 @@ fn resolve_facet_data(doc: &mut BuilderDocument, collection: &CollectionStore) {
                     .filter_map(|obj| serde_json::to_value(obj).ok())
                     .collect();
 
-                if let Some(expr) = filter {
-                    items.retain(|item| evaluate_filter(item, expr));
-                }
-                if let Some(key) = sort_by {
-                    let (descending, path) = if let Some(stripped) = key.strip_prefix('-') {
-                        (true, stripped)
-                    } else {
-                        (false, key.as_str())
-                    };
-                    items.sort_by(|a, b| {
-                        let va = get_field(a, path).map(value_sort_key).unwrap_or_default();
-                        let vb = get_field(b, path).map(value_sort_key).unwrap_or_default();
-                        if descending {
-                            vb.cmp(&va)
-                        } else {
-                            va.cmp(&vb)
-                        }
-                    });
-                }
-                if let Some(lim) = limit {
-                    items.truncate(*lim);
-                }
+                query.apply(&mut items);
                 facet.resolved_data = if items.is_empty() { None } else { Some(items) };
             }
             FacetKind::Lookup {
@@ -7190,8 +7165,7 @@ fn apply_facet_edit(def: &mut FacetDef, key: &str, value: &str) {
                     };
                     FacetDataSource::Query {
                         source,
-                        filter: None,
-                        sort_by: None,
+                        query: prism_core::widget::DataQuery::default(),
                     }
                 }
                 _ => FacetDataSource::Static {
@@ -7206,21 +7180,29 @@ fn apply_facet_edit(def: &mut FacetDef, key: &str, value: &str) {
             _ => {}
         },
         "filter" => {
-            if let FacetDataSource::Query { filter, .. } = &mut def.data {
-                *filter = if value.is_empty() {
-                    None
-                } else {
-                    Some(value.to_string())
-                };
+            if let FacetDataSource::Query { query, .. } = &mut def.data {
+                if value.is_empty() {
+                    query.filters.clear();
+                } else if let Some(qf) = prism_builder::parse_filter_expr(value) {
+                    query.filters = vec![qf];
+                }
             }
         }
         "sort_by" => {
-            if let FacetDataSource::Query { sort_by, .. } = &mut def.data {
-                *sort_by = if value.is_empty() {
-                    None
+            if let FacetDataSource::Query { query, .. } = &mut def.data {
+                if value.is_empty() {
+                    query.sort.clear();
                 } else {
-                    Some(value.to_string())
-                };
+                    let (descending, path) = if let Some(stripped) = value.strip_prefix('-') {
+                        (true, stripped)
+                    } else {
+                        (false, value)
+                    };
+                    query.sort = vec![prism_core::widget::QuerySort {
+                        field: path.to_string(),
+                        descending,
+                    }];
+                }
             }
         }
         "schema_id" => {
@@ -7230,40 +7212,45 @@ fn apply_facet_edit(def: &mut FacetDef, key: &str, value: &str) {
                 Some(value.to_string())
             };
         }
-        // ObjectQuery fields
+        // ObjectQuery fields — all modify the embedded DataQuery
         "entity_type" => {
-            if let FacetKind::ObjectQuery {
-                ref mut entity_type,
-                ..
-            } = def.kind
-            {
-                *entity_type = value.to_string();
+            if let FacetKind::ObjectQuery { ref mut query } = def.kind {
+                query.object_type = if value.is_empty() {
+                    None
+                } else {
+                    Some(value.to_string())
+                };
             }
         }
         "oq_filter" => {
-            if let FacetKind::ObjectQuery { ref mut filter, .. } = def.kind {
-                *filter = if value.is_empty() {
-                    None
-                } else {
-                    Some(value.to_string())
-                };
+            if let FacetKind::ObjectQuery { ref mut query } = def.kind {
+                if value.is_empty() {
+                    query.filters.clear();
+                } else if let Some(qf) = prism_builder::parse_filter_expr(value) {
+                    query.filters = vec![qf];
+                }
             }
         }
         "oq_sort_by" => {
-            if let FacetKind::ObjectQuery {
-                ref mut sort_by, ..
-            } = def.kind
-            {
-                *sort_by = if value.is_empty() {
-                    None
+            if let FacetKind::ObjectQuery { ref mut query } = def.kind {
+                if value.is_empty() {
+                    query.sort.clear();
                 } else {
-                    Some(value.to_string())
-                };
+                    let (descending, path) = if let Some(stripped) = value.strip_prefix('-') {
+                        (true, stripped)
+                    } else {
+                        (false, value)
+                    };
+                    query.sort = vec![prism_core::widget::QuerySort {
+                        field: path.to_string(),
+                        descending,
+                    }];
+                }
             }
         }
         "oq_limit" => {
-            if let FacetKind::ObjectQuery { ref mut limit, .. } = def.kind {
-                *limit = value.parse::<usize>().ok().filter(|&n| n > 0);
+            if let FacetKind::ObjectQuery { ref mut query } = def.kind {
+                query.limit = value.parse::<usize>().ok().filter(|&n| n > 0);
             }
         }
         // Script fields
@@ -9408,10 +9395,14 @@ mod tests {
                 label: "Tasks".into(),
                 description: String::new(),
                 kind: FacetKind::ObjectQuery {
-                    entity_type: "Task".into(),
-                    filter: None,
-                    sort_by: Some("-data.priority".into()),
-                    limit: None,
+                    query: prism_core::widget::DataQuery {
+                        object_type: Some("Task".into()),
+                        sort: vec![prism_core::widget::QuerySort {
+                            field: "data.priority".into(),
+                            descending: true,
+                        }],
+                        ..Default::default()
+                    },
                 },
                 schema_id: None,
                 data: FacetDataSource::default(),
@@ -9459,10 +9450,16 @@ mod tests {
                 label: "Active Items".into(),
                 description: String::new(),
                 kind: FacetKind::ObjectQuery {
-                    entity_type: "Item".into(),
-                    filter: Some("data.active".into()),
-                    sort_by: None,
-                    limit: Some(2),
+                    query: prism_core::widget::DataQuery {
+                        object_type: Some("Item".into()),
+                        filters: vec![prism_core::widget::QueryFilter::new(
+                            "data.active",
+                            prism_core::widget::FilterOp::Eq,
+                            serde_json::json!(true),
+                        )],
+                        limit: Some(2),
+                        ..Default::default()
+                    },
                 },
                 schema_id: None,
                 data: FacetDataSource::default(),
@@ -9572,10 +9569,7 @@ mod tests {
                 label: "Empty".into(),
                 description: String::new(),
                 kind: FacetKind::ObjectQuery {
-                    entity_type: String::new(),
-                    filter: None,
-                    sort_by: None,
-                    limit: None,
+                    query: prism_core::widget::DataQuery::default(),
                 },
                 schema_id: None,
                 data: FacetDataSource::default(),
@@ -9724,10 +9718,7 @@ mod tests {
             label: "Test".into(),
             description: String::new(),
             kind: FacetKind::ObjectQuery {
-                entity_type: String::new(),
-                filter: None,
-                sort_by: None,
-                limit: None,
+                query: prism_core::widget::DataQuery::default(),
             },
             schema_id: None,
             data: FacetDataSource::default(),
@@ -9745,23 +9736,21 @@ mod tests {
         apply_facet_edit(&mut def, "oq_limit", "10");
 
         match &def.kind {
-            FacetKind::ObjectQuery {
-                entity_type,
-                filter,
-                sort_by,
-                limit,
-            } => {
-                assert_eq!(entity_type, "BlogPost");
-                assert_eq!(filter.as_deref(), Some("status == published"));
-                assert_eq!(sort_by.as_deref(), Some("-created_at"));
-                assert_eq!(*limit, Some(10));
+            FacetKind::ObjectQuery { query } => {
+                assert_eq!(query.object_type.as_deref(), Some("BlogPost"));
+                assert_eq!(query.filters.len(), 1);
+                assert_eq!(query.filters[0].field, "status");
+                assert_eq!(query.sort.len(), 1);
+                assert_eq!(query.sort[0].field, "created_at");
+                assert!(query.sort[0].descending);
+                assert_eq!(query.limit, Some(10));
             }
             _ => panic!("expected ObjectQuery kind"),
         }
 
         apply_facet_edit(&mut def, "oq_filter", "");
         match &def.kind {
-            FacetKind::ObjectQuery { filter, .. } => assert!(filter.is_none()),
+            FacetKind::ObjectQuery { query } => assert!(query.filters.is_empty()),
             _ => panic!("expected ObjectQuery kind"),
         }
     }
