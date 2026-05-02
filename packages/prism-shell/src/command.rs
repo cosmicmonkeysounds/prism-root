@@ -190,6 +190,11 @@ impl CommandRegistry {
             "Refresh Facet Data",
             "Facet",
         ));
+        reg.register(CommandEntry::new(
+            "facet.promote",
+            "Save Template as Component",
+            "Facet",
+        ));
         // Schema management
         reg.register(CommandEntry::new(
             "schema.create",

@@ -1066,23 +1066,16 @@ impl Component for FacetComponent {
                         return ctx.render_child(&root, out);
                     }
                 };
-                let layout_tag = match facet.layout.direction {
-                    FacetDirection::Row => "HorizontalLayout",
-                    FacetDirection::Column => "VerticalLayout",
-                };
-                out.block(layout_tag, |out| {
-                    if facet.layout.gap > 0.0 {
-                        out.prop_px("spacing", facet.layout.gap as f64);
-                    }
-                    out.line("alignment: start;");
-                    for item in &items {
+                let nodes: Vec<Node> = items
+                    .iter()
+                    .map(|item| {
                         let mut root = template.clone();
                         resolve_template_expressions(&mut root, item);
                         evaluate_variant_rules(&mut root, &facet.variant_rules, item);
-                        ctx.render_child(&root, out)?;
-                    }
-                    Ok(())
-                })
+                        *root
+                    })
+                    .collect();
+                emit_facet_slint_layout(&facet.layout, &nodes, ctx, out)
             }
             FacetTemplate::ComponentRef { component_id } => {
                 let prefab = ctx.prefabs.get(component_id.as_str()).ok_or_else(|| {
@@ -1114,25 +1107,75 @@ impl Component for FacetComponent {
                         return ctx.render_child(&root, out);
                     }
                 };
-                let layout_tag = match facet.layout.direction {
-                    FacetDirection::Row => "HorizontalLayout",
-                    FacetDirection::Column => "VerticalLayout",
-                };
-                out.block(layout_tag, |out| {
-                    if facet.layout.gap > 0.0 {
-                        out.prop_px("spacing", facet.layout.gap as f64);
-                    }
-                    out.line("alignment: start;");
-                    for item in &items {
+                let nodes: Vec<Node> = items
+                    .iter()
+                    .map(|item| {
                         let mut root = prefab.root.clone();
                         apply_bindings(&mut root, prefab, &facet.bindings, item);
                         evaluate_variant_rules(&mut root, &facet.variant_rules, item);
-                        ctx.render_child(&root, out)?;
-                    }
-                    Ok(())
-                })
+                        root
+                    })
+                    .collect();
+                emit_facet_slint_layout(&facet.layout, &nodes, ctx, out)
             }
         }
+    }
+}
+
+/// Emit a list of prepared nodes into a Slint layout container.
+///
+/// When `columns` is set, items are chunked into rows of N and emitted
+/// as a VerticalLayout of HorizontalLayouts (for row direction) or
+/// HorizontalLayout of VerticalLayouts (for column direction), giving
+/// a grid-like wrap effect.
+fn emit_facet_slint_layout(
+    layout: &FacetLayout,
+    nodes: &[Node],
+    ctx: &RenderSlintContext<'_>,
+    out: &mut SlintEmitter,
+) -> Result<(), RenderError> {
+    let gap = layout.gap as f64;
+
+    if let Some(cols) = layout.columns.filter(|&c| c > 1) {
+        let cols = cols as usize;
+        let (outer_tag, inner_tag) = match layout.direction {
+            FacetDirection::Row => ("VerticalLayout", "HorizontalLayout"),
+            FacetDirection::Column => ("HorizontalLayout", "VerticalLayout"),
+        };
+        out.block(outer_tag, |out| {
+            if gap > 0.0 {
+                out.prop_px("spacing", gap);
+            }
+            out.line("alignment: start;");
+            for chunk in nodes.chunks(cols) {
+                out.block(inner_tag, |out| {
+                    if gap > 0.0 {
+                        out.prop_px("spacing", gap);
+                    }
+                    out.line("alignment: start;");
+                    for node in chunk {
+                        ctx.render_child(node, out)?;
+                    }
+                    Ok(())
+                })?;
+            }
+            Ok(())
+        })
+    } else {
+        let layout_tag = match layout.direction {
+            FacetDirection::Row => "HorizontalLayout",
+            FacetDirection::Column => "VerticalLayout",
+        };
+        out.block(layout_tag, |out| {
+            if gap > 0.0 {
+                out.prop_px("spacing", gap);
+            }
+            out.line("alignment: start;");
+            for node in nodes {
+                ctx.render_child(node, out)?;
+            }
+            Ok(())
+        })
     }
 }
 
@@ -1188,17 +1231,6 @@ impl HtmlBlock for FacetHtmlBlock {
 
         let resolved = facet.resolve_items(ctx.resources, ctx.facet_schemas);
 
-        let style = match facet.layout.direction {
-            FacetDirection::Row => format!(
-                "display:flex;flex-direction:row;gap:{}px",
-                facet.layout.gap as u32
-            ),
-            FacetDirection::Column => format!(
-                "display:flex;flex-direction:column;gap:{}px",
-                facet.layout.gap as u32
-            ),
-        };
-
         match &facet.template {
             FacetTemplate::Inline { root: template } => {
                 let items = match resolved {
@@ -1217,18 +1249,16 @@ impl HtmlBlock for FacetHtmlBlock {
                         return Ok(());
                     }
                 };
-                out.open_attrs(
-                    "div",
-                    &[("style", style.as_str()), ("data-facet", facet_id)],
-                );
-                for item in &items {
-                    let mut root = template.clone();
-                    resolve_template_expressions(&mut root, item);
-                    evaluate_variant_rules(&mut root, &facet.variant_rules, item);
-                    ctx.render_child(&root, out)?;
-                }
-                out.close("div");
-                Ok(())
+                let nodes: Vec<Node> = items
+                    .iter()
+                    .map(|item| {
+                        let mut root = template.clone();
+                        resolve_template_expressions(&mut root, item);
+                        evaluate_variant_rules(&mut root, &facet.variant_rules, item);
+                        *root
+                    })
+                    .collect();
+                emit_facet_html_layout(&facet.layout, &nodes, facet_id, ctx, out)
             }
             FacetTemplate::ComponentRef { component_id } => {
                 let prefab = ctx.prefabs.get(component_id.as_str()).ok_or_else(|| {
@@ -1263,21 +1293,57 @@ impl HtmlBlock for FacetHtmlBlock {
                         return Ok(());
                     }
                 };
-                out.open_attrs(
-                    "div",
-                    &[("style", style.as_str()), ("data-facet", facet_id)],
-                );
-                for item in &items {
-                    let mut root = prefab.root.clone();
-                    apply_bindings(&mut root, prefab, &facet.bindings, item);
-                    evaluate_variant_rules(&mut root, &facet.variant_rules, item);
-                    ctx.render_child(&root, out)?;
-                }
-                out.close("div");
-                Ok(())
+                let nodes: Vec<Node> = items
+                    .iter()
+                    .map(|item| {
+                        let mut root = prefab.root.clone();
+                        apply_bindings(&mut root, prefab, &facet.bindings, item);
+                        evaluate_variant_rules(&mut root, &facet.variant_rules, item);
+                        root
+                    })
+                    .collect();
+                emit_facet_html_layout(&facet.layout, &nodes, facet_id, ctx, out)
             }
         }
     }
+}
+
+/// Emit a list of prepared nodes into an HTML layout container.
+///
+/// When `columns` is set, emits a CSS Grid layout. When `wrap` is true,
+/// emits a flex-wrap container. Otherwise emits a simple flex container.
+fn emit_facet_html_layout(
+    layout: &FacetLayout,
+    nodes: &[Node],
+    facet_id: &str,
+    ctx: &HtmlRenderContext<'_>,
+    out: &mut Html,
+) -> Result<(), RenderError> {
+    let gap = layout.gap as u32;
+    let direction = match layout.direction {
+        FacetDirection::Row => "row",
+        FacetDirection::Column => "column",
+    };
+
+    let style = if let Some(cols) = layout.columns.filter(|&c| c > 1) {
+        format!(
+            "display:grid;grid-template-columns:repeat({cols},1fr);gap:{gap}px"
+        )
+    } else if layout.wrap {
+        format!("display:flex;flex-direction:{direction};flex-wrap:wrap;gap:{gap}px")
+    } else {
+        format!("display:flex;flex-direction:{direction};gap:{gap}px")
+    };
+
+    out.open_attrs(
+        "div",
+        &[("style", style.as_str()), ("data-facet", facet_id)],
+    );
+    for node in nodes {
+        ctx.render_child(node, out)?;
+    }
+    out.close("div");
+    Ok(())
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -2740,5 +2806,38 @@ mod tests {
         };
         def.set_component_id("hero");
         assert!(def.is_inline());
+    }
+
+    #[test]
+    fn layout_serde_with_wrap_and_columns() {
+        let layout = FacetLayout {
+            direction: FacetDirection::Row,
+            gap: 12.0,
+            wrap: true,
+            columns: Some(3),
+        };
+        let json = serde_json::to_string(&layout).unwrap();
+        let back: FacetLayout = serde_json::from_str(&json).unwrap();
+        assert!(back.wrap);
+        assert_eq!(back.columns, Some(3));
+        assert_eq!(back.gap, 12.0);
+    }
+
+    #[test]
+    fn layout_defaults_no_wrap_no_columns() {
+        let layout = FacetLayout::default();
+        assert!(!layout.wrap);
+        assert_eq!(layout.columns, None);
+    }
+
+    #[test]
+    fn facet_def_serde_with_wrap_columns() {
+        let mut def = sample_facet();
+        def.layout.wrap = true;
+        def.layout.columns = Some(4);
+        let json = serde_json::to_string(&def).unwrap();
+        let back: FacetDef = serde_json::from_str(&json).unwrap();
+        assert!(back.layout.wrap);
+        assert_eq!(back.layout.columns, Some(4));
     }
 }

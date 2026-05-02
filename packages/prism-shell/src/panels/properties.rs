@@ -1352,6 +1352,28 @@ impl PropertiesPanel {
                 has_bounds: true,
                 options: vec![],
             },
+            FieldRowData {
+                key: "facet.wrap".into(),
+                label: "Wrap".into(),
+                kind: "boolean".into(),
+                value: def.layout.wrap.to_string(),
+                required: false,
+                min: 0.0,
+                max: 0.0,
+                has_bounds: false,
+                options: vec![],
+            },
+            FieldRowData {
+                key: "facet.columns".into(),
+                label: "Columns".into(),
+                kind: "integer".into(),
+                value: def.layout.columns.map(|c| c.to_string()).unwrap_or_default(),
+                required: false,
+                min: 0.0,
+                max: 12.0,
+                has_bounds: true,
+                options: vec![],
+            },
         ]);
     }
 

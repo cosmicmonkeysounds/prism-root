@@ -5159,6 +5159,24 @@ fn build_context_menu_items(
                     "",
                     true,
                 ));
+                let app_state = inner.store.state();
+                let is_inline = app_state
+                    .active_app()
+                    .and_then(|a| a.active_document())
+                    .and_then(|doc| {
+                        let node = doc.root.as_ref()?.find(app_state.selection.primary()?)?;
+                        let fid = node.props.get("facet_id")?.as_str()?;
+                        Some(doc.facets.get(fid)?.is_inline())
+                    })
+                    .unwrap_or(false);
+                if is_inline {
+                    items.push(ContextMenuItemDef::action(
+                        "Save Template as Component",
+                        "facet.promote",
+                        "",
+                        true,
+                    ));
+                }
             } else if has_selection {
                 items.push(ContextMenuItemDef::separator());
                 items.push(ContextMenuItemDef::action(
@@ -5881,6 +5899,42 @@ fn execute_command(
             let mut s = shared.borrow_mut();
             s.sync_builder_document();
             s.add_toast("Facet", "Data refreshed", "success");
+        }
+        "facet.promote" => {
+            let mut s = shared.borrow_mut();
+            let info: Option<(String, String, prism_builder::Node)> = s.store.state().active_app()
+                .and_then(|a| a.active_document())
+                .and_then(|doc| {
+                    let selected = s.store.state().selection.primary()?;
+                    let node = doc.root.as_ref()?.find(selected)?;
+                    if node.component != "facet" { return None; }
+                    let fid = node.props.get("facet_id")?.as_str()?;
+                    let def = doc.facets.get(fid)?;
+                    if let prism_builder::FacetTemplate::Inline { root } = &def.template {
+                        Some((fid.to_string(), selected.to_string(), *root.clone()))
+                    } else {
+                        None
+                    }
+                });
+            if let Some((fid, _node_id, root)) = info {
+                let (prefab, bindings) = prism_builder::promote_inline_to_component(&fid, &root);
+                let component_id = prefab.id.clone();
+                s.push_undo("Promote to component");
+                let cid = component_id.clone();
+                s.store.mutate(|state| {
+                    if let Some(doc) = state.active_app_mut().and_then(|a| a.active_document_mut()) {
+                        doc.prefabs.insert(cid.clone(), prefab);
+                        if let Some(def) = doc.facets.get_mut(&fid) {
+                            def.template = prism_builder::FacetTemplate::ComponentRef { component_id: cid };
+                            def.bindings = bindings;
+                        }
+                    }
+                });
+                s.sync_builder_document();
+                s.add_toast("Facet", &format!("Promoted to {component_id}"), "success");
+            } else {
+                s.add_toast("Facet", "Select an inline-template facet first", "warning");
+            }
         }
         "schema.create" => {
             let mut s = shared.borrow_mut();
@@ -7235,6 +7289,12 @@ fn apply_facet_edit(def: &mut FacetDef, key: &str, value: &str) {
             if let Ok(v) = value.parse::<f32>() {
                 def.layout.gap = v;
             }
+        }
+        "wrap" => {
+            def.layout.wrap = value == "true";
+        }
+        "columns" => {
+            def.layout.columns = value.parse::<u32>().ok().filter(|&n| n > 0);
         }
         "source_kind" => {
             def.data = match value {
@@ -10051,5 +10111,49 @@ mod tests {
             }
             _ => panic!("expected Script kind"),
         }
+    }
+
+    #[test]
+    fn apply_facet_edit_wrap_and_columns() {
+        use prism_builder::{FacetDataSource, FacetDef, FacetLayout};
+        let mut def = FacetDef {
+            id: "facet:test".into(),
+            label: "Test".into(),
+            description: String::new(),
+            kind: FacetKind::List,
+            schema_id: None,
+            data: FacetDataSource::default(),
+            bindings: vec![],
+            variant_rules: vec![],
+            layout: FacetLayout::default(),
+            template: FacetTemplate::default(),
+            output: FacetOutput::default(),
+            resolved_data: None,
+        };
+
+        assert!(!def.layout.wrap);
+        assert_eq!(def.layout.columns, None);
+
+        apply_facet_edit(&mut def, "wrap", "true");
+        assert!(def.layout.wrap);
+
+        apply_facet_edit(&mut def, "wrap", "false");
+        assert!(!def.layout.wrap);
+
+        apply_facet_edit(&mut def, "columns", "3");
+        assert_eq!(def.layout.columns, Some(3));
+
+        apply_facet_edit(&mut def, "columns", "0");
+        assert_eq!(def.layout.columns, None);
+
+        apply_facet_edit(&mut def, "columns", "");
+        assert_eq!(def.layout.columns, None);
+    }
+
+    #[test]
+    fn facet_promote_command_registered() {
+        let reg = super::CommandRegistry::with_builtins();
+        assert!(reg.get("facet.promote").is_some());
+        assert_eq!(reg.get("facet.promote").unwrap().category, "Facet");
     }
 }
