@@ -21,6 +21,7 @@
 pub mod app;
 pub mod asset;
 pub mod component;
+pub mod core_widget;
 pub mod document;
 pub mod facet;
 pub mod html;
@@ -45,13 +46,13 @@ pub mod variant;
 pub use app::{AppIcon, AppId, NavigationConfig, NavigationStyle, Page, PrismApp};
 pub use asset::{collect_vfs_hashes, AssetSource};
 pub use component::{Component, ComponentId, RenderContext, RenderError, RenderSlintContext};
+pub use core_widget::{collect_all_contributions, register_core_widgets, CoreWidgetComponent};
 pub use document::{BuilderDocument, Node, NodeId};
 pub use facet::{
     apply_aggregate, evaluate_calculations, evaluate_filter, get_field, value_sort_key,
     AggregateOp, FacetBinding, FacetDataSource, FacetDef, FacetDirection, FacetKind, FacetLayout,
-    FacetRecord, FacetSchema, FacetSchemaId, FacetVariantRule, ResolvedFacetData, SchemaField,
-    SchemaFieldKind, SchemaSelectOption, ScriptLanguage, ValidationError, AGGREGATE_OP_TAGS,
-    FACET_KIND_TAGS,
+    FacetRecord, FacetSchema, FacetSchemaId, FacetVariantRule, ResolvedFacetData, ScriptLanguage,
+    ValidationError, AGGREGATE_OP_TAGS, FACET_KIND_TAGS,
 };
 pub use html::{escape_attr, escape_text, Html};
 pub use html_block::{HtmlBlock, HtmlRegistry, HtmlRenderContext};

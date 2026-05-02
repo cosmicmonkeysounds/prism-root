@@ -14,8 +14,7 @@ use prism_builder::layout::{
 };
 use prism_builder::style::StyleProperties;
 use prism_builder::{
-    AggregateOp, FacetDataSource, FacetDirection, FacetKind, SchemaFieldKind, AGGREGATE_OP_TAGS,
-    FACET_KIND_TAGS,
+    AggregateOp, FacetDataSource, FacetDirection, FacetKind, AGGREGATE_OP_TAGS, FACET_KIND_TAGS,
 };
 use prism_builder::{
     BuilderDocument, ComponentRegistry, FieldKind, FieldSpec, FieldValue, Node, NodeId, PrismApp,
@@ -814,11 +813,6 @@ impl PropertiesPanel {
         ]
     }
 
-    /// Facet-specific property rows for a selected `facet` component node.
-    pub fn facet_rows_pub(doc: &BuilderDocument, node: &Node) -> Vec<FieldRowData> {
-        Self::facet_rows(doc, node)
-    }
-
     fn facet_rows(doc: &BuilderDocument, node: &Node) -> Vec<FieldRowData> {
         let facet_id = node
             .props
@@ -826,17 +820,19 @@ impl PropertiesPanel {
             .and_then(|v| v.as_str())
             .unwrap_or("");
 
+        let facet_ids: Vec<String> = doc.facets.keys().cloned().collect();
+
         let Some(def) = doc.facets.get(facet_id) else {
             return vec![FieldRowData {
                 key: "facet.facet_id".into(),
-                label: "Facet ID (not found)".into(),
-                kind: "text".into(),
+                label: "Facet ID".into(),
+                kind: "select".into(),
                 value: facet_id.to_string(),
                 required: true,
                 min: 0.0,
                 max: 0.0,
                 has_bounds: false,
-                options: vec![],
+                options: facet_ids,
             }];
         };
 
@@ -1459,7 +1455,7 @@ impl PropertiesPanel {
                 options: vec![],
             });
             for field in &s.fields {
-                if matches!(field.kind, SchemaFieldKind::Calculation { .. }) {
+                if matches!(field.kind, FieldKind::Calculation { .. }) {
                     continue;
                 }
                 let val = rec
@@ -1473,34 +1469,37 @@ impl PropertiesPanel {
                     .unwrap_or_default();
 
                 let (kind, opts, min, max, has_bounds) = match &field.kind {
-                    SchemaFieldKind::Text
-                    | SchemaFieldKind::Date
-                    | SchemaFieldKind::Url
-                    | SchemaFieldKind::Image => ("text", vec![], 0.0, 0.0, false),
-                    SchemaFieldKind::Number { min: lo, max: hi } => (
+                    FieldKind::Text
+                    | FieldKind::TextArea
+                    | FieldKind::Date
+                    | FieldKind::DateTime
+                    | FieldKind::File(_) => ("text", vec![], 0.0, 0.0, false),
+                    FieldKind::Number(b) => (
                         "number",
                         vec![],
-                        lo.unwrap_or(0.0) as f32,
-                        hi.unwrap_or(0.0) as f32,
-                        lo.is_some() || hi.is_some(),
+                        b.min.unwrap_or(0.0) as f32,
+                        b.max.unwrap_or(0.0) as f32,
+                        b.min.is_some() || b.max.is_some(),
                     ),
-                    SchemaFieldKind::Integer { min: lo, max: hi } => (
+                    FieldKind::Currency { .. } => ("number", vec![], 0.0, 0.0, false),
+                    FieldKind::Integer(b) => (
                         "integer",
                         vec![],
-                        lo.unwrap_or(0) as f32,
-                        hi.unwrap_or(0) as f32,
-                        lo.is_some() || hi.is_some(),
+                        b.min.unwrap_or(0.0) as f32,
+                        b.max.unwrap_or(0.0) as f32,
+                        b.min.is_some() || b.max.is_some(),
                     ),
-                    SchemaFieldKind::Boolean => ("boolean", vec![], 0.0, 0.0, false),
-                    SchemaFieldKind::Color => ("color", vec![], 0.0, 0.0, false),
-                    SchemaFieldKind::Select { options } => (
+                    FieldKind::Duration => ("integer", vec![], 0.0, 0.0, false),
+                    FieldKind::Boolean => ("boolean", vec![], 0.0, 0.0, false),
+                    FieldKind::Color => ("color", vec![], 0.0, 0.0, false),
+                    FieldKind::Select(options) => (
                         "select",
                         options.iter().map(|o| o.value.clone()).collect(),
                         0.0,
                         0.0,
                         false,
                     ),
-                    SchemaFieldKind::Calculation { .. } => unreachable!(),
+                    FieldKind::Calculation { .. } => unreachable!(),
                 };
 
                 rows.push(FieldRowData {
@@ -1532,11 +1531,37 @@ impl PropertiesPanel {
         let Some(component) = registry.get(&node.component) else {
             return vec![];
         };
-        component
+        let mut rows: Vec<FieldRowData> = component
             .schema()
             .into_iter()
             .map(|spec| row_from_spec(&spec, &node.props))
-            .collect()
+            .collect();
+
+        if node.component == "facet" {
+            let facet_ids: Vec<String> = doc.facets.keys().cloned().collect();
+            let facet_id = node
+                .props
+                .get("facet_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let is_list = doc
+                .facets
+                .get(facet_id)
+                .map(|f| matches!(f.kind, FacetKind::List))
+                .unwrap_or(false);
+
+            for row in &mut rows {
+                if row.key == "facet_id" {
+                    row.kind = "select".into();
+                    row.options = facet_ids.clone();
+                }
+            }
+            if !is_list {
+                rows.retain(|r| r.key != "max_items");
+            }
+        }
+
+        rows
     }
 }
 
@@ -1606,6 +1631,38 @@ fn row_from_spec(spec: &FieldSpec, props: &Value) -> FieldRowData {
                 .unwrap_or_default();
             ("file", display, 0.0, 0.0, false, vec![])
         }
+        FieldKind::Date | FieldKind::DateTime => (
+            "text",
+            FieldValue::read_string(props, spec).to_string(),
+            0.0,
+            0.0,
+            false,
+            vec![],
+        ),
+        FieldKind::Duration => (
+            "number",
+            format_number(FieldValue::read_number(props, spec)),
+            0.0,
+            0.0,
+            false,
+            vec![],
+        ),
+        FieldKind::Currency { .. } => (
+            "number",
+            format_number(FieldValue::read_number(props, spec)),
+            0.0,
+            0.0,
+            false,
+            vec![],
+        ),
+        FieldKind::Calculation { .. } => (
+            "text",
+            FieldValue::read_string(props, spec).to_string(),
+            0.0,
+            0.0,
+            false,
+            vec![],
+        ),
     };
     FieldRowData {
         key: spec.key.clone(),
@@ -2383,7 +2440,7 @@ mod tests {
             props: serde_json::json!({ "facet_id": facet_id }),
             ..Default::default()
         };
-        let rows = PropertiesPanel::facet_rows_pub(&doc, &node);
+        let rows = PropertiesPanel::facet_rows(&doc, &node);
         // prefab_id row should be select kind
         let prefab_row = rows.iter().find(|r| r.key == "facet.prefab_id").unwrap();
         assert_eq!(prefab_row.kind, "select");
@@ -2396,5 +2453,112 @@ mod tests {
         assert_eq!(binding_rows.len(), 2);
         assert!(binding_rows.iter().any(|r| r.key == "facet.binding.title"));
         assert!(binding_rows.iter().any(|r| r.key == "facet.binding.body"));
+    }
+
+    #[test]
+    fn facet_component_rows_use_select_for_facet_id() {
+        use prism_builder::{FacetDataSource, FacetDef, FacetKind, FacetLayout};
+
+        let mut reg = ComponentRegistry::new();
+        register_builtins(&mut reg).unwrap();
+        let facet_id = "facet:f1".to_string();
+        let mut doc = BuilderDocument {
+            root: Some(Node {
+                id: "n1".into(),
+                component: "facet".into(),
+                props: json!({ "facet_id": &facet_id }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        doc.facets.insert(
+            facet_id.clone(),
+            FacetDef {
+                id: facet_id.clone(),
+                label: "Test".into(),
+                description: String::new(),
+                kind: FacetKind::List,
+                schema_id: None,
+                prefab_id: "card".into(),
+                data: FacetDataSource::Static {
+                    items: vec![],
+                    records: vec![],
+                },
+                bindings: vec![],
+                variant_rules: vec![],
+                layout: FacetLayout::default(),
+                resolved_data: None,
+            },
+        );
+        let rows = PropertiesPanel::rows(&doc, &reg, &Some("n1".into()));
+        let fid_row = rows.iter().find(|r| r.key == "facet_id").unwrap();
+        assert_eq!(fid_row.kind, "select");
+        assert!(fid_row.options.contains(&facet_id));
+        assert!(
+            rows.iter().any(|r| r.key == "max_items"),
+            "List facets should show max_items"
+        );
+    }
+
+    #[test]
+    fn facet_component_rows_hide_max_items_for_non_list() {
+        use prism_builder::{AggregateOp, FacetDataSource, FacetDef, FacetKind, FacetLayout};
+
+        let mut reg = ComponentRegistry::new();
+        register_builtins(&mut reg).unwrap();
+        let facet_id = "facet:agg".to_string();
+        let mut doc = BuilderDocument {
+            root: Some(Node {
+                id: "n1".into(),
+                component: "facet".into(),
+                props: json!({ "facet_id": &facet_id }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        doc.facets.insert(
+            facet_id.clone(),
+            FacetDef {
+                id: facet_id.clone(),
+                label: "Sum".into(),
+                description: String::new(),
+                kind: FacetKind::Aggregate {
+                    operation: AggregateOp::Count,
+                    field: None,
+                },
+                schema_id: None,
+                prefab_id: "card".into(),
+                data: FacetDataSource::Static {
+                    items: vec![],
+                    records: vec![],
+                },
+                bindings: vec![],
+                variant_rules: vec![],
+                layout: FacetLayout::default(),
+                resolved_data: None,
+            },
+        );
+        let rows = PropertiesPanel::rows(&doc, &reg, &Some("n1".into()));
+        assert!(
+            !rows.iter().any(|r| r.key == "max_items"),
+            "non-List facets should not show max_items"
+        );
+        let fid_row = rows.iter().find(|r| r.key == "facet_id").unwrap();
+        assert_eq!(fid_row.kind, "select");
+    }
+
+    #[test]
+    fn facet_data_fallback_uses_select() {
+        let doc = BuilderDocument::default();
+        let node = Node {
+            id: "n1".into(),
+            component: "facet".into(),
+            props: json!({ "facet_id": "missing" }),
+            ..Default::default()
+        };
+        let rows = PropertiesPanel::facet_rows(&doc, &node);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].kind, "select");
+        assert_eq!(rows[0].key, "facet.facet_id");
     }
 }

@@ -71,6 +71,7 @@ pub mod kernel;
 pub mod language;
 pub mod network;
 pub mod shell_mode;
+pub mod widget;
 
 pub use boot_config::{BootConfig, DEFAULT_BOOT_CONFIG};
 pub use design_tokens::DesignTokens;

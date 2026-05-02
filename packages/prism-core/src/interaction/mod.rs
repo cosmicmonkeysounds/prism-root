@@ -18,5 +18,7 @@
 //!   **not** ported (views are `prism_builder::Component`s now).
 
 pub mod activity;
+pub mod comments;
+pub mod dashboard;
 pub mod notification;
 pub mod query;

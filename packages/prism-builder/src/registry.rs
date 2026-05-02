@@ -7,25 +7,22 @@
 //!    id at render time. `register` is idempotent-per-id, double-registers
 //!    error out.
 //! 2. Field factories ([`FieldSpec`], [`FieldKind`], [`SelectOption`],
-//!    [`NumericBounds`]) — the typed descriptors a [`Component`] returns
-//!    from [`Component::schema`]. Phase 3 brings these over from the old
-//!    TS tree so the Studio property panel can render a consistent UI
-//!    across every component without the panel having to know what a
-//!    given component *does*.
-//!
-//! Field factories deliberately stay close to the registry: every new
-//! block type hits the same set of primitives (string / long-string /
-//! number / bool / select / color), so a shared construction surface
-//! keeps component authors from hand-rolling schemas.
+//!    [`NumericBounds`]) — re-exported from `prism_core::widget::field`
+//!    so the API surface is unchanged for existing consumers.
 
 use indexmap::IndexMap;
 use prism_core::help::{HelpEntry, HelpProvider};
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::sync::Arc;
 use thiserror::Error;
 
 use crate::component::{Component, ComponentId};
+
+// Re-export field types from prism-core so existing `use crate::registry::*`
+// imports throughout prism-builder continue to work unchanged.
+pub use prism_core::widget::field::{
+    prop_bool, prop_f64, prop_str, prop_u64, FieldKind, FieldSpec, FieldValue, FileFieldConfig,
+    NumericBounds, SelectOption,
+};
 
 #[derive(Debug, Error)]
 pub enum RegistryError {
@@ -73,9 +70,6 @@ impl ComponentRegistry {
     }
 
     /// Iterate the full `(id, component)` pairs in registration order.
-    /// Used by the Studio palette (shows every registered block type)
-    /// and by the Slint walker when it pre-declares the global component
-    /// dictionary.
     pub fn iter(&self) -> impl Iterator<Item = (&ComponentId, &Arc<dyn Component>)> {
         self.components.iter()
     }
@@ -90,305 +84,10 @@ impl HelpProvider for ComponentRegistry {
     }
 }
 
-// -- Property-panel field factories ----------------------------------
-
-/// Typed field descriptor. A component returns a `Vec<FieldSpec>` from
-/// [`Component::schema`]; the Studio property panel walks the list and
-/// paints one field per entry. Document nodes store their values under
-/// [`FieldSpec::key`] in the node's `props` map.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FieldSpec {
-    /// JSON key this field reads from / writes into `Node::props`.
-    pub key: String,
-    /// Human-visible label shown in the property panel.
-    pub label: String,
-    /// Kind of editor the panel should render.
-    pub kind: FieldKind,
-    /// Default value when the node's props omit this key. Must match
-    /// [`FieldKind`] — e.g. `Number`/`Integer` require a JSON number,
-    /// `Select` requires one of the option values, etc.
-    #[serde(default)]
-    pub default: Value,
-    /// When `true` the panel blocks save if the field is empty. Cheap
-    /// ergonomic hint; validation is still the component's job.
-    #[serde(default)]
-    pub required: bool,
-    /// Optional helper string shown beneath the editor.
-    #[serde(default)]
-    pub help: Option<String>,
-    /// Optional group name for organizing fields within a section.
-    /// Components can use this to cluster related fields (e.g. "content",
-    /// "appearance"). Ungrouped fields render under the component heading.
-    #[serde(default)]
-    pub group: Option<String>,
-}
-
-impl FieldSpec {
-    /// Construct a bare [`FieldSpec`]. Prefer the typed builders
-    /// ([`FieldSpec::text`], [`FieldSpec::number`], …) — they preserve
-    /// the default/required invariants automatically.
-    pub fn new(key: impl Into<String>, label: impl Into<String>, kind: FieldKind) -> Self {
-        Self {
-            key: key.into(),
-            label: label.into(),
-            kind,
-            default: Value::Null,
-            required: false,
-            help: None,
-            group: None,
-        }
-    }
-
-    pub fn with_default(mut self, default: Value) -> Self {
-        self.default = default;
-        self
-    }
-
-    pub fn required(mut self) -> Self {
-        self.required = true;
-        self
-    }
-
-    pub fn with_help(mut self, help: impl Into<String>) -> Self {
-        self.help = Some(help.into());
-        self
-    }
-
-    pub fn group(mut self, group: impl Into<String>) -> Self {
-        self.group = Some(group.into());
-        self
-    }
-
-    /// Short single-line text editor. Default is an empty string.
-    pub fn text(key: impl Into<String>, label: impl Into<String>) -> Self {
-        Self::new(key, label, FieldKind::Text).with_default(Value::String(String::new()))
-    }
-
-    /// Multi-line text editor. Default is an empty string.
-    pub fn textarea(key: impl Into<String>, label: impl Into<String>) -> Self {
-        Self::new(key, label, FieldKind::TextArea).with_default(Value::String(String::new()))
-    }
-
-    /// Floating-point number with optional bounds. Default is `0.0`.
-    pub fn number(key: impl Into<String>, label: impl Into<String>, bounds: NumericBounds) -> Self {
-        Self::new(key, label, FieldKind::Number(bounds)).with_default(Value::from(0.0))
-    }
-
-    /// Signed integer with optional bounds. Default is `0`.
-    pub fn integer(
-        key: impl Into<String>,
-        label: impl Into<String>,
-        bounds: NumericBounds,
-    ) -> Self {
-        Self::new(key, label, FieldKind::Integer(bounds)).with_default(Value::from(0))
-    }
-
-    /// Boolean toggle. Default is `false`.
-    pub fn boolean(key: impl Into<String>, label: impl Into<String>) -> Self {
-        Self::new(key, label, FieldKind::Boolean).with_default(Value::Bool(false))
-    }
-
-    /// Drop-down selector. Default is the first option's value, or
-    /// `Value::Null` if the option list is empty.
-    pub fn select(
-        key: impl Into<String>,
-        label: impl Into<String>,
-        options: Vec<SelectOption>,
-    ) -> Self {
-        let default = options
-            .first()
-            .map(|o| Value::String(o.value.clone()))
-            .unwrap_or(Value::Null);
-        Self::new(key, label, FieldKind::Select(options)).with_default(default)
-    }
-
-    /// Hex color editor (`"#RRGGBB"` or `"#RRGGBBAA"`). Default is
-    /// `"#000000"` so the component always has something to paint.
-    pub fn color(key: impl Into<String>, label: impl Into<String>) -> Self {
-        Self::new(key, label, FieldKind::Color).with_default(Value::String("#000000".into()))
-    }
-
-    /// File / binary asset picker. Default is `Null` (no file selected).
-    /// `accept` filters the picker by MIME pattern (e.g. `["image/*"]`).
-    pub fn file(key: impl Into<String>, label: impl Into<String>, accept: Vec<String>) -> Self {
-        Self::new(key, label, FieldKind::File(FileFieldConfig { accept }))
-    }
-}
-
-/// Discriminator telling the property panel which editor to render.
-/// Carries bounds / options inline so the panel doesn't need a second
-/// lookup to know how to paint itself.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
-pub enum FieldKind {
-    /// Single-line string.
-    Text,
-    /// Multi-line string.
-    TextArea,
-    /// Floating-point number with optional bounds.
-    Number(NumericBounds),
-    /// Signed integer with optional bounds.
-    Integer(NumericBounds),
-    /// Boolean.
-    Boolean,
-    /// Drop-down selector over a fixed option list.
-    Select(Vec<SelectOption>),
-    /// Hex color editor (`"#RRGGBB"` / `"#RRGGBBAA"`).
-    Color,
-    /// File / binary asset picker. Prop value is either a URL string
-    /// or a VFS `BinaryRef`-shaped object (`{ hash, filename, mimeType, size }`).
-    File(FileFieldConfig),
-}
-
-/// Configuration for file/asset picker fields.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct FileFieldConfig {
-    /// MIME type patterns the file picker accepts.
-    /// Examples: `["image/*"]`, `["image/png", "image/jpeg"]`.
-    /// Empty means accept any file.
-    #[serde(default)]
-    pub accept: Vec<String>,
-}
-
-/// Optional min/max bounds for numeric fields. `None` on either end
-/// means unbounded.
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
-pub struct NumericBounds {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub min: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max: Option<f64>,
-}
-
-impl NumericBounds {
-    pub const fn unbounded() -> Self {
-        Self {
-            min: None,
-            max: None,
-        }
-    }
-
-    pub const fn min_max(min: f64, max: f64) -> Self {
-        Self {
-            min: Some(min),
-            max: Some(max),
-        }
-    }
-
-    pub const fn min(min: f64) -> Self {
-        Self {
-            min: Some(min),
-            max: None,
-        }
-    }
-
-    pub const fn max(max: f64) -> Self {
-        Self {
-            min: None,
-            max: Some(max),
-        }
-    }
-
-    /// Clamp a value to the bounds. Unbounded ends don't clamp.
-    pub fn clamp(&self, value: f64) -> f64 {
-        let mut v = value;
-        if let Some(m) = self.min {
-            if v < m {
-                v = m;
-            }
-        }
-        if let Some(m) = self.max {
-            if v > m {
-                v = m;
-            }
-        }
-        v
-    }
-}
-
-/// One entry in a [`FieldKind::Select`] drop-down.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SelectOption {
-    pub value: String,
-    pub label: String,
-}
-
-impl SelectOption {
-    pub fn new(value: impl Into<String>, label: impl Into<String>) -> Self {
-        Self {
-            value: value.into(),
-            label: label.into(),
-        }
-    }
-}
-
-/// Typed read of a [`FieldSpec`]-shaped slot out of a node's `props`.
-/// Components use this to pull out their expected props without
-/// juggling `serde_json::Value` match arms inline.
-pub struct FieldValue;
-
-impl FieldValue {
-    pub fn read_string<'a>(props: &'a Value, spec: &'a FieldSpec) -> &'a str {
-        props
-            .get(&spec.key)
-            .and_then(|v| v.as_str())
-            .or_else(|| spec.default.as_str())
-            .unwrap_or("")
-    }
-
-    pub fn read_number(props: &Value, spec: &FieldSpec) -> f64 {
-        let raw = props
-            .get(&spec.key)
-            .and_then(|v| v.as_f64())
-            .or_else(|| spec.default.as_f64())
-            .unwrap_or(0.0);
-        match &spec.kind {
-            FieldKind::Number(b) | FieldKind::Integer(b) => b.clamp(raw),
-            _ => raw,
-        }
-    }
-
-    pub fn read_integer(props: &Value, spec: &FieldSpec) -> i64 {
-        let raw = props
-            .get(&spec.key)
-            .and_then(|v| v.as_i64())
-            .or_else(|| spec.default.as_i64())
-            .unwrap_or(0);
-        match &spec.kind {
-            FieldKind::Integer(b) => b.clamp(raw as f64) as i64,
-            _ => raw,
-        }
-    }
-
-    pub fn read_boolean(props: &Value, spec: &FieldSpec) -> bool {
-        props
-            .get(&spec.key)
-            .and_then(|v| v.as_bool())
-            .or_else(|| spec.default.as_bool())
-            .unwrap_or(false)
-    }
-}
-
-pub fn prop_str<'a>(props: &'a Value, key: &str, default: &'a str) -> &'a str {
-    props.get(key).and_then(|v| v.as_str()).unwrap_or(default)
-}
-
-pub fn prop_u64(props: &Value, key: &str, default: u64) -> u64 {
-    props.get(key).and_then(|v| v.as_u64()).unwrap_or(default)
-}
-
-pub fn prop_f64(props: &Value, key: &str, default: f64) -> f64 {
-    props.get(key).and_then(|v| v.as_f64()).unwrap_or(default)
-}
-
-pub fn prop_bool(props: &Value, key: &str) -> bool {
-    props.get(key).and_then(|v| v.as_bool()).unwrap_or(false)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use serde_json::{json, Value};
 
     #[test]
     fn text_builder_defaults_to_empty_string() {

@@ -1001,6 +1001,7 @@ impl ShellInner {
                 if let Some(app_doc) = state.active_app().and_then(|a| a.active_document()) {
                     doc.connections = app_doc.connections.clone();
                     doc.facets = app_doc.facets.clone();
+                    doc.facet_schemas = app_doc.facet_schemas.clone();
                     doc.resources = app_doc.resources.clone();
                     doc.prefabs = app_doc.prefabs.clone();
                 }
@@ -1020,6 +1021,7 @@ impl ShellInner {
                 if let Some(app_doc) = state.active_app().and_then(|a| a.active_document()) {
                     doc.connections = app_doc.connections.clone();
                     doc.facets = app_doc.facets.clone();
+                    doc.facet_schemas = app_doc.facet_schemas.clone();
                     doc.resources = app_doc.resources.clone();
                     doc.prefabs = app_doc.prefabs.clone();
                 }
@@ -5779,13 +5781,9 @@ fn execute_command(
                             id: sid.clone(),
                             label: "New Schema".into(),
                             description: String::new(),
-                            fields: vec![prism_builder::SchemaField {
-                                key: "title".into(),
-                                label: "Title".into(),
-                                kind: prism_builder::SchemaFieldKind::Text,
-                                required: true,
-                                default_value: None,
-                            }],
+                            fields: vec![
+                                prism_core::widget::FieldSpec::text("title", "Title").required()
+                            ],
                         },
                     );
                 }
@@ -5841,13 +5839,10 @@ fn execute_command(
                     {
                         if let Some(schema) = doc.facet_schemas.get_mut(&sid) {
                             let n = schema.fields.len() + 1;
-                            schema.fields.push(prism_builder::SchemaField {
-                                key: format!("field_{n}"),
-                                label: format!("Field {n}"),
-                                kind: prism_builder::SchemaFieldKind::Text,
-                                required: false,
-                                default_value: None,
-                            });
+                            schema.fields.push(prism_core::widget::FieldSpec::text(
+                                format!("field_{n}"),
+                                format!("Field {n}"),
+                            ));
                         }
                     }
                 });
@@ -9456,5 +9451,280 @@ mod tests {
         assert_eq!(resolved.len(), 2);
         assert_eq!(resolved[0]["name"], "X");
         assert_eq!(resolved[1]["name"], "Y");
+    }
+
+    #[test]
+    fn apply_facet_edit_variant_rule_crud() {
+        use prism_builder::{FacetDataSource, FacetDef, FacetKind, FacetLayout};
+        let mut def = FacetDef {
+            id: "facet:test".into(),
+            label: "Test".into(),
+            description: String::new(),
+            kind: FacetKind::List,
+            schema_id: None,
+            prefab_id: "card".into(),
+            data: FacetDataSource::default(),
+            bindings: vec![],
+            variant_rules: vec![],
+            layout: FacetLayout::default(),
+            resolved_data: None,
+        };
+        assert!(def.variant_rules.is_empty());
+
+        apply_facet_edit(&mut def, "add_variant_rule", "");
+        assert_eq!(def.variant_rules.len(), 1);
+        assert!(def.variant_rules[0].field.is_empty());
+
+        apply_facet_edit(&mut def, "variant_rule.0.field", "status");
+        apply_facet_edit(&mut def, "variant_rule.0.value", "featured");
+        apply_facet_edit(&mut def, "variant_rule.0.axis_key", "variant");
+        apply_facet_edit(&mut def, "variant_rule.0.axis_value", "highlight");
+        assert_eq!(def.variant_rules[0].field, "status");
+        assert_eq!(def.variant_rules[0].value, "featured");
+        assert_eq!(def.variant_rules[0].axis_key, "variant");
+        assert_eq!(def.variant_rules[0].axis_value, "highlight");
+
+        apply_facet_edit(&mut def, "add_variant_rule", "");
+        assert_eq!(def.variant_rules.len(), 2);
+
+        apply_facet_edit(&mut def, "remove_variant_rule.0", "");
+        assert_eq!(def.variant_rules.len(), 1);
+    }
+
+    #[test]
+    fn apply_facet_edit_script_language_switch() {
+        use prism_builder::{FacetDataSource, FacetDef, FacetKind, FacetLayout, ScriptLanguage};
+        let mut def = FacetDef {
+            id: "facet:test".into(),
+            label: "Test".into(),
+            description: String::new(),
+            kind: FacetKind::Script {
+                source: "return {}".into(),
+                language: ScriptLanguage::Luau,
+                graph: None,
+            },
+            schema_id: None,
+            prefab_id: "card".into(),
+            data: FacetDataSource::default(),
+            bindings: vec![],
+            variant_rules: vec![],
+            layout: FacetLayout::default(),
+            resolved_data: None,
+        };
+
+        apply_facet_edit(&mut def, "script_language", "visual-graph");
+        match &def.kind {
+            FacetKind::Script { language, .. } => {
+                assert_eq!(*language, ScriptLanguage::VisualGraph);
+            }
+            _ => panic!("expected Script kind"),
+        }
+
+        apply_facet_edit(&mut def, "script_language", "luau");
+        match &def.kind {
+            FacetKind::Script { language, .. } => {
+                assert_eq!(*language, ScriptLanguage::Luau);
+            }
+            _ => panic!("expected Script kind"),
+        }
+    }
+
+    #[test]
+    fn apply_facet_edit_object_query_fields() {
+        use prism_builder::{FacetDataSource, FacetDef, FacetKind, FacetLayout};
+        let mut def = FacetDef {
+            id: "facet:test".into(),
+            label: "Test".into(),
+            description: String::new(),
+            kind: FacetKind::ObjectQuery {
+                entity_type: String::new(),
+                filter: None,
+                sort_by: None,
+                limit: None,
+            },
+            schema_id: None,
+            prefab_id: "card".into(),
+            data: FacetDataSource::default(),
+            bindings: vec![],
+            variant_rules: vec![],
+            layout: FacetLayout::default(),
+            resolved_data: None,
+        };
+
+        apply_facet_edit(&mut def, "entity_type", "BlogPost");
+        apply_facet_edit(&mut def, "oq_filter", "status == published");
+        apply_facet_edit(&mut def, "oq_sort_by", "-created_at");
+        apply_facet_edit(&mut def, "oq_limit", "10");
+
+        match &def.kind {
+            FacetKind::ObjectQuery {
+                entity_type,
+                filter,
+                sort_by,
+                limit,
+            } => {
+                assert_eq!(entity_type, "BlogPost");
+                assert_eq!(filter.as_deref(), Some("status == published"));
+                assert_eq!(sort_by.as_deref(), Some("-created_at"));
+                assert_eq!(*limit, Some(10));
+            }
+            _ => panic!("expected ObjectQuery kind"),
+        }
+
+        apply_facet_edit(&mut def, "oq_filter", "");
+        match &def.kind {
+            FacetKind::ObjectQuery { filter, .. } => assert!(filter.is_none()),
+            _ => panic!("expected ObjectQuery kind"),
+        }
+    }
+
+    #[test]
+    fn apply_facet_edit_aggregate_fields() {
+        use prism_builder::{AggregateOp, FacetDataSource, FacetDef, FacetKind, FacetLayout};
+        let mut def = FacetDef {
+            id: "facet:test".into(),
+            label: "Test".into(),
+            description: String::new(),
+            kind: FacetKind::Aggregate {
+                operation: AggregateOp::Count,
+                field: None,
+            },
+            schema_id: None,
+            prefab_id: "card".into(),
+            data: FacetDataSource::default(),
+            bindings: vec![],
+            variant_rules: vec![],
+            layout: FacetLayout::default(),
+            resolved_data: None,
+        };
+
+        apply_facet_edit(&mut def, "agg_operation", "sum");
+        apply_facet_edit(&mut def, "agg_field", "price");
+
+        match &def.kind {
+            FacetKind::Aggregate { operation, field } => {
+                assert!(matches!(operation, AggregateOp::Sum));
+                assert_eq!(field.as_deref(), Some("price"));
+            }
+            _ => panic!("expected Aggregate kind"),
+        }
+
+        apply_facet_edit(&mut def, "agg_operation", "join");
+        apply_facet_edit(&mut def, "agg_separator", " | ");
+        match &def.kind {
+            FacetKind::Aggregate { operation, .. } => match operation {
+                AggregateOp::Join { separator } => assert_eq!(separator, " | "),
+                _ => panic!("expected Join"),
+            },
+            _ => panic!("expected Aggregate kind"),
+        }
+    }
+
+    #[test]
+    fn apply_facet_edit_lookup_fields() {
+        use prism_builder::{FacetDataSource, FacetDef, FacetKind, FacetLayout};
+        let mut def = FacetDef {
+            id: "facet:test".into(),
+            label: "Test".into(),
+            description: String::new(),
+            kind: FacetKind::Lookup {
+                source_entity: String::new(),
+                edge_type: String::new(),
+                target_entity: String::new(),
+            },
+            schema_id: None,
+            prefab_id: "card".into(),
+            data: FacetDataSource::default(),
+            bindings: vec![],
+            variant_rules: vec![],
+            layout: FacetLayout::default(),
+            resolved_data: None,
+        };
+
+        apply_facet_edit(&mut def, "lookup_source", "Project");
+        apply_facet_edit(&mut def, "lookup_edge", "has_member");
+        apply_facet_edit(&mut def, "lookup_target", "User");
+
+        match &def.kind {
+            FacetKind::Lookup {
+                source_entity,
+                edge_type,
+                target_entity,
+            } => {
+                assert_eq!(source_entity, "Project");
+                assert_eq!(edge_type, "has_member");
+                assert_eq!(target_entity, "User");
+            }
+            _ => panic!("expected Lookup kind"),
+        }
+    }
+
+    #[test]
+    fn apply_facet_edit_kind_switch() {
+        use prism_builder::{FacetDataSource, FacetDef, FacetKind, FacetLayout};
+        let mut def = FacetDef {
+            id: "facet:test".into(),
+            label: "Test".into(),
+            description: String::new(),
+            kind: FacetKind::List,
+            schema_id: None,
+            prefab_id: "card".into(),
+            data: FacetDataSource::default(),
+            bindings: vec![],
+            variant_rules: vec![],
+            layout: FacetLayout::default(),
+            resolved_data: None,
+        };
+
+        apply_facet_edit(&mut def, "kind", "object-query");
+        assert!(matches!(def.kind, FacetKind::ObjectQuery { .. }));
+
+        apply_facet_edit(&mut def, "kind", "script");
+        assert!(matches!(def.kind, FacetKind::Script { .. }));
+
+        apply_facet_edit(&mut def, "kind", "aggregate");
+        assert!(matches!(def.kind, FacetKind::Aggregate { .. }));
+
+        apply_facet_edit(&mut def, "kind", "lookup");
+        assert!(matches!(def.kind, FacetKind::Lookup { .. }));
+
+        apply_facet_edit(&mut def, "kind", "list");
+        assert!(matches!(def.kind, FacetKind::List));
+    }
+
+    #[test]
+    fn sync_script_language_decompiles_luau_to_graph() {
+        use prism_builder::{FacetDataSource, FacetDef, FacetKind, FacetLayout, ScriptLanguage};
+        let mut def = FacetDef {
+            id: "facet:test".into(),
+            label: "Test".into(),
+            description: String::new(),
+            kind: FacetKind::Script {
+                source: "return {}".into(),
+                language: ScriptLanguage::Luau,
+                graph: None,
+            },
+            schema_id: None,
+            prefab_id: "card".into(),
+            data: FacetDataSource::default(),
+            bindings: vec![],
+            variant_rules: vec![],
+            layout: FacetLayout::default(),
+            resolved_data: None,
+        };
+
+        apply_facet_edit(&mut def, "script_language", "visual-graph");
+        match &def.kind {
+            FacetKind::Script {
+                language, graph, ..
+            } => {
+                assert_eq!(*language, ScriptLanguage::VisualGraph);
+                assert!(
+                    graph.is_some(),
+                    "switching to visual-graph should decompile existing source"
+                );
+            }
+            _ => panic!("expected Script kind"),
+        }
     }
 }

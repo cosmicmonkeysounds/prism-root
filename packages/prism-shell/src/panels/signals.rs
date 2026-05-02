@@ -383,6 +383,10 @@ fn field_kind_to_entity_field_type(kind: &FieldKind) -> EntityFieldType {
         FieldKind::Integer { .. } => EntityFieldType::Int,
         FieldKind::Boolean => EntityFieldType::Bool,
         FieldKind::File { .. } => EntityFieldType::File,
+        FieldKind::Date | FieldKind::DateTime => EntityFieldType::Date,
+        FieldKind::Duration => EntityFieldType::Int,
+        FieldKind::Currency { .. } => EntityFieldType::Float,
+        FieldKind::Calculation { .. } => EntityFieldType::String,
     }
 }
 

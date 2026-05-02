@@ -21,7 +21,7 @@ use crate::document::Node;
 use crate::html::Html;
 use crate::html_block::{HtmlBlock, HtmlRenderContext};
 use crate::prefab::{apply_prop_to_node, PrefabDef};
-use crate::registry::FieldSpec;
+use crate::registry::{FieldKind, FieldSpec};
 use crate::resource::ResourceId;
 use crate::signal::{common_signals, SignalDef};
 use crate::slint_source::SlintEmitter;
@@ -37,54 +37,7 @@ pub struct FacetSchema {
     #[serde(default)]
     pub description: String,
     #[serde(default)]
-    pub fields: Vec<SchemaField>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SchemaField {
-    pub key: String,
-    pub label: String,
-    pub kind: SchemaFieldKind,
-    #[serde(default)]
-    pub required: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default_value: Option<Value>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "kebab-case")]
-pub enum SchemaFieldKind {
-    #[default]
-    Text,
-    Number {
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        min: Option<f64>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        max: Option<f64>,
-    },
-    Integer {
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        min: Option<i64>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        max: Option<i64>,
-    },
-    Boolean,
-    Date,
-    Color,
-    Image,
-    Url,
-    Select {
-        options: Vec<SchemaSelectOption>,
-    },
-    Calculation {
-        formula: String,
-    },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SchemaSelectOption {
-    pub value: String,
-    pub label: String,
+    pub fields: Vec<FieldSpec>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -131,18 +84,18 @@ impl FacetSchema {
             }
             if let Some(val) = val {
                 match &field.kind {
-                    SchemaFieldKind::Number { min, max } => {
+                    FieldKind::Number(bounds) => {
                         if let Some(n) = val.as_f64() {
-                            if let Some(lo) = min {
-                                if n < *lo {
+                            if let Some(lo) = bounds.min {
+                                if n < lo {
                                     errors.push(ValidationError {
                                         field: field.key.clone(),
                                         message: format!("must be >= {lo}"),
                                     });
                                 }
                             }
-                            if let Some(hi) = max {
-                                if n > *hi {
+                            if let Some(hi) = bounds.max {
+                                if n > hi {
                                     errors.push(ValidationError {
                                         field: field.key.clone(),
                                         message: format!("must be <= {hi}"),
@@ -151,18 +104,18 @@ impl FacetSchema {
                             }
                         }
                     }
-                    SchemaFieldKind::Integer { min, max } => {
+                    FieldKind::Integer(bounds) => {
                         if let Some(n) = val.as_i64() {
-                            if let Some(lo) = min {
-                                if n < *lo {
+                            if let Some(lo) = bounds.min {
+                                if (n as f64) < lo {
                                     errors.push(ValidationError {
                                         field: field.key.clone(),
                                         message: format!("must be >= {lo}"),
                                     });
                                 }
                             }
-                            if let Some(hi) = max {
-                                if n > *hi {
+                            if let Some(hi) = bounds.max {
+                                if (n as f64) > hi {
                                     errors.push(ValidationError {
                                         field: field.key.clone(),
                                         message: format!("must be <= {hi}"),
@@ -171,7 +124,7 @@ impl FacetSchema {
                             }
                         }
                     }
-                    SchemaFieldKind::Select { options } => {
+                    FieldKind::Select(options) => {
                         if let Some(s) = val.as_str() {
                             if !s.is_empty() && !options.iter().any(|o| o.value == s) {
                                 errors.push(ValidationError {
@@ -191,13 +144,14 @@ impl FacetSchema {
     pub fn default_record(&self, id: impl Into<String>) -> FacetRecord {
         let mut fields = IndexMap::new();
         for field in &self.fields {
-            if matches!(field.kind, SchemaFieldKind::Calculation { .. }) {
+            if matches!(field.kind, FieldKind::Calculation { .. }) {
                 continue;
             }
-            let val = field
-                .default_value
-                .clone()
-                .unwrap_or_else(|| default_for_kind(&field.kind));
+            let val = if field.default != Value::Null {
+                field.default.clone()
+            } else {
+                default_for_kind(&field.kind)
+            };
             fields.insert(field.key.clone(), val);
         }
         FacetRecord {
@@ -207,21 +161,21 @@ impl FacetSchema {
     }
 }
 
-fn default_for_kind(kind: &SchemaFieldKind) -> Value {
+fn default_for_kind(kind: &FieldKind) -> Value {
     match kind {
-        SchemaFieldKind::Text | SchemaFieldKind::Date | SchemaFieldKind::Url => {
+        FieldKind::Text | FieldKind::TextArea | FieldKind::Date | FieldKind::DateTime => {
             Value::String(String::new())
         }
-        SchemaFieldKind::Number { .. } => Value::from(0.0),
-        SchemaFieldKind::Integer { .. } => Value::from(0),
-        SchemaFieldKind::Boolean => Value::Bool(false),
-        SchemaFieldKind::Color => Value::String("#000000".into()),
-        SchemaFieldKind::Image => Value::Null,
-        SchemaFieldKind::Select { options } => options
+        FieldKind::Number(_) | FieldKind::Currency { .. } => Value::from(0.0),
+        FieldKind::Integer(_) | FieldKind::Duration => Value::from(0),
+        FieldKind::Boolean => Value::Bool(false),
+        FieldKind::Color => Value::String("#000000".into()),
+        FieldKind::File(_) => Value::Null,
+        FieldKind::Select(options) => options
             .first()
             .map(|o| Value::String(o.value.clone()))
             .unwrap_or(Value::String(String::new())),
-        SchemaFieldKind::Calculation { .. } => Value::Null,
+        FieldKind::Calculation { .. } => Value::Null,
     }
 }
 
@@ -748,7 +702,7 @@ fn evaluate_variant_rules(root: &mut Node, rules: &[FacetVariantRule], item: &Va
 
 /// Evaluate `Calculation` fields in a schema against each data item.
 ///
-/// For every `SchemaFieldKind::Calculation { formula }` field, builds an
+/// For every `FieldKind::Calculation { formula }` field, builds an
 /// expression context from the item's other fields and runs
 /// `evaluate_expression`. The result is stored back into the item.
 pub fn evaluate_calculations(items: &mut [Value], schema: &FacetSchema) {
@@ -756,7 +710,7 @@ pub fn evaluate_calculations(items: &mut [Value], schema: &FacetSchema) {
         .fields
         .iter()
         .filter_map(|f| match &f.kind {
-            SchemaFieldKind::Calculation { formula } if !formula.is_empty() => {
+            FieldKind::Calculation { formula } if !formula.is_empty() => {
                 Some((f.key.as_str(), formula.as_str()))
             }
             _ => None,
@@ -1027,7 +981,7 @@ mod tests {
     use serde_json::json;
 
     use crate::prefab::{ExposedSlot, PrefabDef};
-    use crate::registry::FieldSpec;
+    use crate::registry::{FieldSpec, NumericBounds, SelectOption};
 
     fn hero_prefab() -> PrefabDef {
         PrefabDef {
@@ -1369,41 +1323,17 @@ mod tests {
             label: "Test Schema".into(),
             description: String::new(),
             fields: vec![
-                SchemaField {
-                    key: "title".into(),
-                    label: "Title".into(),
-                    kind: SchemaFieldKind::Text,
-                    required: true,
-                    default_value: None,
-                },
-                SchemaField {
-                    key: "count".into(),
-                    label: "Count".into(),
-                    kind: SchemaFieldKind::Integer {
-                        min: Some(0),
-                        max: Some(100),
-                    },
-                    required: false,
-                    default_value: Some(json!(0)),
-                },
-                SchemaField {
-                    key: "status".into(),
-                    label: "Status".into(),
-                    kind: SchemaFieldKind::Select {
-                        options: vec![
-                            SchemaSelectOption {
-                                value: "active".into(),
-                                label: "Active".into(),
-                            },
-                            SchemaSelectOption {
-                                value: "archived".into(),
-                                label: "Archived".into(),
-                            },
-                        ],
-                    },
-                    required: false,
-                    default_value: None,
-                },
+                FieldSpec::text("title", "Title").required(),
+                FieldSpec::integer("count", "Count", NumericBounds::min_max(0.0, 100.0))
+                    .with_default(json!(0)),
+                FieldSpec::select(
+                    "status",
+                    "Status",
+                    vec![
+                        SelectOption::new("active", "Active"),
+                        SelectOption::new("archived", "Archived"),
+                    ],
+                ),
             ],
         }
     }
@@ -1435,25 +1365,8 @@ mod tests {
             label: "With Calc".into(),
             description: String::new(),
             fields: vec![
-                SchemaField {
-                    key: "price".into(),
-                    label: "Price".into(),
-                    kind: SchemaFieldKind::Number {
-                        min: None,
-                        max: None,
-                    },
-                    required: false,
-                    default_value: None,
-                },
-                SchemaField {
-                    key: "total".into(),
-                    label: "Total".into(),
-                    kind: SchemaFieldKind::Calculation {
-                        formula: "price * 2".into(),
-                    },
-                    required: false,
-                    default_value: None,
-                },
+                FieldSpec::number("price", "Price", NumericBounds::unbounded()),
+                FieldSpec::calculation("total", "Total", "price * 2"),
             ],
         };
         let rec = schema.default_record("rec:1");
@@ -1799,9 +1712,9 @@ mod tests {
     }
 
     #[test]
-    fn schema_field_kind_default_is_text() {
-        let kind = SchemaFieldKind::default();
-        assert!(matches!(kind, SchemaFieldKind::Text));
+    fn field_kind_text_is_default_builder() {
+        let spec = FieldSpec::text("test", "Test");
+        assert!(matches!(spec.kind, FieldKind::Text));
     }
 
     // ── Calculation field tests ──────────────────────────────────────
@@ -1813,35 +1726,9 @@ mod tests {
             label: "Test".into(),
             description: String::new(),
             fields: vec![
-                SchemaField {
-                    key: "price".into(),
-                    label: "Price".into(),
-                    kind: SchemaFieldKind::Number {
-                        min: None,
-                        max: None,
-                    },
-                    required: false,
-                    default_value: None,
-                },
-                SchemaField {
-                    key: "qty".into(),
-                    label: "Quantity".into(),
-                    kind: SchemaFieldKind::Integer {
-                        min: None,
-                        max: None,
-                    },
-                    required: false,
-                    default_value: None,
-                },
-                SchemaField {
-                    key: "total".into(),
-                    label: "Total".into(),
-                    kind: SchemaFieldKind::Calculation {
-                        formula: "price * qty".into(),
-                    },
-                    required: false,
-                    default_value: None,
-                },
+                FieldSpec::number("price", "Price", NumericBounds::unbounded()),
+                FieldSpec::integer("qty", "Quantity", NumericBounds::unbounded()),
+                FieldSpec::calculation("total", "Total", "price * qty"),
             ],
         };
 
@@ -1863,29 +1750,9 @@ mod tests {
             label: "Test".into(),
             description: String::new(),
             fields: vec![
-                SchemaField {
-                    key: "first".into(),
-                    label: "First".into(),
-                    kind: SchemaFieldKind::Text,
-                    required: false,
-                    default_value: None,
-                },
-                SchemaField {
-                    key: "last".into(),
-                    label: "Last".into(),
-                    kind: SchemaFieldKind::Text,
-                    required: false,
-                    default_value: None,
-                },
-                SchemaField {
-                    key: "full".into(),
-                    label: "Full Name".into(),
-                    kind: SchemaFieldKind::Calculation {
-                        formula: "concat(first, \" \", last)".into(),
-                    },
-                    required: false,
-                    default_value: None,
-                },
+                FieldSpec::text("first", "First"),
+                FieldSpec::text("last", "Last"),
+                FieldSpec::calculation("full", "Full Name", "concat(first, \" \", last)"),
             ],
         };
 
@@ -1900,15 +1767,7 @@ mod tests {
             id: "s3".into(),
             label: "Test".into(),
             description: String::new(),
-            fields: vec![SchemaField {
-                key: "calc".into(),
-                label: "Calc".into(),
-                kind: SchemaFieldKind::Calculation {
-                    formula: String::new(),
-                },
-                required: false,
-                default_value: None,
-            }],
+            fields: vec![FieldSpec::calculation("calc", "Calc", String::new())],
         };
 
         let mut items = vec![json!({"x": 1})];
@@ -1922,13 +1781,7 @@ mod tests {
             id: "s4".into(),
             label: "Test".into(),
             description: String::new(),
-            fields: vec![SchemaField {
-                key: "name".into(),
-                label: "Name".into(),
-                kind: SchemaFieldKind::Text,
-                required: false,
-                default_value: None,
-            }],
+            fields: vec![FieldSpec::text("name", "Name")],
         };
 
         let mut items = vec![json!({"name": "x"})];
@@ -1943,15 +1796,7 @@ mod tests {
             id: "s5".into(),
             label: "Test".into(),
             description: String::new(),
-            fields: vec![SchemaField {
-                key: "calc".into(),
-                label: "Calc".into(),
-                kind: SchemaFieldKind::Calculation {
-                    formula: "1 + 1".into(),
-                },
-                required: false,
-                default_value: None,
-            }],
+            fields: vec![FieldSpec::calculation("calc", "Calc", "1 + 1")],
         };
 
         let mut items = vec![json!(42), json!("hello"), json!(null)];
@@ -1980,15 +1825,7 @@ mod tests {
                 id: "s1".into(),
                 label: "Products".into(),
                 description: String::new(),
-                fields: vec![SchemaField {
-                    key: "total".into(),
-                    label: "Total".into(),
-                    kind: SchemaFieldKind::Calculation {
-                        formula: "price * qty".into(),
-                    },
-                    required: false,
-                    default_value: None,
-                }],
+                fields: vec![FieldSpec::calculation("total", "Total", "price * qty")],
             },
         );
 
@@ -2025,15 +1862,7 @@ mod tests {
                 id: "s1".into(),
                 label: "Products".into(),
                 description: String::new(),
-                fields: vec![SchemaField {
-                    key: "total".into(),
-                    label: "Total".into(),
-                    kind: SchemaFieldKind::Calculation {
-                        formula: "price * qty".into(),
-                    },
-                    required: false,
-                    default_value: None,
-                }],
+                fields: vec![FieldSpec::calculation("total", "Total", "price * qty")],
             },
         );
 

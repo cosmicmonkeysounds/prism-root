@@ -1,5 +1,6 @@
 use prism_builder::BuilderDocument;
-use prism_builder::{FacetSchema, SchemaFieldKind};
+use prism_builder::FacetSchema;
+use prism_core::widget::{FieldKind, FileFieldConfig, NumericBounds};
 
 use super::properties::FieldRowData;
 
@@ -99,7 +100,7 @@ impl SchemaDesignerPanel {
                 has_bounds: false,
                 options: vec![],
             });
-            if let SchemaFieldKind::Calculation { formula } = &field.kind {
+            if let FieldKind::Calculation { formula } = &field.kind {
                 rows.push(FieldRowData {
                     key: format!("schema.field.{i}.formula"),
                     label: "Formula".into(),
@@ -132,47 +133,41 @@ const FIELD_KIND_OPTIONS: &[&str] = &[
     "date",
     "color",
     "image",
-    "url",
     "select",
     "calculation",
 ];
 
-fn kind_to_string(kind: &SchemaFieldKind) -> String {
+fn kind_to_string(kind: &FieldKind) -> String {
     match kind {
-        SchemaFieldKind::Text => "text",
-        SchemaFieldKind::Number { .. } => "number",
-        SchemaFieldKind::Integer { .. } => "integer",
-        SchemaFieldKind::Boolean => "boolean",
-        SchemaFieldKind::Date => "date",
-        SchemaFieldKind::Color => "color",
-        SchemaFieldKind::Image => "image",
-        SchemaFieldKind::Url => "url",
-        SchemaFieldKind::Select { .. } => "select",
-        SchemaFieldKind::Calculation { .. } => "calculation",
+        FieldKind::Text | FieldKind::TextArea => "text",
+        FieldKind::Number(_) | FieldKind::Currency { .. } => "number",
+        FieldKind::Integer(_) | FieldKind::Duration => "integer",
+        FieldKind::Boolean => "boolean",
+        FieldKind::Date | FieldKind::DateTime => "date",
+        FieldKind::Color => "color",
+        FieldKind::File(_) => "image",
+        FieldKind::Select(_) => "select",
+        FieldKind::Calculation { .. } => "calculation",
     }
     .into()
 }
 
-pub fn kind_from_string(s: &str) -> SchemaFieldKind {
+pub fn kind_from_string(s: &str) -> FieldKind {
     match s {
-        "number" => SchemaFieldKind::Number {
-            min: None,
-            max: None,
-        },
-        "integer" => SchemaFieldKind::Integer {
-            min: None,
-            max: None,
-        },
-        "boolean" => SchemaFieldKind::Boolean,
-        "date" => SchemaFieldKind::Date,
-        "color" => SchemaFieldKind::Color,
-        "image" => SchemaFieldKind::Image,
-        "url" => SchemaFieldKind::Url,
-        "select" => SchemaFieldKind::Select { options: vec![] },
-        "calculation" => SchemaFieldKind::Calculation {
+        "number" => FieldKind::Number(NumericBounds::unbounded()),
+        "integer" => FieldKind::Integer(NumericBounds::unbounded()),
+        "boolean" => FieldKind::Boolean,
+        "date" => FieldKind::Date,
+        "color" => FieldKind::Color,
+        "image" => FieldKind::File(FileFieldConfig {
+            accept: vec!["image/*".into()],
+        }),
+        "url" => FieldKind::Text,
+        "select" => FieldKind::Select(vec![]),
+        "calculation" => FieldKind::Calculation {
             formula: String::new(),
         },
-        _ => SchemaFieldKind::Text,
+        _ => FieldKind::Text,
     }
 }
 
@@ -191,8 +186,7 @@ pub fn apply_schema_edit(schema: &mut FacetSchema, key: &str, value: &str) {
                             "kind" => field.kind = kind_from_string(value),
                             "required" => field.required = value == "true",
                             "formula" => {
-                                if let SchemaFieldKind::Calculation { ref mut formula } = field.kind
-                                {
+                                if let FieldKind::Calculation { ref mut formula } = field.kind {
                                     *formula = value.to_string();
                                 }
                             }
@@ -209,7 +203,7 @@ pub fn apply_schema_edit(schema: &mut FacetSchema, key: &str, value: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prism_builder::SchemaField;
+    use prism_core::widget::FieldSpec;
 
     fn test_schema() -> FacetSchema {
         FacetSchema {
@@ -217,23 +211,8 @@ mod tests {
             label: "Test".into(),
             description: String::new(),
             fields: vec![
-                SchemaField {
-                    key: "title".into(),
-                    label: "Title".into(),
-                    kind: SchemaFieldKind::Text,
-                    required: true,
-                    default_value: None,
-                },
-                SchemaField {
-                    key: "count".into(),
-                    label: "Count".into(),
-                    kind: SchemaFieldKind::Integer {
-                        min: Some(0),
-                        max: Some(100),
-                    },
-                    required: false,
-                    default_value: None,
-                },
+                FieldSpec::text("title", "Title").required(),
+                FieldSpec::integer("count", "Count", NumericBounds::min_max(0.0, 100.0)),
             ],
         }
     }
@@ -273,10 +252,7 @@ mod tests {
     fn apply_schema_edit_changes_field_kind() {
         let mut schema = test_schema();
         apply_schema_edit(&mut schema, "field.0.kind", "number");
-        assert!(matches!(
-            schema.fields[0].kind,
-            SchemaFieldKind::Number { .. }
-        ));
+        assert!(matches!(schema.fields[0].kind, FieldKind::Number(_)));
     }
 
     #[test]
@@ -311,15 +287,7 @@ mod tests {
             id: "s:calc".into(),
             label: "Calc".into(),
             description: String::new(),
-            fields: vec![SchemaField {
-                key: "total".into(),
-                label: "Total".into(),
-                kind: SchemaFieldKind::Calculation {
-                    formula: "price * qty".into(),
-                },
-                required: false,
-                default_value: None,
-            }],
+            fields: vec![FieldSpec::calculation("total", "Total", "price * qty")],
         };
         let rows = SchemaDesignerPanel::field_rows(&schema);
         let formula_row = rows.iter().find(|r| r.key == "schema.field.0.formula");
@@ -333,19 +301,11 @@ mod tests {
             id: "s:calc".into(),
             label: "Calc".into(),
             description: String::new(),
-            fields: vec![SchemaField {
-                key: "total".into(),
-                label: "Total".into(),
-                kind: SchemaFieldKind::Calculation {
-                    formula: "a + b".into(),
-                },
-                required: false,
-                default_value: None,
-            }],
+            fields: vec![FieldSpec::calculation("total", "Total", "a + b")],
         };
         apply_schema_edit(&mut schema, "field.0.formula", "price * qty");
         match &schema.fields[0].kind {
-            SchemaFieldKind::Calculation { formula } => {
+            FieldKind::Calculation { formula } => {
                 assert_eq!(formula, "price * qty");
             }
             _ => panic!("expected Calculation kind"),

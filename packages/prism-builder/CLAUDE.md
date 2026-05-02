@@ -236,22 +236,30 @@ Twenty-five modules in `src/` (excluding `lib.rs`):
 - `facet.rs` — `FacetDef`, `FacetKind` (List/ObjectQuery/Script/
   Aggregate/Lookup), `FacetDataSource` (Static/Resource/Query),
   `FacetBinding`, `FacetLayout`, `AggregateOp` (Count/Sum/Min/Max/
-  Avg/Join), `ScriptLanguage` (Luau), `FacetComponent` (Slint),
-  `FacetHtmlBlock` (HTML), `ResolvedFacetData` (Items/Single).
+  Avg/Join), `ScriptLanguage` (Luau/VisualGraph),
+  `FacetVariantRule` (field condition → axis value mapping),
+  `FacetComponent` (Slint), `FacetHtmlBlock` (HTML),
+  `ResolvedFacetData` (Items/Single).
   Each kind resolves data differently: List uses FacetDataSource,
   Aggregate reduces to a single value via `apply_aggregate`,
   ObjectQuery/Script/Lookup use pre-resolved `resolved_data` from
-  the shell layer. `Query` variant filters (`"field == val"`,
-  `"field != val"`, `"field"` truthy) and sorts (ascending `"field"`
-  or descending `"-field"`) a resource array without mutating it.
+  the shell layer. Script kind supports both Luau source and
+  `VisualGraph` (stores a `ScriptGraph`, compiled to Luau at
+  resolution time via `LuauVisualLanguage`). `Query` variant
+  filters (`"field == val"`, `"field != val"`, `"field"` truthy)
+  and sorts (ascending `"field"` or descending `"-field"`) a
+  resource array without mutating it.
   `evaluate_calculations(&mut items, &schema)` evaluates
   `SchemaFieldKind::Calculation { formula }` fields via
   `prism_core::language::expression::evaluate_expression`, wired
   into `resolve_items()` when a schema with calc fields is set.
+  `evaluate_variant_rules(root, rules, item)` conditionally sets
+  axis key props on cloned prefab roots per data item, triggering
+  the variant system's `apply_variant_defaults`.
   `FacetSchema`, `SchemaField`, `SchemaFieldKind`, `FacetRecord`,
   `ValidationError` — typed schema system with validation and
   default record generation. `FACET_KIND_TAGS`, `AGGREGATE_OP_TAGS`
-  — string constants for UI dropdowns. 59 unit tests.
+  — string constants for UI dropdowns. 68 unit tests.
 - `project.rs` — `ProjectFile`, `SavedApp`, `SavedPage`,
   `FILE_EXTENSION`, `FORMAT_VERSION`. Portable `.prism` file format
   with `from_apps`/`into_apps` conversion. `SavedPage` serializes

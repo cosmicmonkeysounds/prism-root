@@ -212,9 +212,14 @@ fn field_kind_to_luau_type(kind: &FieldKind) -> &'static str {
         FieldKind::Text | FieldKind::TextArea | FieldKind::Color | FieldKind::Select { .. } => {
             "string"
         }
-        FieldKind::Number { .. } | FieldKind::Integer { .. } => "number",
+        FieldKind::Number { .. }
+        | FieldKind::Integer { .. }
+        | FieldKind::Duration
+        | FieldKind::Currency { .. } => "number",
         FieldKind::Boolean => "boolean",
         FieldKind::File { .. } => "string",
+        FieldKind::Date | FieldKind::DateTime => "string",
+        FieldKind::Calculation { .. } => "any",
     }
 }
 
