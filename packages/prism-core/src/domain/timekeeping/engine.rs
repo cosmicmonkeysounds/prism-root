@@ -386,8 +386,9 @@ impl Stopwatch {
 
 pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
     use crate::widget::{
-        FieldSpec, LayoutDirection, NumericBounds, SelectOption, SignalSpec, TemplateNode,
-        ToolbarAction, WidgetCategory, WidgetContribution, WidgetSize, WidgetTemplate,
+        DataQuery, FieldSpec, LayoutDirection, NumericBounds, QuerySort, SelectOption, SignalSpec,
+        TemplateNode, ToolbarAction, WidgetCategory, WidgetContribution, WidgetSize,
+        WidgetTemplate,
     };
     use serde_json::json;
 
@@ -472,6 +473,21 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
             ],
             default_size: WidgetSize::new(2, 2),
             min_size: Some(WidgetSize::new(1, 1)),
+            data_query: Some(DataQuery {
+                object_type: Some("time_entry".into()),
+                sort: vec![QuerySort {
+                    field: "date".into(),
+                    descending: true,
+                }],
+                limit: Some(20),
+                ..Default::default()
+            }),
+            data_key: Some("entries".into()),
+            data_fields: vec![
+                FieldSpec::text("project", "Project"),
+                FieldSpec::text("date", "Date"),
+                FieldSpec::number("duration_ms", "Duration (ms)", NumericBounds::unbounded()),
+            ],
             template: WidgetTemplate {
                 root: TemplateNode::Container {
                     direction: LayoutDirection::Vertical,

@@ -100,6 +100,11 @@ pub struct RenderSlintContext<'a> {
     /// second pass outside the parent's layout element so the Slint
     /// compiler doesn't reject the x/y properties.
     skip_positioned: Cell<bool>,
+    /// Pre-resolved widget data keyed by node ID. Populated by the
+    /// shell's `resolve_widget_data` for nodes backed by
+    /// `CoreWidgetComponent`s that declare a `data_query`. Merged
+    /// into props in `render_child` before template rendering.
+    pub widget_data: HashMap<String, Value>,
 }
 
 impl<'a> RenderSlintContext<'a> {
@@ -126,6 +131,7 @@ impl<'a> RenderSlintContext<'a> {
             current_style: RefCell::new(StyleProperties::default()),
             asset_paths: HashMap::new(),
             skip_positioned: Cell::new(false),
+            widget_data: HashMap::new(),
         }
     }
 
@@ -168,7 +174,14 @@ impl<'a> RenderSlintContext<'a> {
             .get(&child.component)
             .ok_or_else(|| RenderError::UnknownComponent(child.component.clone()))?;
 
-        let props = crate::resource::resolve_resource_refs(&child.props, self.resources);
+        let mut props = crate::resource::resolve_resource_refs(&child.props, self.resources);
+        if let Some(data) = self.widget_data.get(&child.id) {
+            if let (Some(target), Some(source)) = (props.as_object_mut(), data.as_object()) {
+                for (k, v) in source {
+                    target.insert(k.clone(), v.clone());
+                }
+            }
+        }
         let props = crate::variant::apply_variant_defaults(&props, &component.variants());
 
         *self.current_style.borrow_mut() = child.style.clone();

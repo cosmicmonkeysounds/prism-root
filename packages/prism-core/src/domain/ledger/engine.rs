@@ -736,8 +736,9 @@ impl<A: LedgerAdapter> LedgerBook<A> {
 
 pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
     use crate::widget::{
-        FieldSpec, LayoutDirection, NumericBounds, SelectOption, SignalSpec, TemplateNode,
-        ToolbarAction, WidgetCategory, WidgetContribution, WidgetSize, WidgetTemplate,
+        DataQuery, FieldSpec, LayoutDirection, NumericBounds, QuerySort, SelectOption, SignalSpec,
+        TemplateNode, ToolbarAction, WidgetCategory, WidgetContribution, WidgetSize,
+        WidgetTemplate,
     };
     use serde_json::json;
 
@@ -768,6 +769,16 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
             ],
             toolbar_actions: vec![ToolbarAction::signal("refresh", "Refresh", "refresh")],
             default_size: WidgetSize::new(2, 1),
+            data_query: Some(DataQuery {
+                object_type: Some("account".into()),
+                ..Default::default()
+            }),
+            data_key: Some("accounts".into()),
+            data_fields: vec![
+                FieldSpec::text("name", "Name"),
+                FieldSpec::text("account_class", "Class"),
+                FieldSpec::number("balance", "Balance", NumericBounds::unbounded()),
+            ],
             template: WidgetTemplate {
                 root: TemplateNode::Container {
                     direction: LayoutDirection::Vertical,
@@ -810,6 +821,21 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
                 ToolbarAction::signal("export", "Export", "export"),
             ],
             default_size: WidgetSize::new(2, 2),
+            data_query: Some(DataQuery {
+                object_type: Some("transaction".into()),
+                sort: vec![QuerySort {
+                    field: "date".into(),
+                    descending: true,
+                }],
+                limit: Some(20),
+                ..Default::default()
+            }),
+            data_key: Some("transactions".into()),
+            data_fields: vec![
+                FieldSpec::text("description", "Description"),
+                FieldSpec::text("date", "Date"),
+                FieldSpec::number("amount", "Amount", NumericBounds::unbounded()),
+            ],
             template: WidgetTemplate {
                 root: TemplateNode::Container {
                     direction: LayoutDirection::Vertical,
@@ -847,6 +873,11 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
                 ToolbarAction::signal("export", "Export", "export"),
             ],
             default_size: WidgetSize::new(3, 2),
+            data_query: Some(DataQuery {
+                object_type: Some("account".into()),
+                ..Default::default()
+            }),
+            data_key: Some("accounts".into()),
             template: WidgetTemplate {
                 root: TemplateNode::Container {
                     direction: LayoutDirection::Horizontal,
@@ -915,6 +946,15 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
             ],
             toolbar_actions: vec![ToolbarAction::signal("refresh", "Refresh", "refresh")],
             default_size: WidgetSize::new(3, 2),
+            data_query: Some(DataQuery {
+                object_type: Some("transaction".into()),
+                sort: vec![QuerySort {
+                    field: "date".into(),
+                    descending: true,
+                }],
+                ..Default::default()
+            }),
+            data_key: Some("transactions".into()),
             template: WidgetTemplate {
                 root: TemplateNode::Container {
                     direction: LayoutDirection::Vertical,

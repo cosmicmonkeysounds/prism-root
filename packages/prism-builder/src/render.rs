@@ -309,6 +309,26 @@ pub fn render_document_slint_preview_with_assets(
     tokens: &DesignTokens,
     asset_paths: std::collections::HashMap<String, std::path::PathBuf>,
 ) -> Result<String, RenderError> {
+    render_document_slint_preview_with_assets_and_data(
+        doc,
+        registry,
+        tokens,
+        asset_paths,
+        std::collections::HashMap::new(),
+    )
+}
+
+/// Like [`render_document_slint_preview_with_assets`] but also accepts
+/// pre-resolved widget data. Nodes whose ID appears in `widget_data`
+/// get the resolved data merged into their props before template
+/// rendering — the unified pipeline for `WidgetContribution.data_query`.
+pub fn render_document_slint_preview_with_assets_and_data(
+    doc: &BuilderDocument,
+    registry: &ComponentRegistry,
+    tokens: &DesignTokens,
+    asset_paths: std::collections::HashMap<String, std::path::PathBuf>,
+    widget_data: std::collections::HashMap<String, serde_json::Value>,
+) -> Result<String, RenderError> {
     let mut ctx = RenderSlintContext::new(
         tokens,
         registry,
@@ -319,6 +339,7 @@ pub fn render_document_slint_preview_with_assets(
         false,
     );
     ctx.asset_paths = asset_paths;
+    ctx.widget_data = widget_data;
     let mut out = SlintEmitter::new();
     out.line("// Auto-generated preview by prism_builder.");
     out.blank();

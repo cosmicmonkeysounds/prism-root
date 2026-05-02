@@ -17,12 +17,12 @@ use crate::signals::SignalRuntime;
 use prism_builder::AssetSource;
 use prism_builder::{
     app::{AppIcon, NavigationConfig, Page, PrismApp},
-    compile_slint_preview, compute_layout,
+    compile_slint_preview, compute_layout, render_document_slint_preview_with_assets_and_data,
     layout::{
         AbsoluteProps, AlignOption, Dimension, FlexDirection, FlowDisplay, FlowProps,
         GridPlacement, JustifyOption, LayoutMode, PageSize, TrackSize,
     },
-    path_from_string, preview_component_factory, render_document_slint_preview_with_assets,
+    path_from_string, preview_component_factory,
     starter::{builtin_prefab, card_prefab_def, materialize_prefab, register_builtins},
     AggregateOp, BuilderDocument, CellEdge, ComponentRegistry, DispatchResult, ExposedSlot,
     FacetBinding, FacetDataSource, FacetDef, FacetDirection, FacetKind, FacetLayout, FacetOutput,
@@ -4373,6 +4373,10 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
             .facets
             .values()
             .any(|f| f.is_scalar());
+        #[cfg(feature = "native")]
+        let widget_data = resolve_widget_data(&state.builder_document, &inner.collection);
+        #[cfg(not(feature = "native"))]
+        let widget_data = HashMap::new();
         let needs_clone = has_dynamic_facets || has_scalar_facets;
         let resolved_doc = if needs_clone {
             let mut doc = state.builder_document.clone();
@@ -4393,6 +4397,7 @@ fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
             &inner.registry,
             &state.tokens,
             &inner.vfs,
+            &widget_data,
         );
         push_live_preview(
             &inner.models,
@@ -4821,6 +4826,7 @@ fn push_wysiwyg_preview(
     registry: &ComponentRegistry,
     tokens: &DesignTokens,
     vfs: &VfsManager,
+    widget_data: &HashMap<String, serde_json::Value>,
 ) {
     if doc.root.is_none() {
         window.set_preview_factory_ready(false);
@@ -4833,7 +4839,13 @@ fn push_wysiwyg_preview(
         doc.page_layout.leaf_count(),
         doc.root.as_ref().map(|r| r.children.len()).unwrap_or(0),
     );
-    match render_document_slint_preview_with_assets(doc, registry, tokens, asset_paths) {
+    match render_document_slint_preview_with_assets_and_data(
+        doc,
+        registry,
+        tokens,
+        asset_paths,
+        widget_data.clone(),
+    ) {
         Ok(source) => {
             eprintln!("[preview] source:\n{source}");
             match compile_slint_preview(&source) {
@@ -6519,6 +6531,85 @@ fn resolve_facet_data(doc: &mut BuilderDocument, collection: &CollectionStore) {
             _ => {}
         }
     }
+}
+
+/// Resolve `data_query` for core widget nodes. Walks the document tree,
+/// finds nodes whose component has a declared `data_query` + `data_key`,
+/// queries the `CollectionStore`, and returns a map of node_id → resolved
+/// data `Value` (an object with the `data_key` mapped to the result array).
+///
+/// Follows the same pre-resolution pattern as [`resolve_facet_data`]:
+/// the shell resolves data before the render walker runs, and the
+/// render context merges it into node props via `widget_data`.
+#[cfg(feature = "native")]
+fn resolve_widget_data(
+    doc: &BuilderDocument,
+    collection: &CollectionStore,
+) -> HashMap<String, serde_json::Value> {
+    use prism_builder::core_widget::collect_all_contributions;
+
+    let contributions = collect_all_contributions();
+    let contrib_map: HashMap<&str, &prism_core::widget::WidgetContribution> = contributions
+        .iter()
+        .filter(|c| c.data_query.is_some() && c.data_key.is_some())
+        .map(|c| (c.id.as_str(), c))
+        .collect();
+
+    if contrib_map.is_empty() {
+        return HashMap::new();
+    }
+
+    let mut result = HashMap::new();
+    fn walk_nodes(
+        node: &Node,
+        contrib_map: &HashMap<&str, &prism_core::widget::WidgetContribution>,
+        collection: &CollectionStore,
+        result: &mut HashMap<String, serde_json::Value>,
+    ) {
+        if let Some(contrib) = contrib_map.get(node.component.as_str()) {
+            let query = contrib.data_query.as_ref().unwrap();
+            let data_key = contrib.data_key.as_ref().unwrap();
+
+            let mut items: Vec<serde_json::Value> = if let Some(obj_type) = &query.object_type {
+                if obj_type.is_empty() {
+                    Vec::new()
+                } else {
+                    collection
+                        .list_objects(Some(&ObjectFilter {
+                            types: Some(vec![obj_type.clone()]),
+                            exclude_deleted: true,
+                            ..Default::default()
+                        }))
+                        .iter()
+                        .filter_map(|obj| serde_json::to_value(obj).ok())
+                        .collect()
+                }
+            } else {
+                collection
+                    .list_objects(Some(&ObjectFilter {
+                        exclude_deleted: true,
+                        ..Default::default()
+                    }))
+                    .iter()
+                    .filter_map(|obj| serde_json::to_value(obj).ok())
+                    .collect()
+            };
+
+            query.apply(&mut items);
+            result.insert(
+                node.id.clone(),
+                serde_json::json!({ data_key: items }),
+            );
+        }
+        for child in &node.children {
+            walk_nodes(child, &contrib_map, collection, result);
+        }
+    }
+
+    if let Some(root) = &doc.root {
+        walk_nodes(root, &contrib_map, collection, &mut result);
+    }
+    result
 }
 
 /// Build a Luau script that includes the signal handler stdlib, the

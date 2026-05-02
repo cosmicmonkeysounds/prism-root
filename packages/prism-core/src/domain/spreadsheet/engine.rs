@@ -1167,7 +1167,7 @@ fn json_to_cell_value(val: &Value) -> CellValue {
 
 pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
     use crate::widget::{
-        FieldSpec, LayoutDirection, NumericBounds, SelectOption, SignalSpec, TemplateNode,
+        DataQuery, FieldSpec, LayoutDirection, NumericBounds, SelectOption, SignalSpec, TemplateNode,
         ToolbarAction, VariantOptionSpec, VariantSpec, WidgetCategory, WidgetContribution,
         WidgetSize, WidgetTemplate,
     };
@@ -1229,6 +1229,11 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
                 ],
             }],
             default_size: WidgetSize::new(3, 2),
+            data_query: Some(DataQuery {
+                object_type: Some("row".into()),
+                ..Default::default()
+            }),
+            data_key: Some("rows".into()),
             template: WidgetTemplate {
                 root: TemplateNode::Container {
                     direction: LayoutDirection::Vertical,

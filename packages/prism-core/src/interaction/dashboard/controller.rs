@@ -640,8 +640,9 @@ impl Default for WidgetRegistry {
 
 pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
     use crate::widget::{
-        FieldSpec, LayoutDirection, NumericBounds, SelectOption, SignalSpec, TemplateNode,
-        ToolbarAction, WidgetCategory, WidgetContribution, WidgetSize, WidgetTemplate,
+        DataQuery, FieldSpec, LayoutDirection, NumericBounds, QuerySort, SelectOption, SignalSpec,
+        TemplateNode, ToolbarAction, WidgetCategory, WidgetContribution, WidgetSize,
+        WidgetTemplate,
     };
     use serde_json::json;
 
@@ -685,6 +686,19 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
             description: "Active task list".into(),
             category: WidgetCategory::Display,
             default_size: WidgetSize::new(2, 1),
+            data_query: Some(DataQuery {
+                object_type: Some("task".into()),
+                sort: vec![QuerySort {
+                    field: "updated_at".into(),
+                    descending: true,
+                }],
+                ..Default::default()
+            }),
+            data_key: Some("tasks".into()),
+            data_fields: vec![
+                FieldSpec::text("title", "Title"),
+                FieldSpec::text("status", "Status"),
+            ],
             config_fields: vec![FieldSpec::select(
                 "filter",
                 "Filter",
@@ -768,6 +782,19 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
             description: "Recently visited items".into(),
             category: WidgetCategory::Display,
             default_size: WidgetSize::new(2, 1),
+            data_query: Some(DataQuery {
+                sort: vec![QuerySort {
+                    field: "updated_at".into(),
+                    descending: true,
+                }],
+                limit: Some(10),
+                ..Default::default()
+            }),
+            data_key: Some("items".into()),
+            data_fields: vec![
+                FieldSpec::text("title", "Title"),
+                FieldSpec::text("object_type", "Type"),
+            ],
             config_fields: vec![FieldSpec::number(
                 "limit",
                 "Items to show",

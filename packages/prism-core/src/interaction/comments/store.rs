@@ -437,8 +437,8 @@ fn thread_last_activity(root: &Comment, replies: &[Comment]) -> String {
 
 pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
     use crate::widget::{
-        FieldSpec, LayoutDirection, SelectOption, SignalSpec, TemplateNode, ToolbarAction,
-        WidgetCategory, WidgetContribution, WidgetSize, WidgetTemplate,
+        DataQuery, FieldSpec, LayoutDirection, SelectOption, SignalSpec, TemplateNode,
+        ToolbarAction, WidgetCategory, WidgetContribution, WidgetSize, WidgetTemplate,
     };
     use serde_json::json;
 
@@ -449,6 +449,11 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
             description: "Displays a comment thread for an object".into(),
             category: WidgetCategory::Communication,
             default_size: WidgetSize::new(2, 2),
+            data_query: Some(DataQuery {
+                object_type: Some("comment".into()),
+                ..Default::default()
+            }),
+            data_key: Some("threads".into()),
             config_fields: vec![
                 FieldSpec::text("object_id", "Object ID"),
                 FieldSpec::boolean("show_resolved", "Show Resolved"),
@@ -514,6 +519,11 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
             description: "Badge showing comment count for an object".into(),
             category: WidgetCategory::Communication,
             default_size: WidgetSize::new(1, 1),
+            data_query: Some(DataQuery {
+                object_type: Some("comment".into()),
+                ..Default::default()
+            }),
+            data_key: Some("comments".into()),
             config_fields: vec![FieldSpec::text("object_id", "Object ID")],
             signals: vec![SignalSpec::new("clicked", "Badge clicked")],
             template: WidgetTemplate {

@@ -47,6 +47,13 @@ pub struct WidgetContribution {
     pub max_size: Option<WidgetSize>,
 
     pub template: WidgetTemplate,
+
+    /// Prop key where resolved `data_query` results are stored.
+    /// When set alongside `data_query`, the shell resolves the query
+    /// and injects the result array at `props[data_key]` before
+    /// template rendering.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_key: Option<String>,
 }
 
 impl Default for WidgetContribution {
@@ -68,6 +75,7 @@ impl Default for WidgetContribution {
             min_size: None,
             max_size: None,
             template: WidgetTemplate::default(),
+            data_key: None,
         }
     }
 }
