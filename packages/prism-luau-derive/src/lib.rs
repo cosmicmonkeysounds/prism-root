@@ -39,9 +39,22 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{parse_macro_input, Data, DataEnum, DataStruct, DeriveInput, Field, Fields, Ident, Type};
 
+mod prism_block;
 mod prism_field;
 mod slint_binding;
 mod visual_node;
+
+/// Derive a `prism_builder::Block` impl from a struct exposing
+/// `schema()` and `template(props, children)` associated functions.
+/// Requires `#[block(id = "...")]` on the struct.
+#[proc_macro_derive(PrismBlock, attributes(block))]
+pub fn derive_prism_block(item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as DeriveInput);
+    match prism_block::expand(&input) {
+        Ok(ts) => ts.into(),
+        Err(e) => e.to_compile_error().into(),
+    }
+}
 
 /// Derive `field_specs() -> Vec<FieldSpec>` from a struct of typed
 /// props. See `prism_field` module for details.

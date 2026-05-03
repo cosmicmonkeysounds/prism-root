@@ -5,7 +5,7 @@
 
 use prism_core::language::visual::{DataType, PortDirection, PortKind, ScriptNodeKind};
 use prism_core::widget::field::{FieldKind, FieldSpec};
-use prism_luau_derive::{visual_node, PrismField};
+use prism_luau_derive::{visual_node, PrismBlock, PrismField};
 
 #[derive(PrismField)]
 #[allow(dead_code)]
@@ -40,10 +40,16 @@ fn prism_field_derive_emits_specs_in_order() {
         other => panic!("expected Select, got {other:?}"),
     }
 
-    assert_eq!(specs[0].default, serde_json::Value::String("Untitled".into()));
+    assert_eq!(
+        specs[0].default,
+        serde_json::Value::String("Untitled".into())
+    );
     assert_eq!(specs[2].default, serde_json::Value::from(1i64));
     assert_eq!(specs[3].default, serde_json::Value::Bool(true));
-    assert_eq!(specs[4].default, serde_json::Value::String("primary".into()));
+    assert_eq!(
+        specs[4].default,
+        serde_json::Value::String("primary".into())
+    );
 }
 
 #[test]
@@ -105,4 +111,77 @@ fn visual_node_uses_explicit_luau_template_when_provided() {
     let def = NOT_OP_NODE_DEF();
     assert_eq!(def.description, "not (a)");
     assert_eq!(def.category, "Logic");
+}
+
+// ── PrismBlock derive ───────────────────────────────────────────
+
+#[derive(PrismBlock, Default)]
+#[block(id = "demo-card")]
+struct DemoCardBlock;
+
+impl DemoCardBlock {
+    fn schema() -> Vec<FieldSpec> {
+        vec![FieldSpec::text("title", "Title")]
+    }
+
+    fn template(
+        _props: &serde_json::Value,
+        _children: &[prism_builder::Node],
+    ) -> prism_core::widget::TemplateNode {
+        use prism_core::widget::{LayoutDirection, TemplateNode};
+        TemplateNode::Container {
+            direction: LayoutDirection::Vertical,
+            gap: Some(8),
+            padding: Some(12),
+            children: vec![
+                TemplateNode::DataBinding {
+                    field: "title".into(),
+                    component_id: "text".into(),
+                    prop_key: "body".into(),
+                },
+                TemplateNode::Children,
+            ],
+        }
+    }
+}
+
+#[test]
+fn prism_block_derive_emits_block_impl_with_id_and_schema() {
+    use prism_builder::Block;
+    let block = DemoCardBlock;
+    assert_eq!(block.id(), "demo-card");
+    let schema = block.schema();
+    assert_eq!(schema.len(), 1);
+    assert_eq!(schema[0].key, "title");
+}
+
+#[test]
+fn prism_block_derive_renders_html_via_template_walker() {
+    use prism_builder::{Block, Html, HtmlRegistry, HtmlRenderContext};
+    let mut html_registry = HtmlRegistry::new();
+    prism_builder::register_html_builtins(&mut html_registry).unwrap();
+
+    let tokens = prism_core::design_tokens::DesignTokens::default();
+    let resources = indexmap::IndexMap::new();
+    let prefabs = indexmap::IndexMap::new();
+    let facets = indexmap::IndexMap::new();
+    let facet_schemas = indexmap::IndexMap::new();
+    let ctx = HtmlRenderContext {
+        tokens: &tokens,
+        registry: &html_registry,
+        resources: &resources,
+        prefabs: &prefabs,
+        facets: &facets,
+        facet_schemas: &facet_schemas,
+        widget_data: std::collections::HashMap::new(),
+    };
+
+    let block = DemoCardBlock;
+    let mut out = Html::new();
+    block
+        .render_html(&ctx, &serde_json::json!({"title": "Hello"}), &[], &mut out)
+        .unwrap();
+    let html = out.into_string();
+    assert!(html.contains("display:flex"));
+    assert!(html.contains("Hello"));
 }

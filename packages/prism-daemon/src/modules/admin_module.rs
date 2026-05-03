@@ -12,15 +12,48 @@
 
 use crate::builder::DaemonBuilder;
 use crate::module::DaemonModule;
-use crate::permission::Permission;
 use crate::registry::CommandError;
-use serde_json::{json, Value as JsonValue};
+use crate::typed_command::CommandRegistryExt;
+use serde::Serialize;
+use serde_json::Value as JsonValue;
 use std::sync::Arc;
 use std::time::Instant;
 
 /// Shared state for the admin module — tracks uptime.
 struct AdminState {
     started_at: Instant,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AdminSnapshot {
+    pub health: HealthSnapshot,
+    #[serde(rename = "uptimeSeconds")]
+    pub uptime_seconds: u64,
+    pub metrics: Vec<Metric>,
+    pub services: Vec<ServiceEntry>,
+    pub activity: Vec<JsonValue>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct HealthSnapshot {
+    pub level: &'static str,
+    pub label: &'static str,
+    pub detail: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Metric {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub value: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ServiceEntry {
+    pub id: String,
+    pub name: String,
+    pub health: &'static str,
+    pub status: &'static str,
 }
 
 pub struct AdminModule;
@@ -44,36 +77,28 @@ impl DaemonModule for AdminModule {
         let module_ids: Vec<String> = builder.module_ids.clone();
 
         let registry = builder.registry().clone();
-        // Clone for the closure — the outer `registry` is used for .register()
         let registry_inner = registry.clone();
         let admin_state = state.clone();
-        let mods = module_ids.clone();
+        let mods = module_ids;
 
-        registry.register_with_permission(
+        registry.register_typed_user(
             "daemon.admin",
-            Permission::User,
-            move |_payload: JsonValue| {
-                let uptime = admin_state.started_at.elapsed();
-                let uptime_seconds = uptime.as_secs();
+            move |_args: JsonValue| -> Result<AdminSnapshot, std::convert::Infallible> {
+                let uptime_seconds = admin_state.started_at.elapsed().as_secs();
 
-                // Derive the list of services from modules
-                let services: Vec<JsonValue> = mods
+                let services: Vec<ServiceEntry> = mods
                     .iter()
-                    .map(|id| {
-                        json!({
-                            "id": id,
-                            "name": id,
-                            "health": "ok",
-                            "status": "loaded"
-                        })
+                    .map(|id| ServiceEntry {
+                        id: id.clone(),
+                        name: id.clone(),
+                        health: "ok",
+                        status: "loaded",
                     })
                     .collect();
 
-                // Count registered commands
                 let commands = registry_inner.list();
                 let command_count = commands.len();
 
-                // Group commands by module prefix for metric display
                 let mut module_set = std::collections::HashSet::new();
                 for cmd in &commands {
                     if let Some(dot) = cmd.find('.') {
@@ -81,21 +106,33 @@ impl DaemonModule for AdminModule {
                     }
                 }
 
-                Ok(json!({
-                    "health": {
-                        "level": "ok",
-                        "label": "Healthy",
-                        "detail": format!("{} modules, {} commands", mods.len(), command_count)
+                Ok(AdminSnapshot {
+                    health: HealthSnapshot {
+                        level: "ok",
+                        label: "Healthy",
+                        detail: format!("{} modules, {} commands", mods.len(), command_count),
                     },
-                    "uptimeSeconds": uptime_seconds,
-                    "metrics": [
-                        { "id": "modules", "label": "Modules", "value": mods.len() },
-                        { "id": "commands", "label": "Commands", "value": command_count },
-                        { "id": "namespaces", "label": "Namespaces", "value": module_set.len() },
+                    uptime_seconds,
+                    metrics: vec![
+                        Metric {
+                            id: "modules",
+                            label: "Modules",
+                            value: mods.len() as u64,
+                        },
+                        Metric {
+                            id: "commands",
+                            label: "Commands",
+                            value: command_count as u64,
+                        },
+                        Metric {
+                            id: "namespaces",
+                            label: "Namespaces",
+                            value: module_set.len() as u64,
+                        },
                     ],
-                    "services": services,
-                    "activity": []
-                }))
+                    services,
+                    activity: vec![],
+                })
             },
         )?;
 
@@ -107,6 +144,7 @@ impl DaemonModule for AdminModule {
 mod tests {
     use super::*;
     use crate::builder::DaemonBuilder;
+    use serde_json::json;
 
     #[test]
     fn admin_module_registers_command() {

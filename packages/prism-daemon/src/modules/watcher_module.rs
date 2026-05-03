@@ -13,11 +13,11 @@
 use crate::builder::DaemonBuilder;
 use crate::module::DaemonModule;
 use crate::registry::CommandError;
+use crate::typed_command::CommandRegistryExt;
 use notify::{
     Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Result as NotifyResult, Watcher,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value as JsonValue};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex};
@@ -158,33 +158,17 @@ impl DaemonModule for WatcherModule {
         let registry = builder.registry().clone();
 
         let m = mgr.clone();
-        registry.register("watcher.watch", move |payload| {
-            let args: WatchArgs = serde_json::from_value(payload)
-                .map_err(|e| CommandError::handler("watcher.watch", e.to_string()))?;
-            let id = m
-                .watch(Path::new(&args.path))
-                .map_err(|e| CommandError::handler("watcher.watch", e))?;
-            Ok(json!({ "id": id }))
+        registry.register_typed("watcher.watch", move |args: WatchArgs| {
+            m.watch(Path::new(&args.path)).map(|id| WatchResp { id })
         })?;
 
         let m = mgr.clone();
-        registry.register("watcher.poll", move |payload| {
-            let args: IdArgs = serde_json::from_value(payload)
-                .map_err(|e| CommandError::handler("watcher.poll", e.to_string()))?;
-            let events = m
-                .poll(args.id)
-                .map_err(|e| CommandError::handler("watcher.poll", e))?;
-            Ok(json!({ "events": events }))
+        registry.register_typed("watcher.poll", move |args: IdArgs| {
+            m.poll(args.id).map(|events| PollResp { events })
         })?;
 
         let m = mgr;
-        registry.register("watcher.stop", move |payload| {
-            let args: IdArgs = serde_json::from_value(payload)
-                .map_err(|e| CommandError::handler("watcher.stop", e.to_string()))?;
-            m.stop(args.id)
-                .map_err(|e| CommandError::handler("watcher.stop", e))?;
-            Ok(JsonValue::Null)
-        })?;
+        registry.register_typed("watcher.stop", move |args: IdArgs| m.stop(args.id))?;
 
         Ok(())
     }
@@ -200,10 +184,21 @@ struct IdArgs {
     id: u64,
 }
 
+#[derive(Debug, Serialize)]
+struct WatchResp {
+    id: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct PollResp {
+    events: Vec<FileChangeEvent>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::builder::DaemonBuilder;
+    use serde_json::json;
     use std::fs;
     use std::thread;
 

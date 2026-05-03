@@ -39,6 +39,7 @@
 use crate::builder::DaemonBuilder;
 use crate::module::DaemonModule;
 use crate::registry::CommandError;
+use crate::typed_command::CommandRegistryExt;
 use mlua::{Function, Lua, MultiValue, Value as LuaValue};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map as JsonMap, Value as JsonValue};
@@ -505,90 +506,101 @@ impl DaemonModule for ActorsModule {
         let registry = builder.registry().clone();
 
         let m = manager.clone();
-        registry.register("actors.spawn", move |payload| {
-            let args: SpawnArgs = parse(payload, "actors.spawn")?;
-            match args.kind {
-                ActorKind::Luau => {
-                    let script = args.script.ok_or_else(|| {
-                        CommandError::handler(
-                            "actors.spawn",
-                            "luau actors require a `script` field",
-                        )
-                    })?;
-                    let id = m
-                        .spawn_luau(script, args.name)
-                        .map_err(|e| CommandError::handler("actors.spawn", e))?;
-                    Ok(json!({ "id": id }))
-                }
-                ActorKind::Python | ActorKind::LlmSidecar => Err(CommandError::handler(
-                    "actors.spawn",
-                    format!(
+        registry.register_typed(
+            "actors.spawn",
+            move |args: SpawnArgs| -> Result<SpawnResp, String> {
+                match args.kind {
+                    ActorKind::Luau => {
+                        let script = args
+                            .script
+                            .ok_or_else(|| "luau actors require a `script` field".to_string())?;
+                        let id = m.spawn_luau(script, args.name)?;
+                        Ok(SpawnResp { id })
+                    }
+                    ActorKind::Python | ActorKind::LlmSidecar => Err(format!(
                         "actor kind {:?} is not yet supported by this build",
                         args.kind.as_str()
-                    ),
-                )),
-            }
-        })?;
+                    )),
+                }
+            },
+        )?;
 
         let m = manager.clone();
-        registry.register("actors.send", move |payload| {
-            let args: SendArgs = parse(payload, "actors.send")?;
-            let depth = m
-                .send(
+        registry.register_typed(
+            "actors.send",
+            move |args: SendArgs| -> Result<SendResp, String> {
+                let depth = m.send(
                     args.id,
                     ActorMessage {
                         id: args.correlation_id,
                         body: args.message,
                     },
-                )
-                .map_err(|e| CommandError::handler("actors.send", e))?;
-            Ok(json!({ "delivered": true, "outbox_depth": depth }))
-        })?;
+                )?;
+                Ok(SendResp {
+                    delivered: true,
+                    outbox_depth: depth,
+                })
+            },
+        )?;
 
         let m = manager.clone();
-        registry.register("actors.recv", move |payload| {
-            let args: RecvArgs = parse(payload, "actors.recv")?;
-            let max = args.max.unwrap_or(64);
-            let messages = m
-                .recv(args.id, max)
-                .map_err(|e| CommandError::handler("actors.recv", e))?;
-            Ok(json!({ "messages": messages }))
-        })?;
+        registry.register_typed(
+            "actors.recv",
+            move |args: RecvArgs| -> Result<RecvResp, String> {
+                let max = args.max.unwrap_or(64);
+                let messages = m.recv(args.id, max)?;
+                Ok(RecvResp { messages })
+            },
+        )?;
 
         let m = manager.clone();
-        registry.register("actors.status", move |payload| {
-            let args: IdArgs = parse(payload, "actors.status")?;
-            let status = m
-                .status(args.id)
-                .map_err(|e| CommandError::handler("actors.status", e))?;
-            serde_json::to_value(status)
-                .map_err(|e| CommandError::handler("actors.status", e.to_string()))
-        })?;
+        registry.register_typed("actors.status", move |args: IdArgs| m.status(args.id))?;
 
         let m = manager.clone();
-        registry.register("actors.list", move |_payload| {
-            Ok(json!({ "actors": m.list() }))
-        })?;
+        registry.register_typed(
+            "actors.list",
+            move |_args: JsonValue| -> Result<ListResp, std::convert::Infallible> {
+                Ok(ListResp { actors: m.list() })
+            },
+        )?;
 
         let m = manager;
-        registry.register("actors.stop", move |payload| {
-            let args: IdArgs = parse(payload, "actors.stop")?;
-            let stopped = m
-                .stop(args.id)
-                .map_err(|e| CommandError::handler("actors.stop", e))?;
-            Ok(json!({ "stopped": stopped }))
-        })?;
+        registry.register_typed(
+            "actors.stop",
+            move |args: IdArgs| -> Result<StopResp, String> {
+                let stopped = m.stop(args.id)?;
+                Ok(StopResp { stopped })
+            },
+        )?;
 
         Ok(())
     }
 }
 
-fn parse<T: for<'de> Deserialize<'de>>(
-    payload: JsonValue,
-    command: &str,
-) -> Result<T, CommandError> {
-    serde_json::from_value::<T>(payload)
-        .map_err(|e| CommandError::handler(command.to_string(), e.to_string()))
+#[derive(Debug, Serialize)]
+struct SpawnResp {
+    id: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct SendResp {
+    delivered: bool,
+    outbox_depth: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct RecvResp {
+    messages: Vec<JsonValue>,
+}
+
+#[derive(Debug, Serialize)]
+struct ListResp {
+    actors: Vec<ActorStatus>,
+}
+
+#[derive(Debug, Serialize)]
+struct StopResp {
+    stopped: bool,
 }
 
 #[derive(Debug, Deserialize)]

@@ -13,6 +13,7 @@ use crate::builder::DaemonBuilder;
 use crate::module::DaemonModule;
 use crate::modules::prism_context::{self, PrismContext};
 use crate::registry::CommandError;
+use crate::typed_command::CommandRegistryExt;
 use mlua::{Lua, MultiValue, Result as LuaResult, Value};
 use serde::Deserialize;
 use serde_json::{Map as JsonMap, Value as JsonValue};
@@ -25,12 +26,11 @@ impl DaemonModule for LuauModule {
     }
 
     fn install(&self, builder: &mut DaemonBuilder) -> Result<(), CommandError> {
-        builder.registry().register("luau.exec", |payload| {
-            let args: ExecArgs = serde_json::from_value(payload)
-                .map_err(|e| CommandError::handler("luau.exec", e.to_string()))?;
-            exec(&args.script, args.args.as_ref())
-                .map_err(|e| CommandError::handler("luau.exec", e))
-        })?;
+        builder
+            .registry()
+            .register_typed("luau.exec", |args: ExecArgs| {
+                exec(&args.script, args.args.as_ref())
+            })?;
         Ok(())
     }
 }

@@ -63,10 +63,7 @@ fn build_field_spec(field: &Field) -> syn::Result<TokenStream2> {
         .ok_or_else(|| syn::Error::new_spanned(field, "expected named field"))?;
     let key = fname.to_string();
     let attrs = parse_field_attrs(field)?;
-    let label = attrs
-        .label
-        .clone()
-        .unwrap_or_else(|| humanize(&key));
+    let label = attrs.label.clone().unwrap_or_else(|| humanize(&key));
 
     let kind_expr = field_kind_expr(&field.ty, &attrs)?;
 
@@ -192,8 +189,10 @@ fn field_kind_expr(ty: &Type, attrs: &FieldAttrs) -> syn::Result<TokenStream2> {
         Some("f32" | "f64") => {
             quote! { ::prism_core::widget::field::FieldKind::Number(#bounds_expr) }
         }
-        Some("i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64"
-        | "u128" | "usize") => {
+        Some(
+            "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64" | "u128"
+            | "usize",
+        ) => {
             quote! { ::prism_core::widget::field::FieldKind::Integer(#bounds_expr) }
         }
         _ => {

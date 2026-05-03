@@ -10,7 +10,7 @@ target, codegen, RPC wire, type stubs, intellisense) derived.
 
 ---
 
-## 1. `Block` trait collapse + `#[derive(PrismBlock)]`  🟢 Phase 1 shipped
+## 1. `Block` trait collapse + `#[derive(PrismBlock)]`  🟡 Phases 1–2 shipped, Phase 3 pending
 
 ### Current state
 
@@ -116,13 +116,35 @@ extraction, Phase 2 is icing.
   registrar now points at the unified `*Block` types in `starter.rs`).
   `cargo test --workspace` clean. `cargo clippy -p prism-builder`
   clean.
-- ⬜ Phase 2: extend `TemplateNode` to cover advanced cases (asset
-  paths, conditional structure, modal nesting), then ship the
-  `#[derive(PrismBlock)]` proc-macro that takes a single
-  `fn template(&self, props) -> TemplateNode` and emits both render
-  impls.
+- ✅ Phase 2: `TemplateNode` extended with three new variants —
+  `Image { src_field, alt_field, fit }` (resolves an `AssetSource`
+  prop through `ctx.asset_paths` for Slint and `/asset/{hash}` for
+  HTML), `Link { href_field, child }` (conditionally wraps the child
+  in `<a>` when the field is non-empty; Slint passes through), and
+  `Children` (emits the surrounding block's children slot at this
+  position). Walkers (`render_template_node` / `render_template_html`)
+  now thread `children: &[Node]` through every variant and are
+  re-exported from `prism-builder` so external blocks can call them.
+  `#[derive(PrismBlock)]` shipped in `prism-luau-derive`: takes
+  `#[block(id = "...")]`, expects `Self::schema() -> Vec<FieldSpec>`
+  + `Self::template(&Value, &[Node]) -> TemplateNode`, and emits the
+  full `Block` impl wired through the template walkers. Integration
+  tests in `prism-builder/tests/derive_macros.rs` cover the derive
+  end-to-end (id+schema surface and HTML render through the walker).
 - ⬜ Phase 3: deprecate `WidgetContribution` / `CoreWidgetComponent`
-  in favor of the unified `Block`.
+  in favor of the unified `Block`. The 45 core-engine widget
+  contributions (`prism_core::domain::*::widget_contributions()` +
+  `prism_core::interaction::*::widget_contributions()` +
+  `prism_core::widget::view_contributions()`) are still pure-data
+  records wrapped by `CoreWidgetComponent`/`CoreWidgetHtmlBlock` at
+  registration time. The migration path: each engine module exposes
+  `pub fn blocks() -> Vec<Arc<dyn Block>>` returning derived
+  `#[derive(PrismBlock)]` structs whose `template()` returns the same
+  `TemplateNode` tree the contribution carries today; `register_core_widgets`
+  collapses to a single iteration over `Arc<dyn Block>`. Pre-migration:
+  the few contributions whose templates referenced asset paths or
+  needed child-slot insertion now have a path through the extended
+  `TemplateNode` IR rather than requiring bespoke `Component` impls.
 
 ### Work breakdown
 
@@ -259,10 +281,19 @@ annotated command in the same module into the install impl.
   collapsed from a 12-line `register` closure to a 7-line
   `register_typed` call. All 108 daemon lib tests + 9 integration
   tests pass.
-- ⬜ Migrate the rest of the modules (`crypto`, `vfs`, `actors`,
-  `watcher`, `admin`, `crdt`, `luau`, `debug`). `crypto` and `vfs`
-  need typed response structs first — they currently build inline
-  `json!()` literals.
+- ✅ Wave 1 migrations: `watcher` (3 cmds), `crdt` (4 cmds),
+  `luau` (1 cmd), `admin` (1 cmd, with public typed `AdminSnapshot`),
+  and `actors` (6 cmds) all collapsed onto `register_typed` /
+  `register_typed_user`. Inline `json!()` response literals replaced
+  with module-private response structs (`WatchResp`, `BytesResp`,
+  `SpawnResp`, …); `admin` exposes `AdminSnapshot` / `HealthSnapshot`
+  / `Metric` / `ServiceEntry` as crate-public types so transports
+  can deserialize the snapshot without round-tripping JSON. 108
+  lib + 12 integration + 2 stdio_bin tests pass; clippy clean.
+- ⬜ Migrate the remaining modules (`crypto`, `vfs`, `debug`).
+  `crypto` and `vfs` need typed response structs first — they
+  currently build inline `json!()` literals across many byte-array
+  fields.
 - ⬜ Pick an attribute macro shape (function attr vs derive on a unit
   struct) once enough modules are typed to see the patterns clearly.
 - ⬜ Add to `prism-luau-derive` or a new `prism-daemon-derive` crate
@@ -383,8 +414,9 @@ Implementation order optimises for value × independence:
    mechanical once the macro shape is fixed.
 3. **#2 PrismField**: enables #1 Phase 2 (the derive needs a unified
    field shape).
-4. **#1 Phase 2** (PrismBlock derive): depends on #2 and a richer
-   `TemplateNode`.
+4. **#1 Phase 2** (PrismBlock derive): ✅ shipped — depended on a
+   richer `TemplateNode` (now grew `Image`/`Link`/`Children` arms)
+   and on the walkers being callable from derived impls.
 5. **#5 SlintBinding**: independent, lower priority.
 6. **#4 visual_node**: lowest priority — visual scripting is still
    evolving rapidly.

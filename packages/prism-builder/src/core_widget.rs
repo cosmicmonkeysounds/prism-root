@@ -17,12 +17,14 @@ use prism_core::widget::{
     LayoutDirection, SignalSpec, TemplateNode, ToolbarAction, VariantSpec, WidgetContribution,
 };
 
+use crate::asset::AssetSource;
 use crate::component::{Component, ComponentId, RenderError, RenderSlintContext};
 use crate::document::Node;
 use crate::html::Html;
 use crate::html_block::{HtmlBlock, HtmlRegistry, HtmlRenderContext};
 use crate::registry::{ComponentRegistry, FieldSpec, RegistryError};
 use crate::signal::{with_common_signals, SignalDef};
+use crate::slint_source::escape_slint_string;
 use crate::slint_source::SlintEmitter;
 use crate::variant::{VariantAxis, VariantOption};
 
@@ -75,10 +77,10 @@ impl Component for CoreWidgetComponent {
         &self,
         ctx: &RenderSlintContext<'_>,
         props: &Value,
-        _children: &[Node],
+        children: &[Node],
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
-        render_template_node(ctx, &self.contribution.template.root, props, out)
+        render_template_node(ctx, &self.contribution.template.root, props, children, out)
     }
 }
 
@@ -111,10 +113,11 @@ fn map_variant_spec(spec: &VariantSpec) -> VariantAxis {
 // ── Template rendering ──────────────────────────────────────────
 
 /// Recursively walk a [`TemplateNode`] tree and emit Slint DSL.
-fn render_template_node(
+pub fn render_template_node(
     ctx: &RenderSlintContext<'_>,
     node: &TemplateNode,
     props: &Value,
+    children: &[Node],
     out: &mut SlintEmitter,
 ) -> Result<(), RenderError> {
     match node {
@@ -122,7 +125,7 @@ fn render_template_node(
             direction,
             gap,
             padding,
-            children,
+            children: tmpl_children,
         } => {
             let element = match direction {
                 LayoutDirection::Horizontal => "HorizontalLayout",
@@ -139,8 +142,8 @@ fn render_template_node(
                     out.prop_px("padding-bottom", px);
                     out.prop_px("padding-left", px);
                 }
-                for child in children {
-                    render_template_node(ctx, child, props, out)?;
+                for child in tmpl_children {
+                    render_template_node(ctx, child, props, children, out)?;
                 }
                 Ok(())
             })
@@ -192,7 +195,7 @@ fn render_template_node(
                 })
             } else {
                 for item in &items {
-                    render_template_node(ctx, item_template, item, out)?;
+                    render_template_node(ctx, item_template, item, children, out)?;
                 }
                 Ok(())
             }
@@ -215,13 +218,56 @@ fn render_template_node(
                 .unwrap_or(false);
 
             if is_truthy {
-                render_template_node(ctx, child, props, out)
+                render_template_node(ctx, child, props, children, out)
             } else if let Some(fb) = fallback {
-                render_template_node(ctx, fb, props, out)
+                render_template_node(ctx, fb, props, children, out)
             } else {
                 Ok(())
             }
         }
+
+        TemplateNode::Image { src_field, fit, .. } => {
+            let source = props.get(src_field).and_then(AssetSource::from_prop);
+            let resolved: Option<String> = match &source {
+                Some(AssetSource::Vfs { hash, .. }) => ctx
+                    .asset_paths
+                    .get(hash)
+                    .map(|p| p.to_string_lossy().into_owned()),
+                Some(AssetSource::Url { url }) => Some(url.clone()),
+                None => None,
+            };
+            let slint_fit = match fit.as_deref().unwrap_or("cover") {
+                "contain" => "contain",
+                "fill" => "fill",
+                "none" => "none",
+                _ => "cover",
+            };
+            if let Some(path) = resolved {
+                out.block("Image", |out| {
+                    out.line(format!(
+                        "source: @image-url(\"{}\");",
+                        escape_slint_string(&path)
+                    ));
+                    out.line(format!("image-fit: {slint_fit};"));
+                    Ok(())
+                })
+            } else {
+                out.block("Rectangle", |out| {
+                    out.line("horizontal-stretch: 1;");
+                    Ok(())
+                })
+            }
+        }
+
+        TemplateNode::Link { href_field, child } => {
+            // Slint has no native anchor; pass through to child. The
+            // hyperlink chrome is HTML-only — the Studio side renders
+            // a link affordance via the property panel / hover state.
+            let _ = href_field;
+            render_template_node(ctx, child, props, children, out)
+        }
+
+        TemplateNode::Children => ctx.render_children(children, out),
     }
 }
 
@@ -285,18 +331,19 @@ impl HtmlBlock for CoreWidgetHtmlBlock {
         &self,
         ctx: &HtmlRenderContext<'_>,
         props: &Value,
-        _children: &[Node],
+        children: &[Node],
         out: &mut Html,
     ) -> Result<(), RenderError> {
-        render_template_html(ctx, &self.contribution.template.root, props, out)
+        render_template_html(ctx, &self.contribution.template.root, props, children, out)
     }
 }
 
 /// Walk a [`TemplateNode`] tree and emit HTML.
-fn render_template_html(
+pub fn render_template_html(
     ctx: &HtmlRenderContext<'_>,
     node: &TemplateNode,
     props: &Value,
+    children: &[Node],
     out: &mut Html,
 ) -> Result<(), RenderError> {
     match node {
@@ -304,7 +351,7 @@ fn render_template_html(
             direction,
             gap,
             padding,
-            children,
+            children: tmpl_children,
         } => {
             let dir = match direction {
                 LayoutDirection::Horizontal => "row",
@@ -318,8 +365,8 @@ fn render_template_html(
                 style.push_str(&format!(";padding:{p}px"));
             }
             out.open_attrs("div", &[("style", style.as_str())]);
-            for child in children {
-                render_template_html(ctx, child, props, out)?;
+            for child in tmpl_children {
+                render_template_html(ctx, child, props, children, out)?;
             }
             out.close("div");
             Ok(())
@@ -373,7 +420,7 @@ fn render_template_html(
                 Ok(())
             } else {
                 for item in &items {
-                    render_template_html(ctx, item_template, item, out)?;
+                    render_template_html(ctx, item_template, item, children, out)?;
                 }
                 Ok(())
             }
@@ -396,13 +443,48 @@ fn render_template_html(
                 .unwrap_or(false);
 
             if is_truthy {
-                render_template_html(ctx, child, props, out)
+                render_template_html(ctx, child, props, children, out)
             } else if let Some(fb) = fallback {
-                render_template_html(ctx, fb, props, out)
+                render_template_html(ctx, fb, props, children, out)
             } else {
                 Ok(())
             }
         }
+
+        TemplateNode::Image {
+            src_field,
+            alt_field,
+            fit,
+        } => {
+            let src = props
+                .get(src_field)
+                .and_then(AssetSource::from_prop)
+                .map(|s| s.to_html_src())
+                .unwrap_or_default();
+            let alt = alt_field
+                .as_deref()
+                .and_then(|k| props.get(k))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let fit = fit.as_deref().unwrap_or("cover");
+            let style = format!("object-fit:{fit}");
+            out.void("img", &[("src", &src), ("alt", alt), ("style", &style)]);
+            Ok(())
+        }
+
+        TemplateNode::Link { href_field, child } => {
+            let href = props.get(href_field).and_then(|v| v.as_str()).unwrap_or("");
+            if href.is_empty() {
+                render_template_html(ctx, child, props, children, out)
+            } else {
+                out.open_attrs("a", &[("href", href)]);
+                render_template_html(ctx, child, props, children, out)?;
+                out.close("a");
+                Ok(())
+            }
+        }
+
+        TemplateNode::Children => ctx.render_children(children, out),
     }
 }
 

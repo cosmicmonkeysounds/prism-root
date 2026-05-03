@@ -485,6 +485,28 @@ pub enum TemplateNode {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         fallback: Option<Box<TemplateNode>>,
     },
+    /// Render an image whose source is read from a prop field. The
+    /// field carries either a string URL or a VFS binary ref shape;
+    /// the builder resolves the latter via its asset-path map for
+    /// Slint and via `/asset/{hash}` for HTML SSR.
+    Image {
+        src_field: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        alt_field: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fit: Option<String>,
+    },
+    /// Wrap a child in a hyperlink when the field at `href_field`
+    /// resolves to a non-empty string. Falls through to the child
+    /// unchanged otherwise.
+    Link {
+        href_field: String,
+        child: Box<TemplateNode>,
+    },
+    /// Emit the surrounding block's children slot here. Lets templates
+    /// place a layout chrome around node-tree children rather than
+    /// only consuming the widget's own props.
+    Children,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

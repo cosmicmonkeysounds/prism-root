@@ -139,8 +139,10 @@ fn data_type_for(ty: &Type) -> DataTypeTag {
         _ => None,
     };
     match leaf.as_deref() {
-        Some("f32" | "f64" | "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64"
-        | "usize" | "isize") => DataTypeTag::Number,
+        Some(
+            "f32" | "f64" | "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "usize"
+            | "isize",
+        ) => DataTypeTag::Number,
         Some("bool") => DataTypeTag::Boolean,
         Some("String" | "str") => DataTypeTag::String,
         _ => DataTypeTag::Any,

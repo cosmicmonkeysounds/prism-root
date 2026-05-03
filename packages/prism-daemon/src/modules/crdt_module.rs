@@ -17,8 +17,8 @@ use crate::builder::DaemonBuilder;
 use crate::doc_manager::DocManager;
 use crate::module::DaemonModule;
 use crate::registry::CommandError;
+use crate::typed_command::CommandRegistryExt;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value as JsonValue};
 use std::sync::Arc;
 
 /// The CRDT module. Stateless — the state lives on the shared
@@ -40,56 +40,59 @@ impl DaemonModule for CrdtModule {
         let registry = builder.registry().clone();
 
         let mgr = manager.clone();
-        registry.register("crdt.write", move |payload| {
-            let args: WriteArgs = parse(payload, "crdt.write")?;
-            mgr.get_or_create(&args.doc_id)
-                .map_err(|e| CommandError::handler("crdt.write", e.to_string()))?;
-            let bytes = mgr
-                .write(&args.doc_id, &args.key, &args.value)
-                .map_err(|e| CommandError::handler("crdt.write", e.to_string()))?;
-            Ok(json!({ "bytes": bytes }))
-        })?;
+        registry.register_typed(
+            "crdt.write",
+            move |args: WriteArgs| -> Result<BytesResp, String> {
+                mgr.get_or_create(&args.doc_id).map_err(|e| e.to_string())?;
+                let bytes = mgr
+                    .write(&args.doc_id, &args.key, &args.value)
+                    .map_err(|e| e.to_string())?;
+                Ok(BytesResp { bytes })
+            },
+        )?;
 
         let mgr = manager.clone();
-        registry.register("crdt.read", move |payload| {
-            let args: ReadArgs = parse(payload, "crdt.read")?;
-            mgr.get_or_create(&args.doc_id)
-                .map_err(|e| CommandError::handler("crdt.read", e.to_string()))?;
-            let value = mgr
-                .read(&args.doc_id, &args.key)
-                .map_err(|e| CommandError::handler("crdt.read", e.to_string()))?;
-            Ok(json!({ "value": value }))
-        })?;
+        registry.register_typed(
+            "crdt.read",
+            move |args: ReadArgs| -> Result<ValueResp, String> {
+                mgr.get_or_create(&args.doc_id).map_err(|e| e.to_string())?;
+                let value = mgr
+                    .read(&args.doc_id, &args.key)
+                    .map_err(|e| e.to_string())?;
+                Ok(ValueResp { value })
+            },
+        )?;
 
         let mgr = manager.clone();
-        registry.register("crdt.export", move |payload| {
-            let args: ExportArgs = parse(payload, "crdt.export")?;
-            mgr.get_or_create(&args.doc_id)
-                .map_err(|e| CommandError::handler("crdt.export", e.to_string()))?;
-            let bytes = mgr
-                .export_snapshot(&args.doc_id)
-                .map_err(|e| CommandError::handler("crdt.export", e.to_string()))?;
-            Ok(json!({ "bytes": bytes }))
-        })?;
+        registry.register_typed(
+            "crdt.export",
+            move |args: ExportArgs| -> Result<BytesResp, String> {
+                mgr.get_or_create(&args.doc_id).map_err(|e| e.to_string())?;
+                let bytes = mgr
+                    .export_snapshot(&args.doc_id)
+                    .map_err(|e| e.to_string())?;
+                Ok(BytesResp { bytes })
+            },
+        )?;
 
         let mgr = manager;
-        registry.register("crdt.import", move |payload| {
-            let args: ImportArgs = parse(payload, "crdt.import")?;
+        registry.register_typed("crdt.import", move |args: ImportArgs| {
             mgr.import_snapshot(&args.doc_id, &args.snapshot)
-                .map_err(|e| CommandError::handler("crdt.import", e.to_string()))?;
-            Ok(JsonValue::Null)
+                .map_err(|e| e.to_string())
         })?;
 
         Ok(())
     }
 }
 
-fn parse<T: for<'de> Deserialize<'de>>(
-    payload: JsonValue,
-    command: &str,
-) -> Result<T, CommandError> {
-    serde_json::from_value::<T>(payload)
-        .map_err(|e| CommandError::handler(command.to_string(), e.to_string()))
+#[derive(Debug, Serialize)]
+struct BytesResp {
+    bytes: Vec<u8>,
+}
+
+#[derive(Debug, Serialize)]
+struct ValueResp {
+    value: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -124,6 +127,7 @@ struct ImportArgs {
 mod tests {
     use super::*;
     use crate::builder::DaemonBuilder;
+    use serde_json::{json, Value as JsonValue};
 
     #[test]
     fn crdt_module_registers_four_commands() {
