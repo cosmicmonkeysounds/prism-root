@@ -198,6 +198,121 @@ pub mod presets {
             ],
         }]
     }
+
+    pub fn image() -> Vec<VariantAxis> {
+        vec![VariantAxis {
+            key: "shape".into(),
+            label: "Shape".into(),
+            options: vec![
+                VariantOption {
+                    value: "square".into(),
+                    label: "Square".into(),
+                    overrides: json!({ "border_radius": 0 }),
+                },
+                VariantOption {
+                    value: "rounded".into(),
+                    label: "Rounded".into(),
+                    overrides: json!({ "border_radius": 8 }),
+                },
+                VariantOption {
+                    value: "circle".into(),
+                    label: "Circle".into(),
+                    overrides: json!({ "border_radius": 9999 }),
+                },
+            ],
+        }]
+    }
+
+    pub fn code() -> Vec<VariantAxis> {
+        vec![VariantAxis {
+            key: "theme".into(),
+            label: "Theme".into(),
+            options: vec![
+                VariantOption {
+                    value: "dark".into(),
+                    label: "Dark".into(),
+                    overrides: json!({ "bg": "#1a1e28", "color": "#a3be8c" }),
+                },
+                VariantOption {
+                    value: "light".into(),
+                    label: "Light".into(),
+                    overrides: json!({ "bg": "#f8f9fa", "color": "#2e3440" }),
+                },
+            ],
+        }]
+    }
+
+    pub fn columns() -> Vec<VariantAxis> {
+        vec![VariantAxis {
+            key: "spacing".into(),
+            label: "Spacing".into(),
+            options: vec![
+                VariantOption {
+                    value: "compact".into(),
+                    label: "Compact".into(),
+                    overrides: json!({ "gap": 8 }),
+                },
+                VariantOption {
+                    value: "normal".into(),
+                    label: "Normal".into(),
+                    overrides: json!({ "gap": 16 }),
+                },
+                VariantOption {
+                    value: "wide".into(),
+                    label: "Wide".into(),
+                    overrides: json!({ "gap": 32 }),
+                },
+            ],
+        }]
+    }
+
+    pub fn list() -> Vec<VariantAxis> {
+        vec![VariantAxis {
+            key: "density".into(),
+            label: "Density".into(),
+            options: vec![
+                VariantOption {
+                    value: "compact".into(),
+                    label: "Compact".into(),
+                    overrides: json!({ "item_spacing": 2 }),
+                },
+                VariantOption {
+                    value: "normal".into(),
+                    label: "Normal".into(),
+                    overrides: json!({ "item_spacing": 4 }),
+                },
+                VariantOption {
+                    value: "spacious".into(),
+                    label: "Spacious".into(),
+                    overrides: json!({ "item_spacing": 10 }),
+                },
+            ],
+        }]
+    }
+
+    pub fn accordion() -> Vec<VariantAxis> {
+        vec![VariantAxis {
+            key: "style".into(),
+            label: "Style".into(),
+            options: vec![
+                VariantOption {
+                    value: "bordered".into(),
+                    label: "Bordered".into(),
+                    overrides: json!({ "border_width": 1, "border_color": "#3b4252" }),
+                },
+                VariantOption {
+                    value: "flush".into(),
+                    label: "Flush".into(),
+                    overrides: json!({ "border_width": 0 }),
+                },
+                VariantOption {
+                    value: "separated".into(),
+                    label: "Separated".into(),
+                    overrides: json!({ "border_width": 0, "section_gap": 8 }),
+                },
+            ],
+        }]
+    }
 }
 
 /// Like `apply_variant_overrides` but variant overrides fill in
@@ -334,6 +449,11 @@ mod tests {
         assert_eq!(presets::container()[0].key, "style");
         assert_eq!(presets::tabs()[0].key, "style");
         assert_eq!(presets::table()[0].key, "density");
+        assert_eq!(presets::image()[0].key, "shape");
+        assert_eq!(presets::code()[0].key, "theme");
+        assert_eq!(presets::columns()[0].key, "spacing");
+        assert_eq!(presets::list()[0].key, "density");
+        assert_eq!(presets::accordion()[0].key, "style");
     }
 
     #[test]
@@ -349,5 +469,42 @@ mod tests {
         let props = json!({ "state": "error" });
         let result = apply_variant_defaults(&props, &presets::input());
         assert_eq!(result["border_color"], "#ef4444");
+    }
+
+    #[test]
+    fn image_circle_preset_applies_max_radius() {
+        let props = json!({ "shape": "circle" });
+        let result = apply_variant_defaults(&props, &presets::image());
+        assert_eq!(result["border_radius"], 9999);
+    }
+
+    #[test]
+    fn code_light_preset_applies_colors() {
+        let props = json!({ "theme": "light" });
+        let result = apply_variant_defaults(&props, &presets::code());
+        assert_eq!(result["bg"], "#f8f9fa");
+        assert_eq!(result["color"], "#2e3440");
+    }
+
+    #[test]
+    fn columns_wide_preset_applies_gap() {
+        let props = json!({ "spacing": "wide" });
+        let result = apply_variant_defaults(&props, &presets::columns());
+        assert_eq!(result["gap"], 32);
+    }
+
+    #[test]
+    fn list_spacious_preset_applies_item_spacing() {
+        let props = json!({ "density": "spacious" });
+        let result = apply_variant_defaults(&props, &presets::list());
+        assert_eq!(result["item_spacing"], 10);
+    }
+
+    #[test]
+    fn accordion_bordered_preset_applies_border() {
+        let props = json!({ "style": "bordered" });
+        let result = apply_variant_defaults(&props, &presets::accordion());
+        assert_eq!(result["border_width"], 1);
+        assert_eq!(result["border_color"], "#3b4252");
     }
 }

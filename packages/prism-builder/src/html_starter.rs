@@ -106,6 +106,9 @@ impl HtmlBlock for HtmlImage {
     fn schema(&self) -> Vec<FieldSpec> {
         schemas::image()
     }
+    fn variants(&self) -> Vec<VariantAxis> {
+        variant_presets::image()
+    }
     fn render_html(
         &self,
         _ctx: &HtmlRenderContext<'_>,
@@ -116,12 +119,17 @@ impl HtmlBlock for HtmlImage {
         let alt = prop_str(props, "alt", "");
         let fit = prop_str(props, "fit", "cover");
         let href = prop_str(props, "href", "");
+        let border_radius = prop_u64(props, "border_radius", 0);
         let src = props
             .get("src")
             .and_then(AssetSource::from_prop)
             .map(|s| s.to_html_src())
             .unwrap_or_default();
-        let style = format!("object-fit:{fit}");
+        let style = if border_radius > 0 {
+            format!("object-fit:{fit};border-radius:{border_radius}px")
+        } else {
+            format!("object-fit:{fit}")
+        };
         if !href.is_empty() {
             out.open_attrs("a", &[("href", href)]);
         }
@@ -315,6 +323,9 @@ impl HtmlBlock for HtmlCode {
     fn schema(&self) -> Vec<FieldSpec> {
         schemas::code()
     }
+    fn variants(&self) -> Vec<VariantAxis> {
+        variant_presets::code()
+    }
     fn render_html(
         &self,
         _ctx: &HtmlRenderContext<'_>,
@@ -324,7 +335,10 @@ impl HtmlBlock for HtmlCode {
     ) -> Result<(), RenderError> {
         let code = prop_str(props, "code", "");
         let lang = prop_str(props, "language", "");
-        out.open("pre");
+        let bg = prop_str(props, "bg", "#1a1e28");
+        let color = prop_str(props, "color", "#a3be8c");
+        let style = format!("background:{bg};color:{color};padding:12px;border-radius:6px");
+        out.open_attrs("pre", &[("style", &style)]);
         if lang.is_empty() {
             out.open("code");
         } else {
@@ -397,6 +411,9 @@ impl HtmlBlock for HtmlColumns {
     fn schema(&self) -> Vec<FieldSpec> {
         schemas::columns()
     }
+    fn variants(&self) -> Vec<VariantAxis> {
+        variant_presets::columns()
+    }
     fn render_html(
         &self,
         ctx: &HtmlRenderContext<'_>,
@@ -427,6 +444,9 @@ impl HtmlBlock for HtmlList {
     }
     fn schema(&self) -> Vec<FieldSpec> {
         schemas::list()
+    }
+    fn variants(&self) -> Vec<VariantAxis> {
+        variant_presets::list()
     }
     fn render_html(
         &self,
@@ -552,6 +572,9 @@ impl HtmlBlock for HtmlAccordion {
     }
     fn schema(&self) -> Vec<FieldSpec> {
         schemas::accordion()
+    }
+    fn variants(&self) -> Vec<VariantAxis> {
+        variant_presets::accordion()
     }
     fn render_html(
         &self,

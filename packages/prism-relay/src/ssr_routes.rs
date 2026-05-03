@@ -275,8 +275,24 @@ fn render_head(h: &mut Html, title: &str, description: &str) {
     }
     h.open_attrs("meta", &[("property", "og:title"), ("content", title)]);
     h.open_attrs("meta", &[("property", "og:type"), ("content", "article")]);
+    h.raw(MODIFIER_CSS);
     h.close("head");
 }
+
+const MODIFIER_CSS: &str = r#"<style>
+.prism-hover{transition:all var(--prism-hover-duration,200ms) ease}
+.prism-hover-scale:hover{transform:scale(1.05)}
+.prism-hover-fade:hover{opacity:0.85}
+.prism-hover-lift:hover{box-shadow:0 4px 12px rgba(0,0,0,0.2)}
+.prism-hover-glow:hover{box-shadow:0 0 8px rgba(255,255,255,0.4)}
+@keyframes prism-fade-in{from{opacity:0}to{opacity:1}}
+@keyframes prism-slide-up{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:none}}
+@keyframes prism-slide-left{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:none}}
+@keyframes prism-scale-up{from{opacity:0;transform:scale(0.9)}to{opacity:1;transform:none}}
+@media(max-width:639px){.prism-resp-hide-mobile{display:none!important}}
+@media(min-width:640px) and (max-width:1023px){.prism-resp-hide-tablet{display:none!important}}
+@media(min-width:1024px){.prism-resp-hide-desktop{display:none!important}}
+</style>"#;
 
 // ── Response helpers ────────────────────────────────────────────
 

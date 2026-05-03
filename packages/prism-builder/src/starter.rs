@@ -187,6 +187,9 @@ impl Component for ImageComponent {
             "Fires when the image finishes loading",
         )])
     }
+    fn variants(&self) -> Vec<VariantAxis> {
+        variant_presets::image()
+    }
     fn render_slint(
         &self,
         ctx: &RenderSlintContext<'_>,
@@ -196,6 +199,7 @@ impl Component for ImageComponent {
     ) -> Result<(), RenderError> {
         let fit = prop_str(props, "fit", "cover");
         let href = prop_str(props, "href", "");
+        let border_radius = prop_f64(props, "border_radius", 0.0);
         let source = props.get("src").and_then(AssetSource::from_prop);
 
         let slint_fit = match fit {
@@ -219,10 +223,15 @@ impl Component for ImageComponent {
                 out.line("clip: true;");
                 out.line("horizontal-stretch: 1;");
                 out.line("vertical-stretch: 1;");
+                if border_radius > 0.0 {
+                    out.prop_px("border-radius", border_radius);
+                }
                 if !href.is_empty() {
                     out.line("border-width: 2px;");
                     out.line("border-color: #5aa0ff;");
-                    out.line("border-radius: 4px;");
+                    if border_radius == 0.0 {
+                        out.line("border-radius: 4px;");
+                    }
                 }
                 out.block("Image", |out| {
                     out.line(format!(
@@ -556,6 +565,9 @@ impl Component for CodeComponent {
     fn signals(&self) -> Vec<SignalDef> {
         with_common_signals(vec![])
     }
+    fn variants(&self) -> Vec<VariantAxis> {
+        variant_presets::code()
+    }
     fn render_slint(
         &self,
         ctx: &RenderSlintContext<'_>,
@@ -565,7 +577,18 @@ impl Component for CodeComponent {
     ) -> Result<(), RenderError> {
         let code = prop_str(props, "code", "");
         let style = ctx.style();
-        let bg = style.background.as_deref().unwrap_or("#1a1e28");
+        let bg = prop_str(props, "bg", "").to_string();
+        let bg = if bg.is_empty() {
+            style.background.as_deref().unwrap_or("#1a1e28")
+        } else {
+            &bg
+        };
+        let color = prop_str(props, "color", "").to_string();
+        let color = if color.is_empty() {
+            style.color.as_deref().unwrap_or("#a3be8c")
+        } else {
+            &color
+        };
         let radius = style.border_radius.unwrap_or(6.0);
         out.block("Rectangle", |out| {
             out.prop_color("background", bg);
@@ -576,7 +599,6 @@ impl Component for CodeComponent {
                     out.prop_string("text", code);
                     let font_size = style.font_size.unwrap_or(13.0);
                     out.prop_px("font-size", font_size as f64);
-                    let color = style.color.as_deref().unwrap_or("#a3be8c");
                     out.prop_color("color", color);
                     out.line("font-family: \"monospace\";");
                     out.line("wrap: word-wrap;");
@@ -683,6 +705,9 @@ impl Component for ColumnsComponent {
     fn signals(&self) -> Vec<SignalDef> {
         with_common_signals(vec![])
     }
+    fn variants(&self) -> Vec<VariantAxis> {
+        variant_presets::columns()
+    }
     fn render_slint(
         &self,
         ctx: &RenderSlintContext<'_>,
@@ -728,15 +753,19 @@ impl Component for ListComponent {
             Default::default(),
         )])])
     }
+    fn variants(&self) -> Vec<VariantAxis> {
+        variant_presets::list()
+    }
     fn render_slint(
         &self,
         ctx: &RenderSlintContext<'_>,
-        _props: &Value,
+        props: &Value,
         children: &[Node],
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
+        let spacing = prop_f64(props, "item_spacing", 4.0);
         out.block("VerticalLayout", |out| {
-            out.prop_px("spacing", 4.0);
+            out.prop_px("spacing", spacing);
             out.line("alignment: start;");
             ctx.render_children(children, out)
         })
@@ -935,6 +964,9 @@ impl Component for AccordionComponent {
             "Whether the section is now open",
         )])])
     }
+    fn variants(&self) -> Vec<VariantAxis> {
+        variant_presets::accordion()
+    }
     fn render_slint(
         &self,
         ctx: &RenderSlintContext<'_>,
@@ -943,12 +975,19 @@ impl Component for AccordionComponent {
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
         let title = prop_str(props, "title", "");
+        let border_width = prop_f64(props, "border_width", 0.0);
+        let border_color = prop_str(props, "border_color", "#3b4252");
+        let section_gap = prop_f64(props, "section_gap", 4.0);
         out.block("VerticalLayout", |out| {
-            out.prop_px("spacing", 4.0);
+            out.prop_px("spacing", section_gap);
             out.block("Rectangle", |out| {
                 out.prop_px("height", 32.0);
                 out.line("background: #2e3440;");
                 out.line("border-radius: 4px;");
+                if border_width > 0.0 {
+                    out.prop_px("border-width", border_width);
+                    out.prop_color("border-color", border_color);
+                }
                 out.block("Text", |out| {
                     let display = format!("▸ {title}");
                     out.prop_string("text", &display);
