@@ -14,6 +14,7 @@ use crate::workspace::Workspace;
 
 pub mod build;
 pub mod clean;
+pub mod codegen;
 pub mod dev;
 pub mod e2e;
 pub mod fmt;
@@ -63,6 +64,9 @@ pub enum Command {
     E2e(e2e::E2eArgs),
     /// Run `cargo clean` to remove all build artefacts.
     Clean,
+    /// Emit derived artefacts (Luau type stubs, etc.) from the
+    /// workspace's `#[luau_expose]` annotations.
+    Codegen(codegen::CodegenArgs),
 }
 
 /// Dispatch a parsed [`Cli`] to the right subcommand.
@@ -78,6 +82,7 @@ pub fn run(cli: &Cli, workspace: &Workspace) -> Result<u8> {
         Command::Visual(args) => visual::run(args, workspace, cli.dry_run),
         Command::E2e(args) => e2e::run(args, workspace, cli.dry_run),
         Command::Clean => clean::run(workspace, cli.dry_run),
+        Command::Codegen(args) => codegen::run(args, workspace, cli.dry_run),
     }
 }
 

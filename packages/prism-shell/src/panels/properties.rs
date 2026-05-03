@@ -260,16 +260,12 @@ impl PropertiesPanel {
                 .modifiers
                 .iter()
                 .enumerate()
-                .map(|(i, m)| FieldRowData {
-                    key: format!("modifier.{i}"),
-                    label: format!("{:?}", m.kind),
-                    kind: "text".into(),
-                    value: format!("{:?}", m.kind),
-                    required: false,
-                    min: 0.0,
-                    max: 0.0,
-                    has_bounds: false,
-                    options: vec![],
+                .map(|(i, m)| {
+                    FieldRowData::text(
+                        format!("modifier.{i}"),
+                        format!("{:?}", m.kind),
+                        format!("{:?}", m.kind),
+                    )
                 })
                 .collect();
             sections.push(PropertySection {
@@ -295,17 +291,12 @@ impl PropertiesPanel {
                             .unwrap_or(
                                 axis.options.first().map(|o| o.value.as_str()).unwrap_or(""),
                             );
-                        FieldRowData {
-                            key: axis.key.clone(),
-                            label: axis.label.clone(),
-                            kind: "select".into(),
-                            value: current.to_string(),
-                            required: false,
-                            min: 0.0,
-                            max: 0.0,
-                            has_bounds: false,
-                            options: axis.options.iter().map(|o| o.value.clone()).collect(),
-                        }
+                        FieldRowData::select(
+                            axis.key.clone(),
+                            axis.label.clone(),
+                            current,
+                            axis.options.iter().map(|o| o.value.clone()).collect(),
+                        )
                     })
                     .collect();
                 sections.push(PropertySection {

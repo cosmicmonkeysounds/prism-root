@@ -5809,6 +5809,7 @@ dependencies = [
  "clap",
  "filetime",
  "notify 7.0.0",
+ "prism-core",
  "tempfile",
  "tokio",
 ]

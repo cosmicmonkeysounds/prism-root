@@ -2,9 +2,16 @@
 //!
 //! Payload shape: `{ script: String, args?: Object }`
 //! Result: whatever JSON the script evaluates to.
+//!
+//! Every script runs with the `prism` global pre-installed (see
+//! [`crate::modules::prism_context::PrismContext`]) — Phase 1 of
+//! `docs/dev/luau-integration-plan.md`. Today that surfaces design
+//! tokens + shell-mode tag; later phases bolt object/document/signal
+//! access onto the same userdata without changing this entry point.
 
 use crate::builder::DaemonBuilder;
 use crate::module::DaemonModule;
+use crate::modules::prism_context::{self, PrismContext};
 use crate::registry::CommandError;
 use mlua::{Lua, MultiValue, Result as LuaResult, Value};
 use serde::Deserialize;
@@ -35,9 +42,25 @@ struct ExecArgs {
     args: Option<JsonMap<String, JsonValue>>,
 }
 
-/// Execute a Luau script and return the result as JSON.
+/// Execute a Luau script and return the result as JSON. Equivalent to
+/// [`exec_with_context`] called with `PrismContext::default()`.
 pub fn exec(script: &str, args: Option<&JsonMap<String, JsonValue>>) -> Result<JsonValue, String> {
+    exec_with_context(script, args, PrismContext::default())
+}
+
+/// Execute a Luau script with a host-supplied [`PrismContext`]. The
+/// daemon's `luau.exec` command always uses the default context;
+/// hosts that have their own design tokens / shell mode override
+/// (Studio, the relay's render path) reach for this entry point so
+/// scripts see the live values instead of the boot defaults.
+pub fn exec_with_context(
+    script: &str,
+    args: Option<&JsonMap<String, JsonValue>>,
+    ctx: PrismContext,
+) -> Result<JsonValue, String> {
     let lua = Lua::new();
+
+    prism_context::install(&lua, ctx).map_err(|e| e.to_string())?;
 
     if let Some(args) = args {
         let globals = lua.globals();
@@ -165,6 +188,31 @@ mod tests {
             }
             other => panic!("wrong variant: {other:?}"),
         }
+    }
+
+    #[test]
+    fn luau_exec_exposes_prism_global() {
+        // Phase 1 of the Luau integration plan: every script sees the
+        // `prism` global without any opt-in. Reading the default
+        // accent-red channel proves the userdata + nested-getter chain
+        // round-trips through the kernel command surface.
+        let kernel = DaemonBuilder::new().with_luau().build().unwrap();
+        let out = kernel
+            .invoke(
+                "luau.exec",
+                json!({ "script": "return prism.tokens.colors.accent.r" }),
+            )
+            .unwrap();
+        assert_eq!(out, JsonValue::Number(110.into()));
+    }
+
+    #[test]
+    fn luau_exec_exposes_shell_mode_as_string() {
+        let kernel = DaemonBuilder::new().with_luau().build().unwrap();
+        let out = kernel
+            .invoke("luau.exec", json!({ "script": "return prism.shell_mode" }))
+            .unwrap();
+        assert_eq!(out, JsonValue::String("Build".to_string()));
     }
 
     #[test]

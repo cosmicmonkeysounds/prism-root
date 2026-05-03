@@ -22,6 +22,125 @@ use super::{
 use crate::input::{combo_from_slint, update_panel_schemes};
 use crate::{AppWindow, DocsPanelData, HelpTooltipData};
 
+/// Apply a property edit by routing on the key prefix. Returns `true`
+/// if the key matched a known prefix and was handled. Returns `false`
+/// for unprefixed keys, leaving caller-specific source-edit handling
+/// to the call site (which differs between text and numeric inputs).
+fn apply_prefixed_property_edit(
+    s: &mut ShellInner,
+    selected_id: &Option<prism_builder::NodeId>,
+    key: &str,
+    value: &str,
+) -> bool {
+    if key.starts_with("layout.") {
+        if let Some(target_id) = selected_id {
+            s.push_undo(&format!("Edit {key}"));
+            let tid = target_id.clone();
+            if let Some(ref mut live) = s.live {
+                let _ = live.mutate_document(|doc| {
+                    if let Some(ref mut root) = doc.root {
+                        apply_node_layout_edit(root, &tid, key, value);
+                    }
+                });
+            }
+            s.sync_builder_document();
+        }
+        true
+    } else if key.starts_with("transform.") {
+        if let Some(target_id) = selected_id {
+            s.push_undo(&format!("Edit {key}"));
+            let tid = target_id.clone();
+            if let Some(ref mut live) = s.live {
+                let _ = live.mutate_document(|doc| {
+                    if let Some(ref mut root) = doc.root {
+                        apply_node_transform_edit(root, &tid, key, value);
+                    }
+                });
+            }
+            s.sync_builder_document();
+        }
+        true
+    } else if key.starts_with("style.") || key.starts_with("inherited.style.") {
+        let style_key = key
+            .strip_prefix("inherited.style.")
+            .or_else(|| key.strip_prefix("style."))
+            .unwrap_or(key);
+        let sk = style_key.to_string();
+        s.push_undo(&format!("Edit style {key}"));
+        if let Some(target_id) = selected_id {
+            let tid = target_id.clone();
+            if let Some(ref mut live) = s.live {
+                let _ = live.mutate_document(|doc| {
+                    if let Some(ref mut root) = doc.root {
+                        if let Some(node) = root.find_mut(&tid) {
+                            apply_style_edit(&mut node.style, &sk, value);
+                        }
+                    }
+                });
+            }
+            s.sync_builder_document();
+        } else {
+            s.store.mutate(|state| {
+                if let Some(app) = state.active_app_mut() {
+                    if let Some(page) = app.pages.get_mut(app.active_page) {
+                        apply_style_edit(&mut page.style, &sk, value);
+                    }
+                }
+            });
+        }
+        true
+    } else if key.starts_with("facet.") {
+        if let Some(target_id) = selected_id {
+            let facet_id = s
+                .store
+                .state()
+                .builder_document
+                .root
+                .as_ref()
+                .and_then(|r| r.find(target_id))
+                .and_then(|n| n.props.get("facet_id"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            if let Some(fid) = facet_id {
+                s.push_undo(&format!("Edit {key}"));
+                let fkey = key.strip_prefix("facet.").unwrap_or(key).to_string();
+                let val = value.to_string();
+                s.store.mutate(|state| {
+                    if let Some(doc) =
+                        state.active_app_mut().and_then(|a| a.active_document_mut())
+                    {
+                        if let Some(def) = doc.facets.get_mut(&fid) {
+                            apply_facet_edit(def, &fkey, &val);
+                        }
+                    }
+                });
+                s.sync_builder_document();
+            }
+        }
+        true
+    } else if key.starts_with("schema.") {
+        let skey = key.strip_prefix("schema.").unwrap_or(key).to_string();
+        let val = value.to_string();
+        s.push_undo(&format!("Edit {key}"));
+        s.store.mutate(|state| {
+            let sid = resolve_schema_id(state);
+            if let Some(sid) = sid {
+                if let Some(doc) =
+                    state.active_app_mut().and_then(|a| a.active_document_mut())
+                {
+                    if let Some(schema) = doc.facet_schemas.get_mut(&sid) {
+                        crate::panels::schema::apply_schema_edit(schema, &skey, &val);
+                    }
+                }
+            }
+        });
+        s.sync_builder_document();
+        true
+    } else {
+        false
+    }
+}
+
 impl Shell {
     pub(super) fn wire_callbacks(&self) {
         let weak = self.window.as_weak();
@@ -514,10 +633,6 @@ impl Shell {
                 if is_preview_mode(&inner.borrow().store.state().workspace) {
                     return;
                 }
-                eprintln!(
-                    "[property-edit] key={key:?} value={value:?} syncing={}",
-                    inner.borrow().syncing.get()
-                );
                 if inner.borrow().syncing.get() {
                     return;
                 }
@@ -526,122 +641,24 @@ impl Shell {
                 {
                     let mut s = inner.borrow_mut();
                     let selected_id = s.store.state().selection.primary().cloned();
-                    if key.starts_with("layout.") {
+                    if !apply_prefixed_property_edit(&mut s, &selected_id, &key, &value) {
                         if let Some(ref target_id) = selected_id {
+                            let kind = field_kind_for_key(&s, &key);
+                            let (source_key, formatted) =
+                                slint_source_key_for_edit(&s, &key, &value, kind.as_deref());
                             s.push_undo(&format!("Edit {key}"));
-                            let tid = target_id.clone();
                             if let Some(ref mut live) = s.live {
-                                let _ = live.mutate_document(|doc| {
-                                    if let Some(ref mut root) = doc.root {
-                                        apply_node_layout_edit(root, &tid, &key, &value);
-                                    }
-                                });
+                                let _ =
+                                    live.edit_prop_in_source(target_id, &source_key, &formatted);
                             }
                             s.sync_builder_document();
-                        }
-                    } else if key.starts_with("transform.") {
-                        if let Some(ref target_id) = selected_id {
-                            s.push_undo(&format!("Edit {key}"));
-                            let tid = target_id.clone();
-                            if let Some(ref mut live) = s.live {
-                                let _ = live.mutate_document(|doc| {
-                                    if let Some(ref mut root) = doc.root {
-                                        apply_node_transform_edit(root, &tid, &key, &value);
-                                    }
-                                });
-                            }
-                            s.sync_builder_document();
-                        }
-                    } else if key.starts_with("style.") || key.starts_with("inherited.style.") {
-                        let style_key = key
-                            .strip_prefix("inherited.style.")
-                            .or_else(|| key.strip_prefix("style."))
-                            .unwrap_or(&key);
-                        let sk = style_key.to_string();
-                        s.push_undo(&format!("Edit style {key}"));
-                        if let Some(ref target_id) = selected_id {
-                            let tid = target_id.clone();
-                            if let Some(ref mut live) = s.live {
-                                let _ = live.mutate_document(|doc| {
-                                    if let Some(ref mut root) = doc.root {
-                                        if let Some(node) = root.find_mut(&tid) {
-                                            apply_style_edit(&mut node.style, &sk, &value);
-                                        }
-                                    }
-                                });
-                            }
-                            s.sync_builder_document();
-                        } else {
-                            s.store.mutate(|state| {
-                                if let Some(app) = state.active_app_mut() {
-                                    if let Some(page) = app.pages.get_mut(app.active_page) {
-                                        apply_style_edit(&mut page.style, &sk, &value);
-                                    }
-                                }
+                            s.fire_signal(target_id, "changed", {
+                                let mut p = serde_json::Map::new();
+                                p.insert("key".into(), serde_json::Value::from(key.as_str()));
+                                p.insert("value".into(), serde_json::Value::from(value.as_str()));
+                                p
                             });
                         }
-                    } else if key.starts_with("facet.") {
-                        if let Some(ref target_id) = selected_id {
-                            let facet_id = s
-                                .store
-                                .state()
-                                .builder_document
-                                .root
-                                .as_ref()
-                                .and_then(|r| r.find(target_id))
-                                .and_then(|n| n.props.get("facet_id"))
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string());
-                            if let Some(fid) = facet_id {
-                                s.push_undo(&format!("Edit {key}"));
-                                let fkey = key.strip_prefix("facet.").unwrap_or(&key).to_string();
-                                let val = value.clone();
-                                s.store.mutate(|state| {
-                                    if let Some(doc) =
-                                        state.active_app_mut().and_then(|a| a.active_document_mut())
-                                    {
-                                        if let Some(def) = doc.facets.get_mut(&fid) {
-                                            apply_facet_edit(def, &fkey, &val);
-                                        }
-                                    }
-                                });
-                                s.sync_builder_document();
-                            }
-                        }
-                    } else if key.starts_with("schema.") {
-                        let skey = key.strip_prefix("schema.").unwrap_or(&key).to_string();
-                        let val = value.clone();
-                        s.push_undo(&format!("Edit {key}"));
-                        s.store.mutate(|state| {
-                            let sid = resolve_schema_id(state);
-                            if let Some(sid) = sid {
-                                if let Some(doc) =
-                                    state.active_app_mut().and_then(|a| a.active_document_mut())
-                                {
-                                    if let Some(schema) = doc.facet_schemas.get_mut(&sid) {
-                                        crate::panels::schema::apply_schema_edit(
-                                            schema, &skey, &val,
-                                        );
-                                    }
-                                }
-                            }
-                        });
-                        s.sync_builder_document();
-                    } else if let Some(ref target_id) = selected_id {
-                        let kind = field_kind_for_key(&s, &key);
-                        let (source_key, formatted) =
-                            slint_source_key_for_edit(&s, &key, &value, kind.as_deref());
-                        s.push_undo(&format!("Edit {key}"));
-                        if let Some(ref mut live) = s.live {
-                            let _ = live.edit_prop_in_source(target_id, &source_key, &formatted);
-                        }
-                        s.sync_builder_document();
-                        s.fire_signal(target_id, "changed", {
-                            let mut p = serde_json::Map::new();
-                            p.insert("key".into(), serde_json::Value::from(key.as_str()));
-                            p.insert("value".into(), serde_json::Value::from(value.as_str()));
-                            p
-                        });
                     }
                 }
                 if let Some(w) = weak.upgrade() {
@@ -658,140 +675,15 @@ impl Shell {
                 if is_preview_mode(&inner.borrow().store.state().workspace) {
                     return;
                 }
-                eprintln!(
-                    "[property-edit-number] key={key:?} val={val} syncing={}",
-                    inner.borrow().syncing.get()
-                );
                 if inner.borrow().syncing.get() {
                     return;
                 }
                 let key = key.to_string();
                 let value = format_slider_value(val);
-                eprintln!("[property-edit-number] formatted value={value:?} for key={key:?}");
                 {
                     let mut s = inner.borrow_mut();
                     let selected_id = s.store.state().selection.primary().cloned();
-                    eprintln!("[property-edit-number] selected_id={selected_id:?}");
-                    if key.starts_with("layout.") {
-                        if let Some(ref target_id) = selected_id {
-                            s.push_undo(&format!("Edit {key}"));
-                            let tid = target_id.clone();
-                            if let Some(ref mut live) = s.live {
-                                let _ = live.mutate_document(|doc| {
-                                    if let Some(ref mut root) = doc.root {
-                                        apply_node_layout_edit(root, &tid, &key, &value);
-                                    }
-                                });
-                            }
-                            s.sync_builder_document();
-                        }
-                    } else if key.starts_with("transform.") {
-                        if let Some(ref target_id) = selected_id {
-                            s.push_undo(&format!("Edit {key}"));
-                            let tid = target_id.clone();
-                            if let Some(ref mut live) = s.live {
-                                let res = live.mutate_document(|doc| {
-                                    if let Some(ref mut root) = doc.root {
-                                        apply_node_transform_edit(root, &tid, &key, &value);
-                                    }
-                                });
-                                eprintln!("[transform-edit-num] mutate result={res:?}");
-                            }
-                            s.sync_builder_document();
-                            if let Some(node) = s
-                                .store
-                                .state()
-                                .builder_document
-                                .root
-                                .as_ref()
-                                .and_then(|r| r.find(&tid))
-                            {
-                                eprintln!(
-                                    "[transform-edit-num] post-sync pos={:?} rot={:.3} scale={:?}",
-                                    node.transform.position,
-                                    node.transform.rotation,
-                                    node.transform.scale
-                                );
-                            } else {
-                                eprintln!("[transform-edit-num] node {tid} NOT FOUND after sync");
-                            }
-                        }
-                    } else if key.starts_with("style.") || key.starts_with("inherited.style.") {
-                        let style_key = key
-                            .strip_prefix("inherited.style.")
-                            .or_else(|| key.strip_prefix("style."))
-                            .unwrap_or(&key);
-                        let sk = style_key.to_string();
-                        s.push_undo(&format!("Edit style {key}"));
-                        if let Some(ref target_id) = selected_id {
-                            let tid = target_id.clone();
-                            if let Some(ref mut live) = s.live {
-                                let _ = live.mutate_document(|doc| {
-                                    if let Some(ref mut root) = doc.root {
-                                        if let Some(node) = root.find_mut(&tid) {
-                                            apply_style_edit(&mut node.style, &sk, &value);
-                                        }
-                                    }
-                                });
-                            }
-                            s.sync_builder_document();
-                        } else {
-                            s.store.mutate(|state| {
-                                if let Some(app) = state.active_app_mut() {
-                                    if let Some(page) = app.pages.get_mut(app.active_page) {
-                                        apply_style_edit(&mut page.style, &sk, &value);
-                                    }
-                                }
-                            });
-                        }
-                    } else if key.starts_with("facet.") {
-                        if let Some(ref target_id) = selected_id {
-                            let facet_id = s
-                                .store
-                                .state()
-                                .builder_document
-                                .root
-                                .as_ref()
-                                .and_then(|r| r.find(target_id))
-                                .and_then(|n| n.props.get("facet_id"))
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string());
-                            if let Some(fid) = facet_id {
-                                s.push_undo(&format!("Edit {key}"));
-                                let fkey = key.strip_prefix("facet.").unwrap_or(&key).to_string();
-                                s.store.mutate(|state| {
-                                    if let Some(doc) =
-                                        state.active_app_mut().and_then(|a| a.active_document_mut())
-                                    {
-                                        if let Some(def) = doc.facets.get_mut(&fid) {
-                                            apply_facet_edit(def, &fkey, &format!("{val}"));
-                                        }
-                                    }
-                                });
-                                s.sync_builder_document();
-                            }
-                        }
-                    } else if key.starts_with("schema.") {
-                        let skey = key.strip_prefix("schema.").unwrap_or(&key).to_string();
-                        s.push_undo(&format!("Edit {key}"));
-                        s.store.mutate(|state| {
-                            let sid = resolve_schema_id(state);
-                            if let Some(sid) = sid {
-                                if let Some(doc) =
-                                    state.active_app_mut().and_then(|a| a.active_document_mut())
-                                {
-                                    if let Some(schema) = doc.facet_schemas.get_mut(&sid) {
-                                        crate::panels::schema::apply_schema_edit(
-                                            schema,
-                                            &skey,
-                                            &format_slider_value(val),
-                                        );
-                                    }
-                                }
-                            }
-                        });
-                        s.sync_builder_document();
-                    } else {
+                    if !apply_prefixed_property_edit(&mut s, &selected_id, &key, &value) {
                         if let Some(ref target_id) = selected_id {
                             let kind = field_kind_for_key(&s, &key);
                             let formatted = match kind.as_deref() {

@@ -21,6 +21,12 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "io
 # and debounces them before handing them to the dev server for
 # rebuild decisions.
 notify = { workspace = true }
+# `prism codegen luau-types` walks the workspace's `#[luau_expose]`
+# annotations through `prism-core`'s curated registry. The Luau runtime
+# itself is *not* needed here — only the type-stub constants — so we
+# pull `prism-core` in without the `luau` feature to keep the CLI's
+# build cheap.
+prism-core = { path = "../prism-core" }
 
 [dev-dependencies]
 filetime = "0.2"
