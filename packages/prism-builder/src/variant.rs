@@ -57,6 +57,149 @@ pub fn apply_variant_overrides(props: &Value, variants: &[VariantAxis]) -> Value
     Value::Object(base)
 }
 
+/// Built-in component variant axes, shared between the Slint
+/// `Component` impls (`starter.rs`) and the HTML `HtmlBlock` impls
+/// (`html_starter.rs`) so a single source of truth feeds both render
+/// walkers' `apply_variant_defaults` step.
+pub mod presets {
+    use super::{VariantAxis, VariantOption};
+    use serde_json::json;
+
+    pub fn button() -> Vec<VariantAxis> {
+        vec![VariantAxis {
+            key: "variant".into(),
+            label: "Variant".into(),
+            options: vec![
+                VariantOption {
+                    value: "primary".into(),
+                    label: "Primary".into(),
+                    overrides: json!({ "bg": "#3b82f6", "color": "#ffffff" }),
+                },
+                VariantOption {
+                    value: "secondary".into(),
+                    label: "Secondary".into(),
+                    overrides: json!({ "bg": "#4b5563", "color": "#ffffff" }),
+                },
+                VariantOption {
+                    value: "danger".into(),
+                    label: "Danger".into(),
+                    overrides: json!({ "bg": "#ef4444", "color": "#ffffff" }),
+                },
+                VariantOption {
+                    value: "ghost".into(),
+                    label: "Ghost".into(),
+                    overrides: json!({ "bg": "transparent", "color": "#d8dee9" }),
+                },
+            ],
+        }]
+    }
+
+    pub fn input() -> Vec<VariantAxis> {
+        vec![VariantAxis {
+            key: "state".into(),
+            label: "State".into(),
+            options: vec![
+                VariantOption {
+                    value: "default".into(),
+                    label: "Default".into(),
+                    overrides: json!({ "border_color": "#3b4252" }),
+                },
+                VariantOption {
+                    value: "error".into(),
+                    label: "Error".into(),
+                    overrides: json!({ "border_color": "#ef4444", "bg": "#fef2f2" }),
+                },
+                VariantOption {
+                    value: "success".into(),
+                    label: "Success".into(),
+                    overrides: json!({ "border_color": "#10b981", "bg": "#f0fdf4" }),
+                },
+            ],
+        }]
+    }
+
+    pub fn container() -> Vec<VariantAxis> {
+        vec![VariantAxis {
+            key: "style".into(),
+            label: "Style".into(),
+            options: vec![
+                VariantOption {
+                    value: "none".into(),
+                    label: "None".into(),
+                    overrides: json!({}),
+                },
+                VariantOption {
+                    value: "card".into(),
+                    label: "Card".into(),
+                    overrides: json!({ "padding": 16, "border_width": 0 }),
+                },
+                VariantOption {
+                    value: "outlined".into(),
+                    label: "Outlined".into(),
+                    overrides: json!({
+                        "padding": 16,
+                        "border_width": 1,
+                        "border_color": "#3b4252"
+                    }),
+                },
+                VariantOption {
+                    value: "elevated".into(),
+                    label: "Elevated".into(),
+                    overrides: json!({ "padding": 20, "border_width": 0 }),
+                },
+            ],
+        }]
+    }
+
+    pub fn tabs() -> Vec<VariantAxis> {
+        vec![VariantAxis {
+            key: "style".into(),
+            label: "Style".into(),
+            options: vec![
+                VariantOption {
+                    value: "underline".into(),
+                    label: "Underline".into(),
+                    overrides: json!({}),
+                },
+                VariantOption {
+                    value: "pill".into(),
+                    label: "Pill".into(),
+                    overrides: json!({}),
+                },
+                VariantOption {
+                    value: "segmented".into(),
+                    label: "Segmented".into(),
+                    overrides: json!({}),
+                },
+            ],
+        }]
+    }
+
+    pub fn table() -> Vec<VariantAxis> {
+        vec![VariantAxis {
+            key: "density".into(),
+            label: "Density".into(),
+            options: vec![
+                VariantOption {
+                    value: "compact".into(),
+                    label: "Compact".into(),
+                    overrides: json!({ "row_padding": 4 }),
+                },
+                VariantOption {
+                    value: "normal".into(),
+                    label: "Normal".into(),
+                    overrides: json!({ "row_padding": 8 }),
+                },
+                VariantOption {
+                    value: "spacious".into(),
+                    label: "Spacious".into(),
+                    overrides: json!({ "row_padding": 14 }),
+                },
+            ],
+        }]
+    }
+}
+
 /// Like `apply_variant_overrides` but variant overrides fill in
 /// missing props rather than overwriting them. Instance props always
 /// win.
@@ -182,5 +325,29 @@ mod tests {
         let back: VariantAxis = serde_json::from_str(&json).unwrap();
         assert_eq!(back.key, "variant");
         assert_eq!(back.options.len(), 3);
+    }
+
+    #[test]
+    fn presets_match_expected_axis_keys() {
+        assert_eq!(presets::button()[0].key, "variant");
+        assert_eq!(presets::input()[0].key, "state");
+        assert_eq!(presets::container()[0].key, "style");
+        assert_eq!(presets::tabs()[0].key, "style");
+        assert_eq!(presets::table()[0].key, "density");
+    }
+
+    #[test]
+    fn container_card_preset_applies_padding_default() {
+        let props = json!({ "style": "card" });
+        let result = apply_variant_defaults(&props, &presets::container());
+        assert_eq!(result["padding"], 16);
+        assert_eq!(result["border_width"], 0);
+    }
+
+    #[test]
+    fn input_error_preset_applies_red_border() {
+        let props = json!({ "state": "error" });
+        let result = apply_variant_defaults(&props, &presets::input());
+        assert_eq!(result["border_color"], "#ef4444");
     }
 }

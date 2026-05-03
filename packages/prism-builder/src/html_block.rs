@@ -78,16 +78,9 @@ impl<'a> HtmlRenderContext<'a> {
         if index >= modifiers.len() {
             return block.render_html(self, props, children, out);
         }
-        let modifier = &modifiers[index];
-        match modifier.kind {
-            crate::modifier::ModifierKind::ScrollOverflow => {
-                out.open_attrs("div", &[("style", "overflow:auto")]);
-                self.apply_html_modifiers(modifiers, index + 1, props, children, block, out)?;
-                out.close("div");
-                Ok(())
-            }
-            _ => self.apply_html_modifiers(modifiers, index + 1, props, children, block, out),
-        }
+        modifiers[index].wrap_html(out, |out| {
+            self.apply_html_modifiers(modifiers, index + 1, props, children, block, out)
+        })
     }
 }
 

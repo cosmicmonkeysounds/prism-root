@@ -431,13 +431,9 @@ impl<'a> RenderSlintContext<'a> {
         if index >= modifiers.len() {
             return component.render_slint(self, props, children, out);
         }
-        let modifier = &modifiers[index];
-        match modifier.kind {
-            crate::modifier::ModifierKind::ScrollOverflow => out.block("Flickable", |out| {
-                self.apply_slint_modifiers(modifiers, index + 1, props, children, component, out)
-            }),
-            _ => self.apply_slint_modifiers(modifiers, index + 1, props, children, component, out),
-        }
+        modifiers[index].wrap_slint(out, |out| {
+            self.apply_slint_modifiers(modifiers, index + 1, props, children, component, out)
+        })
     }
 }
 

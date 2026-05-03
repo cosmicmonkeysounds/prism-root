@@ -29,7 +29,7 @@ use crate::schemas;
 use crate::signal::{with_common_signals, SignalDef};
 use crate::slint_source::{escape_slint_string, SlintEmitter};
 use crate::style::StyleProperties;
-use crate::variant::{VariantAxis, VariantOption};
+use crate::variant::{presets as variant_presets, VariantAxis};
 
 /// Register the starter catalog into `reg`. Call this once at boot
 /// to get a registry with fifteen ready-to-render components.
@@ -271,6 +271,9 @@ impl Component for ContainerComponent {
         )
         .with_payload(vec![FieldSpec::text("child_id", "Added child node ID")])])
     }
+    fn variants(&self) -> Vec<VariantAxis> {
+        variant_presets::container()
+    }
     fn render_slint(
         &self,
         ctx: &RenderSlintContext<'_>,
@@ -397,6 +400,9 @@ impl Component for InputComponent {
                 FieldSpec::text("value", "Current input value"),
             ]),
         ])
+    }
+    fn variants(&self) -> Vec<VariantAxis> {
+        variant_presets::input()
     }
     fn render_slint(
         &self,
@@ -776,6 +782,9 @@ impl Component for TableComponent {
             ),
         ])
     }
+    fn variants(&self) -> Vec<VariantAxis> {
+        variant_presets::table()
+    }
     fn render_slint(
         &self,
         _ctx: &RenderSlintContext<'_>,
@@ -849,6 +858,9 @@ impl Component for TabsComponent {
             FieldSpec::number("index", "Active tab index", Default::default()),
             FieldSpec::text("label", "Active tab label"),
         ])])
+    }
+    fn variants(&self) -> Vec<VariantAxis> {
+        variant_presets::tabs()
     }
     fn render_slint(
         &self,
@@ -978,32 +990,7 @@ impl Component for ButtonComponent {
         with_common_signals(vec![])
     }
     fn variants(&self) -> Vec<VariantAxis> {
-        vec![VariantAxis {
-            key: "variant".into(),
-            label: "Variant".into(),
-            options: vec![
-                VariantOption {
-                    value: "primary".into(),
-                    label: "Primary".into(),
-                    overrides: serde_json::json!({ "bg": "#3b82f6", "color": "#ffffff" }),
-                },
-                VariantOption {
-                    value: "secondary".into(),
-                    label: "Secondary".into(),
-                    overrides: serde_json::json!({ "bg": "#4b5563", "color": "#ffffff" }),
-                },
-                VariantOption {
-                    value: "danger".into(),
-                    label: "Danger".into(),
-                    overrides: serde_json::json!({ "bg": "#ef4444", "color": "#ffffff" }),
-                },
-                VariantOption {
-                    value: "ghost".into(),
-                    label: "Ghost".into(),
-                    overrides: serde_json::json!({ "bg": "transparent", "color": "#d8dee9" }),
-                },
-            ],
-        }]
+        variant_presets::button()
     }
     fn render_slint(
         &self,

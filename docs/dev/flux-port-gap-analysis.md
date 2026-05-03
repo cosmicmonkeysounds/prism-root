@@ -402,10 +402,10 @@ the dock layout and consumes one or more Tier 1–2 engines.
 
 | Need | Crate | Version | Downloads | Decision |
 |---|---|---|---|---|
-| RRULE expansion | `rrule` | 0.14.0 | 590k | **Use.** RFC 5545 parser + expander, built on `chrono` + `chrono-tz`. |
-| Decimal math | `rust_decimal` | 1.41 | 95M | **Use.** 96-bit integer decimal, serde, no float rounding. Standard for money in Rust. |
-| Currency format | `rusty-money` | 0.5.0 | 721k | **Optional.** Wraps `rust_decimal` with ISO 4217 codes + locale formatting. |
-| TVM functions | `financial` | 1.1.5 | 35k | **Use.** Excel-compatible fv/pv/pmt/npv/irr. 180+ test cases. Math is settled. |
+| RRULE expansion | `rrule` | 0.13.0 | 590k | ✅ **Integrated.** RFC 5545 parser + expander in `domain::calendar::engine`. |
+| Decimal math | `rust_decimal` | 1.41 | 95M | ✅ **Integrated.** Exact rounding in `domain::ledger::currency`. |
+| Currency format | `rusty-money` | 0.4.2 | 721k | ✅ **Integrated.** ISO 4217 metadata in `domain::ledger::currency`. |
+| TVM functions | `financial` | 1.1.5 | 35k | ✅ **Integrated.** fv/pv/npv/irr/xnpv/xirr in `domain::ledger::finance`. |
 | Amortization | — | — | — | **Roll own** (~30 LOC on top of `financial`). |
 | Formula eval | — | — | — | **Roll own.** Extend `language::expression` with cell refs + aggregates. No good Rust crate. |
 | Grid layout | `taffy` | 0.7 | — | **Reuse.** Already in workspace. CSS Grid for dashboard widget placement. |

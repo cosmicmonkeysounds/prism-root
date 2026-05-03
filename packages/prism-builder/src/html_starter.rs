@@ -18,6 +18,7 @@ use crate::prefab::PrefabHtmlBlock;
 use crate::registry::{prop_bool, prop_str, prop_u64, FieldSpec, RegistryError};
 use crate::schemas;
 use crate::starter::card_prefab_def;
+use crate::variant::{presets as variant_presets, VariantAxis};
 
 pub fn register_html_builtins(reg: &mut HtmlRegistry) -> Result<(), RegistryError> {
     reg.register(Arc::new(HtmlText { id: "text".into() }))?;
@@ -143,6 +144,9 @@ impl HtmlBlock for HtmlContainer {
     fn schema(&self) -> Vec<FieldSpec> {
         schemas::container()
     }
+    fn variants(&self) -> Vec<VariantAxis> {
+        variant_presets::container()
+    }
     fn render_html(
         &self,
         ctx: &HtmlRenderContext<'_>,
@@ -219,6 +223,9 @@ impl HtmlBlock for HtmlInput {
     fn schema(&self) -> Vec<FieldSpec> {
         schemas::input()
     }
+    fn variants(&self) -> Vec<VariantAxis> {
+        variant_presets::input()
+    }
     fn render_html(
         &self,
         _ctx: &HtmlRenderContext<'_>,
@@ -265,6 +272,9 @@ impl HtmlBlock for HtmlButton {
     }
     fn schema(&self) -> Vec<FieldSpec> {
         schemas::button()
+    }
+    fn variants(&self) -> Vec<VariantAxis> {
+        variant_presets::button()
     }
     fn render_html(
         &self,
@@ -449,6 +459,9 @@ impl HtmlBlock for HtmlTable {
     fn schema(&self) -> Vec<FieldSpec> {
         schemas::table()
     }
+    fn variants(&self) -> Vec<VariantAxis> {
+        variant_presets::table()
+    }
     fn render_html(
         &self,
         _ctx: &HtmlRenderContext<'_>,
@@ -491,6 +504,9 @@ impl HtmlBlock for HtmlTabs {
     }
     fn schema(&self) -> Vec<FieldSpec> {
         schemas::tabs()
+    }
+    fn variants(&self) -> Vec<VariantAxis> {
+        variant_presets::tabs()
     }
     fn render_html(
         &self,
