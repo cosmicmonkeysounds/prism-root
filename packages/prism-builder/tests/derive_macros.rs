@@ -53,6 +53,46 @@ fn prism_field_derive_emits_specs_in_order() {
 }
 
 #[test]
+fn prism_field_explicit_kind_attributes_cover_rich_kinds() {
+    #[derive(PrismField)]
+    #[allow(dead_code)]
+    struct RichProps {
+        #[field(kind = "color")]
+        accent: String,
+        #[field(kind = "date")]
+        starts_on: String,
+        #[field(kind = "datetime")]
+        starts_at: String,
+        #[field(kind = "duration")]
+        run_for: i64,
+        #[field(kind = "file", accept = "image/*")]
+        avatar: String,
+        #[field(kind = "currency", currency = "USD")]
+        price: f64,
+        #[field(kind = "calculation", formula = "SUM(items)")]
+        total: f64,
+    }
+
+    let specs = RichProps::field_specs();
+    assert!(matches!(specs[0].kind, FieldKind::Color));
+    assert!(matches!(specs[1].kind, FieldKind::Date));
+    assert!(matches!(specs[2].kind, FieldKind::DateTime));
+    assert!(matches!(specs[3].kind, FieldKind::Duration));
+    match &specs[4].kind {
+        FieldKind::File(cfg) => assert_eq!(cfg.accept, vec!["image/*".to_string()]),
+        other => panic!("expected File, got {other:?}"),
+    }
+    match &specs[5].kind {
+        FieldKind::Currency { currency_code } => assert_eq!(currency_code.as_deref(), Some("USD")),
+        other => panic!("expected Currency, got {other:?}"),
+    }
+    match &specs[6].kind {
+        FieldKind::Calculation { formula } => assert_eq!(formula, "SUM(items)"),
+        other => panic!("expected Calculation, got {other:?}"),
+    }
+}
+
+#[test]
 fn prism_field_humanizes_missing_labels() {
     #[derive(PrismField)]
     #[allow(dead_code)]

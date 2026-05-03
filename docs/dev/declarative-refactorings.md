@@ -10,7 +10,7 @@ target, codegen, RPC wire, type stubs, intellisense) derived.
 
 ---
 
-## 1. `Block` trait collapse + `#[derive(PrismBlock)]`  🟡 Phases 1–2 shipped, Phase 3 pending
+## 1. `Block` trait collapse + `#[derive(PrismBlock)]`  ✅ all three phases shipped
 
 ### Current state
 
@@ -131,20 +131,17 @@ extraction, Phase 2 is icing.
   full `Block` impl wired through the template walkers. Integration
   tests in `prism-builder/tests/derive_macros.rs` cover the derive
   end-to-end (id+schema surface and HTML render through the walker).
-- ⬜ Phase 3: deprecate `WidgetContribution` / `CoreWidgetComponent`
-  in favor of the unified `Block`. The 45 core-engine widget
-  contributions (`prism_core::domain::*::widget_contributions()` +
-  `prism_core::interaction::*::widget_contributions()` +
-  `prism_core::widget::view_contributions()`) are still pure-data
-  records wrapped by `CoreWidgetComponent`/`CoreWidgetHtmlBlock` at
-  registration time. The migration path: each engine module exposes
-  `pub fn blocks() -> Vec<Arc<dyn Block>>` returning derived
-  `#[derive(PrismBlock)]` structs whose `template()` returns the same
-  `TemplateNode` tree the contribution carries today; `register_core_widgets`
-  collapses to a single iteration over `Arc<dyn Block>`. Pre-migration:
-  the few contributions whose templates referenced asset paths or
-  needed child-slot insertion now have a path through the extended
-  `TemplateNode` IR rather than requiring bespoke `Component` impls.
+- ✅ Phase 3: `CoreWidgetComponent` + `CoreWidgetHtmlBlock` collapsed
+  into a single `CoreWidgetBlock: Block` (`prism-builder/src/core_widget.rs`).
+  The blanket `Block`→`Component` and `Block`→`HtmlBlock` impls in
+  `block.rs` mean one `Arc<CoreWidgetBlock>` registers into both
+  registries — `register_core_widgets` and `register_core_html_widgets`
+  both wrap each `WidgetContribution` in the same `CoreWidgetBlock`
+  type. The `WidgetContribution` data shape stays as the pure-data
+  declaration that core engines emit (45 contributions across
+  `domain::*::widget_contributions()`, `interaction::*::widget_contributions()`,
+  and `widget::view_contributions()`); the duplicate trait impl is
+  what's gone. 359 builder + 6 derive tests pass; clippy clean.
 
 ### Work breakdown
 
@@ -157,7 +154,7 @@ extraction, Phase 2 is icing.
 
 ---
 
-## 2. `#[derive(PrismField)]` — unify the four field schemas  🟡 derive shipped, migrations pending
+## 2. `#[derive(PrismField)]` — unify the four field schemas  ✅ derive shipped, all default schemas migrated
 
 ### Current state
 
@@ -222,16 +219,22 @@ plus Luau `type CardProps = { title: string, body: string, ... }`.
   `select = "a,b,c"`. Type→kind mapping covers `String`/`bool`/
   `f32`/`f64` plus all signed and unsigned ints. Generated
   function: `Foo::field_specs() -> Vec<FieldSpec>`.
-- 🟡 Migration: `prism-builder::schemas::text` migrated to
-  `#[derive(PrismField)]` on a private `TextProps` struct as the
-  first proof. The remaining 9 schemas in `schemas.rs` continue to
-  use hand-rolled builders pending derive coverage of `File` /
-  `Currency` / `Calculation` kinds (which take config payloads
-  that don't map cleanly to a Rust field type alone).
+- ✅ Rich-kind coverage: derive grew an explicit `kind = "..."`
+  attribute escape-hatch covering `color`, `date`, `datetime`,
+  `duration`, `file` (with `accept = "..."`), `currency` (with
+  `currency = "USD"`), and `calculation` (with `formula = "..."`).
+  These bypass type-based inference because they need attribute-driven
+  config. Type-based inference still drives the simple kinds.
+- ✅ Migration: every default schema in
+  `prism-builder::schemas` is now a `#[derive(PrismField)]` struct —
+  `text`, `image` (file kind), `container`, `form`, `input`, `button`,
+  `code`, `spacer`, `columns`, `list`, `table`, `tabs`, `accordion`,
+  `facet`. `divider` stays as `vec![]` since it has no fields.
+  361 unit + 7 derive tests pass; clippy clean.
 
 ---
 
-## 3. `#[daemon_command]` proc-macro  🟡 typed-helper shipped, macro pending
+## 3. `#[daemon_command]` proc-macro  ✅ macro shipped, every default module migrated
 
 ### Current state
 
@@ -303,14 +306,33 @@ annotated command in the same module into the install impl.
   callsites to plain `String`-error helpers since `register_typed`
   now owns command-name attribution. 108 lib + 12 integration + 2
   stdio_bin tests pass; clippy clean.
-- ⬜ Pick an attribute macro shape (function attr vs derive on a unit
-  struct) — every default module is now typed, so the patterns are
-  visible: typed `*Args` + typed `*Resp`, single-line registration,
-  command name still hand-attached in the `register_typed` call.
-  The macro should desugar `#[daemon_command(id = "x.y")]` over a
-  `fn(state, Req) -> Result<Resp, E>` to the same shape.
-- ⬜ Add to `prism-luau-derive` or a new `prism-daemon-derive` crate
-  that desugars to the same `register_typed` glue this layer provides.
+- ✅ Attribute-macro shape picked: function attribute (not derive on a
+  unit struct). Arity decides the wiring — `fn(req)` is stateless,
+  `fn(&state, req)` threads an `Arc<StateType>` through the closure.
+  Required `id = "x.y"`; optional `permission = User|Dev` (default
+  `Dev`). Returns must be `Result<_, _>`; the macro errors at compile
+  time otherwise.
+- ✅ Shipped in `prism-luau-derive` as `#[daemon_command]`. Each
+  annotation emits the original function plus a sibling
+  `register_<fname>` helper that calls
+  `register_typed_with_permission` against the typed handler. The
+  daemon crate adds `extern crate self as prism_daemon;` so the
+  macro's `::prism_daemon::…` paths resolve when the macro is used
+  inside the daemon itself.
+- ✅ Migrations: every default-feature module is on the macro —
+  `watcher` (3), `crdt` (4), `luau` (1), `build` (1), `crypto` (6),
+  `actors` (6), `debug` (9), `vfs` (6), `admin` (1 at `User` tier).
+  Admin's handler-captured registry handle moved into a single
+  `AdminState { started_at, module_ids, registry }` struct so the
+  closure stays one captured `Arc<AdminState>` instead of three
+  independent moves. The `typed_command::CommandRegistryExt` trait
+  remains the underlying glue and is still exercised directly by
+  hand-written closures in tests. 108 lib + 12 integration + 12
+  stdio + 2 ipc + 3 macro tests pass; clippy clean.
+- 🟡 Feature-gated modules outside the default surface
+  (`whisper`, `conferencing`) are unmigrated — they need to opt-in
+  on their own build profile, but the macro shape is proven to
+  handle every command pattern those modules use.
 
 ---
 
@@ -423,10 +445,13 @@ Implementation order optimises for value × independence:
 
 1. **#1 Phase 1** (collapse `Component` + `HtmlBlock`): biggest LOC
    reduction, mechanical, no new crate dependencies.
-2. **#3 daemon_command**: independent of #1, large surface area, very
-   mechanical once the macro shape is fixed.
-3. **#2 PrismField**: enables #1 Phase 2 (the derive needs a unified
-   field shape).
+2. **#3 daemon_command**: ✅ macro shipped and every default-feature
+   module migrated. Only feature-gated `whisper` / `conferencing`
+   still use `register_typed` directly — same wire behaviour either
+   way.
+3. **#2 PrismField**: ✅ derive shipped, every default schema
+   migrated, rich kinds covered via the `kind = "..."` attribute
+   escape-hatch.
 4. **#1 Phase 2** (PrismBlock derive): ✅ shipped — depended on a
    richer `TemplateNode` (now grew `Image`/`Link`/`Children` arms)
    and on the walkers being callable from derived impls.

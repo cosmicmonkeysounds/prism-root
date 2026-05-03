@@ -39,6 +39,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{parse_macro_input, Data, DataEnum, DataStruct, DeriveInput, Field, Fields, Ident, Type};
 
+mod daemon_command;
 mod prism_block;
 mod prism_field;
 mod slint_binding;
@@ -76,6 +77,22 @@ pub fn visual_node(attr: TokenStream, item: TokenStream) -> TokenStream {
     let attr2: TokenStream2 = attr.into();
     let item2: TokenStream2 = item.into();
     match visual_node::expand(attr2, item2) {
+        Ok(ts) => ts.into(),
+        Err(e) => e.to_compile_error().into(),
+    }
+}
+
+/// Annotate a typed daemon command handler. Desugars
+/// `fn name(req)` or `fn name(&state, req) -> Result<Resp, E>` into
+/// the original function plus a `register_<name>` helper that wires
+/// the typed handler through `CommandRegistry::register_typed`.
+/// Required: `id = "x.y"`. Optional: `permission = User|Dev|Admin`
+/// (default `Dev`).
+#[proc_macro_attribute]
+pub fn daemon_command(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let attr2: TokenStream2 = attr.into();
+    let item2: TokenStream2 = item.into();
+    match daemon_command::expand(attr2, item2) {
         Ok(ts) => ts.into(),
         Err(e) => e.to_compile_error().into(),
     }

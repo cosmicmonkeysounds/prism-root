@@ -39,8 +39,8 @@
 use crate::builder::DaemonBuilder;
 use crate::module::DaemonModule;
 use crate::registry::CommandError;
-use crate::typed_command::CommandRegistryExt;
 use mlua::{Function, Lua, MultiValue, Value as LuaValue};
+use prism_luau_derive::daemon_command;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map as JsonMap, Value as JsonValue};
 use std::collections::{HashMap, VecDeque};
@@ -505,76 +505,70 @@ impl DaemonModule for ActorsModule {
             .clone();
         let registry = builder.registry().clone();
 
-        let m = manager.clone();
-        registry.register_typed(
-            "actors.spawn",
-            move |args: SpawnArgs| -> Result<SpawnResp, String> {
-                match args.kind {
-                    ActorKind::Luau => {
-                        let script = args
-                            .script
-                            .ok_or_else(|| "luau actors require a `script` field".to_string())?;
-                        let id = m.spawn_luau(script, args.name)?;
-                        Ok(SpawnResp { id })
-                    }
-                    ActorKind::Python | ActorKind::LlmSidecar => Err(format!(
-                        "actor kind {:?} is not yet supported by this build",
-                        args.kind.as_str()
-                    )),
-                }
-            },
-        )?;
-
-        let m = manager.clone();
-        registry.register_typed(
-            "actors.send",
-            move |args: SendArgs| -> Result<SendResp, String> {
-                let depth = m.send(
-                    args.id,
-                    ActorMessage {
-                        id: args.correlation_id,
-                        body: args.message,
-                    },
-                )?;
-                Ok(SendResp {
-                    delivered: true,
-                    outbox_depth: depth,
-                })
-            },
-        )?;
-
-        let m = manager.clone();
-        registry.register_typed(
-            "actors.recv",
-            move |args: RecvArgs| -> Result<RecvResp, String> {
-                let max = args.max.unwrap_or(64);
-                let messages = m.recv(args.id, max)?;
-                Ok(RecvResp { messages })
-            },
-        )?;
-
-        let m = manager.clone();
-        registry.register_typed("actors.status", move |args: IdArgs| m.status(args.id))?;
-
-        let m = manager.clone();
-        registry.register_typed(
-            "actors.list",
-            move |_args: JsonValue| -> Result<ListResp, std::convert::Infallible> {
-                Ok(ListResp { actors: m.list() })
-            },
-        )?;
-
-        let m = manager;
-        registry.register_typed(
-            "actors.stop",
-            move |args: IdArgs| -> Result<StopResp, String> {
-                let stopped = m.stop(args.id)?;
-                Ok(StopResp { stopped })
-            },
-        )?;
+        register_spawn(&registry, manager.clone())?;
+        register_send(&registry, manager.clone())?;
+        register_recv(&registry, manager.clone())?;
+        register_status(&registry, manager.clone())?;
+        register_list(&registry, manager.clone())?;
+        register_stop(&registry, manager)?;
 
         Ok(())
     }
+}
+
+#[daemon_command(id = "actors.spawn")]
+fn spawn(mgr: &ActorsManager, args: SpawnArgs) -> Result<SpawnResp, String> {
+    match args.kind {
+        ActorKind::Luau => {
+            let script = args
+                .script
+                .ok_or_else(|| "luau actors require a `script` field".to_string())?;
+            let id = mgr.spawn_luau(script, args.name)?;
+            Ok(SpawnResp { id })
+        }
+        ActorKind::Python | ActorKind::LlmSidecar => Err(format!(
+            "actor kind {:?} is not yet supported by this build",
+            args.kind.as_str()
+        )),
+    }
+}
+
+#[daemon_command(id = "actors.send")]
+fn send(mgr: &ActorsManager, args: SendArgs) -> Result<SendResp, String> {
+    let depth = mgr.send(
+        args.id,
+        ActorMessage {
+            id: args.correlation_id,
+            body: args.message,
+        },
+    )?;
+    Ok(SendResp {
+        delivered: true,
+        outbox_depth: depth,
+    })
+}
+
+#[daemon_command(id = "actors.recv")]
+fn recv(mgr: &ActorsManager, args: RecvArgs) -> Result<RecvResp, String> {
+    let max = args.max.unwrap_or(64);
+    let messages = mgr.recv(args.id, max)?;
+    Ok(RecvResp { messages })
+}
+
+#[daemon_command(id = "actors.status")]
+fn status(mgr: &ActorsManager, args: IdArgs) -> Result<ActorStatus, String> {
+    mgr.status(args.id)
+}
+
+#[daemon_command(id = "actors.list")]
+fn list(mgr: &ActorsManager, _: JsonValue) -> Result<ListResp, std::convert::Infallible> {
+    Ok(ListResp { actors: mgr.list() })
+}
+
+#[daemon_command(id = "actors.stop")]
+fn stop(mgr: &ActorsManager, args: IdArgs) -> Result<StopResp, String> {
+    let stopped = mgr.stop(args.id)?;
+    Ok(StopResp { stopped })
 }
 
 #[derive(Debug, Serialize)]

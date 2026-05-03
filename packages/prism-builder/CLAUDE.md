@@ -327,7 +327,10 @@ Prefer the unified `Block` trait (`src/block.rs`) — one impl, both
 render targets, registered in both registries via `register_block`.
 `Component` and `HtmlBlock` remain as the underlying traits with
 blanket impls so existing custom impls (`PrefabComponent`,
-`FacetComponent`, `CoreWidgetComponent`) keep working.
+`FacetComponent`) keep working. Core-engine widgets go through the
+unified `CoreWidgetBlock` (`src/core_widget.rs`) — a single `Block`
+impl wrapping a `WidgetContribution` that registers into both
+registries via the blanket impls.
 
 1. Add a struct implementing `Block` in `src/starter.rs`. The trait
    carries both `render_slint` (`SlintEmitter`) and `render_html`

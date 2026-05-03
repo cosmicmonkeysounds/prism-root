@@ -13,10 +13,10 @@
 use crate::builder::DaemonBuilder;
 use crate::module::DaemonModule;
 use crate::registry::CommandError;
-use crate::typed_command::CommandRegistryExt;
 use notify::{
     Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Result as NotifyResult, Watcher,
 };
+use prism_luau_derive::daemon_command;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -157,18 +157,9 @@ impl DaemonModule for WatcherModule {
             .clone();
         let registry = builder.registry().clone();
 
-        let m = mgr.clone();
-        registry.register_typed("watcher.watch", move |args: WatchArgs| {
-            m.watch(Path::new(&args.path)).map(|id| WatchResp { id })
-        })?;
-
-        let m = mgr.clone();
-        registry.register_typed("watcher.poll", move |args: IdArgs| {
-            m.poll(args.id).map(|events| PollResp { events })
-        })?;
-
-        let m = mgr;
-        registry.register_typed("watcher.stop", move |args: IdArgs| m.stop(args.id))?;
+        register_watch(&registry, mgr.clone())?;
+        register_poll(&registry, mgr.clone())?;
+        register_stop(&registry, mgr)?;
 
         Ok(())
     }
@@ -192,6 +183,21 @@ struct WatchResp {
 #[derive(Debug, Serialize)]
 struct PollResp {
     events: Vec<FileChangeEvent>,
+}
+
+#[daemon_command(id = "watcher.watch")]
+fn watch(mgr: &WatcherManager, args: WatchArgs) -> Result<WatchResp, String> {
+    mgr.watch(Path::new(&args.path)).map(|id| WatchResp { id })
+}
+
+#[daemon_command(id = "watcher.poll")]
+fn poll(mgr: &WatcherManager, args: IdArgs) -> Result<PollResp, String> {
+    mgr.poll(args.id).map(|events| PollResp { events })
+}
+
+#[daemon_command(id = "watcher.stop")]
+fn stop(mgr: &WatcherManager, args: IdArgs) -> Result<(), String> {
+    mgr.stop(args.id)
 }
 
 #[cfg(test)]

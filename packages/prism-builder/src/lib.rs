@@ -50,7 +50,7 @@ pub use block::{register_block, Block};
 pub use component::{Component, ComponentId, RenderContext, RenderError, RenderSlintContext};
 pub use core_widget::{
     collect_all_contributions, register_core_html_widgets, register_core_widgets,
-    render_template_html, render_template_node, CoreWidgetComponent, CoreWidgetHtmlBlock,
+    render_template_html, render_template_node, CoreWidgetBlock,
 };
 pub use document::{BuilderDocument, Node, NodeId};
 pub use facet::{

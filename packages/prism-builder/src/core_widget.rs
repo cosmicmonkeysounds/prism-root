@@ -1,13 +1,16 @@
 //! Bridge from `prism_core::widget::WidgetContribution` to the builder's
-//! `Component` trait.
+//! unified [`Block`] trait.
 //!
 //! Core engines declare droppable widgets via pure-data
 //! [`WidgetContribution`]s with no builder dependency. This module wraps
-//! each contribution in a [`CoreWidgetComponent`] that implements
-//! [`Component`] and renders through the existing Slint pipeline.
+//! each contribution in a [`CoreWidgetBlock`] that implements [`Block`];
+//! the blanket impls in `crate::block` derive the matching `Component`
+//! (Slint) and `HtmlBlock` (HTML SSR) impls so a single instance feeds
+//! both registries.
 //!
-//! [`register_core_widgets`] collects all engine contributions and feeds
-//! them into the [`ComponentRegistry`].
+//! [`register_core_widgets`] / [`register_core_html_widgets`] collect
+//! all engine contributions and feed them into their respective
+//! registries.
 
 use std::sync::Arc;
 
@@ -18,31 +21,39 @@ use prism_core::widget::{
 };
 
 use crate::asset::AssetSource;
-use crate::component::{Component, ComponentId, RenderError, RenderSlintContext};
+use crate::block::Block;
+use crate::component::{ComponentId, RenderError, RenderSlintContext};
 use crate::document::Node;
 use crate::html::Html;
-use crate::html_block::{HtmlBlock, HtmlRegistry, HtmlRenderContext};
+use crate::html_block::{HtmlRegistry, HtmlRenderContext};
 use crate::registry::{ComponentRegistry, FieldSpec, RegistryError};
 use crate::signal::{with_common_signals, SignalDef};
 use crate::slint_source::escape_slint_string;
 use crate::slint_source::SlintEmitter;
 use crate::variant::{VariantAxis, VariantOption};
 
-// ── CoreWidgetComponent ─────────────────────────────────────────
+// ── CoreWidgetBlock ─────────────────────────────────────────────
 
 /// Wraps a [`WidgetContribution`] from a core engine and implements
-/// [`Component`] so the builder can render it through the Slint pipeline.
-pub struct CoreWidgetComponent {
+/// the unified [`Block`] trait. The blanket impls in `crate::block`
+/// derive matching `Component` and `HtmlBlock` impls so the same
+/// `Arc<CoreWidgetBlock>` registers into both `ComponentRegistry`
+/// and `HtmlRegistry`.
+pub struct CoreWidgetBlock {
     contribution: WidgetContribution,
 }
 
-impl CoreWidgetComponent {
+impl CoreWidgetBlock {
     pub fn new(contribution: WidgetContribution) -> Self {
         Self { contribution }
     }
+
+    pub fn contribution(&self) -> &WidgetContribution {
+        &self.contribution
+    }
 }
 
-impl Component for CoreWidgetComponent {
+impl Block for CoreWidgetBlock {
     fn id(&self) -> &ComponentId {
         &self.contribution.id
     }
@@ -81,6 +92,16 @@ impl Component for CoreWidgetComponent {
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
         render_template_node(ctx, &self.contribution.template.root, props, children, out)
+    }
+
+    fn render_html(
+        &self,
+        ctx: &HtmlRenderContext<'_>,
+        props: &Value,
+        children: &[Node],
+        out: &mut Html,
+    ) -> Result<(), RenderError> {
+        render_template_html(ctx, &self.contribution.template.root, props, children, out)
     }
 }
 
@@ -286,57 +307,7 @@ fn merge_props(instance: &Value, template: &Value) -> Value {
     }
 }
 
-// ── HTML block ─────────────────────────────────────────────────
-
-/// HTML-side equivalent of [`CoreWidgetComponent`] for Sovereign
-/// Portal SSR rendering.
-pub struct CoreWidgetHtmlBlock {
-    contribution: WidgetContribution,
-}
-
-impl CoreWidgetHtmlBlock {
-    pub fn new(contribution: WidgetContribution) -> Self {
-        Self { contribution }
-    }
-}
-
-impl HtmlBlock for CoreWidgetHtmlBlock {
-    fn id(&self) -> &ComponentId {
-        &self.contribution.id
-    }
-
-    fn schema(&self) -> Vec<FieldSpec> {
-        self.contribution.config_fields.clone()
-    }
-
-    fn signals(&self) -> Vec<SignalDef> {
-        let mapped: Vec<SignalDef> = self
-            .contribution
-            .signals
-            .iter()
-            .map(map_signal_spec)
-            .collect();
-        with_common_signals(mapped)
-    }
-
-    fn variants(&self) -> Vec<VariantAxis> {
-        self.contribution
-            .variants
-            .iter()
-            .map(map_variant_spec)
-            .collect()
-    }
-
-    fn render_html(
-        &self,
-        ctx: &HtmlRenderContext<'_>,
-        props: &Value,
-        children: &[Node],
-        out: &mut Html,
-    ) -> Result<(), RenderError> {
-        render_template_html(ctx, &self.contribution.template.root, props, children, out)
-    }
-}
+// ── HTML walker ─────────────────────────────────────────────────
 
 /// Walk a [`TemplateNode`] tree and emit HTML.
 pub fn render_template_html(
@@ -513,22 +484,24 @@ pub fn collect_all_contributions() -> Vec<WidgetContribution> {
     all
 }
 
-/// Wrap each core-engine [`WidgetContribution`] in a
-/// [`CoreWidgetComponent`] and register it into the given
-/// [`ComponentRegistry`].
+/// Wrap each core-engine [`WidgetContribution`] in a [`CoreWidgetBlock`]
+/// and register it into the given [`ComponentRegistry`]. The
+/// `Block`→`Component` blanket impl makes a single `Arc<CoreWidgetBlock>`
+/// register cleanly here; [`register_core_html_widgets`] takes the
+/// matching path into `HtmlRegistry`.
 pub fn register_core_widgets(registry: &mut ComponentRegistry) -> Result<(), RegistryError> {
     for contribution in collect_all_contributions() {
-        registry.register(Arc::new(CoreWidgetComponent::new(contribution)))?;
+        registry.register(Arc::new(CoreWidgetBlock::new(contribution)))?;
     }
     Ok(())
 }
 
-/// HTML-side equivalent of [`register_core_widgets`]. Wraps each
-/// contribution in a [`CoreWidgetHtmlBlock`] and registers it into
-/// the [`HtmlRegistry`] so the relay SSR path can render them.
+/// HTML-side counterpart to [`register_core_widgets`] — wraps each
+/// contribution in the same [`CoreWidgetBlock`] type and registers it
+/// into the [`HtmlRegistry`] via the `Block`→`HtmlBlock` blanket impl.
 pub fn register_core_html_widgets(registry: &mut HtmlRegistry) -> Result<(), RegistryError> {
     for contribution in collect_all_contributions() {
-        registry.register(Arc::new(CoreWidgetHtmlBlock::new(contribution)))?;
+        registry.register(Arc::new(CoreWidgetBlock::new(contribution)))?;
     }
     Ok(())
 }
@@ -588,13 +561,13 @@ mod tests {
 
     #[test]
     fn id_returns_contribution_id() {
-        let comp = CoreWidgetComponent::new(test_contribution());
+        let comp = CoreWidgetBlock::new(test_contribution());
         assert_eq!(comp.id(), "test-widget");
     }
 
     #[test]
     fn schema_returns_config_fields() {
-        let comp = CoreWidgetComponent::new(test_contribution());
+        let comp = CoreWidgetBlock::new(test_contribution());
         let schema = comp.schema();
         assert_eq!(schema.len(), 2);
         assert_eq!(schema[0].key, "title");
@@ -603,7 +576,7 @@ mod tests {
 
     #[test]
     fn signals_maps_and_includes_common() {
-        let comp = CoreWidgetComponent::new(test_contribution());
+        let comp = CoreWidgetBlock::new(test_contribution());
         let signals = comp.signals();
         // Common signals (12) + 1 component-specific = 13
         assert_eq!(signals.len(), 13);
@@ -618,7 +591,7 @@ mod tests {
 
     #[test]
     fn variants_maps_correctly() {
-        let comp = CoreWidgetComponent::new(test_contribution());
+        let comp = CoreWidgetBlock::new(test_contribution());
         let variants = comp.variants();
         assert_eq!(variants.len(), 1);
         assert_eq!(variants[0].key, "size");
@@ -632,8 +605,8 @@ mod tests {
 
     #[test]
     fn toolbar_actions_are_accessible() {
-        let comp = CoreWidgetComponent::new(test_contribution());
-        let actions = Component::toolbar_actions(&comp);
+        let comp = CoreWidgetBlock::new(test_contribution());
+        let actions = Block::toolbar_actions(&comp);
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0].id, "refresh");
         assert_eq!(actions[0].label, "Refresh");
@@ -661,7 +634,7 @@ mod tests {
             false,
         );
 
-        let comp = CoreWidgetComponent::new(test_contribution());
+        let comp = CoreWidgetBlock::new(test_contribution());
         let mut out = SlintEmitter::new();
         comp.render_slint(&ctx, &json!({}), &[], &mut out).unwrap();
 
@@ -705,7 +678,7 @@ mod tests {
             ..Default::default()
         };
 
-        let comp = CoreWidgetComponent::new(contribution);
+        let comp = CoreWidgetBlock::new(contribution);
         let mut out = SlintEmitter::new();
         comp.render_slint(&ctx, &json!({"label": "Hello World"}), &[], &mut out)
             .unwrap();
@@ -751,7 +724,7 @@ mod tests {
             ..Default::default()
         };
 
-        let comp = CoreWidgetComponent::new(contribution);
+        let comp = CoreWidgetBlock::new(contribution);
         let mut out = SlintEmitter::new();
         comp.render_slint(&ctx, &json!({}), &[], &mut out).unwrap();
 
@@ -797,7 +770,7 @@ mod tests {
             ..Default::default()
         };
 
-        let comp = CoreWidgetComponent::new(contribution);
+        let comp = CoreWidgetBlock::new(contribution);
         let mut out = SlintEmitter::new();
         let props = json!({
             "items": [
@@ -854,7 +827,7 @@ mod tests {
             ..Default::default()
         };
 
-        let comp = CoreWidgetComponent::new(contribution);
+        let comp = CoreWidgetBlock::new(contribution);
 
         // Truthy case
         let mut out = SlintEmitter::new();
@@ -909,7 +882,7 @@ mod tests {
             ..Default::default()
         };
 
-        let comp = CoreWidgetComponent::new(contribution);
+        let comp = CoreWidgetBlock::new(contribution);
         let mut out = SlintEmitter::new();
         comp.render_slint(&ctx, &json!({"active": false}), &[], &mut out)
             .unwrap();
@@ -941,7 +914,7 @@ mod tests {
             id: "empty-widget".into(),
             ..Default::default()
         };
-        let comp = CoreWidgetComponent::new(c);
+        let comp = CoreWidgetBlock::new(c);
         let mut out = SlintEmitter::new();
         comp.render_slint(&ctx, &json!({}), &[], &mut out).unwrap();
         let source = out.build();
@@ -1019,7 +992,7 @@ mod tests {
             ..Default::default()
         };
 
-        let comp = CoreWidgetComponent::new(contribution);
+        let comp = CoreWidgetBlock::new(contribution);
         let mut out = SlintEmitter::new();
         comp.render_slint(&ctx, &json!({}), &[], &mut out).unwrap();
         let source = out.build();
@@ -1058,7 +1031,7 @@ mod tests {
             ..Default::default()
         };
         registry
-            .register(Arc::new(CoreWidgetComponent::new(test_widget)))
+            .register(Arc::new(CoreWidgetBlock::new(test_widget)))
             .unwrap();
 
         let tokens = prism_core::design_tokens::DesignTokens::default();
@@ -1126,7 +1099,7 @@ mod tests {
             ..Default::default()
         };
         registry
-            .register(Arc::new(CoreWidgetComponent::new(test_widget)))
+            .register(Arc::new(CoreWidgetBlock::new(test_widget)))
             .unwrap();
 
         let tokens = prism_core::design_tokens::DesignTokens::default();
@@ -1199,7 +1172,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let block = CoreWidgetHtmlBlock::new(c);
+        let block = CoreWidgetBlock::new(c);
         let mut out = Html::new();
         block.render_html(&ctx, &json!({}), &[], &mut out).unwrap();
         let html = out.into_string();

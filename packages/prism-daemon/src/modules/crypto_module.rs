@@ -34,9 +34,9 @@
 use crate::builder::DaemonBuilder;
 use crate::module::DaemonModule;
 use crate::registry::CommandError;
-use crate::typed_command::CommandRegistryExt;
 use chacha20poly1305::aead::{Aead, AeadCore, KeyInit, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
+use prism_luau_derive::daemon_command;
 use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use x25519_dalek::{PublicKey, StaticSecret};
@@ -61,99 +61,112 @@ impl DaemonModule for CryptoModule {
     fn install(&self, builder: &mut DaemonBuilder) -> Result<(), CommandError> {
         let registry = builder.registry().clone();
 
-        registry.register_typed("crypto.keypair", |_: EmptyArgs| {
-            let secret = StaticSecret::random_from_rng(OsRng);
-            let public = PublicKey::from(&secret);
-            Ok::<_, std::convert::Infallible>(KeypairResp {
-                secret_key: hex::encode(secret.to_bytes()),
-                public_key: hex::encode(public.as_bytes()),
-            })
-        })?;
-
-        registry.register_typed("crypto.derive_public", |args: SecretKeyArgs| {
-            let secret_bytes = decode_fixed::<32>(&args.secret_key, "secret_key")?;
-            let secret = StaticSecret::from(secret_bytes);
-            let public = PublicKey::from(&secret);
-            Ok::<_, String>(PublicKeyResp {
-                public_key: hex::encode(public.as_bytes()),
-            })
-        })?;
-
-        registry.register_typed("crypto.shared_secret", |args: SharedSecretArgs| {
-            let secret_bytes = decode_fixed::<32>(&args.secret_key, "secret_key")?;
-            let peer_bytes = decode_fixed::<32>(&args.peer_public_key, "peer_public_key")?;
-            let secret = StaticSecret::from(secret_bytes);
-            let peer = PublicKey::from(peer_bytes);
-            let shared = secret.diffie_hellman(&peer);
-            Ok::<_, String>(SharedSecretResp {
-                shared_secret: hex::encode(shared.as_bytes()),
-            })
-        })?;
-
-        registry.register_typed("crypto.encrypt", |args: EncryptArgs| {
-            let key_bytes = decode_fixed::<32>(&args.key, "key")?;
-            let plaintext = decode_hex(&args.plaintext, "plaintext")?;
-            let aad = match args.associated_data.as_deref() {
-                Some(hex_str) => decode_hex(hex_str, "associated_data")?,
-                None => Vec::new(),
-            };
-            let cipher = XChaCha20Poly1305::new((&key_bytes).into());
-            let nonce = XChaCha20Poly1305::generate_nonce(&mut OsRng);
-            let ct = cipher
-                .encrypt(
-                    &nonce,
-                    Payload {
-                        msg: &plaintext,
-                        aad: &aad,
-                    },
-                )
-                .map_err(|e| format!("aead encrypt: {e}"))?;
-            Ok::<_, String>(EncryptResp {
-                ciphertext: hex::encode(ct),
-                nonce: hex::encode(nonce.as_slice()),
-            })
-        })?;
-
-        registry.register_typed("crypto.decrypt", |args: DecryptArgs| {
-            let key_bytes = decode_fixed::<32>(&args.key, "key")?;
-            let nonce_bytes = decode_fixed::<24>(&args.nonce, "nonce")?;
-            let ciphertext = decode_hex(&args.ciphertext, "ciphertext")?;
-            let aad = match args.associated_data.as_deref() {
-                Some(hex_str) => decode_hex(hex_str, "associated_data")?,
-                None => Vec::new(),
-            };
-            let cipher = XChaCha20Poly1305::new((&key_bytes).into());
-            let nonce = XNonce::from(nonce_bytes);
-            let pt = cipher
-                .decrypt(
-                    &nonce,
-                    Payload {
-                        msg: &ciphertext,
-                        aad: &aad,
-                    },
-                )
-                .map_err(|e| format!("aead decrypt: {e}"))?;
-            Ok::<_, String>(DecryptResp {
-                plaintext: hex::encode(pt),
-            })
-        })?;
-
-        registry.register_typed("crypto.random_bytes", |args: RandomBytesArgs| {
-            if args.len == 0 {
-                return Err("len must be >= 1".to_string());
-            }
-            if args.len > MAX_RANDOM_BYTES {
-                return Err(format!("len must be <= {MAX_RANDOM_BYTES}"));
-            }
-            let mut buf = vec![0u8; args.len];
-            OsRng.fill_bytes(&mut buf);
-            Ok(RandomBytesResp {
-                bytes: hex::encode(buf),
-            })
-        })?;
+        register_keypair(&registry)?;
+        register_derive_public(&registry)?;
+        register_shared_secret(&registry)?;
+        register_encrypt(&registry)?;
+        register_decrypt(&registry)?;
+        register_random_bytes(&registry)?;
 
         Ok(())
     }
+}
+
+#[daemon_command(id = "crypto.keypair")]
+fn keypair(_: EmptyArgs) -> Result<KeypairResp, std::convert::Infallible> {
+    let secret = StaticSecret::random_from_rng(OsRng);
+    let public = PublicKey::from(&secret);
+    Ok(KeypairResp {
+        secret_key: hex::encode(secret.to_bytes()),
+        public_key: hex::encode(public.as_bytes()),
+    })
+}
+
+#[daemon_command(id = "crypto.derive_public")]
+fn derive_public(args: SecretKeyArgs) -> Result<PublicKeyResp, String> {
+    let secret_bytes = decode_fixed::<32>(&args.secret_key, "secret_key")?;
+    let secret = StaticSecret::from(secret_bytes);
+    let public = PublicKey::from(&secret);
+    Ok(PublicKeyResp {
+        public_key: hex::encode(public.as_bytes()),
+    })
+}
+
+#[daemon_command(id = "crypto.shared_secret")]
+fn shared_secret(args: SharedSecretArgs) -> Result<SharedSecretResp, String> {
+    let secret_bytes = decode_fixed::<32>(&args.secret_key, "secret_key")?;
+    let peer_bytes = decode_fixed::<32>(&args.peer_public_key, "peer_public_key")?;
+    let secret = StaticSecret::from(secret_bytes);
+    let peer = PublicKey::from(peer_bytes);
+    let shared = secret.diffie_hellman(&peer);
+    Ok(SharedSecretResp {
+        shared_secret: hex::encode(shared.as_bytes()),
+    })
+}
+
+#[daemon_command(id = "crypto.encrypt")]
+fn encrypt(args: EncryptArgs) -> Result<EncryptResp, String> {
+    let key_bytes = decode_fixed::<32>(&args.key, "key")?;
+    let plaintext = decode_hex(&args.plaintext, "plaintext")?;
+    let aad = match args.associated_data.as_deref() {
+        Some(hex_str) => decode_hex(hex_str, "associated_data")?,
+        None => Vec::new(),
+    };
+    let cipher = XChaCha20Poly1305::new((&key_bytes).into());
+    let nonce = XChaCha20Poly1305::generate_nonce(&mut OsRng);
+    let ct = cipher
+        .encrypt(
+            &nonce,
+            Payload {
+                msg: &plaintext,
+                aad: &aad,
+            },
+        )
+        .map_err(|e| format!("aead encrypt: {e}"))?;
+    Ok(EncryptResp {
+        ciphertext: hex::encode(ct),
+        nonce: hex::encode(nonce.as_slice()),
+    })
+}
+
+#[daemon_command(id = "crypto.decrypt")]
+fn decrypt(args: DecryptArgs) -> Result<DecryptResp, String> {
+    let key_bytes = decode_fixed::<32>(&args.key, "key")?;
+    let nonce_bytes = decode_fixed::<24>(&args.nonce, "nonce")?;
+    let ciphertext = decode_hex(&args.ciphertext, "ciphertext")?;
+    let aad = match args.associated_data.as_deref() {
+        Some(hex_str) => decode_hex(hex_str, "associated_data")?,
+        None => Vec::new(),
+    };
+    let cipher = XChaCha20Poly1305::new((&key_bytes).into());
+    let nonce = XNonce::from(nonce_bytes);
+    let pt = cipher
+        .decrypt(
+            &nonce,
+            Payload {
+                msg: &ciphertext,
+                aad: &aad,
+            },
+        )
+        .map_err(|e| format!("aead decrypt: {e}"))?;
+    Ok(DecryptResp {
+        plaintext: hex::encode(pt),
+    })
+}
+
+#[daemon_command(id = "crypto.random_bytes")]
+fn random_bytes(args: RandomBytesArgs) -> Result<RandomBytesResp, String> {
+    if args.len == 0 {
+        return Err("len must be >= 1".to_string());
+    }
+    if args.len > MAX_RANDOM_BYTES {
+        return Err(format!("len must be <= {MAX_RANDOM_BYTES}"));
+    }
+    let mut buf = vec![0u8; args.len];
+    OsRng.fill_bytes(&mut buf);
+    Ok(RandomBytesResp {
+        bytes: hex::encode(buf),
+    })
 }
 
 // ── JSON arg shapes ────────────────────────────────────────────────────

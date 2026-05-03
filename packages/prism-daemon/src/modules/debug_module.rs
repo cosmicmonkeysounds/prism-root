@@ -20,8 +20,8 @@
 use crate::builder::DaemonBuilder;
 use crate::module::DaemonModule;
 use crate::registry::CommandError;
-use crate::typed_command::CommandRegistryExt;
 use mlua::{Lua, MultiValue, Value as LuaValue, VmState};
+use prism_luau_derive::daemon_command;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map as JsonMap, Value as JsonValue};
 use std::collections::{HashMap, HashSet};
@@ -515,67 +515,72 @@ impl DaemonModule for DebugModule {
         let manager = Arc::new(DebugManager::new());
         let registry = builder.registry().clone();
 
-        let m = manager.clone();
-        registry.register_typed("luau.debug.launch", move |args: LaunchArgs| {
-            m.launch(args.script, args.args, args.stop_on_entry.unwrap_or(false))
-                .map(|session_id| LaunchResp { session_id })
-        })?;
-
-        let m = manager.clone();
-        registry.register_typed(
-            "luau.debug.set_breakpoints",
-            move |args: SetBreakpointsArgs| {
-                m.set_breakpoints(args.session_id, args.breakpoints)
-                    .map(|confirmed| ConfirmedResp { confirmed })
-            },
-        )?;
-
-        let m = manager.clone();
-        registry.register_typed("luau.debug.continue", move |args: SessionArgs| {
-            m.resume(args.session_id, StepMode::Continue)
-                .map(|stopped_at| StoppedResp { stopped_at })
-        })?;
-
-        let m = manager.clone();
-        registry.register_typed("luau.debug.step_in", move |args: SessionArgs| {
-            m.resume(args.session_id, StepMode::StepIn)
-                .map(|stopped_at| StoppedResp { stopped_at })
-        })?;
-
-        let m = manager.clone();
-        registry.register_typed("luau.debug.step_over", move |args: SessionArgs| {
-            m.resume(args.session_id, StepMode::StepOver)
-                .map(|stopped_at| StoppedResp { stopped_at })
-        })?;
-
-        let m = manager.clone();
-        registry.register_typed("luau.debug.step_out", move |args: SessionArgs| {
-            m.resume(args.session_id, StepMode::StepOut)
-                .map(|stopped_at| StoppedResp { stopped_at })
-        })?;
-
-        let m = manager.clone();
-        registry.register_typed("luau.debug.inspect", move |args: SessionArgs| {
-            m.inspect(args.session_id).map(|(locals, call_stack)| InspectResp {
-                locals,
-                call_stack,
-            })
-        })?;
-
-        let m = manager.clone();
-        registry.register_typed("luau.debug.evaluate", move |args: EvalArgs| {
-            m.evaluate(args.session_id, args.expression)
-                .map(|result| EvalResp { result })
-        })?;
-
-        let m = manager;
-        registry.register_typed("luau.debug.terminate", move |args: SessionArgs| {
-            m.terminate(args.session_id)
-                .map(|terminated| TerminatedResp { terminated })
-        })?;
+        register_launch(&registry, manager.clone())?;
+        register_set_breakpoints(&registry, manager.clone())?;
+        register_continue(&registry, manager.clone())?;
+        register_step_in(&registry, manager.clone())?;
+        register_step_over(&registry, manager.clone())?;
+        register_step_out(&registry, manager.clone())?;
+        register_inspect(&registry, manager.clone())?;
+        register_evaluate(&registry, manager.clone())?;
+        register_terminate(&registry, manager)?;
 
         Ok(())
     }
+}
+
+#[daemon_command(id = "luau.debug.launch")]
+fn launch(mgr: &DebugManager, args: LaunchArgs) -> Result<LaunchResp, String> {
+    mgr.launch(args.script, args.args, args.stop_on_entry.unwrap_or(false))
+        .map(|session_id| LaunchResp { session_id })
+}
+
+#[daemon_command(id = "luau.debug.set_breakpoints")]
+fn set_breakpoints(mgr: &DebugManager, args: SetBreakpointsArgs) -> Result<ConfirmedResp, String> {
+    mgr.set_breakpoints(args.session_id, args.breakpoints)
+        .map(|confirmed| ConfirmedResp { confirmed })
+}
+
+#[daemon_command(id = "luau.debug.continue")]
+fn r#continue(mgr: &DebugManager, args: SessionArgs) -> Result<StoppedResp, String> {
+    mgr.resume(args.session_id, StepMode::Continue)
+        .map(|stopped_at| StoppedResp { stopped_at })
+}
+
+#[daemon_command(id = "luau.debug.step_in")]
+fn step_in(mgr: &DebugManager, args: SessionArgs) -> Result<StoppedResp, String> {
+    mgr.resume(args.session_id, StepMode::StepIn)
+        .map(|stopped_at| StoppedResp { stopped_at })
+}
+
+#[daemon_command(id = "luau.debug.step_over")]
+fn step_over(mgr: &DebugManager, args: SessionArgs) -> Result<StoppedResp, String> {
+    mgr.resume(args.session_id, StepMode::StepOver)
+        .map(|stopped_at| StoppedResp { stopped_at })
+}
+
+#[daemon_command(id = "luau.debug.step_out")]
+fn step_out(mgr: &DebugManager, args: SessionArgs) -> Result<StoppedResp, String> {
+    mgr.resume(args.session_id, StepMode::StepOut)
+        .map(|stopped_at| StoppedResp { stopped_at })
+}
+
+#[daemon_command(id = "luau.debug.inspect")]
+fn inspect(mgr: &DebugManager, args: SessionArgs) -> Result<InspectResp, String> {
+    mgr.inspect(args.session_id)
+        .map(|(locals, call_stack)| InspectResp { locals, call_stack })
+}
+
+#[daemon_command(id = "luau.debug.evaluate")]
+fn evaluate(mgr: &DebugManager, args: EvalArgs) -> Result<EvalResp, String> {
+    mgr.evaluate(args.session_id, args.expression)
+        .map(|result| EvalResp { result })
+}
+
+#[daemon_command(id = "luau.debug.terminate")]
+fn terminate(mgr: &DebugManager, args: SessionArgs) -> Result<TerminatedResp, String> {
+    mgr.terminate(args.session_id)
+        .map(|terminated| TerminatedResp { terminated })
 }
 
 #[derive(Deserialize)]

@@ -42,7 +42,7 @@
 use crate::builder::DaemonBuilder;
 use crate::module::DaemonModule;
 use crate::registry::CommandError;
-use crate::typed_command::CommandRegistryExt;
+use prism_luau_derive::daemon_command;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -454,46 +454,53 @@ impl DaemonModule for VfsModule {
             .clone();
         let registry = builder.registry().clone();
 
-        let m = manager.clone();
-        registry.register_typed("vfs.put", move |args: PutArgs| {
-            let size = args.bytes.len() as u64;
-            m.put(&args.bytes).map(|hash| PutResp { hash, size })
-        })?;
-
-        let m = manager.clone();
-        registry.register_typed("vfs.get", move |args: HashArgs| {
-            m.get(&args.hash).map(|bytes| GetResp { bytes })
-        })?;
-
-        let m = manager.clone();
-        registry.register_typed("vfs.has", move |args: HashArgs| {
-            m.has(&args.hash).map(|maybe_size| HasResp {
-                present: maybe_size.is_some(),
-                size: maybe_size,
-            })
-        })?;
-
-        let m = manager.clone();
-        registry.register_typed("vfs.delete", move |args: HashArgs| {
-            m.delete(&args.hash).map(|deleted| DeleteResp { deleted })
-        })?;
-
-        let m = manager.clone();
-        registry.register_typed("vfs.list", move |_: EmptyArgs| {
-            m.list().map(|entries| ListResp { entries })
-        })?;
-
-        let m = manager;
-        registry.register_typed("vfs.stats", move |_: EmptyArgs| {
-            m.stats().map(|stats| StatsResp {
-                entries: stats.entries,
-                total_bytes: stats.total_bytes,
-                backend: m.backend().backend_name().to_string(),
-            })
-        })?;
+        register_put(&registry, manager.clone())?;
+        register_get(&registry, manager.clone())?;
+        register_has(&registry, manager.clone())?;
+        register_delete(&registry, manager.clone())?;
+        register_list(&registry, manager.clone())?;
+        register_stats(&registry, manager)?;
 
         Ok(())
     }
+}
+
+#[daemon_command(id = "vfs.put")]
+fn put(mgr: &VfsManager, args: PutArgs) -> Result<PutResp, String> {
+    let size = args.bytes.len() as u64;
+    mgr.put(&args.bytes).map(|hash| PutResp { hash, size })
+}
+
+#[daemon_command(id = "vfs.get")]
+fn get(mgr: &VfsManager, args: HashArgs) -> Result<GetResp, String> {
+    mgr.get(&args.hash).map(|bytes| GetResp { bytes })
+}
+
+#[daemon_command(id = "vfs.has")]
+fn has(mgr: &VfsManager, args: HashArgs) -> Result<HasResp, String> {
+    mgr.has(&args.hash).map(|maybe_size| HasResp {
+        present: maybe_size.is_some(),
+        size: maybe_size,
+    })
+}
+
+#[daemon_command(id = "vfs.delete")]
+fn delete(mgr: &VfsManager, args: HashArgs) -> Result<DeleteResp, String> {
+    mgr.delete(&args.hash).map(|deleted| DeleteResp { deleted })
+}
+
+#[daemon_command(id = "vfs.list")]
+fn list(mgr: &VfsManager, _: EmptyArgs) -> Result<ListResp, String> {
+    mgr.list().map(|entries| ListResp { entries })
+}
+
+#[daemon_command(id = "vfs.stats")]
+fn stats(mgr: &VfsManager, _: EmptyArgs) -> Result<StatsResp, String> {
+    mgr.stats().map(|stats| StatsResp {
+        entries: stats.entries,
+        total_bytes: stats.total_bytes,
+        backend: mgr.backend().backend_name().to_string(),
+    })
 }
 
 #[derive(Debug, Default, Deserialize)]

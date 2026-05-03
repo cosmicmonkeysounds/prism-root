@@ -13,8 +13,8 @@ use crate::builder::DaemonBuilder;
 use crate::module::DaemonModule;
 use crate::modules::prism_context::{self, PrismContext};
 use crate::registry::CommandError;
-use crate::typed_command::CommandRegistryExt;
 use mlua::{Lua, MultiValue, Result as LuaResult, Value};
+use prism_luau_derive::daemon_command;
 use serde::Deserialize;
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
@@ -26,11 +26,7 @@ impl DaemonModule for LuauModule {
     }
 
     fn install(&self, builder: &mut DaemonBuilder) -> Result<(), CommandError> {
-        builder
-            .registry()
-            .register_typed("luau.exec", |args: ExecArgs| {
-                exec(&args.script, args.args.as_ref())
-            })?;
+        register_exec_cmd(builder.registry())?;
         Ok(())
     }
 }
@@ -40,6 +36,11 @@ struct ExecArgs {
     script: String,
     #[serde(default)]
     args: Option<JsonMap<String, JsonValue>>,
+}
+
+#[daemon_command(id = "luau.exec")]
+fn exec_cmd(args: ExecArgs) -> Result<JsonValue, String> {
+    exec(&args.script, args.args.as_ref())
 }
 
 /// Execute a Luau script and return the result as JSON. Equivalent to

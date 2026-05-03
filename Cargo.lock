@@ -5867,6 +5867,7 @@ dependencies = [
  "notify 7.0.0",
  "postcard",
  "prism-core",
+ "prism-luau-derive",
  "prost",
  "rand_core 0.6.4",
  "serde",

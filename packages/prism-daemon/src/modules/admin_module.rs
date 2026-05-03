@@ -12,17 +12,24 @@
 
 use crate::builder::DaemonBuilder;
 use crate::module::DaemonModule;
-use crate::registry::CommandError;
-use crate::typed_command::CommandRegistryExt;
-use serde::Serialize;
+use crate::registry::{CommandError, CommandRegistry};
+use prism_luau_derive::daemon_command;
+use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
 use std::time::Instant;
 
-/// Shared state for the admin module — tracks uptime.
+/// Shared state for the admin module — tracks uptime, the module IDs
+/// captured at install, and a back-reference to the registry so the
+/// snapshot handler can introspect command counts.
 struct AdminState {
     started_at: Instant,
+    module_ids: Vec<String>,
+    registry: Arc<CommandRegistry>,
 }
+
+#[derive(Debug, Default, Deserialize)]
+struct AdminArgs {}
 
 #[derive(Debug, Serialize)]
 pub struct AdminSnapshot {
@@ -64,80 +71,81 @@ impl DaemonModule for AdminModule {
     }
 
     fn install(&self, builder: &mut DaemonBuilder) -> Result<(), CommandError> {
+        // Capture module IDs at install time. Admin is typically installed
+        // last (via with_defaults), so this snapshot covers every module
+        // that came before. The handler also keeps a registry handle so
+        // it can introspect live command counts.
+        let registry: Arc<CommandRegistry> = builder.registry().clone();
         let state = Arc::new(AdminState {
             started_at: Instant::now(),
+            module_ids: builder.module_ids.clone(),
+            registry: registry.clone(),
         });
 
-        // Capture the module IDs at install time. Since admin is typically
-        // installed last (via with_defaults or explicitly), this snapshot
-        // includes all modules installed before it. The full list is also
-        // available from kernel.installed_modules() at runtime — but we
-        // need a copy here because the command handler closure only captures
-        // the registry, not the kernel.
-        let module_ids: Vec<String> = builder.module_ids.clone();
-
-        let registry = builder.registry().clone();
-        let registry_inner = registry.clone();
-        let admin_state = state.clone();
-        let mods = module_ids;
-
-        registry.register_typed_user(
-            "daemon.admin",
-            move |_args: JsonValue| -> Result<AdminSnapshot, std::convert::Infallible> {
-                let uptime_seconds = admin_state.started_at.elapsed().as_secs();
-
-                let services: Vec<ServiceEntry> = mods
-                    .iter()
-                    .map(|id| ServiceEntry {
-                        id: id.clone(),
-                        name: id.clone(),
-                        health: "ok",
-                        status: "loaded",
-                    })
-                    .collect();
-
-                let commands = registry_inner.list();
-                let command_count = commands.len();
-
-                let mut module_set = std::collections::HashSet::new();
-                for cmd in &commands {
-                    if let Some(dot) = cmd.find('.') {
-                        module_set.insert(cmd[..dot].to_string());
-                    }
-                }
-
-                Ok(AdminSnapshot {
-                    health: HealthSnapshot {
-                        level: "ok",
-                        label: "Healthy",
-                        detail: format!("{} modules, {} commands", mods.len(), command_count),
-                    },
-                    uptime_seconds,
-                    metrics: vec![
-                        Metric {
-                            id: "modules",
-                            label: "Modules",
-                            value: mods.len() as u64,
-                        },
-                        Metric {
-                            id: "commands",
-                            label: "Commands",
-                            value: command_count as u64,
-                        },
-                        Metric {
-                            id: "namespaces",
-                            label: "Namespaces",
-                            value: module_set.len() as u64,
-                        },
-                    ],
-                    services,
-                    activity: vec![],
-                })
-            },
-        )?;
-
+        register_admin_snapshot(&registry, state)?;
         Ok(())
     }
+}
+
+#[daemon_command(id = "daemon.admin", permission = User)]
+fn admin_snapshot(
+    state: &AdminState,
+    _args: AdminArgs,
+) -> Result<AdminSnapshot, std::convert::Infallible> {
+    let uptime_seconds = state.started_at.elapsed().as_secs();
+
+    let services: Vec<ServiceEntry> = state
+        .module_ids
+        .iter()
+        .map(|id| ServiceEntry {
+            id: id.clone(),
+            name: id.clone(),
+            health: "ok",
+            status: "loaded",
+        })
+        .collect();
+
+    let commands = state.registry.list();
+    let command_count = commands.len();
+
+    let mut module_set = std::collections::HashSet::new();
+    for cmd in &commands {
+        if let Some(dot) = cmd.find('.') {
+            module_set.insert(cmd[..dot].to_string());
+        }
+    }
+
+    Ok(AdminSnapshot {
+        health: HealthSnapshot {
+            level: "ok",
+            label: "Healthy",
+            detail: format!(
+                "{} modules, {} commands",
+                state.module_ids.len(),
+                command_count
+            ),
+        },
+        uptime_seconds,
+        metrics: vec![
+            Metric {
+                id: "modules",
+                label: "Modules",
+                value: state.module_ids.len() as u64,
+            },
+            Metric {
+                id: "commands",
+                label: "Commands",
+                value: command_count as u64,
+            },
+            Metric {
+                id: "namespaces",
+                label: "Namespaces",
+                value: module_set.len() as u64,
+            },
+        ],
+        services,
+        activity: vec![],
+    })
 }
 
 #[cfg(test)]

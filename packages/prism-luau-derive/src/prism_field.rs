@@ -54,6 +54,16 @@ struct FieldAttrs {
     select: Option<Vec<(String, String)>>,
     min: Option<f64>,
     max: Option<f64>,
+    /// Explicit kind override — set via `#[field(kind = "...")]`.
+    /// Skips Rust-type inference. Accepts: "color", "date",
+    /// "datetime", "duration", "file", "currency", "calculation".
+    kind: Option<String>,
+    /// Comma-separated MIME hints for `kind = "file"`.
+    accept: Option<String>,
+    /// ISO-4217 currency code for `kind = "currency"`.
+    currency: Option<String>,
+    /// Spreadsheet formula for `kind = "calculation"`.
+    formula: Option<String>,
 }
 
 fn build_field_spec(field: &Field) -> syn::Result<TokenStream2> {
@@ -124,6 +134,18 @@ fn parse_field_attrs(field: &Field) -> syn::Result<FieldAttrs> {
             } else if meta.path.is_ident("max") {
                 let lit: syn::LitFloat = meta.value()?.parse()?;
                 out.max = Some(lit.base10_parse()?);
+            } else if meta.path.is_ident("kind") {
+                let lit: syn::LitStr = meta.value()?.parse()?;
+                out.kind = Some(lit.value());
+            } else if meta.path.is_ident("accept") {
+                let lit: syn::LitStr = meta.value()?.parse()?;
+                out.accept = Some(lit.value());
+            } else if meta.path.is_ident("currency") {
+                let lit: syn::LitStr = meta.value()?.parse()?;
+                out.currency = Some(lit.value());
+            } else if meta.path.is_ident("formula") {
+                let lit: syn::LitStr = meta.value()?.parse()?;
+                out.formula = Some(lit.value());
             } else if meta.path.is_ident("select") {
                 // Two accepted shapes:
                 //   select("a", "b", "c")
@@ -173,6 +195,70 @@ fn field_kind_expr(ty: &Type, attrs: &FieldAttrs) -> syn::Result<TokenStream2> {
         });
         return Ok(quote! {
             ::prism_core::widget::field::FieldKind::Select(::std::vec![#(#pairs),*])
+        });
+    }
+    // Explicit kind override — bypass type inference for the rich
+    // built-ins that take their config from attributes rather than
+    // Rust types.
+    if let Some(kind) = &attrs.kind {
+        return Ok(match kind.as_str() {
+            "color" => quote! { ::prism_core::widget::field::FieldKind::Color },
+            "date" => quote! { ::prism_core::widget::field::FieldKind::Date },
+            "datetime" => quote! { ::prism_core::widget::field::FieldKind::DateTime },
+            "duration" => quote! { ::prism_core::widget::field::FieldKind::Duration },
+            "file" => {
+                // `accept` is comma-separated MIME hints (e.g.
+                // `accept = "image/*,application/pdf"`) flattened into
+                // a `Vec<String>` matching `FileFieldConfig.accept`.
+                let accept_tok = match &attrs.accept {
+                    Some(a) => {
+                        let parts: Vec<String> = a
+                            .split(',')
+                            .map(|p| p.trim().to_string())
+                            .filter(|p| !p.is_empty())
+                            .collect();
+                        quote! { ::std::vec![#(#parts.to_string()),*] }
+                    }
+                    None => quote! { ::std::vec::Vec::<::std::string::String>::new() },
+                };
+                quote! {
+                    ::prism_core::widget::field::FieldKind::File(
+                        ::prism_core::widget::field::FileFieldConfig { accept: #accept_tok }
+                    )
+                }
+            }
+            "currency" => {
+                let cc_tok = match &attrs.currency {
+                    Some(c) => quote! { ::core::option::Option::Some(#c.to_string()) },
+                    None => quote! { ::core::option::Option::None },
+                };
+                quote! {
+                    ::prism_core::widget::field::FieldKind::Currency { currency_code: #cc_tok }
+                }
+            }
+            "calculation" => {
+                let formula = attrs.formula.as_deref().ok_or_else(|| {
+                    syn::Error::new_spanned(
+                        ty,
+                        "#[field(kind = \"calculation\")] requires `formula = \"...\"`",
+                    )
+                })?;
+                quote! {
+                    ::prism_core::widget::field::FieldKind::Calculation {
+                        formula: #formula.to_string(),
+                    }
+                }
+            }
+            other => {
+                return Err(syn::Error::new_spanned(
+                    ty,
+                    format!(
+                        "#[field(kind = \"{other}\")] is not a recognised kind. \
+                         Use color/date/datetime/duration/file/currency/calculation, \
+                         or omit `kind` and let the Rust type drive inference."
+                    ),
+                ));
+            }
         });
     }
     let name = type_leaf_name(ty);

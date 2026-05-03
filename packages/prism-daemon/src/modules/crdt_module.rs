@@ -17,7 +17,7 @@ use crate::builder::DaemonBuilder;
 use crate::doc_manager::DocManager;
 use crate::module::DaemonModule;
 use crate::registry::CommandError;
-use crate::typed_command::CommandRegistryExt;
+use prism_luau_derive::daemon_command;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -39,50 +39,46 @@ impl DaemonModule for CrdtModule {
             .clone();
         let registry = builder.registry().clone();
 
-        let mgr = manager.clone();
-        registry.register_typed(
-            "crdt.write",
-            move |args: WriteArgs| -> Result<BytesResp, String> {
-                mgr.get_or_create(&args.doc_id).map_err(|e| e.to_string())?;
-                let bytes = mgr
-                    .write(&args.doc_id, &args.key, &args.value)
-                    .map_err(|e| e.to_string())?;
-                Ok(BytesResp { bytes })
-            },
-        )?;
-
-        let mgr = manager.clone();
-        registry.register_typed(
-            "crdt.read",
-            move |args: ReadArgs| -> Result<ValueResp, String> {
-                mgr.get_or_create(&args.doc_id).map_err(|e| e.to_string())?;
-                let value = mgr
-                    .read(&args.doc_id, &args.key)
-                    .map_err(|e| e.to_string())?;
-                Ok(ValueResp { value })
-            },
-        )?;
-
-        let mgr = manager.clone();
-        registry.register_typed(
-            "crdt.export",
-            move |args: ExportArgs| -> Result<BytesResp, String> {
-                mgr.get_or_create(&args.doc_id).map_err(|e| e.to_string())?;
-                let bytes = mgr
-                    .export_snapshot(&args.doc_id)
-                    .map_err(|e| e.to_string())?;
-                Ok(BytesResp { bytes })
-            },
-        )?;
-
-        let mgr = manager;
-        registry.register_typed("crdt.import", move |args: ImportArgs| {
-            mgr.import_snapshot(&args.doc_id, &args.snapshot)
-                .map_err(|e| e.to_string())
-        })?;
+        register_write(&registry, manager.clone())?;
+        register_read(&registry, manager.clone())?;
+        register_export(&registry, manager.clone())?;
+        register_import(&registry, manager)?;
 
         Ok(())
     }
+}
+
+#[daemon_command(id = "crdt.write")]
+fn write(mgr: &DocManager, args: WriteArgs) -> Result<BytesResp, String> {
+    mgr.get_or_create(&args.doc_id).map_err(|e| e.to_string())?;
+    let bytes = mgr
+        .write(&args.doc_id, &args.key, &args.value)
+        .map_err(|e| e.to_string())?;
+    Ok(BytesResp { bytes })
+}
+
+#[daemon_command(id = "crdt.read")]
+fn read(mgr: &DocManager, args: ReadArgs) -> Result<ValueResp, String> {
+    mgr.get_or_create(&args.doc_id).map_err(|e| e.to_string())?;
+    let value = mgr
+        .read(&args.doc_id, &args.key)
+        .map_err(|e| e.to_string())?;
+    Ok(ValueResp { value })
+}
+
+#[daemon_command(id = "crdt.export")]
+fn export(mgr: &DocManager, args: ExportArgs) -> Result<BytesResp, String> {
+    mgr.get_or_create(&args.doc_id).map_err(|e| e.to_string())?;
+    let bytes = mgr
+        .export_snapshot(&args.doc_id)
+        .map_err(|e| e.to_string())?;
+    Ok(BytesResp { bytes })
+}
+
+#[daemon_command(id = "crdt.import")]
+fn import(mgr: &DocManager, args: ImportArgs) -> Result<(), String> {
+    mgr.import_snapshot(&args.doc_id, &args.snapshot)
+        .map_err(|e| e.to_string())
 }
 
 #[derive(Debug, Serialize)]

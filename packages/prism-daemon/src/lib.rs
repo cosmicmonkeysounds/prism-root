@@ -53,6 +53,10 @@
 
 #![deny(clippy::all)]
 
+// Self-alias so `#[daemon_command]`'s expanded `::prism_daemon::…` paths
+// resolve when the macro is used inside this crate.
+extern crate self as prism_daemon;
+
 pub mod builder;
 pub mod initializer;
 pub mod kernel;

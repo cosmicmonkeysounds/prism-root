@@ -20,9 +20,11 @@
 //! })?;
 //! ```
 //!
-//! The helper is the precursor to the planned `#[daemon_command]`
-//! proc-macro; once the macro lands it will desugar through this same
-//! trait so both authoring styles produce identical wire behaviour.
+//! `#[daemon_command]` (in `prism-luau-derive`) is the preferred
+//! authoring surface — it desugars to `register_typed_with_permission`
+//! against this same trait, so the wire behaviour is identical. Reach
+//! for the trait directly only when you need to register a closure
+//! that captures non-state data, or in tests.
 //!
 //! See `docs/dev/declarative-refactorings.md` for the broader context.
 

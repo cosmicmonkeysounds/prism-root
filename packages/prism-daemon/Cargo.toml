@@ -149,6 +149,11 @@ mlua = { workspace = true, optional = true }
 # (CRDT-only) stays prism-core-free.
 prism-core = { path = "../prism-core", features = ["luau"], optional = true }
 
+# Proc-macro home for `#[daemon_command]` — collapses the typed-command
+# registration boilerplate. Always on; the macro is cheap and used by
+# every default module.
+prism-luau-derive = { workspace = true }
+
 # Serialization — always on; every module speaks JSON at the registry edge.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

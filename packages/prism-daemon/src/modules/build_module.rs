@@ -19,7 +19,7 @@
 use crate::builder::DaemonBuilder;
 use crate::module::DaemonModule;
 use crate::registry::CommandError;
-use crate::typed_command::CommandRegistryExt;
+use prism_luau_derive::daemon_command;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
@@ -66,17 +66,19 @@ impl DaemonModule for BuildModule {
     }
 
     fn install(&self, builder: &mut DaemonBuilder) -> Result<(), CommandError> {
-        builder
-            .registry()
-            .register_typed("build.run_step", |args: RunStepArgs| {
-                let cwd = args.working_dir.map(PathBuf::from).unwrap_or_else(|| {
-                    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-                });
-                let env = args.env.unwrap_or_default();
-                run_build_step(&args.step, &cwd, &env)
-            })?;
+        register_run_step(builder.registry())?;
         Ok(())
     }
+}
+
+#[daemon_command(id = "build.run_step")]
+fn run_step(args: RunStepArgs) -> Result<BuildStepOutput, String> {
+    let cwd = args
+        .working_dir
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    let env = args.env.unwrap_or_default();
+    run_build_step(&args.step, &cwd, &env)
 }
 
 #[derive(Debug, Deserialize)]

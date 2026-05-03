@@ -1,15 +1,14 @@
 //! Shared component schemas — single source of truth for field
 //! definitions used by both the Slint and HTML render paths.
 //!
-//! `text()` is migrated to `#[derive(PrismField)]` as the first
-//! consumer of the unified field-derive (declarative-refactorings.md
-//! item #2 phase 1). The remaining schemas continue to use the
-//! hand-rolled `FieldSpec` builders pending the derive's coverage of
-//! `file` / `currency` / `calculation` kinds.
+//! Every schema is a `#[derive(PrismField)]` struct with a thin
+//! free-function wrapper that returns `Vec<FieldSpec>`. The legacy
+//! `FieldSpec::*` builder API is still available for callers that
+//! need it (custom widgets, plugin contributions); these built-in
+//! schemas just go through the derive so the prop struct is the
+//! single source of truth.
 
-use serde_json::Value;
-
-use crate::registry::{FieldSpec, NumericBounds, SelectOption};
+use crate::registry::FieldSpec;
 use prism_luau_derive::PrismField;
 
 #[derive(PrismField)]
@@ -31,162 +30,208 @@ pub fn text() -> Vec<FieldSpec> {
     TextProps::field_specs()
 }
 
+#[derive(PrismField)]
+#[allow(dead_code)]
+struct ImageProps {
+    #[field(label = "Image source", kind = "file", accept = "image/*", required)]
+    src: String,
+    #[field(label = "Alt text")]
+    alt: String,
+    #[field(
+        label = "Object fit",
+        select("cover", "contain", "fill", "none"),
+        default = "cover"
+    )]
+    fit: String,
+    #[field(label = "Link URL")]
+    href: String,
+}
+
 pub fn image() -> Vec<FieldSpec> {
-    vec![
-        FieldSpec::file("src", "Image source", vec!["image/*".into()]).required(),
-        FieldSpec::text("alt", "Alt text"),
-        FieldSpec::select(
-            "fit",
-            "Object fit",
-            vec![
-                SelectOption::new("cover", "Cover"),
-                SelectOption::new("contain", "Contain"),
-                SelectOption::new("fill", "Fill"),
-                SelectOption::new("none", "None"),
-            ],
-        )
-        .with_default(Value::from("cover")),
-        FieldSpec::text("href", "Link URL"),
-    ]
+    ImageProps::field_specs()
+}
+
+#[derive(PrismField)]
+#[allow(dead_code)]
+struct ContainerProps {
+    #[field(label = "Child spacing (px)", default = 12, min = 0.0, max = 64.0)]
+    spacing: i64,
+    #[field(label = "Padding (px)", default = 0, min = 0.0, max = 64.0)]
+    padding: i64,
+    #[field(label = "Border width (px)", default = 0, min = 0.0, max = 8.0)]
+    border_width: i64,
+    #[field(label = "Border color")]
+    border_color: String,
 }
 
 pub fn container() -> Vec<FieldSpec> {
-    vec![
-        FieldSpec::integer(
-            "spacing",
-            "Child spacing (px)",
-            NumericBounds::min_max(0.0, 64.0),
-        )
-        .with_default(Value::from(12)),
-        FieldSpec::integer("padding", "Padding (px)", NumericBounds::min_max(0.0, 64.0))
-            .with_default(Value::from(0)),
-        FieldSpec::integer(
-            "border_width",
-            "Border width (px)",
-            NumericBounds::min_max(0.0, 8.0),
-        )
-        .with_default(Value::from(0)),
-        FieldSpec::text("border_color", "Border color"),
-    ]
+    ContainerProps::field_specs()
+}
+
+#[derive(PrismField)]
+#[allow(dead_code)]
+struct FormProps {
+    #[field(label = "Form action URL")]
+    action: String,
+    #[field(label = "HTTP method", select("post", "get"), default = "post")]
+    method: String,
 }
 
 pub fn form() -> Vec<FieldSpec> {
-    vec![
-        FieldSpec::text("action", "Form action URL"),
-        FieldSpec::select(
-            "method",
-            "HTTP method",
-            vec![
-                SelectOption::new("post", "POST"),
-                SelectOption::new("get", "GET"),
-            ],
-        )
-        .with_default(Value::from("post")),
-    ]
+    FormProps::field_specs()
+}
+
+#[derive(PrismField)]
+#[allow(dead_code)]
+struct InputProps {
+    #[field(label = "Field name", required)]
+    name: String,
+    #[field(
+        label = "Input type",
+        select("text", "email", "password", "number", "hidden"),
+        default = "text"
+    )]
+    r#type: String,
+    #[field(label = "Placeholder")]
+    placeholder: String,
+    #[field(label = "Default value")]
+    value: String,
+    #[field(label = "Required")]
+    required: bool,
+    #[field(label = "Label text")]
+    label: String,
 }
 
 pub fn input() -> Vec<FieldSpec> {
-    vec![
-        FieldSpec::text("name", "Field name").required(),
-        FieldSpec::select(
-            "type",
-            "Input type",
-            vec![
-                SelectOption::new("text", "Text"),
-                SelectOption::new("email", "Email"),
-                SelectOption::new("password", "Password"),
-                SelectOption::new("number", "Number"),
-                SelectOption::new("hidden", "Hidden"),
-            ],
-        )
-        .with_default(Value::from("text")),
-        FieldSpec::text("placeholder", "Placeholder"),
-        FieldSpec::text("value", "Default value"),
-        FieldSpec::boolean("required", "Required"),
-        FieldSpec::text("label", "Label text"),
-    ]
+    InputProps::field_specs()
+}
+
+#[derive(PrismField)]
+#[allow(dead_code)]
+struct ButtonProps {
+    #[field(label = "Button label", required)]
+    text: String,
+    #[field(
+        label = "Button type",
+        select("submit", "button", "reset"),
+        default = "submit"
+    )]
+    r#type: String,
+    #[field(label = "Disabled")]
+    disabled: bool,
+    #[field(label = "Link URL")]
+    href: String,
 }
 
 pub fn button() -> Vec<FieldSpec> {
-    vec![
-        FieldSpec::text("text", "Button label").required(),
-        FieldSpec::select(
-            "type",
-            "Button type",
-            vec![
-                SelectOption::new("submit", "Submit"),
-                SelectOption::new("button", "Button"),
-                SelectOption::new("reset", "Reset"),
-            ],
-        )
-        .with_default(Value::from("submit")),
-        FieldSpec::boolean("disabled", "Disabled"),
-        FieldSpec::text("href", "Link URL"),
-    ]
+    ButtonProps::field_specs()
+}
+
+#[derive(PrismField)]
+#[allow(dead_code)]
+struct CodeProps {
+    #[field(label = "Code", multiline, required)]
+    code: String,
+    #[field(label = "Language")]
+    language: String,
 }
 
 pub fn code() -> Vec<FieldSpec> {
-    vec![
-        FieldSpec::textarea("code", "Code").required(),
-        FieldSpec::text("language", "Language"),
-    ]
+    CodeProps::field_specs()
 }
 
 pub fn divider() -> Vec<FieldSpec> {
     vec![]
 }
 
+#[derive(PrismField)]
+#[allow(dead_code)]
+struct SpacerProps {
+    #[field(label = "Height (px)", default = 24, min = 4.0, max = 128.0)]
+    height: i64,
+}
+
 pub fn spacer() -> Vec<FieldSpec> {
-    vec![
-        FieldSpec::integer("height", "Height (px)", NumericBounds::min_max(4.0, 128.0))
-            .with_default(Value::from(24)),
-    ]
+    SpacerProps::field_specs()
+}
+
+#[derive(PrismField)]
+#[allow(dead_code)]
+struct ColumnsProps {
+    #[field(label = "Column gap (px)", default = 16, min = 0.0, max = 64.0)]
+    gap: i64,
 }
 
 pub fn columns() -> Vec<FieldSpec> {
-    vec![
-        FieldSpec::integer("gap", "Column gap (px)", NumericBounds::min_max(0.0, 64.0))
-            .with_default(Value::from(16)),
-    ]
+    ColumnsProps::field_specs()
+}
+
+#[derive(PrismField)]
+#[allow(dead_code)]
+struct ListProps {
+    #[field(label = "Ordered (numbered)")]
+    ordered: bool,
 }
 
 pub fn list() -> Vec<FieldSpec> {
-    vec![FieldSpec::boolean("ordered", "Ordered (numbered)")]
+    ListProps::field_specs()
+}
+
+#[derive(PrismField)]
+#[allow(dead_code)]
+struct TableProps {
+    #[field(label = "Column headers (comma-separated)", required)]
+    headers: String,
+    #[field(label = "Table caption")]
+    caption: String,
 }
 
 pub fn table() -> Vec<FieldSpec> {
-    vec![
-        FieldSpec::text("headers", "Column headers (comma-separated)").required(),
-        FieldSpec::text("caption", "Table caption"),
-    ]
+    TableProps::field_specs()
+}
+
+#[derive(PrismField)]
+#[allow(dead_code)]
+struct TabsProps {
+    #[field(label = "Tab labels (comma-separated)", required)]
+    labels: String,
 }
 
 pub fn tabs() -> Vec<FieldSpec> {
-    vec![FieldSpec::text("labels", "Tab labels (comma-separated)").required()]
+    TabsProps::field_specs()
+}
+
+#[derive(PrismField)]
+#[allow(dead_code)]
+struct AccordionProps {
+    #[field(label = "Section title", required)]
+    title: String,
+    #[field(label = "Initially open")]
+    open: bool,
 }
 
 pub fn accordion() -> Vec<FieldSpec> {
-    vec![
-        FieldSpec::text("title", "Section title").required(),
-        FieldSpec::boolean("open", "Initially open"),
-    ]
+    AccordionProps::field_specs()
+}
+
+#[derive(PrismField)]
+#[allow(dead_code)]
+struct FacetProps {
+    #[field(label = "Facet ID", required)]
+    facet_id: String,
+    #[field(label = "Max items", min = 1.0, max = 10_000.0)]
+    max_items: i64,
 }
 
 pub fn facet() -> Vec<FieldSpec> {
-    vec![
-        FieldSpec::text("facet_id", "Facet ID").required(),
-        FieldSpec::integer(
-            "max_items",
-            "Max items",
-            NumericBounds::min_max(1.0, 10_000.0),
-        ),
-    ]
+    FacetProps::field_specs()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::registry::FieldKind;
+    use serde_json::Value;
 
     #[test]
     fn derived_text_schema_matches_legacy_shape() {
@@ -214,5 +259,23 @@ mod tests {
         assert_eq!(schema[2].key, "href");
         assert_eq!(schema[2].label, "Link URL");
         assert!(matches!(schema[2].kind, FieldKind::Text));
+    }
+
+    #[test]
+    fn derived_image_schema_uses_file_kind_with_accept() {
+        let schema = image();
+        assert_eq!(schema[0].key, "src");
+        match &schema[0].kind {
+            FieldKind::File(cfg) => assert_eq!(cfg.accept, vec!["image/*".to_string()]),
+            other => panic!("expected File, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn derived_container_schema_keeps_default_values() {
+        let schema = container();
+        assert_eq!(schema[0].key, "spacing");
+        assert_eq!(schema[0].default, Value::from(12i64));
+        assert_eq!(schema[3].key, "border_color");
     }
 }
