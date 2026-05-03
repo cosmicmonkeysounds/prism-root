@@ -10,13 +10,10 @@
 //! Watcher state is shared across handlers via [`WatcherManager`], which
 //! the kernel also exposes directly for hot paths.
 
-use crate::builder::DaemonBuilder;
-use crate::module::DaemonModule;
-use crate::registry::CommandError;
 use notify::{
     Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Result as NotifyResult, Watcher,
 };
-use prism_luau_derive::daemon_command;
+use prism_luau_derive::{daemon_command, daemon_module};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -143,27 +140,13 @@ impl Default for WatcherManager {
     }
 }
 
+#[daemon_module(
+    id = "prism.watcher",
+    slot = watcher_manager_slot,
+    default = || Arc::new(WatcherManager::new()),
+    commands(watch, poll, stop),
+)]
 pub struct WatcherModule;
-
-impl DaemonModule for WatcherModule {
-    fn id(&self) -> &str {
-        "prism.watcher"
-    }
-
-    fn install(&self, builder: &mut DaemonBuilder) -> Result<(), CommandError> {
-        let mgr = builder
-            .watcher_manager_slot()
-            .get_or_insert_with(|| Arc::new(WatcherManager::new()))
-            .clone();
-        let registry = builder.registry().clone();
-
-        register_watch(&registry, mgr.clone())?;
-        register_poll(&registry, mgr.clone())?;
-        register_stop(&registry, mgr)?;
-
-        Ok(())
-    }
-}
 
 #[derive(Debug, Deserialize)]
 struct WatchArgs {

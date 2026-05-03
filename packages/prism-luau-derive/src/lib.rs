@@ -40,6 +40,7 @@ use quote::quote;
 use syn::{parse_macro_input, Data, DataEnum, DataStruct, DeriveInput, Field, Fields, Ident, Type};
 
 mod daemon_command;
+mod daemon_module;
 mod prism_block;
 mod prism_field;
 mod slint_binding;
@@ -93,6 +94,20 @@ pub fn daemon_command(attr: TokenStream, item: TokenStream) -> TokenStream {
     let attr2: TokenStream2 = attr.into();
     let item2: TokenStream2 = item.into();
     match daemon_command::expand(attr2, item2) {
+        Ok(ts) => ts.into(),
+        Err(e) => e.to_compile_error().into(),
+    }
+}
+
+/// Annotate a daemon module struct. Emits a `DaemonModule` impl whose
+/// `install()` body acquires shared state (per `slot = …, default = …`
+/// or `state = …`, both optional) and calls each `register_<cmd>`
+/// sibling listed in `commands(…)`. Required: `id = "…"`.
+#[proc_macro_attribute]
+pub fn daemon_module(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let attr2: TokenStream2 = attr.into();
+    let item2: TokenStream2 = item.into();
+    match daemon_module::expand(attr2, item2) {
         Ok(ts) => ts.into(),
         Err(e) => e.to_compile_error().into(),
     }

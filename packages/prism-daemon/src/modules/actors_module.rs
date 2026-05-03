@@ -36,11 +36,8 @@
 //! shape is stable from day one and hosts can feature-detect by payload
 //! kind rather than by command existence.
 
-use crate::builder::DaemonBuilder;
-use crate::module::DaemonModule;
-use crate::registry::CommandError;
 use mlua::{Function, Lua, MultiValue, Value as LuaValue};
-use prism_luau_derive::daemon_command;
+use prism_luau_derive::{daemon_command, daemon_module};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map as JsonMap, Value as JsonValue};
 use std::collections::{HashMap, VecDeque};
@@ -489,32 +486,15 @@ fn lua_to_json(value: &LuaValue) -> mlua::Result<JsonValue> {
 
 // ── Module wiring ──────────────────────────────────────────────────────
 
-/// The built-in actors module. Stateless — the state lives on the shared
-/// [`ActorsManager`] stashed on the builder.
+/// The built-in actors module. The shared [`ActorsManager`] is stashed
+/// on the builder so hosts can inject a preconfigured one.
+#[daemon_module(
+    id = "prism.actors",
+    slot = actors_manager_slot,
+    default = || Arc::new(ActorsManager::new()),
+    commands(spawn, send, recv, status, list, stop),
+)]
 pub struct ActorsModule;
-
-impl DaemonModule for ActorsModule {
-    fn id(&self) -> &str {
-        "prism.actors"
-    }
-
-    fn install(&self, builder: &mut DaemonBuilder) -> Result<(), CommandError> {
-        let manager = builder
-            .actors_manager_slot()
-            .get_or_insert_with(|| Arc::new(ActorsManager::new()))
-            .clone();
-        let registry = builder.registry().clone();
-
-        register_spawn(&registry, manager.clone())?;
-        register_send(&registry, manager.clone())?;
-        register_recv(&registry, manager.clone())?;
-        register_status(&registry, manager.clone())?;
-        register_list(&registry, manager.clone())?;
-        register_stop(&registry, manager)?;
-
-        Ok(())
-    }
-}
 
 #[daemon_command(id = "actors.spawn")]
 fn spawn(mgr: &ActorsManager, args: SpawnArgs) -> Result<SpawnResp, String> {
@@ -632,6 +612,7 @@ struct IdArgs {
 mod tests {
     use super::*;
     use crate::builder::DaemonBuilder;
+    use crate::registry::CommandError;
 
     fn kernel() -> crate::DaemonKernel {
         DaemonBuilder::new()

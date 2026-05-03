@@ -439,7 +439,7 @@ declared in `.slint` get matched to Rust fns by name.
 
 ---
 
-## 6. `#[daemon_module]` — auto-generate `install()`  ⬜ not started
+## 6. `#[daemon_module]` — auto-generate `install()`  ✅ shipped, every default module migrated
 
 ### Current state
 
@@ -466,30 +466,66 @@ impl DaemonModule for CrdtModule {
 
 ### Design
 
-A `#[daemon_module(id = "prism.crdt")]` annotation on the module
-struct collects every `register_*` symbol visible in the same module
-and emits the full `DaemonModule` impl automatically:
+A `#[daemon_module(id = "prism.crdt", …)]` annotation on the module
+struct emits the full `DaemonModule` impl. Proc-macros only see their
+annotated item, so the command list is explicit (`commands(write,
+read, …)`) rather than scraped from the surrounding module — keeping
+the dependency graph auditable and matching the pattern
+`widget_providers!` will use in #9. State acquisition has three
+declarative shapes:
 
 ```rust
-#[daemon_module(id = "prism.crdt")]
-struct CrdtModule;
-```
+// Stateless — every register_<cmd> takes only &CommandRegistry.
+#[daemon_module(id = "prism.crypto",
+    commands(keypair, derive_public, shared_secret, encrypt, decrypt, random_bytes))]
+pub struct CryptoModule;
 
-The macro detects state capture by inspecting the `register_*`
-signatures (stateless vs `fn(&Registry, Arc<State>)`) and
-synthesises the builder acquire calls. Modules that need custom
-builder slots (e.g. `doc_manager_slot`) can annotate the relevant
-field with `#[module_slot]`.
+// Slot-backed — manager stashed on a DaemonBuilder::*_slot() accessor
+// so hosts can inject a preconfigured one before build().
+#[daemon_module(
+    id = "prism.crdt",
+    slot = doc_manager_slot,
+    default = || Arc::new(DocManager::new()),
+    commands(write, read, export, import),
+)]
+pub struct CrdtModule;
+
+// Direct state — manager constructed inline at install time. Used
+// when no slot accessor exists (debug sessions are per-install, not
+// host-injectable).
+#[daemon_module(
+    id = "prism.debug",
+    state = Arc::new(DebugManager::new()),
+    commands(launch, set_breakpoints, r#continue, /* … */),
+)]
+pub struct DebugModule;
+```
 
 This is the logical complement to `#[daemon_command]` — the two
 macros together make a module fully declarative with zero hand-written
-boilerplate.
+`install()` boilerplate.
 
 ### Status
 
-- ⬜ Not started. Blocked on nothing — `#[daemon_command]` is fully
-  shipped and provides all the `register_*` hooks the module macro
-  needs to collect.
+- ✅ Macro shipped in `prism-luau-derive` as `#[daemon_module]`. Three
+  state forms (stateless, `slot`/`default`, `state` expression),
+  required `id = "..."` and `commands(…)` lists. Each command ident
+  in the list is desugared to a `register_<ident>` call against the
+  builder's registry, threading an `Arc::clone(&__state)` for the
+  stateful forms. Raw idents (`r#continue`) survive the
+  `format_ident!` round-trip so keyword-named commands work.
+- ✅ Migrations: every default-feature module has been collapsed to a
+  single struct definition — `crypto` (stateless), `build` (stateless,
+  1 cmd), `luau` (stateless, 1 cmd), `crdt`/`watcher`/`vfs`/`actors`
+  (slot-backed), `debug` (direct-state). 9 modules, 36 commands, all
+  hand-written `install()` bodies deleted. Admin stays hand-written
+  intentionally — it captures `builder.module_ids` into its
+  `AdminState`, which is fine but doesn't fit the macro's single-state
+  shape. 108 lib + 12 integration + 12 stdio + 2 ipc + 6 macro tests
+  pass; clippy clean.
+- 🟡 Feature-gated `whisper` / `conferencing` modules are unmigrated
+  for the same reason as #3 — they need their own opt-in build to
+  exercise.
 
 ---
 
@@ -642,6 +678,605 @@ to a single macro invocation over the annotated types.
 
 ---
 
+## 11. `#[derive(Editable)]` — shell stringly-typed field dispatch  ⬜ not started
+
+### Current state
+
+`prism-shell/src/app/mutations.rs` contains 8 `apply_*` functions
+(600+ lines total) that all do the same thing: dispatch on a `&str`
+key, parse the `&str` value to the correct Rust type, clamp/validate,
+and assign to a struct field. The pattern is forced by the Slint
+callback boundary — field names arrive as strings from the property
+inspector.
+
+```rust
+pub(super) fn apply_style_edit(style: &mut StyleProperties, key: &str, value: &str) {
+    match key {
+        "font_family" => style.font_family = Some(value.to_string()),
+        "font_size"   => style.font_size   = value.parse().ok(),
+        "font_weight" => style.font_weight = value.parse().ok(),
+        "color"       => style.color       = Some(value.to_string()),
+        // … 9 more arms
+        _ => {}
+    }
+}
+```
+
+Every arm is mechanical: parse with the right coercion (`to_string`,
+`.parse::<f32>()`, `parse_enum`, `clamp`), write the field. A
+renamed field silently stops applying without a compile error.
+
+### Design
+
+```rust
+#[derive(Editable)]
+struct StyleProperties {
+    #[edit]
+    font_family: Option<String>,
+    #[edit(parse = "f32", clamp(0.0, 200.0))]
+    font_size: Option<f32>,
+    #[edit(parse = "enum")]
+    font_weight: Option<FontWeight>,
+    // …
+}
+
+// Generates:
+impl Editable for StyleProperties {
+    fn apply_field(&mut self, key: &str, value: &str) {
+        match key {
+            "font_family" => self.font_family = Some(value.to_string()),
+            "font_size"   => self.font_size   = value.parse::<f32>().ok()
+                                 .map(|v| v.clamp(0.0, 200.0)),
+            // …
+            _ => {}
+        }
+    }
+}
+```
+
+The 8 `apply_*` fns in `mutations.rs` become 8 one-liners:
+`T::apply_field(entity, key, value)`.
+
+### Status
+
+- ⬜ Not started. No crate dependencies needed beyond
+  `prism-luau-derive` (or a new `prism-derive` crate). The field
+  annotation surface mirrors `#[derive(PrismField)]`'s syntax so
+  both derives could share attribute parsing logic.
+
+---
+
+## 12. Transport invoke adapter  ⬜ not started
+
+### Current state
+
+All three daemon transports repeat the same core logic: extract a
+command name + JSON payload, call `kernel.invoke(cmd, payload)` on a
+blocking pool, map `CommandError` variants to transport-specific
+response codes.
+
+```rust
+// http_axum.rs
+let result = spawn_blocking(move || kernel.invoke(&cmd, payload)).await??;
+match result {
+    Ok(v)  => (StatusCode::OK, Json(v)).into_response(),
+    Err(CommandError::NotFound(_)) => StatusCode::NOT_FOUND.into_response(),
+    Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))).into_response(),
+}
+
+// grpc_tonic.rs — same logic, different response type
+// ipc_local.rs  — same logic, different frame type
+```
+
+The `CommandError → status/code` mapping is re-written independently
+in each transport.
+
+### Design
+
+A shared `CommandErrorMapper` trait with a blanket impl for each
+response type:
+
+```rust
+pub trait CommandErrorMapper {
+    fn map_not_found(msg: &str) -> Self;
+    fn map_internal(msg: &str) -> Self;
+    // …
+}
+
+impl CommandErrorMapper for axum::Response { … }
+impl CommandErrorMapper for tonic::Status { … }
+impl CommandErrorMapper for IpcResponse { … }
+
+pub fn invoke_mapped<R: CommandErrorMapper>(
+    kernel: &DaemonKernel,
+    cmd: &str,
+    payload: JsonValue,
+) -> R { … }
+```
+
+Each transport's handler shrinks to a single `invoke_mapped` call
+plus the transport-specific serialization.
+
+### Status
+
+- ⬜ Not started. The three transports are in
+  `prism-daemon/src/transport/{http_axum,grpc_tonic,ipc_local}.rs`.
+  Low design risk; the error variant set is already stable.
+
+---
+
+## 13. Relay `RelayResult<T>` response type  ⬜ not started
+
+### Current state
+
+All 25+ route handlers in `prism-relay/src/routes/` follow the same
+shape:
+
+```rust
+pub async fn issue_token(
+    State(state): State<Arc<FullRelayState>>,
+    Json(input): Json<IssueTokenRequest>,
+) -> impl IntoResponse {
+    match state.capability_tokens().issue(input) {
+        Ok(r)  => (StatusCode::OK,       Json(json!(r))).into_response(),
+        Err(e) => (StatusCode::CONFLICT, Json(json!({ "error": e.to_string() }))).into_response(),
+    }
+}
+```
+
+The `Ok` branch is always `200 + json!(result)`. The `Err` branch is
+always one of 3-4 status codes plus `json!({ "error": … })`. The
+wrapping and error mapping is repeated in every handler.
+
+### Design
+
+A typed `RelayResult<T>` that implements `IntoResponse`:
+
+```rust
+pub struct RelayResult<T>(Result<T, RelayError>);
+
+impl<T: Serialize> IntoResponse for RelayResult<T> {
+    fn into_response(self) -> Response {
+        match self.0 {
+            Ok(v)  => (StatusCode::OK, Json(v)).into_response(),
+            Err(e) => e.into_response(),
+        }
+    }
+}
+
+pub struct RelayError { status: StatusCode, message: String }
+impl IntoResponse for RelayError { … }
+```
+
+Handlers reduce to:
+
+```rust
+pub async fn issue_token(
+    State(state): State<Arc<FullRelayState>>,
+    Json(input): Json<IssueTokenRequest>,
+) -> RelayResult<IssueTokenResponse> {
+    state.capability_tokens().issue(input)
+        .map_err(|e| RelayError::conflict(e))
+        .into()
+}
+```
+
+This mirrors what `register_typed` did for daemon commands — moves
+the wire serialization boilerplate out of the handler body.
+
+### Status
+
+- ⬜ Not started. Entirely within `prism-relay`. No macro needed —
+  just a newtype + `IntoResponse` impl. Could land in an afternoon.
+
+---
+
+## 14. Test fixture helpers  ⬜ not started
+
+### Current state
+
+Integration tests across three packages repeat the same setup
+boilerplate:
+
+```rust
+// prism-daemon/tests/kernel_integration.rs (repeated 12 times)
+let kernel = DaemonBuilder::new()
+    .with_crdt().with_luau().with_vfs().build().unwrap();
+
+// prism-relay/tests/routes.rs (repeated 8 times)
+let state = Arc::new(FullRelayState::new(RelayConfig::dev_mode())
+    .with_all_modules());
+let app = build_full_router(state);
+
+// prism-builder/tests/derive_macros.rs (repeated per test)
+let mut reg = ComponentRegistry::new();
+register_builtins(&mut reg).unwrap();
+```
+
+### Design
+
+Each package gets a `tests/common/mod.rs` (the standard Rust pattern)
+with typed fixture constructors:
+
+```rust
+// prism-daemon/tests/common/mod.rs
+pub fn test_kernel() -> Arc<DaemonKernel> {
+    DaemonBuilder::new().with_defaults().build().unwrap()
+}
+
+// prism-relay/tests/common/mod.rs
+pub fn test_router() -> Router { … }
+
+// prism-builder/tests/common/mod.rs
+pub fn test_registry() -> ComponentRegistry { … }
+```
+
+No new abstraction — just moving existing setup into a shared location.
+This is a pure cleanup, no design needed.
+
+### Status
+
+- ⬜ Not started. Smallest item on this list; can be done incrementally
+  test-file by test-file. Good first-contribution task.
+
+---
+
+## 15. `SignalSpec` fluent builder  ✅ shipped
+
+### Current state
+
+`SignalSpec { name, payload_fields, triggers }` is constructed as a
+struct literal in ~30 places across the 11 domain engine
+`widget_contributions()` functions:
+
+```rust
+.signal(SignalSpec {
+    name: "on_milestone_complete".to_string(),
+    payload_fields: vec![
+        SignalPayloadField { name: "milestone_id".to_string(), kind: SignalPayloadKind::String },
+        SignalPayloadField { name: "progress".to_string(),     kind: SignalPayloadKind::Number },
+    ],
+    triggers: Triggers::default(),
+})
+```
+
+`WidgetContribution`'s builder already has `.signal()`. The gap is
+that `SignalSpec` itself has no builder, so every call site repeats
+the nested struct literal verbatim.
+
+### Design
+
+A minimal fluent builder on `SignalSpec` — no macro needed:
+
+```rust
+impl SignalSpec {
+    pub fn new(name: impl Into<String>) -> Self { … }
+    pub fn payload(mut self, name: &str, kind: SignalPayloadKind) -> Self { … }
+}
+
+// Before: 6 lines. After:
+.signal(SignalSpec::new("on_milestone_complete")
+    .payload("milestone_id", SignalPayloadKind::String)
+    .payload("progress",     SignalPayloadKind::Number))
+```
+
+The existing `SignalDef::new` / `.with_payload` pattern in
+`prism-builder/src/signal.rs` is the model — `SignalSpec` (in
+`prism-core`) just needs the same treatment.
+
+### Status
+
+- ✅ Shipped. `SignalSpec` (in `prism-core/src/widget/contribution.rs`)
+  grew a chainable `.payload(FieldSpec)` plus typed shorthands
+  `.payload_text` / `.payload_number` / `.payload_boolean` /
+  `.payload_date` / `.payload_date_time`. Migrated every
+  `with_payload(vec![...])` call site in `prism-core` —
+  `widget::views`, `interaction::comments`, and the `focus_planner`,
+  `calendar`, `goals`, `projects`, `habits`, `fitness`, `reminders`,
+  `spreadsheet`, and `timekeeping` engines all now read as fluent
+  chains. `with_payload` stays for callers passing a pre-built
+  `Vec<FieldSpec>`. 1913 prism-core tests pass; workspace check clean.
+
+---
+
+---
+
+## 16. `VfsBackend` / `build_module` stringly-typed errors  ⬜ not started
+
+### Current state
+
+The `VfsBackend` trait and all its implementations (`LocalVfsBackend`,
+`InMemoryVfsBackend`, `S3VfsBackend`, `GcsVfsBackend`) use
+`Result<T, String>` for every method signature
+(`vfs_module.rs:71–85`). The `build_module.rs` internal helpers
+(`run_step`, `emit_file`, `compile_luau`, lines 62–123) do the same.
+
+This means:
+- Callers can't pattern-match error kinds — only `display()` strings.
+- The `?` operator widens any upstream error into a `String` via
+  `.to_string()` / `.map_err(|e| e.to_string())`, discarding
+  structured cause chains.
+- Introducing a new error condition requires callers to string-match,
+  which silently breaks when the message changes.
+
+### Design
+
+Two small `thiserror` enums:
+
+```rust
+// vfs_module.rs
+#[derive(Debug, thiserror::Error)]
+pub enum VfsError {
+    #[error("hash not found: {0}")]
+    NotFound(String),
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("{0}")]
+    Other(String),
+}
+```
+
+```rust
+// build_module.rs
+#[derive(Debug, thiserror::Error)]
+pub enum BuildError {
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("compile error: {0}")]
+    Compile(String),
+    #[error("{0}")]
+    Other(String),
+}
+```
+
+Both are crate-private (no pub re-export needed). The `VfsBackend`
+trait becomes `fn put(&self, …) -> Result<(), VfsError>`. Both error
+types implement `Display` so `CommandError` mapping via
+`register_typed_with_permission`'s `E: Display` bound continues to
+work unchanged.
+
+### Status
+
+- ⬜ Not started. `thiserror` is already in the workspace.
+  `vfs_module.rs` changes are self-contained — the error type is
+  visible only inside the module (backends call each other, not
+  the outside world). `build_module.rs` changes are similarly
+  internal. No cross-crate impact.
+
+---
+
+## 17. `EmptyArgs` duplication across modules  ⬜ not started
+
+### Current state
+
+`crypto_module.rs:157` and `vfs_module.rs:486` both define an
+identical `struct EmptyArgs {}` for commands that take no request
+payload. Neither module can see the other's definition, so both
+re-declare the same zero-field struct.
+
+```rust
+// crypto_module.rs:157
+struct EmptyArgs {}
+
+// vfs_module.rs:486
+struct EmptyArgs {}
+```
+
+Any future module adding a no-payload command will create a third
+copy.
+
+### Design
+
+Two options:
+
+**Option A (preferred):** Change the `#[daemon_command]` macro to
+accept `()` as the request type directly, skipping deserialization
+when the request is the unit type. The handler becomes
+`fn my_cmd() -> Result<Resp, E>` with no args struct at all.
+
+**Option B (minimal):** Add `pub(crate) struct NoArgs;` in
+`src/typed_command.rs` (next to `CommandRegistryExt`) and have both
+modules import it.
+
+Option A is cleaner because it eliminates the struct entirely rather
+than sharing it. The macro already has the `fn(req)` vs
+`fn(&state, req)` arity detection needed to special-case `()`.
+
+### Status
+
+- ⬜ Not started. Option A requires a one-line change to the
+  `#[daemon_command]` proc-macro's code-generation path. Option B
+  is a 5-minute file edit. Either unblocks easily.
+
+---
+
+## 18. `schemas.rs` per-struct `#[allow(dead_code)]`  ⬜ not started
+
+### Current state
+
+`prism-builder/src/schemas.rs` has 14 individual
+`#[allow(dead_code)]` attributes, one per `#[derive(PrismField)]`
+struct (lines 15, 34, 55, 72, 85, 110, 131, 148, 159, 170, 181,
+194, 205, 218, …). Each struct is "dead" at the type level because
+it is never instantiated — only its derived `::field_specs()` method
+is called. The allow is correct but the repetition is noise.
+
+### Design
+
+Replace the 14 per-struct allows with a single module-level
+suppression at the top of `schemas.rs`:
+
+```rust
+#![allow(dead_code)] // structs are used only via their derived ::field_specs()
+```
+
+This removes 13 lines and makes the intent explicit in one place.
+
+### Status
+
+- ⬜ Not started. One-line change. No logic impact.
+
+---
+
+## 19. `#[allow(clippy::module_inception)]` in prism-core  ⬜ not started
+
+### Current state
+
+Three modules in `prism-core` suppress the `module_inception` lint
+(a module containing a submodule with the same name, making
+`use foo::foo::Thing` necessary):
+
+- `src/identity/manifest/mod.rs:16`
+- `src/language/syntax/mod.rs:12`
+- `src/kernel/plugin_bundles/flux_types.rs:14`
+
+The lint fires because the inner `mod manifest` / `mod syntax` /
+`mod flux_types` shadows the outer module name. The conventional fix
+is to rename the inner submodule (e.g. `mod manifest_inner` or
+`mod types`) and re-export the public surface from `mod.rs`.
+
+### Design
+
+For each of the three occurrences:
+1. Rename the inner submodule to avoid the clash (e.g.
+   `mod manifest` → `mod inner` or `mod impl_`).
+2. Re-export all currently-public items from `mod.rs` so call sites
+   are unchanged.
+3. Remove the `#[allow]`.
+
+No caller changes needed if the `pub use inner::*` pattern is used
+in `mod.rs`.
+
+### Status
+
+- ⬜ Not started. Each fix is a 2-file rename + re-export. No design
+  risk — purely cosmetic. Low priority; the suppression is harmless
+  but adds noise to `cargo clippy` output when new members audit the
+  project.
+
+---
+
+## 20. `ObjectSnapshot` large-variant boxing  ⬜ not started
+
+### Current state
+
+`prism-core/src/foundation/undo/types.rs:18` suppresses
+`clippy::large_enum_variant` on `ObjectSnapshot`:
+
+```rust
+#[allow(clippy::large_enum_variant)]
+pub enum ObjectSnapshot {
+    Object {
+        before: Option<GraphObject>,
+        after: Option<GraphObject>,
+    },
+    Edge {
+        before: Option<ObjectEdge>,
+        after: Option<ObjectEdge>,
+    },
+}
+```
+
+The `Object` variant holds two `Option<GraphObject>` fields inline,
+making it substantially larger than the `Edge` variant. Every
+`ObjectSnapshot::Edge` allocation carries padding to fit the larger
+variant, and `Vec<ObjectSnapshot>` in undo batches pays that cost
+per entry.
+
+### Design
+
+Box the large fields:
+
+```rust
+pub enum ObjectSnapshot {
+    Object {
+        before: Option<Box<GraphObject>>,
+        after: Option<Box<GraphObject>>,
+    },
+    Edge {
+        before: Option<ObjectEdge>,
+        after: Option<ObjectEdge>,
+    },
+}
+```
+
+Remove the `#[allow]`. Any construction/match sites need one
+`Box::new(…)` / `*deref` each.
+
+### Status
+
+- ⬜ Not started. Affects `prism-core` only. Impact is proportional
+  to how large `GraphObject` actually is — worth profiling undo-batch
+  allocation before and after to confirm the saving is real.
+
+---
+
+## 21. `prism-shell/src/app/` decomposition  ⬜ not started
+
+### Current state
+
+The shell's application layer is concentrated in four files that
+together exceed 10,400 lines:
+
+| File | Lines |
+|---|---|
+| `src/app/mod.rs` | 2,736 |
+| `src/app/callbacks.rs` | 2,460 |
+| `src/app/sync.rs` | 2,449 |
+| `src/panels/properties.rs` | 2,798 |
+
+`mod.rs` owns `AppState`, its constructor, and Slint window setup.
+`callbacks.rs` holds every `on_*` Slint callback registration.
+`sync.rs` handles every state → Slint push. All three files reference
+the same `AppState` fields, making them tightly coupled but not
+cohesive — large swaths of each file belong to a single feature
+(builder panel, canvas, navigation, timeline) but are interleaved
+with unrelated code.
+
+### Design
+
+Decompose each file by panel/feature boundary:
+
+```
+src/app/
+  mod.rs          ← AppState struct + constructor only (< 300 lines)
+  window.rs       ← Slint window setup/teardown
+  callbacks/
+    builder.rs    ← builder-panel on_* registrations
+    canvas.rs     ← canvas drag/select/resize on_* registrations
+    navigation.rs ← nav + page-switcher on_* registrations
+    timeline.rs   ← timeline on_* registrations
+  sync/
+    builder.rs    ← builder → Slint model pushes
+    canvas.rs     ← canvas selection state pushes
+    navigation.rs ← page/nav model pushes
+    timeline.rs   ← timeline model pushes
+
+src/panels/
+  properties/
+    mod.rs        ← router + shared helpers
+    style.rs      ← style cascade panel (< 400 lines)
+    layout.rs     ← layout/position panel
+    signals.rs    ← signal/connection panel
+    variants.rs   ← variant axis panel
+```
+
+No logic moves — only file boundaries. Each module stays `pub(super)`
+to the `app` module so the public API is unchanged.
+
+This is a pure structural cleanup with no design risk. The `#[derive(SlintBinding)]`
+migration (item #5 above) becomes much easier once `sync.rs` is split
+into per-feature modules.
+
+### Status
+
+- ⬜ Not started. No new abstractions — just splitting existing code
+  along the panel-feature grain lines that are already implicit in
+  the file. Best done incrementally: start with `properties.rs`
+  (the most self-contained), then `callbacks/navigation.rs`, etc.
+
+---
+
 ## Sequencing
 
 Implementation order optimises for value × independence:
@@ -658,18 +1293,37 @@ Implementation order optimises for value × independence:
 4. **#1 Phase 2** (PrismBlock derive): ✅ shipped — depended on a
    richer `TemplateNode` (now grew `Image`/`Link`/`Children` arms)
    and on the walkers being callable from derived impls.
-5. **#6 daemon_module**: natural next step after #3 — no new design
-   work, just collecting what `#[daemon_command]` already emits.
-6. **#8 typed Props**: depends on #2 PrismField completing for all
-   field kinds (`File`/`Currency`/`Calculation`).
-7. **#10 LuauType**: independent, reuses existing emit infrastructure.
-8. **#7 Luau stubs**: additive to #3, priority rises with
-   luau-integration phase 4+.
-9. **#5 SlintBinding**: independent, lower priority.
-10. **#4 visual_node**: lower priority — visual scripting is still
+5. **#15 SignalSpec builder**: no dependencies, tiny — land any time.
+6. **#14 test fixtures**: no dependencies, pure cleanup — land any time.
+7. **#13 RelayResult**: self-contained in prism-relay, one afternoon.
+8. **#6 daemon_module**: ✅ shipped — every default-feature module
+   collapsed onto `#[daemon_module(id, slot/state, commands(…))]`.
+   Hand-written `install()` bodies deleted across 9 modules.
+9. **#12 transport adapter**: low design risk, error set is stable.
+10. **#11 Editable derive**: high value in mutations.rs; shares
+    attribute parsing with PrismField.
+11. **#8 typed Props**: depends on #2 PrismField completing for all
+    field kinds (`File`/`Currency`/`Calculation`).
+12. **#10 LuauType**: independent, reuses existing emit infrastructure.
+13. **#7 Luau stubs**: additive to #3, priority rises with
+    luau-integration phase 4+.
+14. **#5 SlintBinding**: independent, lower priority.
+15. **#4 visual_node**: lower priority — visual scripting is still
     evolving rapidly.
-11. **#9 widget aggregator**: lowest priority, hand-maintained list
+16. **#9 widget aggregator**: lowest priority, hand-maintained list
     changes infrequently.
+17. **#18 schemas.rs dead_code consolidation**: one-line change, land any time.
+18. **#17 EmptyArgs deduplication**: extend `#[daemon_command]` for unit
+    request type — small macro change, high ergonomic payoff.
+19. **#16 VfsBackend / build_module typed errors**: self-contained in
+    `prism-daemon`; `thiserror` already in workspace.
+20. **#20 ObjectSnapshot boxing**: check `GraphObject` size first; only
+    worth doing if the allocation saving is measurable.
+21. **#19 module_inception cleanup**: cosmetic, 2-file change per
+    occurrence — good first-contribution task.
+22. **#21 app/ decomposition**: largest cleanup item; start with
+    `properties.rs`, then `callbacks/` splits. Unblocks `#5 SlintBinding`
+    migration.
 
 The luau-integration plan's open phases (4.3–4.7, 6) are *consumers*
 of these refactorings: declarative widget definition in Luau (Phase 6

@@ -4,8 +4,10 @@
 //! because the macro expands to paths in `prism_daemon::*` and exercising
 //! it requires linking the real `CommandRegistry`.
 
+use prism_daemon::builder::DaemonBuilder;
+use prism_daemon::module::DaemonModule;
 use prism_daemon::registry::CommandRegistry;
-use prism_luau_derive::daemon_command;
+use prism_luau_derive::{daemon_command, daemon_module};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
@@ -56,6 +58,59 @@ fn stateful_command_threads_arc_state() {
     assert_eq!(a, json!(1));
     assert_eq!(b, json!(2));
     assert_eq!(*state.0.lock().unwrap(), 2);
+}
+
+// ── #[daemon_module] coverage ─────────────────────────────────────────
+
+#[daemon_command(id = "modtest.ping")]
+fn ping(_: Greet) -> Result<&'static str, std::convert::Infallible> {
+    Ok("pong")
+}
+
+#[daemon_command(id = "modtest.echo")]
+fn echo(state: &Counter, _: Greet) -> Result<u64, std::convert::Infallible> {
+    Ok(*state.0.lock().unwrap())
+}
+
+#[daemon_module(id = "modtest.stateless", commands(ping))]
+struct StatelessModule;
+
+#[daemon_module(
+    id = "modtest.stateful",
+    state = Arc::new(Counter(std::sync::Mutex::new(7))),
+    commands(echo),
+)]
+struct StatefulModule;
+
+#[test]
+fn daemon_module_stateless_install_registers_commands() {
+    let kernel = DaemonBuilder::new()
+        .with_module(StatelessModule)
+        .build()
+        .unwrap();
+    assert!(kernel.capabilities().contains(&"modtest.ping".to_string()));
+    let out = kernel
+        .invoke("modtest.ping", json!({ "name": "x" }))
+        .unwrap();
+    assert_eq!(out, json!("pong"));
+}
+
+#[test]
+fn daemon_module_id_matches_attribute() {
+    assert_eq!(StatelessModule.id(), "modtest.stateless");
+    assert_eq!(StatefulModule.id(), "modtest.stateful");
+}
+
+#[test]
+fn daemon_module_state_form_threads_arc_into_handlers() {
+    let kernel = DaemonBuilder::new()
+        .with_module(StatefulModule)
+        .build()
+        .unwrap();
+    let out = kernel
+        .invoke("modtest.echo", json!({ "name": "x" }))
+        .unwrap();
+    assert_eq!(out, json!(7));
 }
 
 #[test]

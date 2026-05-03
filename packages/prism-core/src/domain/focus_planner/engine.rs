@@ -128,7 +128,7 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
             ))
             .signal(
                 SignalSpec::new("item-toggled", "A plan item was toggled")
-                    .with_payload(vec![FieldSpec::text("item_id", "Item ID")]),
+                    .payload_text("item_id", "Item ID"),
             )
             .signal(SignalSpec::new("plan-completed", "All items completed"))
             .action(ToolbarAction::signal("add-item", "Add Item", "plus"))
@@ -185,11 +185,11 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
             .category(WidgetCategory::Input)
             .signal(
                 SignalSpec::new("item-added", "A brain dump item was added")
-                    .with_payload(vec![FieldSpec::text("text", "Text")]),
+                    .payload_text("text", "Text"),
             )
             .signal(
                 SignalSpec::new("item-removed", "A brain dump item was removed")
-                    .with_payload(vec![FieldSpec::text("item_id", "Item ID")]),
+                    .payload_text("item_id", "Item ID"),
             )
             .action(ToolbarAction::signal("add", "Add", "plus"))
             .action(ToolbarAction::signal("clear-all", "Clear All", "trash"))

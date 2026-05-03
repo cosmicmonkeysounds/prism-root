@@ -9,27 +9,14 @@
 //! tokens + shell-mode tag; later phases bolt object/document/signal
 //! access onto the same userdata without changing this entry point.
 
-use crate::builder::DaemonBuilder;
-use crate::module::DaemonModule;
 use crate::modules::prism_context::{self, PrismContext};
-use crate::registry::CommandError;
 use mlua::{Lua, MultiValue, Result as LuaResult, Value};
-use prism_luau_derive::daemon_command;
+use prism_luau_derive::{daemon_command, daemon_module};
 use serde::Deserialize;
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
+#[daemon_module(id = "prism.luau", commands(exec_cmd))]
 pub struct LuauModule;
-
-impl DaemonModule for LuauModule {
-    fn id(&self) -> &str {
-        "prism.luau"
-    }
-
-    fn install(&self, builder: &mut DaemonBuilder) -> Result<(), CommandError> {
-        register_exec_cmd(builder.registry())?;
-        Ok(())
-    }
-}
 
 #[derive(Debug, Deserialize)]
 struct ExecArgs {
@@ -147,6 +134,7 @@ fn lua_to_json(value: &Value) -> LuaResult<JsonValue> {
 mod tests {
     use super::*;
     use crate::builder::DaemonBuilder;
+    use crate::registry::CommandError;
     use serde_json::json;
 
     #[test]

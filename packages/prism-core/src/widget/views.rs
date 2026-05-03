@@ -48,18 +48,17 @@ pub fn kanban_view() -> WidgetContribution {
         .data_key("items")
         .signal(
             SignalSpec::new("card-clicked", "A card was clicked")
-                .with_payload(vec![FieldSpec::text("item_id", "Item ID")]),
+                .payload_text("item_id", "Item ID"),
         )
         .signal(
-            SignalSpec::new("card-moved", "A card was moved between columns").with_payload(vec![
-                FieldSpec::text("item_id", "Item ID"),
-                FieldSpec::text("from_column", "Source Column"),
-                FieldSpec::text("to_column", "Target Column"),
-            ]),
+            SignalSpec::new("card-moved", "A card was moved between columns")
+                .payload_text("item_id", "Item ID")
+                .payload_text("from_column", "Source Column")
+                .payload_text("to_column", "Target Column"),
         )
         .signal(
             SignalSpec::new("column-clicked", "A column header was clicked")
-                .with_payload(vec![FieldSpec::text("column_id", "Column ID")]),
+                .payload_text("column_id", "Column ID"),
         )
         .size(4, 3)
         .min_size(2, 2)
@@ -123,20 +122,16 @@ pub fn calendar_view() -> WidgetContribution {
         .data_key("events")
         .signal(
             SignalSpec::new("event-clicked", "A calendar event was clicked")
-                .with_payload(vec![FieldSpec::text("event_id", "Event ID")]),
+                .payload_text("event_id", "Event ID"),
         )
         .signal(
-            SignalSpec::new("date-clicked", "A date cell was clicked")
-                .with_payload(vec![FieldSpec::text("date", "Date")]),
+            SignalSpec::new("date-clicked", "A date cell was clicked").payload_text("date", "Date"),
         )
         .signal(
-            SignalSpec::new("event-moved", "An event was moved to a new time range").with_payload(
-                vec![
-                    FieldSpec::text("event_id", "Event ID"),
-                    FieldSpec::text("new_start", "New Start"),
-                    FieldSpec::text("new_end", "New End"),
-                ],
-            ),
+            SignalSpec::new("event-moved", "An event was moved to a new time range")
+                .payload_text("event_id", "Event ID")
+                .payload_text("new_start", "New Start")
+                .payload_text("new_end", "New End"),
         )
         .size(4, 3)
         .min_size(2, 2)
@@ -205,22 +200,18 @@ pub fn gantt_chart() -> WidgetContribution {
         .data_key("tasks")
         .signal(
             SignalSpec::new("task-clicked", "A task bar was clicked")
-                .with_payload(vec![FieldSpec::text("task_id", "Task ID")]),
+                .payload_text("task_id", "Task ID"),
         )
         .signal(
-            SignalSpec::new("task-resized", "A task bar was resized").with_payload(vec![
-                FieldSpec::text("task_id", "Task ID"),
-                FieldSpec::text("new_start", "New Start"),
-                FieldSpec::text("new_end", "New End"),
-            ]),
+            SignalSpec::new("task-resized", "A task bar was resized")
+                .payload_text("task_id", "Task ID")
+                .payload_text("new_start", "New Start")
+                .payload_text("new_end", "New End"),
         )
         .signal(
-            SignalSpec::new("dependency-clicked", "A dependency line was clicked").with_payload(
-                vec![
-                    FieldSpec::text("source_id", "Source ID"),
-                    FieldSpec::text("target_id", "Target ID"),
-                ],
-            ),
+            SignalSpec::new("dependency-clicked", "A dependency line was clicked")
+                .payload_text("source_id", "Source ID")
+                .payload_text("target_id", "Target ID"),
         )
         .size(4, 2)
         .min_size(3, 2)
@@ -303,7 +294,7 @@ pub fn gallery_view() -> WidgetContribution {
         .data_key("items")
         .signal(
             SignalSpec::new("item-clicked", "A gallery item was clicked")
-                .with_payload(vec![FieldSpec::text("item_id", "Item ID")]),
+                .payload_text("item_id", "Item ID"),
         )
         .signal(SignalSpec::selection("item"))
         .size(4, 3)
@@ -347,7 +338,7 @@ pub fn inbox_view() -> WidgetContribution {
         .data_key("messages")
         .signal(
             SignalSpec::new("message-clicked", "A message was clicked")
-                .with_payload(vec![FieldSpec::text("message_id", "Message ID")]),
+                .payload_text("message_id", "Message ID"),
         )
         .signal(
             SignalSpec::new("message-starred", "A message was starred/unstarred").with_payload(
@@ -359,7 +350,7 @@ pub fn inbox_view() -> WidgetContribution {
         )
         .signal(
             SignalSpec::new("thread-expanded", "A thread was expanded")
-                .with_payload(vec![FieldSpec::text("thread_id", "Thread ID")]),
+                .payload_text("thread_id", "Thread ID"),
         )
         .size(3, 4)
         .min_size(2, 2)
@@ -407,7 +398,7 @@ pub fn timeline_view() -> WidgetContribution {
         .data_key("events")
         .signal(
             SignalSpec::new("event-clicked", "A timeline event was clicked")
-                .with_payload(vec![FieldSpec::text("event_id", "Event ID")]),
+                .payload_text("event_id", "Event ID"),
         )
         .size(3, 4)
         .min_size(2, 2)

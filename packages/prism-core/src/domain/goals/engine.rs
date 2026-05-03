@@ -235,7 +235,7 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
             .category(WidgetCategory::Display)
             .signal(
                 SignalSpec::new("milestone-toggled", "A milestone was toggled")
-                    .with_payload(vec![FieldSpec::text("milestone_id", "Milestone ID")]),
+                    .payload_text("milestone_id", "Milestone ID"),
             )
             .action(ToolbarAction::signal("add-milestone", "Add", "plus"))
             .size(2, 2)

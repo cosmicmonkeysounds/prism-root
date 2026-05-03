@@ -16,10 +16,7 @@
 //! Path resolution: relative paths in a step are resolved against
 //! `working_dir`. Absolute paths are used as-is.
 
-use crate::builder::DaemonBuilder;
-use crate::module::DaemonModule;
-use crate::registry::CommandError;
-use prism_luau_derive::daemon_command;
+use prism_luau_derive::{daemon_command, daemon_module};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
@@ -58,18 +55,8 @@ pub struct BuildStepOutput {
     pub stderr: Option<String>,
 }
 
+#[daemon_module(id = "prism.build", commands(run_step))]
 pub struct BuildModule;
-
-impl DaemonModule for BuildModule {
-    fn id(&self) -> &str {
-        "prism.build"
-    }
-
-    fn install(&self, builder: &mut DaemonBuilder) -> Result<(), CommandError> {
-        register_run_step(builder.registry())?;
-        Ok(())
-    }
-}
 
 #[daemon_command(id = "build.run_step")]
 fn run_step(args: RunStepArgs) -> Result<BuildStepOutput, String> {

@@ -17,11 +17,8 @@
 //! | `luau.debug.evaluate`    | `{ session_id, expression }`                  | `{ result?, error? }`                   |
 //! | `luau.debug.terminate`   | `{ session_id }`                              | `{ terminated: bool }`                  |
 
-use crate::builder::DaemonBuilder;
-use crate::module::DaemonModule;
-use crate::registry::CommandError;
 use mlua::{Lua, MultiValue, Value as LuaValue, VmState};
-use prism_luau_derive::daemon_command;
+use prism_luau_derive::{daemon_command, daemon_module};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map as JsonMap, Value as JsonValue};
 use std::collections::{HashMap, HashSet};
@@ -504,30 +501,22 @@ fn lua_to_json(value: &LuaValue) -> mlua::Result<JsonValue> {
 
 // ── Module wiring ─────────────────────────────────────────────────────
 
+#[daemon_module(
+    id = "prism.debug",
+    state = Arc::new(DebugManager::new()),
+    commands(
+        launch,
+        set_breakpoints,
+        r#continue,
+        step_in,
+        step_over,
+        step_out,
+        inspect,
+        evaluate,
+        terminate,
+    ),
+)]
 pub struct DebugModule;
-
-impl DaemonModule for DebugModule {
-    fn id(&self) -> &str {
-        "prism.debug"
-    }
-
-    fn install(&self, builder: &mut DaemonBuilder) -> Result<(), CommandError> {
-        let manager = Arc::new(DebugManager::new());
-        let registry = builder.registry().clone();
-
-        register_launch(&registry, manager.clone())?;
-        register_set_breakpoints(&registry, manager.clone())?;
-        register_continue(&registry, manager.clone())?;
-        register_step_in(&registry, manager.clone())?;
-        register_step_over(&registry, manager.clone())?;
-        register_step_out(&registry, manager.clone())?;
-        register_inspect(&registry, manager.clone())?;
-        register_evaluate(&registry, manager.clone())?;
-        register_terminate(&registry, manager)?;
-
-        Ok(())
-    }
-}
 
 #[daemon_command(id = "luau.debug.launch")]
 fn launch(mgr: &DebugManager, args: LaunchArgs) -> Result<LaunchResp, String> {

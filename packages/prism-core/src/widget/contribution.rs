@@ -413,6 +413,36 @@ impl SignalSpec {
         self.payload_fields = fields;
         self
     }
+
+    pub fn payload(mut self, field: FieldSpec) -> Self {
+        self.payload_fields.push(field);
+        self
+    }
+
+    pub fn payload_text(self, key: impl Into<String>, label: impl Into<String>) -> Self {
+        self.payload(FieldSpec::text(key, label))
+    }
+
+    pub fn payload_number(
+        self,
+        key: impl Into<String>,
+        label: impl Into<String>,
+        bounds: super::field::NumericBounds,
+    ) -> Self {
+        self.payload(FieldSpec::number(key, label, bounds))
+    }
+
+    pub fn payload_boolean(self, key: impl Into<String>, label: impl Into<String>) -> Self {
+        self.payload(FieldSpec::boolean(key, label))
+    }
+
+    pub fn payload_date(self, key: impl Into<String>, label: impl Into<String>) -> Self {
+        self.payload(FieldSpec::date(key, label))
+    }
+
+    pub fn payload_date_time(self, key: impl Into<String>, label: impl Into<String>) -> Self {
+        self.payload(FieldSpec::date_time(key, label))
+    }
 }
 
 // ── VariantSpec ──────────────────────────────────────────────────
@@ -770,7 +800,7 @@ mod tests {
     #[test]
     fn signal_spec_with_payload() {
         let s = SignalSpec::new("item-selected", "An item was selected")
-            .with_payload(vec![FieldSpec::text("item_id", "Item ID")]);
+            .payload_text("item_id", "Item ID");
         assert_eq!(s.payload_fields.len(), 1);
     }
 

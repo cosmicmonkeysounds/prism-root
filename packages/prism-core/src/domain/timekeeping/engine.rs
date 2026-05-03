@@ -401,9 +401,11 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
             .signal(SignalSpec::new("stopped", "Timer stopped"))
             .signal(SignalSpec::new("paused", "Timer paused"))
             .signal(
-                SignalSpec::new("lap-recorded", "A lap was recorded").with_payload(vec![
-                    FieldSpec::number("elapsed_ms", "Elapsed (ms)", NumericBounds::unbounded()),
-                ]),
+                SignalSpec::new("lap-recorded", "A lap was recorded").payload_number(
+                    "elapsed_ms",
+                    "Elapsed (ms)",
+                    NumericBounds::unbounded(),
+                ),
             )
             .action(ToolbarAction::signal("start", "Start", "play"))
             .action(ToolbarAction::signal("pause", "Pause", "pause"))

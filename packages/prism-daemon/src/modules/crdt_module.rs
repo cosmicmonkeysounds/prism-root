@@ -13,40 +13,20 @@
 //! the registry and call [`DaemonKernel::doc_manager`] directly for hot
 //! paths — the two entry points are deliberately symmetric.
 
-use crate::builder::DaemonBuilder;
 use crate::doc_manager::DocManager;
-use crate::module::DaemonModule;
-use crate::registry::CommandError;
-use prism_luau_derive::daemon_command;
+use prism_luau_derive::{daemon_command, daemon_module};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-/// The CRDT module. Stateless — the state lives on the shared
-/// [`DocManager`] stashed into the builder.
+/// The CRDT module. The shared [`DocManager`] is stashed into the
+/// builder so hosts can inject a preloaded one.
+#[daemon_module(
+    id = "prism.crdt",
+    slot = doc_manager_slot,
+    default = || Arc::new(DocManager::new()),
+    commands(write, read, export, import),
+)]
 pub struct CrdtModule;
-
-impl DaemonModule for CrdtModule {
-    fn id(&self) -> &str {
-        "prism.crdt"
-    }
-
-    fn install(&self, builder: &mut DaemonBuilder) -> Result<(), CommandError> {
-        // Reuse an injected DocManager if the host already provided one,
-        // otherwise spin a fresh one up.
-        let manager = builder
-            .doc_manager_slot()
-            .get_or_insert_with(|| Arc::new(DocManager::new()))
-            .clone();
-        let registry = builder.registry().clone();
-
-        register_write(&registry, manager.clone())?;
-        register_read(&registry, manager.clone())?;
-        register_export(&registry, manager.clone())?;
-        register_import(&registry, manager)?;
-
-        Ok(())
-    }
-}
 
 #[daemon_command(id = "crdt.write")]
 fn write(mgr: &DocManager, args: WriteArgs) -> Result<BytesResp, String> {

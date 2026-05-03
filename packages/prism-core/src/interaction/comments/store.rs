@@ -461,17 +461,16 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
             ))
             .signal(
                 SignalSpec::new("comment-added", "A new comment was added")
-                    .with_payload(vec![FieldSpec::text("body", "Body")]),
+                    .payload_text("body", "Body"),
             )
             .signal(
                 SignalSpec::new("comment-resolved", "A comment was resolved")
-                    .with_payload(vec![FieldSpec::text("comment_id", "Comment ID")]),
+                    .payload_text("comment_id", "Comment ID"),
             )
             .signal(
-                SignalSpec::new("reply-added", "A reply was added").with_payload(vec![
-                    FieldSpec::text("parent_id", "Parent ID"),
-                    FieldSpec::text("body", "Body"),
-                ]),
+                SignalSpec::new("reply-added", "A reply was added")
+                    .payload_text("parent_id", "Parent ID")
+                    .payload_text("body", "Body"),
             )
             .action(ToolbarAction::signal("new-comment", "New Comment", "plus"))
             .action(ToolbarAction::signal("resolve-all", "Resolve All", "check"))

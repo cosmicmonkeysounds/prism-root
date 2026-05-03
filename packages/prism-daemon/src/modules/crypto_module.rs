@@ -31,12 +31,9 @@
 //! nicely with the emscripten C ABI which would otherwise have to
 //! choose a base64 flavor.
 
-use crate::builder::DaemonBuilder;
-use crate::module::DaemonModule;
-use crate::registry::CommandError;
 use chacha20poly1305::aead::{Aead, AeadCore, KeyInit, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
-use prism_luau_derive::daemon_command;
+use prism_luau_derive::{daemon_command, daemon_module};
 use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use x25519_dalek::{PublicKey, StaticSecret};
@@ -51,26 +48,11 @@ const MAX_RANDOM_BYTES: usize = 64 * 1024;
 /// caller. This keeps the module safe to carry on every platform
 /// (including WASM) without having to reason about where a long-lived
 /// keystore would live.
+#[daemon_module(
+    id = "prism.crypto",
+    commands(keypair, derive_public, shared_secret, encrypt, decrypt, random_bytes)
+)]
 pub struct CryptoModule;
-
-impl DaemonModule for CryptoModule {
-    fn id(&self) -> &str {
-        "prism.crypto"
-    }
-
-    fn install(&self, builder: &mut DaemonBuilder) -> Result<(), CommandError> {
-        let registry = builder.registry().clone();
-
-        register_keypair(&registry)?;
-        register_derive_public(&registry)?;
-        register_shared_secret(&registry)?;
-        register_encrypt(&registry)?;
-        register_decrypt(&registry)?;
-        register_random_bytes(&registry)?;
-
-        Ok(())
-    }
-}
 
 #[daemon_command(id = "crypto.keypair")]
 fn keypair(_: EmptyArgs) -> Result<KeypairResp, std::convert::Infallible> {
@@ -260,6 +242,7 @@ fn decode_fixed<const N: usize>(s: &str, field: &str) -> Result<[u8; N], String>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::registry::CommandError;
     use crate::DaemonBuilder;
     use serde_json::json;
 

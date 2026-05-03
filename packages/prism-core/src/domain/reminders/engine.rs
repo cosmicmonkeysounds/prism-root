@@ -126,7 +126,7 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
             .signal(SignalSpec::selection("reminder"))
             .signal(
                 SignalSpec::new("reminder-completed", "A reminder was completed")
-                    .with_payload(vec![FieldSpec::text("reminder_id", "Reminder ID")]),
+                    .payload_text("reminder_id", "Reminder ID"),
             )
             .action(ToolbarAction::signal("add-reminder", "Add", "plus"))
             .action(ToolbarAction::refresh())

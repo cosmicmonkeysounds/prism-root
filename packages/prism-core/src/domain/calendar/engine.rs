@@ -540,8 +540,7 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
             ])
             .signal(SignalSpec::selection("event"))
             .signal(
-                SignalSpec::new("date-selected", "A date was clicked")
-                    .with_payload(vec![FieldSpec::text("date", "Date")]),
+                SignalSpec::new("date-selected", "A date was clicked").payload_text("date", "Date"),
             )
             .action(ToolbarAction::signal("today", "Today", "calendar"))
             .action(ToolbarAction::signal("prev", "Previous", "arrow-left"))
@@ -613,7 +612,7 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
             .field(FieldSpec::boolean("show_week_numbers", "Show Week Numbers"))
             .signal(
                 SignalSpec::new("date-selected", "A date was selected")
-                    .with_payload(vec![FieldSpec::text("date", "Date")]),
+                    .payload_text("date", "Date"),
             )
             .size(1, 1)
             .template(TemplateNode::vertical(

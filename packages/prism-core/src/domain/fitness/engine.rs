@@ -210,7 +210,7 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
             .category(WidgetCategory::Display)
             .signal(
                 SignalSpec::new("exercise-selected", "An exercise was selected")
-                    .with_payload(vec![FieldSpec::text("exercise", "Exercise")]),
+                    .payload_text("exercise", "Exercise"),
             )
             .action(ToolbarAction::refresh())
             .size(2, 1)

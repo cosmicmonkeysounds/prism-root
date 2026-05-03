@@ -1190,17 +1190,15 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
                     .with_default(json!(true)),
             )
             .signal(
-                SignalSpec::new("cell-selected", "A cell was selected").with_payload(vec![
-                    FieldSpec::text("row_id", "Row ID"),
-                    FieldSpec::text("col_id", "Column ID"),
-                ]),
+                SignalSpec::new("cell-selected", "A cell was selected")
+                    .payload_text("row_id", "Row ID")
+                    .payload_text("col_id", "Column ID"),
             )
             .signal(
-                SignalSpec::new("cell-changed", "A cell value changed").with_payload(vec![
-                    FieldSpec::text("row_id", "Row ID"),
-                    FieldSpec::text("col_id", "Column ID"),
-                    FieldSpec::text("value", "Value"),
-                ]),
+                SignalSpec::new("cell-changed", "A cell value changed")
+                    .payload_text("row_id", "Row ID")
+                    .payload_text("col_id", "Column ID")
+                    .payload_text("value", "Value"),
             )
             .action(ToolbarAction::signal("add-row", "Add Row", "add"))
             .action(ToolbarAction::signal("add-column", "Add Column", "add"))
@@ -1296,9 +1294,11 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
             .field(FieldSpec::text("y_column", "Y Column"))
             .field(FieldSpec::text("title", "Title"))
             .signal(
-                SignalSpec::new("point-selected", "A data point was selected").with_payload(vec![
-                    FieldSpec::number("data_index", "Data Index", NumericBounds::unbounded()),
-                ]),
+                SignalSpec::new("point-selected", "A data point was selected").payload_number(
+                    "data_index",
+                    "Data Index",
+                    NumericBounds::unbounded(),
+                ),
             )
             .action(ToolbarAction::refresh())
             .action(ToolbarAction::export())

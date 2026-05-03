@@ -174,7 +174,7 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
             .category(WidgetCategory::Display)
             .signal(
                 SignalSpec::new("axis-selected", "A health axis was selected")
-                    .with_payload(vec![FieldSpec::text("axis", "Axis")]),
+                    .payload_text("axis", "Axis"),
             )
             .size(2, 1)
             .template(TemplateNode::horizontal(

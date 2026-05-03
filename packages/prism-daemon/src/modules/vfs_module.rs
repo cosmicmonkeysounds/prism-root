@@ -39,10 +39,7 @@
 //! the module lazily creates a `LocalVfsBackend` under the OS temp
 //! directory if no host plugged anything in.
 
-use crate::builder::DaemonBuilder;
-use crate::module::DaemonModule;
-use crate::registry::CommandError;
-use prism_luau_derive::daemon_command;
+use prism_luau_derive::{daemon_command, daemon_module};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -433,37 +430,19 @@ fn looks_like_hash(s: &str) -> bool {
 /// The built-in VFS module. Stateless — the state lives on the shared
 /// [`VfsManager`] stashed on the builder (or lazily created on install
 /// if no host injected one).
+#[daemon_module(
+    id = "prism.vfs",
+    slot = vfs_manager_slot,
+    default = || {
+        // Include the PID so parallel test-binary invocations (e.g. two
+        // concurrent CI jobs) each get an isolated directory and can't
+        // delete each other's blobs.
+        let root = std::env::temp_dir().join(format!("prism-daemon-vfs-{}", std::process::id()));
+        Arc::new(VfsManager::new(root).expect("default vfs root must be writable"))
+    },
+    commands(put, get, has, delete, list, stats),
+)]
 pub struct VfsModule;
-
-impl DaemonModule for VfsModule {
-    fn id(&self) -> &str {
-        "prism.vfs"
-    }
-
-    fn install(&self, builder: &mut DaemonBuilder) -> Result<(), CommandError> {
-        let manager = builder
-            .vfs_manager_slot()
-            .get_or_insert_with(|| {
-                // Include the PID so parallel test-binary invocations
-                // (e.g. two concurrent CI jobs) each get an isolated
-                // directory and can't delete each other's blobs.
-                let root =
-                    std::env::temp_dir().join(format!("prism-daemon-vfs-{}", std::process::id()));
-                Arc::new(VfsManager::new(root).expect("default vfs root must be writable"))
-            })
-            .clone();
-        let registry = builder.registry().clone();
-
-        register_put(&registry, manager.clone())?;
-        register_get(&registry, manager.clone())?;
-        register_has(&registry, manager.clone())?;
-        register_delete(&registry, manager.clone())?;
-        register_list(&registry, manager.clone())?;
-        register_stats(&registry, manager)?;
-
-        Ok(())
-    }
-}
 
 #[daemon_command(id = "vfs.put")]
 fn put(mgr: &VfsManager, args: PutArgs) -> Result<PutResp, String> {
@@ -555,6 +534,7 @@ struct StatsResp {
 mod tests {
     use super::*;
     use crate::builder::DaemonBuilder;
+    use crate::registry::CommandError;
     use serde_json::json;
     use tempfile::tempdir;
 

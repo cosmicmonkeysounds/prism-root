@@ -151,7 +151,7 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
             )
             .signal(
                 SignalSpec::new("habit-uncompleted", "A habit completion was revoked")
-                    .with_payload(vec![FieldSpec::text("habit_id", "Habit ID")]),
+                    .payload_text("habit_id", "Habit ID"),
             )
             .action(ToolbarAction::signal("complete", "Complete", "check"))
             .action(ToolbarAction::signal("skip", "Skip", "forward"))
@@ -201,7 +201,7 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
             .field(FieldSpec::boolean("show_legend", "Show Legend"))
             .signal(
                 SignalSpec::new("date-selected", "A date cell was selected")
-                    .with_payload(vec![FieldSpec::text("date", "Date")]),
+                    .payload_text("date", "Date"),
             )
             .action(ToolbarAction::signal(
                 "prev-month",
