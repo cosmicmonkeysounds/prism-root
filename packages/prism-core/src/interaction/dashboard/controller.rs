@@ -728,16 +728,14 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
             .description("Recently visited items")
             .category(WidgetCategory::Display)
             .size(2, 1)
-            .query(
-                DataQuery {
-                    sort: vec![crate::widget::QuerySort {
-                        field: "updated_at".into(),
-                        descending: true,
-                    }],
-                    limit: Some(10),
-                    ..Default::default()
-                },
-            )
+            .query(DataQuery {
+                sort: vec![crate::widget::QuerySort {
+                    field: "updated_at".into(),
+                    descending: true,
+                }],
+                limit: Some(10),
+                ..Default::default()
+            })
             .data_key("items")
             .data_fields(vec![
                 FieldSpec::text("title", "Title"),

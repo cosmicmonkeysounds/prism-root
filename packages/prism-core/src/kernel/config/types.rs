@@ -2,12 +2,14 @@
 //! the `ConfigStore` trait, and feature-flag definitions. Port of
 //! `@prism/core/kernel/config/config-types.ts`.
 
+use prism_luau_derive::luau_expose;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
 /// Resolution scopes, ordered from least to most specific. The legacy
 /// TS tree had "app" and "team"; Prism is local-first, so only
 /// `default → workspace → user` survive.
+#[luau_expose]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SettingScope {
@@ -26,6 +28,7 @@ impl SettingScope {
     ];
 }
 
+#[luau_expose]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SettingType {

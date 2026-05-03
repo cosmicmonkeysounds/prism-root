@@ -59,8 +59,7 @@ fn luau_types(args: &LuauTypesArgs, workspace: &Workspace, dry_run: bool) -> Res
     fs::create_dir_all(&out_dir)
         .with_context(|| format!("create luau types output dir at {}", out_dir.display()))?;
     let core_path = out_dir.join("core.d.luau");
-    fs::write(&core_path, &core_stub)
-        .with_context(|| format!("write {}", core_path.display()))?;
+    fs::write(&core_path, &core_stub).with_context(|| format!("write {}", core_path.display()))?;
     println!("wrote {}", core_path.display());
     Ok(0)
 }

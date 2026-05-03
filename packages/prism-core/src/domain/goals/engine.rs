@@ -203,7 +203,11 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
             .icon("git-branch")
             .category(WidgetCategory::Display)
             .signal(SignalSpec::selection("goal"))
-            .action(ToolbarAction::signal("expand-all", "Expand All", "maximize"))
+            .action(ToolbarAction::signal(
+                "expand-all",
+                "Expand All",
+                "maximize",
+            ))
             .action(ToolbarAction::signal(
                 "collapse-all",
                 "Collapse All",

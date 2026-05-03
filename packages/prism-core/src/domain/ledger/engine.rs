@@ -839,7 +839,10 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
                         8,
                         0,
                         vec![
-                            TemplateNode::component("heading", json!({"body": "Assets", "level": 3})),
+                            TemplateNode::component(
+                                "heading",
+                                json!({"body": "Assets", "level": 3}),
+                            ),
                             TemplateNode::repeater(
                                 "assets",
                                 TemplateNode::component("text", json!({"body": "asset"})),

@@ -69,6 +69,9 @@ pub mod identity;
 pub mod interaction;
 pub mod kernel;
 pub mod language;
+#[cfg(feature = "luau")]
+pub mod luau_bindings;
+pub mod luau_bindings_consts;
 pub mod luau_types;
 pub mod network;
 pub mod shell_mode;

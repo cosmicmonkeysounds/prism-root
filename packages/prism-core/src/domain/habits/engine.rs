@@ -219,7 +219,10 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
                 4,
                 8,
                 vec![
-                    TemplateNode::component("heading", json!({"body": "Habit Heatmap", "level": 3})),
+                    TemplateNode::component(
+                        "heading",
+                        json!({"body": "Habit Heatmap", "level": 3}),
+                    ),
                     TemplateNode::text_binding("heatmap_data"),
                 ],
             ))

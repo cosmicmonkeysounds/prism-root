@@ -7,6 +7,7 @@
 //! [`EntityDef`] is registered for the object's `type`.
 
 use chrono::{DateTime, Utc};
+use prism_luau_derive::luau_expose;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -91,6 +92,7 @@ pub fn edge_id(id: impl Into<String>) -> EdgeId {
 // ── Entity field definitions ───────────────────────────────────────
 
 /// The set of value types an entity field may hold.
+#[luau_expose]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EntityFieldType {
@@ -111,6 +113,7 @@ pub enum EntityFieldType {
 }
 
 /// Aggregation function used by rollup fields.
+#[luau_expose]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RollupFunction {
@@ -122,12 +125,14 @@ pub enum RollupFunction {
     List,
 }
 
+#[luau_expose]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EnumOption {
     pub value: String,
     pub label: String,
 }
 
+#[luau_expose]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct UiHints {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -300,6 +305,7 @@ pub struct ResolvedEdgeVia {
 
 // ── Edge Type Definition ───────────────────────────────────────────
 
+#[luau_expose]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum EdgeBehavior {
@@ -311,6 +317,7 @@ pub enum EdgeBehavior {
     Stream,
 }
 
+#[luau_expose]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum EdgeScope {
@@ -319,6 +326,7 @@ pub enum EdgeScope {
     Federated,
 }
 
+#[luau_expose]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum EdgeCascade {
@@ -396,6 +404,7 @@ impl EdgeTypeDef {
 
 // ── Entity Type Definition ─────────────────────────────────────────
 
+#[luau_expose]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DefaultChildView {
@@ -406,6 +415,7 @@ pub enum DefaultChildView {
     Graph,
 }
 
+#[luau_expose]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TabDefinition {
     pub id: String,
@@ -414,6 +424,7 @@ pub struct TabDefinition {
     pub dynamic: Option<bool>,
 }
 
+#[luau_expose]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ApiOperation {
@@ -427,12 +438,14 @@ pub enum ApiOperation {
     Duplicate,
 }
 
+#[luau_expose]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DefaultSort {
     pub field: String,
     pub dir: SortDir,
 }
 
+#[luau_expose]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SortDir {

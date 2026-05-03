@@ -31,7 +31,10 @@ pub fn kanban_view() -> WidgetContribution {
         .category(WidgetCategory::DataTable)
         .field(FieldSpec::text("group_field", "Group Field").required())
         .field(FieldSpec::text("card_title_field", "Card Title Field").required())
-        .field(FieldSpec::text("card_subtitle_field", "Card Subtitle Field"))
+        .field(FieldSpec::text(
+            "card_subtitle_field",
+            "Card Subtitle Field",
+        ))
         .field(FieldSpec::boolean("show_counts", "Show Column Counts").with_default(json!(true)))
         .field(
             FieldSpec::number(

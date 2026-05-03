@@ -12,17 +12,23 @@
 //! 2. An `mlua::UserData` impl with field getters (and setters when
 //!    `mutable` is set) — guarded by `#[cfg(feature = "luau")]` so
 //!    crates that opt out of the runtime don't pay for the dep.
+//!    Suppress with `#[luau_expose(manual_impl)]` when the host
+//!    crate hand-writes the `UserData` (the stateful subsystems —
+//!    `ObjectRegistry`, `ConfigModel`, `GraphObject` — go down this
+//!    path because their Lua surface is a method API, not a flat
+//!    field projection).
 //! 3. A registry entry — the host crate reflects on a slice of
 //!    `(name, def)` pairs by hand. `inventory`-style registration is
 //!    deliberately avoided because cdylib + WASM targets don't play
 //!    well with link-time collection.
 //!
-//! Supported shapes (Phase 1):
+//! Supported shapes:
 //!
 //! * `struct Foo { a: T1, b: T2, ... }` — every field is exposed.
-//!   Nested types must themselves be `UserData` or one of the
-//!   supported primitives (`bool`, `String`, the integer/float
-//!   primitives). Read-only by default; opt into setters with
+//!   Fields tagged `#[luau_skip]` are dropped from both the type
+//!   stub and the generated getters/setters; combine with
+//!   `manual_impl` when a hand-written `UserData` will provide the
+//!   missing surface. Read-only by default; opt into setters with
 //!   `#[luau_expose(mutable)]`.
 //! * `enum Foo { A, B, C }` — unit-only enums become a Luau string
 //!   union (`type Foo = "A" | "B" | "C"`). The runtime side emits
@@ -31,7 +37,7 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::{parse_macro_input, Data, DataEnum, DataStruct, DeriveInput, Fields, Ident, Type};
+use syn::{parse_macro_input, Data, DataEnum, DataStruct, DeriveInput, Field, Fields, Ident, Type};
 
 #[proc_macro_attribute]
 pub fn luau_expose(attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -39,11 +45,20 @@ pub fn luau_expose(attr: TokenStream, item: TokenStream) -> TokenStream {
         Ok(a) => a,
         Err(e) => return e.to_compile_error().into(),
     };
-    let input = parse_macro_input!(item as DeriveInput);
+    let mut input = parse_macro_input!(item as DeriveInput);
     let expanded = match expand(&input, &args) {
         Ok(ts) => ts,
         Err(e) => e.to_compile_error(),
     };
+    // Strip `#[luau_skip]` from the surviving struct so rustc doesn't
+    // complain about an unknown attribute.
+    if let Data::Struct(s) = &mut input.data {
+        if let Fields::Named(named) = &mut s.fields {
+            for f in named.named.iter_mut() {
+                f.attrs.retain(|a| !a.path().is_ident("luau_skip"));
+            }
+        }
+    }
     quote! {
         #input
         #expanded
@@ -55,6 +70,10 @@ pub fn luau_expose(attr: TokenStream, item: TokenStream) -> TokenStream {
 struct ExposeArgs {
     rename: Option<String>,
     mutable: bool,
+    /// When true, emit only the `LUAU_TYPE_NAME` / `LUAU_TYPE_DEF`
+    /// constants. Skip the `UserData` / `IntoLua` / `FromLua`
+    /// generation so the host crate can hand-write the Lua surface.
+    manual_impl: bool,
 }
 
 fn parse_attr_args(attr: TokenStream2) -> syn::Result<ExposeArgs> {
@@ -70,8 +89,12 @@ fn parse_attr_args(attr: TokenStream2) -> syn::Result<ExposeArgs> {
             out.mutable = true;
         } else if meta.path.is_ident("read_only") {
             out.mutable = false;
+        } else if meta.path.is_ident("manual_impl") {
+            out.manual_impl = true;
         } else {
-            return Err(meta.error("unknown #[luau_expose] arg (expected `rename`, `mutable`, or `read_only`)"));
+            return Err(meta.error(
+                "unknown #[luau_expose] arg (expected `rename`, `mutable`, `read_only`, or `manual_impl`)",
+            ));
         }
         Ok(())
     });
@@ -94,6 +117,10 @@ fn luau_name(input: &DeriveInput, args: &ExposeArgs) -> String {
     args.rename
         .clone()
         .unwrap_or_else(|| input.ident.to_string())
+}
+
+fn field_is_skipped(f: &Field) -> bool {
+    f.attrs.iter().any(|a| a.path().is_ident("luau_skip"))
 }
 
 // ───── struct expansion ─────────────────────────────────────────────
@@ -121,6 +148,9 @@ fn expand_struct(
     let mut setters = Vec::new();
 
     for field in &named.named {
+        if field_is_skipped(field) {
+            continue;
+        }
         let fname = field.ident.as_ref().expect("named field");
         let fname_str = fname.to_string();
         let luau_ty = rust_type_to_luau(&field.ty);
@@ -145,12 +175,16 @@ fn expand_struct(
     let body = field_lines.join("\n");
     let type_def = format!("export type {luau_name} = {{\n{body}\n}}");
 
-    let userdata_impl = quote! {
-        #[cfg(feature = "luau")]
-        impl ::mlua::UserData for #ident {
-            fn add_fields<F: ::mlua::UserDataFields<Self>>(fields: &mut F) {
-                #(#getters)*
-                #(#setters)*
+    let userdata_impl = if args.manual_impl {
+        quote! {}
+    } else {
+        quote! {
+            #[cfg(feature = "luau")]
+            impl ::mlua::UserData for #ident {
+                fn add_fields<F: ::mlua::UserDataFields<Self>>(fields: &mut F) {
+                    #(#getters)*
+                    #(#setters)*
+                }
             }
         }
     };
@@ -174,7 +208,11 @@ fn expand_enum(
     let ident = &input.ident;
     let luau_name = luau_name(input, args);
 
-    if data.variants.iter().any(|v| !matches!(v.fields, Fields::Unit)) {
+    if data
+        .variants
+        .iter()
+        .any(|v| !matches!(v.fields, Fields::Unit))
+    {
         return Err(syn::Error::new_spanned(
             input,
             "#[luau_expose] enums currently only support unit variants (Phase 1). Tagged unions land in Phase 2.",
@@ -191,42 +229,51 @@ fn expand_enum(
         .join(" | ");
     let type_def = format!("export type {luau_name} = {union}");
 
-    // `IntoLua` / `FromLua` rather than UserData: enums round-trip as
-    // strings on the Luau side, which is the natural shape for a
-    // tagged union and matches the type stub.
-    let into_arms = variant_idents.iter().zip(variant_strs.iter()).map(|(v, s)| {
-        quote! { #ident::#v => #s, }
-    });
-    let from_arms = variant_idents.iter().zip(variant_strs.iter()).map(|(v, s)| {
-        quote! { #s => Ok(#ident::#v), }
-    });
-
-    let lua_impls = quote! {
-        #[cfg(feature = "luau")]
-        impl ::mlua::IntoLua for #ident {
-            fn into_lua(self, lua: &::mlua::Lua) -> ::mlua::Result<::mlua::Value> {
-                let s: &'static str = match self { #(#into_arms)* };
-                Ok(::mlua::Value::String(lua.create_string(s)?))
+    let lua_impls = if args.manual_impl {
+        quote! {}
+    } else {
+        // `IntoLua` / `FromLua` rather than UserData: enums round-trip
+        // as strings on the Luau side, which is the natural shape for
+        // a tagged union and matches the type stub.
+        let into_arms = variant_idents
+            .iter()
+            .zip(variant_strs.iter())
+            .map(|(v, s)| {
+                quote! { #ident::#v => #s, }
+            });
+        let from_arms = variant_idents
+            .iter()
+            .zip(variant_strs.iter())
+            .map(|(v, s)| {
+                quote! { #s => Ok(#ident::#v), }
+            });
+        quote! {
+            #[cfg(feature = "luau")]
+            impl ::mlua::IntoLua for #ident {
+                fn into_lua(self, lua: &::mlua::Lua) -> ::mlua::Result<::mlua::Value> {
+                    let s: &'static str = match self { #(#into_arms)* };
+                    Ok(::mlua::Value::String(lua.create_string(s)?))
+                }
             }
-        }
-        #[cfg(feature = "luau")]
-        impl ::mlua::FromLua for #ident {
-            fn from_lua(value: ::mlua::Value, _: &::mlua::Lua) -> ::mlua::Result<Self> {
-                let s = match &value {
-                    ::mlua::Value::String(s) => s.to_str()?.to_string(),
-                    _ => return Err(::mlua::Error::FromLuaConversionError {
-                        from: value.type_name(),
-                        to: stringify!(#ident).to_string(),
-                        message: Some(format!("expected one of {:?}", [#(#variant_strs),*])),
-                    }),
-                };
-                match s.as_str() {
-                    #(#from_arms)*
-                    other => Err(::mlua::Error::FromLuaConversionError {
-                        from: "string",
-                        to: stringify!(#ident).to_string(),
-                        message: Some(format!("unknown variant `{}`", other)),
-                    }),
+            #[cfg(feature = "luau")]
+            impl ::mlua::FromLua for #ident {
+                fn from_lua(value: ::mlua::Value, _: &::mlua::Lua) -> ::mlua::Result<Self> {
+                    let s = match &value {
+                        ::mlua::Value::String(s) => s.to_str()?.to_string(),
+                        _ => return Err(::mlua::Error::FromLuaConversionError {
+                            from: value.type_name(),
+                            to: stringify!(#ident).to_string(),
+                            message: Some(format!("expected one of {:?}", [#(#variant_strs),*])),
+                        }),
+                    };
+                    match s.as_str() {
+                        #(#from_arms)*
+                        other => Err(::mlua::Error::FromLuaConversionError {
+                            from: "string",
+                            to: stringify!(#ident).to_string(),
+                            message: Some(format!("unknown variant `{}`", other)),
+                        }),
+                    }
                 }
             }
         }
@@ -245,8 +292,9 @@ fn expand_enum(
 
 /// Map a Rust type to the Luau type that the macro will emit into the
 /// `.d.luau` stub. Primitives collapse to `number` / `boolean` /
-/// `string`; everything else is referenced by its leaf identifier and
-/// expected to itself be `#[luau_expose]`-annotated.
+/// `string`; collection types map to typed Luau tables; everything
+/// else is referenced by its leaf identifier and expected to itself
+/// be `#[luau_expose]`-annotated.
 fn rust_type_to_luau(ty: &Type) -> String {
     match ty {
         Type::Path(tp) => {
@@ -256,10 +304,18 @@ fn rust_type_to_luau(ty: &Type) -> String {
             };
             let name = seg.ident.to_string();
             match name.as_str() {
-                "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "i8" | "i16" | "i32"
-                | "i64" | "i128" | "isize" | "f32" | "f64" => "number".to_string(),
+                "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "i8" | "i16" | "i32" | "i64"
+                | "i128" | "isize" | "f32" | "f64" => "number".to_string(),
                 "bool" => "boolean".to_string(),
                 "String" | "str" => "string".to_string(),
+                // `chrono::DateTime<Tz>` round-trips through ISO-8601
+                // strings on the Luau side. Naive dates fall through
+                // here too — the host runtime is responsible for the
+                // string conversion when it builds the userdata.
+                "DateTime" | "NaiveDate" | "NaiveDateTime" => "string".to_string(),
+                // `serde_json::Value` is the universal escape hatch
+                // for opaque payloads (entity `data`, setting values).
+                "Value" | "JsonValue" => "any".to_string(),
                 "Option" => {
                     if let Some(inner) = first_generic_type(seg) {
                         format!("{}?", rust_type_to_luau(inner))
@@ -267,12 +323,18 @@ fn rust_type_to_luau(ty: &Type) -> String {
                         "any?".to_string()
                     }
                 }
-                "Vec" => {
+                "Vec" | "VecDeque" => {
                     if let Some(inner) = first_generic_type(seg) {
                         format!("{{{}}}", rust_type_to_luau(inner))
                     } else {
                         "{any}".to_string()
                     }
+                }
+                "BTreeMap" | "HashMap" | "IndexMap" | "Map" => {
+                    let (k, v) = first_two_generic_types(seg);
+                    let key = k.map(rust_type_to_luau).unwrap_or_else(|| "string".into());
+                    let val = v.map(rust_type_to_luau).unwrap_or_else(|| "any".into());
+                    format!("{{ [{key}]: {val} }}")
                 }
                 _ => name,
             }
@@ -291,4 +353,21 @@ fn first_generic_type(seg: &syn::PathSegment) -> Option<&Type> {
         }
     }
     None
+}
+
+fn first_two_generic_types(seg: &syn::PathSegment) -> (Option<&Type>, Option<&Type>) {
+    let mut out: (Option<&Type>, Option<&Type>) = (None, None);
+    if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
+        for a in &args.args {
+            if let syn::GenericArgument::Type(t) = a {
+                if out.0.is_none() {
+                    out.0 = Some(t);
+                } else if out.1.is_none() {
+                    out.1 = Some(t);
+                    break;
+                }
+            }
+        }
+    }
+    out
 }

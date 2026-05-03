@@ -106,8 +106,7 @@ fn apply_prefixed_property_edit(
                 let fkey = key.strip_prefix("facet.").unwrap_or(key).to_string();
                 let val = value.to_string();
                 s.store.mutate(|state| {
-                    if let Some(doc) =
-                        state.active_app_mut().and_then(|a| a.active_document_mut())
+                    if let Some(doc) = state.active_app_mut().and_then(|a| a.active_document_mut())
                     {
                         if let Some(def) = doc.facets.get_mut(&fid) {
                             apply_facet_edit(def, &fkey, &val);
@@ -125,9 +124,7 @@ fn apply_prefixed_property_edit(
         s.store.mutate(|state| {
             let sid = resolve_schema_id(state);
             if let Some(sid) = sid {
-                if let Some(doc) =
-                    state.active_app_mut().and_then(|a| a.active_document_mut())
-                {
+                if let Some(doc) = state.active_app_mut().and_then(|a| a.active_document_mut()) {
                     if let Some(schema) = doc.facet_schemas.get_mut(&sid) {
                         crate::panels::schema::apply_schema_edit(schema, &skey, &val);
                     }
@@ -138,6 +135,80 @@ fn apply_prefixed_property_edit(
         true
     } else {
         false
+    }
+}
+
+/// Borrow `inner` mutably for `body`, then upgrade `weak` and push state into
+/// the Slint window. Captures the dominant callback shape: take a mutation
+/// closure, sync the UI when it returns. Use directly inside Slint callbacks
+/// to drop the per-site `let mut s = inner.borrow_mut();` / `if let Some(w) =
+/// weak.upgrade()` boilerplate.
+fn with_shell<R>(
+    inner: &Rc<RefCell<ShellInner>>,
+    weak: &slint::Weak<AppWindow>,
+    body: impl FnOnce(&mut ShellInner) -> R,
+) -> R {
+    let result = {
+        let mut s = inner.borrow_mut();
+        body(&mut s)
+    };
+    if let Some(w) = weak.upgrade() {
+        sync_ui_from_shared(inner, &w);
+    }
+    result
+}
+
+/// Shared body of `on_property_field_edited` and `on_property_field_edited_number`.
+/// `numeric` is `Some(raw)` for slider/number-input edits (controls source-value
+/// formatting and suppresses the `changed` signal); `None` for text edits.
+fn dispatch_property_field_edit(
+    inner: &Rc<RefCell<ShellInner>>,
+    weak: &slint::Weak<AppWindow>,
+    key: &str,
+    value: &str,
+    numeric: Option<f32>,
+) {
+    if is_preview_mode(&inner.borrow().store.state().workspace) {
+        return;
+    }
+    if inner.borrow().syncing.get() {
+        return;
+    }
+    {
+        let mut s = inner.borrow_mut();
+        let selected_id = s.store.state().selection.primary().cloned();
+        if !apply_prefixed_property_edit(&mut s, &selected_id, key, value) {
+            if let Some(ref target_id) = selected_id {
+                let kind = field_kind_for_key(&s, key);
+                let (source_key, formatted) = match numeric {
+                    Some(raw) => {
+                        let formatted = match kind.as_deref() {
+                            Some("integer") => format!("{}", raw as i64),
+                            Some("number") => format!("{}px", format_slider_value(raw)),
+                            _ => format_slider_value(raw),
+                        };
+                        (key.to_string(), formatted)
+                    }
+                    None => slint_source_key_for_edit(&s, key, value, kind.as_deref()),
+                };
+                s.push_undo(&format!("Edit {key}"));
+                if let Some(ref mut live) = s.live {
+                    let _ = live.edit_prop_in_source(target_id, &source_key, &formatted);
+                }
+                s.sync_builder_document();
+                if numeric.is_none() {
+                    s.fire_signal(target_id, "changed", {
+                        let mut p = serde_json::Map::new();
+                        p.insert("key".into(), serde_json::Value::from(key));
+                        p.insert("value".into(), serde_json::Value::from(value));
+                        p
+                    });
+                }
+            }
+        }
+    }
+    if let Some(w) = weak.upgrade() {
+        sync_ui_from_shared(inner, &w);
     }
 }
 
@@ -208,8 +279,7 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |page_id| {
-                {
-                    let mut s = inner.borrow_mut();
+                with_shell(&inner, &weak, |s| {
                     let pid = page_id.to_string();
                     let was_preview = is_preview_mode(&s.store.state().workspace);
                     s.store.mutate(|state| {
@@ -224,10 +294,7 @@ impl Shell {
                     s.dock_dirty.set(true);
                     let panel_id = panel_id_for_slint(&s.store.state().workspace);
                     update_panel_schemes(&mut s.input, panel_id);
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
+                });
             }
         });
 
@@ -281,8 +348,7 @@ impl Shell {
             let weak = weak.clone();
             move |node_id| {
                 eprintln!("[click] builder_node_clicked id={node_id}");
-                {
-                    let mut s = inner.borrow_mut();
+                with_shell(&inner, &weak, |s| {
                     let nid = node_id.to_string();
                     s.store.mutate(|state| {
                         state.selection.select(nid.clone());
@@ -301,10 +367,7 @@ impl Shell {
                             });
                         }
                     }
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
+                });
             }
         });
 
@@ -376,8 +439,7 @@ impl Shell {
                 }
                 let node_id = node_id.to_string();
                 let value = value.to_string();
-                {
-                    let mut s = inner.borrow_mut();
+                with_shell(&inner, &weak, |s| {
                     s.push_undo("Edit text");
                     let key = {
                         let component = s.live.as_mut().and_then(|l| {
@@ -401,10 +463,7 @@ impl Shell {
                         let _ = live.edit_prop_in_source(&node_id, key, &formatted);
                     }
                     s.sync_builder_document();
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
+                });
             }
         });
 
@@ -416,8 +475,7 @@ impl Shell {
                 if is_preview_mode(&inner.borrow().store.state().workspace) {
                     return;
                 }
-                {
-                    let mut s = inner.borrow_mut();
+                with_shell(&inner, &weak, |s| {
                     let nid = if node_id.is_empty() {
                         match s.store.state().selection.primary().cloned() {
                             Some(id) => id,
@@ -435,10 +493,7 @@ impl Shell {
                         state.selection.clear();
                     });
                     s.sync_builder_document();
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
+                });
             }
         });
 
@@ -451,8 +506,7 @@ impl Shell {
                     return;
                 }
                 let ct = component_type.to_string();
-                {
-                    let mut s = inner.borrow_mut();
+                with_shell(&inner, &weak, |s| {
                     s.push_undo(&format!("Add {ct}"));
                     let parent_id = s.store.state().selection.primary().cloned();
 
@@ -542,10 +596,7 @@ impl Shell {
                     }
                     s.sync_builder_document();
                     s.fire_signal(&mounted_id, "mounted", serde_json::Map::new());
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
+                });
             }
         });
 
@@ -630,40 +681,7 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |key, value| {
-                if is_preview_mode(&inner.borrow().store.state().workspace) {
-                    return;
-                }
-                if inner.borrow().syncing.get() {
-                    return;
-                }
-                let key = key.to_string();
-                let value = value.to_string();
-                {
-                    let mut s = inner.borrow_mut();
-                    let selected_id = s.store.state().selection.primary().cloned();
-                    if !apply_prefixed_property_edit(&mut s, &selected_id, &key, &value) {
-                        if let Some(ref target_id) = selected_id {
-                            let kind = field_kind_for_key(&s, &key);
-                            let (source_key, formatted) =
-                                slint_source_key_for_edit(&s, &key, &value, kind.as_deref());
-                            s.push_undo(&format!("Edit {key}"));
-                            if let Some(ref mut live) = s.live {
-                                let _ =
-                                    live.edit_prop_in_source(target_id, &source_key, &formatted);
-                            }
-                            s.sync_builder_document();
-                            s.fire_signal(target_id, "changed", {
-                                let mut p = serde_json::Map::new();
-                                p.insert("key".into(), serde_json::Value::from(key.as_str()));
-                                p.insert("value".into(), serde_json::Value::from(value.as_str()));
-                                p
-                            });
-                        }
-                    }
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
+                dispatch_property_field_edit(&inner, &weak, &key, &value, None);
             }
         });
 
@@ -672,36 +690,8 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |key, val| {
-                if is_preview_mode(&inner.borrow().store.state().workspace) {
-                    return;
-                }
-                if inner.borrow().syncing.get() {
-                    return;
-                }
-                let key = key.to_string();
                 let value = format_slider_value(val);
-                {
-                    let mut s = inner.borrow_mut();
-                    let selected_id = s.store.state().selection.primary().cloned();
-                    if !apply_prefixed_property_edit(&mut s, &selected_id, &key, &value) {
-                        if let Some(ref target_id) = selected_id {
-                            let kind = field_kind_for_key(&s, &key);
-                            let formatted = match kind.as_deref() {
-                                Some("integer") => format!("{}", val as i64),
-                                Some("number") => format!("{}px", format_slider_value(val)),
-                                _ => format_slider_value(val),
-                            };
-                            s.push_undo(&format!("Edit {key}"));
-                            if let Some(ref mut live) = s.live {
-                                let _ = live.edit_prop_in_source(target_id, &key, &formatted);
-                            }
-                            s.sync_builder_document();
-                        }
-                    }
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
+                dispatch_property_field_edit(&inner, &weak, &key, &value, Some(val));
             }
         });
 
@@ -711,17 +701,13 @@ impl Shell {
             let weak = weak.clone();
             move |section_id| {
                 let section_id = section_id.to_string();
-                {
-                    let mut s = inner.borrow_mut();
+                with_shell(&inner, &weak, |s| {
                     if s.toggled_sections.contains(&section_id) {
                         s.toggled_sections.remove(&section_id);
                     } else {
                         s.toggled_sections.insert(section_id);
                     }
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
+                });
             }
         });
 
@@ -787,8 +773,7 @@ impl Shell {
             let weak = weak.clone();
             move |app_id| {
                 let app_id = app_id.to_string();
-                {
-                    let mut s = inner.borrow_mut();
+                with_shell(&inner, &weak, |s| {
                     s.store.mutate(|state| {
                         state.shell_view = ShellView::App {
                             app_id: app_id.clone(),
@@ -799,10 +784,7 @@ impl Shell {
                     });
                     s.load_active_page();
                     s.dock_dirty.set(true);
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
+                });
             }
         });
 
@@ -811,8 +793,7 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move || {
-                {
-                    let mut s = inner.borrow_mut();
+                with_shell(&inner, &weak, |s| {
                     s.save_to_active_page();
                     s.store.mutate(|state| {
                         state.shell_view = ShellView::Launchpad;
@@ -820,10 +801,7 @@ impl Shell {
                     });
                     s.live = None;
                     s.dock_dirty.set(true);
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
+                });
             }
         });
 
@@ -833,8 +811,7 @@ impl Shell {
             let weak = weak.clone();
             move |node_id| {
                 let nid = node_id.to_string();
-                {
-                    let mut s = inner.borrow_mut();
+                with_shell(&inner, &weak, |s| {
                     if let Some(app_id) = nid.strip_prefix("app:") {
                         s.save_to_active_page();
                         s.store.mutate(|state| {
@@ -867,10 +844,7 @@ impl Shell {
                             s.dock_dirty.set(true);
                         }
                     }
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
+                });
             }
         });
 
@@ -898,13 +872,10 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move || {
-                let new_app_id;
-                {
-                    let mut s = inner.borrow_mut();
+                with_shell(&inner, &weak, |s| {
                     s.save_to_active_page();
                     let id_num = s.store.state().next_app_id;
-                    new_app_id = format!("app-{id_num}");
-                    let naid = new_app_id.clone();
+                    let naid = format!("app-{id_num}");
                     s.store.mutate(|state| {
                         state.next_app_id += 1;
                         state.apps.push(PrismApp {
@@ -936,10 +907,7 @@ impl Shell {
                         &format!("App {id_num} is ready to edit"),
                         "success",
                     );
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
+                });
             }
         });
 
@@ -1332,8 +1300,7 @@ impl Shell {
             let weak = weak.clone();
             move |action| {
                 let action = action.to_string();
-                {
-                    let mut s = inner.borrow_mut();
+                with_shell(&inner, &weak, |s| {
                     s.store.mutate(|state| {
                         state.editor_state.handle_action(&action);
                     });
@@ -1342,10 +1309,7 @@ impl Shell {
                         let _ = live.set_source(text);
                     }
                     s.sync_builder_document();
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
+                });
             }
         });
 
@@ -1357,8 +1321,7 @@ impl Shell {
                 let ch = ch.to_string();
                 if let Some(c) = ch.chars().next() {
                     if !c.is_control() {
-                        {
-                            let mut s = inner.borrow_mut();
+                        with_shell(&inner, &weak, |s| {
                             s.store.mutate(|state| {
                                 state.editor_state.insert_char(c);
                             });
@@ -1367,10 +1330,7 @@ impl Shell {
                                 let _ = live.set_source(text);
                             }
                             s.sync_builder_document();
-                        }
-                        if let Some(w) = weak.upgrade() {
-                            sync_ui_from_shared(&inner, &w);
-                        }
+                        });
                     }
                 }
             }
@@ -1381,8 +1341,7 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |display_row, col| {
-                {
-                    let mut s = inner.borrow_mut();
+                with_shell(&inner, &weak, |s| {
                     let buf_line = {
                         let state = s.store.state();
                         display_row_to_buffer_line(&state.editor_state, display_row as usize)
@@ -1400,10 +1359,7 @@ impl Shell {
                             });
                         }
                     }
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
+                });
             }
         });
 
@@ -1468,8 +1424,7 @@ impl Shell {
                 }
                 let key = key.to_string();
                 let value = value.to_string();
-                {
-                    let mut s = inner.borrow_mut();
+                with_shell(&inner, &weak, |s| {
                     s.push_undo(&format!("Edit page {key}"));
                     s.store.mutate(|state| {
                         apply_page_layout_edit(
@@ -1478,10 +1433,7 @@ impl Shell {
                             &value,
                         );
                     });
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
+                });
             }
         });
 
@@ -1526,8 +1478,7 @@ impl Shell {
                 }
                 let nid = node_id.to_string();
                 let tool = tool.to_string();
-                {
-                    let mut s = inner.borrow_mut();
+                with_shell(&inner, &weak, |s| {
                     let snap = s.drag_initial_transform.clone();
                     if let (Some(ref snap), Some(ref mut live)) = (&snap, &mut s.live) {
                         if snap.node_id == nid {
@@ -1539,10 +1490,7 @@ impl Shell {
                         }
                     }
                     s.sync_builder_document();
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
+                });
             }
         });
 
@@ -1558,8 +1506,7 @@ impl Shell {
                     return;
                 }
                 let nid = node_id.to_string();
-                {
-                    let mut s = inner.borrow_mut();
+                with_shell(&inner, &weak, |s| {
                     let snap = s.drag_initial_transform.take();
                     if let Some(snap) = snap {
                         if snap.node_id == nid {
@@ -1582,10 +1529,7 @@ impl Shell {
                     }
                     s.sync_builder_document();
                     s.fire_signal(&nid, "drag-ended", serde_json::Map::new());
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
+                });
             }
         });
 
@@ -1631,8 +1575,7 @@ impl Shell {
                 }
                 let nid = node_id.to_string();
                 let handle = handle.to_string();
-                {
-                    let mut s = inner.borrow_mut();
+                with_shell(&inner, &weak, |s| {
                     let snap = s.resize_initial.clone();
                     if let (Some(ref snap), Some(ref mut live)) = (&snap, &mut s.live) {
                         if snap.node_id == nid {
@@ -1644,10 +1587,7 @@ impl Shell {
                         }
                     }
                     s.sync_builder_document();
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
+                });
             }
         });
 
@@ -1664,8 +1604,7 @@ impl Shell {
                 }
                 let nid = node_id.to_string();
                 let handle = handle.to_string();
-                {
-                    let mut s = inner.borrow_mut();
+                with_shell(&inner, &weak, |s| {
                     let snap = s.resize_initial.take();
                     if let Some(snap) = snap {
                         if snap.node_id == nid {
@@ -1680,10 +1619,7 @@ impl Shell {
                         }
                     }
                     s.sync_builder_document();
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
+                });
             }
         });
 
@@ -1695,8 +1631,7 @@ impl Shell {
                 if is_preview_mode(&inner.borrow().store.state().workspace) {
                     return;
                 }
-                {
-                    let mut s = inner.borrow_mut();
+                with_shell(&inner, &weak, |s| {
                     let occupant_id = {
                         let doc = &s.store.state().builder_document;
                         let cell_path = path_from_string(path.as_str());
@@ -1711,10 +1646,7 @@ impl Shell {
                             state.selection.select(id);
                         });
                     }
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
+                });
             }
         });
 
@@ -1726,8 +1658,7 @@ impl Shell {
                 if is_preview_mode(&inner.borrow().store.state().workspace) {
                     return;
                 }
-                {
-                    let mut s = inner.borrow_mut();
+                with_shell(&inner, &weak, |s| {
                     s.push_undo("Add cell");
                     let path = path_from_string(cell_path.as_str());
                     let cell_edge = match edge.as_str() {
@@ -1743,10 +1674,7 @@ impl Shell {
                             .page_layout
                             .insert_at_edge(&path, cell_edge);
                     });
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
+                });
             }
         });
 
@@ -1809,8 +1737,7 @@ impl Shell {
                 if inner.borrow().syncing.get() {
                     return;
                 }
-                {
-                    let mut s = inner.borrow_mut();
+                with_shell(&inner, &weak, |s| {
                     let snap = s.gap_resize_snapshot.clone();
                     if let Some(ref snap) = snap {
                         s.store.mutate(|state| {
@@ -1841,10 +1768,7 @@ impl Shell {
                             );
                         });
                     }
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
+                });
             }
         });
 
@@ -1867,16 +1791,12 @@ impl Shell {
                 let id_str = id.as_str();
                 if let Some(path_str) = id_str.strip_prefix("cell:") {
                     let path = path_from_string(path_str);
-                    {
-                        let mut s = inner.borrow_mut();
+                    with_shell(&inner, &weak, |s| {
                         s.push_undo("Remove cell");
                         s.store.mutate(|state| {
                             let _ = state.builder_document.page_layout.remove_cell(&path);
                         });
-                    }
-                    if let Some(w) = weak.upgrade() {
-                        sync_ui_from_shared(&inner, &w);
-                    }
+                    });
                 }
             }
         });
@@ -1891,8 +1811,7 @@ impl Shell {
                 }
                 let ct = component_type.to_string();
                 let path_str = path.to_string();
-                {
-                    let mut s = inner.borrow_mut();
+                with_shell(&inner, &weak, |s| {
                     s.push_undo(&format!("Add {ct} at {path_str}"));
 
                     let user_prefab_grid =
@@ -1941,10 +1860,7 @@ impl Shell {
                     s.sync_builder_document();
                     s.drag_component_type.clear();
                     s.pending_picker = None;
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
+                });
             }
         });
 
@@ -1956,13 +1872,9 @@ impl Shell {
                 if is_preview_mode(&inner.borrow().store.state().workspace) {
                     return;
                 }
-                {
-                    let mut s = inner.borrow_mut();
+                with_shell(&inner, &weak, |s| {
                     s.pending_picker = Some((path.to_string(), x, y));
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
+                });
             }
         });
 
@@ -1988,17 +1900,13 @@ impl Shell {
                 if is_preview_mode(&inner.borrow().store.state().workspace) {
                     return;
                 }
-                {
-                    let mut s = inner.borrow_mut();
+                with_shell(&inner, &weak, |s| {
                     if s.drag_component_type == component_type.as_str() {
                         s.drag_component_type.clear();
                     } else {
                         s.drag_component_type = component_type.to_string();
                     }
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
+                });
             }
         });
 
@@ -2007,8 +1915,7 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |target_kind, target_id, x, y| {
-                {
-                    let mut s = inner.borrow_mut();
+                with_shell(&inner, &weak, |s| {
                     let kind = target_kind.to_string();
                     let id = target_id.to_string();
                     // Select the right-clicked item so commands operate on it
@@ -2029,10 +1936,7 @@ impl Shell {
                         x,
                         y,
                     });
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
+                });
             }
         });
 
@@ -2107,8 +2011,7 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |connection_id| {
-                {
-                    let mut s = inner.borrow_mut();
+                with_shell(&inner, &weak, |s| {
                     let cid = connection_id.to_string();
                     s.push_undo("Remove signal connection");
                     s.store.mutate(|state| {
@@ -2119,10 +2022,7 @@ impl Shell {
                         }
                     });
                     s.sync_builder_document();
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
+                });
             }
         });
 
@@ -2131,8 +2031,7 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |signal_name, target_idx, action_idx| {
-                {
-                    let mut s = inner.borrow_mut();
+                with_shell(&inner, &weak, |s| {
                     let source = match s.store.state().selection.primary().cloned() {
                         Some(id) => id,
                         None => return,
@@ -2183,10 +2082,7 @@ impl Shell {
                         }
                     });
                     s.sync_builder_document();
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
+                });
             }
         });
 
@@ -2202,8 +2098,7 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |page_index| {
-                {
-                    let mut s = inner.borrow_mut();
+                with_shell(&inner, &weak, |s| {
                     s.save_to_active_page();
                     let deleted = s.store.state().active_app().is_some_and(|app| {
                         app.pages.len() > 1 && (page_index as usize) < app.pages.len()
@@ -2222,18 +2117,14 @@ impl Shell {
                         });
                         s.load_active_page();
                     }
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
+                });
             }
         });
         self.window.on_nav_rename_page({
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |page_index, new_title| {
-                {
-                    let mut s = inner.borrow_mut();
+                with_shell(&inner, &weak, |s| {
                     s.push_undo("Rename page");
                     s.store.mutate(|state| {
                         if let Some(app) = state.active_app_mut() {
@@ -2244,18 +2135,14 @@ impl Shell {
                             );
                         }
                     });
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
+                });
             }
         });
         self.window.on_nav_set_route({
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |page_index, new_route| {
-                {
-                    let mut s = inner.borrow_mut();
+                with_shell(&inner, &weak, |s| {
                     s.push_undo("Set page route");
                     s.store.mutate(|state| {
                         if let Some(app) = state.active_app_mut() {
@@ -2266,18 +2153,14 @@ impl Shell {
                             );
                         }
                     });
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
+                });
             }
         });
         self.window.on_nav_move_page_up({
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |page_index| {
-                {
-                    let mut s = inner.borrow_mut();
+                with_shell(&inner, &weak, |s| {
                     s.save_to_active_page();
                     s.push_undo("Move page up");
                     s.store.mutate(|state| {
@@ -2288,18 +2171,14 @@ impl Shell {
                             );
                         }
                     });
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
+                });
             }
         });
         self.window.on_nav_move_page_down({
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move |page_index| {
-                {
-                    let mut s = inner.borrow_mut();
+                with_shell(&inner, &weak, |s| {
                     s.save_to_active_page();
                     s.push_undo("Move page down");
                     s.store.mutate(|state| {
@@ -2310,10 +2189,7 @@ impl Shell {
                             );
                         }
                     });
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
+                });
             }
         });
         self.window.on_nav_select_page({
@@ -2330,8 +2206,7 @@ impl Shell {
             let inner = Rc::clone(&inner);
             let weak = weak.clone();
             move || {
-                {
-                    let mut s = inner.borrow_mut();
+                with_shell(&inner, &weak, |s| {
                     s.push_undo("Change navigation style");
                     s.store.mutate(|state| {
                         if let Some(app) = state.active_app_mut() {
@@ -2347,10 +2222,7 @@ impl Shell {
                             );
                         }
                     });
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
+                });
             }
         });
 
@@ -2389,8 +2261,7 @@ impl Shell {
                 if src == tgt {
                     return;
                 }
-                {
-                    let mut s = inner.borrow_mut();
+                with_shell(&inner, &weak, |s| {
                     let target_route = s
                         .store
                         .state()
@@ -2429,10 +2300,7 @@ impl Shell {
                             }
                         });
                     }
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
+                });
             }
         });
 
@@ -2442,8 +2310,7 @@ impl Shell {
             let weak = weak.clone();
             move |edge_id| {
                 let edge_id = edge_id.to_string();
-                {
-                    let mut s = inner.borrow_mut();
+                with_shell(&inner, &weak, |s| {
                     s.push_undo("Remove navigation link");
                     if edge_id.starts_with("href:") {
                         // href:<page_idx>:<node_id> — clear the href prop
@@ -2472,10 +2339,7 @@ impl Shell {
                             }
                         });
                     }
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
+                });
             }
         });
 
@@ -2500,8 +2364,7 @@ impl Shell {
             let weak = weak.clone();
             move |action_id| {
                 let action_id = action_id.to_string();
-                {
-                    let mut s = inner.borrow_mut();
+                with_shell(&inner, &weak, |s| {
                     let sel = s.store.state().selection.clone();
                     let Some(node_id) = sel.primary() else {
                         return;
@@ -2572,10 +2435,7 @@ impl Shell {
                             );
                         }
                     }
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
+                });
             }
         });
 
@@ -2589,15 +2449,11 @@ impl Shell {
                     "Mobile" => 375.0,
                     _ => 1280.0,
                 };
-                {
-                    let mut s = inner.borrow_mut();
+                with_shell(&inner, &weak, |s| {
                     s.store.mutate(|state| {
                         state.viewport_width = width;
                     });
-                }
-                if let Some(w) = weak.upgrade() {
-                    sync_ui_from_shared(&inner, &w);
-                }
+                });
             }
         });
     }
