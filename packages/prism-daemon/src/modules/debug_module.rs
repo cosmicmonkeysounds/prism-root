@@ -20,6 +20,7 @@
 use crate::builder::DaemonBuilder;
 use crate::module::DaemonModule;
 use crate::registry::CommandError;
+use crate::typed_command::CommandRegistryExt;
 use mlua::{Lua, MultiValue, Value as LuaValue, VmState};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map as JsonMap, Value as JsonValue};
@@ -515,96 +516,66 @@ impl DaemonModule for DebugModule {
         let registry = builder.registry().clone();
 
         let m = manager.clone();
-        registry.register("luau.debug.launch", move |payload| {
-            let args: LaunchArgs = parse(payload, "luau.debug.launch")?;
-            let id = m
-                .launch(args.script, args.args, args.stop_on_entry.unwrap_or(false))
-                .map_err(|e| CommandError::handler("luau.debug.launch", e))?;
-            Ok(json!({ "session_id": id }))
+        registry.register_typed("luau.debug.launch", move |args: LaunchArgs| {
+            m.launch(args.script, args.args, args.stop_on_entry.unwrap_or(false))
+                .map(|session_id| LaunchResp { session_id })
         })?;
 
         let m = manager.clone();
-        registry.register("luau.debug.set_breakpoints", move |payload| {
-            let args: SetBreakpointsArgs = parse(payload, "luau.debug.set_breakpoints")?;
-            let confirmed = m
-                .set_breakpoints(args.session_id, args.breakpoints)
-                .map_err(|e| CommandError::handler("luau.debug.set_breakpoints", e))?;
-            Ok(json!({ "confirmed": confirmed }))
+        registry.register_typed(
+            "luau.debug.set_breakpoints",
+            move |args: SetBreakpointsArgs| {
+                m.set_breakpoints(args.session_id, args.breakpoints)
+                    .map(|confirmed| ConfirmedResp { confirmed })
+            },
+        )?;
+
+        let m = manager.clone();
+        registry.register_typed("luau.debug.continue", move |args: SessionArgs| {
+            m.resume(args.session_id, StepMode::Continue)
+                .map(|stopped_at| StoppedResp { stopped_at })
         })?;
 
         let m = manager.clone();
-        registry.register("luau.debug.continue", move |payload| {
-            let args: SessionArgs = parse(payload, "luau.debug.continue")?;
-            let stopped = m
-                .resume(args.session_id, StepMode::Continue)
-                .map_err(|e| CommandError::handler("luau.debug.continue", e))?;
-            Ok(json!({ "stopped_at": stopped }))
+        registry.register_typed("luau.debug.step_in", move |args: SessionArgs| {
+            m.resume(args.session_id, StepMode::StepIn)
+                .map(|stopped_at| StoppedResp { stopped_at })
         })?;
 
         let m = manager.clone();
-        registry.register("luau.debug.step_in", move |payload| {
-            let args: SessionArgs = parse(payload, "luau.debug.step_in")?;
-            let stopped = m
-                .resume(args.session_id, StepMode::StepIn)
-                .map_err(|e| CommandError::handler("luau.debug.step_in", e))?;
-            Ok(json!({ "stopped_at": stopped }))
+        registry.register_typed("luau.debug.step_over", move |args: SessionArgs| {
+            m.resume(args.session_id, StepMode::StepOver)
+                .map(|stopped_at| StoppedResp { stopped_at })
         })?;
 
         let m = manager.clone();
-        registry.register("luau.debug.step_over", move |payload| {
-            let args: SessionArgs = parse(payload, "luau.debug.step_over")?;
-            let stopped = m
-                .resume(args.session_id, StepMode::StepOver)
-                .map_err(|e| CommandError::handler("luau.debug.step_over", e))?;
-            Ok(json!({ "stopped_at": stopped }))
+        registry.register_typed("luau.debug.step_out", move |args: SessionArgs| {
+            m.resume(args.session_id, StepMode::StepOut)
+                .map(|stopped_at| StoppedResp { stopped_at })
         })?;
 
         let m = manager.clone();
-        registry.register("luau.debug.step_out", move |payload| {
-            let args: SessionArgs = parse(payload, "luau.debug.step_out")?;
-            let stopped = m
-                .resume(args.session_id, StepMode::StepOut)
-                .map_err(|e| CommandError::handler("luau.debug.step_out", e))?;
-            Ok(json!({ "stopped_at": stopped }))
+        registry.register_typed("luau.debug.inspect", move |args: SessionArgs| {
+            m.inspect(args.session_id).map(|(locals, call_stack)| InspectResp {
+                locals,
+                call_stack,
+            })
         })?;
 
         let m = manager.clone();
-        registry.register("luau.debug.inspect", move |payload| {
-            let args: SessionArgs = parse(payload, "luau.debug.inspect")?;
-            let (locals, stack) = m
-                .inspect(args.session_id)
-                .map_err(|e| CommandError::handler("luau.debug.inspect", e))?;
-            Ok(json!({ "locals": locals, "call_stack": stack }))
-        })?;
-
-        let m = manager.clone();
-        registry.register("luau.debug.evaluate", move |payload| {
-            let args: EvalArgs = parse(payload, "luau.debug.evaluate")?;
-            let result = m
-                .evaluate(args.session_id, args.expression)
-                .map_err(|e| CommandError::handler("luau.debug.evaluate", e))?;
-            Ok(json!({ "result": result }))
+        registry.register_typed("luau.debug.evaluate", move |args: EvalArgs| {
+            m.evaluate(args.session_id, args.expression)
+                .map(|result| EvalResp { result })
         })?;
 
         let m = manager;
-        registry.register("luau.debug.terminate", move |payload| {
-            let args: SessionArgs = parse(payload, "luau.debug.terminate")?;
-            let terminated = m
-                .terminate(args.session_id)
-                .map_err(|e| CommandError::handler("luau.debug.terminate", e))?;
-            Ok(json!({ "terminated": terminated }))
+        registry.register_typed("luau.debug.terminate", move |args: SessionArgs| {
+            m.terminate(args.session_id)
+                .map(|terminated| TerminatedResp { terminated })
         })?;
 
         Ok(())
     }
-}
-
-fn parse<T: for<'de> Deserialize<'de>>(
-    payload: JsonValue,
-    command: &str,
-) -> Result<T, CommandError> {
-    serde_json::from_value::<T>(payload)
-        .map_err(|e| CommandError::handler(command.to_string(), e.to_string()))
 }
 
 #[derive(Deserialize)]
@@ -631,6 +602,37 @@ struct SessionArgs {
 struct EvalArgs {
     session_id: u64,
     expression: String,
+}
+
+#[derive(Serialize)]
+struct LaunchResp {
+    session_id: u64,
+}
+
+#[derive(Serialize)]
+struct StoppedResp {
+    stopped_at: Option<StopInfo>,
+}
+
+#[derive(Serialize)]
+struct ConfirmedResp {
+    confirmed: Vec<Breakpoint>,
+}
+
+#[derive(Serialize)]
+struct InspectResp {
+    locals: Vec<LocalVar>,
+    call_stack: Vec<StackFrame>,
+}
+
+#[derive(Serialize)]
+struct EvalResp {
+    result: JsonValue,
+}
+
+#[derive(Serialize)]
+struct TerminatedResp {
+    terminated: bool,
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────

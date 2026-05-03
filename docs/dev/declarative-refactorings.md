@@ -290,12 +290,25 @@ annotated command in the same module into the install impl.
   / `Metric` / `ServiceEntry` as crate-public types so transports
   can deserialize the snapshot without round-tripping JSON. 108
   lib + 12 integration + 2 stdio_bin tests pass; clippy clean.
-- ⬜ Migrate the remaining modules (`crypto`, `vfs`, `debug`).
-  `crypto` and `vfs` need typed response structs first — they
-  currently build inline `json!()` literals across many byte-array
-  fields.
+- ✅ Wave 2 migrations: `debug` (9 cmds), `crypto` (6 cmds), and
+  `vfs` (6 cmds) collapsed onto `register_typed`. The byte-array-heavy
+  modules grew typed response structs alongside their existing
+  arg structs (`KeypairResp`/`EncryptResp`/`DecryptResp` for crypto,
+  `PutResp`/`HasResp`/`StatsResp` for vfs, `LaunchResp`/`StoppedResp`/
+  `InspectResp` for debug). `vfs.has`'s conditional `size` field uses
+  `#[serde(skip_serializing_if = "Option::is_none")]` to preserve the
+  pre-migration wire shape; `vfs.stats` adds `backend` as a struct
+  field rather than the post-hoc JSON splice it was. Per-command
+  `parse()` / `decode_*` helpers shrunk from `(payload, command)`
+  callsites to plain `String`-error helpers since `register_typed`
+  now owns command-name attribution. 108 lib + 12 integration + 2
+  stdio_bin tests pass; clippy clean.
 - ⬜ Pick an attribute macro shape (function attr vs derive on a unit
-  struct) once enough modules are typed to see the patterns clearly.
+  struct) — every default module is now typed, so the patterns are
+  visible: typed `*Args` + typed `*Resp`, single-line registration,
+  command name still hand-attached in the `register_typed` call.
+  The macro should desugar `#[daemon_command(id = "x.y")]` over a
+  `fn(state, Req) -> Result<Resp, E>` to the same shape.
 - ⬜ Add to `prism-luau-derive` or a new `prism-daemon-derive` crate
   that desugars to the same `register_typed` glue this layer provides.
 

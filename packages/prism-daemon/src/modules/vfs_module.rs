@@ -42,8 +42,8 @@
 use crate::builder::DaemonBuilder;
 use crate::module::DaemonModule;
 use crate::registry::CommandError;
+use crate::typed_command::CommandRegistryExt;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value as JsonValue};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
@@ -455,76 +455,49 @@ impl DaemonModule for VfsModule {
         let registry = builder.registry().clone();
 
         let m = manager.clone();
-        registry.register("vfs.put", move |payload| {
-            let args: PutArgs = parse(payload, "vfs.put")?;
-            let hash = m
-                .put(&args.bytes)
-                .map_err(|e| CommandError::handler("vfs.put", e))?;
-            Ok(json!({ "hash": hash, "size": args.bytes.len() }))
+        registry.register_typed("vfs.put", move |args: PutArgs| {
+            let size = args.bytes.len() as u64;
+            m.put(&args.bytes).map(|hash| PutResp { hash, size })
         })?;
 
         let m = manager.clone();
-        registry.register("vfs.get", move |payload| {
-            let args: HashArgs = parse(payload, "vfs.get")?;
-            let bytes = m
-                .get(&args.hash)
-                .map_err(|e| CommandError::handler("vfs.get", e))?;
-            Ok(json!({ "bytes": bytes }))
+        registry.register_typed("vfs.get", move |args: HashArgs| {
+            m.get(&args.hash).map(|bytes| GetResp { bytes })
         })?;
 
         let m = manager.clone();
-        registry.register("vfs.has", move |payload| {
-            let args: HashArgs = parse(payload, "vfs.has")?;
-            match m
-                .has(&args.hash)
-                .map_err(|e| CommandError::handler("vfs.has", e))?
-            {
-                Some(size) => Ok(json!({ "present": true, "size": size })),
-                None => Ok(json!({ "present": false })),
-            }
+        registry.register_typed("vfs.has", move |args: HashArgs| {
+            m.has(&args.hash).map(|maybe_size| HasResp {
+                present: maybe_size.is_some(),
+                size: maybe_size,
+            })
         })?;
 
         let m = manager.clone();
-        registry.register("vfs.delete", move |payload| {
-            let args: HashArgs = parse(payload, "vfs.delete")?;
-            let deleted = m
-                .delete(&args.hash)
-                .map_err(|e| CommandError::handler("vfs.delete", e))?;
-            Ok(json!({ "deleted": deleted }))
+        registry.register_typed("vfs.delete", move |args: HashArgs| {
+            m.delete(&args.hash).map(|deleted| DeleteResp { deleted })
         })?;
 
         let m = manager.clone();
-        registry.register("vfs.list", move |_payload| {
-            let entries = m.list().map_err(|e| CommandError::handler("vfs.list", e))?;
-            Ok(json!({ "entries": entries }))
+        registry.register_typed("vfs.list", move |_: EmptyArgs| {
+            m.list().map(|entries| ListResp { entries })
         })?;
 
         let m = manager;
-        registry.register("vfs.stats", move |_payload| {
-            let stats = m
-                .stats()
-                .map_err(|e| CommandError::handler("vfs.stats", e))?;
-            let mut value = serde_json::to_value(stats).unwrap_or(JsonValue::Null);
-            if let Some(obj) = value.as_object_mut() {
-                obj.insert(
-                    "backend".to_string(),
-                    JsonValue::String(m.backend().backend_name().to_string()),
-                );
-            }
-            Ok(value)
+        registry.register_typed("vfs.stats", move |_: EmptyArgs| {
+            m.stats().map(|stats| StatsResp {
+                entries: stats.entries,
+                total_bytes: stats.total_bytes,
+                backend: m.backend().backend_name().to_string(),
+            })
         })?;
 
         Ok(())
     }
 }
 
-fn parse<T: for<'de> Deserialize<'de>>(
-    payload: JsonValue,
-    command: &str,
-) -> Result<T, CommandError> {
-    serde_json::from_value::<T>(payload)
-        .map_err(|e| CommandError::handler(command.to_string(), e.to_string()))
-}
+#[derive(Debug, Default, Deserialize)]
+struct EmptyArgs {}
 
 #[derive(Debug, Deserialize)]
 struct PutArgs {
@@ -536,10 +509,46 @@ struct HashArgs {
     hash: String,
 }
 
+#[derive(Debug, Serialize)]
+struct PutResp {
+    hash: String,
+    size: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct GetResp {
+    bytes: Vec<u8>,
+}
+
+#[derive(Debug, Serialize)]
+struct HasResp {
+    present: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    size: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+struct DeleteResp {
+    deleted: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct ListResp {
+    entries: Vec<VfsEntry>,
+}
+
+#[derive(Debug, Serialize)]
+struct StatsResp {
+    entries: u64,
+    total_bytes: u64,
+    backend: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::builder::DaemonBuilder;
+    use serde_json::json;
     use tempfile::tempdir;
 
     fn kernel_with_tmp_vfs() -> (crate::DaemonKernel, tempfile::TempDir) {

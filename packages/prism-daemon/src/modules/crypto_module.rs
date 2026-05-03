@@ -34,11 +34,11 @@
 use crate::builder::DaemonBuilder;
 use crate::module::DaemonModule;
 use crate::registry::CommandError;
+use crate::typed_command::CommandRegistryExt;
 use chacha20poly1305::aead::{Aead, AeadCore, KeyInit, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use rand_core::{OsRng, RngCore};
-use serde::Deserialize;
-use serde_json::{json, Value as JsonValue};
+use serde::{Deserialize, Serialize};
 use x25519_dalek::{PublicKey, StaticSecret};
 
 /// The maximum number of bytes a single `crypto.random_bytes` call can
@@ -61,45 +61,40 @@ impl DaemonModule for CryptoModule {
     fn install(&self, builder: &mut DaemonBuilder) -> Result<(), CommandError> {
         let registry = builder.registry().clone();
 
-        registry.register("crypto.keypair", |_payload| {
+        registry.register_typed("crypto.keypair", |_: EmptyArgs| {
             let secret = StaticSecret::random_from_rng(OsRng);
             let public = PublicKey::from(&secret);
-            Ok(json!({
-                "secret_key": hex::encode(secret.to_bytes()),
-                "public_key": hex::encode(public.as_bytes()),
-            }))
+            Ok::<_, std::convert::Infallible>(KeypairResp {
+                secret_key: hex::encode(secret.to_bytes()),
+                public_key: hex::encode(public.as_bytes()),
+            })
         })?;
 
-        registry.register("crypto.derive_public", |payload| {
-            let args: SecretKeyArgs = parse(payload, "crypto.derive_public")?;
-            let secret_bytes =
-                decode_fixed::<32>(&args.secret_key, "secret_key", "crypto.derive_public")?;
+        registry.register_typed("crypto.derive_public", |args: SecretKeyArgs| {
+            let secret_bytes = decode_fixed::<32>(&args.secret_key, "secret_key")?;
             let secret = StaticSecret::from(secret_bytes);
             let public = PublicKey::from(&secret);
-            Ok(json!({ "public_key": hex::encode(public.as_bytes()) }))
+            Ok::<_, String>(PublicKeyResp {
+                public_key: hex::encode(public.as_bytes()),
+            })
         })?;
 
-        registry.register("crypto.shared_secret", |payload| {
-            let args: SharedSecretArgs = parse(payload, "crypto.shared_secret")?;
-            let secret_bytes =
-                decode_fixed::<32>(&args.secret_key, "secret_key", "crypto.shared_secret")?;
-            let peer_bytes = decode_fixed::<32>(
-                &args.peer_public_key,
-                "peer_public_key",
-                "crypto.shared_secret",
-            )?;
+        registry.register_typed("crypto.shared_secret", |args: SharedSecretArgs| {
+            let secret_bytes = decode_fixed::<32>(&args.secret_key, "secret_key")?;
+            let peer_bytes = decode_fixed::<32>(&args.peer_public_key, "peer_public_key")?;
             let secret = StaticSecret::from(secret_bytes);
             let peer = PublicKey::from(peer_bytes);
             let shared = secret.diffie_hellman(&peer);
-            Ok(json!({ "shared_secret": hex::encode(shared.as_bytes()) }))
+            Ok::<_, String>(SharedSecretResp {
+                shared_secret: hex::encode(shared.as_bytes()),
+            })
         })?;
 
-        registry.register("crypto.encrypt", |payload| {
-            let args: EncryptArgs = parse(payload, "crypto.encrypt")?;
-            let key_bytes = decode_fixed::<32>(&args.key, "key", "crypto.encrypt")?;
-            let plaintext = decode_hex(&args.plaintext, "plaintext", "crypto.encrypt")?;
+        registry.register_typed("crypto.encrypt", |args: EncryptArgs| {
+            let key_bytes = decode_fixed::<32>(&args.key, "key")?;
+            let plaintext = decode_hex(&args.plaintext, "plaintext")?;
             let aad = match args.associated_data.as_deref() {
-                Some(hex_str) => decode_hex(hex_str, "associated_data", "crypto.encrypt")?,
+                Some(hex_str) => decode_hex(hex_str, "associated_data")?,
                 None => Vec::new(),
             };
             let cipher = XChaCha20Poly1305::new((&key_bytes).into());
@@ -112,22 +107,19 @@ impl DaemonModule for CryptoModule {
                         aad: &aad,
                     },
                 )
-                .map_err(|e| {
-                    CommandError::handler("crypto.encrypt", format!("aead encrypt: {e}"))
-                })?;
-            Ok(json!({
-                "ciphertext": hex::encode(ct),
-                "nonce": hex::encode(nonce.as_slice()),
-            }))
+                .map_err(|e| format!("aead encrypt: {e}"))?;
+            Ok::<_, String>(EncryptResp {
+                ciphertext: hex::encode(ct),
+                nonce: hex::encode(nonce.as_slice()),
+            })
         })?;
 
-        registry.register("crypto.decrypt", |payload| {
-            let args: DecryptArgs = parse(payload, "crypto.decrypt")?;
-            let key_bytes = decode_fixed::<32>(&args.key, "key", "crypto.decrypt")?;
-            let nonce_bytes = decode_fixed::<24>(&args.nonce, "nonce", "crypto.decrypt")?;
-            let ciphertext = decode_hex(&args.ciphertext, "ciphertext", "crypto.decrypt")?;
+        registry.register_typed("crypto.decrypt", |args: DecryptArgs| {
+            let key_bytes = decode_fixed::<32>(&args.key, "key")?;
+            let nonce_bytes = decode_fixed::<24>(&args.nonce, "nonce")?;
+            let ciphertext = decode_hex(&args.ciphertext, "ciphertext")?;
             let aad = match args.associated_data.as_deref() {
-                Some(hex_str) => decode_hex(hex_str, "associated_data", "crypto.decrypt")?,
+                Some(hex_str) => decode_hex(hex_str, "associated_data")?,
                 None => Vec::new(),
             };
             let cipher = XChaCha20Poly1305::new((&key_bytes).into());
@@ -140,29 +132,24 @@ impl DaemonModule for CryptoModule {
                         aad: &aad,
                     },
                 )
-                .map_err(|e| {
-                    CommandError::handler("crypto.decrypt", format!("aead decrypt: {e}"))
-                })?;
-            Ok(json!({ "plaintext": hex::encode(pt) }))
+                .map_err(|e| format!("aead decrypt: {e}"))?;
+            Ok::<_, String>(DecryptResp {
+                plaintext: hex::encode(pt),
+            })
         })?;
 
-        registry.register("crypto.random_bytes", |payload| {
-            let args: RandomBytesArgs = parse(payload, "crypto.random_bytes")?;
+        registry.register_typed("crypto.random_bytes", |args: RandomBytesArgs| {
             if args.len == 0 {
-                return Err(CommandError::handler(
-                    "crypto.random_bytes",
-                    "len must be >= 1",
-                ));
+                return Err("len must be >= 1".to_string());
             }
             if args.len > MAX_RANDOM_BYTES {
-                return Err(CommandError::handler(
-                    "crypto.random_bytes",
-                    format!("len must be <= {MAX_RANDOM_BYTES}"),
-                ));
+                return Err(format!("len must be <= {MAX_RANDOM_BYTES}"));
             }
             let mut buf = vec![0u8; args.len];
             OsRng.fill_bytes(&mut buf);
-            Ok(json!({ "bytes": hex::encode(buf) }))
+            Ok(RandomBytesResp {
+                bytes: hex::encode(buf),
+            })
         })?;
 
         Ok(())
@@ -170,6 +157,9 @@ impl DaemonModule for CryptoModule {
 }
 
 // ── JSON arg shapes ────────────────────────────────────────────────────
+
+#[derive(Debug, Default, Deserialize)]
+struct EmptyArgs {}
 
 #[derive(Debug, Deserialize)]
 struct SecretKeyArgs {
@@ -204,31 +194,50 @@ struct RandomBytesArgs {
     len: usize,
 }
 
+// ── Response shapes ────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+struct KeypairResp {
+    secret_key: String,
+    public_key: String,
+}
+
+#[derive(Debug, Serialize)]
+struct PublicKeyResp {
+    public_key: String,
+}
+
+#[derive(Debug, Serialize)]
+struct SharedSecretResp {
+    shared_secret: String,
+}
+
+#[derive(Debug, Serialize)]
+struct EncryptResp {
+    ciphertext: String,
+    nonce: String,
+}
+
+#[derive(Debug, Serialize)]
+struct DecryptResp {
+    plaintext: String,
+}
+
+#[derive(Debug, Serialize)]
+struct RandomBytesResp {
+    bytes: String,
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────
 
-fn parse<T: for<'de> Deserialize<'de>>(
-    payload: JsonValue,
-    command: &'static str,
-) -> Result<T, CommandError> {
-    serde_json::from_value::<T>(payload).map_err(|e| CommandError::handler(command, e.to_string()))
+fn decode_hex(s: &str, field: &str) -> Result<Vec<u8>, String> {
+    hex::decode(s).map_err(|e| format!("invalid hex in {field}: {e}"))
 }
 
-fn decode_hex(s: &str, field: &str, command: &'static str) -> Result<Vec<u8>, CommandError> {
-    hex::decode(s)
-        .map_err(|e| CommandError::handler(command, format!("invalid hex in {field}: {e}")))
-}
-
-fn decode_fixed<const N: usize>(
-    s: &str,
-    field: &str,
-    command: &'static str,
-) -> Result<[u8; N], CommandError> {
-    let bytes = decode_hex(s, field, command)?;
+fn decode_fixed<const N: usize>(s: &str, field: &str) -> Result<[u8; N], String> {
+    let bytes = decode_hex(s, field)?;
     if bytes.len() != N {
-        return Err(CommandError::handler(
-            command,
-            format!("{field} must be {N} bytes (got {})", bytes.len()),
-        ));
+        return Err(format!("{field} must be {N} bytes (got {})", bytes.len()));
     }
     let mut out = [0u8; N];
     out.copy_from_slice(&bytes);
@@ -239,6 +248,7 @@ fn decode_fixed<const N: usize>(
 mod tests {
     use super::*;
     use crate::DaemonBuilder;
+    use serde_json::json;
 
     fn kernel() -> crate::DaemonKernel {
         DaemonBuilder::new()
