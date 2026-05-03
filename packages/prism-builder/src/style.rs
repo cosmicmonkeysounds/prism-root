@@ -4,9 +4,10 @@
 //! follows CSS-like cascade order: component > page > app. For each
 //! field, the most specific non-`None` value wins.
 
+use prism_luau_derive::Editable;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Editable)]
 pub struct StyleProperties {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub font_family: Option<String>,
@@ -167,6 +168,50 @@ mod tests {
         let json = serde_json::to_string(&style).unwrap();
         let parsed: StyleProperties = serde_json::from_str(&json).unwrap();
         assert_eq!(style, parsed);
+    }
+
+    #[test]
+    fn apply_field_dispatches_by_field_name() {
+        let mut s = StyleProperties::default();
+        s.apply_field("font_family", "Inter");
+        s.apply_field("font_size", "16.5");
+        s.apply_field("font_weight", "600");
+        s.apply_field("background", "#fff");
+        assert_eq!(s.font_family.as_deref(), Some("Inter"));
+        assert_eq!(s.font_size, Some(16.5));
+        assert_eq!(s.font_weight, Some(600));
+        assert_eq!(s.background.as_deref(), Some("#fff"));
+    }
+
+    #[test]
+    fn apply_field_empty_string_clears_optional_string() {
+        let mut s = StyleProperties {
+            color: Some("#000".into()),
+            ..Default::default()
+        };
+        s.apply_field("color", "");
+        assert_eq!(s.color, None);
+    }
+
+    #[test]
+    fn apply_field_unparseable_numeric_clears_field() {
+        let mut s = StyleProperties {
+            font_size: Some(12.0),
+            ..Default::default()
+        };
+        s.apply_field("font_size", "not-a-number");
+        // Option<f32>: parse().ok() yields None on parse failure.
+        assert_eq!(s.font_size, None);
+    }
+
+    #[test]
+    fn apply_field_unknown_key_is_noop() {
+        let mut s = StyleProperties {
+            font_family: Some("Inter".into()),
+            ..Default::default()
+        };
+        s.apply_field("totally_unknown", "value");
+        assert_eq!(s.font_family.as_deref(), Some("Inter"));
     }
 
     #[test]

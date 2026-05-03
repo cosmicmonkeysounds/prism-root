@@ -395,29 +395,7 @@ pub(super) fn auto_expose_slots(node: &Node) -> Vec<ExposedSlot> {
 }
 
 pub(super) fn apply_style_edit(style: &mut StyleProperties, key: &str, value: &str) {
-    let parse_f32 = |s: &str| s.parse::<f32>().ok();
-    let parse_u16 = |s: &str| s.parse::<u16>().ok();
-    let opt_string = |s: &str| {
-        if s.is_empty() {
-            None
-        } else {
-            Some(s.to_string())
-        }
-    };
-
-    match key {
-        "font_family" => style.font_family = opt_string(value),
-        "font_size" => style.font_size = parse_f32(value),
-        "font_weight" => style.font_weight = parse_u16(value),
-        "line_height" => style.line_height = parse_f32(value),
-        "letter_spacing" => style.letter_spacing = parse_f32(value),
-        "color" => style.color = opt_string(value),
-        "background" => style.background = opt_string(value),
-        "accent" => style.accent = opt_string(value),
-        "base_spacing" => style.base_spacing = parse_f32(value),
-        "border_radius" => style.border_radius = parse_f32(value),
-        _ => {}
-    }
+    style.apply_field(key, value);
 }
 
 pub(super) fn apply_page_layout_edit(

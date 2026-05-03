@@ -41,6 +41,7 @@ use syn::{parse_macro_input, Data, DataEnum, DataStruct, DeriveInput, Field, Fie
 
 mod daemon_command;
 mod daemon_module;
+mod editable;
 mod prism_block;
 mod prism_field;
 mod slint_binding;
@@ -108,6 +109,20 @@ pub fn daemon_module(attr: TokenStream, item: TokenStream) -> TokenStream {
     let attr2: TokenStream2 = attr.into();
     let item2: TokenStream2 = item.into();
     match daemon_module::expand(attr2, item2) {
+        Ok(ts) => ts.into(),
+        Err(e) => e.to_compile_error().into(),
+    }
+}
+
+/// Derive `apply_field(&mut self, key: &str, value: &str)` from a struct
+/// of typed fields. Dispatches stringly-typed property-panel edits to
+/// the matching field, parsing `value` based on the field's Rust type.
+/// See the `editable` module for the supported type → parser mapping
+/// and per-field attributes (`skip`, `rename`, `clamp`).
+#[proc_macro_derive(Editable, attributes(edit))]
+pub fn derive_editable(item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as DeriveInput);
+    match editable::expand(&input) {
         Ok(ts) => ts.into(),
         Err(e) => e.to_compile_error().into(),
     }

@@ -640,7 +640,7 @@ of optional engines.
 
 ---
 
-## 10. `#[derive(LuauType)]` for design-token structs  ⬜ not started
+## 10. `#[derive(LuauType)]` for design-token structs  ✅ shipped (via existing `#[luau_expose]` + `luau_types!` macro)
 
 ### Current state
 
@@ -672,13 +672,29 @@ to a single macro invocation over the annotated types.
 
 ### Status
 
-- ⬜ Not started. The emit infrastructure (`SymbolEmmyDocEmitter`,
-  `LUAU_TYPE_DEF` pattern) already exists in `prism-luau-derive`.
-  This is mostly a new derive macro that reuses existing emit logic.
+- ✅ Audit: the `LUAU_TYPE_NAME` / `LUAU_TYPE_DEF` per-struct constants
+  the design contemplates are already emitted by the existing
+  `#[luau_expose]` proc-attribute (`prism-luau-derive/src/lib.rs`).
+  Every struct in `design_tokens.rs`, `shell_mode.rs`, the
+  object-model leaves, and the config leaves is already annotated, so
+  the single-source-of-truth goal is met for all the targets the
+  design names. No new derive macro was needed — `#[luau_expose]`'s
+  field walker (with its `Option<T>` / `Vec<T>` / `HashMap<K,V>`
+  recursion through `rust_type_to_luau`) already covers every shape
+  the design lists.
+- ✅ Registration table collapsed: `crate::luau_types!(T1, T2, …)`
+  in `prism-core/src/luau_types.rs` desugars to the
+  `(T::LUAU_TYPE_NAME, T::LUAU_TYPE_DEF)` pair list. The hand-typed
+  pair literals in `type_defs()` are gone — the 23 derive-driven
+  types now read as a single comma-separated list, with the four
+  hand-rolled stateful userdata types (the `luau_bindings_consts::*`
+  free constants) appended via `extend_from_slice` since their
+  type-stub constants aren't associated items the macro can reach.
+  All 7 `luau_types::tests` still pass; clippy clean.
 
 ---
 
-## 11. `#[derive(Editable)]` — shell stringly-typed field dispatch  ⬜ not started
+## 11. `#[derive(Editable)]` — shell stringly-typed field dispatch  🟡 derive shipped, `apply_style_edit` migrated
 
 ### Current state
 
@@ -739,10 +755,39 @@ The 8 `apply_*` fns in `mutations.rs` become 8 one-liners:
 
 ### Status
 
-- ⬜ Not started. No crate dependencies needed beyond
-  `prism-luau-derive` (or a new `prism-derive` crate). The field
-  annotation surface mirrors `#[derive(PrismField)]`'s syntax so
-  both derives could share attribute parsing logic.
+- ✅ Derive shipped in `prism-luau-derive` as `#[derive(Editable)]`
+  (`src/editable.rs`). Emits an inherent
+  `apply_field(&mut self, key: &str, value: &str)` method whose body
+  is a `match key` table over the struct's named fields. Type → parser
+  mapping is driven by the field's Rust type: `Option<String>` clears
+  on empty input and writes `Some(value.to_string())` otherwise;
+  `Option<T: numeric>` parses through `value.parse::<T>().ok()`;
+  `Option<bool>` writes `Some(value == "true")`; required `String` /
+  `bool` / numeric fields parse with the same shape but fall through
+  silently on parse failure rather than zeroing. Per-field attributes:
+  `#[edit(skip)]`, `#[edit(rename = "key")]`, and
+  `#[edit(clamp(lo, hi))]` for bounded numerics.
+- ✅ Migration: `StyleProperties` (the 10-field cascade struct in
+  `prism-builder/src/style.rs`) now derives `Editable` and
+  `prism-shell::app::mutations::apply_style_edit` collapses to a
+  one-line `style.apply_field(key, value)` thunk. Behavioural tests
+  cover the dispatch table, the empty-string-clears-`Option<String>`
+  semantics, the parse-failure-clears-`Option<numeric>` semantics, and
+  the unknown-key no-op. 12 builder tests (was 8) + workspace clippy
+  clean.
+- 🟡 Remaining `apply_*` fns in `mutations.rs` — `apply_facet_edit`,
+  `apply_layout_to_node`, `apply_node_layout_edit`,
+  `apply_transform_to_node`, `apply_page_layout_edit` — keep their
+  hand-rolled bodies. They aren't flat field-dispatch tables: every
+  arm branches on a different nested enum variant
+  (`FacetKind::ObjectQuery { query }`, `LayoutMode::Absolute(abs)`,
+  `Transform2D.position[0]`), maps free-form string values to
+  custom enum arms (`Anchor::TopLeft` etc.), or fans one input out
+  to multiple fields (`column_gap` writes both `column_gap` and
+  `row_gap`). The current derive intentionally stays in the simple
+  flat-struct lane — any of those fns would need a sibling derive
+  on `enum`s or a free-form custom-arm escape hatch that's larger in
+  scope than the value extraction here.
 
 ---
 
@@ -1345,11 +1390,19 @@ Implementation order optimises for value × independence:
 9. **#12 transport adapter**: ✅ shipped — `CommandErrorMapper` trait in
    `transport::mapper`; HTTP + gRPC migrated. IPC stays hand-rolled
    (no kind tag, request id must thread through).
-10. **#11 Editable derive**: high value in mutations.rs; shares
-    attribute parsing with PrismField.
+10. **#11 Editable derive**: ✅ shipped — `#[derive(Editable)]` in
+    `prism-luau-derive`; `StyleProperties` migrated. Other `apply_*`
+    fns in `mutations.rs` stay hand-rolled (nested enum / multi-field
+    fan-out cases the flat-struct derive doesn't fit).
 11. **#8 typed Props**: depends on #2 PrismField completing for all
     field kinds (`File`/`Currency`/`Calculation`).
-12. **#10 LuauType**: independent, reuses existing emit infrastructure.
+12. **#10 LuauType**: ✅ shipped — the per-struct constants are already
+    emitted by the pre-existing `#[luau_expose]` macro across
+    `design_tokens.rs` and the other leaf crates. The registration
+    table in `luau_types.rs` collapsed to a single
+    `crate::luau_types![…]` invocation; the four hand-rolled userdata
+    types are appended explicitly because their stub constants are
+    free `pub const`s, not associated items.
 13. **#7 Luau stubs**: additive to #3, priority rises with
     luau-integration phase 4+.
 14. **#5 SlintBinding**: independent, lower priority.

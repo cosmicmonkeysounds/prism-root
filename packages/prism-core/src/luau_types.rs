@@ -10,6 +10,19 @@
 //! `&[(&str, &str)]` works on every target and stays trivial to audit.
 //! Add a new entry here whenever a new annotation lands.
 
+/// Collapse a list of `#[luau_expose]`-annotated types into the
+/// `(LUAU_TYPE_NAME, LUAU_TYPE_DEF)` pairs the registry walks. Replaces
+/// the per-type pair literal that the registry table used to spell out
+/// by hand.
+#[macro_export]
+macro_rules! luau_types {
+    ($($t:ty),* $(,)?) => {
+        ::std::vec![
+            $((<$t>::LUAU_TYPE_NAME, <$t>::LUAU_TYPE_DEF),)*
+        ]
+    };
+}
+
 use crate::design_tokens::{Colors, DesignTokens, Radius, Rgba, Spacing, Typography};
 use crate::foundation::object_model::types::{
     ApiOperation, DefaultChildView, DefaultSort, EdgeBehavior, EdgeCascade, EdgeScope,
@@ -27,43 +40,40 @@ use crate::shell_mode::{Permission, ShellMode};
 /// themselves are plain string constants, so they compile even when
 /// the `luau` feature is off and the runtime impls aren't built.
 pub fn type_defs() -> Vec<(&'static str, &'static str)> {
-    vec![
-        // ── design tokens ────────────────────────────────────────
-        (DesignTokens::LUAU_TYPE_NAME, DesignTokens::LUAU_TYPE_DEF),
-        (Colors::LUAU_TYPE_NAME, Colors::LUAU_TYPE_DEF),
-        (Spacing::LUAU_TYPE_NAME, Spacing::LUAU_TYPE_DEF),
-        (Radius::LUAU_TYPE_NAME, Radius::LUAU_TYPE_DEF),
-        (Typography::LUAU_TYPE_NAME, Typography::LUAU_TYPE_DEF),
-        (Rgba::LUAU_TYPE_NAME, Rgba::LUAU_TYPE_DEF),
-        // ── shell mode ───────────────────────────────────────────
-        (ShellMode::LUAU_TYPE_NAME, ShellMode::LUAU_TYPE_DEF),
-        (Permission::LUAU_TYPE_NAME, Permission::LUAU_TYPE_DEF),
-        // ── object-model leaves ──────────────────────────────────
-        (
-            EntityFieldType::LUAU_TYPE_NAME,
-            EntityFieldType::LUAU_TYPE_DEF,
-        ),
-        (
-            RollupFunction::LUAU_TYPE_NAME,
-            RollupFunction::LUAU_TYPE_DEF,
-        ),
-        (EnumOption::LUAU_TYPE_NAME, EnumOption::LUAU_TYPE_DEF),
-        (UiHints::LUAU_TYPE_NAME, UiHints::LUAU_TYPE_DEF),
-        (EdgeBehavior::LUAU_TYPE_NAME, EdgeBehavior::LUAU_TYPE_DEF),
-        (EdgeScope::LUAU_TYPE_NAME, EdgeScope::LUAU_TYPE_DEF),
-        (EdgeCascade::LUAU_TYPE_NAME, EdgeCascade::LUAU_TYPE_DEF),
-        (
-            DefaultChildView::LUAU_TYPE_NAME,
-            DefaultChildView::LUAU_TYPE_DEF,
-        ),
-        (TabDefinition::LUAU_TYPE_NAME, TabDefinition::LUAU_TYPE_DEF),
-        (ApiOperation::LUAU_TYPE_NAME, ApiOperation::LUAU_TYPE_DEF),
-        (DefaultSort::LUAU_TYPE_NAME, DefaultSort::LUAU_TYPE_DEF),
-        (SortDir::LUAU_TYPE_NAME, SortDir::LUAU_TYPE_DEF),
-        // ── config leaves ────────────────────────────────────────
-        (SettingScope::LUAU_TYPE_NAME, SettingScope::LUAU_TYPE_DEF),
-        (SettingType::LUAU_TYPE_NAME, SettingType::LUAU_TYPE_DEF),
-        // ── hand-rolled stateful surfaces ────────────────────────
+    let mut defs = crate::luau_types![
+        // design tokens
+        DesignTokens,
+        Colors,
+        Spacing,
+        Radius,
+        Typography,
+        Rgba,
+        // shell mode
+        ShellMode,
+        Permission,
+        // object-model leaves
+        EntityFieldType,
+        RollupFunction,
+        EnumOption,
+        UiHints,
+        EdgeBehavior,
+        EdgeScope,
+        EdgeCascade,
+        DefaultChildView,
+        TabDefinition,
+        ApiOperation,
+        DefaultSort,
+        SortDir,
+        // config leaves
+        SettingScope,
+        SettingType,
+    ];
+    // Hand-rolled stateful surfaces — the userdata types in
+    // `luau_bindings.rs` aren't `#[luau_expose]`-derived, so they
+    // expose their LUAU_TYPE_NAME/DEF as free `pub const`s rather than
+    // associated items. The macro can't reach those, so they're
+    // appended here.
+    defs.extend_from_slice(&[
         (
             crate::luau_bindings_consts::GRAPH_OBJECT_TYPE_NAME,
             crate::luau_bindings_consts::GRAPH_OBJECT_TYPE_DEF,
@@ -80,7 +90,8 @@ pub fn type_defs() -> Vec<(&'static str, &'static str)> {
             crate::luau_bindings_consts::CONFIG_HANDLE_TYPE_NAME,
             crate::luau_bindings_consts::CONFIG_HANDLE_TYPE_DEF,
         ),
-    ]
+    ]);
+    defs
 }
 
 /// Concatenate every entry from [`type_defs`] into a single Luau source
