@@ -60,6 +60,7 @@ pub mod module;
 pub mod modules;
 pub mod permission;
 pub mod registry;
+pub mod typed_command;
 
 #[cfg(any(
     feature = "transport-http",
@@ -97,6 +98,7 @@ pub use kernel::DaemonKernel;
 pub use module::DaemonModule;
 pub use permission::{ParsePermissionError, Permission};
 pub use registry::{CommandError, CommandHandler, CommandRegistry};
+pub use typed_command::CommandRegistryExt;
 
 #[cfg(feature = "crdt")]
 pub use doc_manager::DocManager;

@@ -220,6 +220,7 @@ fn field_kind_to_luau_type(kind: &FieldKind) -> &'static str {
         FieldKind::File { .. } => "string",
         FieldKind::Date | FieldKind::DateTime => "string",
         FieldKind::Calculation { .. } => "any",
+        FieldKind::Custom { .. } => "any",
     }
 }
 

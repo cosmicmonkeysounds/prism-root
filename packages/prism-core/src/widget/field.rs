@@ -164,6 +164,63 @@ pub enum FieldKind {
     Calculation {
         formula: String,
     },
+    /// Plugin-contributed field kind. The `tag` is looked up in a
+    /// [`FieldKindRegistry`] for editor / validator behavior; `data`
+    /// carries the kind-specific config (bounds, options, etc.) the
+    /// contribution interprets. Built-ins keep their typed arms above
+    /// — `Custom` is the extension hatch only.
+    Custom {
+        tag: String,
+        #[serde(default)]
+        data: Value,
+    },
+}
+
+// ── FieldKindRegistry ────────────────────────────────────────────
+
+/// Plugin-contributed `FieldKind::Custom` tags resolve to this trait.
+/// Built-in kinds bypass the registry entirely; the registry only
+/// exists so external code can light up new editor surfaces without
+/// editing the [`FieldKind`] enum.
+pub trait FieldKindContribution: Send + Sync {
+    fn tag(&self) -> &str;
+    fn label(&self) -> &str;
+    /// Default value when a freshly-constructed field has no
+    /// explicit `default` set.
+    fn default_value(&self) -> Value {
+        Value::Null
+    }
+    /// Optional validator for record values against this kind. Empty
+    /// vec = valid.
+    fn validate(&self, _value: &Value, _data: &Value) -> Vec<String> {
+        Vec::new()
+    }
+}
+
+#[derive(Default)]
+pub struct FieldKindRegistry {
+    entries: std::collections::BTreeMap<String, std::sync::Arc<dyn FieldKindContribution>>,
+}
+
+impl FieldKindRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn register(&mut self, kind: std::sync::Arc<dyn FieldKindContribution>) {
+        self.entries.insert(kind.tag().to_string(), kind);
+    }
+    pub fn get(&self, tag: &str) -> Option<std::sync::Arc<dyn FieldKindContribution>> {
+        self.entries.get(tag).cloned()
+    }
+    pub fn tags(&self) -> impl Iterator<Item = &str> {
+        self.entries.keys().map(|s| s.as_str())
+    }
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
 }
 
 // ── Supporting types ─────────────────────────────────────────────

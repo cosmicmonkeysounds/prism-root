@@ -1,8 +1,6 @@
 //! Promote inline facet templates into reusable prefab components.
 
-
 use serde_json::Value;
-
 
 use crate::document::Node;
 use crate::prefab::{ExposedSlot, PrefabDef};
@@ -70,4 +68,3 @@ fn clear_expressions(node: &mut Node) {
         clear_expressions(child);
     }
 }
-

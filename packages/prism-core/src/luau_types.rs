@@ -12,8 +12,8 @@
 
 use crate::design_tokens::{Colors, DesignTokens, Radius, Rgba, Spacing, Typography};
 use crate::foundation::object_model::types::{
-    ApiOperation, DefaultChildView, DefaultSort, EdgeBehavior, EdgeCascade, EdgeScope, EnumOption,
-    EntityFieldType, RollupFunction, SortDir, TabDefinition, UiHints,
+    ApiOperation, DefaultChildView, DefaultSort, EdgeBehavior, EdgeCascade, EdgeScope,
+    EntityFieldType, EnumOption, RollupFunction, SortDir, TabDefinition, UiHints,
 };
 use crate::kernel::config::types::{SettingScope, SettingType};
 use crate::shell_mode::{Permission, ShellMode};
@@ -43,7 +43,10 @@ pub fn type_defs() -> Vec<(&'static str, &'static str)> {
             EntityFieldType::LUAU_TYPE_NAME,
             EntityFieldType::LUAU_TYPE_DEF,
         ),
-        (RollupFunction::LUAU_TYPE_NAME, RollupFunction::LUAU_TYPE_DEF),
+        (
+            RollupFunction::LUAU_TYPE_NAME,
+            RollupFunction::LUAU_TYPE_DEF,
+        ),
         (EnumOption::LUAU_TYPE_NAME, EnumOption::LUAU_TYPE_DEF),
         (UiHints::LUAU_TYPE_NAME, UiHints::LUAU_TYPE_DEF),
         (EdgeBehavior::LUAU_TYPE_NAME, EdgeBehavior::LUAU_TYPE_DEF),

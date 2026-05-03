@@ -18,12 +18,16 @@ use serde_json::Value;
 use serde_json::json;
 
 use crate::asset::AssetSource;
-use crate::component::{Component, ComponentId, RenderError, RenderSlintContext};
+use crate::block::Block;
+use crate::component::{ComponentId, RenderError, RenderSlintContext};
 use crate::document::Node;
 use crate::facet::FacetComponent;
+use crate::html::Html;
+use crate::html_block::HtmlRenderContext;
 use crate::prefab::{ExposedSlot, PrefabComponent, PrefabDef};
 use crate::registry::{
-    prop_f64, prop_str, ComponentRegistry, FieldSpec, NumericBounds, RegistryError, SelectOption,
+    prop_bool, prop_f64, prop_str, prop_u64, ComponentRegistry, FieldSpec, NumericBounds,
+    RegistryError, SelectOption,
 };
 use crate::schemas;
 use crate::signal::{with_common_signals, SignalDef};
@@ -34,35 +38,35 @@ use crate::variant::{presets as variant_presets, VariantAxis};
 /// Register the starter catalog into `reg`. Call this once at boot
 /// to get a registry with fifteen ready-to-render components.
 pub fn register_builtins(reg: &mut ComponentRegistry) -> Result<(), RegistryError> {
-    reg.register(Arc::new(TextComponent { id: "text".into() }))?;
-    reg.register(Arc::new(ImageComponent { id: "image".into() }))?;
-    reg.register(Arc::new(ContainerComponent {
+    reg.register(Arc::new(TextBlock { id: "text".into() }))?;
+    reg.register(Arc::new(ImageBlock { id: "image".into() }))?;
+    reg.register(Arc::new(ContainerBlock {
         id: "container".into(),
     }))?;
-    reg.register(Arc::new(FormComponent { id: "form".into() }))?;
-    reg.register(Arc::new(InputComponent { id: "input".into() }))?;
-    reg.register(Arc::new(ButtonComponent {
+    reg.register(Arc::new(FormBlock { id: "form".into() }))?;
+    reg.register(Arc::new(InputBlock { id: "input".into() }))?;
+    reg.register(Arc::new(ButtonBlock {
         id: "button".into(),
     }))?;
     reg.register(Arc::new(PrefabComponent::new(card_prefab_def())))?;
-    reg.register(Arc::new(CodeComponent { id: "code".into() }))?;
-    reg.register(Arc::new(DividerComponent {
+    reg.register(Arc::new(CodeBlock { id: "code".into() }))?;
+    reg.register(Arc::new(DividerBlock {
         id: "divider".into(),
     }))?;
-    reg.register(Arc::new(SpacerComponent {
+    reg.register(Arc::new(SpacerBlock {
         id: "spacer".into(),
     }))?;
-    reg.register(Arc::new(ColumnsComponent {
+    reg.register(Arc::new(ColumnsBlock {
         id: "columns".into(),
     }))?;
-    reg.register(Arc::new(ListComponent { id: "list".into() }))?;
-    reg.register(Arc::new(TableComponent { id: "table".into() }))?;
-    reg.register(Arc::new(TabsComponent { id: "tabs".into() }))?;
-    reg.register(Arc::new(AccordionComponent {
+    reg.register(Arc::new(ListBlock { id: "list".into() }))?;
+    reg.register(Arc::new(TableBlock { id: "table".into() }))?;
+    reg.register(Arc::new(TabsBlock { id: "tabs".into() }))?;
+    reg.register(Arc::new(AccordionBlock {
         id: "accordion".into(),
     }))?;
     reg.register(Arc::new(FacetComponent::new()))?;
-    reg.register(Arc::new(GraphViewComponent {
+    reg.register(Arc::new(GraphViewBlock {
         id: "graph-view".into(),
     }))?;
     Ok(())
@@ -101,11 +105,11 @@ fn emit_text_style(out: &mut SlintEmitter, style: &StyleProperties) {
 
 /// Unified text block — paragraph, heading (h1–h6), or link depending
 /// on the `level` and `href` props.
-pub struct TextComponent {
+pub struct TextBlock {
     pub id: ComponentId,
 }
 
-impl Component for TextComponent {
+impl Block for TextBlock {
     fn id(&self) -> &ComponentId {
         &self.id
     }
@@ -158,16 +162,46 @@ impl Component for TextComponent {
             Ok(())
         })
     }
+    fn render_html(
+        &self,
+        _ctx: &HtmlRenderContext<'_>,
+        props: &Value,
+        _children: &[Node],
+        out: &mut Html,
+    ) -> Result<(), RenderError> {
+        let body = prop_str(props, "body", "");
+        let level = prop_str(props, "level", "paragraph");
+        let href = prop_str(props, "href", "");
+        let tag = match level {
+            "h1" => "h1",
+            "h2" => "h2",
+            "h3" => "h3",
+            "h4" => "h4",
+            "h5" => "h5",
+            "h6" => "h6",
+            _ => "p",
+        };
+        out.open(tag);
+        if !href.is_empty() {
+            out.open_attrs("a", &[("href", href)]);
+            out.text(body);
+            out.close("a");
+        } else {
+            out.text(body);
+        }
+        out.close(tag);
+        Ok(())
+    }
 }
 
 /// Image block. Accepts a VFS binary ref or an external URL via
 /// the `src` prop and displays a builder placeholder. The HTML SSR
 /// path resolves VFS hashes to `/asset/{hash}`.
-pub struct ImageComponent {
+pub struct ImageBlock {
     pub id: ComponentId,
 }
 
-impl Component for ImageComponent {
+impl Block for ImageBlock {
     fn id(&self) -> &ComponentId {
         &self.id
     }
@@ -251,15 +285,45 @@ impl Component for ImageComponent {
             })
         }
     }
+    fn render_html(
+        &self,
+        _ctx: &HtmlRenderContext<'_>,
+        props: &Value,
+        _children: &[Node],
+        out: &mut Html,
+    ) -> Result<(), RenderError> {
+        let alt = prop_str(props, "alt", "");
+        let fit = prop_str(props, "fit", "cover");
+        let href = prop_str(props, "href", "");
+        let border_radius = prop_u64(props, "border_radius", 0);
+        let src = props
+            .get("src")
+            .and_then(AssetSource::from_prop)
+            .map(|s| s.to_html_src())
+            .unwrap_or_default();
+        let style = if border_radius > 0 {
+            format!("object-fit:{fit};border-radius:{border_radius}px")
+        } else {
+            format!("object-fit:{fit}")
+        };
+        if !href.is_empty() {
+            out.open_attrs("a", &[("href", href)]);
+        }
+        out.void("img", &[("src", &src), ("alt", alt), ("style", &style)]);
+        if !href.is_empty() {
+            out.close("a");
+        }
+        Ok(())
+    }
 }
 
 /// Semantic `<section>` wrapper with children rendered inside.
 /// Useful as a layout block in the portal body.
-pub struct ContainerComponent {
+pub struct ContainerBlock {
     pub id: ComponentId,
 }
 
-impl Component for ContainerComponent {
+impl Block for ContainerBlock {
     fn id(&self) -> &ComponentId {
         &self.id
     }
@@ -333,15 +397,47 @@ impl Component for ContainerComponent {
             render_inner(out)
         }
     }
+    fn render_html(
+        &self,
+        ctx: &HtmlRenderContext<'_>,
+        props: &Value,
+        children: &[Node],
+        out: &mut Html,
+    ) -> Result<(), RenderError> {
+        let padding = prop_u64(props, "padding", 0);
+        let border_width = prop_u64(props, "border_width", 0);
+        let border_color = prop_str(props, "border_color", "");
+        let mut parts: Vec<String> = Vec::new();
+        if padding > 0 {
+            parts.push(format!("padding:{padding}px"));
+        }
+        if border_width > 0 {
+            let color = if border_color.is_empty() {
+                "#000"
+            } else {
+                border_color
+            };
+            parts.push(format!("border:{border_width}px solid {color}"));
+        }
+        if parts.is_empty() {
+            out.open("section");
+        } else {
+            let style = parts.join(";");
+            out.open_attrs("section", &[("style", &style)]);
+        }
+        ctx.render_children(children, out)?;
+        out.close("section");
+        Ok(())
+    }
 }
 
 /// HTML `<form>` wrapper. Renders children inside a `<form method="post">`.
 /// L3 portals use this for interactive submissions.
-pub struct FormComponent {
+pub struct FormBlock {
     pub id: ComponentId,
 }
 
-impl Component for FormComponent {
+impl Block for FormBlock {
     fn id(&self) -> &ComponentId {
         &self.id
     }
@@ -377,14 +473,32 @@ impl Component for FormComponent {
             ctx.render_children(children, out)
         })
     }
+    fn render_html(
+        &self,
+        ctx: &HtmlRenderContext<'_>,
+        props: &Value,
+        children: &[Node],
+        out: &mut Html,
+    ) -> Result<(), RenderError> {
+        let method = prop_str(props, "method", "post");
+        let action = prop_str(props, "action", "");
+        let mut attrs: Vec<(&str, &str)> = vec![("method", method)];
+        if !action.is_empty() {
+            attrs.push(("action", action));
+        }
+        out.open_attrs("form", &attrs);
+        ctx.render_children(children, out)?;
+        out.close("form");
+        Ok(())
+    }
 }
 
 /// HTML `<input>`. Renders as a void element with name, type, and placeholder.
-pub struct InputComponent {
+pub struct InputBlock {
     pub id: ComponentId,
 }
 
-impl Component for InputComponent {
+impl Block for InputBlock {
     fn id(&self) -> &ComponentId {
         &self.id
     }
@@ -449,6 +563,40 @@ impl Component for InputComponent {
                 })
             })
         })
+    }
+    fn render_html(
+        &self,
+        _ctx: &HtmlRenderContext<'_>,
+        props: &Value,
+        _children: &[Node],
+        out: &mut Html,
+    ) -> Result<(), RenderError> {
+        let name = prop_str(props, "name", "");
+        let input_type = prop_str(props, "type", "text");
+        let placeholder = prop_str(props, "placeholder", "");
+        let value = prop_str(props, "value", "");
+        let required = prop_bool(props, "required");
+        let label = prop_str(props, "label", "");
+
+        if !label.is_empty() {
+            out.open("label");
+            out.text(label);
+        }
+        let mut attrs = vec![("type", input_type), ("name", name)];
+        if !placeholder.is_empty() {
+            attrs.push(("placeholder", placeholder));
+        }
+        if !value.is_empty() {
+            attrs.push(("value", value));
+        }
+        if required {
+            attrs.push(("required", "required"));
+        }
+        out.void("input", &attrs);
+        if !label.is_empty() {
+            out.close("label");
+        }
+        Ok(())
     }
 }
 
@@ -544,11 +692,11 @@ pub fn builtin_prefab(component_type: &str) -> Option<PrefabDef> {
 }
 
 /// Preformatted code block with monospace font.
-pub struct CodeComponent {
+pub struct CodeBlock {
     pub id: ComponentId,
 }
 
-impl Component for CodeComponent {
+impl Block for CodeBlock {
     fn id(&self) -> &ComponentId {
         &self.id
     }
@@ -607,14 +755,41 @@ impl Component for CodeComponent {
             })
         })
     }
+    fn render_html(
+        &self,
+        _ctx: &HtmlRenderContext<'_>,
+        props: &Value,
+        _children: &[Node],
+        out: &mut Html,
+    ) -> Result<(), RenderError> {
+        let code = prop_str(props, "code", "");
+        let lang = prop_str(props, "language", "");
+        let bg = prop_str(props, "bg", "#1a1e28");
+        let color = prop_str(props, "color", "#a3be8c");
+        let style = format!("background:{bg};color:{color};padding:12px;border-radius:6px");
+        out.open_attrs("pre", &[("style", &style)]);
+        if lang.is_empty() {
+            out.open("code");
+        } else {
+            out.open_attrs("code", &[("class", &format!("language-{lang}"))]);
+        }
+        out.text(code);
+        out.close("code");
+        out.close("pre");
+        Ok(())
+    }
 }
 
 /// Horizontal rule / visual separator.
-pub struct DividerComponent {
+/// Horizontal separator line between content sections.
+///
+/// First block ported to the unified [`crate::block::Block`] trait —
+/// a single impl drives both the Slint and HTML render paths.
+pub struct DividerBlock {
     pub id: ComponentId,
 }
 
-impl Component for DividerComponent {
+impl Block for DividerBlock {
     fn id(&self) -> &ComponentId {
         &self.id
     }
@@ -644,14 +819,24 @@ impl Component for DividerComponent {
             Ok(())
         })
     }
+    fn render_html(
+        &self,
+        _ctx: &crate::html_block::HtmlRenderContext<'_>,
+        _props: &Value,
+        _children: &[Node],
+        out: &mut crate::html::Html,
+    ) -> Result<(), RenderError> {
+        out.void("hr", &[]);
+        Ok(())
+    }
 }
 
-/// Empty vertical spacer with configurable height.
-pub struct SpacerComponent {
+/// Empty vertical spacer with configurable height. Unified Block impl.
+pub struct SpacerBlock {
     pub id: ComponentId,
 }
 
-impl Component for SpacerComponent {
+impl Block for SpacerBlock {
     fn id(&self) -> &ComponentId {
         &self.id
     }
@@ -681,14 +866,27 @@ impl Component for SpacerComponent {
             Ok(())
         })
     }
+    fn render_html(
+        &self,
+        _ctx: &crate::html_block::HtmlRenderContext<'_>,
+        props: &Value,
+        _children: &[Node],
+        out: &mut crate::html::Html,
+    ) -> Result<(), RenderError> {
+        let height = prop_u64(props, "height", 24);
+        let style = format!("height:{height}px");
+        out.open_attrs("div", &[("style", &style), ("aria-hidden", "true")]);
+        out.close("div");
+        Ok(())
+    }
 }
 
 /// Multi-column horizontal layout. Children are placed side-by-side.
-pub struct ColumnsComponent {
+pub struct ColumnsBlock {
     pub id: ComponentId,
 }
 
-impl Component for ColumnsComponent {
+impl Block for ColumnsBlock {
     fn id(&self) -> &ComponentId {
         &self.id
     }
@@ -721,14 +919,32 @@ impl Component for ColumnsComponent {
             ctx.render_children(children, out)
         })
     }
+    fn render_html(
+        &self,
+        ctx: &HtmlRenderContext<'_>,
+        props: &Value,
+        children: &[Node],
+        out: &mut Html,
+    ) -> Result<(), RenderError> {
+        let gap = prop_u64(props, "gap", 16);
+        let style = format!("display:flex;gap:{gap}px");
+        out.open_attrs("div", &[("style", &style)]);
+        for child in children {
+            out.open_attrs("div", &[("style", "flex:1")]);
+            ctx.render_child(child, out)?;
+            out.close("div");
+        }
+        out.close("div");
+        Ok(())
+    }
 }
 
 /// Ordered or unordered list wrapper. Each child becomes a list item.
-pub struct ListComponent {
+pub struct ListBlock {
     pub id: ComponentId,
 }
 
-impl Component for ListComponent {
+impl Block for ListBlock {
     fn id(&self) -> &ComponentId {
         &self.id
     }
@@ -770,14 +986,32 @@ impl Component for ListComponent {
             ctx.render_children(children, out)
         })
     }
+    fn render_html(
+        &self,
+        ctx: &HtmlRenderContext<'_>,
+        props: &Value,
+        children: &[Node],
+        out: &mut Html,
+    ) -> Result<(), RenderError> {
+        let ordered = prop_bool(props, "ordered");
+        let tag = if ordered { "ol" } else { "ul" };
+        out.open(tag);
+        for child in children {
+            out.open("li");
+            ctx.render_child(child, out)?;
+            out.close("li");
+        }
+        out.close(tag);
+        Ok(())
+    }
 }
 
 /// Simple data table with header columns and optional caption.
-pub struct TableComponent {
+pub struct TableBlock {
     pub id: ComponentId,
 }
 
-impl Component for TableComponent {
+impl Block for TableBlock {
     fn id(&self) -> &ComponentId {
         &self.id
     }
@@ -856,15 +1090,45 @@ impl Component for TableComponent {
             })
         })
     }
+    fn render_html(
+        &self,
+        _ctx: &HtmlRenderContext<'_>,
+        props: &Value,
+        _children: &[Node],
+        out: &mut Html,
+    ) -> Result<(), RenderError> {
+        let headers = prop_str(props, "headers", "");
+        let caption = prop_str(props, "caption", "");
+        out.open("table");
+        if !caption.is_empty() {
+            out.open("caption");
+            out.text(caption);
+            out.close("caption");
+        }
+        out.open("thead");
+        out.open("tr");
+        for col in headers.split(',') {
+            let col = col.trim();
+            if !col.is_empty() {
+                out.open("th");
+                out.text(col);
+                out.close("th");
+            }
+        }
+        out.close("tr");
+        out.close("thead");
+        out.close("table");
+        Ok(())
+    }
 }
 
 /// Tabbed content container. Children map to tab panels; the `labels`
 /// prop names each panel.
-pub struct TabsComponent {
+pub struct TabsBlock {
     pub id: ComponentId,
 }
 
-impl Component for TabsComponent {
+impl Block for TabsBlock {
     fn id(&self) -> &ComponentId {
         &self.id
     }
@@ -933,14 +1197,46 @@ impl Component for TabsComponent {
             })
         })
     }
+    fn render_html(
+        &self,
+        ctx: &HtmlRenderContext<'_>,
+        props: &Value,
+        children: &[Node],
+        out: &mut Html,
+    ) -> Result<(), RenderError> {
+        let labels = prop_str(props, "labels", "");
+        let tab_labels: Vec<&str> = labels
+            .split(',')
+            .map(|l| l.trim())
+            .filter(|l| !l.is_empty())
+            .collect();
+        out.open_attrs("div", &[("role", "tablist")]);
+        for (i, label) in tab_labels.iter().enumerate() {
+            let selected = if i == 0 { "true" } else { "false" };
+            out.open_attrs("button", &[("role", "tab"), ("aria-selected", selected)]);
+            out.text(label);
+            out.close("button");
+        }
+        out.close("div");
+        for (i, child) in children.iter().take(tab_labels.len()).enumerate() {
+            if i == 0 {
+                out.open_attrs("div", &[("role", "tabpanel")]);
+            } else {
+                out.open_attrs("div", &[("role", "tabpanel"), ("hidden", "true")]);
+            }
+            ctx.render_child(child, out)?;
+            out.close("div");
+        }
+        Ok(())
+    }
 }
 
 /// Collapsible section with a title. Renders as `<details>/<summary>` in HTML.
-pub struct AccordionComponent {
+pub struct AccordionBlock {
     pub id: ComponentId,
 }
 
-impl Component for AccordionComponent {
+impl Block for AccordionBlock {
     fn id(&self) -> &ComponentId {
         &self.id
     }
@@ -1004,14 +1300,35 @@ impl Component for AccordionComponent {
             })
         })
     }
+    fn render_html(
+        &self,
+        ctx: &HtmlRenderContext<'_>,
+        props: &Value,
+        children: &[Node],
+        out: &mut Html,
+    ) -> Result<(), RenderError> {
+        let title = prop_str(props, "title", "");
+        let open = prop_bool(props, "open");
+        if open {
+            out.open_attrs("details", &[("open", "open")]);
+        } else {
+            out.open("details");
+        }
+        out.open("summary");
+        out.text(title);
+        out.close("summary");
+        ctx.render_children(children, out)?;
+        out.close("details");
+        Ok(())
+    }
 }
 
 /// HTML `<button>`. Renders as `<button type="submit">text</button>`.
-pub struct ButtonComponent {
+pub struct ButtonBlock {
     pub id: ComponentId,
 }
 
-impl Component for ButtonComponent {
+impl Block for ButtonBlock {
     fn id(&self) -> &ComponentId {
         &self.id
     }
@@ -1067,15 +1384,41 @@ impl Component for ButtonComponent {
             })
         })
     }
+    fn render_html(
+        &self,
+        _ctx: &HtmlRenderContext<'_>,
+        props: &Value,
+        _children: &[Node],
+        out: &mut Html,
+    ) -> Result<(), RenderError> {
+        let text = prop_str(props, "text", "Submit");
+        let btn_type = prop_str(props, "type", "submit");
+        let href = prop_str(props, "href", "");
+        let disabled = prop_bool(props, "disabled");
+        if !href.is_empty() {
+            out.open_attrs("a", &[("href", href), ("role", "button")]);
+            out.text(text);
+            out.close("a");
+        } else {
+            let mut attrs = vec![("type", btn_type)];
+            if disabled {
+                attrs.push(("disabled", "disabled"));
+            }
+            out.open_attrs("button", &attrs);
+            out.text(text);
+            out.close("button");
+        }
+        Ok(())
+    }
 }
 
 /// Interactive node-and-edge graph visualization. Renders nodes as
 /// positioned circles on a canvas with label text.
-pub struct GraphViewComponent {
+pub struct GraphViewBlock {
     pub id: ComponentId,
 }
 
-impl Component for GraphViewComponent {
+impl Block for GraphViewBlock {
     fn id(&self) -> &ComponentId {
         &self.id
     }
@@ -1242,7 +1585,7 @@ mod tests {
 
     #[test]
     fn text_schema_has_body_level_href() {
-        let comp = TextComponent { id: "text".into() };
+        let comp = TextBlock { id: "text".into() };
         let schema = comp.schema();
         assert_eq!(schema.len(), 3);
         assert_eq!(schema[0].key, "body");
@@ -1278,10 +1621,10 @@ mod tests {
 
     #[test]
     fn divider_schema_is_empty() {
-        let comp = DividerComponent {
+        let comp = DividerBlock {
             id: "divider".into(),
         };
-        assert!(comp.schema().is_empty());
+        assert!(crate::block::Block::schema(&comp).is_empty());
     }
 
     #[test]
@@ -1466,7 +1809,7 @@ mod tests {
 
     #[test]
     fn graph_view_id() {
-        let comp = GraphViewComponent {
+        let comp = GraphViewBlock {
             id: "graph-view".into(),
         };
         assert_eq!(comp.id(), "graph-view");
@@ -1474,7 +1817,7 @@ mod tests {
 
     #[test]
     fn graph_view_schema_has_layout_options() {
-        let comp = GraphViewComponent {
+        let comp = GraphViewBlock {
             id: "graph-view".into(),
         };
         let schema = comp.schema();
@@ -1497,7 +1840,7 @@ mod tests {
 
     #[test]
     fn graph_view_signals() {
-        let comp = GraphViewComponent {
+        let comp = GraphViewBlock {
             id: "graph-view".into(),
         };
         let signals = comp.signals();

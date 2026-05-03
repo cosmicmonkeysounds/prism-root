@@ -387,6 +387,7 @@ fn field_kind_to_entity_field_type(kind: &FieldKind) -> EntityFieldType {
         FieldKind::Duration => EntityFieldType::Int,
         FieldKind::Currency { .. } => EntityFieldType::Float,
         FieldKind::Calculation { .. } => EntityFieldType::String,
+        FieldKind::Custom { .. } => EntityFieldType::String,
     }
 }
 

@@ -1,13 +1,10 @@
 //! Facet kind enums and aggregation ops.
 
-
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use prism_core::language::visual::ScriptGraph;
 use prism_core::widget::{get_json_field, DataQuery};
-
-
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(tag = "type", rename_all = "kebab-case")]
@@ -231,4 +228,3 @@ pub fn apply_aggregate(items: &[Value], op: &AggregateOp, field: Option<&str>) -
 }
 
 // ── Data types ────────────────────────────────────────────────────────────────
-

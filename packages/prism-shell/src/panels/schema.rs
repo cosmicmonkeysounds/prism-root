@@ -148,6 +148,7 @@ fn kind_to_string(kind: &FieldKind) -> String {
         FieldKind::File(_) => "image",
         FieldKind::Select(_) => "select",
         FieldKind::Calculation { .. } => "calculation",
+        FieldKind::Custom { tag, .. } => return tag.clone(),
     }
     .into()
 }

@@ -7,14 +7,13 @@
 //!
 //! See `docs/dev/facets.md` for the full design rationale.
 
-
-mod schema;
-mod kind;
 mod data;
-mod template;
-mod resolve;
+mod kind;
 mod promote;
 mod render;
+mod resolve;
+mod schema;
+mod template;
 
 pub use data::*;
 pub use kind::*;

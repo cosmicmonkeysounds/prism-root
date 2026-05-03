@@ -39,6 +39,47 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{parse_macro_input, Data, DataEnum, DataStruct, DeriveInput, Field, Fields, Ident, Type};
 
+mod prism_field;
+mod slint_binding;
+mod visual_node;
+
+/// Derive `field_specs() -> Vec<FieldSpec>` from a struct of typed
+/// props. See `prism_field` module for details.
+#[proc_macro_derive(PrismField, attributes(field))]
+pub fn derive_prism_field(item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as DeriveInput);
+    match prism_field::expand(&input) {
+        Ok(ts) => ts.into(),
+        Err(e) => e.to_compile_error().into(),
+    }
+}
+
+/// Annotate a free Rust function as a visual scripting node. The macro
+/// emits a `pub const <FN_NAME>_NODE_DEF: NodeKindDef` capturing label,
+/// category, and a Luau-snippet template derived from the function
+/// signature.
+#[proc_macro_attribute]
+pub fn visual_node(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let attr2: TokenStream2 = attr.into();
+    let item2: TokenStream2 = item.into();
+    match visual_node::expand(attr2, item2) {
+        Ok(ts) => ts.into(),
+        Err(e) => e.to_compile_error().into(),
+    }
+}
+
+/// Derive `bind_to(&AppGlobal)` and `pull_from(&AppGlobal)` from a Rust
+/// state struct. Field names must match Slint global properties; type
+/// mapping is handled by Slint's generated `Set`/`Get` traits.
+#[proc_macro_derive(SlintBinding, attributes(slint))]
+pub fn derive_slint_binding(item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as DeriveInput);
+    match slint_binding::expand(&input) {
+        Ok(ts) => ts.into(),
+        Err(e) => e.to_compile_error().into(),
+    }
+}
+
 #[proc_macro_attribute]
 pub fn luau_expose(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = match parse_attr_args(attr.into()) {

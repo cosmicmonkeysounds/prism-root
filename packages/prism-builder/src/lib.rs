@@ -20,6 +20,7 @@
 
 pub mod app;
 pub mod asset;
+pub mod block;
 pub mod component;
 pub mod core_widget;
 pub mod document;
@@ -45,6 +46,7 @@ pub mod variant;
 
 pub use app::{AppIcon, AppId, NavigationConfig, NavigationStyle, Page, PrismApp};
 pub use asset::{collect_vfs_hashes, AssetSource};
+pub use block::{register_block, Block};
 pub use component::{Component, ComponentId, RenderContext, RenderError, RenderSlintContext};
 pub use core_widget::{
     collect_all_contributions, register_core_html_widgets, register_core_widgets,

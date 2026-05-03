@@ -1,29 +1,34 @@
 //! Shared component schemas — single source of truth for field
 //! definitions used by both the Slint and HTML render paths.
+//!
+//! `text()` is migrated to `#[derive(PrismField)]` as the first
+//! consumer of the unified field-derive (declarative-refactorings.md
+//! item #2 phase 1). The remaining schemas continue to use the
+//! hand-rolled `FieldSpec` builders pending the derive's coverage of
+//! `file` / `currency` / `calculation` kinds.
 
 use serde_json::Value;
 
 use crate::registry::{FieldSpec, NumericBounds, SelectOption};
+use prism_luau_derive::PrismField;
+
+#[derive(PrismField)]
+#[allow(dead_code)]
+struct TextProps {
+    #[field(label = "Body", multiline)]
+    body: String,
+    #[field(
+        label = "Level",
+        select("paragraph", "h1", "h2", "h3", "h4", "h5", "h6"),
+        default = "paragraph"
+    )]
+    level: String,
+    #[field(label = "Link URL")]
+    href: String,
+}
 
 pub fn text() -> Vec<FieldSpec> {
-    vec![
-        FieldSpec::textarea("body", "Body"),
-        FieldSpec::select(
-            "level",
-            "Level",
-            vec![
-                SelectOption::new("paragraph", "Paragraph"),
-                SelectOption::new("h1", "H1"),
-                SelectOption::new("h2", "H2"),
-                SelectOption::new("h3", "H3"),
-                SelectOption::new("h4", "H4"),
-                SelectOption::new("h5", "H5"),
-                SelectOption::new("h6", "H6"),
-            ],
-        )
-        .with_default(Value::from("paragraph")),
-        FieldSpec::text("href", "Link URL"),
-    ]
+    TextProps::field_specs()
 }
 
 pub fn image() -> Vec<FieldSpec> {
@@ -176,4 +181,38 @@ pub fn facet() -> Vec<FieldSpec> {
             NumericBounds::min_max(1.0, 10_000.0),
         ),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::registry::FieldKind;
+
+    #[test]
+    fn derived_text_schema_matches_legacy_shape() {
+        let schema = text();
+        assert_eq!(schema.len(), 3);
+
+        assert_eq!(schema[0].key, "body");
+        assert_eq!(schema[0].label, "Body");
+        assert!(matches!(schema[0].kind, FieldKind::TextArea));
+
+        assert_eq!(schema[1].key, "level");
+        assert_eq!(schema[1].label, "Level");
+        match &schema[1].kind {
+            FieldKind::Select(opts) => {
+                let values: Vec<&str> = opts.iter().map(|o| o.value.as_str()).collect();
+                assert_eq!(
+                    values,
+                    vec!["paragraph", "h1", "h2", "h3", "h4", "h5", "h6"]
+                );
+            }
+            other => panic!("expected Select, got {other:?}"),
+        }
+        assert_eq!(schema[1].default, Value::String("paragraph".into()));
+
+        assert_eq!(schema[2].key, "href");
+        assert_eq!(schema[2].label, "Link URL");
+        assert!(matches!(schema[2].kind, FieldKind::Text));
+    }
 }

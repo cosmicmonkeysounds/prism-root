@@ -1734,6 +1734,7 @@ impl PropertiesPanel {
                         false,
                     ),
                     FieldKind::Calculation { .. } => unreachable!(),
+                    FieldKind::Custom { .. } => ("text", vec![], 0.0, 0.0, false),
                 };
 
                 rows.push(FieldRowData {
@@ -1890,6 +1891,14 @@ fn row_from_spec(spec: &FieldSpec, props: &Value) -> FieldRowData {
             vec![],
         ),
         FieldKind::Calculation { .. } => (
+            "text",
+            FieldValue::read_string(props, spec).to_string(),
+            0.0,
+            0.0,
+            false,
+            vec![],
+        ),
+        FieldKind::Custom { .. } => (
             "text",
             FieldValue::read_string(props, spec).to_string(),
             0.0,

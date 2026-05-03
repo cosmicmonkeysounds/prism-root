@@ -1,6 +1,5 @@
 //! Data sources, bindings, layout/direction, and variant rules.
 
-
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -115,4 +114,3 @@ pub struct FacetVariantRule {
 }
 
 // ── Template + output types ──────────────────────────────────────────────────
-

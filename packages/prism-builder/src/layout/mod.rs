@@ -11,13 +11,12 @@
 //! - [`ComputedLayout`] — the output of the layout pass: a per-node
 //!   map of resolved rectangles + composed transforms.
 
-
 use std::collections::HashMap;
 
 use glam::{Affine2, Vec2};
-use prism_core::foundation::geometry::{Point2, Rect, Size2};
 #[cfg(test)]
 use prism_core::foundation::geometry::Edges;
+use prism_core::foundation::geometry::{Point2, Rect, Size2};
 use prism_core::foundation::spatial::ComputedTransform;
 use taffy::{AvailableSpace, Position, Style, TaffyTree};
 

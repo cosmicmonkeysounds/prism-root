@@ -1,6 +1,5 @@
 //! `FacetComponent` (Slint) and `FacetHtmlBlock` (HTML SSR).
 
-
 use serde_json::Value;
 
 use prism_core::help::HelpEntry;
@@ -382,4 +381,3 @@ fn emit_facet_html_layout(
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
-

@@ -19,6 +19,7 @@
 use crate::builder::DaemonBuilder;
 use crate::module::DaemonModule;
 use crate::registry::CommandError;
+use crate::typed_command::CommandRegistryExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
@@ -65,19 +66,15 @@ impl DaemonModule for BuildModule {
     }
 
     fn install(&self, builder: &mut DaemonBuilder) -> Result<(), CommandError> {
-        builder.registry().register("build.run_step", |payload| {
-            let args: RunStepArgs = serde_json::from_value(payload)
-                .map_err(|e| CommandError::handler("build.run_step", e.to_string()))?;
-            let cwd = args
-                .working_dir
-                .map(PathBuf::from)
-                .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-            let env = args.env.unwrap_or_default();
-            let out = run_build_step(&args.step, &cwd, &env)
-                .map_err(|e| CommandError::handler("build.run_step", e))?;
-            serde_json::to_value(out)
-                .map_err(|e| CommandError::handler("build.run_step", e.to_string()))
-        })?;
+        builder
+            .registry()
+            .register_typed("build.run_step", |args: RunStepArgs| {
+                let cwd = args.working_dir.map(PathBuf::from).unwrap_or_else(|| {
+                    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+                });
+                let env = args.env.unwrap_or_default();
+                run_build_step(&args.step, &cwd, &env)
+            })?;
         Ok(())
     }
 }

@@ -287,4 +287,3 @@ pub fn evaluate_calculations(items: &mut [Value], schema: &FacetSchema) {
 }
 
 // ── Slint component ───────────────────────────────────────────────────────────
-

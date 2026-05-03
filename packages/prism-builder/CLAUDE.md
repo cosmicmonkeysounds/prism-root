@@ -323,18 +323,27 @@ Twenty-five modules in `src/` (excluding `lib.rs`):
 
 ## Adding a new block type
 
-1. Add a struct implementing `Component` in `src/starter.rs` (Slint
-   rendering).
-2. Add a struct implementing `HtmlBlock` in `src/html_starter.rs`
-   (HTML SSR). Use the same `ComponentId`.
-3. Implement `schema` using `FieldSpec` builders.
-4. Implement `render_slint` and `render_html` on their respective
-   traits.
-5. Optionally implement `signals()` and `variants()` if the component
+Prefer the unified `Block` trait (`src/block.rs`) — one impl, both
+render targets, registered in both registries via `register_block`.
+`Component` and `HtmlBlock` remain as the underlying traits with
+blanket impls so existing custom impls (`PrefabComponent`,
+`FacetComponent`, `CoreWidgetComponent`) keep working.
+
+1. Add a struct implementing `Block` in `src/starter.rs`. The trait
+   carries both `render_slint` (`SlintEmitter`) and `render_html`
+   (`Html`) with sensible defaults — override whichever your block
+   needs.
+2. Implement `schema` using `FieldSpec` builders.
+3. Optionally implement `signals()` and `variants()` if the block
    emits events or has named style/size axes.
-6. Register in both `register_builtins` and `register_html_builtins`.
-7. Add unit tests — Slint tests in `starter.rs`, HTML tests in
-   `html_starter.rs`.
+4. Register in `register_builtins` (for `ComponentRegistry`) and
+   `register_html_builtins` (for `HtmlRegistry`). The blanket impls
+   make the same `Arc<MyBlock>` valid for both registries.
+5. Add unit tests for both render paths.
+
+`DividerBlock` and `SpacerBlock` in `src/starter.rs` are the
+reference port. Migration of the remaining 14 builtins is tracked
+in `docs/dev/declarative-refactorings.md`.
 
 ## Dependencies
 - `prism-core` — `design_tokens`, `language::codegen::SourceBuilder`,

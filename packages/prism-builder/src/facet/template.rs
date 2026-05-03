@@ -1,10 +1,8 @@
 //! Templates, outputs, and the `FacetDef` glue.
 
-
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-
 
 use crate::component::ComponentId;
 use crate::document::{Node, NodeId};
@@ -149,4 +147,3 @@ impl FacetDef {
         }
     }
 }
-

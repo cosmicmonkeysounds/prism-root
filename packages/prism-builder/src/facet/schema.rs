@@ -1,13 +1,10 @@
 //! Facet schema, records, and validation.
 
-
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-
 use crate::registry::{FieldKind, FieldSpec};
-
 
 // ── Schema types ─────────────────────────────────────────────────────────────
 
@@ -159,8 +156,8 @@ fn default_for_kind(kind: &FieldKind) -> Value {
             .map(|o| Value::String(o.value.clone()))
             .unwrap_or(Value::String(String::new())),
         FieldKind::Calculation { .. } => Value::Null,
+        FieldKind::Custom { .. } => Value::Null,
     }
 }
 
 // ── Facet kinds ──────────────────────────────────────────────────────────────
-

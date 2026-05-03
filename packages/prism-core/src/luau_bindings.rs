@@ -200,10 +200,13 @@ impl UserData for ConfigHandle {
                 Ok(())
             },
         );
-        methods.add_method("reset", |_, this, (key, scope): (String, Option<SettingScope>)| {
-            this.model.reset(&key, scope.unwrap_or(SettingScope::User));
-            Ok(())
-        });
+        methods.add_method(
+            "reset",
+            |_, this, (key, scope): (String, Option<SettingScope>)| {
+                this.model.reset(&key, scope.unwrap_or(SettingScope::User));
+                Ok(())
+            },
+        );
         methods.add_method("is_overridden", |_, this, key: String| {
             Ok(this.model.is_overridden(&key))
         });
@@ -307,7 +310,9 @@ mod tests {
             .eval()
             .unwrap();
         assert_eq!(initial, 14.0);
-        lua.load("config:set('editor.fontSize', 18)").exec().unwrap();
+        lua.load("config:set('editor.fontSize', 18)")
+            .exec()
+            .unwrap();
         let updated: f64 = lua
             .load("return config:get('editor.fontSize')")
             .eval()

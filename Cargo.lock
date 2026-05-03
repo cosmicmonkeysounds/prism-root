@@ -5791,6 +5791,7 @@ dependencies = [
  "indexmap 2.14.0",
  "insta",
  "prism-core",
+ "prism-luau-derive",
  "serde",
  "serde_json",
  "slint",

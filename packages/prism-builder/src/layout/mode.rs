@@ -402,4 +402,3 @@ impl GridPlacement {
 }
 
 // ── Layout computation ───────────────────────────────────────────────
-
