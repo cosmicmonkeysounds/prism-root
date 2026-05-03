@@ -27,6 +27,7 @@
 //! pinned to the public `tonic::server` API.
 
 use crate::kernel::DaemonKernel;
+use crate::transport::mapper::CommandErrorMapper;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
@@ -222,23 +223,7 @@ impl DaemonGrpcService for KernelGrpcService {
             let value = match result {
                 Ok(v) => v,
                 Err(err) => {
-                    use crate::registry::CommandError;
-                    return Err(match err {
-                        CommandError::NotFound(name) => {
-                            tonic::Status::not_found(format!("command not found: {name}"))
-                        }
-                        CommandError::AlreadyRegistered { command } => {
-                            tonic::Status::already_exists(format!(
-                                "command already registered: {command}"
-                            ))
-                        }
-                        CommandError::Handler { command, message } => {
-                            tonic::Status::internal(format!("{command}: {message}"))
-                        }
-                        CommandError::LockPoisoned => {
-                            tonic::Status::internal("registry lock poisoned")
-                        }
-                    });
+                    return Err(tonic::Status::from_command_error(&req.command, err));
                 }
             };
 
@@ -253,6 +238,24 @@ impl DaemonGrpcService for KernelGrpcService {
 /// one shot.
 pub fn server_for_kernel(kernel: DaemonKernel) -> DaemonServiceServer<KernelGrpcService> {
     DaemonServiceServer::new(KernelGrpcService::new(kernel))
+}
+
+impl CommandErrorMapper for tonic::Status {
+    fn not_found(_command: &str, message: &str) -> Self {
+        tonic::Status::not_found(message)
+    }
+    fn already_registered(_command: &str, message: &str) -> Self {
+        tonic::Status::already_exists(message)
+    }
+    fn handler_error(_command: &str, message: &str) -> Self {
+        tonic::Status::internal(message)
+    }
+    fn lock_poisoned(_command: &str, message: &str) -> Self {
+        tonic::Status::internal(message)
+    }
+    fn permission_denied(_command: &str, message: &str) -> Self {
+        tonic::Status::permission_denied(message)
+    }
 }
 
 #[cfg(test)]

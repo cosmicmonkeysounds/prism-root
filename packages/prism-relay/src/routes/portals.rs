@@ -12,6 +12,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::relay_state::FullRelayState;
+use crate::result::{RelayError, RelayResult};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -72,11 +73,12 @@ pub async fn create_portal(
 pub async fn get_portal(
     State(state): State<Arc<FullRelayState>>,
     Path(id): Path<String>,
-) -> impl IntoResponse {
-    match state.portal_registry().get(&id) {
-        Some(p) => Ok(Json(json!(p))),
-        None => Err(StatusCode::NOT_FOUND),
-    }
+) -> RelayResult<Json<serde_json::Value>> {
+    let portal = state
+        .portal_registry()
+        .get(&id)
+        .ok_or_else(RelayError::not_found)?;
+    Ok(Json(json!(portal)))
 }
 
 pub async fn delete_portal(
@@ -93,10 +95,11 @@ pub async fn delete_portal(
 pub async fn export_portal(
     State(state): State<Arc<FullRelayState>>,
     Path(id): Path<String>,
-) -> impl IntoResponse {
-    let Some(portal) = state.portal_registry().get(&id) else {
-        return Err(StatusCode::NOT_FOUND);
-    };
+) -> RelayResult<Json<serde_json::Value>> {
+    let portal = state
+        .portal_registry()
+        .get(&id)
+        .ok_or_else(RelayError::not_found)?;
     let snapshot = state.collections().export_snapshot(&portal.collection_id);
     let encoded = snapshot.map(crate::util::b64_encode).unwrap_or_default();
     Ok(Json(json!({

@@ -29,6 +29,7 @@
 
 use crate::kernel::DaemonKernel;
 use crate::registry::CommandError;
+use crate::transport::mapper::CommandErrorMapper;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -222,21 +223,47 @@ fn days_to_ymd(days: u64) -> (u64, u64, u64) {
 }
 
 fn command_error_to_response(command: &str, err: CommandError) -> Response {
-    let (code, kind) = match &err {
-        CommandError::NotFound(_) => (StatusCode::NOT_FOUND, "not_found"),
-        CommandError::AlreadyRegistered { .. } => (StatusCode::CONFLICT, "already_registered"),
-        CommandError::Handler { .. } => (StatusCode::INTERNAL_SERVER_ERROR, "handler_error"),
-        CommandError::LockPoisoned => (StatusCode::INTERNAL_SERVER_ERROR, "lock_poisoned"),
-    };
+    Response::from_command_error(command, err)
+}
+
+fn http_error(code: StatusCode, kind: &str, command: &str, message: &str) -> Response {
     (
         code,
         Json(json!({
             "error": kind,
             "command": command,
-            "message": err.to_string(),
+            "message": message,
         })),
     )
         .into_response()
+}
+
+impl CommandErrorMapper for Response {
+    fn not_found(command: &str, message: &str) -> Self {
+        http_error(StatusCode::NOT_FOUND, "not_found", command, message)
+    }
+    fn already_registered(command: &str, message: &str) -> Self {
+        http_error(StatusCode::CONFLICT, "already_registered", command, message)
+    }
+    fn handler_error(command: &str, message: &str) -> Self {
+        http_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "handler_error",
+            command,
+            message,
+        )
+    }
+    fn lock_poisoned(command: &str, message: &str) -> Self {
+        http_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "lock_poisoned",
+            command,
+            message,
+        )
+    }
+    fn permission_denied(command: &str, message: &str) -> Self {
+        http_error(StatusCode::FORBIDDEN, "permission_denied", command, message)
+    }
 }
 
 #[cfg(test)]

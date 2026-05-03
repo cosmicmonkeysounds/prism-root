@@ -1,6 +1,7 @@
 //! Portal template routes.
 
 use crate::relay_state::FullRelayState;
+use crate::result::{RelayError, RelayResult};
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -46,11 +47,12 @@ pub async fn create_template(
 pub async fn get_template(
     State(state): State<Arc<FullRelayState>>,
     Path(id): Path<String>,
-) -> impl IntoResponse {
-    match state.templates().get(&id) {
-        Some(t) => Ok(Json(json!(t))),
-        None => Err(StatusCode::NOT_FOUND),
-    }
+) -> RelayResult<Json<serde_json::Value>> {
+    let tpl = state
+        .templates()
+        .get(&id)
+        .ok_or_else(RelayError::not_found)?;
+    Ok(Json(json!(tpl)))
 }
 
 pub async fn delete_template(

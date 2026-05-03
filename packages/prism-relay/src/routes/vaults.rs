@@ -1,6 +1,7 @@
 //! Vault host routes.
 
 use crate::relay_state::FullRelayState;
+use crate::result::{RelayError, RelayResult};
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -69,50 +70,48 @@ pub async fn publish_vault(
 pub async fn get_vault(
     State(state): State<Arc<FullRelayState>>,
     Path(id): Path<String>,
-) -> impl IntoResponse {
-    match state.vaults().get(&id) {
-        Some(v) => Ok(Json(json!(v))),
-        None => Err(StatusCode::NOT_FOUND),
-    }
+) -> RelayResult<Json<serde_json::Value>> {
+    let vault = state.vaults().get(&id).ok_or_else(RelayError::not_found)?;
+    Ok(Json(json!(vault)))
 }
 
 pub async fn get_vault_collections(
     State(state): State<Arc<FullRelayState>>,
     Path(id): Path<String>,
-) -> impl IntoResponse {
-    match state.vaults().get_all_snapshots(&id) {
-        Some(snaps) => {
-            let listing: Vec<_> = snaps
-                .iter()
-                .map(|(k, v)| json!({"id": k, "size": v.len()}))
-                .collect();
-            Ok(Json(json!(listing)))
-        }
-        None => Err(StatusCode::NOT_FOUND),
-    }
+) -> RelayResult<Json<serde_json::Value>> {
+    let snaps = state
+        .vaults()
+        .get_all_snapshots(&id)
+        .ok_or_else(RelayError::not_found)?;
+    let listing: Vec<_> = snaps
+        .iter()
+        .map(|(k, v)| json!({"id": k, "size": v.len()}))
+        .collect();
+    Ok(Json(json!(listing)))
 }
 
 pub async fn get_vault_collection(
     State(state): State<Arc<FullRelayState>>,
     Path((vault_id, coll_id)): Path<(String, String)>,
-) -> impl IntoResponse {
-    match state.vaults().get_snapshot(&vault_id, &coll_id) {
-        Some(data) => Ok(Json(json!({"snapshot": crate::util::b64_encode(data)}))),
-        None => Err(StatusCode::NOT_FOUND),
-    }
+) -> RelayResult<Json<serde_json::Value>> {
+    let data = state
+        .vaults()
+        .get_snapshot(&vault_id, &coll_id)
+        .ok_or_else(RelayError::not_found)?;
+    Ok(Json(json!({"snapshot": crate::util::b64_encode(data)})))
 }
 
 pub async fn download_vault(
     State(state): State<Arc<FullRelayState>>,
     Path(id): Path<String>,
-) -> impl IntoResponse {
-    let vault = state.vaults().get(&id).ok_or(StatusCode::NOT_FOUND)?;
+) -> RelayResult<Json<serde_json::Value>> {
+    let vault = state.vaults().get(&id).ok_or_else(RelayError::not_found)?;
     let snaps = state.vaults().get_all_snapshots(&id).unwrap_or_default();
     let encoded: HashMap<String, String> = snaps
         .into_iter()
         .map(|(k, v)| (k, crate::util::b64_encode(v)))
         .collect();
-    Ok::<_, StatusCode>(Json(
+    Ok(Json(
         json!({"manifest": vault.manifest, "collections": encoded}),
     ))
 }

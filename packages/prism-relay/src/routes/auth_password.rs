@@ -1,10 +1,10 @@
 //! Password authentication routes.
 
 use crate::relay_state::FullRelayState;
+use crate::result::{RelayError, RelayResult};
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    response::IntoResponse,
     Json,
 };
 use serde::Deserialize;
@@ -41,64 +41,62 @@ pub struct DeleteInput {
 pub async fn register(
     State(state): State<Arc<FullRelayState>>,
     Json(input): Json<RegisterInput>,
-) -> impl IntoResponse {
+) -> RelayResult<(StatusCode, Json<serde_json::Value>)> {
     let now = crate::util::now_rfc3339();
-    match state.password_auth().register(
-        &input.username,
-        &input.password,
-        input.did,
-        input.metadata,
-        &now,
-    ) {
-        Ok(record) => Ok((StatusCode::CREATED, Json(record.redacted()))),
-        Err(_) => Err(StatusCode::CONFLICT),
-    }
+    let record = state
+        .password_auth()
+        .register(
+            &input.username,
+            &input.password,
+            input.did,
+            input.metadata,
+            &now,
+        )
+        .map_err(|_| RelayError::conflict())?;
+    Ok((StatusCode::CREATED, Json(record.redacted())))
 }
 
 pub async fn login(
     State(state): State<Arc<FullRelayState>>,
     Json(input): Json<LoginInput>,
-) -> impl IntoResponse {
-    match state
+) -> RelayResult<Json<serde_json::Value>> {
+    let record = state
         .password_auth()
         .login(&input.username, &input.password)
-    {
-        Ok(record) => Ok(Json(json!({"ok": true, "did": record.did}))),
-        Err(_) => Err(StatusCode::UNAUTHORIZED),
-    }
+        .map_err(|_| RelayError::unauthorized())?;
+    Ok(Json(json!({"ok": true, "did": record.did})))
 }
 
 pub async fn change_password(
     State(state): State<Arc<FullRelayState>>,
     Json(input): Json<ChangePasswordInput>,
-) -> impl IntoResponse {
-    match state.password_auth().change_password(
-        &input.username,
-        &input.old_password,
-        &input.new_password,
-    ) {
-        Ok(()) => StatusCode::OK,
-        Err(_) => StatusCode::UNAUTHORIZED,
-    }
+) -> RelayResult<StatusCode> {
+    state
+        .password_auth()
+        .change_password(&input.username, &input.old_password, &input.new_password)
+        .map_err(|_| RelayError::unauthorized())?;
+    Ok(StatusCode::OK)
 }
 
 pub async fn get_user(
     State(state): State<Arc<FullRelayState>>,
     Path(username): Path<String>,
-) -> impl IntoResponse {
-    match state.password_auth().get(&username) {
-        Some(record) => Ok(Json(record.redacted())),
-        None => Err(StatusCode::NOT_FOUND),
-    }
+) -> RelayResult<Json<serde_json::Value>> {
+    let record = state
+        .password_auth()
+        .get(&username)
+        .ok_or_else(RelayError::not_found)?;
+    Ok(Json(record.redacted()))
 }
 
 pub async fn delete_user(
     State(state): State<Arc<FullRelayState>>,
     Path(username): Path<String>,
     Json(input): Json<DeleteInput>,
-) -> impl IntoResponse {
-    match state.password_auth().remove(&username, &input.password) {
-        Ok(()) => StatusCode::OK,
-        Err(_) => StatusCode::UNAUTHORIZED,
-    }
+) -> RelayResult<StatusCode> {
+    state
+        .password_auth()
+        .remove(&username, &input.password)
+        .map_err(|_| RelayError::unauthorized())?;
+    Ok(StatusCode::OK)
 }

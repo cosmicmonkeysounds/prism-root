@@ -746,7 +746,7 @@ The 8 `apply_*` fns in `mutations.rs` become 8 one-liners:
 
 ---
 
-## 12. Transport invoke adapter  ⬜ not started
+## 12. Transport invoke adapter  ✅ trait shipped, HTTP + gRPC migrated
 
 ### Current state
 
@@ -799,13 +799,36 @@ plus the transport-specific serialization.
 
 ### Status
 
-- ⬜ Not started. The three transports are in
-  `prism-daemon/src/transport/{http_axum,grpc_tonic,ipc_local}.rs`.
-  Low design risk; the error variant set is already stable.
+- ✅ Shared `CommandErrorMapper` trait shipped in
+  `prism-daemon/src/transport/mapper.rs`. One method per `CommandError`
+  variant (`not_found` / `already_registered` / `handler_error` /
+  `lock_poisoned` / `permission_denied`); the provided
+  `from_command_error(command, err)` fans out by variant. Implementors
+  receive `(command, message)` so the response envelope (HTTP JSON
+  body, gRPC status message) can carry both.
+- ✅ HTTP migration: `axum::response::Response` impls
+  `CommandErrorMapper` in `transport::http_axum`. The legacy
+  `command_error_to_response` thunks through `Response::from_command_error`
+  so existing call sites (`invoke`, `admin_snapshot`) are unchanged.
+  Adds the previously-missing `PermissionDenied → 403` arm.
+- ✅ gRPC migration: `tonic::Status` impls `CommandErrorMapper` in
+  `transport::grpc_tonic`. The hand-rolled match in
+  `KernelGrpcService::invoke` collapses to
+  `tonic::Status::from_command_error(&req.command, err)`. Adds the
+  previously-missing `PermissionDenied → grpc PermissionDenied` arm.
+  Wire-level test coverage (`invoke_unknown_command_maps_to_grpc_not_found`,
+  `invoke_handler_error_maps_to_grpc_internal`) still passes — the
+  message payloads now use `CommandError`'s `Display` impl directly
+  (which the tests assert on substring, not exact match).
+- 🟡 IPC unmigrated by design. `IpcResponse` carries no kind tag (the
+  envelope is `{ ok: bool, error: Option<String> }`) and the request
+  `id` must be threaded into every response, which a stateless
+  trait impl can't see. The single-line `e.to_string()` mapping in
+  `dispatch` is not duplication worth abstracting.
 
 ---
 
-## 13. Relay `RelayResult<T>` response type  ⬜ not started
+## 13. Relay `RelayResult<T>` response type  ✅ type shipped, primary error-path handlers migrated
 
 ### Current state
 
@@ -866,8 +889,26 @@ the wire serialization boilerplate out of the handler body.
 
 ### Status
 
-- ⬜ Not started. Entirely within `prism-relay`. No macro needed —
-  just a newtype + `IntoResponse` impl. Could land in an afternoon.
+- ✅ Type shipped in `prism-relay/src/result.rs` as `RelayResult<T> =
+  Result<T, RelayError>` plus a `RelayError` whose `IntoResponse` impl
+  emits either `{ "error": "<msg>" }` (when constructed via
+  `with_message` / the `*_msg` constructors) or a bare status code (when
+  constructed via `new` / the no-arg constructors), preserving the
+  legacy "raw `StatusCode` return" wire shape. `From<StatusCode>` keeps
+  callers' `.map_err(|_| StatusCode::CONFLICT)?` pattern legal during
+  incremental migration.
+- ✅ Migrated handlers across every route module that had explicit
+  `Result<Json, StatusCode>` / `match { Some => Ok, None => Err }` shapes:
+  `portals` (`get_portal`, `export_portal`), `vaults` (4 handlers),
+  `collections` (`get_snapshot`, `import_snapshot`), `auth_password` (5
+  handlers), `autorest` (5 handlers), `escrow` (`claim`), `templates`
+  (`get_template`), `trust` (`get_peer_trust`), `acme`
+  (`acme_challenge_response`, `get_certificate`), `forms` (2 handlers).
+  Bare `StatusCode`-returning handlers (e.g.
+  `delete_collection`, `unban_peer`) and pure-200 handlers
+  (`list_*`, `verify_token`) remain on `impl IntoResponse` — the type
+  buys nothing for them. 26 lib + 8 integration tests pass; clippy
+  clean under `-D warnings`.
 
 ---
 
@@ -1295,11 +1336,15 @@ Implementation order optimises for value × independence:
    and on the walkers being callable from derived impls.
 5. **#15 SignalSpec builder**: no dependencies, tiny — land any time.
 6. **#14 test fixtures**: no dependencies, pure cleanup — land any time.
-7. **#13 RelayResult**: self-contained in prism-relay, one afternoon.
+7. **#13 RelayResult**: ✅ shipped — `RelayResult<T>` + `RelayError`
+   live in `prism-relay/src/result.rs`; every handler with an explicit
+   error-path mapping migrated.
 8. **#6 daemon_module**: ✅ shipped — every default-feature module
    collapsed onto `#[daemon_module(id, slot/state, commands(…))]`.
    Hand-written `install()` bodies deleted across 9 modules.
-9. **#12 transport adapter**: low design risk, error set is stable.
+9. **#12 transport adapter**: ✅ shipped — `CommandErrorMapper` trait in
+   `transport::mapper`; HTTP + gRPC migrated. IPC stays hand-rolled
+   (no kind tag, request id must thread through).
 10. **#11 Editable derive**: high value in mutations.rs; shares
     attribute parsing with PrismField.
 11. **#8 typed Props**: depends on #2 PrismField completing for all

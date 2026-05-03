@@ -12,6 +12,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::relay_state::FullRelayState;
+use crate::result::{RelayError, RelayResult};
 
 #[derive(Deserialize)]
 pub struct BanInput {
@@ -25,11 +26,12 @@ pub async fn list_trust(State(state): State<Arc<FullRelayState>>) -> impl IntoRe
 pub async fn get_peer_trust(
     State(state): State<Arc<FullRelayState>>,
     Path(did): Path<String>,
-) -> impl IntoResponse {
-    match state.trust().get_peer(&did) {
-        Some(p) => Ok(Json(json!(p))),
-        None => Err(StatusCode::NOT_FOUND),
-    }
+) -> RelayResult<Json<serde_json::Value>> {
+    let peer = state
+        .trust()
+        .get_peer(&did)
+        .ok_or_else(RelayError::not_found)?;
+    Ok(Json(json!(peer)))
 }
 
 pub async fn ban_peer(

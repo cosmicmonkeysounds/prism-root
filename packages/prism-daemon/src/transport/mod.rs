@@ -18,6 +18,8 @@
 //! runtimes (`http_axum`, `grpc_tonic`) hop onto a blocking pool via
 //! [`tokio::task::spawn_blocking`] before calling `kernel.invoke`.
 
+pub mod mapper;
+
 #[cfg(feature = "transport-http")]
 pub mod http_axum;
 

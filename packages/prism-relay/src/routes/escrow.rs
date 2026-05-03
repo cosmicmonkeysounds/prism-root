@@ -1,6 +1,7 @@
 //! Escrow deposit/claim routes.
 
 use crate::relay_state::FullRelayState;
+use crate::result::{RelayError, RelayResult};
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -42,11 +43,12 @@ pub async fn deposit(
 pub async fn claim(
     State(state): State<Arc<FullRelayState>>,
     Json(input): Json<ClaimInput>,
-) -> impl IntoResponse {
-    match state.escrow().claim(&input.deposit_id) {
-        Some(dep) => Ok(Json(json!(dep))),
-        None => Err(StatusCode::NOT_FOUND),
-    }
+) -> RelayResult<Json<serde_json::Value>> {
+    let dep = state
+        .escrow()
+        .claim(&input.deposit_id)
+        .ok_or_else(RelayError::not_found)?;
+    Ok(Json(json!(dep)))
 }
 
 pub async fn list_deposits(

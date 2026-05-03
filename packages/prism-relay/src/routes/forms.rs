@@ -5,12 +5,12 @@ use std::sync::Arc;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    response::IntoResponse,
     Json,
 };
 use serde_json::json;
 
 use crate::relay_state::FullRelayState;
+use crate::result::{RelayError, RelayResult};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -25,11 +25,11 @@ pub async fn submit_form(
     State(state): State<Arc<FullRelayState>>,
     Path(portal_id): Path<String>,
     Json(data): Json<serde_json::Value>,
-) -> impl IntoResponse {
-    let portal = state.portal_registry().get(&portal_id);
-    if portal.is_none() {
-        return Err(StatusCode::NOT_FOUND);
-    }
+) -> RelayResult<(StatusCode, Json<serde_json::Value>)> {
+    state
+        .portal_registry()
+        .get(&portal_id)
+        .ok_or_else(RelayError::not_found)?;
 
     let now = crate::util::now_rfc3339();
     let submission = FormSubmission {
@@ -52,9 +52,10 @@ pub async fn submit_form(
 pub async fn list_submissions(
     State(state): State<Arc<FullRelayState>>,
     Path(portal_id): Path<String>,
-) -> impl IntoResponse {
-    if state.portal_registry().get(&portal_id).is_none() {
-        return Err(StatusCode::NOT_FOUND);
-    }
+) -> RelayResult<Json<serde_json::Value>> {
+    state
+        .portal_registry()
+        .get(&portal_id)
+        .ok_or_else(RelayError::not_found)?;
     Ok(Json(json!([])))
 }

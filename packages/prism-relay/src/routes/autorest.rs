@@ -5,13 +5,13 @@ use std::sync::Arc;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
-    response::IntoResponse,
     Json,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::relay_state::FullRelayState;
+use crate::result::{RelayError, RelayResult};
 
 #[derive(Deserialize, Default)]
 pub struct ListQuery {
@@ -27,31 +27,30 @@ pub async fn list_objects(
     State(state): State<Arc<FullRelayState>>,
     Path(collection_id): Path<String>,
     Query(_query): Query<ListQuery>,
-) -> impl IntoResponse {
-    match state.collections().get(&collection_id) {
-        Some(_) => Ok(Json(json!([]))),
-        None => Err(StatusCode::NOT_FOUND),
-    }
+) -> RelayResult<Json<Value>> {
+    state
+        .collections()
+        .get(&collection_id)
+        .ok_or_else(RelayError::not_found)?;
+    Ok(Json(json!([])))
 }
 
 pub async fn get_object(
-    State(state): State<Arc<FullRelayState>>,
-    Path((collection_id, _object_id)): Path<(String, String)>,
-) -> impl IntoResponse {
-    match state.collections().get(&collection_id) {
-        Some(_) => Err::<Json<Value>, _>(StatusCode::NOT_FOUND),
-        None => Err(StatusCode::NOT_FOUND),
-    }
+    State(_state): State<Arc<FullRelayState>>,
+    Path((_collection_id, _object_id)): Path<(String, String)>,
+) -> RelayResult<Json<Value>> {
+    Err(RelayError::not_found())
 }
 
 pub async fn create_object(
     State(state): State<Arc<FullRelayState>>,
     Path(collection_id): Path<String>,
     Json(body): Json<Value>,
-) -> impl IntoResponse {
-    if state.collections().get(&collection_id).is_none() {
-        return Err(StatusCode::NOT_FOUND);
-    }
+) -> RelayResult<(StatusCode, Json<Value>)> {
+    state
+        .collections()
+        .get(&collection_id)
+        .ok_or_else(RelayError::not_found)?;
     let now = crate::util::now_rfc3339();
     state
         .webhooks()
@@ -63,10 +62,11 @@ pub async fn update_object(
     State(state): State<Arc<FullRelayState>>,
     Path((collection_id, _object_id)): Path<(String, String)>,
     Json(body): Json<Value>,
-) -> impl IntoResponse {
-    if state.collections().get(&collection_id).is_none() {
-        return Err(StatusCode::NOT_FOUND);
-    }
+) -> RelayResult<Json<Value>> {
+    state
+        .collections()
+        .get(&collection_id)
+        .ok_or_else(RelayError::not_found)?;
     let now = crate::util::now_rfc3339();
     state
         .webhooks()
@@ -77,10 +77,11 @@ pub async fn update_object(
 pub async fn delete_object(
     State(state): State<Arc<FullRelayState>>,
     Path((collection_id, object_id)): Path<(String, String)>,
-) -> impl IntoResponse {
-    if state.collections().get(&collection_id).is_none() {
-        return Err(StatusCode::NOT_FOUND);
-    }
+) -> RelayResult<StatusCode> {
+    state
+        .collections()
+        .get(&collection_id)
+        .ok_or_else(RelayError::not_found)?;
     let now = crate::util::now_rfc3339();
     state.webhooks().emit(
         "object.deleted",

@@ -12,6 +12,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::relay_state::FullRelayState;
+use crate::result::{RelayError, RelayResult};
 
 #[derive(Deserialize)]
 pub struct CreateCollectionInput {
@@ -42,22 +43,23 @@ pub async fn create_collection(
 pub async fn get_snapshot(
     State(state): State<Arc<FullRelayState>>,
     Path(id): Path<String>,
-) -> impl IntoResponse {
-    match state.collections().export_snapshot(&id) {
-        Some(data) => Ok(Json(json!({"snapshot": crate::util::b64_encode(data)}))),
-        None => Err(StatusCode::NOT_FOUND),
-    }
+) -> RelayResult<Json<serde_json::Value>> {
+    let data = state
+        .collections()
+        .export_snapshot(&id)
+        .ok_or_else(RelayError::not_found)?;
+    Ok(Json(json!({"snapshot": crate::util::b64_encode(data)})))
 }
 
 pub async fn import_snapshot(
     State(state): State<Arc<FullRelayState>>,
     Path(id): Path<String>,
     Json(input): Json<ImportSnapshotInput>,
-) -> impl IntoResponse {
-    let data = crate::util::b64_decode(&input.data).map_err(|_| StatusCode::BAD_REQUEST)?;
+) -> RelayResult<StatusCode> {
+    let data = crate::util::b64_decode(&input.data).map_err(|_| RelayError::bad_request())?;
     let now = crate::util::now_rfc3339();
     state.collections().import_snapshot(&id, data, &now);
-    Ok::<_, StatusCode>(StatusCode::OK)
+    Ok(StatusCode::OK)
 }
 
 pub async fn delete_collection(

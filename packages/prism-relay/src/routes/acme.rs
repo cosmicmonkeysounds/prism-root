@@ -1,6 +1,7 @@
 //! ACME certificate routes.
 
 use crate::relay_state::FullRelayState;
+use crate::result::{RelayError, RelayResult};
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -14,11 +15,12 @@ use std::sync::Arc;
 pub async fn acme_challenge_response(
     State(state): State<Arc<FullRelayState>>,
     Path(token): Path<String>,
-) -> impl IntoResponse {
-    match state.acme().get_challenge(&token) {
-        Some(c) => Ok(c.key_authorization),
-        None => Err(StatusCode::NOT_FOUND),
-    }
+) -> RelayResult<String> {
+    let challenge = state
+        .acme()
+        .get_challenge(&token)
+        .ok_or_else(RelayError::not_found)?;
+    Ok(challenge.key_authorization)
 }
 
 pub async fn add_challenge(
@@ -55,9 +57,10 @@ pub async fn add_certificate(
 pub async fn get_certificate(
     State(state): State<Arc<FullRelayState>>,
     Path(domain): Path<String>,
-) -> impl IntoResponse {
-    match state.acme().get_certificate(&domain) {
-        Some(c) => Ok(Json(json!(c))),
-        None => Err(StatusCode::NOT_FOUND),
-    }
+) -> RelayResult<Json<serde_json::Value>> {
+    let cert = state
+        .acme()
+        .get_certificate(&domain)
+        .ok_or_else(RelayError::not_found)?;
+    Ok(Json(json!(cert)))
 }

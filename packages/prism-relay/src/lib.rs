@@ -17,6 +17,7 @@ pub mod middleware;
 pub mod persistence;
 pub mod portal;
 pub mod relay_state;
+pub mod result;
 pub mod router;
 pub mod routes;
 pub mod ssr_routes;
