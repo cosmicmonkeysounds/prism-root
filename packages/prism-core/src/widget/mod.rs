@@ -14,9 +14,10 @@ pub mod field;
 pub mod views;
 
 pub use contribution::{
-    get_json_field, json_sort_key, DataQuery, FilterOp, LayoutDirection, QueryFilter, QuerySort,
-    SignalSpec, TemplateNode, ToolbarAction, ToolbarActionKind, VariantOptionSpec, VariantSpec,
-    WidgetCategory, WidgetContribution, WidgetSize, WidgetTemplate,
+    get_json_field, json_sort_key, widget, DataQuery, FilterOp, LayoutDirection, QueryFilter,
+    QuerySort, SignalSpec, TemplateNode, ToolbarAction, ToolbarActionKind, VariantOptionSpec,
+    VariantSpec, WidgetCategory, WidgetContribution, WidgetContributionBuilder, WidgetSize,
+    WidgetTemplate,
 };
 pub use field::{
     prop_bool, prop_f64, prop_str, prop_u64, FieldKind, FieldSpec, FieldValue, FileFieldConfig,

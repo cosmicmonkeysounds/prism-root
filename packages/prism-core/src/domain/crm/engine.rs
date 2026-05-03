@@ -213,136 +213,90 @@ pub fn advance_contract_stage(contract: &Contract) -> Option<ContractStage> {
 
 pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
     use crate::widget::{
-        DataQuery, FieldSpec, LayoutDirection, NumericBounds, QuerySort, SelectOption, SignalSpec,
-        TemplateNode, ToolbarAction, WidgetCategory, WidgetContribution, WidgetSize,
-        WidgetTemplate,
+        widget, DataQuery, FieldSpec, NumericBounds, SelectOption, SignalSpec, TemplateNode,
+        ToolbarAction, WidgetCategory,
     };
     use serde_json::json;
 
     vec![
-        WidgetContribution {
-            id: "deal-pipeline".into(),
-            label: "Deal Pipeline".into(),
-            description: "Pipeline funnel view of active deals".into(),
-            category: WidgetCategory::Finance,
-            config_fields: vec![
-                FieldSpec::select(
-                    "stage_filter",
-                    "Stage Filter",
-                    vec![
-                        SelectOption::new("all", "All Stages"),
-                        SelectOption::new("lead", "Lead"),
-                        SelectOption::new("qualified", "Qualified"),
-                        SelectOption::new("proposal", "Proposal"),
-                        SelectOption::new("negotiation", "Negotiation"),
-                        SelectOption::new("closed_won", "Closed Won"),
-                        SelectOption::new("closed_lost", "Closed Lost"),
-                    ],
-                ),
-                FieldSpec::boolean("show_value", "Show Deal Value"),
-            ],
-            signals: vec![SignalSpec::new("deal-selected", "A deal was selected")
-                .with_payload(vec![FieldSpec::text("deal_id", "Deal ID")])],
-            toolbar_actions: vec![
-                ToolbarAction::signal("refresh", "Refresh", "refresh"),
-                ToolbarAction::signal("new-deal", "New Deal", "add"),
-            ],
-            default_size: WidgetSize::new(3, 2),
-            data_query: Some(DataQuery {
-                object_type: Some("deal".into()),
-                sort: vec![QuerySort {
-                    field: "stage".into(),
-                    descending: false,
-                }],
-                ..Default::default()
-            }),
-            data_key: Some("deals".into()),
-            data_fields: vec![
+        widget("deal-pipeline", "Deal Pipeline")
+            .description("Pipeline funnel view of active deals")
+            .category(WidgetCategory::Finance)
+            .field(FieldSpec::select(
+                "stage_filter",
+                "Stage Filter",
+                vec![
+                    SelectOption::new("all", "All Stages"),
+                    SelectOption::new("lead", "Lead"),
+                    SelectOption::new("qualified", "Qualified"),
+                    SelectOption::new("proposal", "Proposal"),
+                    SelectOption::new("negotiation", "Negotiation"),
+                    SelectOption::new("closed_won", "Closed Won"),
+                    SelectOption::new("closed_lost", "Closed Lost"),
+                ],
+            ))
+            .field(FieldSpec::boolean("show_value", "Show Deal Value"))
+            .signal(SignalSpec::selection("deal"))
+            .action(ToolbarAction::refresh())
+            .action(ToolbarAction::signal("new-deal", "New Deal", "add"))
+            .size(3, 2)
+            .query(DataQuery::for_type("deal").sort_asc("stage"))
+            .data_key("deals")
+            .data_fields(vec![
                 FieldSpec::text("title", "Title"),
                 FieldSpec::text("stage", "Stage"),
                 FieldSpec::number("value", "Value", NumericBounds::unbounded()),
                 FieldSpec::number("probability", "Probability", NumericBounds::unbounded()),
-            ],
-            template: WidgetTemplate {
-                root: TemplateNode::Container {
-                    direction: LayoutDirection::Vertical,
-                    gap: Some(8),
-                    padding: Some(12),
-                    children: vec![
-                        TemplateNode::Component {
-                            component_id: "heading".into(),
-                            props: json!({"body": "Deal Pipeline", "level": 3}),
-                        },
-                        TemplateNode::Repeater {
-                            source: "deals".into(),
-                            item_template: Box::new(TemplateNode::Component {
-                                component_id: "text".into(),
-                                props: json!({"body": "deal"}),
-                            }),
-                            empty_label: Some("No deals".into()),
-                        },
-                    ],
-                },
-            },
-            ..Default::default()
-        },
-        WidgetContribution {
-            id: "client-profitability".into(),
-            label: "Client Profitability".into(),
-            description: "Revenue and cost breakdown by client".into(),
-            category: WidgetCategory::Finance,
-            config_fields: vec![FieldSpec::text("currency", "Currency").with_default(json!("USD"))],
-            signals: vec![SignalSpec::new("client-selected", "A client was selected")
-                .with_payload(vec![FieldSpec::text("client_id", "Client ID")])],
-            toolbar_actions: vec![
-                ToolbarAction::signal("refresh", "Refresh", "refresh"),
-                ToolbarAction::signal("export", "Export", "export"),
-            ],
-            default_size: WidgetSize::new(3, 2),
-            data_query: Some(DataQuery {
-                object_type: Some("client_revenue".into()),
-                sort: vec![QuerySort {
-                    field: "profit".into(),
-                    descending: true,
-                }],
-                ..Default::default()
-            }),
-            data_key: Some("clients".into()),
-            data_fields: vec![
+            ])
+            .template(TemplateNode::vertical(
+                8,
+                12,
+                vec![
+                    TemplateNode::component("heading", json!({"body": "Deal Pipeline", "level": 3})),
+                    TemplateNode::repeater(
+                        "deals",
+                        TemplateNode::component("text", json!({"body": "deal"})),
+                        "No deals",
+                    ),
+                ],
+            ))
+            .build(),
+        widget("client-profitability", "Client Profitability")
+            .description("Revenue and cost breakdown by client")
+            .category(WidgetCategory::Finance)
+            .field(FieldSpec::text("currency", "Currency").with_default(json!("USD")))
+            .signal(SignalSpec::selection("client"))
+            .action(ToolbarAction::refresh())
+            .action(ToolbarAction::export())
+            .size(3, 2)
+            .query(DataQuery::for_type("client_revenue").sort_desc("profit"))
+            .data_key("clients")
+            .data_fields(vec![
                 FieldSpec::text("client_id", "Client"),
                 FieldSpec::number("total_revenue", "Revenue", NumericBounds::unbounded()),
                 FieldSpec::number("total_costs", "Costs", NumericBounds::unbounded()),
                 FieldSpec::number("profit", "Profit", NumericBounds::unbounded()),
-            ],
-            template: WidgetTemplate {
-                root: TemplateNode::Container {
-                    direction: LayoutDirection::Vertical,
-                    gap: Some(8),
-                    padding: Some(12),
-                    children: vec![
-                        TemplateNode::Component {
-                            component_id: "heading".into(),
-                            props: json!({"body": "Client Profitability", "level": 3}),
-                        },
-                        TemplateNode::Repeater {
-                            source: "clients".into(),
-                            item_template: Box::new(TemplateNode::Component {
-                                component_id: "text".into(),
-                                props: json!({"body": "client"}),
-                            }),
-                            empty_label: Some("No client data".into()),
-                        },
-                    ],
-                },
-            },
-            ..Default::default()
-        },
-        WidgetContribution {
-            id: "contract-status".into(),
-            label: "Contract Status".into(),
-            description: "Contract lifecycle tracker".into(),
-            category: WidgetCategory::Display,
-            config_fields: vec![FieldSpec::select(
+            ])
+            .template(TemplateNode::vertical(
+                8,
+                12,
+                vec![
+                    TemplateNode::component(
+                        "heading",
+                        json!({"body": "Client Profitability", "level": 3}),
+                    ),
+                    TemplateNode::repeater(
+                        "clients",
+                        TemplateNode::component("text", json!({"body": "client"})),
+                        "No client data",
+                    ),
+                ],
+            ))
+            .build(),
+        widget("contract-status", "Contract Status")
+            .description("Contract lifecycle tracker")
+            .category(WidgetCategory::Display)
+            .field(FieldSpec::select(
                 "stage_filter",
                 "Stage Filter",
                 vec![
@@ -354,54 +308,32 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
                     SelectOption::new("expired", "Expired"),
                     SelectOption::new("cancelled", "Cancelled"),
                 ],
-            )],
-            signals: vec![
-                SignalSpec::new("contract-selected", "A contract was selected")
-                    .with_payload(vec![FieldSpec::text("contract_id", "Contract ID")]),
-            ],
-            toolbar_actions: vec![
-                ToolbarAction::signal("refresh", "Refresh", "refresh"),
-                ToolbarAction::signal("new-contract", "New Contract", "add"),
-            ],
-            default_size: WidgetSize::new(2, 2),
-            data_query: Some(DataQuery {
-                object_type: Some("contract".into()),
-                sort: vec![QuerySort {
-                    field: "stage".into(),
-                    descending: false,
-                }],
-                ..Default::default()
-            }),
-            data_key: Some("contracts".into()),
-            data_fields: vec![
+            ))
+            .signal(SignalSpec::selection("contract"))
+            .action(ToolbarAction::refresh())
+            .action(ToolbarAction::signal("new-contract", "New Contract", "add"))
+            .size(2, 2)
+            .query(DataQuery::for_type("contract").sort_asc("stage"))
+            .data_key("contracts")
+            .data_fields(vec![
                 FieldSpec::text("id", "Contract ID"),
                 FieldSpec::text("client_id", "Client"),
                 FieldSpec::text("stage", "Stage"),
                 FieldSpec::number("value", "Value", NumericBounds::unbounded()),
-            ],
-            template: WidgetTemplate {
-                root: TemplateNode::Container {
-                    direction: LayoutDirection::Vertical,
-                    gap: Some(8),
-                    padding: Some(12),
-                    children: vec![
-                        TemplateNode::Component {
-                            component_id: "heading".into(),
-                            props: json!({"body": "Contracts", "level": 3}),
-                        },
-                        TemplateNode::Repeater {
-                            source: "contracts".into(),
-                            item_template: Box::new(TemplateNode::Component {
-                                component_id: "text".into(),
-                                props: json!({"body": "contract"}),
-                            }),
-                            empty_label: Some("No contracts".into()),
-                        },
-                    ],
-                },
-            },
-            ..Default::default()
-        },
+            ])
+            .template(TemplateNode::vertical(
+                8,
+                12,
+                vec![
+                    TemplateNode::component("heading", json!({"body": "Contracts", "level": 3})),
+                    TemplateNode::repeater(
+                        "contracts",
+                        TemplateNode::component("text", json!({"body": "contract"})),
+                        "No contracts",
+                    ),
+                ],
+            ))
+            .build(),
     ]
 }
 

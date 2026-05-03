@@ -131,145 +131,99 @@ pub fn wellness_summary(categories: &[WellnessCategory]) -> WellnessSummary {
 
 pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
     use crate::widget::{
-        FieldSpec, LayoutDirection, SignalSpec, TemplateNode, ToolbarAction, WidgetCategory,
-        WidgetContribution, WidgetSize, WidgetTemplate,
+        widget, FieldSpec, SignalSpec, TemplateNode, ToolbarAction, WidgetCategory,
     };
     use serde_json::json;
 
     vec![
-        WidgetContribution {
-            id: "habit-tracker".into(),
-            label: "Habit Tracker".into(),
-            description: "Track daily habits with streak display".into(),
-            icon: Some("check-circle".into()),
-            category: WidgetCategory::Display,
-            config_fields: vec![FieldSpec::boolean("show_streaks", "Show Streaks")],
-            signals: vec![
+        widget("habit-tracker", "Habit Tracker")
+            .description("Track daily habits with streak display")
+            .icon("check-circle")
+            .category(WidgetCategory::Display)
+            .field(FieldSpec::boolean("show_streaks", "Show Streaks"))
+            .signal(
                 SignalSpec::new("habit-completed", "A habit was marked complete").with_payload(
                     vec![
                         FieldSpec::text("habit_id", "Habit ID"),
                         FieldSpec::text("date", "Date"),
                     ],
                 ),
+            )
+            .signal(
                 SignalSpec::new("habit-uncompleted", "A habit completion was revoked")
                     .with_payload(vec![FieldSpec::text("habit_id", "Habit ID")]),
-            ],
-            toolbar_actions: vec![
-                ToolbarAction::signal("complete", "Complete", "check"),
-                ToolbarAction::signal("skip", "Skip", "forward"),
-            ],
-            default_size: WidgetSize::new(2, 2),
-            min_size: Some(WidgetSize::new(1, 1)),
-            template: WidgetTemplate {
-                root: TemplateNode::Container {
-                    direction: LayoutDirection::Vertical,
-                    gap: Some(8),
-                    padding: Some(12),
-                    children: vec![
-                        TemplateNode::Component {
-                            component_id: "heading".into(),
-                            props: json!({"body": "Habits", "level": 3}),
-                        },
-                        TemplateNode::Repeater {
-                            source: "habits".into(),
-                            item_template: Box::new(TemplateNode::DataBinding {
-                                field: "name".into(),
-                                component_id: "text".into(),
-                                prop_key: "body".into(),
-                            }),
-                            empty_label: Some("No habits".into()),
-                        },
-                        TemplateNode::Conditional {
-                            field: "show_streaks".into(),
-                            child: Box::new(TemplateNode::DataBinding {
-                                field: "current_streak".into(),
-                                component_id: "text".into(),
-                                prop_key: "body".into(),
-                            }),
-                            fallback: None,
-                        },
-                    ],
-                },
-            },
-            ..Default::default()
-        },
-        WidgetContribution {
-            id: "wellness-score".into(),
-            label: "Wellness Score".into(),
-            description: "Composite wellness score across habit categories".into(),
-            icon: Some("heart".into()),
-            category: WidgetCategory::Display,
-            config_fields: vec![],
-            signals: vec![],
-            toolbar_actions: vec![],
-            default_size: WidgetSize::new(1, 1),
-            template: WidgetTemplate {
-                root: TemplateNode::Container {
-                    direction: LayoutDirection::Vertical,
-                    gap: Some(8),
-                    padding: Some(16),
-                    children: vec![
-                        TemplateNode::Component {
-                            component_id: "heading".into(),
-                            props: json!({"body": "Wellness", "level": 3}),
-                        },
-                        TemplateNode::DataBinding {
-                            field: "composite_score".into(),
-                            component_id: "text".into(),
-                            prop_key: "body".into(),
-                        },
-                        TemplateNode::Repeater {
-                            source: "categories".into(),
-                            item_template: Box::new(TemplateNode::DataBinding {
-                                field: "name".into(),
-                                component_id: "text".into(),
-                                prop_key: "body".into(),
-                            }),
-                            empty_label: Some("No categories".into()),
-                        },
-                    ],
-                },
-            },
-            ..Default::default()
-        },
-        WidgetContribution {
-            id: "habit-heatmap".into(),
-            label: "Habit Heatmap".into(),
-            description: "Calendar heatmap of habit completions".into(),
-            icon: Some("calendar".into()),
-            category: WidgetCategory::Display,
-            config_fields: vec![
-                FieldSpec::text("habit_id", "Habit ID"),
-                FieldSpec::boolean("show_legend", "Show Legend"),
-            ],
-            signals: vec![SignalSpec::new("date-selected", "A date cell was selected")
-                .with_payload(vec![FieldSpec::text("date", "Date")])],
-            toolbar_actions: vec![
-                ToolbarAction::signal("prev-month", "Previous Month", "chevron-left"),
-                ToolbarAction::signal("next-month", "Next Month", "chevron-right"),
-            ],
-            default_size: WidgetSize::new(3, 2),
-            min_size: Some(WidgetSize::new(2, 1)),
-            template: WidgetTemplate {
-                root: TemplateNode::Container {
-                    direction: LayoutDirection::Vertical,
-                    gap: Some(4),
-                    padding: Some(8),
-                    children: vec![
-                        TemplateNode::Component {
-                            component_id: "heading".into(),
-                            props: json!({"body": "Habit Heatmap", "level": 3}),
-                        },
-                        TemplateNode::DataBinding {
-                            field: "heatmap_data".into(),
-                            component_id: "text".into(),
-                            prop_key: "body".into(),
-                        },
-                    ],
-                },
-            },
-            ..Default::default()
-        },
+            )
+            .action(ToolbarAction::signal("complete", "Complete", "check"))
+            .action(ToolbarAction::signal("skip", "Skip", "forward"))
+            .size(2, 2)
+            .min_size(1, 1)
+            .template(TemplateNode::vertical(
+                8,
+                12,
+                vec![
+                    TemplateNode::component("heading", json!({"body": "Habits", "level": 3})),
+                    TemplateNode::repeater(
+                        "habits",
+                        TemplateNode::text_binding("name"),
+                        "No habits",
+                    ),
+                    TemplateNode::conditional(
+                        "show_streaks",
+                        TemplateNode::text_binding("current_streak"),
+                    ),
+                ],
+            ))
+            .build(),
+        widget("wellness-score", "Wellness Score")
+            .description("Composite wellness score across habit categories")
+            .icon("heart")
+            .category(WidgetCategory::Display)
+            .size(1, 1)
+            .template(TemplateNode::vertical(
+                8,
+                16,
+                vec![
+                    TemplateNode::component("heading", json!({"body": "Wellness", "level": 3})),
+                    TemplateNode::text_binding("composite_score"),
+                    TemplateNode::repeater(
+                        "categories",
+                        TemplateNode::text_binding("name"),
+                        "No categories",
+                    ),
+                ],
+            ))
+            .build(),
+        widget("habit-heatmap", "Habit Heatmap")
+            .description("Calendar heatmap of habit completions")
+            .icon("calendar")
+            .category(WidgetCategory::Display)
+            .field(FieldSpec::text("habit_id", "Habit ID"))
+            .field(FieldSpec::boolean("show_legend", "Show Legend"))
+            .signal(
+                SignalSpec::new("date-selected", "A date cell was selected")
+                    .with_payload(vec![FieldSpec::text("date", "Date")]),
+            )
+            .action(ToolbarAction::signal(
+                "prev-month",
+                "Previous Month",
+                "chevron-left",
+            ))
+            .action(ToolbarAction::signal(
+                "next-month",
+                "Next Month",
+                "chevron-right",
+            ))
+            .size(3, 2)
+            .min_size(2, 1)
+            .template(TemplateNode::vertical(
+                4,
+                8,
+                vec![
+                    TemplateNode::component("heading", json!({"body": "Habit Heatmap", "level": 3})),
+                    TemplateNode::text_binding("heatmap_data"),
+                ],
+            ))
+            .build(),
     ]
 }
 

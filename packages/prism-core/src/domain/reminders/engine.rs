@@ -114,96 +114,59 @@ pub fn due_today<'a>(reminders: &'a [Reminder], today: &NaiveDate) -> Vec<&'a Re
 
 pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
     use crate::widget::{
-        DataQuery, FieldSpec, LayoutDirection, QuerySort, SignalSpec, TemplateNode, ToolbarAction,
-        WidgetCategory, WidgetContribution, WidgetSize, WidgetTemplate,
+        widget, DataQuery, FieldSpec, SignalSpec, TemplateNode, ToolbarAction, WidgetCategory,
     };
     use serde_json::json;
 
     vec![
-        WidgetContribution {
-            id: "reminder-list".into(),
-            label: "Reminders".into(),
-            description: "Upcoming reminders list".into(),
-            icon: Some("bell".into()),
-            category: WidgetCategory::Display,
-            signals: vec![
-                SignalSpec::new("reminder-selected", "A reminder was selected")
-                    .with_payload(vec![FieldSpec::text("reminder_id", "Reminder ID")]),
+        widget("reminder-list", "Reminders")
+            .description("Upcoming reminders list")
+            .icon("bell")
+            .category(WidgetCategory::Display)
+            .signal(SignalSpec::selection("reminder"))
+            .signal(
                 SignalSpec::new("reminder-completed", "A reminder was completed")
                     .with_payload(vec![FieldSpec::text("reminder_id", "Reminder ID")]),
-            ],
-            toolbar_actions: vec![
-                ToolbarAction::signal("add-reminder", "Add", "plus"),
-                ToolbarAction::signal("refresh", "Refresh", "refresh"),
-            ],
-            default_size: WidgetSize::new(2, 2),
-            data_query: Some(DataQuery {
-                object_type: Some("reminder".into()),
-                sort: vec![QuerySort {
-                    field: "due_date".into(),
-                    descending: false,
-                }],
-                ..Default::default()
-            }),
-            data_key: Some("reminders".into()),
-            data_fields: vec![
+            )
+            .action(ToolbarAction::signal("add-reminder", "Add", "plus"))
+            .action(ToolbarAction::refresh())
+            .size(2, 2)
+            .query(DataQuery::for_type("reminder").sort_asc("due_date"))
+            .data_key("reminders")
+            .data_fields(vec![
                 FieldSpec::text("title", "Title"),
                 FieldSpec::text("due_date", "Due Date"),
-            ],
-            template: WidgetTemplate {
-                root: TemplateNode::Container {
-                    direction: LayoutDirection::Vertical,
-                    gap: Some(4),
-                    padding: Some(8),
-                    children: vec![
-                        TemplateNode::Component {
-                            component_id: "heading".into(),
-                            props: json!({"body": "Reminders", "level": 3}),
-                        },
-                        TemplateNode::Repeater {
-                            source: "reminders".into(),
-                            item_template: Box::new(TemplateNode::DataBinding {
-                                field: "title".into(),
-                                component_id: "text".into(),
-                                prop_key: "body".into(),
-                            }),
-                            empty_label: Some("No reminders".into()),
-                        },
-                    ],
-                },
-            },
-            ..Default::default()
-        },
-        WidgetContribution {
-            id: "overdue-reminders".into(),
-            label: "Overdue".into(),
-            description: "Overdue reminders with urgency indicators".into(),
-            icon: Some("alert-circle".into()),
-            category: WidgetCategory::Display,
-            signals: vec![
-                SignalSpec::new("reminder-selected", "A reminder was selected")
-                    .with_payload(vec![FieldSpec::text("reminder_id", "Reminder ID")]),
-            ],
-            toolbar_actions: vec![ToolbarAction::signal("dismiss-all", "Dismiss All", "x")],
-            default_size: WidgetSize::new(2, 1),
-            template: WidgetTemplate {
-                root: TemplateNode::Container {
-                    direction: LayoutDirection::Vertical,
-                    gap: Some(4),
-                    padding: Some(8),
-                    children: vec![TemplateNode::Repeater {
-                        source: "overdue".into(),
-                        item_template: Box::new(TemplateNode::DataBinding {
-                            field: "title".into(),
-                            component_id: "text".into(),
-                            prop_key: "body".into(),
-                        }),
-                        empty_label: Some("All caught up".into()),
-                    }],
-                },
-            },
-            ..Default::default()
-        },
+            ])
+            .template(TemplateNode::vertical(
+                4,
+                8,
+                vec![
+                    TemplateNode::component("heading", json!({"body": "Reminders", "level": 3})),
+                    TemplateNode::repeater(
+                        "reminders",
+                        TemplateNode::text_binding("title"),
+                        "No reminders",
+                    ),
+                ],
+            ))
+            .build(),
+        widget("overdue-reminders", "Overdue")
+            .description("Overdue reminders with urgency indicators")
+            .icon("alert-circle")
+            .category(WidgetCategory::Display)
+            .signal(SignalSpec::selection("reminder"))
+            .action(ToolbarAction::signal("dismiss-all", "Dismiss All", "x"))
+            .size(2, 1)
+            .template(TemplateNode::vertical(
+                4,
+                8,
+                vec![TemplateNode::repeater(
+                    "overdue",
+                    TemplateNode::text_binding("title"),
+                    "All caught up",
+                )],
+            ))
+            .build(),
     ]
 }
 

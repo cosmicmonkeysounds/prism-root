@@ -6,8 +6,8 @@
 //! module since they are cross-domain view primitives.
 
 use crate::widget::{
-    DataQuery, FieldSpec, LayoutDirection, QuerySort, SelectOption, SignalSpec, TemplateNode,
-    WidgetCategory, WidgetContribution, WidgetSize, WidgetTemplate,
+    widget, DataQuery, FieldSpec, LayoutDirection, SelectOption, SignalSpec, TemplateNode,
+    WidgetCategory, WidgetContribution,
 };
 use serde_json::json;
 
@@ -25,131 +25,108 @@ pub fn view_contributions() -> Vec<WidgetContribution> {
 
 /// Kanban board view — groups items into columns by a configurable field.
 pub fn kanban_view() -> WidgetContribution {
-    WidgetContribution {
-        id: "kanban-board".into(),
-        label: "Kanban Board".into(),
-        description: "Drag-and-drop kanban board that groups items into columns".into(),
-        icon: Some("columns".into()),
-        category: WidgetCategory::DataTable,
-        config_fields: vec![
-            FieldSpec::text("group_field", "Group Field").required(),
-            FieldSpec::text("card_title_field", "Card Title Field").required(),
-            FieldSpec::text("card_subtitle_field", "Card Subtitle Field"),
-            FieldSpec::boolean("show_counts", "Show Column Counts").with_default(json!(true)),
+    widget("kanban-board", "Kanban Board")
+        .description("Drag-and-drop kanban board that groups items into columns")
+        .icon("columns")
+        .category(WidgetCategory::DataTable)
+        .field(FieldSpec::text("group_field", "Group Field").required())
+        .field(FieldSpec::text("card_title_field", "Card Title Field").required())
+        .field(FieldSpec::text("card_subtitle_field", "Card Subtitle Field"))
+        .field(FieldSpec::boolean("show_counts", "Show Column Counts").with_default(json!(true)))
+        .field(
             FieldSpec::number(
                 "column_width",
                 "Column Width",
                 crate::widget::NumericBounds::min(100.0),
             )
             .with_default(json!(280)),
-        ],
-        data_query: Some(DataQuery {
-            object_type: Some("task".into()),
-            sort: vec![QuerySort {
-                field: "order".into(),
-                descending: false,
-            }],
-            ..Default::default()
-        }),
-        data_key: Some("items".into()),
-        signals: vec![
+        )
+        .query(DataQuery::for_type("task").sort_asc("order"))
+        .data_key("items")
+        .signal(
             SignalSpec::new("card-clicked", "A card was clicked")
                 .with_payload(vec![FieldSpec::text("item_id", "Item ID")]),
+        )
+        .signal(
             SignalSpec::new("card-moved", "A card was moved between columns").with_payload(vec![
                 FieldSpec::text("item_id", "Item ID"),
                 FieldSpec::text("from_column", "Source Column"),
                 FieldSpec::text("to_column", "Target Column"),
             ]),
+        )
+        .signal(
             SignalSpec::new("column-clicked", "A column header was clicked")
                 .with_payload(vec![FieldSpec::text("column_id", "Column ID")]),
-        ],
-        default_size: WidgetSize::new(4, 3),
-        min_size: Some(WidgetSize::new(2, 2)),
-        template: WidgetTemplate {
-            root: TemplateNode::Container {
-                direction: LayoutDirection::Horizontal,
-                gap: Some(12),
-                padding: Some(8),
-                children: vec![TemplateNode::Repeater {
-                    source: "columns".into(),
-                    item_template: Box::new(TemplateNode::Container {
-                        direction: LayoutDirection::Vertical,
-                        gap: Some(8),
-                        padding: Some(8),
-                        children: vec![
-                            TemplateNode::DataBinding {
-                                field: "title".into(),
-                                component_id: "heading".into(),
-                                prop_key: "body".into(),
-                            },
-                            TemplateNode::Repeater {
-                                source: "cards".into(),
-                                item_template: Box::new(TemplateNode::Container {
-                                    direction: LayoutDirection::Vertical,
-                                    gap: Some(4),
-                                    padding: Some(8),
-                                    children: vec![
-                                        TemplateNode::DataBinding {
-                                            field: "title".into(),
-                                            component_id: "text".into(),
-                                            prop_key: "body".into(),
-                                        },
-                                        TemplateNode::Conditional {
-                                            field: "subtitle".into(),
-                                            child: Box::new(TemplateNode::DataBinding {
-                                                field: "subtitle".into(),
-                                                component_id: "text".into(),
-                                                prop_key: "body".into(),
-                                            }),
-                                            fallback: None,
-                                        },
-                                    ],
-                                }),
-                                empty_label: Some("No cards".into()),
-                            },
-                        ],
-                    }),
-                    empty_label: Some("No columns".into()),
-                }],
-            },
-        },
-        ..Default::default()
-    }
+        )
+        .size(4, 3)
+        .min_size(2, 2)
+        .template(TemplateNode::horizontal(
+            12,
+            8,
+            vec![TemplateNode::repeater(
+                "columns",
+                TemplateNode::vertical(
+                    8,
+                    8,
+                    vec![
+                        TemplateNode::DataBinding {
+                            field: "title".into(),
+                            component_id: "heading".into(),
+                            prop_key: "body".into(),
+                        },
+                        TemplateNode::repeater(
+                            "cards",
+                            TemplateNode::vertical(
+                                4,
+                                8,
+                                vec![
+                                    TemplateNode::text_binding("title"),
+                                    TemplateNode::conditional(
+                                        "subtitle",
+                                        TemplateNode::text_binding("subtitle"),
+                                    ),
+                                ],
+                            ),
+                            "No cards",
+                        ),
+                    ],
+                ),
+                "No columns",
+            )],
+        ))
+        .build()
 }
 
 /// Calendar view — week/month/day display of calendar events.
 pub fn calendar_view() -> WidgetContribution {
-    WidgetContribution {
-        id: "calendar-view".into(),
-        label: "Calendar View".into(),
-        description: "Calendar with month, week, and day view modes".into(),
-        icon: Some("calendar".into()),
-        category: WidgetCategory::DataTable,
-        config_fields: vec![
-            FieldSpec::select(
-                "view_mode",
-                "View Mode",
-                vec![
-                    SelectOption::new("month", "Month"),
-                    SelectOption::new("week", "Week"),
-                    SelectOption::new("day", "Day"),
-                ],
-            ),
-            FieldSpec::text("start_field", "Start Field").required(),
-            FieldSpec::text("end_field", "End Field").required(),
-            FieldSpec::text("title_field", "Title Field").required(),
-            FieldSpec::boolean("show_weekends", "Show Weekends").with_default(json!(true)),
-        ],
-        data_query: Some(DataQuery {
-            object_type: Some("calendar-event".into()),
-            ..Default::default()
-        }),
-        data_key: Some("events".into()),
-        signals: vec![
+    widget("calendar-view", "Calendar View")
+        .description("Calendar with month, week, and day view modes")
+        .icon("calendar")
+        .category(WidgetCategory::DataTable)
+        .field(FieldSpec::select(
+            "view_mode",
+            "View Mode",
+            vec![
+                SelectOption::new("month", "Month"),
+                SelectOption::new("week", "Week"),
+                SelectOption::new("day", "Day"),
+            ],
+        ))
+        .field(FieldSpec::text("start_field", "Start Field").required())
+        .field(FieldSpec::text("end_field", "End Field").required())
+        .field(FieldSpec::text("title_field", "Title Field").required())
+        .field(FieldSpec::boolean("show_weekends", "Show Weekends").with_default(json!(true)))
+        .query(DataQuery::for_type("calendar-event"))
+        .data_key("events")
+        .signal(
             SignalSpec::new("event-clicked", "A calendar event was clicked")
                 .with_payload(vec![FieldSpec::text("event_id", "Event ID")]),
+        )
+        .signal(
             SignalSpec::new("date-clicked", "A date cell was clicked")
                 .with_payload(vec![FieldSpec::text("date", "Date")]),
+        )
+        .signal(
             SignalSpec::new("event-moved", "An event was moved to a new time range").with_payload(
                 vec![
                     FieldSpec::text("event_id", "Event ID"),
@@ -157,444 +134,310 @@ pub fn calendar_view() -> WidgetContribution {
                     FieldSpec::text("new_end", "New End"),
                 ],
             ),
-        ],
-        default_size: WidgetSize::new(4, 3),
-        min_size: Some(WidgetSize::new(2, 2)),
-        template: WidgetTemplate {
-            root: TemplateNode::Container {
-                direction: LayoutDirection::Vertical,
-                gap: Some(8),
-                padding: Some(12),
-                children: vec![
-                    // Navigation header row
-                    TemplateNode::Container {
-                        direction: LayoutDirection::Horizontal,
-                        gap: Some(8),
-                        padding: None,
-                        children: vec![
-                            TemplateNode::Component {
-                                component_id: "button".into(),
-                                props: json!({"label": "Previous"}),
-                            },
-                            TemplateNode::DataBinding {
-                                field: "current_period".into(),
-                                component_id: "heading".into(),
-                                prop_key: "body".into(),
-                            },
-                            TemplateNode::Component {
-                                component_id: "button".into(),
-                                props: json!({"label": "Next"}),
+        )
+        .size(4, 3)
+        .min_size(2, 2)
+        .template(TemplateNode::vertical(
+            8,
+            12,
+            vec![
+                TemplateNode::Container {
+                    direction: LayoutDirection::Horizontal,
+                    gap: Some(8),
+                    padding: None,
+                    children: vec![
+                        TemplateNode::component("button", json!({"label": "Previous"})),
+                        TemplateNode::DataBinding {
+                            field: "current_period".into(),
+                            component_id: "heading".into(),
+                            prop_key: "body".into(),
+                        },
+                        TemplateNode::component("button", json!({"label": "Next"})),
+                    ],
+                },
+                TemplateNode::repeater(
+                    "day_cells",
+                    TemplateNode::vertical(
+                        2,
+                        4,
+                        vec![
+                            TemplateNode::text_binding("day_label"),
+                            TemplateNode::Repeater {
+                                source: "events".into(),
+                                item_template: Box::new(TemplateNode::text_binding("title")),
+                                empty_label: None,
                             },
                         ],
-                    },
-                    // Day cells grid
-                    TemplateNode::Repeater {
-                        source: "day_cells".into(),
-                        item_template: Box::new(TemplateNode::Container {
-                            direction: LayoutDirection::Vertical,
-                            gap: Some(2),
-                            padding: Some(4),
-                            children: vec![
-                                TemplateNode::DataBinding {
-                                    field: "day_label".into(),
-                                    component_id: "text".into(),
-                                    prop_key: "body".into(),
-                                },
-                                TemplateNode::Repeater {
-                                    source: "events".into(),
-                                    item_template: Box::new(TemplateNode::DataBinding {
-                                        field: "title".into(),
-                                        component_id: "text".into(),
-                                        prop_key: "body".into(),
-                                    }),
-                                    empty_label: None,
-                                },
-                            ],
-                        }),
-                        empty_label: Some("No days".into()),
-                    },
-                ],
-            },
-        },
-        ..Default::default()
-    }
+                    ),
+                    "No days",
+                ),
+            ],
+        ))
+        .build()
 }
 
 /// Gantt chart — timeline view with task bars and optional dependencies.
 pub fn gantt_chart() -> WidgetContribution {
-    WidgetContribution {
-        id: "gantt-chart".into(),
-        label: "Gantt Chart".into(),
-        description: "Timeline view with task bars, progress, and dependency lines".into(),
-        icon: Some("bar-chart".into()),
-        category: WidgetCategory::Custom,
-        config_fields: vec![
-            FieldSpec::text("start_field", "Start Field").required(),
-            FieldSpec::text("end_field", "End Field").required(),
-            FieldSpec::text("name_field", "Name Field").required(),
-            FieldSpec::text("progress_field", "Progress Field"),
+    widget("gantt-chart", "Gantt Chart")
+        .description("Timeline view with task bars, progress, and dependency lines")
+        .icon("bar-chart")
+        .category(WidgetCategory::Custom)
+        .field(FieldSpec::text("start_field", "Start Field").required())
+        .field(FieldSpec::text("end_field", "End Field").required())
+        .field(FieldSpec::text("name_field", "Name Field").required())
+        .field(FieldSpec::text("progress_field", "Progress Field"))
+        .field(
             FieldSpec::boolean("show_dependencies", "Show Dependencies").with_default(json!(true)),
-            FieldSpec::select(
-                "time_scale",
-                "Time Scale",
-                vec![
-                    SelectOption::new("day", "Day"),
-                    SelectOption::new("week", "Week"),
-                    SelectOption::new("month", "Month"),
-                ],
-            ),
-        ],
-        data_query: Some(DataQuery {
-            object_type: Some("task".into()),
-            sort: vec![QuerySort {
-                field: "start".into(),
-                descending: false,
-            }],
-            ..Default::default()
-        }),
-        data_key: Some("tasks".into()),
-        signals: vec![
+        )
+        .field(FieldSpec::select(
+            "time_scale",
+            "Time Scale",
+            vec![
+                SelectOption::new("day", "Day"),
+                SelectOption::new("week", "Week"),
+                SelectOption::new("month", "Month"),
+            ],
+        ))
+        .query(DataQuery::for_type("task").sort_asc("start"))
+        .data_key("tasks")
+        .signal(
             SignalSpec::new("task-clicked", "A task bar was clicked")
                 .with_payload(vec![FieldSpec::text("task_id", "Task ID")]),
+        )
+        .signal(
             SignalSpec::new("task-resized", "A task bar was resized").with_payload(vec![
                 FieldSpec::text("task_id", "Task ID"),
                 FieldSpec::text("new_start", "New Start"),
                 FieldSpec::text("new_end", "New End"),
             ]),
+        )
+        .signal(
             SignalSpec::new("dependency-clicked", "A dependency line was clicked").with_payload(
                 vec![
                     FieldSpec::text("source_id", "Source ID"),
                     FieldSpec::text("target_id", "Target ID"),
                 ],
             ),
-        ],
-        default_size: WidgetSize::new(4, 2),
-        min_size: Some(WidgetSize::new(3, 2)),
-        template: WidgetTemplate {
-            root: TemplateNode::Container {
-                direction: LayoutDirection::Horizontal,
-                gap: Some(0),
-                padding: Some(8),
-                children: vec![
-                    // Left: task label column
-                    TemplateNode::Container {
-                        direction: LayoutDirection::Vertical,
-                        gap: Some(4),
-                        padding: Some(8),
-                        children: vec![
-                            TemplateNode::Component {
-                                component_id: "heading".into(),
-                                props: json!({"body": "Tasks", "level": 4}),
+        )
+        .size(4, 2)
+        .min_size(3, 2)
+        .template(TemplateNode::horizontal(
+            0,
+            8,
+            vec![
+                TemplateNode::vertical(
+                    4,
+                    8,
+                    vec![
+                        TemplateNode::component("heading", json!({"body": "Tasks", "level": 4})),
+                        TemplateNode::repeater(
+                            "tasks",
+                            TemplateNode::text_binding("name"),
+                            "No tasks",
+                        ),
+                    ],
+                ),
+                TemplateNode::vertical(
+                    4,
+                    8,
+                    vec![
+                        TemplateNode::text_binding("timeline_header"),
+                        TemplateNode::repeater(
+                            "task_bars",
+                            TemplateNode::Container {
+                                direction: LayoutDirection::Horizontal,
+                                gap: Some(0),
+                                padding: None,
+                                children: vec![
+                                    TemplateNode::text_binding("bar"),
+                                    TemplateNode::conditional(
+                                        "progress",
+                                        TemplateNode::text_binding("progress"),
+                                    ),
+                                ],
                             },
-                            TemplateNode::Repeater {
-                                source: "tasks".into(),
-                                item_template: Box::new(TemplateNode::DataBinding {
-                                    field: "name".into(),
-                                    component_id: "text".into(),
-                                    prop_key: "body".into(),
-                                }),
-                                empty_label: Some("No tasks".into()),
-                            },
-                        ],
-                    },
-                    // Right: timeline area
-                    TemplateNode::Container {
-                        direction: LayoutDirection::Vertical,
-                        gap: Some(4),
-                        padding: Some(8),
-                        children: vec![
-                            TemplateNode::DataBinding {
-                                field: "timeline_header".into(),
-                                component_id: "text".into(),
-                                prop_key: "body".into(),
-                            },
-                            TemplateNode::Repeater {
-                                source: "task_bars".into(),
-                                item_template: Box::new(TemplateNode::Container {
-                                    direction: LayoutDirection::Horizontal,
-                                    gap: Some(0),
-                                    padding: None,
-                                    children: vec![
-                                        TemplateNode::DataBinding {
-                                            field: "bar".into(),
-                                            component_id: "text".into(),
-                                            prop_key: "body".into(),
-                                        },
-                                        TemplateNode::Conditional {
-                                            field: "progress".into(),
-                                            child: Box::new(TemplateNode::DataBinding {
-                                                field: "progress".into(),
-                                                component_id: "text".into(),
-                                                prop_key: "body".into(),
-                                            }),
-                                            fallback: None,
-                                        },
-                                    ],
-                                }),
-                                empty_label: Some("No task bars".into()),
-                            },
-                        ],
-                    },
-                ],
-            },
-        },
-        ..Default::default()
-    }
+                            "No task bars",
+                        ),
+                    ],
+                ),
+            ],
+        ))
+        .build()
 }
 
 /// Gallery view — image/card grid with preview support.
 pub fn gallery_view() -> WidgetContribution {
-    WidgetContribution {
-        id: "gallery-view".into(),
-        label: "Gallery".into(),
-        description: "Grid of image or card thumbnails with preview".into(),
-        icon: Some("grid".into()),
-        category: WidgetCategory::DataTable,
-        config_fields: vec![
-            FieldSpec::text("image_field", "Image Field").required(),
-            FieldSpec::text("title_field", "Title Field"),
-            FieldSpec::text("subtitle_field", "Subtitle Field"),
+    widget("gallery-view", "Gallery")
+        .description("Grid of image or card thumbnails with preview")
+        .icon("grid")
+        .category(WidgetCategory::DataTable)
+        .field(FieldSpec::text("image_field", "Image Field").required())
+        .field(FieldSpec::text("title_field", "Title Field"))
+        .field(FieldSpec::text("subtitle_field", "Subtitle Field"))
+        .field(
             FieldSpec::number(
                 "columns",
                 "Columns",
                 crate::widget::NumericBounds::min_max(1.0, 12.0),
             )
             .with_default(json!(4)),
+        )
+        .field(
             FieldSpec::number("gap", "Gap (px)", crate::widget::NumericBounds::min(0.0))
                 .with_default(json!(8)),
-            FieldSpec::select(
-                "aspect_ratio",
-                "Aspect Ratio",
-                vec![
-                    SelectOption::new("square", "Square (1:1)"),
-                    SelectOption::new("landscape", "Landscape (16:9)"),
-                    SelectOption::new("portrait", "Portrait (3:4)"),
-                    SelectOption::new("auto", "Auto"),
-                ],
-            ),
-        ],
-        data_query: Some(DataQuery {
-            object_type: Some("media-asset".into()),
-            ..Default::default()
-        }),
-        data_key: Some("items".into()),
-        signals: vec![
+        )
+        .field(FieldSpec::select(
+            "aspect_ratio",
+            "Aspect Ratio",
+            vec![
+                SelectOption::new("square", "Square (1:1)"),
+                SelectOption::new("landscape", "Landscape (16:9)"),
+                SelectOption::new("portrait", "Portrait (3:4)"),
+                SelectOption::new("auto", "Auto"),
+            ],
+        ))
+        .query(DataQuery::for_type("media-asset"))
+        .data_key("items")
+        .signal(
             SignalSpec::new("item-clicked", "A gallery item was clicked")
                 .with_payload(vec![FieldSpec::text("item_id", "Item ID")]),
-            SignalSpec::new("item-selected", "A gallery item was selected")
-                .with_payload(vec![FieldSpec::text("item_id", "Item ID")]),
-        ],
-        default_size: WidgetSize::new(4, 3),
-        min_size: Some(WidgetSize::new(2, 2)),
-        template: WidgetTemplate {
-            root: TemplateNode::Container {
-                direction: LayoutDirection::Vertical,
-                gap: Some(8),
-                padding: Some(8),
-                children: vec![TemplateNode::Repeater {
-                    source: "items".into(),
-                    item_template: Box::new(TemplateNode::Container {
-                        direction: LayoutDirection::Vertical,
-                        gap: Some(4),
-                        padding: Some(4),
-                        children: vec![
-                            TemplateNode::DataBinding {
-                                field: "image_url".into(),
-                                component_id: "image".into(),
-                                prop_key: "src".into(),
-                            },
-                            TemplateNode::Conditional {
-                                field: "title".into(),
-                                child: Box::new(TemplateNode::DataBinding {
-                                    field: "title".into(),
-                                    component_id: "text".into(),
-                                    prop_key: "body".into(),
-                                }),
-                                fallback: None,
-                            },
-                        ],
-                    }),
-                    empty_label: Some("No items".into()),
-                }],
-            },
-        },
-        ..Default::default()
-    }
+        )
+        .signal(SignalSpec::selection("item"))
+        .size(4, 3)
+        .min_size(2, 2)
+        .template(TemplateNode::vertical(
+            8,
+            8,
+            vec![TemplateNode::repeater(
+                "items",
+                TemplateNode::vertical(
+                    4,
+                    4,
+                    vec![
+                        TemplateNode::DataBinding {
+                            field: "image_url".into(),
+                            component_id: "image".into(),
+                            prop_key: "src".into(),
+                        },
+                        TemplateNode::conditional("title", TemplateNode::text_binding("title")),
+                    ],
+                ),
+                "No items",
+            )],
+        ))
+        .build()
 }
 
 /// Inbox view — threaded message list.
 pub fn inbox_view() -> WidgetContribution {
-    WidgetContribution {
-        id: "inbox-view".into(),
-        label: "Inbox".into(),
-        description: "Threaded message list with read/unread state".into(),
-        icon: Some("inbox".into()),
-        category: WidgetCategory::DataTable,
-        config_fields: vec![
-            FieldSpec::text("sender_field", "Sender Field").required(),
-            FieldSpec::text("subject_field", "Subject Field").required(),
-            FieldSpec::text("body_field", "Body Field"),
-            FieldSpec::text("date_field", "Date Field"),
-            FieldSpec::boolean("show_preview", "Show Body Preview").with_default(json!(true)),
-            FieldSpec::boolean("group_threads", "Group by Thread").with_default(json!(true)),
-        ],
-        data_query: Some(DataQuery {
-            object_type: Some("message".into()),
-            sort: vec![QuerySort {
-                field: "date".into(),
-                descending: true,
-            }],
-            ..Default::default()
-        }),
-        data_key: Some("messages".into()),
-        signals: vec![
+    widget("inbox-view", "Inbox")
+        .description("Threaded message list with read/unread state")
+        .icon("inbox")
+        .category(WidgetCategory::DataTable)
+        .field(FieldSpec::text("sender_field", "Sender Field").required())
+        .field(FieldSpec::text("subject_field", "Subject Field").required())
+        .field(FieldSpec::text("body_field", "Body Field"))
+        .field(FieldSpec::text("date_field", "Date Field"))
+        .field(FieldSpec::boolean("show_preview", "Show Body Preview").with_default(json!(true)))
+        .field(FieldSpec::boolean("group_threads", "Group by Thread").with_default(json!(true)))
+        .query(DataQuery::for_type("message").sort_desc("date"))
+        .data_key("messages")
+        .signal(
             SignalSpec::new("message-clicked", "A message was clicked")
                 .with_payload(vec![FieldSpec::text("message_id", "Message ID")]),
+        )
+        .signal(
             SignalSpec::new("message-starred", "A message was starred/unstarred").with_payload(
                 vec![
                     FieldSpec::text("message_id", "Message ID"),
                     FieldSpec::text("starred", "Starred"),
                 ],
             ),
+        )
+        .signal(
             SignalSpec::new("thread-expanded", "A thread was expanded")
                 .with_payload(vec![FieldSpec::text("thread_id", "Thread ID")]),
-        ],
-        default_size: WidgetSize::new(3, 4),
-        min_size: Some(WidgetSize::new(2, 2)),
-        template: WidgetTemplate {
-            root: TemplateNode::Container {
-                direction: LayoutDirection::Vertical,
-                gap: Some(0),
-                padding: Some(0),
-                children: vec![TemplateNode::Repeater {
-                    source: "messages".into(),
-                    item_template: Box::new(TemplateNode::Container {
-                        direction: LayoutDirection::Vertical,
-                        gap: Some(2),
-                        padding: Some(12),
-                        children: vec![
-                            TemplateNode::Container {
-                                direction: LayoutDirection::Horizontal,
-                                gap: Some(8),
-                                padding: None,
-                                children: vec![
-                                    TemplateNode::DataBinding {
-                                        field: "sender".into(),
-                                        component_id: "text".into(),
-                                        prop_key: "body".into(),
-                                    },
-                                    TemplateNode::DataBinding {
-                                        field: "date".into(),
-                                        component_id: "text".into(),
-                                        prop_key: "body".into(),
-                                    },
-                                ],
-                            },
-                            TemplateNode::DataBinding {
-                                field: "subject".into(),
-                                component_id: "text".into(),
-                                prop_key: "body".into(),
-                            },
-                            TemplateNode::Conditional {
-                                field: "preview".into(),
-                                child: Box::new(TemplateNode::DataBinding {
-                                    field: "preview".into(),
-                                    component_id: "text".into(),
-                                    prop_key: "body".into(),
-                                }),
-                                fallback: None,
-                            },
-                        ],
-                    }),
-                    empty_label: Some("No messages".into()),
-                }],
-            },
-        },
-        ..Default::default()
-    }
+        )
+        .size(3, 4)
+        .min_size(2, 2)
+        .template(TemplateNode::vertical(
+            0,
+            0,
+            vec![TemplateNode::repeater(
+                "messages",
+                TemplateNode::vertical(
+                    2,
+                    12,
+                    vec![
+                        TemplateNode::Container {
+                            direction: LayoutDirection::Horizontal,
+                            gap: Some(8),
+                            padding: None,
+                            children: vec![
+                                TemplateNode::text_binding("sender"),
+                                TemplateNode::text_binding("date"),
+                            ],
+                        },
+                        TemplateNode::text_binding("subject"),
+                        TemplateNode::conditional("preview", TemplateNode::text_binding("preview")),
+                    ],
+                ),
+                "No messages",
+            )],
+        ))
+        .build()
 }
 
 /// Timeline view — chronological event stream.
 pub fn timeline_view() -> WidgetContribution {
-    WidgetContribution {
-        id: "timeline-view".into(),
-        label: "Timeline".into(),
-        description: "Chronological stream of events and activities".into(),
-        icon: Some("clock".into()),
-        category: WidgetCategory::DataTable,
-        config_fields: vec![
-            FieldSpec::text("title_field", "Title Field").required(),
-            FieldSpec::text("date_field", "Date Field").required(),
-            FieldSpec::text("description_field", "Description Field"),
-            FieldSpec::text("icon_field", "Icon Field"),
-            FieldSpec::boolean("show_timestamps", "Show Timestamps").with_default(json!(true)),
-            FieldSpec::boolean("group_by_date", "Group by Date").with_default(json!(true)),
-        ],
-        data_query: Some(DataQuery {
-            object_type: Some("activity".into()),
-            sort: vec![QuerySort {
-                field: "date".into(),
-                descending: true,
-            }],
-            ..Default::default()
-        }),
-        data_key: Some("events".into()),
-        signals: vec![
+    widget("timeline-view", "Timeline")
+        .description("Chronological stream of events and activities")
+        .icon("clock")
+        .category(WidgetCategory::DataTable)
+        .field(FieldSpec::text("title_field", "Title Field").required())
+        .field(FieldSpec::text("date_field", "Date Field").required())
+        .field(FieldSpec::text("description_field", "Description Field"))
+        .field(FieldSpec::text("icon_field", "Icon Field"))
+        .field(FieldSpec::boolean("show_timestamps", "Show Timestamps").with_default(json!(true)))
+        .field(FieldSpec::boolean("group_by_date", "Group by Date").with_default(json!(true)))
+        .query(DataQuery::for_type("activity").sort_desc("date"))
+        .data_key("events")
+        .signal(
             SignalSpec::new("event-clicked", "A timeline event was clicked")
                 .with_payload(vec![FieldSpec::text("event_id", "Event ID")]),
-        ],
-        default_size: WidgetSize::new(3, 4),
-        min_size: Some(WidgetSize::new(2, 2)),
-        template: WidgetTemplate {
-            root: TemplateNode::Container {
-                direction: LayoutDirection::Vertical,
-                gap: Some(0),
-                padding: Some(8),
-                children: vec![TemplateNode::Repeater {
-                    source: "events".into(),
-                    item_template: Box::new(TemplateNode::Container {
-                        direction: LayoutDirection::Horizontal,
-                        gap: Some(12),
-                        padding: Some(8),
-                        children: vec![
-                            TemplateNode::Conditional {
-                                field: "timestamp".into(),
-                                child: Box::new(TemplateNode::DataBinding {
-                                    field: "timestamp".into(),
-                                    component_id: "text".into(),
-                                    prop_key: "body".into(),
-                                }),
-                                fallback: None,
-                            },
-                            TemplateNode::Container {
-                                direction: LayoutDirection::Vertical,
-                                gap: Some(2),
-                                padding: None,
-                                children: vec![
-                                    TemplateNode::DataBinding {
-                                        field: "title".into(),
-                                        component_id: "text".into(),
-                                        prop_key: "body".into(),
-                                    },
-                                    TemplateNode::Conditional {
-                                        field: "description".into(),
-                                        child: Box::new(TemplateNode::DataBinding {
-                                            field: "description".into(),
-                                            component_id: "text".into(),
-                                            prop_key: "body".into(),
-                                        }),
-                                        fallback: None,
-                                    },
-                                ],
-                            },
-                        ],
-                    }),
-                    empty_label: Some("No events".into()),
-                }],
-            },
-        },
-        ..Default::default()
-    }
+        )
+        .size(3, 4)
+        .min_size(2, 2)
+        .template(TemplateNode::vertical(
+            0,
+            8,
+            vec![TemplateNode::repeater(
+                "events",
+                TemplateNode::horizontal(
+                    12,
+                    8,
+                    vec![
+                        TemplateNode::conditional(
+                            "timestamp",
+                            TemplateNode::text_binding("timestamp"),
+                        ),
+                        TemplateNode::vertical(
+                            2,
+                            0,
+                            vec![
+                                TemplateNode::text_binding("title"),
+                                TemplateNode::conditional(
+                                    "description",
+                                    TemplateNode::text_binding("description"),
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+                "No events",
+            )],
+        ))
+        .build()
 }
 
 #[cfg(test)]

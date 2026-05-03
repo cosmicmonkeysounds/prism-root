@@ -516,20 +516,17 @@ fn iso_week_start(date: NaiveDate) -> NaiveDate {
 
 pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
     use crate::widget::{
-        DataQuery, FieldSpec, LayoutDirection, NumericBounds, QuerySort, SelectOption, SignalSpec,
-        TemplateNode, ToolbarAction, WidgetCategory, WidgetContribution, WidgetSize,
-        WidgetTemplate,
+        widget, DataQuery, FieldSpec, NumericBounds, SelectOption, SignalSpec, TemplateNode,
+        ToolbarAction, WidgetCategory,
     };
     use serde_json::json;
 
     vec![
-        WidgetContribution {
-            id: "calendar-month-view".into(),
-            label: "Calendar".into(),
-            description: "Month grid showing events with day/week/month views".into(),
-            icon: Some("calendar".into()),
-            category: WidgetCategory::Temporal,
-            config_fields: vec![
+        widget("calendar-month-view", "Calendar")
+            .description("Month grid showing events with day/week/month views")
+            .icon("calendar")
+            .category(WidgetCategory::Temporal)
+            .fields(vec![
                 FieldSpec::select(
                     "view_mode",
                     "View Mode",
@@ -540,134 +537,91 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
                     ],
                 ),
                 FieldSpec::boolean("show_weekends", "Show Weekends").with_default(json!(true)),
-            ],
-            signals: vec![
-                SignalSpec::new("event-selected", "An event was selected")
-                    .with_payload(vec![FieldSpec::text("event_id", "Event ID")]),
+            ])
+            .signal(SignalSpec::selection("event"))
+            .signal(
                 SignalSpec::new("date-selected", "A date was clicked")
                     .with_payload(vec![FieldSpec::text("date", "Date")]),
-            ],
-            toolbar_actions: vec![
-                ToolbarAction::signal("today", "Today", "calendar"),
-                ToolbarAction::signal("prev", "Previous", "arrow-left"),
-                ToolbarAction::signal("next", "Next", "arrow-right"),
-            ],
-            default_size: WidgetSize::new(3, 2),
-            min_size: Some(WidgetSize::new(2, 1)),
-            data_query: Some(DataQuery {
-                object_type: Some("event".into()),
-                sort: vec![QuerySort {
-                    field: "date".into(),
-                    descending: false,
-                }],
-                ..Default::default()
-            }),
-            data_key: Some("events".into()),
-            data_fields: vec![
-                FieldSpec::text("title", "Title"),
-                FieldSpec::text("date", "Date"),
-            ],
-            template: WidgetTemplate {
-                root: TemplateNode::Container {
-                    direction: LayoutDirection::Vertical,
-                    gap: Some(8),
-                    padding: Some(12),
-                    children: vec![
-                        TemplateNode::DataBinding {
-                            field: "title".into(),
-                            component_id: "heading".into(),
-                            prop_key: "body".into(),
-                        },
-                        TemplateNode::Repeater {
-                            source: "events".into(),
-                            item_template: Box::new(TemplateNode::Component {
-                                component_id: "text".into(),
-                                props: json!({"body": "event"}),
-                            }),
-                            empty_label: Some("No events".into()),
-                        },
-                    ],
-                },
-            },
-            ..Default::default()
-        },
-        WidgetContribution {
-            id: "calendar-agenda".into(),
-            label: "Agenda".into(),
-            description: "Upcoming events list".into(),
-            icon: Some("list".into()),
-            category: WidgetCategory::Temporal,
-            config_fields: vec![FieldSpec::number(
-                "days_ahead",
-                "Days Ahead",
-                NumericBounds::min_max(1.0, 90.0),
             )
-            .with_default(json!(7))],
-            signals: vec![SignalSpec::new("event-selected", "An event was selected")
-                .with_payload(vec![FieldSpec::text("event_id", "Event ID")])],
-            toolbar_actions: vec![ToolbarAction::signal("refresh", "Refresh", "refresh")],
-            default_size: WidgetSize::new(2, 2),
-            min_size: Some(WidgetSize::new(1, 1)),
-            data_query: Some(DataQuery {
-                object_type: Some("event".into()),
-                sort: vec![QuerySort {
-                    field: "date".into(),
-                    descending: false,
-                }],
-                ..Default::default()
-            }),
-            data_key: Some("events".into()),
-            data_fields: vec![
+            .action(ToolbarAction::signal("today", "Today", "calendar"))
+            .action(ToolbarAction::signal("prev", "Previous", "arrow-left"))
+            .action(ToolbarAction::signal("next", "Next", "arrow-right"))
+            .size(3, 2)
+            .min_size(2, 1)
+            .query(DataQuery::for_type("event").sort_asc("date"))
+            .data_key("events")
+            .data_fields(vec![
                 FieldSpec::text("title", "Title"),
                 FieldSpec::text("date", "Date"),
-            ],
-            template: WidgetTemplate {
-                root: TemplateNode::Container {
-                    direction: LayoutDirection::Vertical,
-                    gap: Some(4),
-                    padding: Some(8),
-                    children: vec![
-                        TemplateNode::Component {
-                            component_id: "heading".into(),
-                            props: json!({"body": "Upcoming", "level": 3}),
-                        },
-                        TemplateNode::Repeater {
-                            source: "events".into(),
-                            item_template: Box::new(TemplateNode::Component {
-                                component_id: "text".into(),
-                                props: json!({"body": "event"}),
-                            }),
-                            empty_label: Some("No upcoming events".into()),
-                        },
-                    ],
-                },
-            },
-            ..Default::default()
-        },
-        WidgetContribution {
-            id: "calendar-mini".into(),
-            label: "Mini Calendar".into(),
-            description: "Compact date picker".into(),
-            icon: Some("calendar".into()),
-            category: WidgetCategory::Temporal,
-            config_fields: vec![FieldSpec::boolean("show_week_numbers", "Show Week Numbers")],
-            signals: vec![SignalSpec::new("date-selected", "A date was selected")
-                .with_payload(vec![FieldSpec::text("date", "Date")])],
-            default_size: WidgetSize::new(1, 1),
-            template: WidgetTemplate {
-                root: TemplateNode::Container {
-                    direction: LayoutDirection::Vertical,
-                    gap: Some(4),
-                    padding: Some(8),
-                    children: vec![TemplateNode::DataBinding {
-                        field: "current_date".into(),
-                        component_id: "text".into(),
+            ])
+            .template(TemplateNode::vertical(
+                8,
+                12,
+                vec![
+                    TemplateNode::DataBinding {
+                        field: "title".into(),
+                        component_id: "heading".into(),
                         prop_key: "body".into(),
-                    }],
-                },
-            },
-            ..Default::default()
-        },
+                    },
+                    TemplateNode::repeater(
+                        "events",
+                        TemplateNode::component("text", json!({"body": "event"})),
+                        "No events",
+                    ),
+                ],
+            ))
+            .build(),
+        widget("calendar-agenda", "Agenda")
+            .description("Upcoming events list")
+            .icon("list")
+            .category(WidgetCategory::Temporal)
+            .field(
+                FieldSpec::number(
+                    "days_ahead",
+                    "Days Ahead",
+                    NumericBounds::min_max(1.0, 90.0),
+                )
+                .with_default(json!(7)),
+            )
+            .signal(SignalSpec::selection("event"))
+            .action(ToolbarAction::refresh())
+            .size(2, 2)
+            .min_size(1, 1)
+            .query(DataQuery::for_type("event").sort_asc("date"))
+            .data_key("events")
+            .data_fields(vec![
+                FieldSpec::text("title", "Title"),
+                FieldSpec::text("date", "Date"),
+            ])
+            .template(TemplateNode::vertical(
+                4,
+                8,
+                vec![
+                    TemplateNode::component("heading", json!({"body": "Upcoming", "level": 3})),
+                    TemplateNode::repeater(
+                        "events",
+                        TemplateNode::component("text", json!({"body": "event"})),
+                        "No upcoming events",
+                    ),
+                ],
+            ))
+            .build(),
+        widget("calendar-mini", "Mini Calendar")
+            .description("Compact date picker")
+            .icon("calendar")
+            .category(WidgetCategory::Temporal)
+            .field(FieldSpec::boolean("show_week_numbers", "Show Week Numbers"))
+            .signal(
+                SignalSpec::new("date-selected", "A date was selected")
+                    .with_payload(vec![FieldSpec::text("date", "Date")]),
+            )
+            .size(1, 1)
+            .template(TemplateNode::vertical(
+                4,
+                8,
+                vec![TemplateNode::text_binding("current_date")],
+            ))
+            .build(),
     ]
 }
 

@@ -9,8 +9,10 @@
 //! [`ShellModeContext::can_see`] returns whether that lens is
 //! reachable in the current context.
 
+use prism_luau_derive::luau_expose;
 use serde::{Deserialize, Serialize};
 
+#[luau_expose]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ShellMode {
@@ -19,6 +21,7 @@ pub enum ShellMode {
     Admin,
 }
 
+#[luau_expose]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Permission {

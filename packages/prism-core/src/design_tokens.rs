@@ -1,10 +1,12 @@
 //! Design tokens — the canonical color / spacing / typography palette
 //! the Slint UI tree reads from.
 
+use prism_luau_derive::luau_expose;
 use serde::{Deserialize, Serialize};
 
 /// Static token table. Everything is a `const` so the Slint property
 /// bindings can reference them without any runtime lookup.
+#[luau_expose]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct DesignTokens {
     pub colors: Colors,
@@ -13,6 +15,7 @@ pub struct DesignTokens {
     pub typography: Typography,
 }
 
+#[luau_expose]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Colors {
     pub background: Rgba,
@@ -27,6 +30,7 @@ pub struct Colors {
     pub success: Rgba,
 }
 
+#[luau_expose]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Spacing {
     pub xs: u16,
@@ -36,6 +40,7 @@ pub struct Spacing {
     pub xl: u16,
 }
 
+#[luau_expose]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Radius {
     pub sm: u16,
@@ -44,6 +49,7 @@ pub struct Radius {
     pub pill: u16,
 }
 
+#[luau_expose]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Typography {
     pub font_size_sm: u16,
@@ -55,6 +61,7 @@ pub struct Typography {
 
 /// Packed RGBA as four u8s. Stored as a struct instead of a `u32` so
 /// serde output is human-readable.
+#[luau_expose]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Rgba {
     pub r: u8,

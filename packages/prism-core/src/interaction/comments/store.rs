@@ -437,116 +437,82 @@ fn thread_last_activity(root: &Comment, replies: &[Comment]) -> String {
 
 pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
     use crate::widget::{
-        DataQuery, FieldSpec, LayoutDirection, SelectOption, SignalSpec, TemplateNode,
-        ToolbarAction, WidgetCategory, WidgetContribution, WidgetSize, WidgetTemplate,
+        widget, DataQuery, FieldSpec, SelectOption, SignalSpec, TemplateNode, ToolbarAction,
+        WidgetCategory,
     };
     use serde_json::json;
 
     vec![
-        WidgetContribution {
-            id: "comment-thread".into(),
-            label: "Comment Thread".into(),
-            description: "Displays a comment thread for an object".into(),
-            category: WidgetCategory::Communication,
-            default_size: WidgetSize::new(2, 2),
-            data_query: Some(DataQuery {
-                object_type: Some("comment".into()),
-                ..Default::default()
-            }),
-            data_key: Some("threads".into()),
-            config_fields: vec![
-                FieldSpec::text("object_id", "Object ID"),
-                FieldSpec::boolean("show_resolved", "Show Resolved"),
-                FieldSpec::select(
-                    "sort_order",
-                    "Sort Order",
-                    vec![
-                        SelectOption::new("newest", "Newest First"),
-                        SelectOption::new("oldest", "Oldest First"),
-                    ],
-                ),
-            ],
-            signals: vec![
+        widget("comment-thread", "Comment Thread")
+            .description("Displays a comment thread for an object")
+            .category(WidgetCategory::Communication)
+            .size(2, 2)
+            .query(DataQuery::for_type("comment"))
+            .data_key("threads")
+            .field(FieldSpec::text("object_id", "Object ID"))
+            .field(FieldSpec::boolean("show_resolved", "Show Resolved"))
+            .field(FieldSpec::select(
+                "sort_order",
+                "Sort Order",
+                vec![
+                    SelectOption::new("newest", "Newest First"),
+                    SelectOption::new("oldest", "Oldest First"),
+                ],
+            ))
+            .signal(
                 SignalSpec::new("comment-added", "A new comment was added")
                     .with_payload(vec![FieldSpec::text("body", "Body")]),
+            )
+            .signal(
                 SignalSpec::new("comment-resolved", "A comment was resolved")
                     .with_payload(vec![FieldSpec::text("comment_id", "Comment ID")]),
+            )
+            .signal(
                 SignalSpec::new("reply-added", "A reply was added").with_payload(vec![
                     FieldSpec::text("parent_id", "Parent ID"),
                     FieldSpec::text("body", "Body"),
                 ]),
-            ],
-            toolbar_actions: vec![
-                ToolbarAction::signal("new-comment", "New Comment", "plus"),
-                ToolbarAction::signal("resolve-all", "Resolve All", "check"),
-            ],
-            template: WidgetTemplate {
-                root: TemplateNode::Container {
-                    direction: LayoutDirection::Vertical,
-                    gap: Some(8),
-                    padding: Some(12),
-                    children: vec![
-                        TemplateNode::Component {
-                            component_id: "heading".into(),
-                            props: json!({"body": "Comments"}),
-                        },
-                        TemplateNode::Conditional {
-                            field: "has_comments".into(),
-                            child: Box::new(TemplateNode::Repeater {
-                                source: "threads".into(),
-                                item_template: Box::new(TemplateNode::DataBinding {
-                                    field: "body".into(),
-                                    component_id: "text".into(),
-                                    prop_key: "body".into(),
-                                }),
-                                empty_label: Some("No comments yet".into()),
-                            }),
-                            fallback: None,
-                        },
-                        TemplateNode::DataBinding {
-                            field: "compose".into(),
-                            component_id: "input".into(),
-                            prop_key: "value".into(),
-                        },
-                    ],
-                },
-            },
-            ..Default::default()
-        },
-        WidgetContribution {
-            id: "comment-count".into(),
-            label: "Comment Count".into(),
-            description: "Badge showing comment count for an object".into(),
-            category: WidgetCategory::Communication,
-            default_size: WidgetSize::new(1, 1),
-            data_query: Some(DataQuery {
-                object_type: Some("comment".into()),
-                ..Default::default()
-            }),
-            data_key: Some("comments".into()),
-            config_fields: vec![FieldSpec::text("object_id", "Object ID")],
-            signals: vec![SignalSpec::new("clicked", "Badge clicked")],
-            template: WidgetTemplate {
-                root: TemplateNode::Container {
-                    direction: LayoutDirection::Vertical,
-                    gap: Some(4),
-                    padding: Some(8),
-                    children: vec![
-                        TemplateNode::DataBinding {
-                            field: "count".into(),
-                            component_id: "text".into(),
-                            prop_key: "body".into(),
-                        },
-                        TemplateNode::DataBinding {
-                            field: "unresolved_count".into(),
-                            component_id: "text".into(),
-                            prop_key: "body".into(),
-                        },
-                    ],
-                },
-            },
-            ..Default::default()
-        },
+            )
+            .action(ToolbarAction::signal("new-comment", "New Comment", "plus"))
+            .action(ToolbarAction::signal("resolve-all", "Resolve All", "check"))
+            .template(TemplateNode::vertical(
+                8,
+                12,
+                vec![
+                    TemplateNode::component("heading", json!({"body": "Comments"})),
+                    TemplateNode::conditional(
+                        "has_comments",
+                        TemplateNode::repeater(
+                            "threads",
+                            TemplateNode::text_binding("body"),
+                            "No comments yet",
+                        ),
+                    ),
+                    TemplateNode::DataBinding {
+                        field: "compose".into(),
+                        component_id: "input".into(),
+                        prop_key: "value".into(),
+                    },
+                ],
+            ))
+            .build(),
+        widget("comment-count", "Comment Count")
+            .description("Badge showing comment count for an object")
+            .category(WidgetCategory::Communication)
+            .size(1, 1)
+            .query(DataQuery::for_type("comment"))
+            .data_key("comments")
+            .field(FieldSpec::text("object_id", "Object ID"))
+            .signal(SignalSpec::new("clicked", "Badge clicked"))
+            .template(TemplateNode::vertical(
+                4,
+                8,
+                vec![
+                    TemplateNode::text_binding("count"),
+                    TemplateNode::text_binding("unresolved_count"),
+                ],
+            ))
+            .build(),
     ]
 }
 

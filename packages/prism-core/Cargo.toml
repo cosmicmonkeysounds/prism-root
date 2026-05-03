@@ -14,8 +14,24 @@ default = []
 # pure-logic consumers (design tokens, shell mode, puck-JSON parsing)
 # so they don't drag loro into their dependency tree.
 crdt = ["dep:loro"]
+# Phase 1 of `docs/dev/luau-integration-plan.md`. Off by default so
+# pure-logic consumers don't drag mlua's vendored Luau build into their
+# dependency tree. The `#[luau_expose]` annotations themselves live in
+# the source unconditionally — only the generated `mlua::UserData` /
+# `IntoLua` / `FromLua` impls are gated on this feature. The Luau type
+# stub constants (`LUAU_TYPE_DEF` / `LUAU_TYPE_NAME`) are always
+# emitted so the codegen subcommand can scrape them without flipping
+# the feature on.
+luau = ["dep:mlua"]
 
 [dependencies]
+# Proc macro that turns `#[luau_expose]` into `mlua::UserData` impls +
+# `LUAU_TYPE_DEF` constants. Always pulled in (the macro itself is
+# zero-cost when not invoked); the `mlua` runtime side only compiles
+# when the `luau` feature is on.
+prism-luau-derive = { workspace = true }
+mlua = { workspace = true, optional = true }
+
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

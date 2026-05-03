@@ -160,40 +160,29 @@ pub fn fitness_summary(logs: &[FitnessLog], default_weight_kg: f64) -> FitnessSu
 
 pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
     use crate::widget::{
-        DataQuery, FieldSpec, LayoutDirection, NumericBounds, QuerySort, SignalSpec, TemplateNode,
-        ToolbarAction, WidgetCategory, WidgetContribution, WidgetSize, WidgetTemplate,
+        widget, DataQuery, FieldSpec, NumericBounds, SignalSpec, TemplateNode, ToolbarAction,
+        WidgetCategory,
     };
 
     vec![
-        WidgetContribution {
-            id: "fitness-log".into(),
-            label: "Fitness Log".into(),
-            description: "Workout history and calorie tracking".into(),
-            category: WidgetCategory::Display,
-            config_fields: vec![
+        widget("fitness-log", "Fitness Log")
+            .description("Workout history and calorie tracking")
+            .category(WidgetCategory::Display)
+            .field(
                 FieldSpec::number("limit", "Limit", NumericBounds::unbounded())
                     .with_default(json!(20)),
-            ],
-            signals: vec![
-                SignalSpec::new("log-selected", "A workout log was selected")
-                    .with_payload(vec![FieldSpec::text("log_id", "Log ID")]),
-            ],
-            toolbar_actions: vec![
-                ToolbarAction::signal("new-log", "New Log", "add"),
-                ToolbarAction::signal("refresh", "Refresh", "refresh"),
-            ],
-            default_size: WidgetSize::new(2, 2),
-            data_query: Some(DataQuery {
-                object_type: Some("fitness_log".into()),
-                sort: vec![QuerySort {
-                    field: "date".into(),
-                    descending: true,
-                }],
-                limit: Some(20),
-                ..Default::default()
-            }),
-            data_key: Some("logs".into()),
-            data_fields: vec![
+            )
+            .signal(SignalSpec::selection("log"))
+            .action(ToolbarAction::signal("new-log", "New Log", "add"))
+            .action(ToolbarAction::refresh())
+            .size(2, 2)
+            .query(
+                DataQuery::for_type("fitness_log")
+                    .sort_desc("date")
+                    .with_limit(20),
+            )
+            .data_key("logs")
+            .data_fields(vec![
                 FieldSpec::text("activity", "Activity"),
                 FieldSpec::text("date", "Date"),
                 FieldSpec::number(
@@ -202,48 +191,32 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
                     NumericBounds::unbounded(),
                 ),
                 FieldSpec::number("calories", "Calories", NumericBounds::unbounded()),
-            ],
-            template: WidgetTemplate {
-                root: TemplateNode::Container {
-                    direction: LayoutDirection::Vertical,
-                    gap: Some(8),
-                    padding: Some(12),
-                    children: vec![
-                        TemplateNode::Component {
-                            component_id: "heading".into(),
-                            props: json!({"body": "Workout Log", "level": 3}),
-                        },
-                        TemplateNode::Repeater {
-                            source: "logs".into(),
-                            item_template: Box::new(TemplateNode::Component {
-                                component_id: "text".into(),
-                                props: json!({"body": "log"}),
-                            }),
-                            empty_label: Some("No workouts logged".into()),
-                        },
-                    ],
-                },
-            },
-            ..Default::default()
-        },
-        WidgetContribution {
-            id: "personal-bests".into(),
-            label: "Personal Bests".into(),
-            description: "PR board — all-time personal records".into(),
-            category: WidgetCategory::Display,
-            config_fields: vec![],
-            signals: vec![
+            ])
+            .template(TemplateNode::vertical(
+                8,
+                12,
+                vec![
+                    TemplateNode::component("heading", json!({"body": "Workout Log", "level": 3})),
+                    TemplateNode::repeater(
+                        "logs",
+                        TemplateNode::component("text", json!({"body": "log"})),
+                        "No workouts logged",
+                    ),
+                ],
+            ))
+            .build(),
+        widget("personal-bests", "Personal Bests")
+            .description("PR board — all-time personal records")
+            .category(WidgetCategory::Display)
+            .signal(
                 SignalSpec::new("exercise-selected", "An exercise was selected")
                     .with_payload(vec![FieldSpec::text("exercise", "Exercise")]),
-            ],
-            toolbar_actions: vec![ToolbarAction::signal("refresh", "Refresh", "refresh")],
-            default_size: WidgetSize::new(2, 1),
-            data_query: Some(DataQuery {
-                object_type: Some("fitness_log".into()),
-                ..Default::default()
-            }),
-            data_key: Some("personal_bests".into()),
-            data_fields: vec![
+            )
+            .action(ToolbarAction::refresh())
+            .size(2, 1)
+            .query(DataQuery::for_type("fitness_log"))
+            .data_key("personal_bests")
+            .data_fields(vec![
                 FieldSpec::text("exercise", "Exercise"),
                 FieldSpec::number(
                     "max_weight_kg",
@@ -252,30 +225,23 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
                 ),
                 FieldSpec::number("max_reps", "Max Reps", NumericBounds::unbounded()),
                 FieldSpec::number("max_volume", "Max Volume", NumericBounds::unbounded()),
-            ],
-            template: WidgetTemplate {
-                root: TemplateNode::Container {
-                    direction: LayoutDirection::Vertical,
-                    gap: Some(8),
-                    padding: Some(12),
-                    children: vec![
-                        TemplateNode::Component {
-                            component_id: "heading".into(),
-                            props: json!({"body": "Personal Bests", "level": 3}),
-                        },
-                        TemplateNode::Repeater {
-                            source: "personal_bests".into(),
-                            item_template: Box::new(TemplateNode::Component {
-                                component_id: "text".into(),
-                                props: json!({"body": "record"}),
-                            }),
-                            empty_label: Some("No records yet".into()),
-                        },
-                    ],
-                },
-            },
-            ..Default::default()
-        },
+            ])
+            .template(TemplateNode::vertical(
+                8,
+                12,
+                vec![
+                    TemplateNode::component(
+                        "heading",
+                        json!({"body": "Personal Bests", "level": 3}),
+                    ),
+                    TemplateNode::repeater(
+                        "personal_bests",
+                        TemplateNode::component("text", json!({"body": "record"})),
+                        "No records yet",
+                    ),
+                ],
+            ))
+            .build(),
     ]
 }
 

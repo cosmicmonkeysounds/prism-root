@@ -43,6 +43,107 @@ pub struct FieldRowData {
     pub options: Vec<String>,
 }
 
+impl FieldRowData {
+    pub fn text(
+        key: impl Into<String>,
+        label: impl Into<String>,
+        value: impl Into<String>,
+    ) -> Self {
+        Self {
+            key: key.into(),
+            label: label.into(),
+            kind: "text".into(),
+            value: value.into(),
+            required: false,
+            min: 0.0,
+            max: 0.0,
+            has_bounds: false,
+            options: vec![],
+        }
+    }
+
+    pub fn number(
+        key: impl Into<String>,
+        label: impl Into<String>,
+        value: impl Into<String>,
+    ) -> Self {
+        Self {
+            key: key.into(),
+            label: label.into(),
+            kind: "number".into(),
+            value: value.into(),
+            required: false,
+            min: 0.0,
+            max: 0.0,
+            has_bounds: false,
+            options: vec![],
+        }
+    }
+
+    pub fn boolean(key: impl Into<String>, label: impl Into<String>, value: bool) -> Self {
+        Self {
+            key: key.into(),
+            label: label.into(),
+            kind: "boolean".into(),
+            value: if value { "true" } else { "false" }.into(),
+            required: false,
+            min: 0.0,
+            max: 0.0,
+            has_bounds: false,
+            options: vec![],
+        }
+    }
+
+    pub fn select(
+        key: impl Into<String>,
+        label: impl Into<String>,
+        value: impl Into<String>,
+        options: Vec<String>,
+    ) -> Self {
+        Self {
+            key: key.into(),
+            label: label.into(),
+            kind: "select".into(),
+            value: value.into(),
+            required: false,
+            min: 0.0,
+            max: 0.0,
+            has_bounds: false,
+            options,
+        }
+    }
+
+    pub fn color(
+        key: impl Into<String>,
+        label: impl Into<String>,
+        value: impl Into<String>,
+    ) -> Self {
+        Self {
+            key: key.into(),
+            label: label.into(),
+            kind: "color".into(),
+            value: value.into(),
+            required: false,
+            min: 0.0,
+            max: 0.0,
+            has_bounds: false,
+            options: vec![],
+        }
+    }
+
+    pub fn required(mut self) -> Self {
+        self.required = true;
+        self
+    }
+
+    pub fn bounds(mut self, min: f32, max: f32) -> Self {
+        self.min = min;
+        self.max = max;
+        self.has_bounds = true;
+        self
+    }
+}
+
 /// A collapsible section in the properties panel. Collapse state
 /// is computed from the data: sections at defaults auto-collapse,
 /// modified sections auto-expand. No stored booleans.

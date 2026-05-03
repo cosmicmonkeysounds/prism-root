@@ -163,100 +163,66 @@ pub fn generate_burnup(sprints: &[SprintData]) -> Vec<BurnupPoint> {
 
 pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
     use crate::widget::{
-        FieldSpec, LayoutDirection, NumericBounds, SignalSpec, TemplateNode, ToolbarAction,
-        WidgetCategory, WidgetContribution, WidgetSize, WidgetTemplate,
+        widget, FieldSpec, NumericBounds, SignalSpec, TemplateNode, ToolbarAction, WidgetCategory,
     };
     use serde_json::json;
 
     vec![
-        WidgetContribution {
-            id: "project-health".into(),
-            label: "Project Health".into(),
-            description: "Composite health gauge from schedule, scope, and risk".into(),
-            icon: Some("activity".into()),
-            category: WidgetCategory::Display,
-            signals: vec![
+        widget("project-health", "Project Health")
+            .description("Composite health gauge from schedule, scope, and risk")
+            .icon("activity")
+            .category(WidgetCategory::Display)
+            .signal(
                 SignalSpec::new("axis-selected", "A health axis was selected")
                     .with_payload(vec![FieldSpec::text("axis", "Axis")]),
-            ],
-            default_size: WidgetSize::new(2, 1),
-            template: WidgetTemplate {
-                root: TemplateNode::Container {
-                    direction: LayoutDirection::Horizontal,
-                    gap: Some(16),
-                    padding: Some(12),
-                    children: vec![TemplateNode::DataBinding {
-                        field: "overall".into(),
-                        component_id: "text".into(),
-                        prop_key: "body".into(),
-                    }],
-                },
-            },
-            ..Default::default()
-        },
-        WidgetContribution {
-            id: "risk-matrix".into(),
-            label: "Risk Matrix".into(),
-            description: "Impact x probability grid for risk register".into(),
-            icon: Some("alert-triangle".into()),
-            category: WidgetCategory::Display,
-            signals: vec![SignalSpec::new("risk-selected", "A risk was selected")
-                .with_payload(vec![FieldSpec::text("risk_id", "Risk ID")])],
-            toolbar_actions: vec![ToolbarAction::signal("add-risk", "Add Risk", "plus")],
-            default_size: WidgetSize::new(2, 2),
-            template: WidgetTemplate {
-                root: TemplateNode::Container {
-                    direction: LayoutDirection::Vertical,
-                    gap: Some(4),
-                    padding: Some(8),
-                    children: vec![
-                        TemplateNode::Component {
-                            component_id: "heading".into(),
-                            props: json!({"body": "Risk Matrix", "level": 3}),
-                        },
-                        TemplateNode::Repeater {
-                            source: "risks".into(),
-                            item_template: Box::new(TemplateNode::DataBinding {
-                                field: "title".into(),
-                                component_id: "text".into(),
-                                prop_key: "body".into(),
-                            }),
-                            empty_label: Some("No risks".into()),
-                        },
-                    ],
-                },
-            },
-            ..Default::default()
-        },
-        WidgetContribution {
-            id: "velocity-chart".into(),
-            label: "Velocity Chart".into(),
-            description: "Sprint velocity trend over time".into(),
-            icon: Some("trending-up".into()),
-            category: WidgetCategory::Display,
-            config_fields: vec![FieldSpec::number(
-                "sprint_count",
-                "Sprints to Show",
-                NumericBounds::min_max(1.0, 20.0),
             )
-            .with_default(json!(6))],
-            signals: vec![SignalSpec::new("sprint-selected", "A sprint was selected")
-                .with_payload(vec![FieldSpec::text("sprint_id", "Sprint ID")])],
-            default_size: WidgetSize::new(2, 1),
-            template: WidgetTemplate {
-                root: TemplateNode::Container {
-                    direction: LayoutDirection::Vertical,
-                    gap: Some(8),
-                    padding: Some(12),
-                    children: vec![TemplateNode::DataBinding {
-                        field: "average_velocity".into(),
-                        component_id: "text".into(),
-                        prop_key: "body".into(),
-                    }],
-                },
-            },
-            ..Default::default()
-        },
+            .size(2, 1)
+            .template(TemplateNode::horizontal(
+                16,
+                12,
+                vec![TemplateNode::text_binding("overall")],
+            ))
+            .build(),
+        widget("risk-matrix", "Risk Matrix")
+            .description("Impact x probability grid for risk register")
+            .icon("alert-triangle")
+            .category(WidgetCategory::Display)
+            .signal(SignalSpec::selection("risk"))
+            .action(ToolbarAction::signal("add-risk", "Add Risk", "plus"))
+            .size(2, 2)
+            .template(TemplateNode::vertical(
+                4,
+                8,
+                vec![
+                    TemplateNode::component("heading", json!({"body": "Risk Matrix", "level": 3})),
+                    TemplateNode::repeater(
+                        "risks",
+                        TemplateNode::text_binding("title"),
+                        "No risks",
+                    ),
+                ],
+            ))
+            .build(),
+        widget("velocity-chart", "Velocity Chart")
+            .description("Sprint velocity trend over time")
+            .icon("trending-up")
+            .category(WidgetCategory::Display)
+            .field(
+                FieldSpec::number(
+                    "sprint_count",
+                    "Sprints to Show",
+                    NumericBounds::min_max(1.0, 20.0),
+                )
+                .with_default(json!(6)),
+            )
+            .signal(SignalSpec::selection("sprint"))
+            .size(2, 1)
+            .template(TemplateNode::vertical(
+                8,
+                12,
+                vec![TemplateNode::text_binding("average_velocity")],
+            ))
+            .build(),
     ]
 }
 

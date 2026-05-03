@@ -69,6 +69,7 @@ pub mod identity;
 pub mod interaction;
 pub mod kernel;
 pub mod language;
+pub mod luau_types;
 pub mod network;
 pub mod shell_mode;
 pub mod widget;

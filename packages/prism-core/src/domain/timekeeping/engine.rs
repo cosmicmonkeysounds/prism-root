@@ -386,188 +386,139 @@ impl Stopwatch {
 
 pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
     use crate::widget::{
-        DataQuery, FieldSpec, LayoutDirection, NumericBounds, QuerySort, SelectOption, SignalSpec,
-        TemplateNode, ToolbarAction, WidgetCategory, WidgetContribution, WidgetSize,
-        WidgetTemplate,
+        widget, DataQuery, FieldSpec, NumericBounds, SelectOption, SignalSpec, TemplateNode,
+        ToolbarAction, WidgetCategory,
     };
     use serde_json::json;
 
     vec![
-        WidgetContribution {
-            id: "stopwatch".into(),
-            label: "Stopwatch".into(),
-            description: "Live timer display with start/pause/stop controls".into(),
-            icon: Some("clock".into()),
-            category: WidgetCategory::Temporal,
-            config_fields: vec![FieldSpec::boolean("show_laps", "Show Laps")],
-            signals: vec![
-                SignalSpec::new("started", "Timer started"),
-                SignalSpec::new("stopped", "Timer stopped"),
-                SignalSpec::new("paused", "Timer paused"),
+        widget("stopwatch", "Stopwatch")
+            .description("Live timer display with start/pause/stop controls")
+            .icon("clock")
+            .category(WidgetCategory::Temporal)
+            .field(FieldSpec::boolean("show_laps", "Show Laps"))
+            .signal(SignalSpec::new("started", "Timer started"))
+            .signal(SignalSpec::new("stopped", "Timer stopped"))
+            .signal(SignalSpec::new("paused", "Timer paused"))
+            .signal(
                 SignalSpec::new("lap-recorded", "A lap was recorded").with_payload(vec![
                     FieldSpec::number("elapsed_ms", "Elapsed (ms)", NumericBounds::unbounded()),
                 ]),
-            ],
-            toolbar_actions: vec![
-                ToolbarAction::signal("start", "Start", "play"),
-                ToolbarAction::signal("pause", "Pause", "pause"),
-                ToolbarAction::signal("stop", "Stop", "stop"),
-                ToolbarAction::signal("lap", "Lap", "flag"),
-                ToolbarAction::signal("reset", "Reset", "refresh"),
-            ],
-            default_size: WidgetSize::new(1, 1),
-            template: WidgetTemplate {
-                root: TemplateNode::Container {
-                    direction: LayoutDirection::Vertical,
-                    gap: Some(8),
-                    padding: Some(12),
-                    children: vec![
-                        TemplateNode::DataBinding {
-                            field: "elapsed".into(),
-                            component_id: "text".into(),
-                            prop_key: "body".into(),
-                        },
-                        TemplateNode::Conditional {
-                            field: "show_laps".into(),
-                            child: Box::new(TemplateNode::Repeater {
-                                source: "laps".into(),
-                                item_template: Box::new(TemplateNode::Component {
-                                    component_id: "text".into(),
-                                    props: json!({"body": "lap"}),
-                                }),
-                                empty_label: Some("No laps".into()),
-                            }),
-                            fallback: None,
-                        },
-                    ],
-                },
-            },
-            ..Default::default()
-        },
-        WidgetContribution {
-            id: "time-log".into(),
-            label: "Time Log".into(),
-            description: "Time entry history table".into(),
-            icon: Some("list".into()),
-            category: WidgetCategory::Temporal,
-            config_fields: vec![
-                FieldSpec::select(
-                    "group_by",
-                    "Group By",
-                    vec![
-                        SelectOption::new("day", "Day"),
-                        SelectOption::new("week", "Week"),
-                        SelectOption::new("project", "Project"),
-                    ],
-                ),
+            )
+            .action(ToolbarAction::signal("start", "Start", "play"))
+            .action(ToolbarAction::signal("pause", "Pause", "pause"))
+            .action(ToolbarAction::signal("stop", "Stop", "stop"))
+            .action(ToolbarAction::signal("lap", "Lap", "flag"))
+            .action(ToolbarAction::signal("reset", "Reset", "refresh"))
+            .size(1, 1)
+            .template(TemplateNode::vertical(
+                8,
+                12,
+                vec![
+                    TemplateNode::text_binding("elapsed"),
+                    TemplateNode::conditional(
+                        "show_laps",
+                        TemplateNode::repeater(
+                            "laps",
+                            TemplateNode::component("text", json!({"body": "lap"})),
+                            "No laps",
+                        ),
+                    ),
+                ],
+            ))
+            .build(),
+        widget("time-log", "Time Log")
+            .description("Time entry history table")
+            .icon("list")
+            .category(WidgetCategory::Temporal)
+            .field(FieldSpec::select(
+                "group_by",
+                "Group By",
+                vec![
+                    SelectOption::new("day", "Day"),
+                    SelectOption::new("week", "Week"),
+                    SelectOption::new("project", "Project"),
+                ],
+            ))
+            .field(
                 FieldSpec::number("limit", "Items to Show", NumericBounds::unbounded())
                     .with_default(json!(20)),
-            ],
-            signals: vec![
-                SignalSpec::new("entry-selected", "A time entry was selected")
-                    .with_payload(vec![FieldSpec::text("entry_id", "Entry ID")]),
-            ],
-            toolbar_actions: vec![
-                ToolbarAction::signal("new-entry", "New Entry", "plus"),
-                ToolbarAction::signal("export", "Export", "download"),
-            ],
-            default_size: WidgetSize::new(2, 2),
-            min_size: Some(WidgetSize::new(1, 1)),
-            data_query: Some(DataQuery {
-                object_type: Some("time_entry".into()),
-                sort: vec![QuerySort {
-                    field: "date".into(),
-                    descending: true,
-                }],
-                limit: Some(20),
-                ..Default::default()
-            }),
-            data_key: Some("entries".into()),
-            data_fields: vec![
+            )
+            .signal(SignalSpec::selection("entry"))
+            .action(ToolbarAction::signal("new-entry", "New Entry", "plus"))
+            .action(ToolbarAction::signal("export", "Export", "download"))
+            .size(2, 2)
+            .min_size(1, 1)
+            .query(
+                DataQuery::for_type("time_entry")
+                    .sort_desc("date")
+                    .with_limit(20),
+            )
+            .data_key("entries")
+            .data_fields(vec![
                 FieldSpec::text("project", "Project"),
                 FieldSpec::text("date", "Date"),
                 FieldSpec::number("duration_ms", "Duration (ms)", NumericBounds::unbounded()),
-            ],
-            template: WidgetTemplate {
-                root: TemplateNode::Container {
-                    direction: LayoutDirection::Vertical,
-                    gap: Some(4),
-                    padding: Some(8),
-                    children: vec![
-                        TemplateNode::Component {
-                            component_id: "heading".into(),
-                            props: json!({"body": "Time Log", "level": 3}),
-                        },
-                        TemplateNode::Repeater {
-                            source: "entries".into(),
-                            item_template: Box::new(TemplateNode::Component {
-                                component_id: "text".into(),
-                                props: json!({"body": "entry"}),
-                            }),
-                            empty_label: Some("No entries".into()),
-                        },
-                    ],
-                },
-            },
-            ..Default::default()
-        },
-        WidgetContribution {
-            id: "pomodoro".into(),
-            label: "Pomodoro".into(),
-            description: "Focus timer with work/break cycles".into(),
-            icon: Some("clock".into()),
-            category: WidgetCategory::Temporal,
-            config_fields: vec![
+            ])
+            .template(TemplateNode::vertical(
+                4,
+                8,
+                vec![
+                    TemplateNode::component("heading", json!({"body": "Time Log", "level": 3})),
+                    TemplateNode::repeater(
+                        "entries",
+                        TemplateNode::component("text", json!({"body": "entry"})),
+                        "No entries",
+                    ),
+                ],
+            ))
+            .build(),
+        widget("pomodoro", "Pomodoro")
+            .description("Focus timer with work/break cycles")
+            .icon("clock")
+            .category(WidgetCategory::Temporal)
+            .field(
                 FieldSpec::number(
                     "work_minutes",
                     "Work (min)",
                     NumericBounds::min_max(1.0, 120.0),
                 )
                 .with_default(json!(25)),
+            )
+            .field(
                 FieldSpec::number(
                     "break_minutes",
                     "Break (min)",
                     NumericBounds::min_max(1.0, 60.0),
                 )
                 .with_default(json!(5)),
+            )
+            .field(
                 FieldSpec::number(
                     "long_break_minutes",
                     "Long Break (min)",
                     NumericBounds::min_max(1.0, 120.0),
                 )
                 .with_default(json!(15)),
-            ],
-            signals: vec![
-                SignalSpec::new("work-completed", "Work session completed"),
-                SignalSpec::new("break-completed", "Break session completed"),
-            ],
-            toolbar_actions: vec![
-                ToolbarAction::signal("start", "Start", "play"),
-                ToolbarAction::signal("skip", "Skip", "forward"),
-                ToolbarAction::signal("reset", "Reset", "refresh"),
-            ],
-            default_size: WidgetSize::new(1, 1),
-            template: WidgetTemplate {
-                root: TemplateNode::Container {
-                    direction: LayoutDirection::Vertical,
-                    gap: Some(8),
-                    padding: Some(16),
-                    children: vec![
-                        TemplateNode::DataBinding {
-                            field: "phase".into(),
-                            component_id: "text".into(),
-                            prop_key: "body".into(),
-                        },
-                        TemplateNode::DataBinding {
-                            field: "remaining".into(),
-                            component_id: "text".into(),
-                            prop_key: "body".into(),
-                        },
-                    ],
-                },
-            },
-            ..Default::default()
-        },
+            )
+            .signal(SignalSpec::new("work-completed", "Work session completed"))
+            .signal(SignalSpec::new(
+                "break-completed",
+                "Break session completed",
+            ))
+            .action(ToolbarAction::signal("start", "Start", "play"))
+            .action(ToolbarAction::signal("skip", "Skip", "forward"))
+            .action(ToolbarAction::signal("reset", "Reset", "refresh"))
+            .size(1, 1)
+            .template(TemplateNode::vertical(
+                8,
+                16,
+                vec![
+                    TemplateNode::text_binding("phase"),
+                    TemplateNode::text_binding("remaining"),
+                ],
+            ))
+            .build(),
     ]
 }
 

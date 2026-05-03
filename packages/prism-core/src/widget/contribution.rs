@@ -494,6 +494,237 @@ pub enum LayoutDirection {
     Vertical,
 }
 
+// ── TemplateNode shorthand constructors ────���────────────────────
+
+impl TemplateNode {
+    pub fn vertical(gap: u32, padding: u32, children: Vec<TemplateNode>) -> Self {
+        Self::Container {
+            direction: LayoutDirection::Vertical,
+            gap: Some(gap),
+            padding: Some(padding),
+            children,
+        }
+    }
+
+    pub fn horizontal(gap: u32, padding: u32, children: Vec<TemplateNode>) -> Self {
+        Self::Container {
+            direction: LayoutDirection::Horizontal,
+            gap: Some(gap),
+            padding: Some(padding),
+            children,
+        }
+    }
+
+    pub fn text_binding(field: impl Into<String>) -> Self {
+        Self::DataBinding {
+            field: field.into(),
+            component_id: "text".into(),
+            prop_key: "body".into(),
+        }
+    }
+
+    pub fn component(id: impl Into<String>, props: Value) -> Self {
+        Self::Component {
+            component_id: id.into(),
+            props,
+        }
+    }
+
+    pub fn repeater(
+        source: impl Into<String>,
+        item_template: TemplateNode,
+        empty_label: impl Into<String>,
+    ) -> Self {
+        Self::Repeater {
+            source: source.into(),
+            item_template: Box::new(item_template),
+            empty_label: Some(empty_label.into()),
+        }
+    }
+
+    pub fn conditional(field: impl Into<String>, child: TemplateNode) -> Self {
+        Self::Conditional {
+            field: field.into(),
+            child: Box::new(child),
+            fallback: None,
+        }
+    }
+}
+
+// ── SignalSpec shorthand ────────────────────────────────────────
+
+impl SignalSpec {
+    pub fn selection(thing: &str) -> Self {
+        Self::new(
+            format!("{thing}-selected"),
+            format!("A {thing} was selected"),
+        )
+        .with_payload(vec![super::field::FieldSpec::text(
+            format!("{thing}_id"),
+            format!("{} ID", capitalize(thing)),
+        )])
+    }
+}
+
+fn capitalize(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(c) => c.to_uppercase().chain(chars).collect(),
+    }
+}
+
+// ── ToolbarAction shorthand ────────────────────────────────────
+
+impl ToolbarAction {
+    pub fn refresh() -> Self {
+        Self::signal("refresh", "Refresh", "refresh")
+    }
+
+    pub fn export() -> Self {
+        Self::signal("export", "Export", "export")
+    }
+}
+
+// ── DataQuery builder ────────────��─────────────────────────────
+
+impl DataQuery {
+    pub fn for_type(object_type: impl Into<String>) -> Self {
+        Self {
+            object_type: Some(object_type.into()),
+            ..Default::default()
+        }
+    }
+
+    pub fn sort_asc(mut self, field: impl Into<String>) -> Self {
+        self.sort.push(QuerySort {
+            field: field.into(),
+            descending: false,
+        });
+        self
+    }
+
+    pub fn sort_desc(mut self, field: impl Into<String>) -> Self {
+        self.sort.push(QuerySort {
+            field: field.into(),
+            descending: true,
+        });
+        self
+    }
+
+    pub fn with_limit(mut self, n: usize) -> Self {
+        self.limit = Some(n);
+        self
+    }
+}
+
+// ── WidgetContributionBuilder ──────────────────���───────────────
+
+pub fn widget(id: impl Into<String>, label: impl Into<String>) -> WidgetContributionBuilder {
+    WidgetContributionBuilder {
+        inner: WidgetContribution {
+            id: id.into(),
+            label: label.into(),
+            ..Default::default()
+        },
+    }
+}
+
+pub struct WidgetContributionBuilder {
+    inner: WidgetContribution,
+}
+
+impl WidgetContributionBuilder {
+    pub fn description(mut self, desc: impl Into<String>) -> Self {
+        self.inner.description = desc.into();
+        self
+    }
+
+    pub fn icon(mut self, icon: impl Into<String>) -> Self {
+        self.inner.icon = Some(icon.into());
+        self
+    }
+
+    pub fn category(mut self, cat: WidgetCategory) -> Self {
+        self.inner.category = cat;
+        self
+    }
+
+    pub fn field(mut self, spec: super::field::FieldSpec) -> Self {
+        self.inner.config_fields.push(spec);
+        self
+    }
+
+    pub fn fields(mut self, specs: Vec<super::field::FieldSpec>) -> Self {
+        self.inner.config_fields = specs;
+        self
+    }
+
+    pub fn signal(mut self, spec: SignalSpec) -> Self {
+        self.inner.signals.push(spec);
+        self
+    }
+
+    pub fn signals(mut self, specs: Vec<SignalSpec>) -> Self {
+        self.inner.signals = specs;
+        self
+    }
+
+    pub fn action(mut self, action: ToolbarAction) -> Self {
+        self.inner.toolbar_actions.push(action);
+        self
+    }
+
+    pub fn variant(mut self, spec: VariantSpec) -> Self {
+        self.inner.variants.push(spec);
+        self
+    }
+
+    pub fn size(mut self, cols: u8, rows: u8) -> Self {
+        self.inner.default_size = WidgetSize::new(cols, rows);
+        self
+    }
+
+    pub fn min_size(mut self, cols: u8, rows: u8) -> Self {
+        self.inner.min_size = Some(WidgetSize::new(cols, rows));
+        self
+    }
+
+    pub fn max_size(mut self, cols: u8, rows: u8) -> Self {
+        self.inner.max_size = Some(WidgetSize::new(cols, rows));
+        self
+    }
+
+    pub fn template(mut self, root: TemplateNode) -> Self {
+        self.inner.template = WidgetTemplate { root };
+        self
+    }
+
+    pub fn query(mut self, q: DataQuery) -> Self {
+        self.inner.data_query = Some(q);
+        self
+    }
+
+    pub fn data_key(mut self, key: impl Into<String>) -> Self {
+        self.inner.data_key = Some(key.into());
+        self
+    }
+
+    pub fn data_fields(mut self, fields: Vec<super::field::FieldSpec>) -> Self {
+        self.inner.data_fields = fields;
+        self
+    }
+
+    pub fn default_config(mut self, config: Value) -> Self {
+        self.inner.default_config = config;
+        self
+    }
+
+    pub fn build(self) -> WidgetContribution {
+        self.inner
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

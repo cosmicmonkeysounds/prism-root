@@ -79,7 +79,7 @@ wasm = ["crdt", "luau", "vfs", "crypto"]
 
 # Individual capabilities.
 crdt = ["dep:loro"]
-luau = ["dep:mlua"]
+luau = ["dep:mlua", "dep:prism-core"]
 build = []
 watcher = ["dep:notify"]
 vfs = ["dep:sha2", "dep:hex"]
@@ -139,7 +139,15 @@ transport-ipc = ["dep:interprocess", "dep:postcard"]
 loro = { version = "1.4", optional = true }
 
 # Luau scripting — vendored for zero system deps (builds on iOS/Android).
-mlua = { version = "0.10", features = ["luau", "vendored", "serialize"], optional = true }
+# Pinned at the workspace level so `prism-core`'s `#[luau_expose]` derive
+# (which generates `mlua::UserData` impls) and the daemon's runtime sit
+# on the same version.
+mlua = { workspace = true, optional = true }
+# Generated `UserData` impls live on types defined in `prism-core`; the
+# daemon flips on the same `luau` feature so those impls compile in.
+# Optional + only pulled in by the `luau` feature so the embedded preset
+# (CRDT-only) stays prism-core-free.
+prism-core = { path = "../prism-core", features = ["luau"], optional = true }
 
 # Serialization — always on; every module speaks JSON at the registry edge.
 serde = { version = "1", features = ["derive"] }

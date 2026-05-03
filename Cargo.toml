@@ -9,6 +9,7 @@ members = [
     "packages/prism-cli",
     "packages/prism-relay",
     "packages/prism-dock",
+    "packages/prism-luau-derive",
 ]
 
 # Shared package metadata — every crate opts in to `license` via
@@ -136,6 +137,18 @@ rfd = "0.15"
 # full input pipeline (winit → Slint → InputManager). Optional:
 # callback-level testing works without it.
 enigo = { version = "0.2", default-features = false }
+
+# Luau scripting runtime. Pinned at the workspace level so the daemon
+# (the only crate that *runs* Luau today) and any crate that *exposes*
+# types to Luau via `#[luau_expose]` (the derive macro pulls in mlua's
+# trait surface) track the same version. Phase 1 of
+# `docs/dev/luau-integration-plan.md` lifted this here from the daemon
+# manifest because `prism-core` now needs the trait imports too.
+mlua = { version = "0.10", features = ["luau", "vendored", "serialize"] }
+# In-tree proc macro that derives `mlua::UserData` impls + `.d.luau`
+# type stubs from a single Rust source. Annotated leaf-first across the
+# workspace so the Luau type surface stays in lockstep with Rust.
+prism-luau-derive = { path = "packages/prism-luau-derive" }
 
 # Dev-only.
 insta = "1"

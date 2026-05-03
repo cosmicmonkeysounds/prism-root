@@ -736,256 +736,173 @@ impl<A: LedgerAdapter> LedgerBook<A> {
 
 pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
     use crate::widget::{
-        DataQuery, FieldSpec, LayoutDirection, NumericBounds, QuerySort, SelectOption, SignalSpec,
-        TemplateNode, ToolbarAction, WidgetCategory, WidgetContribution, WidgetSize,
-        WidgetTemplate,
+        widget, DataQuery, FieldSpec, NumericBounds, SelectOption, SignalSpec, TemplateNode,
+        ToolbarAction, WidgetCategory,
     };
     use serde_json::json;
 
     vec![
-        WidgetContribution {
-            id: "ledger-account-summary".into(),
-            label: "Account Summary".into(),
-            description: "Account balances at a glance".into(),
-            category: WidgetCategory::Finance,
-            config_fields: vec![
-                FieldSpec::select(
-                    "account_class",
-                    "Account Class",
-                    vec![
-                        SelectOption::new("all", "All"),
-                        SelectOption::new("asset", "Asset"),
-                        SelectOption::new("liability", "Liability"),
-                        SelectOption::new("equity", "Equity"),
-                        SelectOption::new("revenue", "Revenue"),
-                        SelectOption::new("expense", "Expense"),
-                    ],
-                ),
-                FieldSpec::boolean("show_sparkline", "Show Sparkline"),
-            ],
-            signals: vec![
-                SignalSpec::new("account-selected", "An account was selected")
-                    .with_payload(vec![FieldSpec::text("account_id", "Account ID")]),
-            ],
-            toolbar_actions: vec![ToolbarAction::signal("refresh", "Refresh", "refresh")],
-            default_size: WidgetSize::new(2, 1),
-            data_query: Some(DataQuery {
-                object_type: Some("account".into()),
-                ..Default::default()
-            }),
-            data_key: Some("accounts".into()),
-            data_fields: vec![
+        widget("ledger-account-summary", "Account Summary")
+            .description("Account balances at a glance")
+            .category(WidgetCategory::Finance)
+            .field(FieldSpec::select(
+                "account_class",
+                "Account Class",
+                vec![
+                    SelectOption::new("all", "All"),
+                    SelectOption::new("asset", "Asset"),
+                    SelectOption::new("liability", "Liability"),
+                    SelectOption::new("equity", "Equity"),
+                    SelectOption::new("revenue", "Revenue"),
+                    SelectOption::new("expense", "Expense"),
+                ],
+            ))
+            .field(FieldSpec::boolean("show_sparkline", "Show Sparkline"))
+            .signal(SignalSpec::selection("account"))
+            .action(ToolbarAction::refresh())
+            .size(2, 1)
+            .query(DataQuery::for_type("account"))
+            .data_key("accounts")
+            .data_fields(vec![
                 FieldSpec::text("name", "Name"),
                 FieldSpec::text("account_class", "Class"),
                 FieldSpec::number("balance", "Balance", NumericBounds::unbounded()),
-            ],
-            template: WidgetTemplate {
-                root: TemplateNode::Container {
-                    direction: LayoutDirection::Vertical,
-                    gap: Some(8),
-                    padding: Some(12),
-                    children: vec![
-                        TemplateNode::Component {
-                            component_id: "heading".into(),
-                            props: json!({"body": "Accounts", "level": 3}),
-                        },
-                        TemplateNode::Repeater {
-                            source: "accounts".into(),
-                            item_template: Box::new(TemplateNode::Component {
-                                component_id: "text".into(),
-                                props: json!({"body": "account"}),
-                            }),
-                            empty_label: Some("No accounts".into()),
-                        },
-                    ],
-                },
-            },
-            ..Default::default()
-        },
-        WidgetContribution {
-            id: "ledger-transaction-list".into(),
-            label: "Transaction List".into(),
-            description: "Recent transactions".into(),
-            category: WidgetCategory::Finance,
-            config_fields: vec![
+            ])
+            .template(TemplateNode::vertical(
+                8,
+                12,
+                vec![
+                    TemplateNode::component("heading", json!({"body": "Accounts", "level": 3})),
+                    TemplateNode::repeater(
+                        "accounts",
+                        TemplateNode::component("text", json!({"body": "account"})),
+                        "No accounts",
+                    ),
+                ],
+            ))
+            .build(),
+        widget("ledger-transaction-list", "Transaction List")
+            .description("Recent transactions")
+            .category(WidgetCategory::Finance)
+            .field(
                 FieldSpec::number("limit", "Limit", NumericBounds::unbounded())
                     .with_default(json!(20)),
-                FieldSpec::text("account_id", "Account ID"),
-            ],
-            signals: vec![
-                SignalSpec::new("transaction-selected", "A transaction was selected")
-                    .with_payload(vec![FieldSpec::text("transaction_id", "Transaction ID")]),
-            ],
-            toolbar_actions: vec![
-                ToolbarAction::signal("new-transaction", "New Transaction", "add"),
-                ToolbarAction::signal("export", "Export", "export"),
-            ],
-            default_size: WidgetSize::new(2, 2),
-            data_query: Some(DataQuery {
-                object_type: Some("transaction".into()),
-                sort: vec![QuerySort {
-                    field: "date".into(),
-                    descending: true,
-                }],
-                limit: Some(20),
-                ..Default::default()
-            }),
-            data_key: Some("transactions".into()),
-            data_fields: vec![
+            )
+            .field(FieldSpec::text("account_id", "Account ID"))
+            .signal(SignalSpec::selection("transaction"))
+            .action(ToolbarAction::signal(
+                "new-transaction",
+                "New Transaction",
+                "add",
+            ))
+            .action(ToolbarAction::export())
+            .size(2, 2)
+            .query(
+                DataQuery::for_type("transaction")
+                    .sort_desc("date")
+                    .with_limit(20),
+            )
+            .data_key("transactions")
+            .data_fields(vec![
                 FieldSpec::text("description", "Description"),
                 FieldSpec::text("date", "Date"),
                 FieldSpec::number("amount", "Amount", NumericBounds::unbounded()),
-            ],
-            template: WidgetTemplate {
-                root: TemplateNode::Container {
-                    direction: LayoutDirection::Vertical,
-                    gap: Some(8),
-                    padding: Some(12),
-                    children: vec![
-                        TemplateNode::Component {
-                            component_id: "heading".into(),
-                            props: json!({"body": "Transactions", "level": 3}),
-                        },
-                        TemplateNode::Repeater {
-                            source: "transactions".into(),
-                            item_template: Box::new(TemplateNode::Component {
-                                component_id: "text".into(),
-                                props: json!({"body": "transaction"}),
-                            }),
-                            empty_label: Some("No transactions".into()),
-                        },
-                    ],
-                },
-            },
-            ..Default::default()
-        },
-        WidgetContribution {
-            id: "ledger-balance-sheet".into(),
-            label: "Balance Sheet".into(),
-            description: "Assets vs liabilities summary".into(),
-            category: WidgetCategory::Finance,
-            config_fields: vec![
-                FieldSpec::text("as_of_date", "As of Date"),
-                FieldSpec::text("currency", "Currency").with_default(json!("USD")),
-            ],
-            toolbar_actions: vec![
-                ToolbarAction::signal("refresh", "Refresh", "refresh"),
-                ToolbarAction::signal("export", "Export", "export"),
-            ],
-            default_size: WidgetSize::new(3, 2),
-            data_query: Some(DataQuery {
-                object_type: Some("account".into()),
-                ..Default::default()
-            }),
-            data_key: Some("accounts".into()),
-            template: WidgetTemplate {
-                root: TemplateNode::Container {
-                    direction: LayoutDirection::Horizontal,
-                    gap: Some(16),
-                    padding: Some(12),
-                    children: vec![
-                        TemplateNode::Container {
-                            direction: LayoutDirection::Vertical,
-                            gap: Some(8),
-                            padding: None,
-                            children: vec![
-                                TemplateNode::Component {
-                                    component_id: "heading".into(),
-                                    props: json!({"body": "Assets", "level": 3}),
-                                },
-                                TemplateNode::Repeater {
-                                    source: "assets".into(),
-                                    item_template: Box::new(TemplateNode::Component {
-                                        component_id: "text".into(),
-                                        props: json!({"body": "asset"}),
-                                    }),
-                                    empty_label: Some("No assets".into()),
-                                },
-                            ],
-                        },
-                        TemplateNode::Container {
-                            direction: LayoutDirection::Vertical,
-                            gap: Some(8),
-                            padding: None,
-                            children: vec![
-                                TemplateNode::Component {
-                                    component_id: "heading".into(),
-                                    props: json!({"body": "Liabilities", "level": 3}),
-                                },
-                                TemplateNode::Repeater {
-                                    source: "liabilities".into(),
-                                    item_template: Box::new(TemplateNode::Component {
-                                        component_id: "text".into(),
-                                        props: json!({"body": "liability"}),
-                                    }),
-                                    empty_label: Some("No liabilities".into()),
-                                },
-                            ],
-                        },
-                    ],
-                },
-            },
-            ..Default::default()
-        },
-        WidgetContribution {
-            id: "ledger-income-statement".into(),
-            label: "Income Statement".into(),
-            description: "Revenue vs expenses for a period".into(),
-            category: WidgetCategory::Finance,
-            config_fields: vec![
-                FieldSpec::select(
-                    "period",
-                    "Period",
-                    vec![
-                        SelectOption::new("month", "This Month"),
-                        SelectOption::new("quarter", "This Quarter"),
-                        SelectOption::new("year", "This Year"),
-                    ],
-                ),
-                FieldSpec::text("currency", "Currency").with_default(json!("USD")),
-            ],
-            toolbar_actions: vec![ToolbarAction::signal("refresh", "Refresh", "refresh")],
-            default_size: WidgetSize::new(3, 2),
-            data_query: Some(DataQuery {
-                object_type: Some("transaction".into()),
-                sort: vec![QuerySort {
-                    field: "date".into(),
-                    descending: true,
-                }],
-                ..Default::default()
-            }),
-            data_key: Some("transactions".into()),
-            template: WidgetTemplate {
-                root: TemplateNode::Container {
-                    direction: LayoutDirection::Vertical,
-                    gap: Some(12),
-                    padding: Some(12),
-                    children: vec![
-                        TemplateNode::Component {
-                            component_id: "heading".into(),
-                            props: json!({"body": "Income Statement", "level": 3}),
-                        },
-                        TemplateNode::Repeater {
-                            source: "revenue".into(),
-                            item_template: Box::new(TemplateNode::Component {
-                                component_id: "text".into(),
-                                props: json!({"body": "revenue"}),
-                            }),
-                            empty_label: Some("No revenue".into()),
-                        },
-                        TemplateNode::Repeater {
-                            source: "expenses".into(),
-                            item_template: Box::new(TemplateNode::Component {
-                                component_id: "text".into(),
-                                props: json!({"body": "expense"}),
-                            }),
-                            empty_label: Some("No expenses".into()),
-                        },
-                    ],
-                },
-            },
-            ..Default::default()
-        },
+            ])
+            .template(TemplateNode::vertical(
+                8,
+                12,
+                vec![
+                    TemplateNode::component("heading", json!({"body": "Transactions", "level": 3})),
+                    TemplateNode::repeater(
+                        "transactions",
+                        TemplateNode::component("text", json!({"body": "transaction"})),
+                        "No transactions",
+                    ),
+                ],
+            ))
+            .build(),
+        widget("ledger-balance-sheet", "Balance Sheet")
+            .description("Assets vs liabilities summary")
+            .category(WidgetCategory::Finance)
+            .field(FieldSpec::text("as_of_date", "As of Date"))
+            .field(FieldSpec::text("currency", "Currency").with_default(json!("USD")))
+            .action(ToolbarAction::refresh())
+            .action(ToolbarAction::export())
+            .size(3, 2)
+            .query(DataQuery::for_type("account"))
+            .data_key("accounts")
+            .template(TemplateNode::horizontal(
+                16,
+                12,
+                vec![
+                    TemplateNode::vertical(
+                        8,
+                        0,
+                        vec![
+                            TemplateNode::component("heading", json!({"body": "Assets", "level": 3})),
+                            TemplateNode::repeater(
+                                "assets",
+                                TemplateNode::component("text", json!({"body": "asset"})),
+                                "No assets",
+                            ),
+                        ],
+                    ),
+                    TemplateNode::vertical(
+                        8,
+                        0,
+                        vec![
+                            TemplateNode::component(
+                                "heading",
+                                json!({"body": "Liabilities", "level": 3}),
+                            ),
+                            TemplateNode::repeater(
+                                "liabilities",
+                                TemplateNode::component("text", json!({"body": "liability"})),
+                                "No liabilities",
+                            ),
+                        ],
+                    ),
+                ],
+            ))
+            .build(),
+        widget("ledger-income-statement", "Income Statement")
+            .description("Revenue vs expenses for a period")
+            .category(WidgetCategory::Finance)
+            .field(FieldSpec::select(
+                "period",
+                "Period",
+                vec![
+                    SelectOption::new("month", "This Month"),
+                    SelectOption::new("quarter", "This Quarter"),
+                    SelectOption::new("year", "This Year"),
+                ],
+            ))
+            .field(FieldSpec::text("currency", "Currency").with_default(json!("USD")))
+            .action(ToolbarAction::refresh())
+            .size(3, 2)
+            .query(DataQuery::for_type("transaction").sort_desc("date"))
+            .data_key("transactions")
+            .template(TemplateNode::vertical(
+                12,
+                12,
+                vec![
+                    TemplateNode::component(
+                        "heading",
+                        json!({"body": "Income Statement", "level": 3}),
+                    ),
+                    TemplateNode::repeater(
+                        "revenue",
+                        TemplateNode::component("text", json!({"body": "revenue"})),
+                        "No revenue",
+                    ),
+                    TemplateNode::repeater(
+                        "expenses",
+                        TemplateNode::component("text", json!({"body": "expense"})),
+                        "No expenses",
+                    ),
+                ],
+            ))
+            .build(),
     ]
 }
 

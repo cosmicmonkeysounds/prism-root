@@ -107,19 +107,17 @@ pub fn suggested_item_count(method: &PlanningMethod) -> u32 {
 
 pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
     use crate::widget::{
-        FieldSpec, LayoutDirection, NumericBounds, SelectOption, SignalSpec, TemplateNode,
-        ToolbarAction, WidgetCategory, WidgetContribution, WidgetSize, WidgetTemplate,
+        widget, FieldSpec, NumericBounds, SelectOption, SignalSpec, TemplateNode, ToolbarAction,
+        WidgetCategory,
     };
     use serde_json::json;
 
     vec![
-        WidgetContribution {
-            id: "daily-plan".into(),
-            label: "Daily Plan".into(),
-            description: "Today's focus plan items with completion tracking".into(),
-            icon: Some("target".into()),
-            category: WidgetCategory::Display,
-            config_fields: vec![FieldSpec::select(
+        widget("daily-plan", "Daily Plan")
+            .description("Today's focus plan items with completion tracking")
+            .icon("target")
+            .category(WidgetCategory::Display)
+            .field(FieldSpec::select(
                 "method",
                 "Planning Method",
                 vec![
@@ -127,54 +125,39 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
                     SelectOption::new("three_things", "Three Things"),
                     SelectOption::new("time_blocking", "Time Blocking"),
                 ],
-            )],
-            signals: vec![
+            ))
+            .signal(
                 SignalSpec::new("item-toggled", "A plan item was toggled")
                     .with_payload(vec![FieldSpec::text("item_id", "Item ID")]),
-                SignalSpec::new("plan-completed", "All items completed"),
-            ],
-            toolbar_actions: vec![
-                ToolbarAction::signal("add-item", "Add Item", "plus"),
-                ToolbarAction::signal("clear", "Clear", "trash"),
-            ],
-            default_size: WidgetSize::new(2, 2),
-            min_size: Some(WidgetSize::new(1, 1)),
-            data_key: Some("plan_items".into()),
-            data_fields: vec![
+            )
+            .signal(SignalSpec::new("plan-completed", "All items completed"))
+            .action(ToolbarAction::signal("add-item", "Add Item", "plus"))
+            .action(ToolbarAction::signal("clear", "Clear", "trash"))
+            .size(2, 2)
+            .min_size(1, 1)
+            .data_key("plan_items")
+            .data_fields(vec![
                 FieldSpec::text("title", "Title"),
                 FieldSpec::boolean("completed", "Completed"),
-            ],
-            template: WidgetTemplate {
-                root: TemplateNode::Container {
-                    direction: LayoutDirection::Vertical,
-                    gap: Some(8),
-                    padding: Some(12),
-                    children: vec![
-                        TemplateNode::Component {
-                            component_id: "heading".into(),
-                            props: json!({"body": "Daily Plan", "level": 3}),
-                        },
-                        TemplateNode::Repeater {
-                            source: "plan_items".into(),
-                            item_template: Box::new(TemplateNode::Component {
-                                component_id: "text".into(),
-                                props: json!({"body": "item"}),
-                            }),
-                            empty_label: Some("No items planned".into()),
-                        },
-                    ],
-                },
-            },
-            ..Default::default()
-        },
-        WidgetContribution {
-            id: "focus-check-in".into(),
-            label: "Focus Check-In".into(),
-            description: "Energy, focus, and mood self-rating".into(),
-            icon: Some("heart".into()),
-            category: WidgetCategory::Input,
-            config_fields: vec![],
-            signals: vec![
+            ])
+            .template(TemplateNode::vertical(
+                8,
+                12,
+                vec![
+                    TemplateNode::component("heading", json!({"body": "Daily Plan", "level": 3})),
+                    TemplateNode::repeater(
+                        "plan_items",
+                        TemplateNode::component("text", json!({"body": "item"})),
+                        "No items planned",
+                    ),
+                ],
+            ))
+            .build(),
+        widget("focus-check-in", "Focus Check-In")
+            .description("Energy, focus, and mood self-rating")
+            .icon("heart")
+            .category(WidgetCategory::Input)
+            .signal(
                 SignalSpec::new("check-in-submitted", "A check-in was recorded").with_payload(
                     vec![
                         FieldSpec::number("energy", "Energy", NumericBounds::min_max(1.0, 5.0)),
@@ -182,83 +165,51 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
                         FieldSpec::number("mood", "Mood", NumericBounds::min_max(1.0, 5.0)),
                     ],
                 ),
-            ],
-            toolbar_actions: vec![ToolbarAction::signal("submit", "Submit", "check")],
-            default_size: WidgetSize::new(1, 1),
-            template: WidgetTemplate {
-                root: TemplateNode::Container {
-                    direction: LayoutDirection::Vertical,
-                    gap: Some(8),
-                    padding: Some(12),
-                    children: vec![
-                        TemplateNode::Component {
-                            component_id: "heading".into(),
-                            props: json!({"body": "Check-In", "level": 3}),
-                        },
-                        TemplateNode::DataBinding {
-                            field: "energy".into(),
-                            component_id: "text".into(),
-                            prop_key: "body".into(),
-                        },
-                        TemplateNode::DataBinding {
-                            field: "focus".into(),
-                            component_id: "text".into(),
-                            prop_key: "body".into(),
-                        },
-                        TemplateNode::DataBinding {
-                            field: "mood".into(),
-                            component_id: "text".into(),
-                            prop_key: "body".into(),
-                        },
-                    ],
-                },
-            },
-            ..Default::default()
-        },
-        WidgetContribution {
-            id: "brain-dump".into(),
-            label: "Brain Dump".into(),
-            description: "Quick-capture list for unstructured thoughts".into(),
-            icon: Some("edit".into()),
-            category: WidgetCategory::Input,
-            config_fields: vec![],
-            signals: vec![
+            )
+            .action(ToolbarAction::signal("submit", "Submit", "check"))
+            .size(1, 1)
+            .template(TemplateNode::vertical(
+                8,
+                12,
+                vec![
+                    TemplateNode::component("heading", json!({"body": "Check-In", "level": 3})),
+                    TemplateNode::text_binding("energy"),
+                    TemplateNode::text_binding("focus"),
+                    TemplateNode::text_binding("mood"),
+                ],
+            ))
+            .build(),
+        widget("brain-dump", "Brain Dump")
+            .description("Quick-capture list for unstructured thoughts")
+            .icon("edit")
+            .category(WidgetCategory::Input)
+            .signal(
                 SignalSpec::new("item-added", "A brain dump item was added")
                     .with_payload(vec![FieldSpec::text("text", "Text")]),
+            )
+            .signal(
                 SignalSpec::new("item-removed", "A brain dump item was removed")
                     .with_payload(vec![FieldSpec::text("item_id", "Item ID")]),
-            ],
-            toolbar_actions: vec![
-                ToolbarAction::signal("add", "Add", "plus"),
-                ToolbarAction::signal("clear-all", "Clear All", "trash"),
-            ],
-            default_size: WidgetSize::new(2, 1),
-            min_size: Some(WidgetSize::new(1, 1)),
-            data_key: Some("dump_items".into()),
-            data_fields: vec![FieldSpec::text("text", "Text")],
-            template: WidgetTemplate {
-                root: TemplateNode::Container {
-                    direction: LayoutDirection::Vertical,
-                    gap: Some(4),
-                    padding: Some(8),
-                    children: vec![
-                        TemplateNode::Component {
-                            component_id: "heading".into(),
-                            props: json!({"body": "Brain Dump", "level": 3}),
-                        },
-                        TemplateNode::Repeater {
-                            source: "dump_items".into(),
-                            item_template: Box::new(TemplateNode::Component {
-                                component_id: "text".into(),
-                                props: json!({"body": "item"}),
-                            }),
-                            empty_label: Some("Nothing captured yet".into()),
-                        },
-                    ],
-                },
-            },
-            ..Default::default()
-        },
+            )
+            .action(ToolbarAction::signal("add", "Add", "plus"))
+            .action(ToolbarAction::signal("clear-all", "Clear All", "trash"))
+            .size(2, 1)
+            .min_size(1, 1)
+            .data_key("dump_items")
+            .data_fields(vec![FieldSpec::text("text", "Text")])
+            .template(TemplateNode::vertical(
+                4,
+                8,
+                vec![
+                    TemplateNode::component("heading", json!({"body": "Brain Dump", "level": 3})),
+                    TemplateNode::repeater(
+                        "dump_items",
+                        TemplateNode::component("text", json!({"body": "item"})),
+                        "Nothing captured yet",
+                    ),
+                ],
+            ))
+            .build(),
     ]
 }
 

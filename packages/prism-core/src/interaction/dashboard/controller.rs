@@ -640,66 +640,42 @@ impl Default for WidgetRegistry {
 
 pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
     use crate::widget::{
-        DataQuery, FieldSpec, LayoutDirection, NumericBounds, QuerySort, SelectOption, SignalSpec,
-        TemplateNode, ToolbarAction, WidgetCategory, WidgetContribution, WidgetSize,
-        WidgetTemplate,
+        widget, DataQuery, FieldSpec, NumericBounds, SelectOption, SignalSpec, TemplateNode,
+        ToolbarAction, WidgetCategory,
     };
     use serde_json::json;
 
     vec![
-        WidgetContribution {
-            id: "dashboard-stats".into(),
-            label: "Stats".into(),
-            description: "Key metrics at a glance".into(),
-            category: WidgetCategory::Display,
-            default_size: WidgetSize::new(1, 1),
-            signals: vec![SignalSpec::new("clicked", "Widget clicked")],
-            template: WidgetTemplate {
-                root: TemplateNode::Container {
-                    direction: LayoutDirection::Vertical,
-                    gap: Some(4),
-                    padding: Some(12),
-                    children: vec![
-                        TemplateNode::DataBinding {
-                            field: "label".into(),
-                            component_id: "heading".into(),
-                            prop_key: "body".into(),
-                        },
-                        TemplateNode::DataBinding {
-                            field: "value".into(),
-                            component_id: "text".into(),
-                            prop_key: "body".into(),
-                        },
-                        TemplateNode::DataBinding {
-                            field: "trend".into(),
-                            component_id: "text".into(),
-                            prop_key: "body".into(),
-                        },
-                    ],
-                },
-            },
-            ..Default::default()
-        },
-        WidgetContribution {
-            id: "dashboard-tasks".into(),
-            label: "Tasks".into(),
-            description: "Active task list".into(),
-            category: WidgetCategory::Display,
-            default_size: WidgetSize::new(2, 1),
-            data_query: Some(DataQuery {
-                object_type: Some("task".into()),
-                sort: vec![QuerySort {
-                    field: "updated_at".into(),
-                    descending: true,
-                }],
-                ..Default::default()
-            }),
-            data_key: Some("tasks".into()),
-            data_fields: vec![
+        widget("dashboard-stats", "Stats")
+            .description("Key metrics at a glance")
+            .category(WidgetCategory::Display)
+            .size(1, 1)
+            .signal(SignalSpec::new("clicked", "Widget clicked"))
+            .template(TemplateNode::vertical(
+                4,
+                12,
+                vec![
+                    TemplateNode::DataBinding {
+                        field: "label".into(),
+                        component_id: "heading".into(),
+                        prop_key: "body".into(),
+                    },
+                    TemplateNode::text_binding("value"),
+                    TemplateNode::text_binding("trend"),
+                ],
+            ))
+            .build(),
+        widget("dashboard-tasks", "Tasks")
+            .description("Active task list")
+            .category(WidgetCategory::Display)
+            .size(2, 1)
+            .query(DataQuery::for_type("task").sort_desc("updated_at"))
+            .data_key("tasks")
+            .data_fields(vec![
                 FieldSpec::text("title", "Title"),
                 FieldSpec::text("status", "Status"),
-            ],
-            config_fields: vec![FieldSpec::select(
+            ])
+            .field(FieldSpec::select(
                 "filter",
                 "Filter",
                 vec![
@@ -707,160 +683,100 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
                     SelectOption::new("today", "Today"),
                     SelectOption::new("overdue", "Overdue"),
                 ],
-            )],
-            signals: vec![SignalSpec::new("task-selected", "A task was selected")
-                .with_payload(vec![FieldSpec::text("task_id", "Task ID")])],
-            toolbar_actions: vec![ToolbarAction::signal("refresh", "Refresh", "refresh")],
-            template: WidgetTemplate {
-                root: TemplateNode::Container {
-                    direction: LayoutDirection::Vertical,
-                    gap: Some(8),
-                    padding: Some(12),
-                    children: vec![
-                        TemplateNode::Component {
-                            component_id: "heading".into(),
-                            props: json!({"body": "Tasks"}),
-                        },
-                        TemplateNode::Repeater {
-                            source: "tasks".into(),
-                            item_template: Box::new(TemplateNode::DataBinding {
-                                field: "title".into(),
-                                component_id: "text".into(),
-                                prop_key: "body".into(),
-                            }),
-                            empty_label: Some("No tasks".into()),
-                        },
-                    ],
-                },
-            },
-            ..Default::default()
-        },
-        WidgetContribution {
-            id: "dashboard-timer".into(),
-            label: "Timer".into(),
-            description: "Pomodoro / focus timer".into(),
-            category: WidgetCategory::Temporal,
-            default_size: WidgetSize::new(1, 1),
-            config_fields: vec![FieldSpec::number(
-                "duration_minutes",
-                "Duration (minutes)",
-                NumericBounds::unbounded(),
+            ))
+            .signal(SignalSpec::selection("task"))
+            .action(ToolbarAction::refresh())
+            .template(TemplateNode::vertical(
+                8,
+                12,
+                vec![
+                    TemplateNode::component("heading", json!({"body": "Tasks"})),
+                    TemplateNode::repeater(
+                        "tasks",
+                        TemplateNode::text_binding("title"),
+                        "No tasks",
+                    ),
+                ],
+            ))
+            .build(),
+        widget("dashboard-timer", "Timer")
+            .description("Pomodoro / focus timer")
+            .category(WidgetCategory::Temporal)
+            .size(1, 1)
+            .field(
+                FieldSpec::number(
+                    "duration_minutes",
+                    "Duration (minutes)",
+                    NumericBounds::unbounded(),
+                )
+                .with_default(json!(25)),
             )
-            .with_default(json!(25))],
-            signals: vec![
-                SignalSpec::new("started", "Timer started"),
-                SignalSpec::new("completed", "Timer completed"),
-            ],
-            toolbar_actions: vec![
-                ToolbarAction::signal("start", "Start", "play"),
-                ToolbarAction::signal("reset", "Reset", "refresh"),
-            ],
-            template: WidgetTemplate {
-                root: TemplateNode::Container {
-                    direction: LayoutDirection::Vertical,
-                    gap: Some(8),
-                    padding: Some(12),
-                    children: vec![
-                        TemplateNode::DataBinding {
-                            field: "remaining".into(),
-                            component_id: "text".into(),
-                            prop_key: "body".into(),
-                        },
-                        TemplateNode::DataBinding {
-                            field: "phase".into(),
-                            component_id: "text".into(),
-                            prop_key: "body".into(),
-                        },
-                    ],
+            .signal(SignalSpec::new("started", "Timer started"))
+            .signal(SignalSpec::new("completed", "Timer completed"))
+            .action(ToolbarAction::signal("start", "Start", "play"))
+            .action(ToolbarAction::signal("reset", "Reset", "refresh"))
+            .template(TemplateNode::vertical(
+                8,
+                12,
+                vec![
+                    TemplateNode::text_binding("remaining"),
+                    TemplateNode::text_binding("phase"),
+                ],
+            ))
+            .build(),
+        widget("dashboard-recent", "Recent")
+            .description("Recently visited items")
+            .category(WidgetCategory::Display)
+            .size(2, 1)
+            .query(
+                DataQuery {
+                    sort: vec![crate::widget::QuerySort {
+                        field: "updated_at".into(),
+                        descending: true,
+                    }],
+                    limit: Some(10),
+                    ..Default::default()
                 },
-            },
-            ..Default::default()
-        },
-        WidgetContribution {
-            id: "dashboard-recent".into(),
-            label: "Recent".into(),
-            description: "Recently visited items".into(),
-            category: WidgetCategory::Display,
-            default_size: WidgetSize::new(2, 1),
-            data_query: Some(DataQuery {
-                sort: vec![QuerySort {
-                    field: "updated_at".into(),
-                    descending: true,
-                }],
-                limit: Some(10),
-                ..Default::default()
-            }),
-            data_key: Some("items".into()),
-            data_fields: vec![
+            )
+            .data_key("items")
+            .data_fields(vec![
                 FieldSpec::text("title", "Title"),
                 FieldSpec::text("object_type", "Type"),
-            ],
-            config_fields: vec![FieldSpec::number(
-                "limit",
-                "Items to show",
-                NumericBounds::unbounded(),
+            ])
+            .field(
+                FieldSpec::number("limit", "Items to show", NumericBounds::unbounded())
+                    .with_default(json!(10)),
             )
-            .with_default(json!(10))],
-            signals: vec![SignalSpec::new("item-selected", "An item was selected")
-                .with_payload(vec![FieldSpec::text("item_id", "Item ID")])],
-            toolbar_actions: vec![
-                ToolbarAction::signal("refresh", "Refresh", "refresh"),
-                ToolbarAction::signal("clear", "Clear", "trash"),
-            ],
-            template: WidgetTemplate {
-                root: TemplateNode::Container {
-                    direction: LayoutDirection::Vertical,
-                    gap: Some(8),
-                    padding: Some(12),
-                    children: vec![
-                        TemplateNode::Component {
-                            component_id: "heading".into(),
-                            props: json!({"body": "Recent"}),
-                        },
-                        TemplateNode::Repeater {
-                            source: "items".into(),
-                            item_template: Box::new(TemplateNode::DataBinding {
-                                field: "title".into(),
-                                component_id: "text".into(),
-                                prop_key: "body".into(),
-                            }),
-                            empty_label: Some("No recent items".into()),
-                        },
-                    ],
-                },
-            },
-            ..Default::default()
-        },
-        WidgetContribution {
-            id: "dashboard-graph".into(),
-            label: "Graph".into(),
-            description: "Knowledge graph visualization".into(),
-            category: WidgetCategory::Display,
-            default_size: WidgetSize::new(2, 2),
-            signals: vec![
-                SignalSpec::new("node-selected", "A graph node was selected")
-                    .with_payload(vec![FieldSpec::text("node_id", "Node ID")]),
-            ],
-            template: WidgetTemplate {
-                root: TemplateNode::Container {
-                    direction: LayoutDirection::Vertical,
-                    gap: Some(8),
-                    padding: Some(12),
-                    children: vec![
-                        TemplateNode::Component {
-                            component_id: "heading".into(),
-                            props: json!({"body": "Knowledge Graph"}),
-                        },
-                        TemplateNode::DataBinding {
-                            field: "graph_data".into(),
-                            component_id: "text".into(),
-                            prop_key: "body".into(),
-                        },
-                    ],
-                },
-            },
-            ..Default::default()
-        },
+            .signal(SignalSpec::selection("item"))
+            .action(ToolbarAction::refresh())
+            .action(ToolbarAction::signal("clear", "Clear", "trash"))
+            .template(TemplateNode::vertical(
+                8,
+                12,
+                vec![
+                    TemplateNode::component("heading", json!({"body": "Recent"})),
+                    TemplateNode::repeater(
+                        "items",
+                        TemplateNode::text_binding("title"),
+                        "No recent items",
+                    ),
+                ],
+            ))
+            .build(),
+        widget("dashboard-graph", "Graph")
+            .description("Knowledge graph visualization")
+            .category(WidgetCategory::Display)
+            .size(2, 2)
+            .signal(SignalSpec::selection("node"))
+            .template(TemplateNode::vertical(
+                8,
+                12,
+                vec![
+                    TemplateNode::component("heading", json!({"body": "Knowledge Graph"})),
+                    TemplateNode::text_binding("graph_data"),
+                ],
+            ))
+            .build(),
     ]
 }
 

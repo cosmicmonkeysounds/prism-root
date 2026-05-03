@@ -1167,47 +1167,46 @@ fn json_to_cell_value(val: &Value) -> CellValue {
 
 pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
     use crate::widget::{
-        DataQuery, FieldSpec, LayoutDirection, NumericBounds, SelectOption, SignalSpec,
-        TemplateNode, ToolbarAction, VariantOptionSpec, VariantSpec, WidgetCategory,
-        WidgetContribution, WidgetSize, WidgetTemplate,
+        widget, DataQuery, FieldSpec, NumericBounds, SelectOption, SignalSpec, TemplateNode,
+        ToolbarAction, VariantOptionSpec, VariantSpec, WidgetCategory,
     };
     use serde_json::json;
 
     vec![
-        WidgetContribution {
-            id: "spreadsheet-data-table".into(),
-            label: "Data Table".into(),
-            description: "Interactive spreadsheet grid".into(),
-            category: WidgetCategory::DataTable,
-            config_fields: vec![
-                FieldSpec::text("sheet_id", "Sheet ID"),
+        widget("spreadsheet-data-table", "Data Table")
+            .description("Interactive spreadsheet grid")
+            .category(WidgetCategory::DataTable)
+            .field(FieldSpec::text("sheet_id", "Sheet ID"))
+            .field(
                 FieldSpec::number(
                     "frozen_columns",
                     "Frozen Columns",
                     NumericBounds::min_max(0.0, 10.0),
                 )
                 .with_default(json!(0)),
+            )
+            .field(
                 FieldSpec::boolean("show_row_numbers", "Show Row Numbers")
                     .with_default(json!(true)),
-            ],
-            signals: vec![
+            )
+            .signal(
                 SignalSpec::new("cell-selected", "A cell was selected").with_payload(vec![
                     FieldSpec::text("row_id", "Row ID"),
                     FieldSpec::text("col_id", "Column ID"),
                 ]),
+            )
+            .signal(
                 SignalSpec::new("cell-changed", "A cell value changed").with_payload(vec![
                     FieldSpec::text("row_id", "Row ID"),
                     FieldSpec::text("col_id", "Column ID"),
                     FieldSpec::text("value", "Value"),
                 ]),
-            ],
-            toolbar_actions: vec![
-                ToolbarAction::signal("add-row", "Add Row", "add"),
-                ToolbarAction::signal("add-column", "Add Column", "add"),
-                ToolbarAction::signal("delete-row", "Delete Row", "delete"),
-                ToolbarAction::signal("export", "Export", "export"),
-            ],
-            variants: vec![VariantSpec {
+            )
+            .action(ToolbarAction::signal("add-row", "Add Row", "add"))
+            .action(ToolbarAction::signal("add-column", "Add Column", "add"))
+            .action(ToolbarAction::signal("delete-row", "Delete Row", "delete"))
+            .action(ToolbarAction::export())
+            .variant(VariantSpec {
                 key: "density".into(),
                 label: "Density".into(),
                 options: vec![
@@ -1227,135 +1226,96 @@ pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
                         overrides: json!({"row_height": 48}),
                     },
                 ],
-            }],
-            default_size: WidgetSize::new(3, 2),
-            data_query: Some(DataQuery {
-                object_type: Some("row".into()),
-                ..Default::default()
-            }),
-            data_key: Some("rows".into()),
-            template: WidgetTemplate {
-                root: TemplateNode::Container {
-                    direction: LayoutDirection::Vertical,
-                    gap: Some(8),
-                    padding: Some(12),
-                    children: vec![
-                        TemplateNode::DataBinding {
-                            field: "title".into(),
-                            component_id: "heading".into(),
-                            prop_key: "body".into(),
-                        },
-                        TemplateNode::Repeater {
-                            source: "rows".into(),
-                            item_template: Box::new(TemplateNode::Component {
-                                component_id: "text".into(),
-                                props: json!({"body": "row"}),
-                            }),
-                            empty_label: Some("No data".into()),
-                        },
-                    ],
-                },
-            },
-            ..Default::default()
-        },
-        WidgetContribution {
-            id: "spreadsheet-pivot-table".into(),
-            label: "Pivot Table".into(),
-            description: "Grouped summary view".into(),
-            category: WidgetCategory::DataTable,
-            config_fields: vec![
-                FieldSpec::text("group_by", "Group By"),
-                FieldSpec::select(
-                    "aggregate",
-                    "Aggregate",
-                    vec![
-                        SelectOption::new("count", "Count"),
-                        SelectOption::new("sum", "Sum"),
-                        SelectOption::new("avg", "Average"),
-                        SelectOption::new("min", "Min"),
-                        SelectOption::new("max", "Max"),
-                    ],
-                ),
-                FieldSpec::text("value_column", "Value Column"),
-            ],
-            signals: vec![SignalSpec::new("group-selected", "A group was selected")
-                .with_payload(vec![FieldSpec::text("group_key", "Group Key")])],
-            toolbar_actions: vec![ToolbarAction::signal("refresh", "Refresh", "refresh")],
-            default_size: WidgetSize::new(2, 2),
-            template: WidgetTemplate {
-                root: TemplateNode::Container {
-                    direction: LayoutDirection::Vertical,
-                    gap: Some(8),
-                    padding: Some(12),
-                    children: vec![
-                        TemplateNode::Component {
-                            component_id: "heading".into(),
-                            props: json!({"body": "Pivot Table", "level": 3}),
-                        },
-                        TemplateNode::Repeater {
-                            source: "groups".into(),
-                            item_template: Box::new(TemplateNode::Component {
-                                component_id: "text".into(),
-                                props: json!({"body": "group"}),
-                            }),
-                            empty_label: Some("No groups".into()),
-                        },
-                    ],
-                },
-            },
-            ..Default::default()
-        },
-        WidgetContribution {
-            id: "spreadsheet-chart".into(),
-            label: "Chart".into(),
-            description: "Data visualization".into(),
-            category: WidgetCategory::Display,
-            config_fields: vec![
-                FieldSpec::select(
-                    "chart_type",
-                    "Chart Type",
-                    vec![
-                        SelectOption::new("bar", "Bar"),
-                        SelectOption::new("line", "Line"),
-                        SelectOption::new("pie", "Pie"),
-                        SelectOption::new("scatter", "Scatter"),
-                    ],
-                ),
-                FieldSpec::text("x_column", "X Column"),
-                FieldSpec::text("y_column", "Y Column"),
-                FieldSpec::text("title", "Title"),
-            ],
-            signals: vec![
+            })
+            .size(3, 2)
+            .query(DataQuery::for_type("row"))
+            .data_key("rows")
+            .template(TemplateNode::vertical(
+                8,
+                12,
+                vec![
+                    TemplateNode::DataBinding {
+                        field: "title".into(),
+                        component_id: "heading".into(),
+                        prop_key: "body".into(),
+                    },
+                    TemplateNode::repeater(
+                        "rows",
+                        TemplateNode::component("text", json!({"body": "row"})),
+                        "No data",
+                    ),
+                ],
+            ))
+            .build(),
+        widget("spreadsheet-pivot-table", "Pivot Table")
+            .description("Grouped summary view")
+            .category(WidgetCategory::DataTable)
+            .field(FieldSpec::text("group_by", "Group By"))
+            .field(FieldSpec::select(
+                "aggregate",
+                "Aggregate",
+                vec![
+                    SelectOption::new("count", "Count"),
+                    SelectOption::new("sum", "Sum"),
+                    SelectOption::new("avg", "Average"),
+                    SelectOption::new("min", "Min"),
+                    SelectOption::new("max", "Max"),
+                ],
+            ))
+            .field(FieldSpec::text("value_column", "Value Column"))
+            .signal(SignalSpec::selection("group"))
+            .action(ToolbarAction::refresh())
+            .size(2, 2)
+            .template(TemplateNode::vertical(
+                8,
+                12,
+                vec![
+                    TemplateNode::component("heading", json!({"body": "Pivot Table", "level": 3})),
+                    TemplateNode::repeater(
+                        "groups",
+                        TemplateNode::component("text", json!({"body": "group"})),
+                        "No groups",
+                    ),
+                ],
+            ))
+            .build(),
+        widget("spreadsheet-chart", "Chart")
+            .description("Data visualization")
+            .category(WidgetCategory::Display)
+            .field(FieldSpec::select(
+                "chart_type",
+                "Chart Type",
+                vec![
+                    SelectOption::new("bar", "Bar"),
+                    SelectOption::new("line", "Line"),
+                    SelectOption::new("pie", "Pie"),
+                    SelectOption::new("scatter", "Scatter"),
+                ],
+            ))
+            .field(FieldSpec::text("x_column", "X Column"))
+            .field(FieldSpec::text("y_column", "Y Column"))
+            .field(FieldSpec::text("title", "Title"))
+            .signal(
                 SignalSpec::new("point-selected", "A data point was selected").with_payload(vec![
                     FieldSpec::number("data_index", "Data Index", NumericBounds::unbounded()),
                 ]),
-            ],
-            toolbar_actions: vec![
-                ToolbarAction::signal("refresh", "Refresh", "refresh"),
-                ToolbarAction::signal("export", "Export", "export"),
-            ],
-            default_size: WidgetSize::new(2, 2),
-            template: WidgetTemplate {
-                root: TemplateNode::Container {
-                    direction: LayoutDirection::Vertical,
-                    gap: Some(8),
-                    padding: Some(12),
-                    children: vec![
-                        TemplateNode::DataBinding {
-                            field: "title".into(),
-                            component_id: "heading".into(),
-                            prop_key: "body".into(),
-                        },
-                        TemplateNode::DataBinding {
-                            field: "chart_data".into(),
-                            component_id: "text".into(),
-                            prop_key: "body".into(),
-                        },
-                    ],
-                },
-            },
-            ..Default::default()
-        },
+            )
+            .action(ToolbarAction::refresh())
+            .action(ToolbarAction::export())
+            .size(2, 2)
+            .template(TemplateNode::vertical(
+                8,
+                12,
+                vec![
+                    TemplateNode::DataBinding {
+                        field: "title".into(),
+                        component_id: "heading".into(),
+                        prop_key: "body".into(),
+                    },
+                    TemplateNode::text_binding("chart_data"),
+                ],
+            ))
+            .build(),
     ]
 }
 

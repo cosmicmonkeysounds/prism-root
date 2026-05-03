@@ -167,129 +167,84 @@ pub fn milestone_completion_rate(milestones: &[Milestone]) -> f64 {
 
 pub fn widget_contributions() -> Vec<crate::widget::WidgetContribution> {
     use crate::widget::{
-        DataQuery, FieldSpec, LayoutDirection, NumericBounds, QuerySort, SignalSpec, TemplateNode,
-        ToolbarAction, WidgetCategory, WidgetContribution, WidgetSize, WidgetTemplate,
+        widget, DataQuery, FieldSpec, NumericBounds, SignalSpec, TemplateNode, ToolbarAction,
+        WidgetCategory,
     };
     use serde_json::json;
 
     vec![
-        WidgetContribution {
-            id: "goal-progress".into(),
-            label: "Goal Progress".into(),
-            description: "Progress bar for a goal with milestone breakdown".into(),
-            icon: Some("target".into()),
-            category: WidgetCategory::Display,
-            config_fields: vec![
-                FieldSpec::boolean("show_milestones", "Show Milestones"),
-                FieldSpec::boolean("show_children", "Show Child Goals"),
-            ],
-            signals: vec![SignalSpec::new("goal-selected", "A goal was selected")
-                .with_payload(vec![FieldSpec::text("goal_id", "Goal ID")])],
-            toolbar_actions: vec![ToolbarAction::signal("refresh", "Refresh", "refresh")],
-            default_size: WidgetSize::new(2, 1),
-            data_query: Some(DataQuery {
-                object_type: Some("goal".into()),
-                sort: vec![QuerySort {
-                    field: "title".into(),
-                    descending: false,
-                }],
-                ..Default::default()
-            }),
-            data_key: Some("goals".into()),
-            data_fields: vec![
+        widget("goal-progress", "Goal Progress")
+            .description("Progress bar for a goal with milestone breakdown")
+            .icon("target")
+            .category(WidgetCategory::Display)
+            .field(FieldSpec::boolean("show_milestones", "Show Milestones"))
+            .field(FieldSpec::boolean("show_children", "Show Child Goals"))
+            .signal(SignalSpec::selection("goal"))
+            .action(ToolbarAction::refresh())
+            .size(2, 1)
+            .query(DataQuery::for_type("goal").sort_asc("title"))
+            .data_key("goals")
+            .data_fields(vec![
                 FieldSpec::text("title", "Title"),
                 FieldSpec::number("progress", "Progress", NumericBounds::min_max(0.0, 1.0)),
-            ],
-            template: WidgetTemplate {
-                root: TemplateNode::Container {
-                    direction: LayoutDirection::Vertical,
-                    gap: Some(8),
-                    padding: Some(12),
-                    children: vec![TemplateNode::Repeater {
-                        source: "goals".into(),
-                        item_template: Box::new(TemplateNode::DataBinding {
-                            field: "title".into(),
-                            component_id: "text".into(),
-                            prop_key: "body".into(),
-                        }),
-                        empty_label: Some("No goals".into()),
-                    }],
-                },
-            },
-            ..Default::default()
-        },
-        WidgetContribution {
-            id: "goal-tree".into(),
-            label: "Goal Tree".into(),
-            description: "Hierarchical goal overview with rollup progress".into(),
-            icon: Some("git-branch".into()),
-            category: WidgetCategory::Display,
-            signals: vec![SignalSpec::new("goal-selected", "A goal was selected")
-                .with_payload(vec![FieldSpec::text("goal_id", "Goal ID")])],
-            toolbar_actions: vec![
-                ToolbarAction::signal("expand-all", "Expand All", "maximize"),
-                ToolbarAction::signal("collapse-all", "Collapse All", "minimize"),
-            ],
-            default_size: WidgetSize::new(2, 2),
-            data_query: Some(DataQuery {
-                object_type: Some("goal".into()),
-                ..Default::default()
-            }),
-            data_key: Some("goals".into()),
-            template: WidgetTemplate {
-                root: TemplateNode::Container {
-                    direction: LayoutDirection::Vertical,
-                    gap: Some(4),
-                    padding: Some(8),
-                    children: vec![
-                        TemplateNode::Component {
-                            component_id: "heading".into(),
-                            props: json!({"body": "Goals", "level": 3}),
-                        },
-                        TemplateNode::Repeater {
-                            source: "goals".into(),
-                            item_template: Box::new(TemplateNode::DataBinding {
-                                field: "title".into(),
-                                component_id: "text".into(),
-                                prop_key: "body".into(),
-                            }),
-                            empty_label: Some("No goals".into()),
-                        },
-                    ],
-                },
-            },
-            ..Default::default()
-        },
-        WidgetContribution {
-            id: "milestone-checklist".into(),
-            label: "Milestone Checklist".into(),
-            description: "Checklist of milestones for a goal".into(),
-            icon: Some("check-square".into()),
-            category: WidgetCategory::Display,
-            signals: vec![
+            ])
+            .template(TemplateNode::vertical(
+                8,
+                12,
+                vec![TemplateNode::repeater(
+                    "goals",
+                    TemplateNode::text_binding("title"),
+                    "No goals",
+                )],
+            ))
+            .build(),
+        widget("goal-tree", "Goal Tree")
+            .description("Hierarchical goal overview with rollup progress")
+            .icon("git-branch")
+            .category(WidgetCategory::Display)
+            .signal(SignalSpec::selection("goal"))
+            .action(ToolbarAction::signal("expand-all", "Expand All", "maximize"))
+            .action(ToolbarAction::signal(
+                "collapse-all",
+                "Collapse All",
+                "minimize",
+            ))
+            .size(2, 2)
+            .query(DataQuery::for_type("goal"))
+            .data_key("goals")
+            .template(TemplateNode::vertical(
+                4,
+                8,
+                vec![
+                    TemplateNode::component("heading", json!({"body": "Goals", "level": 3})),
+                    TemplateNode::repeater(
+                        "goals",
+                        TemplateNode::text_binding("title"),
+                        "No goals",
+                    ),
+                ],
+            ))
+            .build(),
+        widget("milestone-checklist", "Milestone Checklist")
+            .description("Checklist of milestones for a goal")
+            .icon("check-square")
+            .category(WidgetCategory::Display)
+            .signal(
                 SignalSpec::new("milestone-toggled", "A milestone was toggled")
                     .with_payload(vec![FieldSpec::text("milestone_id", "Milestone ID")]),
-            ],
-            toolbar_actions: vec![ToolbarAction::signal("add-milestone", "Add", "plus")],
-            default_size: WidgetSize::new(2, 2),
-            template: WidgetTemplate {
-                root: TemplateNode::Container {
-                    direction: LayoutDirection::Vertical,
-                    gap: Some(4),
-                    padding: Some(8),
-                    children: vec![TemplateNode::Repeater {
-                        source: "milestones".into(),
-                        item_template: Box::new(TemplateNode::DataBinding {
-                            field: "title".into(),
-                            component_id: "text".into(),
-                            prop_key: "body".into(),
-                        }),
-                        empty_label: Some("No milestones".into()),
-                    }],
-                },
-            },
-            ..Default::default()
-        },
+            )
+            .action(ToolbarAction::signal("add-milestone", "Add", "plus"))
+            .size(2, 2)
+            .template(TemplateNode::vertical(
+                4,
+                8,
+                vec![TemplateNode::repeater(
+                    "milestones",
+                    TemplateNode::text_binding("title"),
+                    "No milestones",
+                )],
+            ))
+            .build(),
     ]
 }
 
