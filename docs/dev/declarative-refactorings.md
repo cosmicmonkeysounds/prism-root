@@ -439,6 +439,209 @@ declared in `.slint` get matched to Rust fns by name.
 
 ---
 
+## 6. `#[daemon_module]` — auto-generate `install()`  ⬜ not started
+
+### Current state
+
+`#[daemon_command]` generates a `register_<fn>()` sibling for each
+command, but the `DaemonModule::install()` body still calls each
+`register_*` manually. Every module follows the identical shape:
+acquire state/registry from the builder, call `register_<cmd>` for
+each command.
+
+```rust
+impl DaemonModule for CrdtModule {
+    fn id(&self) -> &str { "prism.crdt" }
+    fn install(&self, builder: &mut DaemonBuilder) -> Result<(), CommandError> {
+        let manager = builder.doc_manager_slot()
+            .get_or_insert_with(|| Arc::new(DocManager::new())).clone();
+        let registry = builder.registry().clone();
+        register_write(&registry, manager.clone())?;
+        register_read(&registry, manager.clone())?;
+        // …
+        Ok(())
+    }
+}
+```
+
+### Design
+
+A `#[daemon_module(id = "prism.crdt")]` annotation on the module
+struct collects every `register_*` symbol visible in the same module
+and emits the full `DaemonModule` impl automatically:
+
+```rust
+#[daemon_module(id = "prism.crdt")]
+struct CrdtModule;
+```
+
+The macro detects state capture by inspecting the `register_*`
+signatures (stateless vs `fn(&Registry, Arc<State>)`) and
+synthesises the builder acquire calls. Modules that need custom
+builder slots (e.g. `doc_manager_slot`) can annotate the relevant
+field with `#[module_slot]`.
+
+This is the logical complement to `#[daemon_command]` — the two
+macros together make a module fully declarative with zero hand-written
+boilerplate.
+
+### Status
+
+- ⬜ Not started. Blocked on nothing — `#[daemon_command]` is fully
+  shipped and provides all the `register_*` hooks the module macro
+  needs to collect.
+
+---
+
+## 7. Luau `.d.luau` stub generation from `#[daemon_command]`  ⬜ not started
+
+### Current state
+
+The status note in #3 records: "Manually maintain a `.d.luau` stub
+(or skip and lose intellisense)." The macro already has request and
+response types in scope at proc-macro time via the handler signature;
+nothing prevents it from also emitting a Luau type declaration.
+
+### Design
+
+Extend `#[daemon_command]` with an optional `luau` flag (default on)
+that emits a `const <FN_NAME_UPPER>_LUAU_STUB: &str` constant
+containing the Luau function signature for the command. A companion
+`collect_luau_stubs!(module)` macro (or a build-script step) sweeps
+all `*_LUAU_STUB` constants from a module and writes them into a
+`.d.luau` file alongside the daemon binary.
+
+The `prism-luau-derive` crate already contains all the primitives
+needed for Luau type emission (`SymbolEmmyDocEmitter`,
+`signal_symbols`, `generate_signal_type_stubs`).
+
+### Status
+
+- ⬜ Not started. Low design risk — purely additive to the existing
+  macro. Priority rises once the visual scripting Luau integration
+  (luau-integration-plan phase 4+) makes daemon stubs high-traffic.
+
+---
+
+## 8. Typed `Props` accessor for blocks  ⬜ not started
+
+### Current state
+
+Every `render_slint` / `render_html` impl in `starter.rs` opens with
+a cluster of manual prop extractions — 77 total calls to
+`prop_str(props, "key", default)` / `prop_bool(...)` /
+`prop_f64(...)`. This is stringly-typed: wrong key = silent wrong
+default at runtime, not a compile error.
+
+### Design
+
+`#[derive(PrismBlock)]` gains an optional `#[block(props = "MyProps")]`
+attribute pointing at a `#[derive(PrismField)]`-annotated struct. The
+derive generates a typed `MyProps::from_value(&Value) -> MyProps`
+extractor and passes a `&MyProps` instead of raw `&Value` into the
+render closures or template fn.
+
+```rust
+#[derive(PrismField)]
+struct TextProps {
+    #[field(label = "Body", default = "", multiline)]
+    body: String,
+    #[field(label = "Level", select = ["paragraph","h1","h2","h3"], default = "paragraph")]
+    level: String,
+    #[field(label = "Link", default = "")]
+    href: String,
+}
+
+#[derive(PrismBlock)]
+#[block(id = "text", props = "TextProps")]
+struct TextBlock;
+
+impl TextBlock {
+    fn template(props: &TextProps, children: &[Node]) -> TemplateNode { … }
+}
+```
+
+`PrismField` + `PrismBlock` compose: the schema method is derived
+from the struct fields, and the render template receives a fully
+typed value instead of raw JSON.
+
+### Status
+
+- ⬜ Not started. Depends on `#[derive(PrismField)]` covering all
+  field kinds (item #2 above). The 9 remaining hand-rolled schemas
+  in `schemas.rs` need `File`/`Currency`/`Calculation` kind support
+  before this is viable end-to-end.
+
+---
+
+## 9. Widget contributions aggregator  ⬜ not started
+
+### Current state
+
+Every domain engine (`ledger`, `goals`, `calendar`, `spreadsheet`,
+`habits`, `projects`, `fitness`, `crm`, `timekeeping`) and
+interaction module (`comments`) exports a free
+`pub fn widget_contributions() -> Vec<WidgetContribution>` with no
+standard annotation. The call-site that aggregates them is a
+hand-maintained list that must be updated whenever a new engine is
+added.
+
+### Design
+
+A `widget_providers![ ledger, goals, calendar, … ]` declarative macro
+at the aggregation site emits a single
+`all_widget_contributions() -> Vec<WidgetContribution>` that
+concatenates results from each listed module. Keeping the list
+explicit (rather than an invisible `#[widget_provider]` attribute)
+makes the dependency graph auditable and avoids surprising inclusion
+of optional engines.
+
+### Status
+
+- ⬜ Not started. Lower priority — the hand-maintained list is short
+  and changes infrequently. Straightforward `macro_rules!` once the
+  aggregation site is identified.
+
+---
+
+## 10. `#[derive(LuauType)]` for design-token structs  ⬜ not started
+
+### Current state
+
+`DesignTokens`, `Colors`, `Typography`, `Spacing`, `Rgba`, and
+`Radius` each hand-write `LUAU_TYPE_NAME` and `LUAU_TYPE_DEF` string
+constants in `prism-core/src/design_tokens.rs`. This is the same
+single-source-of-truth problem `#[derive(PrismField)]` solved for
+field schemas — a struct field renamed in Rust requires a parallel
+edit in the string constant, and divergence is silent until a Luau
+type error surfaces at script runtime.
+
+### Design
+
+```rust
+#[derive(LuauType)]
+pub struct Colors {
+    pub primary: Rgba,
+    pub surface: Rgba,
+    pub text: Rgba,
+    // …
+}
+```
+
+Generates `Colors::LUAU_TYPE_NAME` and `Colors::LUAU_TYPE_DEF` from
+the field names and types, mapping Rust primitives to Luau types and
+recursing into nested `#[derive(LuauType)]` structs by their
+`LUAU_TYPE_NAME`. The registration table in `luau_types.rs` reduces
+to a single macro invocation over the annotated types.
+
+### Status
+
+- ⬜ Not started. The emit infrastructure (`SymbolEmmyDocEmitter`,
+  `LUAU_TYPE_DEF` pattern) already exists in `prism-luau-derive`.
+  This is mostly a new derive macro that reuses existing emit logic.
+
+---
+
 ## Sequencing
 
 Implementation order optimises for value × independence:
@@ -455,9 +658,18 @@ Implementation order optimises for value × independence:
 4. **#1 Phase 2** (PrismBlock derive): ✅ shipped — depended on a
    richer `TemplateNode` (now grew `Image`/`Link`/`Children` arms)
    and on the walkers being callable from derived impls.
-5. **#5 SlintBinding**: independent, lower priority.
-6. **#4 visual_node**: lowest priority — visual scripting is still
-   evolving rapidly.
+5. **#6 daemon_module**: natural next step after #3 — no new design
+   work, just collecting what `#[daemon_command]` already emits.
+6. **#8 typed Props**: depends on #2 PrismField completing for all
+   field kinds (`File`/`Currency`/`Calculation`).
+7. **#10 LuauType**: independent, reuses existing emit infrastructure.
+8. **#7 Luau stubs**: additive to #3, priority rises with
+   luau-integration phase 4+.
+9. **#5 SlintBinding**: independent, lower priority.
+10. **#4 visual_node**: lower priority — visual scripting is still
+    evolving rapidly.
+11. **#9 widget aggregator**: lowest priority, hand-maintained list
+    changes infrequently.
 
 The luau-integration plan's open phases (4.3–4.7, 6) are *consumers*
 of these refactorings: declarative widget definition in Luau (Phase 6
