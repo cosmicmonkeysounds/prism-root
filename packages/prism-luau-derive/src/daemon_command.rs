@@ -25,6 +25,8 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::{parse2, spanned::Spanned, FnArg, Ident, ItemFn, LitStr, Pat, PatType, ReturnType, Type};
 
+use crate::{first_generic_type, rust_type_to_luau};
+
 pub fn expand(attr: TokenStream2, item: TokenStream2) -> syn::Result<TokenStream2> {
     let args = parse_args(attr)?;
     let func: ItemFn = parse2(item)?;
@@ -44,22 +46,26 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> syn::Result<TokenStream
         }
     };
 
-    // Confirm the return type is `Result<_, _>`. We don't need the
-    // inner types — `register_typed` is generic — but we surface a
-    // friendlier error if the user wrote `-> Resp` by accident.
-    if let ReturnType::Type(_, ty) = &func.sig.output {
-        if !type_is_result(ty) {
+    // Confirm the return type is `Result<_, _>`. Capture the Ok arm
+    // for the optional Luau stub; the Err arm is unused (every error
+    // collapses to `string` on the wire).
+    let resp_ty: Option<&Type> = match &func.sig.output {
+        ReturnType::Type(_, ty) => {
+            if !type_is_result(ty) {
+                return Err(syn::Error::new(
+                    ty.span(),
+                    "#[daemon_command] handler must return Result<_, _>",
+                ));
+            }
+            result_ok_type(ty)
+        }
+        ReturnType::Default => {
             return Err(syn::Error::new(
-                ty.span(),
+                func.sig.output.span(),
                 "#[daemon_command] handler must return Result<_, _>",
             ));
         }
-    } else {
-        return Err(syn::Error::new(
-            func.sig.output.span(),
-            "#[daemon_command] handler must return Result<_, _>",
-        ));
-    }
+    };
 
     let id_lit = &args.id;
     let perm_ident = args
@@ -97,27 +103,56 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> syn::Result<TokenStream
         }
     };
 
+    let luau_stub_const = if args.luau {
+        // Raw idents (e.g. `r#continue`) need the `r#` stripped before
+        // splicing into a const name — `R#CONTINUE_LUAU_STUB` is not a
+        // valid Rust identifier.
+        let fn_name_for_const = fn_ident.to_string().trim_start_matches("r#").to_uppercase();
+        let const_ident = format_ident!("{}_LUAU_STUB", fn_name_for_const);
+        let req_luau = rust_type_to_luau(req_ty);
+        let resp_luau = resp_ty
+            .map(rust_type_to_luau)
+            .unwrap_or_else(|| "any".to_string());
+        let stub = format!("\"{}\": ({}) -> {}", id_lit.value(), req_luau, resp_luau);
+        quote! {
+            #[allow(non_upper_case_globals, dead_code)]
+            pub const #const_ident: &'static str = #stub;
+        }
+    } else {
+        quote! {}
+    };
+
     Ok(quote! {
         #func
         #register_fn
+        #luau_stub_const
     })
 }
 
 struct Args {
     id: LitStr,
     permission: Option<Ident>,
+    /// Emit a `<FN>_LUAU_STUB` constant carrying the Luau function
+    /// signature for this command. On by default; set `luau = false`
+    /// to opt out (e.g., for commands whose request/response types
+    /// don't have a meaningful Luau projection).
+    luau: bool,
 }
 
 fn parse_args(attr: TokenStream2) -> syn::Result<Args> {
     let mut id: Option<LitStr> = None;
     let mut permission: Option<Ident> = None;
+    let mut luau: bool = true;
     let parser = syn::meta::parser(|meta| {
         if meta.path.is_ident("id") {
             id = Some(meta.value()?.parse::<LitStr>()?);
         } else if meta.path.is_ident("permission") {
             permission = Some(meta.value()?.parse::<Ident>()?);
+        } else if meta.path.is_ident("luau") {
+            luau = meta.value()?.parse::<syn::LitBool>()?.value;
         } else {
-            return Err(meta.error("unknown #[daemon_command] arg (expected `id` or `permission`)"));
+            return Err(meta
+                .error("unknown #[daemon_command] arg (expected `id`, `permission`, or `luau`)"));
         }
         Ok(())
     });
@@ -128,7 +163,11 @@ fn parse_args(attr: TokenStream2) -> syn::Result<Args> {
             "#[daemon_command] requires `id = \"...\"`",
         )
     })?;
-    Ok(Args { id, permission })
+    Ok(Args {
+        id,
+        permission,
+        luau,
+    })
 }
 
 fn pat_type(arg: &FnArg) -> syn::Result<&PatType> {
@@ -171,4 +210,15 @@ fn type_is_result(ty: &Type) -> bool {
         }
     }
     false
+}
+
+fn result_ok_type(ty: &Type) -> Option<&Type> {
+    if let Type::Path(tp) = ty {
+        if let Some(seg) = tp.path.segments.last() {
+            if seg.ident == "Result" {
+                return first_generic_type(seg);
+            }
+        }
+    }
+    None
 }

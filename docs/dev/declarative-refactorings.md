@@ -558,33 +558,34 @@ macros together make a module fully declarative with zero hand-written
 
 ---
 
-## 7. Luau `.d.luau` stub generation from `#[daemon_command]`  ⬜ not started
+## 7. Luau `.d.luau` stub generation from `#[daemon_command]`  ✅ shipped (per-command + per-module constants)
 
 ### Current state
 
-The status note in #3 records: "Manually maintain a `.d.luau` stub
-(or skip and lose intellisense)." The macro already has request and
-response types in scope at proc-macro time via the handler signature;
-nothing prevents it from also emitting a Luau type declaration.
+The macro now emits Luau function-signature stubs alongside the
+existing register glue. Two pieces:
 
-### Design
-
-Extend `#[daemon_command]` with an optional `luau` flag (default on)
-that emits a `const <FN_NAME_UPPER>_LUAU_STUB: &str` constant
-containing the Luau function signature for the command. A companion
-`collect_luau_stubs!(module)` macro (or a build-script step) sweeps
-all `*_LUAU_STUB` constants from a module and writes them into a
-`.d.luau` file alongside the daemon binary.
-
-The `prism-luau-derive` crate already contains all the primitives
-needed for Luau type emission (`SymbolEmmyDocEmitter`,
-`signal_symbols`, `generate_signal_type_stubs`).
+- `#[daemon_command(id = "x.y")]` emits a
+  `pub const <FN_NAME_UPPER>_LUAU_STUB: &'static str` carrying the
+  signature in the form `"x.y": (Req) -> Resp`. Rust types pass
+  through `rust_type_to_luau` (the same mapper `#[luau_expose]`
+  uses) so primitives collapse to `number` / `boolean` / `string`,
+  collections become typed Luau tables, and named structs/enums
+  remain as leaf identifiers expected to be `#[luau_expose]`-annotated
+  elsewhere. Pass `luau = false` to opt out for commands whose
+  request/response types don't have a meaningful Luau projection.
+- `#[daemon_module(commands(a, b, c))]` emits a
+  `pub const <Module>::LUAU_STUBS: &'static [&'static str]` slice
+  pointing at each command's stub constant — sweepable by a future
+  CLI codegen step into a per-module `.d.luau` file alongside the
+  existing `prism codegen luau-types` pipeline.
 
 ### Status
 
-- ⬜ Not started. Low design risk — purely additive to the existing
-  macro. Priority rises once the visual scripting Luau integration
-  (luau-integration-plan phase 4+) makes daemon stubs high-traffic.
+- ✅ Macro-side shipped. The CLI sweep that aggregates `LUAU_STUBS`
+  slices across registered modules and writes them next to
+  `<workspace>/types/core.d.luau` is the natural follow-up; tracked
+  alongside the rest of phase 4 in `docs/dev/luau-integration-plan.md`.
 
 ---
 
@@ -1461,10 +1462,7 @@ into per-feature modules.
 
 ### Status
 
-- ⬜ Not started. No new abstractions — just splitting existing code
-  along the panel-feature grain lines that are already implicit in
-  the file. Best done incrementally: start with `properties.rs`
-  (the most self-contained), then `callbacks/navigation.rs`, etc.
+- ✅ Done!
 
 ---
 
@@ -1543,7 +1541,7 @@ Implementation order optimises for value × independence:
     worth doing if the allocation saving is measurable.
 21. **#19 module_inception cleanup**: cosmetic, 2-file change per
     occurrence — good first-contribution task.
-22. **#21 app/ decomposition**: largest cleanup item; start with
+22. **#21 app/ decomposition**: ✅ largest cleanup item; start with
     `properties.rs`, then `callbacks/` splits. Unblocks `#5 SlintBinding`
     migration.
 

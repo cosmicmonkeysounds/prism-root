@@ -63,8 +63,30 @@ pub fn expand(attr: TokenStream2, item: TokenStream2) -> syn::Result<TokenStream
         },
     };
 
+    let stub_idents: Vec<syn::Ident> = args
+        .commands
+        .iter()
+        .map(|cmd| {
+            let name = cmd.to_string();
+            let name = name.trim_start_matches("r#").to_uppercase();
+            format_ident!("{}_LUAU_STUB", name)
+        })
+        .collect();
+
     Ok(quote! {
         #item_struct
+
+        impl #mod_ident {
+            /// Luau function-signature stubs for every command this
+            /// module installs. Sweepable into a `.d.luau` file by a
+            /// codegen step. Refers to the `<FN>_LUAU_STUB` consts
+            /// emitted by `#[daemon_command]`; commands compiled with
+            /// `luau = false` will fail to resolve here.
+            #[allow(dead_code)]
+            pub const LUAU_STUBS: &'static [&'static str] = &[
+                #(#stub_idents),*
+            ];
+        }
 
         impl ::prism_daemon::module::DaemonModule for #mod_ident {
             fn id(&self) -> &str {

@@ -396,7 +396,7 @@ fn expand_enum(
 /// `string`; collection types map to typed Luau tables; everything
 /// else is referenced by its leaf identifier and expected to itself
 /// be `#[luau_expose]`-annotated.
-fn rust_type_to_luau(ty: &Type) -> String {
+pub(crate) fn rust_type_to_luau(ty: &Type) -> String {
     match ty {
         Type::Path(tp) => {
             let last = tp.path.segments.last();
@@ -445,7 +445,7 @@ fn rust_type_to_luau(ty: &Type) -> String {
     }
 }
 
-fn first_generic_type(seg: &syn::PathSegment) -> Option<&Type> {
+pub(crate) fn first_generic_type(seg: &syn::PathSegment) -> Option<&Type> {
     if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
         for a in &args.args {
             if let syn::GenericArgument::Type(t) = a {

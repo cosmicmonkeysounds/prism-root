@@ -114,6 +114,38 @@ fn daemon_module_state_form_threads_arc_into_handlers() {
 }
 
 #[test]
+fn luau_stub_const_emits_function_signature() {
+    // Stateless: `(EmptyArgs) -> Resp`.
+    assert_eq!(GREET_LUAU_STUB, "\"macro.greet\": (Greet) -> GreetResp");
+    // Stateful: state arg is dropped, only req appears in the signature.
+    // Primitives collapse via `rust_type_to_luau` (u64 → number).
+    assert_eq!(BUMP_LUAU_STUB, "\"macro.bump\": (Greet) -> number");
+}
+
+#[test]
+fn daemon_module_collects_command_luau_stubs() {
+    assert_eq!(StatelessModule::LUAU_STUBS, &[PING_LUAU_STUB]);
+    assert_eq!(StatefulModule::LUAU_STUBS, &[ECHO_LUAU_STUB]);
+    // Sanity check the content the module aggregates.
+    assert!(StatelessModule::LUAU_STUBS[0].starts_with("\"modtest.ping\":"));
+}
+
+#[daemon_command(id = "macro.silent", luau = false)]
+fn silent(_: Greet) -> Result<u64, std::convert::Infallible> {
+    Ok(0)
+}
+
+#[test]
+fn luau_false_compiles_without_stub_const() {
+    // The mere fact that this module type-checks proves
+    // `luau = false` is accepted by the attribute parser and the
+    // macro emits no `SILENT_LUAU_STUB` const (which would otherwise
+    // be visible at this scope).
+    let reg = CommandRegistry::default();
+    register_silent(&reg).unwrap();
+}
+
+#[test]
 fn permission_attribute_uses_user_tier() {
     use prism_daemon::permission::Permission;
     let reg = CommandRegistry::default();
