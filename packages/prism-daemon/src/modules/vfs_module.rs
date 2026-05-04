@@ -39,6 +39,7 @@
 //! the module lazily creates a `LocalVfsBackend` under the OS temp
 //! directory if no host plugged anything in.
 
+use crate::typed_command::EmptyArgs;
 use prism_luau_derive::{daemon_command, daemon_module};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -481,9 +482,6 @@ fn stats(mgr: &VfsManager, _: EmptyArgs) -> Result<StatsResp, String> {
         backend: mgr.backend().backend_name().to_string(),
     })
 }
-
-#[derive(Debug, Default, Deserialize)]
-struct EmptyArgs {}
 
 #[derive(Debug, Deserialize)]
 struct PutArgs {

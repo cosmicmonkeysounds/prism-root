@@ -8,11 +8,12 @@
 //! schemas just go through the derive so the prop struct is the
 //! single source of truth.
 
+#![allow(dead_code)] // structs are used only via their derived ::field_specs()
+
 use crate::registry::FieldSpec;
 use prism_luau_derive::PrismField;
 
 #[derive(PrismField)]
-#[allow(dead_code)]
 struct TextProps {
     #[field(label = "Body", multiline)]
     body: String,
@@ -31,7 +32,6 @@ pub fn text() -> Vec<FieldSpec> {
 }
 
 #[derive(PrismField)]
-#[allow(dead_code)]
 struct ImageProps {
     #[field(label = "Image source", kind = "file", accept = "image/*", required)]
     src: String,
@@ -52,7 +52,6 @@ pub fn image() -> Vec<FieldSpec> {
 }
 
 #[derive(PrismField)]
-#[allow(dead_code)]
 struct ContainerProps {
     #[field(label = "Child spacing (px)", default = 12, min = 0.0, max = 64.0)]
     spacing: i64,
@@ -69,7 +68,6 @@ pub fn container() -> Vec<FieldSpec> {
 }
 
 #[derive(PrismField)]
-#[allow(dead_code)]
 struct FormProps {
     #[field(label = "Form action URL")]
     action: String,
@@ -82,7 +80,6 @@ pub fn form() -> Vec<FieldSpec> {
 }
 
 #[derive(PrismField)]
-#[allow(dead_code)]
 struct InputProps {
     #[field(label = "Field name", required)]
     name: String,
@@ -107,7 +104,6 @@ pub fn input() -> Vec<FieldSpec> {
 }
 
 #[derive(PrismField)]
-#[allow(dead_code)]
 struct ButtonProps {
     #[field(label = "Button label", required)]
     text: String,
@@ -128,7 +124,6 @@ pub fn button() -> Vec<FieldSpec> {
 }
 
 #[derive(PrismField)]
-#[allow(dead_code)]
 struct CodeProps {
     #[field(label = "Code", multiline, required)]
     code: String,
@@ -145,7 +140,6 @@ pub fn divider() -> Vec<FieldSpec> {
 }
 
 #[derive(PrismField)]
-#[allow(dead_code)]
 struct SpacerProps {
     #[field(label = "Height (px)", default = 24, min = 4.0, max = 128.0)]
     height: i64,
@@ -156,7 +150,6 @@ pub fn spacer() -> Vec<FieldSpec> {
 }
 
 #[derive(PrismField)]
-#[allow(dead_code)]
 struct ColumnsProps {
     #[field(label = "Column gap (px)", default = 16, min = 0.0, max = 64.0)]
     gap: i64,
@@ -167,7 +160,6 @@ pub fn columns() -> Vec<FieldSpec> {
 }
 
 #[derive(PrismField)]
-#[allow(dead_code)]
 struct ListProps {
     #[field(label = "Ordered (numbered)")]
     ordered: bool,
@@ -178,7 +170,6 @@ pub fn list() -> Vec<FieldSpec> {
 }
 
 #[derive(PrismField)]
-#[allow(dead_code)]
 struct TableProps {
     #[field(label = "Column headers (comma-separated)", required)]
     headers: String,
@@ -191,7 +182,6 @@ pub fn table() -> Vec<FieldSpec> {
 }
 
 #[derive(PrismField)]
-#[allow(dead_code)]
 struct TabsProps {
     #[field(label = "Tab labels (comma-separated)", required)]
     labels: String,
@@ -202,7 +192,6 @@ pub fn tabs() -> Vec<FieldSpec> {
 }
 
 #[derive(PrismField)]
-#[allow(dead_code)]
 struct AccordionProps {
     #[field(label = "Section title", required)]
     title: String,
@@ -215,7 +204,6 @@ pub fn accordion() -> Vec<FieldSpec> {
 }
 
 #[derive(PrismField)]
-#[allow(dead_code)]
 struct FacetProps {
     #[field(label = "Facet ID", required)]
     facet_id: String,

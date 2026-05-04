@@ -30,9 +30,15 @@
 
 use crate::permission::Permission;
 use crate::registry::{CommandError, CommandRegistry};
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::fmt::Display;
+
+/// Shared no-payload request marker for typed handlers that take no
+/// input. Deserializes from an empty JSON object (`{}`), matching the
+/// legacy per-module `struct EmptyArgs {}` that this replaces.
+#[derive(Debug, Default, Deserialize)]
+pub struct EmptyArgs {}
 
 /// Extension trait that adds typed-handler registration to
 /// [`CommandRegistry`]. Imported via

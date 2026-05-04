@@ -31,6 +31,7 @@
 //! nicely with the emscripten C ABI which would otherwise have to
 //! choose a base64 flavor.
 
+use crate::typed_command::EmptyArgs;
 use chacha20poly1305::aead::{Aead, AeadCore, KeyInit, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use prism_luau_derive::{daemon_command, daemon_module};
@@ -152,9 +153,6 @@ fn random_bytes(args: RandomBytesArgs) -> Result<RandomBytesResp, String> {
 }
 
 // ── JSON arg shapes ────────────────────────────────────────────────────
-
-#[derive(Debug, Default, Deserialize)]
-struct EmptyArgs {}
 
 #[derive(Debug, Deserialize)]
 struct SecretKeyArgs {

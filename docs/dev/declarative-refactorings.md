@@ -610,7 +610,7 @@ typed value instead of raw JSON.
 
 ---
 
-## 9. Widget contributions aggregator  ⬜ not started
+## 9. Widget contributions aggregator  ✅ shipped
 
 ### Current state
 
@@ -634,9 +634,15 @@ of optional engines.
 
 ### Status
 
-- ⬜ Not started. Lower priority — the hand-maintained list is short
-  and changes infrequently. Straightforward `macro_rules!` once the
-  aggregation site is identified.
+- ✅ Shipped. `widget_providers!` declarative macro lives in
+  `prism-builder/src/core_widget.rs` next to `collect_all_contributions`;
+  takes a comma-separated list of `widget_contributions()` call
+  expressions and concatenates their results into a single
+  `Vec<WidgetContribution>`. The 14 hand-rolled `all.extend(...)` calls
+  in `collect_all_contributions` collapsed to one macro invocation
+  with the engines listed inline. The list stays explicit (rather than
+  an attribute scrape) so the dependency graph is auditable — adding
+  a new engine is a one-line edit. 359 builder tests pass; clippy clean.
 
 ---
 
@@ -1131,7 +1137,7 @@ work unchanged.
 
 ---
 
-## 17. `EmptyArgs` duplication across modules  ⬜ not started
+## 17. `EmptyArgs` duplication across modules  ✅ shipped
 
 ### Current state
 
@@ -1170,13 +1176,22 @@ than sharing it. The macro already has the `fn(req)` vs
 
 ### Status
 
-- ⬜ Not started. Option A requires a one-line change to the
-  `#[daemon_command]` proc-macro's code-generation path. Option B
-  is a 5-minute file edit. Either unblocks easily.
+- ✅ Shipped via Option B — single `pub struct EmptyArgs` lives in
+  `prism-daemon::typed_command` next to `CommandRegistryExt`, with
+  `#[derive(Debug, Default, Deserialize)]` so it deserializes from
+  an empty JSON object identically to the legacy per-module copies.
+  Both `crypto_module` (`crypto.keypair`) and `vfs_module`
+  (`vfs.list`, `vfs.stats`) import it from the shared location. The
+  duplicated structs are gone. Option A (macro special-cases `()` as
+  the request) was the documented preference but is more invasive —
+  `()` doesn't `DeserializeOwned` from `{}`, so the macro would have
+  to bypass `register_typed` and emit a separate dispatch path.
+  Option B keeps `register_typed` as the single seam. 113 daemon lib
+  tests pass; clippy clean.
 
 ---
 
-## 18. `schemas.rs` per-struct `#[allow(dead_code)]`  ⬜ not started
+## 18. `schemas.rs` per-struct `#[allow(dead_code)]`  ✅ shipped
 
 ### Current state
 
@@ -1200,7 +1215,11 @@ This removes 13 lines and makes the intent explicit in one place.
 
 ### Status
 
-- ⬜ Not started. One-line change. No logic impact.
+- ✅ Shipped. Module-level `#![allow(dead_code)]` at the top of
+  `prism-builder/src/schemas.rs` replaces the 14 per-struct allows.
+  Comment on the suppression names the intent ("structs are used only
+  via their derived ::field_specs()") so the noise is gone but the
+  reason isn't.
 
 ---
 
@@ -1408,11 +1427,17 @@ Implementation order optimises for value × independence:
 14. **#5 SlintBinding**: independent, lower priority.
 15. **#4 visual_node**: lower priority — visual scripting is still
     evolving rapidly.
-16. **#9 widget aggregator**: lowest priority, hand-maintained list
-    changes infrequently.
-17. **#18 schemas.rs dead_code consolidation**: one-line change, land any time.
-18. **#17 EmptyArgs deduplication**: extend `#[daemon_command]` for unit
-    request type — small macro change, high ergonomic payoff.
+16. **#9 widget aggregator**: ✅ shipped — `widget_providers!` macro
+    in `core_widget.rs` collapses the 14 `all.extend(...)` calls in
+    `collect_all_contributions` to a single declarative invocation.
+17. **#18 schemas.rs dead_code consolidation**: ✅ shipped — one
+    module-level `#![allow(dead_code)]` replaces 14 per-struct allows.
+18. **#17 EmptyArgs deduplication**: ✅ shipped via Option B — shared
+    `pub struct EmptyArgs` in `prism-daemon::typed_command`; the
+    duplicated module-private copies in `crypto_module` and
+    `vfs_module` are gone. Option A (macro special-case for `()`) was
+    rejected — `()` doesn't deserialize from `{}` cleanly through
+    `register_typed`, and the workaround would split the dispatch path.
 19. **#16 VfsBackend / build_module typed errors**: self-contained in
     `prism-daemon`; `thiserror` already in workspace.
 20. **#20 ObjectSnapshot boxing**: check `GraphObject` size first; only

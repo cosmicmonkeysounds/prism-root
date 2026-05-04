@@ -461,27 +461,38 @@ pub fn render_template_html(
 
 // ── Registration ────────────────────────────────────────────────
 
+/// Concatenates `widget_contributions()` from every listed provider
+/// module. Explicit list (rather than an attribute scrape) keeps the
+/// dependency graph auditable — adding a new engine is a one-line edit.
+macro_rules! widget_providers {
+    ($($call:expr),* $(,)?) => {{
+        let mut __all: ::std::vec::Vec<::prism_core::widget::WidgetContribution> = ::std::vec::Vec::new();
+        $( __all.extend($call); )*
+        __all
+    }};
+}
+
 /// Collect all widget contributions from core engines.
 pub fn collect_all_contributions() -> Vec<WidgetContribution> {
-    let mut all = Vec::new();
-    // Tier 1
-    all.extend(prism_core::domain::calendar::widget_contributions());
-    all.extend(prism_core::domain::timekeeping::widget_contributions());
-    all.extend(prism_core::domain::ledger::widget_contributions());
-    all.extend(prism_core::domain::spreadsheet::widget_contributions());
-    all.extend(prism_core::interaction::comments::widget_contributions());
-    all.extend(prism_core::interaction::dashboard::widget_contributions());
-    // Tier 2
-    all.extend(prism_core::domain::habits::widget_contributions());
-    all.extend(prism_core::domain::goals::widget_contributions());
-    all.extend(prism_core::domain::fitness::widget_contributions());
-    all.extend(prism_core::domain::reminders::widget_contributions());
-    all.extend(prism_core::domain::crm::widget_contributions());
-    all.extend(prism_core::domain::projects::widget_contributions());
-    all.extend(prism_core::domain::focus_planner::widget_contributions());
-    // Views
-    all.extend(prism_core::widget::view_contributions());
-    all
+    widget_providers![
+        // Tier 1
+        prism_core::domain::calendar::widget_contributions(),
+        prism_core::domain::timekeeping::widget_contributions(),
+        prism_core::domain::ledger::widget_contributions(),
+        prism_core::domain::spreadsheet::widget_contributions(),
+        prism_core::interaction::comments::widget_contributions(),
+        prism_core::interaction::dashboard::widget_contributions(),
+        // Tier 2
+        prism_core::domain::habits::widget_contributions(),
+        prism_core::domain::goals::widget_contributions(),
+        prism_core::domain::fitness::widget_contributions(),
+        prism_core::domain::reminders::widget_contributions(),
+        prism_core::domain::crm::widget_contributions(),
+        prism_core::domain::projects::widget_contributions(),
+        prism_core::domain::focus_planner::widget_contributions(),
+        // Views
+        prism_core::widget::view_contributions(),
+    ]
 }
 
 /// Wrap each core-engine [`WidgetContribution`] in a [`CoreWidgetBlock`]
