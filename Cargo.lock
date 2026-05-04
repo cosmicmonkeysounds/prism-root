@@ -5944,6 +5944,7 @@ dependencies = [
  "prism-core",
  "prism-daemon",
  "prism-dock",
+ "prism-luau-derive",
  "rfd",
  "serde",
  "serde_json",

@@ -381,14 +381,19 @@ attribute when the Rust body can't trivially translate.
   they don't fit the `#[visual_node]` shape — the derive is for
   user-extended math/logic/utility palette entries that round-trip
   to a single Luau call.
-- ⬜ Wire palette aggregation: Luau's `node_palette()` should
-  concatenate built-in entries with a registry of derived
-  `NODE_DEF` constants. Today the only consumer is the integration
-  test in `prism-builder/tests/derive_macros.rs`.
+- ✅ Palette aggregation wired: `LuauVisualLanguage` carries a
+  `palette_extensions: Vec<NodeKindDef>` registry, populated via
+  `with_node_def(NodeKindDef)` (builder) or `register_node_def(&mut)`
+  (in-place). `node_palette()` returns built-ins concatenated with the
+  registry. No global `inventory`/`OnceCell` — hosts construct an
+  instance per language surface and register the derived `*_NODE_DEF()`
+  fns they want exposed. Covered by
+  `luau_palette_aggregates_derived_node_defs_with_builtins` in
+  `prism-builder/tests/derive_macros.rs`.
 
 ---
 
-## 5. `#[derive(SlintBinding)]` — Rust↔Slint property bridge  🟡 derive shipped, migration pending
+## 5. `#[derive(SlintBinding)]` — Rust↔Slint property bridge  ✅ derive shipped, first migration landed
 
 ### Current state
 
@@ -417,25 +422,49 @@ declared in `.slint` get matched to Rust fns by name.
 ### Status
 
 - ✅ Derive shipped in `prism-luau-derive` as
-  `#[derive(SlintBinding)]` with struct attribute
-  `#[slint(global = "AppGlobal")]`. Emits two methods on the host
+  `#[derive(SlintBinding)]`. Struct attribute
+  `#[slint(global = "...")]` parses its argument as a Rust type, so
+  both Slint handle shapes work directly: root component handles
+  (`global = "AppWindow"`) and generated global borrow types
+  (`global = "AppGlobal<'_>"`). Emits two methods on the host
   struct:
-  - `bind_to(&AppGlobal<'_>)` — calls `handle.set_<field>(self.field.clone().into())` for every field.
-  - `pull_from(&mut self, &AppGlobal<'_>)` — calls `self.field = handle.get_<field>().into()` for every field.
+  - `bind_to(&Target)` — calls `handle.set_<field>(self.field.clone().into())` for every field.
+  - `pull_from(&mut self, &Target)` — calls `self.field = handle.get_<field>().into()` for every field.
   The `.into()` coercion punts type-mapping to Slint's generated
   `Set*` traits — Rust `String` flows through `slint::SharedString`,
   primitives flow as-is. Callbacks (`on_*`) are deliberately not in
   scope; the derive is for state shuttling only.
-- ⬜ Survey: the hand-written `set_*` calls in
-  `prism-shell/src/app/sync.rs` and `commands.rs` are the migration
-  target. Many properties don't live in a `slint::Global<...>` but
-  on the root `AppWindow` directly, which the derive supports if
-  the user passes `AppWindow` for the `global` attribute (the
-  `set_<field>` / `get_<field>` shape matches).
-- ⬜ Migration: pick a small struct that already projects flatly
-  into a Slint global — `panels::navigation::PageRow` or similar —
-  and derive `SlintBinding` on its mirror struct. Defer wider
-  migration until shell-state structure stabilises.
+- ✅ Direction flags + per-field overrides: struct-level
+  `#[slint(push_only)]` / `#[slint(pull_only)]` skip the unwanted
+  half (push-only is required when the target Slint property is `in`
+  rather than `in-out`, since Slint only generates a `set_*` for
+  `in`). Per-field `#[slint(skip)]` drops a field from both directions,
+  and `#[slint(rename = "other")]` lets the Rust field name diverge
+  from the Slint property name.
+- ✅ Survey of the hand-written `set_*` call sites in
+  `prism-shell/src/app/sync.rs` (108 calls): most target Slint `in`
+  properties on the root `AppWindow`, so the migration target is
+  push-only mirrors keyed off `AppState` rather than the in-out
+  globals the derive was originally designed for. `commands.rs` has
+  zero direct `set_*` calls — every shell mutation flows through
+  `sync_ui_from_shared`, so the migration scope is exclusively
+  `sync.rs`.
+- ✅ First migration: `ChromeBindings` in
+  `prism-shell/src/app/sync.rs` collapses the four shell-chrome
+  setters (`set_show_activity_bar` / `set_show_left_sidebar` /
+  `set_show_right_sidebar` / `set_viewport_width`) into a single
+  `ChromeBindings::from(state).bind_to(window)`. Push-only because
+  the Slint properties are `in`. Renaming an `AppState` field
+  without updating the Slint property of the same name now fails
+  to compile rather than silently dropping the push.
+- 🟡 Wider migration deferred: the remaining ~100 `set_*` call sites
+  are interleaved with derived state (`SharedString::from(match …)`,
+  conditional pushes guarded by `if let Some(...)`, model-driven
+  pushes that compute a count alongside the value). Each cluster
+  needs its own mirror struct with a `From<&AppState>` constructor;
+  `ChromeBindings` is the template. Worth tackling cluster-by-cluster
+  once the `app/` decomposition (#21) splits `sync.rs` along
+  panel-feature lines.
 
 ---
 
@@ -559,7 +588,7 @@ needed for Luau type emission (`SymbolEmmyDocEmitter`,
 
 ---
 
-## 8. Typed `Props` accessor for blocks  ✅ shipped (extractor + starter migration)
+## 8. Typed `Props` accessor for blocks  ✅ shipped (extractor + starter migration + derive sugar)
 
 ### Current state
 
@@ -646,14 +675,24 @@ typed value instead of raw JSON.
   `prop_bool` / `prop_f64` / `prop_u64` imports in `starter.rs` are
   gone — every block in the catalog now reads typed fields off the
   prop struct.
-- ⬜ The richer design — `#[block(props = "MyProps")]` on
-  `#[derive(PrismBlock)]` so the derive passes `&MyProps` straight
-  into `template()` instead of `&Value` — was not pursued because
-  the 16 starter blocks haven't migrated to the `template()` shape
-  yet (see #1 Phase 2: `TemplateNode` still can't express
-  conditional `<a>` wrapping for arbitrary chrome). The typed
-  extractor is the load-bearing value, and it's now in place; the
-  derive sugar can land alongside the eventual template migration.
+- ✅ Derive sugar: `#[block(props = "MyProps")]` on
+  `#[derive(PrismBlock)]` now wires the typed extractor through the
+  template path. The derive routes `schema()` to
+  `MyProps::field_specs()` and rewrites the generated
+  `render_slint`/`render_html` to call
+  `MyProps::from_value(props)` once and pass `&MyProps` into
+  `template(&MyProps, &[Node])`. Block authors who already use the
+  template shape (the `CoreWidgetBlock` path, `DemoCardBlock` in
+  the derive integration tests, and the new `TypedCardBlock` test)
+  drop the hand-written `schema()` method entirely. Two new
+  integration tests in `prism-builder/tests/derive_macros.rs`
+  exercise the typed-extraction path end-to-end (schema derivation
+  + branching template based on a typed-prop field). The 16 starter
+  blocks in `starter.rs` keep their hand-written `Component` impls
+  for now — they aren't on the `template()` shape yet because the
+  blocks need Slint-specific chrome (font-family / `Tabs` interactive
+  state / `GraphView` layout fanout) the IR can't yet express. When
+  those migrate, they'll opt into `props = "..."` automatically.
 
 ---
 
@@ -1479,7 +1518,12 @@ Implementation order optimises for value × independence:
     free `pub const`s, not associated items.
 13. **#7 Luau stubs**: additive to #3, priority rises with
     luau-integration phase 4+.
-14. **#5 SlintBinding**: independent, lower priority.
+14. **#5 SlintBinding**: ✅ derive shipped (now supports `push_only` /
+    `pull_only` direction flags + per-field `skip` / `rename`); first
+    migration `ChromeBindings` in `prism-shell/src/app/sync.rs`
+    collapses the four shell-chrome `set_*` calls into one
+    `bind_to(window)`. Wider migration of the remaining ~100
+    `set_*` sites is deferred until #21 splits `sync.rs`.
 15. **#4 visual_node**: lower priority — visual scripting is still
     evolving rapidly.
 16. **#9 widget aggregator**: ✅ shipped — `widget_providers!` macro

@@ -19,11 +19,33 @@ fn diag_error(message: String) -> Diagnostic {
     }
 }
 
-pub struct LuauVisualLanguage;
+pub struct LuauVisualLanguage {
+    /// Additional palette entries appended to the built-in catalog by
+    /// `node_palette()`. Populated by hosts that want derived
+    /// `*_NODE_DEF()` constants (emitted by `#[visual_node]`) to show
+    /// up alongside the language-control-flow built-ins.
+    palette_extensions: Vec<NodeKindDef>,
+}
 
 impl LuauVisualLanguage {
     pub fn new() -> Self {
-        Self
+        Self {
+            palette_extensions: Vec::new(),
+        }
+    }
+
+    /// Append a derived `NodeKindDef` (typically from a
+    /// `#[visual_node]`-generated `*_NODE_DEF()` fn) to this instance's
+    /// palette extension registry. Builder-style; chainable.
+    pub fn with_node_def(mut self, def: NodeKindDef) -> Self {
+        self.palette_extensions.push(def);
+        self
+    }
+
+    /// In-place variant of [`Self::with_node_def`] for hosts that hold
+    /// a `&mut LuauVisualLanguage` after construction.
+    pub fn register_node_def(&mut self, def: NodeKindDef) {
+        self.palette_extensions.push(def);
     }
 }
 
@@ -97,7 +119,7 @@ impl VisualLanguage for LuauVisualLanguage {
     }
 
     fn node_palette(&self) -> Vec<NodeKindDef> {
-        vec![
+        let mut palette = vec![
             palette_entry(
                 ScriptNodeKind::LocalAssignment,
                 "Local Variable",
@@ -182,7 +204,9 @@ impl VisualLanguage for LuauVisualLanguage {
                 "Handle a component signal (clicked, hovered, etc.)",
                 "Signals",
             ),
-        ]
+        ];
+        palette.extend(self.palette_extensions.iter().cloned());
+        palette
     }
 
     fn validate(&self, graph: &ScriptGraph) -> Vec<Diagnostic> {

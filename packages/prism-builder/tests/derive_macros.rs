@@ -201,6 +201,35 @@ fn visual_node_uses_explicit_luau_template_when_provided() {
     assert_eq!(def.category, "Logic");
 }
 
+#[test]
+fn luau_palette_aggregates_derived_node_defs_with_builtins() {
+    use prism_core::language::luau::LuauVisualLanguage;
+    use prism_core::language::visual::bridge::VisualLanguage;
+
+    let lang = LuauVisualLanguage::new()
+        .with_node_def(ADD_NODE_DEF())
+        .with_node_def(NOT_OP_NODE_DEF());
+
+    let palette = lang.node_palette();
+
+    // Built-in language-control-flow entries still present.
+    assert!(palette.iter().any(|p| p.category == "Control Flow"));
+    assert!(palette.iter().any(|p| p.category == "Signals"));
+
+    // Derived entries appended.
+    assert!(palette
+        .iter()
+        .any(|p| p.label == "Add" && p.category == "Math"));
+    assert!(palette
+        .iter()
+        .any(|p| p.label == "NotOp" && p.category == "Logic"));
+
+    // Bare instance still returns built-ins only.
+    let bare = LuauVisualLanguage::new().node_palette();
+    assert!(!bare.iter().any(|p| p.label == "Add"));
+    assert_eq!(palette.len(), bare.len() + 2);
+}
+
 // ── PrismBlock derive ───────────────────────────────────────────
 
 #[derive(PrismBlock, Default)]
@@ -272,4 +301,109 @@ fn prism_block_derive_renders_html_via_template_walker() {
     let html = out.into_string();
     assert!(html.contains("display:flex"));
     assert!(html.contains("Hello"));
+}
+
+// ── PrismBlock with typed `props = "..."` attribute ──────────────────
+
+#[derive(PrismField, Default)]
+#[allow(dead_code)]
+struct TypedCardProps {
+    #[field(label = "Title", default = "Untitled")]
+    title: String,
+    #[field(label = "Subtitle", default = "")]
+    subtitle: String,
+}
+
+#[derive(PrismBlock, Default)]
+#[block(id = "typed-card", props = "TypedCardProps")]
+struct TypedCardBlock;
+
+impl TypedCardBlock {
+    // Note: receives `&TypedCardProps`, not `&Value`. The derive
+    // extracts the typed struct via `TypedCardProps::from_value(props)`
+    // before calling this fn.
+    fn template(
+        p: &TypedCardProps,
+        _children: &[prism_builder::Node],
+    ) -> prism_core::widget::TemplateNode {
+        use prism_core::widget::{LayoutDirection, TemplateNode};
+        // Use the typed struct directly to drive a (trivial) shape
+        // decision — proves the typed extraction reached `template()`.
+        let mut kids = vec![TemplateNode::DataBinding {
+            field: "title".into(),
+            component_id: "text".into(),
+            prop_key: "body".into(),
+        }];
+        if !p.subtitle.is_empty() {
+            kids.push(TemplateNode::DataBinding {
+                field: "subtitle".into(),
+                component_id: "text".into(),
+                prop_key: "body".into(),
+            });
+        }
+        TemplateNode::Container {
+            direction: LayoutDirection::Vertical,
+            gap: Some(4),
+            padding: Some(8),
+            children: kids,
+        }
+    }
+}
+
+#[test]
+fn prism_block_typed_props_derives_schema_from_props_struct() {
+    use prism_builder::Block;
+    let block = TypedCardBlock;
+    let schema = block.schema();
+    let keys: Vec<&str> = schema.iter().map(|s| s.key.as_str()).collect();
+    assert_eq!(keys, vec!["title", "subtitle"]);
+}
+
+#[test]
+fn prism_block_typed_props_extracts_typed_props_for_template() {
+    use prism_builder::{Block, Html, HtmlRegistry, HtmlRenderContext};
+    let mut html_registry = HtmlRegistry::new();
+    prism_builder::register_html_builtins(&mut html_registry).unwrap();
+
+    let tokens = prism_core::design_tokens::DesignTokens::default();
+    let resources = indexmap::IndexMap::new();
+    let prefabs = indexmap::IndexMap::new();
+    let facets = indexmap::IndexMap::new();
+    let facet_schemas = indexmap::IndexMap::new();
+    let ctx = HtmlRenderContext {
+        tokens: &tokens,
+        registry: &html_registry,
+        resources: &resources,
+        prefabs: &prefabs,
+        facets: &facets,
+        facet_schemas: &facet_schemas,
+        widget_data: std::collections::HashMap::new(),
+    };
+
+    let block = TypedCardBlock;
+
+    // With subtitle set, both bindings render.
+    let mut out = Html::new();
+    block
+        .render_html(
+            &ctx,
+            &serde_json::json!({"title": "Hi", "subtitle": "Yo"}),
+            &[],
+            &mut out,
+        )
+        .unwrap();
+    let html = out.into_string();
+    assert!(html.contains("Hi"));
+    assert!(html.contains("Yo"));
+
+    // With subtitle missing, only the title binding renders — proves
+    // the typed extraction (subtitle defaulted to "") gated the
+    // template branch.
+    let mut out = Html::new();
+    block
+        .render_html(&ctx, &serde_json::json!({"title": "Hi"}), &[], &mut out)
+        .unwrap();
+    let html = out.into_string();
+    assert!(html.contains("Hi"));
+    assert!(!html.contains("Yo"));
 }

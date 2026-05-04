@@ -1,5 +1,5 @@
 //! `#[derive(PrismBlock)]` — emit a `Block` impl from a struct that
-//! exposes `schema()` and `template(props, children)` methods.
+//! exposes `template(props, children)` (and optionally `schema()`).
 //!
 //! The derive collapses the boilerplate of authoring a builder block
 //! into a single template-returning function. Both `render_slint` and
@@ -9,18 +9,30 @@
 //! needs Slint-specific or HTML-specific chrome that the
 //! `TemplateNode` IR cannot express yet.
 //!
-//! ```ignore
-//! use prism_luau_derive::PrismBlock;
+//! Two attribute forms:
 //!
+//! ```ignore
+//! // Form A — raw `&Value` props. The block hand-writes both
+//! // `schema()` and `template(&Value, &[Node])`.
 //! #[derive(PrismBlock, Default)]
 //! #[block(id = "divider")]
 //! pub struct DividerBlock;
 //!
 //! impl DividerBlock {
 //!     fn schema() -> Vec<FieldSpec> { schemas::divider() }
-//!     fn template(_props: &Value, _children: &[Node]) -> TemplateNode {
-//!         TemplateNode::Container { /* ... */ }
-//!     }
+//!     fn template(_props: &Value, _children: &[Node]) -> TemplateNode { /* ... */ }
+//! }
+//!
+//! // Form B — typed `&MyProps` props. The struct named by `props = "..."`
+//! // must derive `PrismField` (so the macro can call `MyProps::field_specs()`
+//! // and `MyProps::from_value(&Value)`). `template(&MyProps, &[Node])`
+//! // receives the extracted typed props directly.
+//! #[derive(PrismBlock, Default)]
+//! #[block(id = "text", props = "TextProps")]
+//! pub struct TextBlock;
+//!
+//! impl TextBlock {
+//!     fn template(p: &TextProps, _children: &[Node]) -> TemplateNode { /* ... */ }
 //! }
 //! ```
 
@@ -32,6 +44,7 @@ pub fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let ident = &input.ident;
 
     let mut id_lit: Option<syn::LitStr> = None;
+    let mut props_ty: Option<syn::Type> = None;
     for attr in &input.attrs {
         if !attr.path().is_ident("block") {
             continue;
@@ -41,8 +54,13 @@ pub fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
                 let s: syn::LitStr = meta.value()?.parse()?;
                 id_lit = Some(s);
                 Ok(())
+            } else if meta.path.is_ident("props") {
+                let s: syn::LitStr = meta.value()?.parse()?;
+                props_ty = Some(s.parse()?);
+                Ok(())
             } else {
-                Err(meta.error("unknown #[block] arg (expected `id = \"...\"`)"))
+                Err(meta
+                    .error("unknown #[block] arg (expected `id = \"...\"` or `props = \"...\"`)"))
             }
         })?;
     }
@@ -54,6 +72,23 @@ pub fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
         )
     })?;
 
+    // When `props = "MyProps"` is set the schema is derived from
+    // `MyProps::field_specs()` and `template()` receives `&MyProps`.
+    // Otherwise the host struct hand-writes `schema()` + `template(&Value, …)`.
+    let (schema_body, template_extract) = match &props_ty {
+        Some(ty) => (
+            quote! { <#ty>::field_specs() },
+            quote! {
+                let __typed_props = <#ty>::from_value(props);
+                let template = <#ident>::template(&__typed_props, children);
+            },
+        ),
+        None => (
+            quote! { <#ident>::schema() },
+            quote! { let template = <#ident>::template(props, children); },
+        ),
+    };
+
     Ok(quote! {
         impl ::prism_builder::Block for #ident {
             fn id(&self) -> &::prism_builder::ComponentId {
@@ -63,7 +98,7 @@ pub fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
             }
 
             fn schema(&self) -> ::std::vec::Vec<::prism_builder::FieldSpec> {
-                <#ident>::schema()
+                #schema_body
             }
 
             fn render_slint(
@@ -73,7 +108,7 @@ pub fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
                 children: &[::prism_builder::Node],
                 out: &mut ::prism_builder::SlintEmitter,
             ) -> ::std::result::Result<(), ::prism_builder::RenderError> {
-                let template = <#ident>::template(props, children);
+                #template_extract
                 ::prism_builder::render_template_node(ctx, &template, props, children, out)
             }
 
@@ -84,7 +119,7 @@ pub fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
                 children: &[::prism_builder::Node],
                 out: &mut ::prism_builder::Html,
             ) -> ::std::result::Result<(), ::prism_builder::RenderError> {
-                let template = <#ident>::template(props, children);
+                #template_extract
                 ::prism_builder::render_template_html(ctx, &template, props, children, out)
             }
         }
