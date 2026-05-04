@@ -21,12 +21,19 @@ web = []
 # Always-on for `prism-relay`; default-on so a host pulling
 # `prism-ui-runtime` for SSR alone gets it for free.
 html = []
+# Luau bindings — exposes `Node`, `Surface`, and a `ui.*` constructor
+# table to Luau via `mlua::UserData`. Off by default so the relay's
+# HTML SSR path stays mlua-free; flipped on by `prism-shell` and any
+# host that wants Luau-authored components (see
+# clay-migration-plan.md §11).
+luau = ["dep:mlua"]
 
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 clay-layout = { path = "../../vendor/clay-layout" }
+mlua = { workspace = true, optional = true }
 
 [dev-dependencies]
 insta = { workspace = true }

@@ -47,6 +47,7 @@ pub mod source_map;
 pub mod source_parse;
 pub mod starter;
 pub mod style;
+pub mod ui_runtime;
 pub mod variant;
 
 pub use app::{AppIcon, AppId, NavigationConfig, NavigationStyle, Page, PrismApp};

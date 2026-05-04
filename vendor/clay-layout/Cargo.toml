@@ -1,17 +1,33 @@
 [package]
 name = "clay-layout"
-version = "0.0.1-prism"
+version = "0.4.0-prism"
 edition = "2021"
-license = "MIT OR Apache-2.0"
+build = "build.rs"
 description = "Vendored Prism fork of the Clay (https://github.com/nicbarker/clay) Rust binding."
+license-file = "LICENSE.md"
+repository = "https://github.com/clay-ui-rs/clay"
+keywords = ["clay", "ui", "layout", "bindings"]
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
 
-# This is a placeholder. Phase 1 imports the real upstream
-# clay-layout binding (with its C sources via cc/bindgen), pinned to
-# a specific commit. The placeholder lets the workspace compile and
-# `prism-ui-runtime` link against the public surface stub while we
-# stage the C-source import in a focused PR.
-#
-# Upstream: https://github.com/nicbarker/clay
-# Rust binding: https://crates.io/crates/clay-layout
+# Forked from clay-layout 0.4.0 @ https://github.com/clay-ui-rs/clay
+# per ADR-008 + docs/dev/clay-migration-plan.md. Upstream renderer
+# integrations (raylib / skia / wgpu examples) are stripped — Prism
+# routes Clay's render commands through its own
+# `prism-ui-runtime` backends.
 
-[dependencies]
+[features]
+default = ["std"]
+std = []
+wasm = []
+debug = []
+
+[lib]
+name = "clay_layout"
+path = "src/lib.rs"
+
+[build-dependencies]
+cc = "1.0"

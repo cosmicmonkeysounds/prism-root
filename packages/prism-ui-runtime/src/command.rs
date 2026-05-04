@@ -23,7 +23,7 @@ pub struct Color {
     pub a: u8,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct CornerRadius {
     pub tl: f32,
     pub tr: f32,

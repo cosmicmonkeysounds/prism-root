@@ -33,6 +33,24 @@
    first-class attribute namespaces. Goal: a non-programmer who knows
    HTML can read and edit `.prism-ui` files; an engineer loses no
    expressiveness vs. the strawman in the prior draft.
+4. **Retained-mode layout (added 2026-05-04).** The runtime does **not**
+   recompute the Clay layout every frame. Layout is cached in a
+   [`Surface`](#52-retained-mode-surface) and recomputed only when
+   something invalidates it — tree mutation, viewport resize, scroll
+   offset change, an animation tick, a theme/token swap, or an explicit
+   `Surface::invalidate()`. Backends (`femtovg`, `web`, `html`) pull a
+   `&[RenderCommand]` slice every frame and only pay the layout cost on a
+   dirty cycle. This is the explicit retained-mode contract; immediate-
+   mode wrappers are a non-goal.
+5. **Luau-authorable components (added 2026-05-04).** Clay-backed
+   components (the `Node` tree, the `Surface`, signal hooks) are a
+   first-class Luau surface. Luau code must be able to **author** new
+   components programmatically, **edit** an existing component's props
+   / children / styles, **generate** components from data
+   (template-style emission), and **hook into** them by attaching
+   signal handlers and observing lifecycle. This preserves today's
+   `LuauComponent` capability into the post-Slint world. See §11 for
+   the API contract.
 
 ---
 
@@ -363,7 +381,50 @@ The layout pass is pure, deterministic, and trivially testable — no
 event loop, no GPU, no IO. This unlocks property-test-driven layout
 verification we don't have today.
 
-### 5.2 Backends
+### 5.2 Retained-mode `Surface`
+
+Layout is cached. The runtime exposes a `Surface` value that owns:
+
+- the typed `Node` tree (the `UiTree` root),
+- the current `Viewport`,
+- the most recently computed `Vec<RenderCommand>`,
+- a single `dirty: bool` flag.
+
+The public API is small and deliberately retained-mode:
+
+```rust
+let mut surface = Surface::new(tree, viewport);
+
+surface.set_tree(new_tree);          // marks dirty
+surface.with_tree_mut(|root| ...);   // marks dirty
+surface.set_viewport(new_viewport);  // marks dirty iff value changed
+surface.invalidate();                // explicit hook (scroll / animation)
+
+let cmds: &[RenderCommand] = surface.commands();
+//   ^ recomputes layout iff dirty, otherwise returns the cache
+```
+
+**Why retained:** for an editor-class UI, the vast majority of frames
+are visually identical to the previous frame — re-running Clay's
+layout pass on every vsync is wasted CPU. A dirty bit, flipped only
+by the small set of events that *can* change layout, lets the shell
+stay at 60+ fps with the layout pass running well under 60 Hz.
+
+**Invalidation triggers (canonical set):**
+
+- tree mutation (`set_tree`, `with_tree_mut`, builder applies a CRDT op)
+- viewport / window resize
+- scroll offset change inside any scroll container
+- animation tick (interpolated layout values advanced)
+- theme / design-token change (cascade output diverges)
+- explicit `invalidate()` for cases not covered above (e.g. font load,
+  image decoded, locale change)
+
+Backends do **not** call `compute()` directly — they always go through
+`Surface::commands()`, which is the single chokepoint where dirtiness
+is checked.
+
+### 5.3 Backends
 
 - **`backends/femtovg`** *(native)* — winit window + femtovg renderer.
   We pull both directly (Slint's bundled versions go away with Slint).
@@ -379,7 +440,7 @@ verification we don't have today.
   `HtmlRegistry`; SSR is a side-effect-free render of the same tree the
   shell renders.
 
-### 5.3 Input + event loop
+### 5.4 Input + event loop
 
 Winit on every target; input events become `prism_ui::Event` values
 fed into the existing signal dispatch (`dispatch_signal`,
@@ -452,6 +513,18 @@ CLI surface unchanged.
 - Three backends behind cargo features: `femtovg`, `web`, `html`.
 - Hand-build a 5-element scene in Rust (no DSL yet) and render it to
   all three backends. Snapshot tests on the HTML backend.
+- **In progress (2026-05-04):** vendored fork of `clay-layout` 0.4.0
+  imported under `vendor/clay-layout/` (renderer integrations
+  stripped; `cc`-built `clay.h` linked into the crate). Sanity test
+  in `prism-ui-runtime` exercises `Clay::new` / `begin` / `end` to
+  prove the FFI is live. `prism-builder::ui_runtime` translates
+  `BuilderDocument` → `prism_ui_runtime::layout::Node` (containers,
+  text, spacers; `FlowProps` → flex direction / gap / padding; the
+  `StyleProperties` cascade resolves background / radius / color /
+  font_size). The `luau` feature on `prism-ui-runtime` ships the
+  Phase-1 starter for §11 — `ui.container` / `ui.text` / `ui.spacer`
+  / `ui.surface` constructors plus a `LuaSurface:edit(id, fn)`
+  hook for the §11 "edit" capability.
 
 ### Phase 2 — DSL + parser + codegen
 - New crate `packages/prism-ui-build` (compile-time codegen).
@@ -500,6 +573,8 @@ CLI surface unchanged.
 |---|---|---|
 | 2026-05-04 | Draft Clay-migration plan | Slint friction (§0); SSR/UI-walker duplication; interpreter fragility (ADR-007); licence pressure |
 | 2026-05-04 | Phase 0 accepted; three decisions locked | Licence → `MIT OR Apache-2.0` at cutover; Clay binding **vendored fork** at `vendor/clay-layout/`; DSL flavour **HTMX-inspired** (tag-element + attribute-namespace) — see ADR-008 |
+| 2026-05-04 | Retained-mode runtime contract added (decision #4) | Editor-class UIs idle most frames; recomputing layout per vsync is wasted CPU. `Surface` caches `Vec<RenderCommand>`, dirty bit flips only on tree mutation / resize / scroll / animation tick / theme change / explicit `invalidate()`. Backends always go through `Surface::commands()`. |
+| 2026-05-04 | Luau-authorable Clay components (decision #5) | Preserve today's `LuauComponent` capability into the post-Slint world: Luau must author / edit / generate / hook into Clay-backed components. Imposes value-type design on `Node` / props / `Surface` so `prism-luau-derive` can wrap them mechanically. See §11. |
 
 ## 10. Appendix — file-by-file Slint footprint to retire
 
@@ -529,3 +604,47 @@ exact files Phase 5 deletes or rewrites.)
 - Root `LICENSE` + per-crate `license.workspace = true` — flip
   workspace default to `MIT OR Apache-2.0`. Add `LICENSE-MIT` +
   `LICENSE-APACHE` files at the workspace root.
+
+## 11. Luau authoring of Clay components
+
+**Requirement (locked 2026-05-04):** every Clay-backed component
+must be a first-class Luau surface, on par with today's
+`LuauComponent` impls of `prism_builder::Component`. Luau scripts
+must be able to:
+
+| Capability | What it means | Lowering |
+|---|---|---|
+| **Author** | Build a `Node` tree from scratch in Luau code — `ui.container { direction = "row", children = { ui.text("hi") } }` returning a tree handle | mlua-bound constructors over `Node` value types |
+| **Edit** | Mutate an existing component's props, children, or styles after creation | `Surface::with_tree_mut` exposed as Luau methods on a tree handle |
+| **Generate** | Emit components from data — loops over a list, template substitution from a facet binding | Luau closures invoked during the parse → `BuilderDocument` lowering, identical surface to `<for>` in the DSL |
+| **Hook** | Attach signal handlers and observe lifecycle (`on_mount`, `on_signal`) without owning the renderer | `on:*` actions whose `luau { ... }` body is queued through `exec_custom_handlers` (the same path the DSL takes) |
+
+**Design rules this imposes on the runtime:**
+
+1. `Node`, `ContainerProps`, `TextProps`, `Sizing`, `Padding`, `Color`,
+   `CornerRadius`, `Viewport`, `RenderCommand` are all `serde`-friendly
+   value types — no lifetimes, no trait objects, no `Rc`/`RefCell` in
+   the public API. This is what lets `prism-luau-derive` wrap them as
+   `mlua::UserData` mechanically.
+2. Stable string `id`s on every node. Luau handles index by id, not
+   by tree-walk path, so a CRDT op or a re-render doesn't dangle a
+   handle.
+3. Props are typed structs, not opaque `HashMap<String, Value>`. The
+   Luau bindings translate to/from Lua tables at the boundary, not
+   all the way down — Rust callers stay strongly typed.
+4. The DSL and Luau authoring produce the **same** typed `Node` tree.
+   Luau is an alternative front-end to the same `BuilderDocument` →
+   `UiTree` pipeline, never a parallel one.
+5. `prism-cli codegen` emits `prism-ui.d.luau` (per §4.8) so Luau
+   handlers see strongly-typed component instances — same pipeline as
+   `signals.d.luau` today.
+
+**Phasing.**
+
+- Phase 1: Rust-side `Node` value-type design (lands with the runtime
+  spike; constraints 1–3 enforced).
+- Phase 2: Luau bindings (`prism_ui_runtime::luau` module +
+  `prism-luau-derive` annotations on the value types) ship alongside
+  the DSL parser, so the DSL and Luau front-ends arrive together.
+- Phase 3: Existing `LuauComponent` impls in `prism-builder` migrate
+  to the new surface during component-model unification.

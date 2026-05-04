@@ -1289,7 +1289,10 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "clay-layout"
-version = "0.0.1-prism"
+version = "0.4.0-prism"
+dependencies = [
+ "cc",
+]
 
 [[package]]
 name = "clipboard-win"
@@ -5797,6 +5800,7 @@ dependencies = [
  "mlua",
  "prism-core",
  "prism-luau-derive",
+ "prism-ui-runtime",
  "serde",
  "serde_json",
  "slint",
@@ -5995,6 +5999,7 @@ version = "0.1.0"
 dependencies = [
  "clay-layout",
  "insta",
+ "mlua",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
