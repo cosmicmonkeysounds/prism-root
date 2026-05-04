@@ -173,10 +173,10 @@ mod tests {
     #[test]
     fn apply_field_dispatches_by_field_name() {
         let mut s = StyleProperties::default();
-        s.apply_field("font_family", "Inter");
-        s.apply_field("font_size", "16.5");
-        s.apply_field("font_weight", "600");
-        s.apply_field("background", "#fff");
+        s.apply_path("font_family", "Inter");
+        s.apply_path("font_size", "16.5");
+        s.apply_path("font_weight", "600");
+        s.apply_path("background", "#fff");
         assert_eq!(s.font_family.as_deref(), Some("Inter"));
         assert_eq!(s.font_size, Some(16.5));
         assert_eq!(s.font_weight, Some(600));
@@ -189,7 +189,7 @@ mod tests {
             color: Some("#000".into()),
             ..Default::default()
         };
-        s.apply_field("color", "");
+        s.apply_path("color", "");
         assert_eq!(s.color, None);
     }
 
@@ -199,7 +199,7 @@ mod tests {
             font_size: Some(12.0),
             ..Default::default()
         };
-        s.apply_field("font_size", "not-a-number");
+        s.apply_path("font_size", "not-a-number");
         // Option<f32>: parse().ok() yields None on parse failure.
         assert_eq!(s.font_size, None);
     }
@@ -210,7 +210,7 @@ mod tests {
             font_family: Some("Inter".into()),
             ..Default::default()
         };
-        s.apply_field("totally_unknown", "value");
+        s.apply_path("totally_unknown", "value");
         assert_eq!(s.font_family.as_deref(), Some("Inter"));
     }
 

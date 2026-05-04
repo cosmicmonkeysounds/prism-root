@@ -3,13 +3,14 @@
 //! Submodule of [`crate::layout`]. Re-exported from there.
 
 use prism_core::foundation::geometry::Edges;
+use prism_luau_derive::Editable;
 use serde::{Deserialize, Serialize};
 use taffy::prelude::*;
 
 // ── Per-node layout mode ─────────────────────────────────────────────
 
 /// How a node participates in its parent's layout.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Editable)]
 #[serde(tag = "mode", rename_all = "kebab-case")]
 pub enum LayoutMode {
     /// Positioned by the parent's flow (flex/grid/block).
@@ -54,7 +55,7 @@ impl Default for LayoutMode {
 /// Properties for absolutely-positioned nodes. The node is removed
 /// from the parent's flow and positioned by its `Transform2D.position`
 /// + `Transform2D.anchor` relative to the parent's rect.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Editable)]
 pub struct AbsoluteProps {
     #[serde(default)]
     pub width: Dimension,
@@ -114,7 +115,7 @@ impl AbsoluteProps {
 
 /// CSS-like properties for nodes in flow layout. Maps to `taffy::Style`
 /// fields.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Editable)]
 pub struct FlowProps {
     #[serde(default = "FlowProps::default_display")]
     pub display: FlowDisplay,
@@ -250,7 +251,7 @@ impl Default for FlowProps {
 }
 
 /// Display mode for flow nodes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Editable)]
 #[serde(rename_all = "kebab-case")]
 pub enum FlowDisplay {
     Block,
@@ -271,7 +272,7 @@ impl FlowDisplay {
 }
 
 /// A length dimension — auto, fixed, or percentage.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize, Editable)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum Dimension {
     #[default]
@@ -295,7 +296,7 @@ impl Dimension {
 }
 
 /// Flex direction.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Editable)]
 #[serde(rename_all = "kebab-case")]
 pub enum FlexDirection {
     Row,
@@ -317,7 +318,7 @@ impl FlexDirection {
 }
 
 /// Alignment option (maps to CSS align-items / align-self).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Editable)]
 #[serde(rename_all = "kebab-case")]
 pub enum AlignOption {
     #[default]
@@ -343,7 +344,7 @@ impl AlignOption {
 }
 
 /// Justify-content option.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Editable)]
 #[serde(rename_all = "kebab-case")]
 pub enum JustifyOption {
     #[default]
@@ -371,7 +372,7 @@ impl JustifyOption {
 }
 
 /// Grid placement for a node within a CSS Grid parent.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Editable)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum GridPlacement {
     #[default]

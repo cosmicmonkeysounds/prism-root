@@ -351,14 +351,14 @@ impl PropertiesPanel {
         let t = &node.transform;
         vec![
             layout_number(
-                "transform.x",
+                "transform.position.0",
                 "Position X",
                 format_f32(t.position[0]),
                 -4000.0,
                 4000.0,
             ),
             layout_number(
-                "transform.y",
+                "transform.position.1",
                 "Position Y",
                 format_f32(t.position[1]),
                 -4000.0,
@@ -372,14 +372,14 @@ impl PropertiesPanel {
                 360.0,
             ),
             layout_number(
-                "transform.scale_x",
+                "transform.scale.0",
                 "Scale X",
                 format_f32(t.scale[0]),
                 0.01,
                 10.0,
             ),
             layout_number(
-                "transform.scale_y",
+                "transform.scale.1",
                 "Scale Y",
                 format_f32(t.scale[1]),
                 0.01,

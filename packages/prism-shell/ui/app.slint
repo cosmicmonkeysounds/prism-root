@@ -674,7 +674,7 @@ component TransformEditor inherits VerticalLayout {
             step: 1.0;
             minimum: -4000;
             maximum: 4000;
-            key: "transform.x";
+            key: "transform.position.0";
             changed(k, val) => { root.field-edited-number(k, val); }
             committed(k, val) => { root.field-edited(k, val); }
         }
@@ -685,7 +685,7 @@ component TransformEditor inherits VerticalLayout {
             step: 1.0;
             minimum: -4000;
             maximum: 4000;
-            key: "transform.y";
+            key: "transform.position.1";
             changed(k, val) => { root.field-edited-number(k, val); }
             committed(k, val) => { root.field-edited(k, val); }
         }
@@ -727,7 +727,7 @@ component TransformEditor inherits VerticalLayout {
             step: 0.01;
             minimum: 0.01;
             maximum: 10.0;
-            key: "transform.scale_x";
+            key: "transform.scale.0";
             changed(k, val) => { root.field-edited-number(k, val); }
             committed(k, val) => { root.field-edited(k, val); }
         }
@@ -738,7 +738,7 @@ component TransformEditor inherits VerticalLayout {
             step: 0.01;
             minimum: 0.01;
             maximum: 10.0;
-            key: "transform.scale_y";
+            key: "transform.scale.1";
             changed(k, val) => { root.field-edited-number(k, val); }
             committed(k, val) => { root.field-edited(k, val); }
         }

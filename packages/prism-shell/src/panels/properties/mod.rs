@@ -964,11 +964,11 @@ mod tests {
         assert_eq!(
             keys,
             vec![
-                "transform.x",
-                "transform.y",
+                "transform.position.0",
+                "transform.position.1",
                 "transform.rotation",
-                "transform.scale_x",
-                "transform.scale_y",
+                "transform.scale.0",
+                "transform.scale.1",
                 "transform.anchor"
             ]
         );

@@ -740,7 +740,7 @@ mod tests {
     #[test]
     fn transform_edit_position_x() {
         let mut node = transform_node();
-        apply_transform_to_node(&mut node, "transform.x", "42.5");
+        apply_transform_to_node(&mut node, "transform.position.0", "42.5");
         assert!((node.transform.position[0] - 42.5).abs() < f32::EPSILON);
         assert!((node.transform.position[1] - 0.0).abs() < f32::EPSILON);
     }
@@ -748,7 +748,7 @@ mod tests {
     #[test]
     fn transform_edit_position_y() {
         let mut node = transform_node();
-        apply_transform_to_node(&mut node, "transform.y", "-100");
+        apply_transform_to_node(&mut node, "transform.position.1", "-100");
         assert!((node.transform.position[1] - (-100.0)).abs() < f32::EPSILON);
     }
 
@@ -771,7 +771,7 @@ mod tests {
     #[test]
     fn transform_edit_scale_x() {
         let mut node = transform_node();
-        apply_transform_to_node(&mut node, "transform.scale_x", "2.5");
+        apply_transform_to_node(&mut node, "transform.scale.0", "2.5");
         assert!((node.transform.scale[0] - 2.5).abs() < f32::EPSILON);
         assert!((node.transform.scale[1] - 1.0).abs() < f32::EPSILON);
     }
@@ -779,7 +779,7 @@ mod tests {
     #[test]
     fn transform_edit_scale_y() {
         let mut node = transform_node();
-        apply_transform_to_node(&mut node, "transform.scale_y", "0.5");
+        apply_transform_to_node(&mut node, "transform.scale.1", "0.5");
         assert!((node.transform.scale[1] - 0.5).abs() < f32::EPSILON);
     }
 
@@ -823,11 +823,15 @@ mod tests {
     }
 
     #[test]
-    fn transform_edit_invalid_number_defaults_to_zero() {
+    fn transform_edit_invalid_number_is_noop() {
+        // Path-walker semantics: parse failure is a silent no-op,
+        // not a default-zero. Old hand-rolled fn used `unwrap_or(0.0)`
+        // which silently zeroed the field; the new derive preserves
+        // the prior value, which is the safer behavior.
         let mut node = transform_node();
         node.transform.position[0] = 50.0;
-        apply_transform_to_node(&mut node, "transform.x", "abc");
-        assert!((node.transform.position[0] - 0.0).abs() < f32::EPSILON);
+        apply_transform_to_node(&mut node, "transform.position.0", "abc");
+        assert!((node.transform.position[0] - 50.0).abs() < f32::EPSILON);
     }
 
     #[test]
@@ -856,7 +860,7 @@ mod tests {
         assert!(apply_node_transform_edit(
             &mut root,
             "deep",
-            "transform.x",
+            "transform.position.0",
             "77"
         ));
         let deep = root.children[0].children[0].clone();
@@ -869,7 +873,7 @@ mod tests {
         assert!(!apply_node_transform_edit(
             &mut root,
             "nonexistent",
-            "transform.x",
+            "transform.position.0",
             "10"
         ));
     }

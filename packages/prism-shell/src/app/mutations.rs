@@ -1,6 +1,5 @@
 use prism_builder::layout::{
-    AbsoluteProps, AlignOption, Dimension, FlexDirection, FlowDisplay, FlowProps, GridPlacement,
-    JustifyOption, LayoutMode, PageSize,
+    AbsoluteProps, Dimension, FlowProps, GridPlacement, LayoutMode, PageSize,
 };
 use prism_builder::{
     AggregateOp, ExposedSlot, FacetBinding, FacetDataSource, FacetDef, FacetDirection, FacetKind,
@@ -395,7 +394,7 @@ pub(super) fn auto_expose_slots(node: &Node) -> Vec<ExposedSlot> {
 }
 
 pub(super) fn apply_style_edit(style: &mut StyleProperties, key: &str, value: &str) {
-    style.apply_field(key, value);
+    style.apply_path(key, value);
 }
 
 pub(super) fn apply_page_layout_edit(
@@ -403,29 +402,27 @@ pub(super) fn apply_page_layout_edit(
     key: &str,
     value: &str,
 ) {
-    // `page_size` is a tagged enum with a `Custom { width, height }`
-    // payload — outside the flat-struct derive's lane. Everything else
-    // (margins via #[edit(nested, prefix = "margin_")] and the
-    // column_gap/row_gap fan-out via #[edit(also)]) goes through the
-    // derived dispatch table.
+    // `PageLayout` derives `Editable`. The only legacy-key
+    // translation left is for the `page_size` ComboBox: Slint emits
+    // PascalCase variant names (`"A4"`, `"Custom"`, …) while the
+    // derive's tag matcher expects the serde-rename'd form
+    // (`"a4"`, `"custom"`). And we want `Custom` to seed reasonable
+    // default dimensions instead of zeros.
     if key == "page_size" {
         pl.size = match value {
-            "Responsive" => PageSize::Responsive,
-            "A4" => PageSize::A4,
-            "A3" => PageSize::A3,
-            "A5" => PageSize::A5,
-            "Letter" => PageSize::Letter,
-            "Legal" => PageSize::Legal,
-            "Tabloid" => PageSize::Tabloid,
             "Custom" => PageSize::Custom {
                 width: 1280.0,
                 height: 800.0,
             },
-            _ => pl.size,
+            other => {
+                let mut out = pl.size;
+                out.apply_path("", &other.to_ascii_lowercase());
+                out
+            }
         };
         return;
     }
-    pl.apply_field(key, value);
+    pl.apply_path(key, value);
 }
 
 pub(super) fn apply_node_layout_edit(
@@ -465,32 +462,17 @@ pub(super) fn apply_node_transform_edit(
 }
 
 pub(super) fn apply_transform_to_node(node: &mut Node, key: &str, value: &str) {
-    use prism_core::foundation::spatial::Anchor;
-    let parse_f32 = |s: &str| s.parse::<f32>().unwrap_or(0.0);
-    let t = &mut node.transform;
-    match key {
-        "transform.x" => t.position[0] = parse_f32(value),
-        "transform.y" => t.position[1] = parse_f32(value),
-        "transform.rotation" => t.rotation = parse_f32(value).to_radians(),
-        "transform.scale_x" => t.scale[0] = parse_f32(value),
-        "transform.scale_y" => t.scale[1] = parse_f32(value),
-        "transform.anchor" => {
-            t.anchor = match value {
-                "top-left" => Anchor::TopLeft,
-                "top-center" => Anchor::TopCenter,
-                "top-right" => Anchor::TopRight,
-                "center-left" => Anchor::CenterLeft,
-                "center" => Anchor::Center,
-                "center-right" => Anchor::CenterRight,
-                "bottom-left" => Anchor::BottomLeft,
-                "bottom-center" => Anchor::BottomCenter,
-                "bottom-right" => Anchor::BottomRight,
-                "stretch" => Anchor::Stretch,
-                _ => t.anchor,
-            };
-        }
-        _ => {}
-    }
+    // Strip the `transform.` routing prefix that the dispatcher used
+    // to find this node, then delegate to the derived path-walker.
+    // `Transform2D` derives `Editable` (`prism-core::foundation::spatial`),
+    // so:
+    //   transform.position.0 / .1 → x / y
+    //   transform.scale.0 / .1    → scale x / y
+    //   transform.rotation        → degrees → radians (via #[edit(with = …)])
+    //   transform.anchor          → kebab-case Anchor variant
+    //   transform.pivot.0 / .1    → pivot x / y
+    let path = key.strip_prefix("transform.").unwrap_or(key);
+    node.transform.apply_path(path, value);
 }
 
 #[derive(Clone)]
@@ -741,289 +723,263 @@ pub(super) fn apply_resize_to_node(
     }
 }
 
-pub(super) fn apply_layout_to_node(node: &mut Node, key: &str, value: &str) {
-    let parse_f32 = |s: &str| s.parse::<f32>().unwrap_or(0.0);
-
-    // Handle Absolute mode width/height edits directly.
-    if let LayoutMode::Absolute(abs) = &mut node.layout_mode {
-        match key {
-            "layout.display" => match value {
-                "absolute" => return,
-                "free" => {
-                    node.layout_mode = LayoutMode::Free;
-                    return;
-                }
-                "relative" => {
-                    node.layout_mode = LayoutMode::Relative(FlowProps::default());
-                    return;
-                }
-                _ => {
-                    node.layout_mode = LayoutMode::Flow(FlowProps::default());
-                }
-            },
-            "layout.width_unit" => {
-                let cur = match abs.width {
-                    Dimension::Px { value } | Dimension::Percent { value } => value,
-                    Dimension::Auto => 0.0,
-                };
-                abs.width = match value {
-                    "auto" => Dimension::Auto,
-                    "px" => Dimension::Px { value: cur },
-                    "%" => Dimension::Percent {
-                        value: cur.min(100.0),
-                    },
-                    _ => abs.width,
-                };
-                return;
-            }
-            "layout.width_value" => {
-                let v = value.parse::<f32>().unwrap_or(0.0);
-                abs.width = match abs.width {
-                    Dimension::Px { .. } => Dimension::Px { value: v },
-                    Dimension::Percent { .. } => Dimension::Percent { value: v },
-                    Dimension::Auto => Dimension::Px { value: v },
-                };
-                return;
-            }
-            "layout.height_unit" => {
-                let cur = match abs.height {
-                    Dimension::Px { value } | Dimension::Percent { value } => value,
-                    Dimension::Auto => 0.0,
-                };
-                abs.height = match value {
-                    "auto" => Dimension::Auto,
-                    "px" => Dimension::Px { value: cur },
-                    "%" => Dimension::Percent {
-                        value: cur.min(100.0),
-                    },
-                    _ => abs.height,
-                };
-                return;
-            }
-            "layout.height_value" => {
-                let v = value.parse::<f32>().unwrap_or(0.0);
-                abs.height = match abs.height {
-                    Dimension::Px { .. } => Dimension::Px { value: v },
-                    Dimension::Percent { .. } => Dimension::Percent { value: v },
-                    Dimension::Auto => Dimension::Px { value: v },
-                };
-                return;
-            }
-            _ => return,
-        }
-    }
-
-    let flow = match &mut node.layout_mode {
-        LayoutMode::Flow(f) | LayoutMode::Relative(f) => f,
-        LayoutMode::Free => {
-            if key == "layout.display" && value != "free" {
-                match value {
-                    "absolute" => {
-                        node.layout_mode = LayoutMode::Absolute(AbsoluteProps::default());
-                        return;
-                    }
-                    "relative" => {
-                        node.layout_mode = LayoutMode::Relative(FlowProps::default());
-                        return;
-                    }
-                    _ => {
-                        node.layout_mode = LayoutMode::Flow(FlowProps::default());
-                    }
-                }
-                match &mut node.layout_mode {
-                    LayoutMode::Flow(f) => f,
-                    _ => unreachable!(),
-                }
-            } else {
-                return;
-            }
-        }
-        LayoutMode::Absolute(_) => unreachable!(),
+/// Reseat `node.layout_mode` to the named variant. Preserves
+/// `FlowProps` across `Flow ↔ Relative` since those variants share
+/// the same payload shape (the property panel UX expects the gap /
+/// padding / direction the user already typed to survive a switch
+/// to relative positioning).
+fn reseat_layout_mode(node: &mut Node, variant: &str) {
+    let cur = node.layout_mode.clone();
+    node.layout_mode = match (variant, cur) {
+        ("flow", LayoutMode::Relative(p)) => LayoutMode::Flow(p),
+        ("relative", LayoutMode::Flow(p)) => LayoutMode::Relative(p),
+        ("flow", _) => LayoutMode::Flow(FlowProps::default()),
+        ("relative", _) => LayoutMode::Relative(FlowProps::default()),
+        ("absolute", _) => LayoutMode::Absolute(AbsoluteProps::default()),
+        ("free", _) => LayoutMode::Free,
+        _ => node.layout_mode.clone(),
     };
+}
 
-    match key {
-        "layout.display" => match value {
-            "block" => flow.display = FlowDisplay::Block,
-            "flex" => flow.display = FlowDisplay::Flex,
-            "grid" => flow.display = FlowDisplay::Grid,
-            "none" => flow.display = FlowDisplay::None,
-            "free" => {
-                node.layout_mode = LayoutMode::Free;
-            }
-            "absolute" => {
-                node.layout_mode = LayoutMode::Absolute(AbsoluteProps::default());
-            }
-            "relative" => {
-                node.layout_mode = LayoutMode::Relative(flow.clone());
+/// Returns the canonical sub-path under `LayoutMode` that the active
+/// variant currently exposes, or `None` if the variant has no payload.
+/// Lets the legacy-key translator below dispatch through the derived
+/// `LayoutMode::apply_path` without the caller having to know which
+/// variant is active.
+fn active_variant_prefix(mode: &LayoutMode) -> Option<&'static str> {
+    match mode {
+        LayoutMode::Flow(_) => Some("flow"),
+        LayoutMode::Relative(_) => Some("relative"),
+        LayoutMode::Absolute(_) => Some("absolute"),
+        LayoutMode::Free => None,
+    }
+}
+
+pub(super) fn apply_layout_to_node(node: &mut Node, key: &str, value: &str) {
+    // Strip the dispatcher's `layout.` routing prefix.
+    let sub = key.strip_prefix("layout.").unwrap_or(key);
+
+    // `display` straddles two responsibilities in the legacy key
+    // vocabulary: it both reseats the variant *and* sets a
+    // `FlowDisplay` within `Flow`/`Relative`. Disambiguate by the
+    // value.
+    if sub == "display" {
+        match value {
+            "flow" | "relative" | "absolute" | "free" => reseat_layout_mode(node, value),
+            "block" | "flex" | "grid" | "none" => {
+                // FlowDisplay only exists inside Flow/Relative — if
+                // we're currently Absolute or Free, the user picking
+                // a display mode implies "switch to Flow with that
+                // display." Mirrors the legacy hand-rolled behavior.
+                if active_variant_prefix(&node.layout_mode).is_none()
+                    || matches!(node.layout_mode, LayoutMode::Absolute(_))
+                {
+                    reseat_layout_mode(node, "flow");
+                }
+                if let Some(prefix) = active_variant_prefix(&node.layout_mode) {
+                    node.layout_mode
+                        .apply_path(&format!("{prefix}.display"), value);
+                }
             }
             _ => {}
-        },
-        "layout.width" => flow.width = parse_dimension(value),
-        "layout.height" => flow.height = parse_dimension(value),
-        "layout.gap" => flow.gap = parse_f32(value),
-        "layout.flex_direction" => {
-            flow.flex_direction = match value {
-                "row" => FlexDirection::Row,
-                "column" => FlexDirection::Column,
-                "row-reverse" => FlexDirection::RowReverse,
-                "column-reverse" => FlexDirection::ColumnReverse,
-                _ => flow.flex_direction,
-            };
         }
-        "layout.flex_grow" => flow.flex_grow = parse_f32(value),
-        "layout.flex_shrink" => flow.flex_shrink = parse_f32(value),
-        "layout.align_items" => {
-            flow.align_items = match value {
-                "auto" => AlignOption::Auto,
-                "start" => AlignOption::Start,
-                "end" => AlignOption::End,
-                "center" => AlignOption::Center,
-                "stretch" => AlignOption::Stretch,
-                "baseline" => AlignOption::Baseline,
-                _ => flow.align_items,
-            };
+        return;
+    }
+
+    // CSS-shorthand `padding` / `margin` (e.g. "8 16" → vertical 8,
+    // horizontal 16) is parsed up front into an `Edges<f32>`, then
+    // overwrites the active variant's edge struct directly. The
+    // path-walker only knows how to set individual edges.
+    if sub == "padding" || sub == "margin" {
+        let edges = parse_edge_values(value);
+        match &mut node.layout_mode {
+            LayoutMode::Flow(f) | LayoutMode::Relative(f) => {
+                if sub == "padding" {
+                    f.padding = edges;
+                } else {
+                    f.margin = edges;
+                }
+            }
+            _ => {}
         }
-        "layout.justify_content" => {
-            flow.justify_content = match value {
-                "start" => JustifyOption::Start,
-                "end" => JustifyOption::End,
-                "center" => JustifyOption::Center,
-                "space-between" => JustifyOption::SpaceBetween,
-                "space-around" => JustifyOption::SpaceAround,
-                "space-evenly" => JustifyOption::SpaceEvenly,
-                "stretch" => JustifyOption::Stretch,
-                _ => flow.justify_content,
-            };
+        return;
+    }
+
+    // Width/height live as `Dimension` (a tagged enum). Slint emits a
+    // single string ("auto", "16px", "50%") via `parse_dimension`, so
+    // we parse it up front and write the whole enum at once. Same
+    // for `grid_column` / `grid_row` (`GridPlacement`).
+    if sub == "width" || sub == "height" {
+        let dim = parse_dimension(value);
+        write_dimension(&mut node.layout_mode, sub, dim);
+        return;
+    }
+    if sub == "grid_column" || sub == "grid_row" {
+        let gp = parse_grid_placement(value);
+        write_grid_placement(&mut node.layout_mode, sub, gp);
+        return;
+    }
+
+    // Two-step UI: a `width_unit` ComboBox sets the `Dimension`
+    // variant, then `width_value` LineEdit sets the active payload's
+    // `value` field. Same for height + grid placements.
+    if let Some(field) = sub.strip_suffix("_unit") {
+        if matches!(field, "width" | "height") {
+            apply_dimension_unit(&mut node.layout_mode, field, value);
+            return;
         }
-        "layout.grid_column" => flow.grid_column = parse_grid_placement(value),
-        "layout.grid_row" => flow.grid_row = parse_grid_placement(value),
-        "layout.padding" => {
-            let vals = parse_edge_values(value);
-            flow.padding = vals;
+    }
+    if let Some(field) = sub.strip_suffix("_value") {
+        if matches!(field, "width" | "height") {
+            apply_dimension_value(&mut node.layout_mode, field, value);
+            return;
         }
-        "layout.padding_top" => flow.padding.top = parse_f32(value),
-        "layout.padding_right" => flow.padding.right = parse_f32(value),
-        "layout.padding_bottom" => flow.padding.bottom = parse_f32(value),
-        "layout.padding_left" => flow.padding.left = parse_f32(value),
-        "layout.margin" => {
-            let vals = parse_edge_values(value);
-            flow.margin = vals;
+    }
+    if sub == "grid_column_type" || sub == "grid_row_type" {
+        let field = sub.strip_suffix("_type").unwrap();
+        apply_grid_placement_type(&mut node.layout_mode, field, value);
+        return;
+    }
+    if sub == "grid_column_value" || sub == "grid_row_value" {
+        let field = sub.strip_suffix("_value").unwrap();
+        apply_grid_placement_value(&mut node.layout_mode, field, value);
+        return;
+    }
+
+    // Per-edge writes: `padding_top` / `margin_left` / etc. translate
+    // to `<variant>.<padding|margin>.<edge>` on the active variant.
+    if let Some(prefix) = active_variant_prefix(&node.layout_mode) {
+        if let Some(edge) = sub.strip_prefix("padding_").or_else(|| sub.strip_prefix("margin_")) {
+            let parent = if sub.starts_with("padding_") { "padding" } else { "margin" };
+            node.layout_mode
+                .apply_path(&format!("{prefix}.{parent}.{edge}"), value);
+            return;
         }
-        "layout.margin_top" => flow.margin.top = parse_f32(value),
-        "layout.margin_right" => flow.margin.right = parse_f32(value),
-        "layout.margin_bottom" => flow.margin.bottom = parse_f32(value),
-        "layout.margin_left" => flow.margin.left = parse_f32(value),
-        "layout.width_unit" => {
-            let current_value = match flow.width {
-                Dimension::Px { value } => value,
-                Dimension::Percent { value } => value,
-                Dimension::Auto => 0.0,
-            };
-            flow.width = match value {
-                "auto" => Dimension::Auto,
-                "px" => Dimension::Px {
-                    value: current_value,
-                },
-                "%" => Dimension::Percent {
-                    value: current_value.min(100.0),
-                },
-                _ => flow.width,
-            };
-        }
-        "layout.width_value" => {
-            let v = parse_f32(value);
-            flow.width = match flow.width {
-                Dimension::Px { .. } => Dimension::Px { value: v },
-                Dimension::Percent { .. } => Dimension::Percent { value: v },
-                Dimension::Auto => Dimension::Px { value: v },
-            };
-        }
-        "layout.height_unit" => {
-            let current_value = match flow.height {
-                Dimension::Px { value } => value,
-                Dimension::Percent { value } => value,
-                Dimension::Auto => 0.0,
-            };
-            flow.height = match value {
-                "auto" => Dimension::Auto,
-                "px" => Dimension::Px {
-                    value: current_value,
-                },
-                "%" => Dimension::Percent {
-                    value: current_value.min(100.0),
-                },
-                _ => flow.height,
-            };
-        }
-        "layout.height_value" => {
-            let v = parse_f32(value);
-            flow.height = match flow.height {
-                Dimension::Px { .. } => Dimension::Px { value: v },
-                Dimension::Percent { .. } => Dimension::Percent { value: v },
-                Dimension::Auto => Dimension::Px { value: v },
-            };
-        }
-        "layout.grid_column_type" => {
-            flow.grid_column = match value {
-                "auto" => GridPlacement::Auto,
-                "line" => GridPlacement::Line {
-                    index: match flow.grid_column {
-                        GridPlacement::Line { index } => index,
-                        GridPlacement::Span { count } => count as i16,
-                        GridPlacement::Auto => 1,
-                    },
-                },
-                "span" => GridPlacement::Span {
-                    count: match flow.grid_column {
-                        GridPlacement::Span { count } => count,
-                        GridPlacement::Line { index } => index.max(1) as u16,
-                        GridPlacement::Auto => 1,
-                    },
-                },
-                _ => flow.grid_column,
-            };
-        }
-        "layout.grid_column_value" => {
-            let v = parse_f32(value);
-            flow.grid_column = match flow.grid_column {
-                GridPlacement::Line { .. } => GridPlacement::Line { index: v as i16 },
-                GridPlacement::Span { .. } => GridPlacement::Span {
-                    count: (v as u16).max(1),
-                },
-                GridPlacement::Auto => GridPlacement::Line { index: v as i16 },
-            };
-        }
-        "layout.grid_row_type" => {
-            flow.grid_row = match value {
-                "auto" => GridPlacement::Auto,
-                "line" => GridPlacement::Line {
-                    index: match flow.grid_row {
-                        GridPlacement::Line { index } => index,
-                        GridPlacement::Span { count } => count as i16,
-                        GridPlacement::Auto => 1,
-                    },
-                },
-                "span" => GridPlacement::Span {
-                    count: match flow.grid_row {
-                        GridPlacement::Span { count } => count,
-                        GridPlacement::Line { index } => index.max(1) as u16,
-                        GridPlacement::Auto => 1,
-                    },
-                },
-                _ => flow.grid_row,
-            };
-        }
-        "layout.grid_row_value" => {
-            let v = parse_f32(value);
-            flow.grid_row = match flow.grid_row {
-                GridPlacement::Line { .. } => GridPlacement::Line { index: v as i16 },
-                GridPlacement::Span { .. } => GridPlacement::Span {
-                    count: (v as u16).max(1),
-                },
-                GridPlacement::Auto => GridPlacement::Line { index: v as i16 },
-            };
-        }
+        // Everything else — `gap`, `flex_direction`, `flex_grow`,
+        // `flex_shrink`, `align_items`, `justify_content` — is a
+        // direct field on the active variant payload. The derived
+        // `apply_path` parses primitives and dispatches enum values
+        // (kebab-case via serde rename_all).
+        node.layout_mode
+            .apply_path(&format!("{prefix}.{sub}"), value);
+    }
+}
+
+fn write_dimension(mode: &mut LayoutMode, field: &str, dim: Dimension) {
+    match (mode, field) {
+        (LayoutMode::Flow(f) | LayoutMode::Relative(f), "width") => f.width = dim,
+        (LayoutMode::Flow(f) | LayoutMode::Relative(f), "height") => f.height = dim,
+        (LayoutMode::Absolute(a), "width") => a.width = dim,
+        (LayoutMode::Absolute(a), "height") => a.height = dim,
         _ => {}
+    }
+}
+
+fn write_grid_placement(mode: &mut LayoutMode, field: &str, gp: GridPlacement) {
+    if let LayoutMode::Flow(f) | LayoutMode::Relative(f) = mode {
+        match field {
+            "grid_column" => f.grid_column = gp,
+            "grid_row" => f.grid_row = gp,
+            _ => {}
+        }
+    }
+}
+
+fn current_dimension(mode: &LayoutMode, field: &str) -> Dimension {
+    match (mode, field) {
+        (LayoutMode::Flow(f) | LayoutMode::Relative(f), "width") => f.width,
+        (LayoutMode::Flow(f) | LayoutMode::Relative(f), "height") => f.height,
+        (LayoutMode::Absolute(a), "width") => a.width,
+        (LayoutMode::Absolute(a), "height") => a.height,
+        _ => Dimension::Auto,
+    }
+}
+
+fn dimension_scalar(d: Dimension) -> f32 {
+    match d {
+        Dimension::Px { value } | Dimension::Percent { value } => value,
+        Dimension::Auto => 0.0,
+    }
+}
+
+fn apply_dimension_unit(mode: &mut LayoutMode, field: &str, unit: &str) {
+    let cur_value = dimension_scalar(current_dimension(mode, field));
+    let dim = match unit {
+        "auto" => Dimension::Auto,
+        "px" => Dimension::Px { value: cur_value },
+        "%" => Dimension::Percent {
+            value: cur_value.min(100.0),
+        },
+        _ => return,
+    };
+    write_dimension(mode, field, dim);
+}
+
+fn apply_dimension_value(mode: &mut LayoutMode, field: &str, raw: &str) {
+    let v = raw.parse::<f32>().unwrap_or(0.0);
+    let dim = match current_dimension(mode, field) {
+        Dimension::Px { .. } => Dimension::Px { value: v },
+        Dimension::Percent { .. } => Dimension::Percent { value: v },
+        Dimension::Auto => Dimension::Px { value: v },
+    };
+    write_dimension(mode, field, dim);
+}
+
+fn apply_grid_placement_type(mode: &mut LayoutMode, field: &str, kind: &str) {
+    let (LayoutMode::Flow(f) | LayoutMode::Relative(f)) = mode else {
+        return;
+    };
+    let cur = if field == "grid_column" {
+        f.grid_column
+    } else {
+        f.grid_row
+    };
+    let new = match kind {
+        "auto" => GridPlacement::Auto,
+        "line" => GridPlacement::Line {
+            index: match cur {
+                GridPlacement::Line { index } => index,
+                GridPlacement::Span { count } => count as i16,
+                GridPlacement::Auto => 1,
+            },
+        },
+        "span" => GridPlacement::Span {
+            count: match cur {
+                GridPlacement::Span { count } => count,
+                GridPlacement::Line { index } => index.max(1) as u16,
+                GridPlacement::Auto => 1,
+            },
+        },
+        _ => cur,
+    };
+    if field == "grid_column" {
+        f.grid_column = new;
+    } else {
+        f.grid_row = new;
+    }
+}
+
+fn apply_grid_placement_value(mode: &mut LayoutMode, field: &str, raw: &str) {
+    let (LayoutMode::Flow(f) | LayoutMode::Relative(f)) = mode else {
+        return;
+    };
+    let v = raw.parse::<f32>().unwrap_or(0.0);
+    let cur = if field == "grid_column" {
+        f.grid_column
+    } else {
+        f.grid_row
+    };
+    let new = match cur {
+        GridPlacement::Line { .. } => GridPlacement::Line { index: v as i16 },
+        GridPlacement::Span { .. } => GridPlacement::Span {
+            count: (v as u16).max(1),
+        },
+        GridPlacement::Auto => GridPlacement::Line { index: v as i16 },
+    };
+    if field == "grid_column" {
+        f.grid_column = new;
+    } else {
+        f.grid_row = new;
     }
 }
 

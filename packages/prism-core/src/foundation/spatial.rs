@@ -7,30 +7,39 @@
 //! matrices for O(1) coordinate conversion.
 
 use glam::{Affine2, Vec2};
+use prism_luau_derive::Editable;
 use serde::{Deserialize, Serialize};
 
 use super::geometry::Point2;
 
 /// Per-node transform — position, rotation, scale relative to the
 /// layout-computed origin. Serialized as part of the document.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Editable)]
 pub struct Transform2D {
     /// Offset from the layout-computed origin (or absolute position
-    /// when the node is in `Free` layout mode).
+    /// when the node is in `Free` layout mode). Addressable via
+    /// `position.0` (x) and `position.1` (y).
+    #[edit(index)]
     #[serde(default)]
     pub position: [f32; 2],
 
-    /// Rotation in radians, applied around [`Self::pivot`].
+    /// Rotation in radians, applied around [`Self::pivot`]. The
+    /// property panel sends degrees; `apply_rotation_degrees`
+    /// converts before assigning.
+    #[edit(with = "apply_rotation_degrees")]
     #[serde(default)]
     pub rotation: f32,
 
-    /// Scale factor. `[1.0, 1.0]` = identity.
+    /// Scale factor. `[1.0, 1.0]` = identity. Addressable via
+    /// `scale.0` (x) and `scale.1` (y).
+    #[edit(index)]
     #[serde(default = "Transform2D::default_scale")]
     pub scale: [f32; 2],
 
     /// The point around which rotation and scale are applied,
     /// expressed as a fraction of the node's own size.
     /// `[0.5, 0.5]` = center, `[0.0, 0.0]` = top-left.
+    #[edit(index)]
     #[serde(default = "Transform2D::default_pivot")]
     pub pivot: [f32; 2],
 
@@ -39,12 +48,23 @@ pub struct Transform2D {
     pub anchor: Anchor,
 
     /// Stacking order.
+    #[edit(skip)]
     #[serde(default)]
     pub z_index: ZIndex,
 
     /// Transform modifiers applied during interaction (drag, resize).
+    #[edit(skip)]
     #[serde(default)]
     pub modifiers: Vec<TransformModifier>,
+}
+
+/// Custom value coercion used by `#[edit(with = ...)]` on
+/// `Transform2D::rotation`: the property panel sends degrees, but
+/// the field is stored in radians.
+pub fn apply_rotation_degrees(rotation: &mut f32, value: &str) {
+    if let Ok(deg) = value.parse::<f32>() {
+        *rotation = deg.to_radians();
+    }
 }
 
 impl Transform2D {
@@ -110,7 +130,7 @@ impl PartialEq for Transform2D {
 }
 
 /// How a node attaches to its parent's rectangle.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Editable)]
 #[serde(rename_all = "kebab-case")]
 pub enum Anchor {
     #[default]

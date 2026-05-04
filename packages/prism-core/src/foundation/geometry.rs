@@ -244,16 +244,14 @@ impl Edges<f32> {
         self.top + self.bottom
     }
 
-    /// Stringly-typed property-panel dispatch.
-    ///
-    /// Matches `top` / `right` / `bottom` / `left` against the parsed
-    /// `value`. Parse failures are silent. Mirrors the surface that
-    /// `prism-luau-derive::Editable` synthesises so that consumer
-    /// structs can use `#[edit(nested)]` to delegate edge-keyed edits
-    /// here.
-    pub fn apply_field(&mut self, key: &str, value: &str) {
+    /// Path-walker dispatch — matches `prism-luau-derive::Editable`'s
+    /// `apply_path` convention so this type can sit as a leaf of a
+    /// derived dispatcher. The `path` is the dot-separated key tail
+    /// after the parent's field name; non-leaf paths (anything past
+    /// `top` / `right` / `bottom` / `left`) are silent no-ops.
+    pub fn apply_path(&mut self, path: &str, value: &str) {
         if let Ok(v) = value.parse::<f32>() {
-            match key {
+            match path {
                 "top" => self.top = v,
                 "right" => self.right = v,
                 "bottom" => self.bottom = v,
@@ -283,20 +281,20 @@ mod tests {
     }
 
     #[test]
-    fn edges_apply_field_dispatches_each_side() {
+    fn edges_apply_path_dispatches_each_side() {
         let mut e = Edges::<f32>::ZERO;
-        e.apply_field("top", "1");
-        e.apply_field("right", "2");
-        e.apply_field("bottom", "3");
-        e.apply_field("left", "4");
+        e.apply_path("top", "1");
+        e.apply_path("right", "2");
+        e.apply_path("bottom", "3");
+        e.apply_path("left", "4");
         assert_eq!(e, Edges::new(1.0, 2.0, 3.0, 4.0));
     }
 
     #[test]
-    fn edges_apply_field_unparseable_is_noop() {
+    fn edges_apply_path_unparseable_is_noop() {
         let mut e = Edges::new(1.0, 2.0, 3.0, 4.0);
-        e.apply_field("top", "not-a-number");
-        e.apply_field("unknown", "5");
+        e.apply_path("top", "not-a-number");
+        e.apply_path("unknown", "5");
         assert_eq!(e, Edges::new(1.0, 2.0, 3.0, 4.0));
     }
 
