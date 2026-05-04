@@ -1392,7 +1392,7 @@ mod tests {
     #[cfg(feature = "interpreter")]
     fn real_registry() -> ComponentRegistry {
         let mut reg = ComponentRegistry::new();
-        let _ = crate::starter::register_builtins(&mut reg);
+        let _ = crate::starter::register_builtins(&mut reg, &mut crate::HtmlRegistry::new());
         reg
     }
 

@@ -255,7 +255,7 @@ mod tests {
     #[test]
     fn save_and_load_round_trip() {
         let mut reg = ComponentRegistry::new();
-        register_builtins(&mut reg).unwrap();
+        register_builtins(&mut reg, &mut prism_builder::HtmlRegistry::new()).unwrap();
         let reg = Arc::new(reg);
         let apps = vec![test_app()];
 
@@ -288,7 +288,7 @@ mod tests {
     #[test]
     fn save_without_path_errors() {
         let mut reg = ComponentRegistry::new();
-        register_builtins(&mut reg).unwrap();
+        register_builtins(&mut reg, &mut prism_builder::HtmlRegistry::new()).unwrap();
         let reg = Arc::new(reg);
         let mut persistence = ProjectPersistence::new();
         let result = persistence.save(&[], &reg, &DEFAULT_TOKENS);
@@ -326,7 +326,7 @@ mod tests {
     #[test]
     fn save_clears_dirty() {
         let mut reg = ComponentRegistry::new();
-        register_builtins(&mut reg).unwrap();
+        register_builtins(&mut reg, &mut prism_builder::HtmlRegistry::new()).unwrap();
         let reg = Arc::new(reg);
 
         let unique = std::time::SystemTime::now()
@@ -351,7 +351,7 @@ mod tests {
     #[test]
     fn open_path_loads_project() {
         let mut reg = ComponentRegistry::new();
-        register_builtins(&mut reg).unwrap();
+        register_builtins(&mut reg, &mut prism_builder::HtmlRegistry::new()).unwrap();
         let reg = Arc::new(reg);
         let apps = vec![test_app()];
 

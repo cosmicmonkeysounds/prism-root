@@ -392,6 +392,11 @@ struct ShellInner {
     last_selected_node: Option<String>,
     nav_link_source: Option<usize>,
     persistence: ProjectPersistence,
+    /// Set the first time `apply_luau_result` consumes a legacy
+    /// `_actions` / `set_properties` / `navigate` payload. Used to fire
+    /// a one-shot deprecation warning in this session — see
+    /// `docs/dev/luau-integration-plan.md` Phase 5d.
+    legacy_luau_protocol_warned: Cell<bool>,
     // Wrapped in `Rc<RefCell<…>>` so the Phase 4 Luau bindings
     // (`prism.objects` / `prism.edges`) can hold the same handle the
     // shell mutates from its own callbacks. See

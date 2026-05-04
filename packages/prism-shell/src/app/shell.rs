@@ -18,7 +18,7 @@ impl Shell {
         let telemetry = FirstPaint::start();
         let window = AppWindow::new()?;
         let mut registry = ComponentRegistry::new();
-        register_builtins(&mut registry).expect("starter components must register");
+        register_builtins(&mut registry, &mut prism_builder::HtmlRegistry::new()).expect("starter components must register");
         prism_builder::register_core_widgets(&mut registry)
             .expect("core widget components must register");
         let mut help = HelpRegistry::new();
@@ -115,6 +115,7 @@ impl Shell {
             last_selected_node: None,
             nav_link_source: None,
             persistence: ProjectPersistence::new(),
+            legacy_luau_protocol_warned: Cell::new(false),
             #[cfg(feature = "native")]
             collection: std::rc::Rc::new(std::cell::RefCell::new(CollectionStore::new())),
             #[cfg(feature = "native")]

@@ -7,8 +7,7 @@
 //! contention on a single owner.
 
 use prism_builder::{
-    html_starter::register_html_builtins, starter::register_builtins, BuilderDocument,
-    ComponentRegistry, HtmlRegistry, Node,
+    starter::register_builtins, BuilderDocument, ComponentRegistry, HtmlRegistry, Node,
 };
 use prism_core::design_tokens::{DesignTokens, DEFAULT_TOKENS};
 use serde_json::json;
@@ -30,9 +29,9 @@ impl AppState {
     /// upserting portals before the server is useful.
     pub fn new() -> Self {
         let mut registry = ComponentRegistry::new();
-        register_builtins(&mut registry).expect("builtin components must register");
         let mut html_registry = HtmlRegistry::new();
-        register_html_builtins(&mut html_registry).expect("html builtins must register");
+        register_builtins(&mut registry, &mut html_registry)
+            .expect("builtin components must register");
         prism_builder::register_core_html_widgets(&mut html_registry)
             .expect("core html widgets must register");
         Self {

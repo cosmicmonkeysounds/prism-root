@@ -1,14 +1,14 @@
-//! Starter component catalog — the default Slint-side registry.
+//! Starter component catalog — the default block registry seeding both
+//! render targets in lockstep.
 //!
 //! Seventeen blocks land here: `text`, `image`, `container`, `form`,
 //! `input`, `button`, `card` (prefab), `code`, `divider`, `spacer`,
-//! `columns`, `list`, `table`, `tabs`, `accordion`, and `graph-view`.
-//! Each implements [`Component`] with a `render_slint` method that
-//! emits `.slint` DSL via [`SlintEmitter`] for Studio's live builder
-//! panel.
-//!
-//! HTML SSR is handled separately by [`crate::html_starter`] via the
-//! [`crate::html_block::HtmlBlock`] trait.
+//! `columns`, `list`, `table`, `tabs`, `accordion`, `facet`, and
+//! `graph-view`. The first 14 implement [`Block`] (one impl serves
+//! both Slint and HTML render paths via the blanket impls in
+//! [`crate::block`]); `card`, `facet`, and `graph-view` are special
+//! cases — `card` is a prefab with separate Slint/HTML wrappers,
+//! `facet` likewise, and `graph-view` is Slint-only.
 
 use std::sync::Arc;
 
@@ -18,13 +18,13 @@ use serde_json::Value;
 use serde_json::json;
 
 use crate::asset::AssetSource;
-use crate::block::Block;
+use crate::block::{register_block, Block};
 use crate::component::{ComponentId, RenderError, RenderSlintContext};
 use crate::document::Node;
-use crate::facet::FacetComponent;
+use crate::facet::{FacetComponent, FacetHtmlBlock};
 use crate::html::Html;
-use crate::html_block::HtmlRenderContext;
-use crate::prefab::{ExposedSlot, PrefabComponent, PrefabDef};
+use crate::html_block::{HtmlRegistry, HtmlRenderContext};
+use crate::prefab::{ExposedSlot, PrefabComponent, PrefabDef, PrefabHtmlBlock};
 use crate::registry::{ComponentRegistry, FieldSpec, RegistryError};
 use crate::schemas;
 use crate::signal::{with_common_signals, SignalDef};
@@ -32,40 +32,90 @@ use crate::slint_source::{escape_slint_string, SlintEmitter};
 use crate::style::StyleProperties;
 use crate::variant::{presets as variant_presets, VariantAxis};
 
-/// Register the starter catalog into `reg`. Call this once at boot
-/// to get a registry with fifteen ready-to-render components.
-pub fn register_builtins(reg: &mut ComponentRegistry) -> Result<(), RegistryError> {
-    reg.register(Arc::new(TextBlock { id: "text".into() }))?;
-    reg.register(Arc::new(ImageBlock { id: "image".into() }))?;
-    reg.register(Arc::new(ContainerBlock {
-        id: "container".into(),
-    }))?;
-    reg.register(Arc::new(FormBlock { id: "form".into() }))?;
-    reg.register(Arc::new(InputBlock { id: "input".into() }))?;
-    reg.register(Arc::new(ButtonBlock {
-        id: "button".into(),
-    }))?;
-    reg.register(Arc::new(PrefabComponent::new(card_prefab_def())))?;
-    reg.register(Arc::new(CodeBlock { id: "code".into() }))?;
-    reg.register(Arc::new(DividerBlock {
-        id: "divider".into(),
-    }))?;
-    reg.register(Arc::new(SpacerBlock {
-        id: "spacer".into(),
-    }))?;
-    reg.register(Arc::new(ColumnsBlock {
-        id: "columns".into(),
-    }))?;
-    reg.register(Arc::new(ListBlock { id: "list".into() }))?;
-    reg.register(Arc::new(TableBlock { id: "table".into() }))?;
-    reg.register(Arc::new(TabsBlock { id: "tabs".into() }))?;
-    reg.register(Arc::new(AccordionBlock {
-        id: "accordion".into(),
-    }))?;
-    reg.register(Arc::new(FacetComponent::new()))?;
-    reg.register(Arc::new(GraphViewBlock {
+/// Register the starter catalog into both registries. Single source of
+/// truth for the built-in block list — the Slint side and HTML SSR
+/// side stay in lockstep by construction.
+pub fn register_builtins(
+    components: &mut ComponentRegistry,
+    html: &mut HtmlRegistry,
+) -> Result<(), RegistryError> {
+    register_block(components, html, Arc::new(TextBlock { id: "text".into() }))?;
+    register_block(
+        components,
+        html,
+        Arc::new(ImageBlock { id: "image".into() }),
+    )?;
+    register_block(
+        components,
+        html,
+        Arc::new(ContainerBlock {
+            id: "container".into(),
+        }),
+    )?;
+    register_block(components, html, Arc::new(FormBlock { id: "form".into() }))?;
+    register_block(
+        components,
+        html,
+        Arc::new(InputBlock { id: "input".into() }),
+    )?;
+    register_block(
+        components,
+        html,
+        Arc::new(ButtonBlock {
+            id: "button".into(),
+        }),
+    )?;
+    register_block(components, html, Arc::new(CodeBlock { id: "code".into() }))?;
+    register_block(
+        components,
+        html,
+        Arc::new(DividerBlock {
+            id: "divider".into(),
+        }),
+    )?;
+    register_block(
+        components,
+        html,
+        Arc::new(SpacerBlock {
+            id: "spacer".into(),
+        }),
+    )?;
+    register_block(
+        components,
+        html,
+        Arc::new(ColumnsBlock {
+            id: "columns".into(),
+        }),
+    )?;
+    register_block(components, html, Arc::new(ListBlock { id: "list".into() }))?;
+    register_block(
+        components,
+        html,
+        Arc::new(TableBlock { id: "table".into() }),
+    )?;
+    register_block(components, html, Arc::new(TabsBlock { id: "tabs".into() }))?;
+    register_block(
+        components,
+        html,
+        Arc::new(AccordionBlock {
+            id: "accordion".into(),
+        }),
+    )?;
+
+    // `card` is a prefab — separate Slint/HTML impls share the same def.
+    let card = card_prefab_def();
+    components.register(Arc::new(PrefabComponent::new(card.clone())))?;
+    html.register(Arc::new(PrefabHtmlBlock::new(card)))?;
+
+    // `facet` likewise has parallel Slint/HTML impls.
+    components.register(Arc::new(FacetComponent::new()))?;
+    html.register(Arc::new(FacetHtmlBlock::new()))?;
+
+    // `graph-view` is Slint-only.
+    components.register(Arc::new(GraphViewBlock {
         id: "graph-view".into(),
     }))?;
+
     Ok(())
 }
 
@@ -1527,7 +1577,8 @@ mod tests {
 
     fn setup() -> (ComponentRegistry, DesignTokens) {
         let mut reg = ComponentRegistry::new();
-        register_builtins(&mut reg).expect("register builtins");
+        let mut html = HtmlRegistry::new();
+        register_builtins(&mut reg, &mut html).expect("register builtins");
         (reg, DesignTokens::default())
     }
 

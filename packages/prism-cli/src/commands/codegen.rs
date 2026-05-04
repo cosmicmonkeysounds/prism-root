@@ -84,7 +84,10 @@ fn luau_types(args: &LuauTypesArgs, workspace: &Workspace, dry_run: bool) -> Res
 /// additionally walk per-workspace component contributions.
 fn render_signals_stub() -> String {
     let mut registry = prism_builder::registry::ComponentRegistry::new();
-    let _ = prism_builder::starter::register_builtins(&mut registry);
+    let _ = prism_builder::starter::register_builtins(
+        &mut registry,
+        &mut prism_builder::HtmlRegistry::new(),
+    );
     prism_builder::signal::generate_signal_type_stubs(&registry, "prism")
 }
 

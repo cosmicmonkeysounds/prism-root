@@ -628,7 +628,7 @@ mod tests {
         // Build a registry with the text component so the template
         // can resolve `component_id: "text"`.
         let mut registry = ComponentRegistry::new();
-        crate::starter::register_builtins(&mut registry).unwrap();
+        crate::starter::register_builtins(&mut registry, &mut crate::HtmlRegistry::new()).unwrap();
 
         let tokens = prism_core::design_tokens::DesignTokens::default();
         let resources = indexmap::IndexMap::new();
@@ -659,7 +659,7 @@ mod tests {
     #[test]
     fn render_slint_data_binding() {
         let mut registry = ComponentRegistry::new();
-        crate::starter::register_builtins(&mut registry).unwrap();
+        crate::starter::register_builtins(&mut registry, &mut crate::HtmlRegistry::new()).unwrap();
 
         let tokens = prism_core::design_tokens::DesignTokens::default();
         let resources = indexmap::IndexMap::new();
@@ -702,7 +702,7 @@ mod tests {
     #[test]
     fn render_slint_repeater_empty() {
         let mut registry = ComponentRegistry::new();
-        crate::starter::register_builtins(&mut registry).unwrap();
+        crate::starter::register_builtins(&mut registry, &mut crate::HtmlRegistry::new()).unwrap();
 
         let tokens = prism_core::design_tokens::DesignTokens::default();
         let resources = indexmap::IndexMap::new();
@@ -747,7 +747,7 @@ mod tests {
     #[test]
     fn render_slint_repeater_with_data() {
         let mut registry = ComponentRegistry::new();
-        crate::starter::register_builtins(&mut registry).unwrap();
+        crate::starter::register_builtins(&mut registry, &mut crate::HtmlRegistry::new()).unwrap();
 
         let tokens = prism_core::design_tokens::DesignTokens::default();
         let resources = indexmap::IndexMap::new();
@@ -802,7 +802,7 @@ mod tests {
     #[test]
     fn render_slint_conditional_truthy() {
         let mut registry = ComponentRegistry::new();
-        crate::starter::register_builtins(&mut registry).unwrap();
+        crate::starter::register_builtins(&mut registry, &mut crate::HtmlRegistry::new()).unwrap();
 
         let tokens = prism_core::design_tokens::DesignTokens::default();
         let resources = indexmap::IndexMap::new();
@@ -860,7 +860,7 @@ mod tests {
     #[test]
     fn render_slint_conditional_no_fallback() {
         let mut registry = ComponentRegistry::new();
-        crate::starter::register_builtins(&mut registry).unwrap();
+        crate::starter::register_builtins(&mut registry, &mut crate::HtmlRegistry::new()).unwrap();
 
         let tokens = prism_core::design_tokens::DesignTokens::default();
         let resources = indexmap::IndexMap::new();
@@ -904,7 +904,7 @@ mod tests {
     #[test]
     fn default_contribution_renders_empty_layout() {
         let mut registry = ComponentRegistry::new();
-        crate::starter::register_builtins(&mut registry).unwrap();
+        crate::starter::register_builtins(&mut registry, &mut crate::HtmlRegistry::new()).unwrap();
 
         let tokens = prism_core::design_tokens::DesignTokens::default();
         let resources = indexmap::IndexMap::new();
@@ -972,7 +972,7 @@ mod tests {
     #[test]
     fn horizontal_container_emits_horizontal_layout() {
         let mut registry = ComponentRegistry::new();
-        crate::starter::register_builtins(&mut registry).unwrap();
+        crate::starter::register_builtins(&mut registry, &mut crate::HtmlRegistry::new()).unwrap();
 
         let tokens = prism_core::design_tokens::DesignTokens::default();
         let resources = indexmap::IndexMap::new();
@@ -1017,7 +1017,7 @@ mod tests {
         use std::collections::HashMap;
 
         let mut registry = ComponentRegistry::new();
-        crate::starter::register_builtins(&mut registry).unwrap();
+        crate::starter::register_builtins(&mut registry, &mut crate::HtmlRegistry::new()).unwrap();
 
         // Register a simple widget with a Repeater that reads "items"
         let test_widget = WidgetContribution {
@@ -1092,7 +1092,7 @@ mod tests {
         use crate::document::Node;
 
         let mut registry = ComponentRegistry::new();
-        crate::starter::register_builtins(&mut registry).unwrap();
+        crate::starter::register_builtins(&mut registry, &mut crate::HtmlRegistry::new()).unwrap();
 
         let test_widget = WidgetContribution {
             id: "test-empty-widget".into(),
@@ -1150,8 +1150,9 @@ mod tests {
 
     #[test]
     fn html_block_renders_container() {
+        let mut comp_registry = crate::ComponentRegistry::new();
         let mut html_registry = HtmlRegistry::new();
-        crate::html_starter::register_html_builtins(&mut html_registry).unwrap();
+        crate::starter::register_builtins(&mut comp_registry, &mut html_registry).unwrap();
 
         let tokens = prism_core::design_tokens::DesignTokens::default();
         let resources = indexmap::IndexMap::new();

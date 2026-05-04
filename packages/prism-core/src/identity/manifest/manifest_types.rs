@@ -190,4 +190,27 @@ pub struct PrismManifest {
         skip_serializing_if = "Option::is_none"
     )]
     pub role_assignments: Option<Vec<RoleAssignment>>,
+
+    // ── Luau scripts (Phase 6d) ──────────────────────────────────
+    /// Glob-style script path declarations the host walks at boot.
+    /// See `docs/dev/luau-integration-plan.md` Phase 6d / 7.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scripts: Option<ScriptsConfig>,
+}
+
+/// `.prism.json` `scripts` section. Each field is an optional glob
+/// pattern (relative to the manifest directory). The host walks the
+/// matching files and registers each into its respective registry —
+/// `widgets/` → `LuauRenderRegistry`, `automations/` → automation
+/// engine, etc.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScriptsConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub widgets: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub automations: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_steps: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commands: Option<String>,
 }

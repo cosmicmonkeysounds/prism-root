@@ -70,6 +70,7 @@ pub fn default_manifest(name: impl Into<String>, id: impl Into<String>) -> Prism
         description: None,
         privilege_sets: None,
         role_assignments: None,
+        scripts: None,
     }
 }
 
@@ -120,6 +121,7 @@ pub fn parse_manifest(json: &str) -> Result<PrismManifest, ManifestError> {
         privilege_sets: Option<Vec<super::privilege_set::PrivilegeSet>>,
         #[serde(rename = "roleAssignments")]
         role_assignments: Option<Vec<super::privilege_set::RoleAssignment>>,
+        scripts: Option<super::manifest_types::ScriptsConfig>,
     }
 
     let p: Partial = serde_json::from_value(value)?;
@@ -145,6 +147,7 @@ pub fn parse_manifest(json: &str) -> Result<PrismManifest, ManifestError> {
         description: p.description,
         privilege_sets: p.privilege_sets,
         role_assignments: p.role_assignments,
+        scripts: p.scripts,
     })
 }
 
@@ -383,6 +386,7 @@ mod tests {
             description: Some("A test manifest".into()),
             privilege_sets: None,
             role_assignments: None,
+            scripts: None,
         };
         let json = serde_json::to_string(&full).unwrap();
         let m = parse_manifest(&json).unwrap();

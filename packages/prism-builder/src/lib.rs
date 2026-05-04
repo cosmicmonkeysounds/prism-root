@@ -29,6 +29,8 @@ pub mod html;
 pub mod html_block;
 pub mod html_starter;
 pub mod layout;
+#[cfg(feature = "luau")]
+pub mod luau_component;
 pub mod luau_types;
 pub mod modifier;
 pub mod prefab;
@@ -37,6 +39,8 @@ pub mod registry;
 pub mod render;
 pub mod resource;
 pub mod schemas;
+#[cfg(feature = "luau")]
+pub mod script_loader;
 pub mod signal;
 pub mod slint_source;
 pub mod source_map;
@@ -63,7 +67,6 @@ pub use facet::{
 };
 pub use html::{escape_attr, escape_text, Html};
 pub use html_block::{HtmlBlock, HtmlRegistry, HtmlRenderContext};
-pub use html_starter::register_html_builtins;
 pub use layout::{
     compute_layout, compute_track_sizes, path_from_string, path_to_string, AbsoluteProps, CellEdge,
     ComputedLayout, EdgeHandle, FlatCell, FlowProps, GridCell, GridEditError, GridPlacement,
@@ -109,3 +112,8 @@ pub use render::{
 };
 #[cfg(feature = "interpreter")]
 pub use syntax_provider::BuilderSyntaxProvider;
+
+#[cfg(feature = "luau")]
+pub use luau_component::{ActiveRegistry, LuauComponent, LuauRenderRegistry, VirtualNode};
+#[cfg(feature = "luau")]
+pub use script_loader::{load_widgets, LoadReport, ScriptLoadError};

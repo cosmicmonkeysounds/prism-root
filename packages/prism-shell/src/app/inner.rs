@@ -405,6 +405,19 @@ impl ShellInner {
             return;
         };
         let mut needs_sync = false;
+        let legacy_used = matches!(obj.get("_actions"), Some(Value::Array(a)) if !a.is_empty());
+        if legacy_used && !self.legacy_luau_protocol_warned.replace(true) {
+            self.add_toast(
+                "Deprecated Luau return protocol",
+                "Scripts that call `set_property` / `toggle_visibility` / \
+                 `navigate` / `emit_signal` (the `_actions` return protocol) \
+                 will stop being executed in a future release. Migrate to \
+                 `prism.document:set_prop` / `:insert` / `:remove` and \
+                 `prism.signals:fire`. See docs/dev/luau-integration-plan.md \
+                 Phase 5d.",
+                "warning",
+            );
+        }
         if let Some(Value::Array(actions)) = obj.get("_actions") {
             for action in actions {
                 let Some(action_obj) = action.as_object() else {

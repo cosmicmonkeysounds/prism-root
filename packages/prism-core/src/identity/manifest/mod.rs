@@ -25,8 +25,8 @@ pub use manifest::{
     ManifestValidationError,
 };
 pub use manifest_types::{
-    CollectionRef, ManifestVisibility, PrismManifest, SchemaConfig, SortDirection, StorageConfig,
-    SyncConfig, SyncMode, MANIFEST_FILENAME, MANIFEST_VERSION,
+    CollectionRef, ManifestVisibility, PrismManifest, SchemaConfig, ScriptsConfig, SortDirection,
+    StorageConfig, SyncConfig, SyncMode, MANIFEST_FILENAME, MANIFEST_VERSION,
 };
 pub use privilege_enforcer::{create_privilege_enforcer, PrivilegeContext, PrivilegeEnforcer};
 pub use privilege_set::{

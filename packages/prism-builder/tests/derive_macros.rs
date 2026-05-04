@@ -276,7 +276,10 @@ fn prism_block_derive_emits_block_impl_with_id_and_schema() {
 fn prism_block_derive_renders_html_via_template_walker() {
     use prism_builder::{Block, Html, HtmlRegistry, HtmlRenderContext};
     let mut html_registry = HtmlRegistry::new();
-    prism_builder::register_html_builtins(&mut html_registry).unwrap();
+    {
+        let mut __c = prism_builder::ComponentRegistry::new();
+        prism_builder::starter::register_builtins(&mut __c, &mut html_registry).unwrap();
+    }
 
     let tokens = prism_core::design_tokens::DesignTokens::default();
     let resources = indexmap::IndexMap::new();
@@ -363,7 +366,10 @@ fn prism_block_typed_props_derives_schema_from_props_struct() {
 fn prism_block_typed_props_extracts_typed_props_for_template() {
     use prism_builder::{Block, Html, HtmlRegistry, HtmlRenderContext};
     let mut html_registry = HtmlRegistry::new();
-    prism_builder::register_html_builtins(&mut html_registry).unwrap();
+    {
+        let mut __c = prism_builder::ComponentRegistry::new();
+        prism_builder::starter::register_builtins(&mut __c, &mut html_registry).unwrap();
+    }
 
     let tokens = prism_core::design_tokens::DesignTokens::default();
     let resources = indexmap::IndexMap::new();

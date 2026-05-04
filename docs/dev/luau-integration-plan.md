@@ -928,36 +928,65 @@ the VFS watcher.
      point in `prism-daemon::modules::luau_module` accepts a
      `FnOnce(&Lua)` setup closure, which is how the shell installs
      these handles without forking the daemon's exec path.
-   - 5d. 🟡 The `apply_luau_result` `_actions` / `set_properties` /
-     `navigate` protocol still runs (kept for one release behind
-     the migration); new scripts that call `prism.document:set_prop`
-     etc. flow through the queue-drain path that runs immediately
-     after exec. The deprecation warning on the legacy protocol is
-     a follow-up — the call site will start emitting once the
-     in-tree handler scripts have all migrated.
-6. ⬜ `LuauComponent` renderer + manifest `scripts` section.
+   - 5d. ✅ The `apply_luau_result` `_actions` /
+     `set_properties` / `navigate` protocol still runs (kept for one
+     release behind the migration), but now fires a one-shot
+     deprecation toast the first time a script in this session
+     returns a non-empty `_actions` array. New scripts that call
+     `prism.document:set_prop` etc. flow through the queue-drain
+     path that runs immediately after exec. The legacy in-tree
+     facet handler stdlib (`build_handler_script`) keeps emitting
+     `_actions = {}` on every invocation, so the warning only
+     trips when a user-authored script actually called one of the
+     legacy helpers (`set_property` / `toggle_visibility` /
+     `navigate` / `emit_signal`).
+6. 🟡 `LuauComponent` renderer + manifest `scripts` section.
    Sub-tasks:
-   - 6a. New `prism-builder/src/luau_component.rs` with
-     `LuauComponent` (impls `Component` + `HtmlBlock`) and
+   - 6a. ✅ New `prism-builder/src/luau_component.rs` with
+     `LuauComponent` (implements `Block` — which gives it both
+     `Component` and `HtmlBlock` via blanket impls) and
      `LuauRenderRegistry` owning the shared `mlua::Lua` and a
-     `HashMap<LuauRenderKey, mlua::RegistryKey>`.
-   - 6b. Virtual node tree: `FromLua` impl on a new
-     `prism_builder::VirtualNode` (same shape as `Node` but no IDs)
-     so the walker can recurse through `ComponentRegistry` for both
-     Slint and HTML targets.
-   - 6c. `prism.widget { ... }` global helper (Luau-side) that builds
-     a `WidgetContribution` from the table and registers the render
-     function. Backed by a Rust-side `register_widget` callback
-     installed by `LuauRenderRegistry::install_global`.
-   - 6d. `.prism.json` `scripts` section + capability scope
-     enforcement. Loader walks the glob, classifies by directory
-     (`widgets/`, `automations/`, `build_steps/`, `commands/`),
-     and registers each into its respective registry. VFS watcher
-     calls `LuauRenderRegistry::replace` on change for per-component
-     reload.
-   - 6e. CLI hook: `prism dev shell` passes the project's
-     `scripts.widgets` glob to the shell at boot so Luau-defined
-     widgets appear in the component palette alongside built-ins.
+     `HashMap<String, mlua::RegistryKey>` keyed by component id.
+     `LuauComponent` itself stays `Send + Sync` (data only); the
+     `mlua::Lua` lives in the registry and is reached at render
+     time via a thread-local installed by an `ActiveRegistry`
+     guard. Pragmatic deviation from the original plan text —
+     "per-document Lua state" is enforced by who owns the
+     registry, not by storing the state inside the contribution.
+   - 6b. ✅ `VirtualNode { component, props, children }` (no IDs)
+     with a hand-written `FromLua` impl. `into_node(&mut next_id)`
+     mints synthetic ids so the walker keeps them unique within
+     one render pass. Render walker recurses through
+     `ComponentRegistry::render_child` /
+     `HtmlRenderContext::render_child` for both targets.
+   - 6c. ✅ `prism.widget { ... }` global helper installed by
+     `LuauRenderRegistry::install_global`. Companion helpers:
+     `prism.field.text` / `.boolean` / `.select` for schema rows,
+     `prism.signal(name, payload)`, and `prism.axis(key, options)`.
+     Each helper produces a Lua table whose serde shape matches
+     the Rust `FieldSpec` / `SignalSpec` / `VariantSpec` layout
+     so the contribution parser round-trips without a separate
+     conversion path.
+   - 6d. 🟡 `.prism.json` gained an optional `scripts` section
+     (`ScriptsConfig` in `prism_core::identity::manifest`) with
+     `widgets` / `automations` / `build_steps` / `commands` glob
+     fields. `prism_builder::load_widgets(project_root, glob,
+     &mut LuauRenderRegistry, &mut ComponentRegistry, &mut
+     HtmlRegistry)` walks `<dir>/*.luau` (the simple case),
+     compiles each file, and registers the resulting
+     `LuauComponent`s into both registries via `register_block`.
+     Failed files are reported in `LoadReport.failures` rather
+     than aborting the boot. **Pending**: capability scope
+     enforcement (per-glob `permissions` map), VFS-watcher hot
+     reload via `LuauRenderRegistry::replace`, and the
+     `automations` / `build_steps` / `commands` pipelines.
+   - 6e. ⬜ CLI hook + shell wiring. `prism dev shell` doesn't
+     yet read `scripts.widgets` from the project manifest and
+     hand it to `Shell` at boot — `Shell::open_project` would
+     need to grow a side-table of `LuauRenderRegistry` per
+     project + a way to extend the post-boot
+     `Arc<ComponentRegistry>`. Tracked as the follow-up that
+     lights up Luau-defined widgets in the palette.
 7. ⬜ Port `Tabs` to pure Luau. Sub-tasks:
    - 7a. Author `widgets/tabs.luau` mirroring the existing
      `prism_builder::core_widget::tabs` schema (tab list field,

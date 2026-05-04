@@ -43,103 +43,11 @@ pub struct FieldRowData {
 }
 
 impl FieldRowData {
-    pub fn text(
-        key: impl Into<String>,
-        label: impl Into<String>,
-        value: impl Into<String>,
-    ) -> Self {
-        Self {
-            key: key.into(),
-            label: label.into(),
-            kind: "text".into(),
-            value: value.into(),
-            required: false,
-            min: 0.0,
-            max: 0.0,
-            has_bounds: false,
-            options: vec![],
-        }
-    }
-
-    pub fn number(
-        key: impl Into<String>,
-        label: impl Into<String>,
-        value: impl Into<String>,
-    ) -> Self {
-        Self {
-            key: key.into(),
-            label: label.into(),
-            kind: "number".into(),
-            value: value.into(),
-            required: false,
-            min: 0.0,
-            max: 0.0,
-            has_bounds: false,
-            options: vec![],
-        }
-    }
-
-    pub fn boolean(key: impl Into<String>, label: impl Into<String>, value: bool) -> Self {
-        Self {
-            key: key.into(),
-            label: label.into(),
-            kind: "boolean".into(),
-            value: if value { "true" } else { "false" }.into(),
-            required: false,
-            min: 0.0,
-            max: 0.0,
-            has_bounds: false,
-            options: vec![],
-        }
-    }
-
-    pub fn select(
-        key: impl Into<String>,
-        label: impl Into<String>,
-        value: impl Into<String>,
-        options: Vec<String>,
-    ) -> Self {
-        Self {
-            key: key.into(),
-            label: label.into(),
-            kind: "select".into(),
-            value: value.into(),
-            required: false,
-            min: 0.0,
-            max: 0.0,
-            has_bounds: false,
-            options,
-        }
-    }
-
-    pub fn color(
-        key: impl Into<String>,
-        label: impl Into<String>,
-        value: impl Into<String>,
-    ) -> Self {
-        Self {
-            key: key.into(),
-            label: label.into(),
-            kind: "color".into(),
-            value: value.into(),
-            required: false,
-            min: 0.0,
-            max: 0.0,
-            has_bounds: false,
-            options: vec![],
-        }
-    }
-
-    pub fn required(mut self) -> Self {
-        self.required = true;
-        self
-    }
-
-    pub fn bounds(mut self, min: f32, max: f32) -> Self {
-        self.min = min;
-        self.max = max;
-        self.has_bounds = true;
-        self
+    /// Project a [`FieldSpec`] (declarative schema entry) onto a Slint
+    /// row, reading the current value out of `props`. The canonical
+    /// builder→view bridge — most rows in the panel flow through this.
+    pub fn from_spec(spec: &FieldSpec, props: &Value) -> Self {
+        row_from_spec(spec, props)
     }
 }
 
@@ -265,11 +173,18 @@ impl PropertiesPanel {
                 .iter()
                 .enumerate()
                 .map(|(i, m)| {
-                    FieldRowData::text(
-                        format!("modifier.{i}"),
-                        format!("{:?}", m.kind),
-                        format!("{:?}", m.kind),
-                    )
+                    let kind = format!("{:?}", m.kind);
+                    FieldRowData {
+                        key: format!("modifier.{i}"),
+                        label: kind.clone(),
+                        kind: "text".into(),
+                        value: kind,
+                        required: false,
+                        min: 0.0,
+                        max: 0.0,
+                        has_bounds: false,
+                        options: vec![],
+                    }
                 })
                 .collect();
             sections.push(PropertySection {
@@ -295,12 +210,17 @@ impl PropertiesPanel {
                             .unwrap_or(
                                 axis.options.first().map(|o| o.value.as_str()).unwrap_or(""),
                             );
-                        FieldRowData::select(
-                            axis.key.clone(),
-                            axis.label.clone(),
-                            current,
-                            axis.options.iter().map(|o| o.value.clone()).collect(),
-                        )
+                        FieldRowData {
+                            key: axis.key.clone(),
+                            label: axis.label.clone(),
+                            kind: "select".into(),
+                            value: current.to_string(),
+                            required: false,
+                            min: 0.0,
+                            max: 0.0,
+                            has_bounds: false,
+                            options: axis.options.iter().map(|o| o.value.clone()).collect(),
+                        }
                     })
                     .collect();
                 sections.push(PropertySection {
@@ -796,7 +716,7 @@ mod tests {
 
     fn setup() -> (BuilderDocument, ComponentRegistry) {
         let mut reg = ComponentRegistry::new();
-        register_builtins(&mut reg).unwrap();
+        register_builtins(&mut reg, &mut prism_builder::HtmlRegistry::new()).unwrap();
         let doc = BuilderDocument {
             root: Some(Node {
                 id: "root".into(),
@@ -1055,7 +975,7 @@ mod tests {
     fn sections_non_default_transform_expands() {
         use prism_core::foundation::spatial::Transform2D;
         let mut reg = ComponentRegistry::new();
-        register_builtins(&mut reg).unwrap();
+        register_builtins(&mut reg, &mut prism_builder::HtmlRegistry::new()).unwrap();
         let doc = BuilderDocument {
             root: Some(Node {
                 id: "n".into(),
@@ -1080,7 +1000,7 @@ mod tests {
     fn sections_non_default_layout_expands() {
         use prism_builder::layout::{FlowDisplay, FlowProps, LayoutMode};
         let mut reg = ComponentRegistry::new();
-        register_builtins(&mut reg).unwrap();
+        register_builtins(&mut reg, &mut prism_builder::HtmlRegistry::new()).unwrap();
         let doc = BuilderDocument {
             root: Some(Node {
                 id: "n".into(),
@@ -1102,7 +1022,7 @@ mod tests {
     #[test]
     fn sections_non_default_style_expands_appearance() {
         let mut reg = ComponentRegistry::new();
-        register_builtins(&mut reg).unwrap();
+        register_builtins(&mut reg, &mut prism_builder::HtmlRegistry::new()).unwrap();
         let doc = BuilderDocument {
             root: Some(Node {
                 id: "n".into(),
@@ -1189,7 +1109,7 @@ mod tests {
     fn appearance_rows_show_origin_in_label() {
         use prism_builder::PrismApp;
         let mut reg = ComponentRegistry::new();
-        register_builtins(&mut reg).unwrap();
+        register_builtins(&mut reg, &mut prism_builder::HtmlRegistry::new()).unwrap();
         let app = PrismApp {
             id: "test".into(),
             name: "Test".into(),
@@ -1250,7 +1170,7 @@ mod tests {
     #[test]
     fn button_sections_include_variants() {
         let mut reg = ComponentRegistry::new();
-        register_builtins(&mut reg).unwrap();
+        register_builtins(&mut reg, &mut prism_builder::HtmlRegistry::new()).unwrap();
         let doc = BuilderDocument {
             root: Some(Node {
                 id: "btn".into(),
@@ -1326,7 +1246,7 @@ mod tests {
         use prism_builder::{FacetDataSource, FacetDef, FacetKind, FacetLayout};
 
         let mut reg = ComponentRegistry::new();
-        register_builtins(&mut reg).unwrap();
+        register_builtins(&mut reg, &mut prism_builder::HtmlRegistry::new()).unwrap();
         let facet_id = "facet:f1".to_string();
         let mut doc = BuilderDocument {
             root: Some(Node {
@@ -1372,7 +1292,7 @@ mod tests {
         use prism_builder::{AggregateOp, FacetDef, FacetKind};
 
         let mut reg = ComponentRegistry::new();
-        register_builtins(&mut reg).unwrap();
+        register_builtins(&mut reg, &mut prism_builder::HtmlRegistry::new()).unwrap();
         let facet_id = "facet:agg".to_string();
         let mut doc = BuilderDocument {
             root: Some(Node {

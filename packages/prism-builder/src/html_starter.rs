@@ -1,71 +1,27 @@
-//! HTML starter catalog — registrar for the 16 built-in HTML blocks.
+//! HTML SSR integration tests for the starter catalog.
 //!
-//! Since the unified `Block` trait collapse, every built-in block lives
-//! in `crate::starter` as a single `*Block` struct that implements
-//! `crate::block::Block`. The blanket impl in `crate::block` provides
-//! the `HtmlBlock` view automatically; this module just registers each
-//! one into an `HtmlRegistry` so `prism-relay` can keep its public
-//! surface unchanged.
-//!
-//! The relay calls `register_html_builtins` on boot; the shell never
-//! touches this module.
-
-use std::sync::Arc;
-
-use crate::facet::FacetHtmlBlock;
-use crate::html_block::HtmlRegistry;
-use crate::prefab::PrefabHtmlBlock;
-use crate::registry::RegistryError;
-use crate::starter::{
-    card_prefab_def, AccordionBlock, ButtonBlock, CodeBlock, ColumnsBlock, ContainerBlock,
-    DividerBlock, FormBlock, ImageBlock, InputBlock, ListBlock, SpacerBlock, TableBlock, TabsBlock,
-    TextBlock,
-};
-
-pub fn register_html_builtins(reg: &mut HtmlRegistry) -> Result<(), RegistryError> {
-    reg.register(Arc::new(TextBlock { id: "text".into() }))?;
-    reg.register(Arc::new(ImageBlock { id: "image".into() }))?;
-    reg.register(Arc::new(ContainerBlock {
-        id: "container".into(),
-    }))?;
-    reg.register(Arc::new(FormBlock { id: "form".into() }))?;
-    reg.register(Arc::new(InputBlock { id: "input".into() }))?;
-    reg.register(Arc::new(ButtonBlock {
-        id: "button".into(),
-    }))?;
-    reg.register(Arc::new(PrefabHtmlBlock::new(card_prefab_def())))?;
-    reg.register(Arc::new(CodeBlock { id: "code".into() }))?;
-    reg.register(Arc::new(DividerBlock {
-        id: "divider".into(),
-    }))?;
-    reg.register(Arc::new(SpacerBlock {
-        id: "spacer".into(),
-    }))?;
-    reg.register(Arc::new(ColumnsBlock {
-        id: "columns".into(),
-    }))?;
-    reg.register(Arc::new(ListBlock { id: "list".into() }))?;
-    reg.register(Arc::new(TableBlock { id: "table".into() }))?;
-    reg.register(Arc::new(TabsBlock { id: "tabs".into() }))?;
-    reg.register(Arc::new(AccordionBlock {
-        id: "accordion".into(),
-    }))?;
-    reg.register(Arc::new(FacetHtmlBlock::new()))?;
-    Ok(())
-}
+//! Historically this module owned a parallel `register_html_builtins`
+//! function that registered the same 16 builtins into an
+//! [`HtmlRegistry`]. The unified [`crate::starter::register_builtins`]
+//! now seeds both registries in lockstep, so the only thing left here
+//! is the HTML output test suite — kept as a sibling module so the
+//! Slint and HTML test surfaces stay symmetric.
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::document::{BuilderDocument, Node};
+    use crate::html_block::HtmlRegistry;
+    use crate::registry::ComponentRegistry;
     use crate::render::render_document_html;
+    use crate::starter::register_builtins;
     use prism_core::design_tokens::DesignTokens;
     use serde_json::json;
 
     fn setup() -> (HtmlRegistry, DesignTokens) {
-        let mut reg = HtmlRegistry::new();
-        register_html_builtins(&mut reg).expect("register html builtins");
-        (reg, DesignTokens::default())
+        let mut comp = ComponentRegistry::new();
+        let mut html = HtmlRegistry::new();
+        register_builtins(&mut comp, &mut html).expect("register builtins");
+        (html, DesignTokens::default())
     }
 
     #[test]

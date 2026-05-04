@@ -222,7 +222,7 @@ mod tests {
 
     fn setup() -> (HelpRegistry, ComponentRegistry) {
         let mut components = ComponentRegistry::new();
-        register_builtins(&mut components).unwrap();
+        register_builtins(&mut components, &mut prism_builder::HtmlRegistry::new()).unwrap();
         let mut help = HelpRegistry::new();
         register_help_entries(&mut help, &components);
         (help, components)

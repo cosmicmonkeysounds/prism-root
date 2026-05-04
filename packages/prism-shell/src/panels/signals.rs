@@ -593,7 +593,7 @@ mod tests {
     fn available_signals_with_registered_component() {
         let doc = test_doc();
         let mut registry = ComponentRegistry::new();
-        prism_builder::register_builtins(&mut registry).unwrap();
+        prism_builder::register_builtins(&mut registry, &mut prism_builder::HtmlRegistry::new()).unwrap();
         let sigs = SignalsPanel::available_signals("btn", &doc, &registry);
         assert!(sigs.iter().any(|s| s.signal_name == "clicked"));
         assert!(sigs.iter().any(|s| s.signal_name == "hovered"));
@@ -676,7 +676,7 @@ mod tests {
     fn signal_contexts_for_node_with_builtins() {
         let doc = test_doc();
         let mut registry = ComponentRegistry::new();
-        prism_builder::register_builtins(&mut registry).unwrap();
+        prism_builder::register_builtins(&mut registry, &mut prism_builder::HtmlRegistry::new()).unwrap();
         let contexts = SignalsPanel::signal_contexts_for_node("btn", &doc, &registry);
         assert!(!contexts.is_empty());
         assert!(contexts.iter().any(|c| c.name == "clicked"));
@@ -751,7 +751,7 @@ mod tests {
     fn build_schema_context_populates_signals() {
         let doc = test_doc();
         let mut registry = ComponentRegistry::new();
-        prism_builder::register_builtins(&mut registry).unwrap();
+        prism_builder::register_builtins(&mut registry, &mut prism_builder::HtmlRegistry::new()).unwrap();
         let ctx = SignalsPanel::build_schema_context("btn", &doc, &registry);
         assert_eq!(ctx.object_type, "button");
         assert!(!ctx.signals.is_empty());
@@ -763,7 +763,7 @@ mod tests {
     fn build_schema_context_populates_fields() {
         let doc = test_doc();
         let mut registry = ComponentRegistry::new();
-        prism_builder::register_builtins(&mut registry).unwrap();
+        prism_builder::register_builtins(&mut registry, &mut prism_builder::HtmlRegistry::new()).unwrap();
         let ctx = SignalsPanel::build_schema_context("btn", &doc, &registry);
         assert!(!ctx.fields.is_empty());
         assert!(ctx.fields.iter().any(|f| f.id == "text"));
