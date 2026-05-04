@@ -403,35 +403,29 @@ pub(super) fn apply_page_layout_edit(
     key: &str,
     value: &str,
 ) {
-    let parse_f32 = |s: &str| s.parse::<f32>().unwrap_or(0.0);
-
-    match key {
-        "page_size" => {
-            pl.size = match value {
-                "Responsive" => PageSize::Responsive,
-                "A4" => PageSize::A4,
-                "A3" => PageSize::A3,
-                "A5" => PageSize::A5,
-                "Letter" => PageSize::Letter,
-                "Legal" => PageSize::Legal,
-                "Tabloid" => PageSize::Tabloid,
-                "Custom" => PageSize::Custom {
-                    width: 1280.0,
-                    height: 800.0,
-                },
-                _ => pl.size,
-            };
-        }
-        "column_gap" => {
-            pl.column_gap = parse_f32(value);
-            pl.row_gap = parse_f32(value);
-        }
-        "margin_top" => pl.margins.top = parse_f32(value),
-        "margin_right" => pl.margins.right = parse_f32(value),
-        "margin_bottom" => pl.margins.bottom = parse_f32(value),
-        "margin_left" => pl.margins.left = parse_f32(value),
-        _ => {}
+    // `page_size` is a tagged enum with a `Custom { width, height }`
+    // payload — outside the flat-struct derive's lane. Everything else
+    // (margins via #[edit(nested, prefix = "margin_")] and the
+    // column_gap/row_gap fan-out via #[edit(also)]) goes through the
+    // derived dispatch table.
+    if key == "page_size" {
+        pl.size = match value {
+            "Responsive" => PageSize::Responsive,
+            "A4" => PageSize::A4,
+            "A3" => PageSize::A3,
+            "A5" => PageSize::A5,
+            "Letter" => PageSize::Letter,
+            "Legal" => PageSize::Legal,
+            "Tabloid" => PageSize::Tabloid,
+            "Custom" => PageSize::Custom {
+                width: 1280.0,
+                height: 800.0,
+            },
+            _ => pl.size,
+        };
+        return;
     }
+    pl.apply_field(key, value);
 }
 
 pub(super) fn apply_node_layout_edit(

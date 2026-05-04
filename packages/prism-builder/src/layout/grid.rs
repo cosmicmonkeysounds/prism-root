@@ -4,6 +4,7 @@
 //! callers should import via the parent.
 
 use prism_core::foundation::geometry::{Edges, Rect, Size2};
+use prism_luau_derive::Editable;
 use serde::{Deserialize, Serialize};
 use taffy::prelude::*;
 use thiserror::Error;
@@ -250,20 +251,35 @@ pub enum TrackSize {
 /// Structural layout properties of a page. The grid is a recursive
 /// `GridCell` tree where each cell can be independently split
 /// horizontally (columns) or vertically (rows).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Editable)]
 pub struct PageLayout {
+    // `size` is a tagged enum with a `Custom { width, height }` payload.
+    // The flat-struct derive can't construct that — handled by the
+    // shell's `apply_page_layout_edit` wrapper before delegating.
+    #[edit(skip)]
     #[serde(default)]
     pub size: PageSize,
+    #[edit(skip)]
     #[serde(default)]
     pub orientation: Orientation,
+    /// Per-edge values dispatched as `margin_top` / `margin_right` /
+    /// `margin_bottom` / `margin_left` — `Edges<f32>::apply_field`
+    /// matches the unprefixed key.
+    #[edit(nested, prefix = "margin_")]
     #[serde(default)]
     pub margins: Edges<f32>,
+    #[edit(skip)]
     #[serde(default)]
     pub bleed: f32,
+    #[edit(skip)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grid: Option<GridCell>,
+    /// `column_gap` mirrors into `row_gap` so the property-panel input
+    /// drives both axes from one field.
+    #[edit(also = "row_gap")]
     #[serde(default)]
     pub column_gap: f32,
+    #[edit(skip)]
     #[serde(default)]
     pub row_gap: f32,
 }
@@ -796,5 +812,59 @@ impl Default for PageLayout {
             column_gap: 0.0,
             row_gap: 0.0,
         }
+    }
+}
+
+#[cfg(test)]
+mod editable_tests {
+    use super::*;
+
+    #[test]
+    fn nested_prefix_routes_margin_edits_to_edges() {
+        let mut pl = PageLayout::default();
+        pl.apply_field("margin_top", "8");
+        pl.apply_field("margin_right", "12");
+        pl.apply_field("margin_bottom", "16");
+        pl.apply_field("margin_left", "4");
+        assert_eq!(pl.margins.top, 8.0);
+        assert_eq!(pl.margins.right, 12.0);
+        assert_eq!(pl.margins.bottom, 16.0);
+        assert_eq!(pl.margins.left, 4.0);
+    }
+
+    #[test]
+    fn also_attribute_fans_column_gap_to_row_gap() {
+        let mut pl = PageLayout::default();
+        pl.apply_field("column_gap", "24");
+        assert_eq!(pl.column_gap, 24.0);
+        assert_eq!(pl.row_gap, 24.0);
+    }
+
+    #[test]
+    fn skipped_fields_do_not_dispatch() {
+        // `page_size` is intentionally skipped on the derive — the shell
+        // handles it before delegating, so the derived `apply_field`
+        // must not touch `size`.
+        let mut pl = PageLayout::default();
+        pl.apply_field("page_size", "A4");
+        assert!(matches!(pl.size, PageSize::Responsive));
+    }
+
+    #[test]
+    fn unparseable_margin_is_silent_noop() {
+        let mut pl = PageLayout::default();
+        pl.margins.top = 5.0;
+        pl.apply_field("margin_top", "not-a-number");
+        assert_eq!(pl.margins.top, 5.0);
+    }
+
+    #[test]
+    fn unknown_keys_are_noop() {
+        let mut pl = PageLayout {
+            column_gap: 3.0,
+            ..PageLayout::default()
+        };
+        pl.apply_field("totally_unknown", "99");
+        assert_eq!(pl.column_gap, 3.0);
     }
 }

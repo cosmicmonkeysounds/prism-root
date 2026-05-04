@@ -243,6 +243,25 @@ impl Edges<f32> {
     pub fn vertical(self) -> f32 {
         self.top + self.bottom
     }
+
+    /// Stringly-typed property-panel dispatch.
+    ///
+    /// Matches `top` / `right` / `bottom` / `left` against the parsed
+    /// `value`. Parse failures are silent. Mirrors the surface that
+    /// `prism-luau-derive::Editable` synthesises so that consumer
+    /// structs can use `#[edit(nested)]` to delegate edge-keyed edits
+    /// here.
+    pub fn apply_field(&mut self, key: &str, value: &str) {
+        if let Ok(v) = value.parse::<f32>() {
+            match key {
+                "top" => self.top = v,
+                "right" => self.right = v,
+                "bottom" => self.bottom = v,
+                "left" => self.left = v,
+                _ => {}
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -261,6 +280,24 @@ mod tests {
         let s = Size2::new(-10.0, -5.0);
         assert_eq!(s.width, 0.0);
         assert_eq!(s.height, 0.0);
+    }
+
+    #[test]
+    fn edges_apply_field_dispatches_each_side() {
+        let mut e = Edges::<f32>::ZERO;
+        e.apply_field("top", "1");
+        e.apply_field("right", "2");
+        e.apply_field("bottom", "3");
+        e.apply_field("left", "4");
+        assert_eq!(e, Edges::new(1.0, 2.0, 3.0, 4.0));
+    }
+
+    #[test]
+    fn edges_apply_field_unparseable_is_noop() {
+        let mut e = Edges::new(1.0, 2.0, 3.0, 4.0);
+        e.apply_field("top", "not-a-number");
+        e.apply_field("unknown", "5");
+        assert_eq!(e, Edges::new(1.0, 2.0, 3.0, 4.0));
     }
 
     #[test]

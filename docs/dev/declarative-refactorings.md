@@ -787,7 +787,7 @@ to a single macro invocation over the annotated types.
 
 ---
 
-## 11. `#[derive(Editable)]` — shell stringly-typed field dispatch  🟡 derive shipped, `apply_style_edit` migrated
+## 11. `#[derive(Editable)]` — shell stringly-typed field dispatch  🟡 derive shipped + extended; `apply_style_edit` + `apply_page_layout_edit` migrated
 
 ### Current state
 
@@ -868,19 +868,64 @@ The 8 `apply_*` fns in `mutations.rs` become 8 one-liners:
   semantics, the parse-failure-clears-`Option<numeric>` semantics, and
   the unknown-key no-op. 12 builder tests (was 8) + workspace clippy
   clean.
-- 🟡 Remaining `apply_*` fns in `mutations.rs` — `apply_facet_edit`,
-  `apply_layout_to_node`, `apply_node_layout_edit`,
-  `apply_transform_to_node`, `apply_page_layout_edit` — keep their
-  hand-rolled bodies. They aren't flat field-dispatch tables: every
-  arm branches on a different nested enum variant
-  (`FacetKind::ObjectQuery { query }`, `LayoutMode::Absolute(abs)`,
-  `Transform2D.position[0]`), maps free-form string values to
-  custom enum arms (`Anchor::TopLeft` etc.), or fans one input out
-  to multiple fields (`column_gap` writes both `column_gap` and
-  `row_gap`). The current derive intentionally stays in the simple
-  flat-struct lane — any of those fns would need a sibling derive
-  on `enum`s or a free-form custom-arm escape hatch that's larger in
-  scope than the value extraction here.
+- ✅ Derive extended with two new field attributes covering nested
+  delegation and sibling fan-out:
+  - `#[edit(nested)]` (and `#[edit(nested, prefix = "...")]`) —
+    when the inbound key starts with `<field_name>.` (or the explicit
+    prefix), strip it and delegate to `self.<field>.apply_field(rest,
+    value)`. The nested type just needs an inherent `apply_field`
+    method; typically that comes from the same derive but it can also
+    be hand-written (e.g. the new `Edges<f32>::apply_field` in
+    `prism-core::foundation::geometry`, keyed on `top` / `right` /
+    `bottom` / `left`). Nested arms are emitted *before* the flat
+    `match key` table.
+  - `#[edit(also = "name")]` — replicate the parsed value into a
+    sibling field of the same type. The value is parsed and clamped
+    once and the same `__v` binding is written to both targets, so
+    fan-out can never drift between fields. Stack multiple `also` on
+    one field for N-way fan-out.
+- ✅ Migration: `prism-builder::layout::PageLayout` now derives
+  `Editable`; `apply_page_layout_edit` shrank from a 28-line match
+  block to a 4-line wrapper that handles only the `page_size` enum
+  (which carries a `Custom { width, height }` payload — outside the
+  flat-struct derive's lane) before delegating to the derived
+  `apply_field`. `margin_top` / `margin_right` / `margin_bottom` /
+  `margin_left` route through `#[edit(nested, prefix = "margin_")]`
+  to the new `Edges<f32>::apply_field`; `column_gap` writes both gap
+  axes via `#[edit(also = "row_gap")]`. 5 new builder tests +
+  2 new core tests covering the nested + fan-out + skip + parse-fail +
+  unknown-key surface.
+- 🟡 Remaining hand-rolled `apply_*` fns in `mutations.rs` —
+  `apply_facet_edit`, `apply_layout_to_node`, `apply_node_layout_edit`,
+  `apply_transform_to_node`. These aren't blocked on the derive
+  surface anymore; they're blocked on the underlying *type shape*:
+  - `apply_transform_to_node` writes `position[0]` / `position[1]` /
+    `scale[0]` / `scale[1]` (i.e. it edits *array indices*, not named
+    fields), converts `transform.rotation` from degrees to radians on
+    the way in, and maps free-form strings (`"top-left"`, etc.) to
+    `Anchor` variants. A clean derive migration would first refactor
+    `Transform2D::position` / `scale` from `[f32; 2]` to a struct
+    with `x` / `y` fields, then add a sibling `#[derive(EditableEnum)]`
+    that honours `serde(rename_all = "kebab-case")` for `Anchor`.
+    Both are larger refactors than the value extraction here.
+  - `apply_layout_to_node` is a state machine that branches on
+    `LayoutMode::{Flow, Absolute, Free, Relative}` *and* mutates the
+    enum variant in place when `layout.display` changes. That kind
+    of cross-arm transition can't be expressed as a flat field table
+    — it'd need a `#[derive(EditableEnum)]` over tagged enums plus a
+    way to reseat the variant from a key.
+  - `apply_facet_edit` is the same shape one level worse: it routes
+    by enum variant (`FacetKind::ObjectQuery { query }` etc.), by
+    string-prefix dotted paths (`binding.<slot>`,
+    `record.<idx>.<field>`, `variant_rule.<idx>.<name>`), and reseats
+    `FacetDataSource` / `FacetTemplate` / `FacetOutput` variants
+    based on `source_kind` / `template_type` / `output_type`
+    selectors. It's better thought of as a small interpreter than a
+    dispatch table.
+  - `apply_node_layout_edit` / `apply_node_transform_edit` are tree
+    walkers that find the target node by id and then call the two
+    `apply_*_to_node` fns above; they'll fall out naturally once
+    those migrate.
 
 ---
 
