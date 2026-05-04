@@ -41,8 +41,11 @@ use crate::{
     WorkflowPageItem,
 };
 
-
-pub(crate) fn push_builder_preview(models: &PersistentModels, window: &AppWindow, doc: &BuilderDocument) {
+pub(crate) fn push_builder_preview(
+    models: &PersistentModels,
+    window: &AppWindow,
+    doc: &BuilderDocument,
+) {
     let node_count = count_nodes(doc.root.as_ref());
     window.set_builder_node_count(node_count);
     let palette = component_palette_items(doc);

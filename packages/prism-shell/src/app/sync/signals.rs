@@ -41,7 +41,6 @@ use crate::{
     WorkflowPageItem,
 };
 
-
 pub(crate) fn push_signal_panel_data(
     models: &PersistentModels,
     window: &AppWindow,

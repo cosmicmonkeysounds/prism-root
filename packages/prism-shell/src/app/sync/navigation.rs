@@ -41,7 +41,6 @@ use crate::{
     WorkflowPageItem,
 };
 
-
 pub(crate) fn push_explorer_nodes(
     models: &PersistentModels,
     window: &AppWindow,
@@ -219,10 +218,6 @@ pub(crate) fn clear_href_on_node(node: &mut prism_builder::document::Node, targe
         clear_href_on_node(child, target_id);
     }
 }
-
-/// Resolve facet data for kinds that need external execution (Script,
-/// ObjectQuery, Lookup). Called before the render walker so
-/// `FacetDef::resolve_items` can read `resolved_data`.
 
 pub(crate) fn push_breadcrumbs(
     models: &PersistentModels,

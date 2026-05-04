@@ -41,7 +41,6 @@ use crate::{
     WorkflowPageItem,
 };
 
-
 pub(crate) fn push_editor_data(models: &PersistentModels, window: &AppWindow, es: &EditorState) {
     use prism_core::editor::{
         active_indent_depth, compute_line_indent_guides, highlight_line, is_foldable, TokenKind,

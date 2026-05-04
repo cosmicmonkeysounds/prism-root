@@ -1,19 +1,7 @@
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use prism_builder::app::PrismApp;
-use prism_builder::layout::{GridCell, PageSize};
-use prism_builder::{
-    compile_slint_preview, compute_layout, preview_component_factory,
-    render_document_slint_preview_with_assets_and_data, BuilderDocument, CellEdge,
-    ComponentRegistry, FacetKind, FieldKind, Node, NodeId, ScriptLanguage,
-};
-use prism_core::design_tokens::DesignTokens;
-use prism_core::editor::EditorState;
-#[cfg(feature = "native")]
-use prism_core::foundation::persistence::{CollectionStore, EdgeFilter, ObjectFilter};
-use prism_core::foundation::vfs::VfsManager;
+use prism_builder::{FacetKind, FieldKind, Node};
 use prism_luau_derive::SlintBinding;
 use slint::{ComponentHandle, Model, ModelRc, SharedString, TimerMode, VecModel};
 
@@ -42,18 +30,13 @@ impl ChromeBindings {
 
 use super::commands::build_context_menu_items;
 use super::{
-    panel_id_for_slint, sync_model, AppState, PersistentModels, ShellInner, ShellView,
-    TransformTool,
+    panel_id_for_slint, sync_model, AppState, PersistentModels, ShellInner, TransformTool,
 };
-use crate::panels::{editor::CodeEditorPanel, properties::PropertiesPanel, Panel};
+use crate::panels::{editor::CodeEditorPanel, Panel};
 use crate::search::SearchIndex;
-use crate::selection::SelectionModel;
 use crate::{
-    AppCardItem, AppWindow, BreadcrumbItem, ColorPreset, CommandItem, ComponentPaletteItem,
-    DockDividerRect, DockPanelRect, DockTabItem, EditorIndentGuide, EditorLine, EditorToken,
-    ExplorerNodeItem, FieldRow, GridCellItem, GridEdgeHandle, InspectorNode, MenuDef, MenuItem,
-    PageLayoutData, PreviewNode, SearchResultItem, TabItem, ToastItem, WidgetToolbarItem,
-    WorkflowPageItem,
+    AppWindow, ColorPreset, CommandItem, DockDividerRect, DockPanelRect, DockTabItem, FieldRow,
+    MenuItem, SearchResultItem, TabItem, ToastItem, WorkflowPageItem,
 };
 
 mod editor;
@@ -67,25 +50,28 @@ mod schema;
 mod signals;
 mod widget;
 
-pub(crate) use editor::{compute_line_selection, display_row_to_buffer_line, push_editor_data};
+pub(crate) use editor::{display_row_to_buffer_line, push_editor_data};
+#[cfg(feature = "native")]
+pub(crate) use facets::{build_handler_script, resolve_facet_data, resolve_widget_data};
 pub(crate) use grid::{
     push_composition_counts, push_grid_cells, push_grid_edge_handles, push_page_layout_data,
 };
-pub(crate) use inspector::{flatten_inspector_nodes, push_inspector_nodes};
+#[cfg(test)]
+pub(crate) use inspector::flatten_inspector_nodes;
+pub(crate) use inspector::push_inspector_nodes;
+#[cfg(test)]
+pub(crate) use navigation::find_path_to_node;
 pub(crate) use navigation::{
-    clear_href_on_node, collect_node_ids, find_path_to_node, push_app_cards, push_breadcrumbs,
-    push_explorer_nodes, push_menu_defs, push_navigation_panel_data,
+    clear_href_on_node, collect_node_ids, push_app_cards, push_breadcrumbs, push_explorer_nodes,
+    push_menu_defs, push_navigation_panel_data,
 };
-pub(crate) use preview::{
-    component_palette_items, push_builder_preview, push_live_preview, push_wysiwyg_preview,
-};
+#[cfg(test)]
+pub(crate) use preview::component_palette_items;
+pub(crate) use preview::{push_builder_preview, push_live_preview, push_wysiwyg_preview};
 pub(crate) use properties::push_property_sections;
 pub(crate) use schema::push_schema_list;
 pub(crate) use signals::push_signal_panel_data;
 pub(crate) use widget::push_widget_toolbar;
-#[cfg(feature = "native")]
-pub(crate) use facets::{build_handler_script, resolve_facet_data, resolve_widget_data};
-
 
 pub(super) fn push_user_swatches(shared: &Rc<RefCell<ShellInner>>, window: &AppWindow) {
     let inner = shared.borrow();

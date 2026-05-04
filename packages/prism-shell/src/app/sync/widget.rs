@@ -41,7 +41,6 @@ use crate::{
     WorkflowPageItem,
 };
 
-
 pub(crate) fn push_widget_toolbar(
     models: &PersistentModels,
     window: &AppWindow,

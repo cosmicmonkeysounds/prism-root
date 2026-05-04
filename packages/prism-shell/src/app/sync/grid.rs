@@ -41,7 +41,6 @@ use crate::{
     WorkflowPageItem,
 };
 
-
 pub(crate) fn push_page_layout_data(
     models: &PersistentModels,
     window: &AppWindow,

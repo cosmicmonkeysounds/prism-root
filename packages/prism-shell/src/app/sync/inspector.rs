@@ -41,7 +41,6 @@ use crate::{
     WorkflowPageItem,
 };
 
-
 pub(crate) fn push_inspector_nodes(
     models: &PersistentModels,
     window: &AppWindow,
@@ -68,7 +67,12 @@ pub(crate) fn flatten_inspector_nodes(
     items
 }
 
-pub(crate) fn flatten_walk(node: &Node, depth: i32, selection: &SelectionModel, out: &mut Vec<InspectorNode>) {
+pub(crate) fn flatten_walk(
+    node: &Node,
+    depth: i32,
+    selection: &SelectionModel,
+    out: &mut Vec<InspectorNode>,
+) {
     out.push(InspectorNode {
         id: SharedString::from(&node.id),
         component_id: SharedString::from(&node.component),
@@ -81,7 +85,10 @@ pub(crate) fn flatten_walk(node: &Node, depth: i32, selection: &SelectionModel, 
     }
 }
 
-pub(crate) fn flatten_inspector_grid(doc: &BuilderDocument, selection: &SelectionModel) -> Vec<InspectorNode> {
+pub(crate) fn flatten_inspector_grid(
+    doc: &BuilderDocument,
+    selection: &SelectionModel,
+) -> Vec<InspectorNode> {
     let grid = match &doc.page_layout.grid {
         Some(g) => g,
         None => return Vec::new(),

@@ -41,7 +41,6 @@ use crate::{
     WorkflowPageItem,
 };
 
-
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn push_property_sections(
     models: &PersistentModels,

@@ -41,7 +41,6 @@ use crate::{
     WorkflowPageItem,
 };
 
-
 pub(crate) fn push_schema_list(
     models: &PersistentModels,
     window: &AppWindow,
