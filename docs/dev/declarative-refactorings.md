@@ -559,7 +559,7 @@ needed for Luau type emission (`SymbolEmmyDocEmitter`,
 
 ---
 
-## 8. Typed `Props` accessor for blocks  ⬜ not started
+## 8. Typed `Props` accessor for blocks  ✅ shipped (extractor + starter migration)
 
 ### Current state
 
@@ -603,10 +603,57 @@ typed value instead of raw JSON.
 
 ### Status
 
-- ⬜ Not started. Depends on `#[derive(PrismField)]` covering all
-  field kinds (item #2 above). The 9 remaining hand-rolled schemas
-  in `schemas.rs` need `File`/`Currency`/`Calculation` kind support
-  before this is viable end-to-end.
+- ✅ `#[derive(PrismField)]` extended with two new associated methods
+  (`prism-luau-derive/src/prism_field.rs`):
+  - `defaults() -> Self` — every field set from its
+    `#[field(default = …)]` literal, falling back to the Rust-type
+    default. Type→default mapping covers `String` / `bool` / signed
+    + unsigned ints / `f32` + `f64`.
+  - `from_value(&serde_json::Value) -> Self` — reads each field from
+    the JSON map with type-appropriate accessors (`as_str` /
+    `as_bool` / `as_i64` / `as_f64`); missing keys or wrong types
+    fall back to the field's default. Raw idents (`r#type`) are
+    stripped of the `r#` prefix when resolving JSON keys, so the
+    wire shape matches what the property panel emits. Five new
+    integration tests in `prism-builder/tests/derive_macros.rs`
+    cover defaults, missing-key fallback, wrong-type fallback, and
+    raw-ident handling.
+- ✅ `schemas.rs` migrated: 14 prop structs are now `pub(crate)` with
+  `pub(crate)` fields so `starter.rs` can import them and read fields
+  directly. The dropped allows-stay (`#![allow(dead_code)]` is gone in
+  spirit since the structs are instantiated for real now via
+  `<Props>::from_value`).
+- ✅ `starter.rs` migration: ~70 `prop_str` / `prop_bool` / `prop_f64`
+  call sites replaced across 13 blocks (Text, Image, Container, Form,
+  Input, Button, Code, Spacer, Columns, List, Table, Tabs, Accordion).
+  Each `render_slint` and `render_html` opens with a single
+  `let p = <Props>::from_value(props);` and reads typed fields
+  thereafter. Unused `prop_bool` import dropped.
+- ✅ Schema defaults reconciled with starter runtime fallbacks:
+  `ContainerProps.border_color` gained `default = "#3b4252"` and
+  `ButtonProps.text` gained `default = "Submit"` so the property
+  panel and the render path agree on what unset means. Both were
+  silent divergences pre-migration — the property panel offered an
+  empty string while the renderer fell back to a colored value.
+- ✅ Auxiliary props promoted in a follow-up pass: `ImageProps` gained
+  `border_radius`; `CodeProps` gained `bg` + `color` (both `kind = "color"`,
+  empty-as-sentinel preserved so the slint path still defers to the
+  style cascade and the html path still falls back to the dark theme);
+  `ListProps` gained `item_spacing`; `AccordionProps` gained
+  `border_width` + `border_color` (`kind = "color"`) + `section_gap`.
+  `GraphViewBlock`'s six-field hand-rolled schema collapsed into a
+  `GraphViewProps` struct with the same shape. The `prop_str` /
+  `prop_bool` / `prop_f64` / `prop_u64` imports in `starter.rs` are
+  gone — every block in the catalog now reads typed fields off the
+  prop struct.
+- ⬜ The richer design — `#[block(props = "MyProps")]` on
+  `#[derive(PrismBlock)]` so the derive passes `&MyProps` straight
+  into `template()` instead of `&Value` — was not pursued because
+  the 16 starter blocks haven't migrated to the `template()` shape
+  yet (see #1 Phase 2: `TemplateNode` still can't express
+  conditional `<a>` wrapping for arbitrary chrome). The typed
+  extractor is the load-bearing value, and it's now in place; the
+  derive sugar can land alongside the eventual template migration.
 
 ---
 
@@ -1413,8 +1460,16 @@ Implementation order optimises for value × independence:
     `prism-luau-derive`; `StyleProperties` migrated. Other `apply_*`
     fns in `mutations.rs` stay hand-rolled (nested enum / multi-field
     fan-out cases the flat-struct derive doesn't fit).
-11. **#8 typed Props**: depends on #2 PrismField completing for all
-    field kinds (`File`/`Currency`/`Calculation`).
+11. **#8 typed Props**: ✅ shipped — `#[derive(PrismField)]` grew
+    `defaults()` + `from_value(&Value) -> Self`; every block in
+    `starter.rs` now extracts `let p = <Props>::from_value(props);`
+    once and reads typed fields. Two schema defaults
+    (`ContainerProps.border_color`, `ButtonProps.text`) reconciled
+    with starter runtime fallbacks. Auxiliary props (`bg`, `color`,
+    `border_radius`, `item_spacing`, etc.) and the GraphView's
+    hand-rolled six-field schema were promoted into typed structs in
+    a second pass — the `prop_str` / `prop_bool` / `prop_f64` /
+    `prop_u64` imports in `starter.rs` are gone.
 12. **#10 LuauType**: ✅ shipped — the per-struct constants are already
     emitted by the pre-existing `#[luau_expose]` macro across
     `design_tokens.rs` and the other leaf crates. The registration

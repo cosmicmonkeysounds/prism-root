@@ -14,17 +14,17 @@ use crate::registry::FieldSpec;
 use prism_luau_derive::PrismField;
 
 #[derive(PrismField)]
-struct TextProps {
+pub(crate) struct TextProps {
     #[field(label = "Body", multiline)]
-    body: String,
+    pub(crate) body: String,
     #[field(
         label = "Level",
         select("paragraph", "h1", "h2", "h3", "h4", "h5", "h6"),
         default = "paragraph"
     )]
-    level: String,
+    pub(crate) level: String,
     #[field(label = "Link URL")]
-    href: String,
+    pub(crate) href: String,
 }
 
 pub fn text() -> Vec<FieldSpec> {
@@ -32,19 +32,21 @@ pub fn text() -> Vec<FieldSpec> {
 }
 
 #[derive(PrismField)]
-struct ImageProps {
+pub(crate) struct ImageProps {
     #[field(label = "Image source", kind = "file", accept = "image/*", required)]
-    src: String,
+    pub(crate) src: String,
     #[field(label = "Alt text")]
-    alt: String,
+    pub(crate) alt: String,
     #[field(
         label = "Object fit",
         select("cover", "contain", "fill", "none"),
         default = "cover"
     )]
-    fit: String,
+    pub(crate) fit: String,
     #[field(label = "Link URL")]
-    href: String,
+    pub(crate) href: String,
+    #[field(label = "Border radius (px)", default = 0, min = 0.0, max = 64.0)]
+    pub(crate) border_radius: i64,
 }
 
 pub fn image() -> Vec<FieldSpec> {
@@ -52,15 +54,15 @@ pub fn image() -> Vec<FieldSpec> {
 }
 
 #[derive(PrismField)]
-struct ContainerProps {
+pub(crate) struct ContainerProps {
     #[field(label = "Child spacing (px)", default = 12, min = 0.0, max = 64.0)]
-    spacing: i64,
+    pub(crate) spacing: i64,
     #[field(label = "Padding (px)", default = 0, min = 0.0, max = 64.0)]
-    padding: i64,
+    pub(crate) padding: i64,
     #[field(label = "Border width (px)", default = 0, min = 0.0, max = 8.0)]
-    border_width: i64,
-    #[field(label = "Border color")]
-    border_color: String,
+    pub(crate) border_width: i64,
+    #[field(label = "Border color", default = "#3b4252")]
+    pub(crate) border_color: String,
 }
 
 pub fn container() -> Vec<FieldSpec> {
@@ -68,11 +70,11 @@ pub fn container() -> Vec<FieldSpec> {
 }
 
 #[derive(PrismField)]
-struct FormProps {
+pub(crate) struct FormProps {
     #[field(label = "Form action URL")]
-    action: String,
+    pub(crate) action: String,
     #[field(label = "HTTP method", select("post", "get"), default = "post")]
-    method: String,
+    pub(crate) method: String,
 }
 
 pub fn form() -> Vec<FieldSpec> {
@@ -80,23 +82,23 @@ pub fn form() -> Vec<FieldSpec> {
 }
 
 #[derive(PrismField)]
-struct InputProps {
+pub(crate) struct InputProps {
     #[field(label = "Field name", required)]
-    name: String,
+    pub(crate) name: String,
     #[field(
         label = "Input type",
         select("text", "email", "password", "number", "hidden"),
         default = "text"
     )]
-    r#type: String,
+    pub(crate) r#type: String,
     #[field(label = "Placeholder")]
-    placeholder: String,
+    pub(crate) placeholder: String,
     #[field(label = "Default value")]
-    value: String,
+    pub(crate) value: String,
     #[field(label = "Required")]
-    required: bool,
+    pub(crate) required: bool,
     #[field(label = "Label text")]
-    label: String,
+    pub(crate) label: String,
 }
 
 pub fn input() -> Vec<FieldSpec> {
@@ -104,19 +106,19 @@ pub fn input() -> Vec<FieldSpec> {
 }
 
 #[derive(PrismField)]
-struct ButtonProps {
-    #[field(label = "Button label", required)]
-    text: String,
+pub(crate) struct ButtonProps {
+    #[field(label = "Button label", required, default = "Submit")]
+    pub(crate) text: String,
     #[field(
         label = "Button type",
         select("submit", "button", "reset"),
         default = "submit"
     )]
-    r#type: String,
+    pub(crate) r#type: String,
     #[field(label = "Disabled")]
-    disabled: bool,
+    pub(crate) disabled: bool,
     #[field(label = "Link URL")]
-    href: String,
+    pub(crate) href: String,
 }
 
 pub fn button() -> Vec<FieldSpec> {
@@ -124,11 +126,17 @@ pub fn button() -> Vec<FieldSpec> {
 }
 
 #[derive(PrismField)]
-struct CodeProps {
+pub(crate) struct CodeProps {
     #[field(label = "Code", multiline, required)]
-    code: String,
+    pub(crate) code: String,
     #[field(label = "Language")]
-    language: String,
+    pub(crate) language: String,
+    /// Empty defers to the style cascade (slint) or to a dark-theme
+    /// default (html). Set explicitly to override either path.
+    #[field(label = "Background color", kind = "color")]
+    pub(crate) bg: String,
+    #[field(label = "Text color", kind = "color")]
+    pub(crate) color: String,
 }
 
 pub fn code() -> Vec<FieldSpec> {
@@ -140,9 +148,9 @@ pub fn divider() -> Vec<FieldSpec> {
 }
 
 #[derive(PrismField)]
-struct SpacerProps {
+pub(crate) struct SpacerProps {
     #[field(label = "Height (px)", default = 24, min = 4.0, max = 128.0)]
-    height: i64,
+    pub(crate) height: i64,
 }
 
 pub fn spacer() -> Vec<FieldSpec> {
@@ -150,9 +158,9 @@ pub fn spacer() -> Vec<FieldSpec> {
 }
 
 #[derive(PrismField)]
-struct ColumnsProps {
+pub(crate) struct ColumnsProps {
     #[field(label = "Column gap (px)", default = 16, min = 0.0, max = 64.0)]
-    gap: i64,
+    pub(crate) gap: i64,
 }
 
 pub fn columns() -> Vec<FieldSpec> {
@@ -160,9 +168,11 @@ pub fn columns() -> Vec<FieldSpec> {
 }
 
 #[derive(PrismField)]
-struct ListProps {
+pub(crate) struct ListProps {
     #[field(label = "Ordered (numbered)")]
-    ordered: bool,
+    pub(crate) ordered: bool,
+    #[field(label = "Item spacing (px)", default = 4, min = 0.0, max = 32.0)]
+    pub(crate) item_spacing: i64,
 }
 
 pub fn list() -> Vec<FieldSpec> {
@@ -170,11 +180,11 @@ pub fn list() -> Vec<FieldSpec> {
 }
 
 #[derive(PrismField)]
-struct TableProps {
+pub(crate) struct TableProps {
     #[field(label = "Column headers (comma-separated)", required)]
-    headers: String,
+    pub(crate) headers: String,
     #[field(label = "Table caption")]
-    caption: String,
+    pub(crate) caption: String,
 }
 
 pub fn table() -> Vec<FieldSpec> {
@@ -182,9 +192,9 @@ pub fn table() -> Vec<FieldSpec> {
 }
 
 #[derive(PrismField)]
-struct TabsProps {
+pub(crate) struct TabsProps {
     #[field(label = "Tab labels (comma-separated)", required)]
-    labels: String,
+    pub(crate) labels: String,
 }
 
 pub fn tabs() -> Vec<FieldSpec> {
@@ -192,11 +202,17 @@ pub fn tabs() -> Vec<FieldSpec> {
 }
 
 #[derive(PrismField)]
-struct AccordionProps {
+pub(crate) struct AccordionProps {
     #[field(label = "Section title", required)]
-    title: String,
+    pub(crate) title: String,
     #[field(label = "Initially open")]
-    open: bool,
+    pub(crate) open: bool,
+    #[field(label = "Border width (px)", default = 0, min = 0.0, max = 8.0)]
+    pub(crate) border_width: i64,
+    #[field(label = "Border color", default = "#3b4252", kind = "color")]
+    pub(crate) border_color: String,
+    #[field(label = "Section gap (px)", default = 4, min = 0.0, max = 32.0)]
+    pub(crate) section_gap: i64,
 }
 
 pub fn accordion() -> Vec<FieldSpec> {
@@ -204,15 +220,39 @@ pub fn accordion() -> Vec<FieldSpec> {
 }
 
 #[derive(PrismField)]
-struct FacetProps {
+pub(crate) struct FacetProps {
     #[field(label = "Facet ID", required)]
-    facet_id: String,
+    pub(crate) facet_id: String,
     #[field(label = "Max items", min = 1.0, max = 10_000.0)]
-    max_items: i64,
+    pub(crate) max_items: i64,
 }
 
 pub fn facet() -> Vec<FieldSpec> {
     FacetProps::field_specs()
+}
+
+#[derive(PrismField)]
+pub(crate) struct GraphViewProps {
+    #[field(label = "Node label field", default = "label")]
+    pub(crate) node_label_field: String,
+    #[field(label = "Node color field")]
+    pub(crate) node_color_field: String,
+    #[field(label = "Show edge labels")]
+    pub(crate) edge_label: bool,
+    #[field(
+        label = "Layout algorithm",
+        select("force", "tree", "radial", "grid"),
+        default = "force"
+    )]
+    pub(crate) layout: String,
+    #[field(label = "Node size (px)", default = 48, min = 20.0, max = 120.0)]
+    pub(crate) node_size: i64,
+    #[field(label = "Show arrows", default = true)]
+    pub(crate) show_arrows: bool,
+}
+
+pub fn graph_view() -> Vec<FieldSpec> {
+    GraphViewProps::field_specs()
 }
 
 #[cfg(test)]

@@ -25,10 +25,7 @@ use crate::facet::FacetComponent;
 use crate::html::Html;
 use crate::html_block::HtmlRenderContext;
 use crate::prefab::{ExposedSlot, PrefabComponent, PrefabDef};
-use crate::registry::{
-    prop_bool, prop_f64, prop_str, prop_u64, ComponentRegistry, FieldSpec, NumericBounds,
-    RegistryError, SelectOption,
-};
+use crate::registry::{ComponentRegistry, FieldSpec, RegistryError};
 use crate::schemas;
 use crate::signal::{with_common_signals, SignalDef};
 use crate::slint_source::{escape_slint_string, SlintEmitter};
@@ -137,23 +134,21 @@ impl Block for TextBlock {
         _children: &[Node],
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
-        let body = prop_str(props, "body", "");
-        let level = prop_str(props, "level", "paragraph");
-        let href = prop_str(props, "href", "");
+        let p = schemas::TextProps::from_value(props);
         let style = ctx.style();
 
-        let default_size = level_font_size(level);
-        let default_weight = level_font_weight(level);
+        let default_size = level_font_size(p.level.as_str());
+        let default_weight = level_font_weight(p.level.as_str());
 
         out.block("Text", |out| {
-            out.prop_string("text", body);
+            out.prop_string("text", &p.body);
             let font_size = style.font_size.map(|s| s as f64).unwrap_or(default_size);
             out.prop_px("font-size", font_size);
             let weight = style.font_weight.unwrap_or(default_weight);
             if weight != 400 {
                 out.property("font-weight", weight.to_string());
             }
-            if !href.is_empty() {
+            if !p.href.is_empty() {
                 let color = style.color.as_deref().unwrap_or("#5aa0ff");
                 out.prop_color("color", color);
             }
@@ -169,10 +164,8 @@ impl Block for TextBlock {
         _children: &[Node],
         out: &mut Html,
     ) -> Result<(), RenderError> {
-        let body = prop_str(props, "body", "");
-        let level = prop_str(props, "level", "paragraph");
-        let href = prop_str(props, "href", "");
-        let tag = match level {
+        let p = schemas::TextProps::from_value(props);
+        let tag = match p.level.as_str() {
             "h1" => "h1",
             "h2" => "h2",
             "h3" => "h3",
@@ -182,12 +175,12 @@ impl Block for TextBlock {
             _ => "p",
         };
         out.open(tag);
-        if !href.is_empty() {
-            out.open_attrs("a", &[("href", href)]);
-            out.text(body);
+        if !p.href.is_empty() {
+            out.open_attrs("a", &[("href", &p.href)]);
+            out.text(&p.body);
             out.close("a");
         } else {
-            out.text(body);
+            out.text(&p.body);
         }
         out.close(tag);
         Ok(())
@@ -231,12 +224,11 @@ impl Block for ImageBlock {
         _children: &[Node],
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
-        let fit = prop_str(props, "fit", "cover");
-        let href = prop_str(props, "href", "");
-        let border_radius = prop_f64(props, "border_radius", 0.0);
+        let p = schemas::ImageProps::from_value(props);
+        let border_radius = p.border_radius as f64;
         let source = props.get("src").and_then(AssetSource::from_prop);
 
-        let slint_fit = match fit {
+        let slint_fit = match p.fit.as_str() {
             "contain" => "contain",
             "fill" => "fill",
             "none" => "none",
@@ -260,7 +252,7 @@ impl Block for ImageBlock {
                 if border_radius > 0.0 {
                     out.prop_px("border-radius", border_radius);
                 }
-                if !href.is_empty() {
+                if !p.href.is_empty() {
                     out.line("border-width: 2px;");
                     out.line("border-color: #5aa0ff;");
                     if border_radius == 0.0 {
@@ -292,25 +284,23 @@ impl Block for ImageBlock {
         _children: &[Node],
         out: &mut Html,
     ) -> Result<(), RenderError> {
-        let alt = prop_str(props, "alt", "");
-        let fit = prop_str(props, "fit", "cover");
-        let href = prop_str(props, "href", "");
-        let border_radius = prop_u64(props, "border_radius", 0);
+        let p = schemas::ImageProps::from_value(props);
+        let border_radius = p.border_radius.max(0);
         let src = props
             .get("src")
             .and_then(AssetSource::from_prop)
             .map(|s| s.to_html_src())
             .unwrap_or_default();
         let style = if border_radius > 0 {
-            format!("object-fit:{fit};border-radius:{border_radius}px")
+            format!("object-fit:{};border-radius:{border_radius}px", p.fit)
         } else {
-            format!("object-fit:{fit}")
+            format!("object-fit:{}", p.fit)
         };
-        if !href.is_empty() {
-            out.open_attrs("a", &[("href", href)]);
+        if !p.href.is_empty() {
+            out.open_attrs("a", &[("href", &p.href)]);
         }
-        out.void("img", &[("src", &src), ("alt", alt), ("style", &style)]);
-        if !href.is_empty() {
+        out.void("img", &[("src", &src), ("alt", &p.alt), ("style", &style)]);
+        if !p.href.is_empty() {
             out.close("a");
         }
         Ok(())
@@ -354,14 +344,14 @@ impl Block for ContainerBlock {
         children: &[Node],
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
+        let p = schemas::ContainerProps::from_value(props);
         let style = ctx.style();
         let spacing = style
             .base_spacing
             .map(|s| s as f64)
-            .unwrap_or(prop_f64(props, "spacing", 12.0));
-        let padding = prop_f64(props, "padding", 0.0);
-        let border_width = prop_f64(props, "border_width", 0.0);
-        let border_color = prop_str(props, "border_color", "#3b4252");
+            .unwrap_or(p.spacing as f64);
+        let padding = p.padding as f64;
+        let border_width = p.border_width as f64;
 
         let has_visual =
             style.background.is_some() || style.border_radius.is_some() || border_width > 0.0;
@@ -389,7 +379,7 @@ impl Block for ContainerBlock {
                 }
                 if border_width > 0.0 {
                     out.prop_px("border-width", border_width);
-                    out.prop_color("border-color", border_color);
+                    out.prop_color("border-color", &p.border_color);
                 }
                 render_inner(out)
             })
@@ -404,18 +394,18 @@ impl Block for ContainerBlock {
         children: &[Node],
         out: &mut Html,
     ) -> Result<(), RenderError> {
-        let padding = prop_u64(props, "padding", 0);
-        let border_width = prop_u64(props, "border_width", 0);
-        let border_color = prop_str(props, "border_color", "");
+        let p = schemas::ContainerProps::from_value(props);
+        let padding = p.padding;
+        let border_width = p.border_width;
         let mut parts: Vec<String> = Vec::new();
         if padding > 0 {
             parts.push(format!("padding:{padding}px"));
         }
         if border_width > 0 {
-            let color = if border_color.is_empty() {
+            let color = if p.border_color.is_empty() {
                 "#000"
             } else {
-                border_color
+                p.border_color.as_str()
             };
             parts.push(format!("border:{border_width}px solid {color}"));
         }
@@ -480,11 +470,10 @@ impl Block for FormBlock {
         children: &[Node],
         out: &mut Html,
     ) -> Result<(), RenderError> {
-        let method = prop_str(props, "method", "post");
-        let action = prop_str(props, "action", "");
-        let mut attrs: Vec<(&str, &str)> = vec![("method", method)];
-        if !action.is_empty() {
-            attrs.push(("action", action));
+        let p = schemas::FormProps::from_value(props);
+        let mut attrs: Vec<(&str, &str)> = vec![("method", p.method.as_str())];
+        if !p.action.is_empty() {
+            attrs.push(("action", p.action.as_str()));
         }
         out.open_attrs("form", &attrs);
         ctx.render_children(children, out)?;
@@ -534,13 +523,12 @@ impl Block for InputBlock {
         _children: &[Node],
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
-        let label = prop_str(props, "label", "");
-        let placeholder = prop_str(props, "placeholder", "");
+        let p = schemas::InputProps::from_value(props);
         out.block("VerticalLayout", |out| {
             out.prop_px("spacing", 4.0);
-            if !label.is_empty() {
+            if !p.label.is_empty() {
                 out.block("Text", |out| {
-                    out.prop_string("text", label);
+                    out.prop_string("text", &p.label);
                     out.prop_px("font-size", 12.0);
                     Ok(())
                 })?;
@@ -550,10 +538,10 @@ impl Block for InputBlock {
                 out.line("background: #1e2533;");
                 out.line("border-radius: 4px;");
                 out.block("Text", |out| {
-                    let display = if placeholder.is_empty() {
+                    let display = if p.placeholder.is_empty() {
                         "..."
                     } else {
-                        placeholder
+                        p.placeholder.as_str()
                     };
                     out.prop_string("text", display);
                     out.prop_px("font-size", 14.0);
@@ -571,29 +559,24 @@ impl Block for InputBlock {
         _children: &[Node],
         out: &mut Html,
     ) -> Result<(), RenderError> {
-        let name = prop_str(props, "name", "");
-        let input_type = prop_str(props, "type", "text");
-        let placeholder = prop_str(props, "placeholder", "");
-        let value = prop_str(props, "value", "");
-        let required = prop_bool(props, "required");
-        let label = prop_str(props, "label", "");
+        let p = schemas::InputProps::from_value(props);
 
-        if !label.is_empty() {
+        if !p.label.is_empty() {
             out.open("label");
-            out.text(label);
+            out.text(&p.label);
         }
-        let mut attrs = vec![("type", input_type), ("name", name)];
-        if !placeholder.is_empty() {
-            attrs.push(("placeholder", placeholder));
+        let mut attrs = vec![("type", p.r#type.as_str()), ("name", p.name.as_str())];
+        if !p.placeholder.is_empty() {
+            attrs.push(("placeholder", p.placeholder.as_str()));
         }
-        if !value.is_empty() {
-            attrs.push(("value", value));
+        if !p.value.is_empty() {
+            attrs.push(("value", p.value.as_str()));
         }
-        if required {
+        if p.required {
             attrs.push(("required", "required"));
         }
         out.void("input", &attrs);
-        if !label.is_empty() {
+        if !p.label.is_empty() {
             out.close("label");
         }
         Ok(())
@@ -723,19 +706,17 @@ impl Block for CodeBlock {
         _children: &[Node],
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
-        let code = prop_str(props, "code", "");
+        let p = schemas::CodeProps::from_value(props);
         let style = ctx.style();
-        let bg = prop_str(props, "bg", "").to_string();
-        let bg = if bg.is_empty() {
+        let bg = if p.bg.is_empty() {
             style.background.as_deref().unwrap_or("#1a1e28")
         } else {
-            &bg
+            &p.bg
         };
-        let color = prop_str(props, "color", "").to_string();
-        let color = if color.is_empty() {
+        let color = if p.color.is_empty() {
             style.color.as_deref().unwrap_or("#a3be8c")
         } else {
-            &color
+            &p.color
         };
         let radius = style.border_radius.unwrap_or(6.0);
         out.block("Rectangle", |out| {
@@ -744,7 +725,7 @@ impl Block for CodeBlock {
             out.block("VerticalLayout", |out| {
                 out.prop_px("padding", 12.0);
                 out.block("Text", |out| {
-                    out.prop_string("text", code);
+                    out.prop_string("text", &p.code);
                     let font_size = style.font_size.unwrap_or(13.0);
                     out.prop_px("font-size", font_size as f64);
                     out.prop_color("color", color);
@@ -762,18 +743,21 @@ impl Block for CodeBlock {
         _children: &[Node],
         out: &mut Html,
     ) -> Result<(), RenderError> {
-        let code = prop_str(props, "code", "");
-        let lang = prop_str(props, "language", "");
-        let bg = prop_str(props, "bg", "#1a1e28");
-        let color = prop_str(props, "color", "#a3be8c");
+        let p = schemas::CodeProps::from_value(props);
+        let bg = if p.bg.is_empty() { "#1a1e28" } else { &p.bg };
+        let color = if p.color.is_empty() {
+            "#a3be8c"
+        } else {
+            &p.color
+        };
         let style = format!("background:{bg};color:{color};padding:12px;border-radius:6px");
         out.open_attrs("pre", &[("style", &style)]);
-        if lang.is_empty() {
+        if p.language.is_empty() {
             out.open("code");
         } else {
-            out.open_attrs("code", &[("class", &format!("language-{lang}"))]);
+            out.open_attrs("code", &[("class", &format!("language-{}", p.language))]);
         }
-        out.text(code);
+        out.text(&p.code);
         out.close("code");
         out.close("pre");
         Ok(())
@@ -860,9 +844,9 @@ impl Block for SpacerBlock {
         _children: &[Node],
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
-        let height = prop_f64(props, "height", 24.0);
+        let p = schemas::SpacerProps::from_value(props);
         out.block("Rectangle", |out| {
-            out.prop_px("height", height);
+            out.prop_px("height", p.height as f64);
             Ok(())
         })
     }
@@ -873,7 +857,8 @@ impl Block for SpacerBlock {
         _children: &[Node],
         out: &mut crate::html::Html,
     ) -> Result<(), RenderError> {
-        let height = prop_u64(props, "height", 24);
+        let p = schemas::SpacerProps::from_value(props);
+        let height = p.height;
         let style = format!("height:{height}px");
         out.open_attrs("div", &[("style", &style), ("aria-hidden", "true")]);
         out.close("div");
@@ -913,9 +898,9 @@ impl Block for ColumnsBlock {
         children: &[Node],
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
-        let gap = prop_f64(props, "gap", 16.0);
+        let p = schemas::ColumnsProps::from_value(props);
         out.block("HorizontalLayout", |out| {
-            out.prop_px("spacing", gap);
+            out.prop_px("spacing", p.gap as f64);
             ctx.render_children(children, out)
         })
     }
@@ -926,7 +911,8 @@ impl Block for ColumnsBlock {
         children: &[Node],
         out: &mut Html,
     ) -> Result<(), RenderError> {
-        let gap = prop_u64(props, "gap", 16);
+        let p = schemas::ColumnsProps::from_value(props);
+        let gap = p.gap;
         let style = format!("display:flex;gap:{gap}px");
         out.open_attrs("div", &[("style", &style)]);
         for child in children {
@@ -979,9 +965,9 @@ impl Block for ListBlock {
         children: &[Node],
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
-        let spacing = prop_f64(props, "item_spacing", 4.0);
+        let p = schemas::ListProps::from_value(props);
         out.block("VerticalLayout", |out| {
-            out.prop_px("spacing", spacing);
+            out.prop_px("spacing", p.item_spacing as f64);
             out.line("alignment: start;");
             ctx.render_children(children, out)
         })
@@ -993,8 +979,8 @@ impl Block for ListBlock {
         children: &[Node],
         out: &mut Html,
     ) -> Result<(), RenderError> {
-        let ordered = prop_bool(props, "ordered");
-        let tag = if ordered { "ol" } else { "ul" };
+        let p = schemas::ListProps::from_value(props);
+        let tag = if p.ordered { "ol" } else { "ul" };
         out.open(tag);
         for child in children {
             out.open("li");
@@ -1055,8 +1041,7 @@ impl Block for TableBlock {
         _children: &[Node],
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
-        let headers = prop_str(props, "headers", "");
-        let caption = prop_str(props, "caption", "");
+        let p = schemas::TableProps::from_value(props);
         out.block("Rectangle", |out| {
             out.line("border-width: 1px;");
             out.line("border-color: #3b4252;");
@@ -1064,9 +1049,9 @@ impl Block for TableBlock {
             out.block("VerticalLayout", |out| {
                 out.prop_px("padding", 8.0);
                 out.prop_px("spacing", 4.0);
-                if !caption.is_empty() {
+                if !p.caption.is_empty() {
                     out.block("Text", |out| {
-                        out.prop_string("text", caption);
+                        out.prop_string("text", &p.caption);
                         out.prop_px("font-size", 12.0);
                         out.line("color: #9ca4b4;");
                         Ok(())
@@ -1074,7 +1059,7 @@ impl Block for TableBlock {
                 }
                 out.block("HorizontalLayout", |out| {
                     out.prop_px("spacing", 16.0);
-                    for col in headers.split(',') {
+                    for col in p.headers.split(',') {
                         let col = col.trim();
                         if !col.is_empty() {
                             out.block("Text", |out| {
@@ -1097,17 +1082,16 @@ impl Block for TableBlock {
         _children: &[Node],
         out: &mut Html,
     ) -> Result<(), RenderError> {
-        let headers = prop_str(props, "headers", "");
-        let caption = prop_str(props, "caption", "");
+        let p = schemas::TableProps::from_value(props);
         out.open("table");
-        if !caption.is_empty() {
+        if !p.caption.is_empty() {
             out.open("caption");
-            out.text(caption);
+            out.text(&p.caption);
             out.close("caption");
         }
         out.open("thead");
         out.open("tr");
-        for col in headers.split(',') {
+        for col in p.headers.split(',') {
             let col = col.trim();
             if !col.is_empty() {
                 out.open("th");
@@ -1162,12 +1146,12 @@ impl Block for TabsBlock {
         children: &[Node],
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
-        let labels = prop_str(props, "labels", "");
+        let p = schemas::TabsProps::from_value(props);
         out.block("VerticalLayout", |out| {
             out.prop_px("spacing", 0.0);
             out.block("HorizontalLayout", |out| {
                 out.prop_px("spacing", 0.0);
-                for (i, label) in labels.split(',').enumerate() {
+                for (i, label) in p.labels.split(',').enumerate() {
                     let label = label.trim();
                     if !label.is_empty() {
                         out.block("Rectangle", |out| {
@@ -1204,8 +1188,9 @@ impl Block for TabsBlock {
         children: &[Node],
         out: &mut Html,
     ) -> Result<(), RenderError> {
-        let labels = prop_str(props, "labels", "");
-        let tab_labels: Vec<&str> = labels
+        let p = schemas::TabsProps::from_value(props);
+        let tab_labels: Vec<&str> = p
+            .labels
             .split(',')
             .map(|l| l.trim())
             .filter(|l| !l.is_empty())
@@ -1270,22 +1255,19 @@ impl Block for AccordionBlock {
         children: &[Node],
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
-        let title = prop_str(props, "title", "");
-        let border_width = prop_f64(props, "border_width", 0.0);
-        let border_color = prop_str(props, "border_color", "#3b4252");
-        let section_gap = prop_f64(props, "section_gap", 4.0);
+        let p = schemas::AccordionProps::from_value(props);
         out.block("VerticalLayout", |out| {
-            out.prop_px("spacing", section_gap);
+            out.prop_px("spacing", p.section_gap as f64);
             out.block("Rectangle", |out| {
                 out.prop_px("height", 32.0);
                 out.line("background: #2e3440;");
                 out.line("border-radius: 4px;");
-                if border_width > 0.0 {
-                    out.prop_px("border-width", border_width);
-                    out.prop_color("border-color", border_color);
+                if p.border_width > 0 {
+                    out.prop_px("border-width", p.border_width as f64);
+                    out.prop_color("border-color", &p.border_color);
                 }
                 out.block("Text", |out| {
-                    let display = format!("▸ {title}");
+                    let display = format!("▸ {}", p.title);
                     out.prop_string("text", &display);
                     out.prop_px("font-size", 14.0);
                     out.line("font-weight: 600;");
@@ -1307,15 +1289,14 @@ impl Block for AccordionBlock {
         children: &[Node],
         out: &mut Html,
     ) -> Result<(), RenderError> {
-        let title = prop_str(props, "title", "");
-        let open = prop_bool(props, "open");
-        if open {
+        let p = schemas::AccordionProps::from_value(props);
+        if p.open {
             out.open_attrs("details", &[("open", "open")]);
         } else {
             out.open("details");
         }
         out.open("summary");
-        out.text(title);
+        out.text(&p.title);
         out.close("summary");
         ctx.render_children(children, out)?;
         out.close("details");
@@ -1355,8 +1336,7 @@ impl Block for ButtonBlock {
         _children: &[Node],
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
-        let text = prop_str(props, "text", "Submit");
-        let href = prop_str(props, "href", "");
+        let p = schemas::ButtonProps::from_value(props);
         out.block("Rectangle", |out| {
             out.prop_px("height", 36.0);
             out.prop_px("min-width", 80.0);
@@ -1365,7 +1345,7 @@ impl Block for ButtonBlock {
             out.block("HorizontalLayout", |out| {
                 out.line("alignment: center;");
                 out.prop_px("spacing", 4.0);
-                if !href.is_empty() {
+                if !p.href.is_empty() {
                     out.block("Text", |out| {
                         out.prop_string("text", "🔗");
                         out.prop_px("font-size", 12.0);
@@ -1374,7 +1354,7 @@ impl Block for ButtonBlock {
                     })?;
                 }
                 out.block("Text", |out| {
-                    out.prop_string("text", text);
+                    out.prop_string("text", &p.text);
                     out.prop_px("font-size", 14.0);
                     out.line("color: #ffffff;");
                     out.line("font-weight: 600;");
@@ -1391,21 +1371,18 @@ impl Block for ButtonBlock {
         _children: &[Node],
         out: &mut Html,
     ) -> Result<(), RenderError> {
-        let text = prop_str(props, "text", "Submit");
-        let btn_type = prop_str(props, "type", "submit");
-        let href = prop_str(props, "href", "");
-        let disabled = prop_bool(props, "disabled");
-        if !href.is_empty() {
-            out.open_attrs("a", &[("href", href), ("role", "button")]);
-            out.text(text);
+        let p = schemas::ButtonProps::from_value(props);
+        if !p.href.is_empty() {
+            out.open_attrs("a", &[("href", p.href.as_str()), ("role", "button")]);
+            out.text(&p.text);
             out.close("a");
         } else {
-            let mut attrs = vec![("type", btn_type)];
-            if disabled {
+            let mut attrs = vec![("type", p.r#type.as_str())];
+            if p.disabled {
                 attrs.push(("disabled", "disabled"));
             }
             out.open_attrs("button", &attrs);
-            out.text(text);
+            out.text(&p.text);
             out.close("button");
         }
         Ok(())
@@ -1423,29 +1400,7 @@ impl Block for GraphViewBlock {
         &self.id
     }
     fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::text("node_label_field", "Node label field"),
-            FieldSpec::text("node_color_field", "Node color field"),
-            FieldSpec::boolean("edge_label", "Show edge labels"),
-            FieldSpec::select(
-                "layout",
-                "Layout algorithm",
-                vec![
-                    SelectOption::new("force", "Force-directed"),
-                    SelectOption::new("tree", "Tree"),
-                    SelectOption::new("radial", "Radial"),
-                    SelectOption::new("grid", "Grid"),
-                ],
-            )
-            .with_default(Value::from("force")),
-            FieldSpec::number(
-                "node_size",
-                "Node size (px)",
-                NumericBounds::min_max(20.0, 120.0),
-            )
-            .with_default(Value::from(48)),
-            FieldSpec::boolean("show_arrows", "Show arrows").with_default(Value::from(true)),
-        ]
+        schemas::graph_view()
     }
     fn help_entry(&self) -> Option<HelpEntry> {
         Some(HelpEntry::new(
@@ -1478,8 +1433,8 @@ impl Block for GraphViewBlock {
         _children: &[Node],
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
-        let label_field = prop_str(props, "node_label_field", "label");
-        let node_size = prop_f64(props, "node_size", 48.0);
+        let p = schemas::GraphViewProps::from_value(props);
+        let node_size = p.node_size as f64;
         let style = ctx.style();
         let bg = style.background.as_deref().unwrap_or("#1e2533");
 
@@ -1523,7 +1478,7 @@ impl Block for GraphViewBlock {
                 // Render each node at a grid position
                 for (i, node_val) in nodes.iter().enumerate() {
                     let label = node_val
-                        .get(label_field)
+                        .get(p.node_label_field.as_str())
                         .and_then(|v| v.as_str())
                         .unwrap_or("?");
                     let color = node_val

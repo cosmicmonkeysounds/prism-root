@@ -93,6 +93,54 @@ fn prism_field_explicit_kind_attributes_cover_rich_kinds() {
 }
 
 #[test]
+fn prism_field_defaults_use_attribute_literals_or_type_default() {
+    let p = ExampleProps::defaults();
+    assert_eq!(p.title, "Untitled");
+    assert_eq!(p.body, "");
+    assert_eq!(p.count, 1);
+    assert!(p.visible);
+    assert_eq!(p.style, "primary");
+}
+
+#[test]
+fn prism_field_from_value_extracts_typed_fields_with_fallback() {
+    use serde_json::json;
+    let v = json!({
+        "title": "Hello",
+        "count": 42,
+        "visible": false,
+        // body, style omitted — must fall back to defaults
+    });
+    let p = ExampleProps::from_value(&v);
+    assert_eq!(p.title, "Hello");
+    assert_eq!(p.body, "");
+    assert_eq!(p.count, 42);
+    assert!(!p.visible);
+    assert_eq!(p.style, "primary");
+
+    // Wrong-typed values fall back to defaults rather than panicking.
+    let bad = json!({ "title": 123, "count": "nope", "visible": "yes" });
+    let p = ExampleProps::from_value(&bad);
+    assert_eq!(p.title, "Untitled");
+    assert_eq!(p.count, 1);
+    assert!(p.visible);
+}
+
+#[test]
+fn prism_field_from_value_strips_raw_ident_prefix() {
+    #[derive(PrismField)]
+    #[allow(dead_code)]
+    struct RawIdentProps {
+        #[field(default = "submit")]
+        r#type: String,
+    }
+    let p = RawIdentProps::from_value(&serde_json::json!({ "type": "button" }));
+    assert_eq!(p.r#type, "button");
+    let p = RawIdentProps::defaults();
+    assert_eq!(p.r#type, "submit");
+}
+
+#[test]
 fn prism_field_humanizes_missing_labels() {
     #[derive(PrismField)]
     #[allow(dead_code)]

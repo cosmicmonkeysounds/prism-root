@@ -9,7 +9,7 @@
 
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::{Data, DeriveInput, Field, Fields, Lit, Meta, Type};
+use syn::{Data, DeriveInput, Field, Fields, Ident, Lit, Meta, Type};
 
 pub fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let ident = &input.ident;
@@ -27,9 +27,18 @@ pub fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
     };
 
     let mut field_lines = Vec::new();
+    let mut default_inits = Vec::new();
+    let mut from_value_inits = Vec::new();
     for field in &named.named {
         let line = build_field_spec(field)?;
         field_lines.push(line);
+        let attrs = parse_field_attrs(field)?;
+        let fname = field.ident.as_ref().unwrap();
+        let key = ident_key(fname);
+        let default_expr = default_value_expr(&field.ty, &attrs)?;
+        default_inits.push(quote! { #fname: #default_expr });
+        let from_value_expr = from_value_field_expr(&field.ty, &key, &attrs)?;
+        from_value_inits.push(quote! { #fname: #from_value_expr });
     }
 
     Ok(quote! {
@@ -39,8 +48,150 @@ pub fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
                 #(#field_lines)*
                 __out
             }
+
+            /// Build an instance with every field set to its
+            /// `#[field(default = …)]` literal (or its Rust-type default
+            /// when no attribute default is present).
+            pub fn defaults() -> Self {
+                Self {
+                    #(#default_inits,)*
+                }
+            }
+
+            /// Coerce a `serde_json::Value` map into a typed instance.
+            /// Each field reads its key with type-appropriate accessors;
+            /// missing keys / wrong types fall back to the field's
+            /// declared default.
+            pub fn from_value(__value: &::serde_json::Value) -> Self {
+                Self {
+                    #(#from_value_inits,)*
+                }
+            }
         }
     })
+}
+
+/// Strip a leading `r#` from raw identifiers so the JSON key matches
+/// the user-visible name (e.g. `r#type` → `"type"`).
+fn ident_key(ident: &Ident) -> String {
+    let s = ident.to_string();
+    s.strip_prefix("r#").map(|t| t.to_string()).unwrap_or(s)
+}
+
+/// Token that evaluates to the field's default value expressed in its
+/// Rust type. Used by both `defaults()` and `from_value()`.
+fn default_value_expr(ty: &Type, attrs: &FieldAttrs) -> syn::Result<TokenStream2> {
+    let kind_hint = type_kind(ty, attrs);
+    Ok(match (kind_hint, attrs.default_lit.as_ref()) {
+        (TypeKind::String, Some(Lit::Str(s))) => {
+            let v = s.value();
+            quote! { #v.to_string() }
+        }
+        (TypeKind::String, _) => quote! { ::std::string::String::new() },
+        (TypeKind::Bool, Some(Lit::Bool(b))) => {
+            let v = b.value;
+            quote! { #v }
+        }
+        (TypeKind::Bool, _) => quote! { false },
+        (TypeKind::Int, Some(Lit::Int(i))) => {
+            // Re-use the literal verbatim so the suffix matches the field's type.
+            quote! { (#i) as _ }
+        }
+        (TypeKind::Int, Some(Lit::Float(f))) => {
+            quote! { (#f) as _ }
+        }
+        (TypeKind::Int, _) => quote! { 0 as _ },
+        (TypeKind::Float, Some(Lit::Float(f))) => {
+            quote! { (#f) as _ }
+        }
+        (TypeKind::Float, Some(Lit::Int(i))) => {
+            quote! { (#i) as _ }
+        }
+        (TypeKind::Float, _) => quote! { 0.0 as _ },
+        (TypeKind::Unknown, _) => {
+            return Err(syn::Error::new_spanned(
+                ty,
+                "#[derive(PrismField)] cannot synthesise a default for this type — supported: String, bool, integer/float primitives",
+            ));
+        }
+    })
+}
+
+fn from_value_field_expr(ty: &Type, key: &str, attrs: &FieldAttrs) -> syn::Result<TokenStream2> {
+    let default_expr = default_value_expr(ty, attrs)?;
+    Ok(match type_kind(ty, attrs) {
+        TypeKind::String => quote! {
+            __value
+                .get(#key)
+                .and_then(|__v| __v.as_str())
+                .map(|__s| __s.to_string())
+                .unwrap_or_else(|| #default_expr)
+        },
+        TypeKind::Bool => quote! {
+            __value
+                .get(#key)
+                .and_then(|__v| __v.as_bool())
+                .unwrap_or_else(|| #default_expr)
+        },
+        TypeKind::Int => quote! {
+            __value
+                .get(#key)
+                .and_then(|__v| __v.as_i64())
+                .map(|__n| __n as _)
+                .unwrap_or_else(|| #default_expr)
+        },
+        TypeKind::Float => quote! {
+            __value
+                .get(#key)
+                .and_then(|__v| __v.as_f64())
+                .map(|__n| __n as _)
+                .unwrap_or_else(|| #default_expr)
+        },
+        TypeKind::Unknown => {
+            return Err(syn::Error::new_spanned(
+                ty,
+                "#[derive(PrismField)] cannot extract this type from a Value",
+            ));
+        }
+    })
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TypeKind {
+    String,
+    Bool,
+    Int,
+    Float,
+    Unknown,
+}
+
+fn type_kind(ty: &Type, attrs: &FieldAttrs) -> TypeKind {
+    // Explicit `kind = "..."` overrides target FieldKind only — the
+    // backing Rust type still drives extraction. All current rich kinds
+    // (color/date/datetime/duration/file/currency/calculation) are
+    // string-backed.
+    if attrs.kind.is_some() {
+        return match type_leaf_name(ty).as_deref() {
+            Some("String" | "str") => TypeKind::String,
+            Some("bool") => TypeKind::Bool,
+            Some("f32" | "f64") => TypeKind::Float,
+            Some(
+                "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64"
+                | "u128" | "usize",
+            ) => TypeKind::Int,
+            _ => TypeKind::String,
+        };
+    }
+    match type_leaf_name(ty).as_deref() {
+        Some("String" | "str") => TypeKind::String,
+        Some("bool") => TypeKind::Bool,
+        Some("f32" | "f64") => TypeKind::Float,
+        Some(
+            "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64" | "u128"
+            | "usize",
+        ) => TypeKind::Int,
+        _ => TypeKind::Unknown,
+    }
 }
 
 #[derive(Default)]
@@ -71,7 +222,7 @@ fn build_field_spec(field: &Field) -> syn::Result<TokenStream2> {
         .ident
         .as_ref()
         .ok_or_else(|| syn::Error::new_spanned(field, "expected named field"))?;
-    let key = fname.to_string();
+    let key = ident_key(fname);
     let attrs = parse_field_attrs(field)?;
     let label = attrs.label.clone().unwrap_or_else(|| humanize(&key));
 
