@@ -1,0 +1,14 @@
+[package]
+name = "prism-ui-build"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Build-time codegen for .prism-ui files — same role slint-build plays today, replaced as part of ADR-008"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }

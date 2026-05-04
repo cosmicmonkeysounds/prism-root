@@ -18,7 +18,8 @@ impl Shell {
         let telemetry = FirstPaint::start();
         let window = AppWindow::new()?;
         let mut registry = ComponentRegistry::new();
-        register_builtins(&mut registry, &mut prism_builder::HtmlRegistry::new()).expect("starter components must register");
+        register_builtins(&mut registry, &mut prism_builder::HtmlRegistry::new())
+            .expect("starter components must register");
         prism_builder::register_core_widgets(&mut registry)
             .expect("core widget components must register");
         let mut help = HelpRegistry::new();

@@ -16,3 +16,5 @@ Each ADR follows: **Context → Decision → Rationale → Consequences**.
 | [004](004-composition-patterns.md) | Composition patterns | Accepted |
 | [005](005-dockable-panel-system.md) | Dockable panel system | Accepted |
 | [006](006-live-bidirectional-slint-builder.md) | Live bidirectional Slint builder | Accepted |
+| [007](007-slint-upgrade-interpreter-first.md) | Slint 1.16 upgrade — interpreter scoped to builder | Accepted |
+| [008](008-clay-prism-ui-dsl.md) | Replace Slint with Clay + `prism-ui` DSL | Accepted (supersedes ADR-007 topology) |

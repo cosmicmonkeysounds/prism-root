@@ -10,6 +10,12 @@ members = [
     "packages/prism-relay",
     "packages/prism-dock",
     "packages/prism-luau-derive",
+    # Slint→Clay migration (ADR-008). New crates ship under
+    # `MIT OR Apache-2.0` to mark the licence boundary; existing crates
+    # stay on GPL until Phase 5 cutover.
+    "packages/prism-ui-runtime",
+    "packages/prism-ui-build",
+    "vendor/clay-layout",
 ]
 
 # Shared package metadata — every crate opts in to `license` via

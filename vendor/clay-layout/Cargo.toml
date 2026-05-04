@@ -1,0 +1,17 @@
+[package]
+name = "clay-layout"
+version = "0.0.1-prism"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Vendored Prism fork of the Clay (https://github.com/nicbarker/clay) Rust binding."
+
+# This is a placeholder. Phase 1 imports the real upstream
+# clay-layout binding (with its C sources via cc/bindgen), pinned to
+# a specific commit. The placeholder lets the workspace compile and
+# `prism-ui-runtime` link against the public surface stub while we
+# stage the C-source import in a focused PR.
+#
+# Upstream: https://github.com/nicbarker/clay
+# Rust binding: https://crates.io/crates/clay-layout
+
+[dependencies]

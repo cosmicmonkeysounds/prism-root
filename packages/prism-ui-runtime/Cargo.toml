@@ -1,0 +1,32 @@
+[package]
+name = "prism-ui-runtime"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Prism UI runtime — Clay-backed layout + pluggable backends (femtovg native, web canvas, HTML SSR)"
+
+# This crate ships under MIT OR Apache-2.0 from day one to mark the
+# Slint→Clay licence boundary. The rest of the workspace stays on
+# GPL-3.0-or-later until Phase 5 cutover (see ADR-008 + the Phase 0
+# decision in `docs/dev/clay-migration-plan.md`).
+
+[features]
+default = ["html"]
+# Native: winit + femtovg. Pulled directly; replaces the bundled
+# Slint backend.
+femtovg = []
+# Web: winit-on-wasm + WebGL2 / canvas2d adapter.
+web = []
+# SSR: pure render-command → HTML/CSS lowering. No event loop.
+# Always-on for `prism-relay`; default-on so a host pulling
+# `prism-ui-runtime` for SSR alone gets it for free.
+html = []
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+clay-layout = { path = "../../vendor/clay-layout" }
+
+[dev-dependencies]
+insta = { workspace = true }

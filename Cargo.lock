@@ -1288,6 +1288,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
+name = "clay-layout"
+version = "0.0.1-prism"
+
+[[package]]
 name = "clipboard-win"
 version = "5.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5972,6 +5976,27 @@ dependencies = [
  "serde",
  "serde_json",
  "slint",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "prism-ui-build"
+version = "0.1.0"
+dependencies = [
+ "insta",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "prism-ui-runtime"
+version = "0.1.0"
+dependencies = [
+ "clay-layout",
+ "insta",
+ "serde",
+ "serde_json",
  "thiserror 2.0.18",
 ]
 
