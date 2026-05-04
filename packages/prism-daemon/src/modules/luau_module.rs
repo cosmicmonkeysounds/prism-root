@@ -46,9 +46,29 @@ pub fn exec_with_context(
     args: Option<&JsonMap<String, JsonValue>>,
     ctx: PrismContext,
 ) -> Result<JsonValue, String> {
+    exec_with_setup(script, args, ctx, |_| Ok(()))
+}
+
+/// Execute a Luau script with a host-supplied [`PrismContext`] and a
+/// `setup` closure that runs against the freshly-built [`Lua`] state
+/// after the `prism` global is installed but before the script runs.
+/// The shell uses this to install Phase-5 handles (`prism.document` /
+/// `prism.signals` / `prism.selection` / `prism.app`) on top of the
+/// daemon's stateless context.
+pub fn exec_with_setup<F>(
+    script: &str,
+    args: Option<&JsonMap<String, JsonValue>>,
+    ctx: PrismContext,
+    setup: F,
+) -> Result<JsonValue, String>
+where
+    F: FnOnce(&Lua) -> mlua::Result<()>,
+{
     let lua = Lua::new();
 
     prism_context::install(&lua, ctx).map_err(|e| e.to_string())?;
+
+    setup(&lua).map_err(|e| e.to_string())?;
 
     if let Some(args) = args {
         let globals = lua.globals();
@@ -70,7 +90,7 @@ pub fn exec_with_context(
     lua_to_json(&result).map_err(|e| e.to_string())
 }
 
-fn json_to_lua(lua: &Lua, value: &JsonValue) -> LuaResult<Value> {
+pub fn json_to_lua(lua: &Lua, value: &JsonValue) -> LuaResult<Value> {
     match value {
         JsonValue::Null => Ok(Value::Nil),
         JsonValue::Bool(b) => Ok(Value::Boolean(*b)),
@@ -99,7 +119,7 @@ fn json_to_lua(lua: &Lua, value: &JsonValue) -> LuaResult<Value> {
     }
 }
 
-fn lua_to_json(value: &Value) -> LuaResult<JsonValue> {
+pub fn lua_to_json(value: &Value) -> LuaResult<JsonValue> {
     match value {
         Value::Nil => Ok(JsonValue::Null),
         Value::Boolean(b) => Ok(JsonValue::Bool(*b)),

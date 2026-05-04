@@ -27,6 +27,8 @@ pub mod help;
 pub mod input;
 pub mod keybindings;
 pub mod keyboard;
+#[cfg(feature = "native")]
+pub mod luau;
 pub mod menu;
 pub mod panels;
 pub mod persistence;

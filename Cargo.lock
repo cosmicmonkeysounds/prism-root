@@ -5942,6 +5942,7 @@ dependencies = [
  "hex",
  "image",
  "insta",
+ "mlua",
  "prism-builder",
  "prism-core",
  "prism-daemon",

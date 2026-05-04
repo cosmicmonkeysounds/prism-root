@@ -46,6 +46,11 @@ pub(crate) fn resolve_facet_data(
     doc: &mut BuilderDocument,
     collection_rc: &std::rc::Rc<std::cell::RefCell<CollectionStore>>,
 ) {
+    // Snapshot the document up-front so the read-only `prism.document`
+    // handle the facet script sees is consistent for the whole pass
+    // (and so we don't conflict with the `doc.facets.values_mut()`
+    // borrow below).
+    let doc_snapshot = doc.clone();
     for facet in doc.facets.values_mut() {
         match &facet.kind {
             FacetKind::Script {
@@ -77,19 +82,24 @@ pub(crate) fn resolve_facet_data(
                     facet.resolved_data = None;
                     continue;
                 }
-                // Phase 4: facet scripts run with a live collection
-                // so `prism.objects` / `prism.edges` reads return the
-                // same data the rest of the shell sees. Writes are
-                // technically permitted but discouraged from facet
-                // resolvers — a sync pass that mutates the document
-                // mid-resolution would loop. Phase 5d turns the
-                // facet-side context read-only as a follow-up.
-                let ctx = prism_daemon::modules::prism_context::PrismContext::default()
-                    .with_collection(collection_rc.clone());
-                match prism_daemon::modules::luau_module::exec_with_context(
+                // Phase 4 lights up `prism.objects` / `prism.edges`
+                // against the live collection; Phase 5c additionally
+                // installs `prism.document` / `prism.signals` /
+                // `prism.selection` / `prism.app` here. Document
+                // mutations are blocked in `ReadOnly` mode — a sync
+                // pass that mutates mid-resolution would loop.
+                let ctx = crate::luau::shell_prism_context(collection_rc.clone());
+                let handles = crate::luau::ShellHandles::new(
+                    doc_snapshot.clone(),
+                    crate::luau::DocumentMode::ReadOnly,
+                    crate::luau::ShellSnapshot::default(),
+                );
+                let install_handles = move |lua: &mlua::Lua| handles.install(lua);
+                match prism_daemon::modules::luau_module::exec_with_setup(
                     &effective_source,
                     None,
                     ctx,
+                    install_handles,
                 ) {
                     Ok(result) => {
                         if let Some(arr) = result.as_array() {

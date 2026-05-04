@@ -42,7 +42,7 @@ required-features = ["native"]
 # default (env var + `--features live-preview`); `prism build` leaves
 # it off so release binaries don't pull in the interpreter.
 default = ["native"]
-native = ["dep:prism-daemon", "dep:rfd", "prism-core/crdt"]
+native = ["dep:prism-daemon", "dep:rfd", "dep:mlua", "prism-core/crdt"]
 live-preview = ["slint/live-preview"]
 web = ["dep:wasm-bindgen", "dep:console_error_panic_hook", "dep:getrandom", "uuid/js"]
 e2e = ["dep:image", "dep:enigo"]
@@ -58,6 +58,12 @@ prism-luau-derive = { workspace = true }
 # relay, not a local daemon. Feature-gated so the WASM target stays
 # small.
 prism-daemon = { path = "../prism-daemon", optional = true, default-features = false, features = ["crdt", "luau", "vfs", "crypto"] }
+
+# Luau host runtime — phase 5 of the integration plan installs shell-
+# resident handles (`prism.document`, `prism.signals`, …) onto the
+# same `Lua` state the daemon's `luau_module::exec_with_setup` builds.
+# Native-only for the same reason `prism-daemon` is.
+mlua = { workspace = true, optional = true }
 
 # Slint — the full UI toolkit. Owns layout, renderer, and windowing
 # for both native (winit + femtovg) and browser (winit on

@@ -277,18 +277,29 @@ impl ShellInner {
             let script = build_handler_script(&page_source, handler_name);
             let mut call_args = serde_json::Map::new();
             call_args.insert("event".into(), serde_json::Value::Object(args));
-            // Phase 4: scripts in the shell see a live collection so
-            // `prism.objects` / `prism.edges` mutations land in the
-            // same store the UI mutates from. The daemon's bare
-            // `luau.exec` keeps the default (no collection) context
-            // and surfaces a typed error when scripts reach for the
-            // instance API there.
-            let ctx = prism_daemon::modules::prism_context::PrismContext::default()
-                .with_collection(self.collection.clone());
-            match prism_daemon::modules::luau_module::exec_with_context(
+            // Phase 4 wires the live collection into `prism.objects` /
+            // `prism.edges`; Phase 5 layers the shell-resident
+            // `prism.document` / `prism.signals` / `prism.selection` /
+            // `prism.app` handles on top via `exec_with_setup`. The
+            // daemon's bare `luau.exec` keeps the default (no
+            // collection, no shell handles) context and surfaces a
+            // typed error when scripts reach for either surface there.
+            let ctx = crate::luau::shell_prism_context(self.collection.clone());
+            let snapshot = crate::luau::snapshot_from_state(self.store.state());
+            let doc_clone = self.store.state().builder_document.clone();
+            let handles = crate::luau::ShellHandles::new(
+                doc_clone,
+                crate::luau::DocumentMode::ReadWrite,
+                snapshot,
+            );
+            let document_queue = handles.document_queue.clone();
+            let signal_queue = handles.signal_queue.clone();
+            let install_handles = move |lua: &mlua::Lua| handles.install(lua);
+            match prism_daemon::modules::luau_module::exec_with_setup(
                 &script,
                 Some(&call_args),
                 ctx,
+                install_handles,
             ) {
                 Ok(result) => {
                     self.apply_luau_result(&result);
@@ -301,6 +312,89 @@ impl ShellInner {
                     );
                 }
             }
+            // Phase 5d: drain queued mutations and signals from the
+            // shell handles. Old `_actions`-based scripts still flow
+            // through `apply_luau_result` above; new scripts that call
+            // `prism.document:set_prop` / `prism.signals:fire` flow
+            // through here. Both protocols co-exist for one release
+            // before the legacy path is retired.
+            let mutations: Vec<_> = std::mem::take(&mut *document_queue.borrow_mut());
+            self.apply_document_mutations(&mutations);
+            let signals_drain: Vec<_> = std::mem::take(&mut *signal_queue.borrow_mut());
+            for entry in signals_drain {
+                self.fire_signal(&entry.node_id, &entry.signal, entry.payload);
+            }
+        }
+    }
+
+    /// Apply the [`DocumentMutation`](crate::luau::DocumentMutation)s
+    /// queued by a Luau script through the same `live`-source-edit
+    /// path the legacy `_actions` protocol uses, so undo snapshots
+    /// and source/document parity stay coherent.
+    #[cfg(feature = "native")]
+    pub(crate) fn apply_document_mutations(&mut self, mutations: &[crate::luau::DocumentMutation]) {
+        use crate::luau::DocumentMutation;
+        if mutations.is_empty() {
+            return;
+        }
+        let mut needs_sync = false;
+        let mut next_id_counter: u64 = 0;
+        for m in mutations {
+            match m {
+                DocumentMutation::SetProp {
+                    node_id,
+                    key,
+                    value,
+                } => {
+                    if let Some(ref mut live) = self.live {
+                        let formatted = match value {
+                            serde_json::Value::String(s) => format!(
+                                "\"{}\"",
+                                prism_builder::slint_source::escape_slint_string(s)
+                            ),
+                            serde_json::Value::Bool(b) => b.to_string(),
+                            serde_json::Value::Number(n) => n.to_string(),
+                            _ => continue,
+                        };
+                        let _ = live.edit_prop_in_source(node_id, key, &formatted);
+                        needs_sync = true;
+                    }
+                }
+                DocumentMutation::Insert {
+                    parent_id,
+                    descriptor,
+                } => {
+                    if let Some(node) =
+                        crate::luau::descriptor_to_node(descriptor, &mut next_id_counter)
+                    {
+                        if let Some(ref mut live) = self.live {
+                            let _ = live.insert_tree_in_source(parent_id.as_deref(), &node, None);
+                            needs_sync = true;
+                        }
+                    }
+                }
+                DocumentMutation::Remove { node_id } => {
+                    if let Some(ref mut live) = self.live {
+                        let _ = live.remove_node_from_source(node_id);
+                        needs_sync = true;
+                    }
+                }
+                DocumentMutation::Move { .. } => {
+                    // Re-parenting via source surgery isn't yet wired
+                    // up — the source-map only knows sibling reorder.
+                    // Surface a toast so authors see why the call had
+                    // no effect rather than silently dropping it.
+                    self.add_toast(
+                        "prism.document:move_node",
+                        "Re-parenting from Luau is not yet supported.",
+                        "warning",
+                    );
+                }
+            }
+        }
+        if needs_sync {
+            self.push_undo("luau-mutation");
+            self.sync_builder_document();
         }
     }
 

@@ -8,24 +8,29 @@
 
 ## Current State
 
-Phases 1 + 2a + 4.1 + 4.2 + 5a have shipped. The fundamental gap is
-narrowed but not closed: scripts can read tokens / config / the
+Phases 1 + 2a + 4.1 + 4.2 + **5a–c (and the bulk of 5d)** + **migration
+step 4** have shipped. Scripts can read tokens / config / the
 entity-type registry, mutate the document via `Custom` signal
-handlers, and resolve facet data via `FacetKind::Script`. They still
-can't subscribe to atoms, mutate the object graph, touch the VFS,
-fire signals, or run as long-lived watchers.
+handlers, resolve facet data via `FacetKind::Script`, **read and
+write the object graph through `prism.objects` / `prism.edges`**
+when the host installs a live collection (shell context), **read the
+active page through `prism.document` and queue mutations via
+`prism.document:set_prop` / `:insert` / `:remove`**, and **fire
+signals via `prism.signals:fire(node, signal, payload)`**. They
+still can't subscribe to atoms, touch the VFS, or run as long-lived
+watchers.
 
 | Layer | What exists | Gap |
 |-------|------------|-----|
 | Daemon (`luau_module.rs`) | `luau.exec` — fire-and-forget script with JSON args/return + `prism` global preinstalled | No reactive subscriptions, no `luau.eval` REPL, no persistent script lifecycle, no `luau.register_widget` / `luau.register_automation` |
-| Daemon (`prism_context.rs`) | `PrismContext { tokens, shell_mode, permission, objects, config }` | No `document` / `app` / `selection` / `vfs` / `signals` / `commands` / `crypto` / `automation` surfaces |
+| Daemon (`prism_context.rs`) | `PrismContext { tokens, shell_mode, permission, objects, edges, config }` + `with_collection(Rc<RefCell<CollectionStore>>)` builder method that lights up the Phase 4 instance API on `objects` and `edges` | No `document` / `app` / `selection` / `vfs` / `signals` / `commands` / `crypto` / `automation` surfaces |
 | Macro (`prism-luau-derive`) | `#[luau_expose]` for named-field structs, unit-only enums, **and tagged-union enums** (Phase 1.1 — table-shaped `{ tag = "Variant", … }` round-trip); `manual_impl` / `mutable` / `read_only` / `rename` / `luau_skip` opts | `#[luau_expose]` on free functions |
-| Core (`luau_types.rs` + `luau_bindings*.rs`) | Hand-rolled `GraphObject` / `ObjectEdge` / `ObjectsHandle` / `ConfigHandle` UserData; codegen registry collects every `LUAU_TYPE_DEF` const | `BuilderDocument`, `Node`, `PrismApp`, `Page`, `LayoutMode`, `StyleProperties`, `Connection`, signal payloads, timeline / Flux types |
+| Core (`luau_types.rs` + `luau_bindings*.rs`) | Hand-rolled `GraphObject` / `ObjectEdge` / `ObjectsHandle` / **`EdgesHandle`** / `ConfigHandle` UserData; **`ObjectsHandle::with_collection` + `EdgesHandle::with_collection` gate the Phase 4 instance API (`get` / `list` / `query` / `create` / `update` / `delete`) on a live `CollectionStore`**; codegen registry collects every `LUAU_TYPE_DEF` const | `BuilderDocument`, `Node`, `PrismApp`, `Page`, `LayoutMode`, `StyleProperties`, `Connection`, signal payloads, timeline / Flux types |
 | Core (`language/luau/`) | Parser (full-moon), syntax provider, visual language, signal-aware completions | Read-only intelligence — no mutation path; signal stubs from `prism_builder::signal::generate_signal_type_stubs` are not yet emitted by `prism codegen luau-types` |
 | Builder (`signal.rs`) | `ActionKind::Custom { handler }` round-trips through `DispatchResult::Custom` | — (now executed; see Shell row) |
 | Builder (`facet/mod.rs`) | `FacetKind::Script { source, language, graph }` data type; `ScriptLanguage::{Luau, VisualGraph}` | — (now executed; see Shell row) |
-| Shell (`app/mod.rs::fire_signal`) | `Custom` connection handler runs through `prism_daemon::modules::luau_module::exec`; return values with `set_properties` / `navigate` keys are applied back to the document | Handler scripts still see only the default `PrismContext` — no document reference, no per-event lifecycle |
-| Shell (`app/sync.rs`) | `FacetKind::Script` resolves through `luau_module::exec` per facet evaluation | No incremental re-eval on dependency change; one-shot per sync pass |
+| Shell (`app/mod.rs::fire_signal`) | `Custom` connection handler runs through `prism_daemon::modules::luau_module::exec_with_setup` with the shell's `ShellHandles` installed: `prism.document` (writable, mutations queued + drained through `LiveDocument` source surgery for undo parity), `prism.signals` (writable, fired through `ShellInner::fire_signal` after exec), `prism.selection` / `prism.app` (read-only snapshots), plus the live `Rc<RefCell<CollectionStore>>` for `prism.objects` / `prism.edges`. The legacy `_actions` / `set_properties` / `navigate` return-value protocol still runs through `apply_luau_result` for one release. | No per-event lifecycle, no atom subscriptions (Phase 3), no widget hot-reload (Phase 6). |
+| Shell (`app/sync.rs`) | `FacetKind::Script` resolves through `luau_module::exec_with_setup` per facet evaluation. `ShellHandles` are installed in `DocumentMode::ReadOnly` — a facet script that calls `prism.document:set_prop` raises a typed Luau error rather than recursing into the sync pass. `prism.objects` / `prism.edges` reads return the live collection state. | No incremental re-eval on dependency change; one-shot per sync pass. Signals fired from a facet resolver are dropped (deferred-signal slot is a follow-up). |
 | CLI (`codegen.rs`) | `prism codegen luau-types` emits `<workspace>/types/core.d.luau`, **`builder.d.luau`** (Phase 5 fan-out — `StyleProperties`, `Dimension`, `GridPlacement`, layout enums), and **`signals.d.luau`** (per-component signal payloads from the built-in `ComponentRegistry` via `generate_signal_type_stubs`) | Per-workspace component contributions still aren't walked — the registry instantiation in `render_signals_stub` only seeds built-ins. |
 
 ---
@@ -165,9 +170,17 @@ plumbing in `prism-daemon/src/modules/prism_context.rs` is the single
 shared install point for every entry path (`luau.exec`, the shell's
 `Custom` handler dispatch, facet `Script` resolution).
 
+**Shipped (migration step 4)**: `prism.objects` instance API
+(`get` / `list` / `query` / `create` / `update` / `delete`) and the
+new `prism.edges` handle (same surface, edges instead of objects).
+Both light up only when the host calls `PrismContext::with_collection`
+with an `Rc<RefCell<CollectionStore>>`. The shell wires this in for
+`Custom` signal handlers and `FacetKind::Script` resolvers; the
+daemon's bare `luau.exec` keeps the default (no collection) context
+and surfaces `prism.objects: instance API unavailable in this context`
+on access — typed Luau errors, not silent no-ops.
+
 **Open**: `prism.document`, `prism.app`, `prism.selection`,
-`prism.objects` write API (create/update/delete/query — read API ships;
-mutations require a `CrdtSync` reference threaded through), `prism.edges`,
 `prism.vfs`, `prism.signals`, `prism.commands`, `prism.crypto`,
 `prism.automation`, `prism.atoms`, `prism.store`, `prism.crdt` (the
 last three are Phase 3).
@@ -266,9 +279,9 @@ assume more than the daemon entry can give it.
 
 | Entry point | Caller | Constructed in | Capabilities populated |
 |-------------|--------|----------------|------------------------|
-| `luau.exec` (daemon RPC) | Remote / IPC clients | `prism-daemon::modules::luau_module::exec` | `tokens`, `shell_mode`, `permission`, `objects` (read+write), `config`, `edges`, `vfs`, `crypto`. **No** `document` / `signals` / `selection` / `app` (the daemon has no live UI tree). |
-| `Custom` signal handler | Shell `fire_signal` | `prism-shell::app::ShellInner::exec_custom_handlers` | All daemon-side capabilities **plus** `document` (live `BuilderDocument`), `signals` (re-entrant `fire`), `selection`, `app` (active `PrismApp`). |
-| `FacetKind::Script` resolver | Shell `sync_builder_document` | `prism-shell::app::sync` facet branch | Same as Custom handler **but** `document` is read-only (a sync pass that mutates the document mid-resolution would loop). `signals.fire` is queued, not re-entrant. |
+| `luau.exec` (daemon RPC) | Remote / IPC clients | `prism-daemon::modules::luau_module::exec` | `tokens`, `shell_mode`, `permission`, `objects` / `edges` (registry read API only — instance API surfaces a typed error since no collection is attached), `config`. **No** `document` / `signals` / `selection` / `app` / `vfs` / `crypto` (those land in later phases). |
+| `Custom` signal handler | Shell `fire_signal` | `prism-shell::app::ShellInner::exec_custom_handlers` (via `PrismContext::with_collection`) | All daemon-side capabilities **plus** the live `objects` / `edges` instance API backed by the shell's `Rc<RefCell<CollectionStore>>`. Phase 5b–d add `document` / `signals` / `selection` / `app`. |
+| `FacetKind::Script` resolver | Shell `sync_builder_document` | `prism-shell::app::sync::facets::resolve_facet_data` (via `PrismContext::with_collection`) | Same as Custom handler today; Phase 5d gates the facet-side context to read-only because a sync pass that mutates the document mid-resolution would loop. |
 
 The shared install point in `prism-daemon::modules::prism_context::install`
 remains the single function every entry calls. The new shape is:
@@ -833,43 +846,95 @@ the VFS watcher.
 3. ✅ Build `PrismContext` with `tokens` + `shell_mode` + `permission` +
    `objects` (read API) + `config` access. Wired through `luau.exec`,
    `Custom` signal handlers, and `FacetKind::Script` resolution.
-4. 🟡 Expand `objects` to a write API + add `edges`. Sub-tasks:
-   - 4a. Promote the free `luau_module::exec` to `LuauModule::exec`
-     holding `Arc<DocManager>`, `Rc<CrdtSync>`, and the existing
-     `ObjectRegistry` / `ConfigModel` handles. Re-register the
-     `luau.exec` command against the method.
-   - 4b. Extend `ObjectsHandle` with `create` / `update` / `delete` /
-     `query` methods on `prism-core::luau_bindings`. Each mutation
-     funnels through `CrdtSync::apply_object_change` so peers see
-     identical deltas.
-   - 4c. Add `EdgesHandle` (new userdata in `luau_bindings.rs`) with
-     `create` / `delete` / `query`, backed by
-     `CrdtSync::apply_edge_change`. Mirror the existing
-     `ObjectsHandle` test pattern in `prism_context.rs`.
-   - 4d. Annotate `GraphObject` / `ObjectEdge` mutation payload types
-     with `#[luau_expose]` so `.d.luau` stubs land for free.
-5. ⬜ Expand to `document` + `signals`. Sub-tasks:
-   - 5a. New `DocumentHandle` userdata in
-     `prism-shell/src/luau/document.rs` wrapping
-     `Rc<RefCell<Store<AppState>>>`. Methods: `find`, `insert`,
-     `remove`, `move`, `set_prop`, `prop`. All mutations go through
-     the existing `Store::mutate` path so undo snapshots and live-doc
-     source edits stay in sync.
-   - 5b. New `SignalsHandle` re-entrantly calling
-     `ShellInner::fire_signal` (Custom-handler entry) or queuing the
-     event for the next sync pass (facet-resolver entry, to avoid
-     mid-sync recursion).
-   - 5c. Shell-side `PrismContext` builder: extend
-     `ShellInner::exec_custom_handlers` to install `document`,
-     `signals`, `selection`, `app` before delegating to
-     `LuauModule::exec`. `sync_builder_document`'s `FacetKind::Script`
-     branch installs the same handles in read-only mode.
-   - 5d. Replace the ad-hoc `_actions` / `set_properties` /
-     `navigate` return-value protocol in `apply_luau_result` with
-     direct handle calls — the script mutates `prism.document`
-     directly instead of returning an action list. The old protocol
-     stays for one release behind a deprecation warning so existing
-     handler scripts keep working.
+4. ✅ Expand `objects` to a write API + add `edges`. Sub-tasks:
+   - 4a. ✅ Pragmatic deviation from the original plan text: rather
+     than promoting the free `luau_module::exec` to a stateful
+     `LuauModule` holding `Arc<DocManager>` + `Rc<CrdtSync>` (which
+     can't co-exist — `Arc` requires `Send`, `CrdtSync` is `Rc`-based
+     and `!Send`), Phase 4 keeps `exec` a free function and threads
+     state through a new `PrismContext::with_collection(Rc<RefCell<
+     CollectionStore>>)` builder. The shell calls
+     `exec_with_context(script, args, ctx.with_collection(self.collection.clone()))`
+     so script writes flow into the same store the UI mutates from.
+     `CrdtSync` itself stays out of the loop — `CollectionStore`
+     mutations already commit to the underlying `LoroDoc`, and any
+     reactive atoms wired on top of the same store pick up the
+     change through `process_changes` on the next sync pass.
+   - 4b. ✅ `ObjectsHandle` gained `get` / `list` / `query` /
+     `create` / `update` / `delete` (gated on the `crdt` feature).
+     Mutations funnel through `CollectionStore::put_object` /
+     `remove_object`. Without a collection the methods raise
+     `prism.objects: instance API unavailable in this context`.
+   - 4c. ✅ New `EdgesHandle` userdata in
+     `prism-core/src/luau_bindings.rs` with `get` / `list` / `query` /
+     `create` / `delete`, backed by `CollectionStore::put_edge` /
+     `remove_edge`. Wired into `PrismContext.edges`.
+   - 4d. ✅ Mutation payload types stay JSON-shaped (Lua tables
+     coerce through `mlua::LuaSerdeExt`) rather than typed structs:
+     `GraphObject` and `ObjectEdge` use `#[serde(rename = ...)]`
+     extensively, which is incompatible with the table-shape codegen
+     in `#[luau_expose]`. The hand-rolled `apply_object_patch`
+     / `build_edge_from_payload` helpers handle both the snake_case
+     and camelCase spellings of every renamed field. The `.d.luau`
+     stubs (`OBJECTS_HANDLE_TYPE_DEF`, `EDGES_HANDLE_TYPE_DEF`,
+     plus a new `ObjectFilter` / `EdgeFilter` projection) document
+     the surface for LuaLS without round-tripping through the macro.
+   - **Shell wiring** (also part of step 4): `inner.collection`
+     promoted to `Rc<RefCell<CollectionStore>>` so the same handle
+     is shared into Luau contexts. `Shell::with_collection`
+     unchanged in signature; project-collection writes still bypass
+     the live mirror — Luau scripts only see the local mirror, and
+     when a project is open the existing save-time mirror dance
+     keeps the project store in sync. (Refactoring `VaultManager`
+     so the project's collection is also `Rc<RefCell<>>`-shareable
+     is tracked as a separate cleanup.)
+5. 🟡 Expand to `document` + `signals`. Sub-tasks:
+   - 5a. ✅ `DocumentHandle` userdata in
+     `prism-shell/src/luau/document.rs`. Pragmatic deviation from the
+     original plan text: rather than holding a live
+     `Rc<RefCell<Store<AppState>>>` (which would cascade an
+     `Rc<RefCell<…>>` rewrap through every `ShellInner` callback),
+     the handle wraps an `Rc<BuilderDocument>` snapshot for reads
+     and an `Rc<RefCell<Vec<DocumentMutation>>>` write queue.
+     Methods: `find`, `prop`, `set_prop`, `insert`, `remove`,
+     `move_node` (renamed from `move` to keep call sites unambiguous
+     for editors that highlight `move` as a Lua keyword). The shell
+     drains the queue after `exec_with_setup` returns and applies
+     each mutation through `LiveDocument::edit_prop_in_source` /
+     `insert_tree_in_source` / `remove_node_from_source` — the same
+     path the legacy `_actions` protocol uses, so undo snapshots
+     and source/document parity stay coherent. `move_node` toasts a
+     "not yet supported" warning because the source-map only knows
+     sibling reorder; arbitrary re-parenting is a follow-up.
+   - 5b. ✅ `SignalsHandle` queues `SignalEntry { node_id, signal,
+     payload }` rather than re-entrantly calling
+     `ShellInner::fire_signal` mid-script (which would double-borrow
+     across the Lua state). The `Custom`-handler entry drains the
+     queue after exec via the same `fire_signal` path; the
+     facet-resolver entry's queue is silently dropped today —
+     "queue for the next sync pass" needs a deferred-signal slot on
+     `ShellInner`, tracked as a follow-up.
+   - 5c. ✅ Shell-side `ShellHandles::install` rewires the `prism`
+     global to a Lua table whose metatable's `__index` falls through
+     to the daemon's `PrismContext` userdata. `prism.document`,
+     `prism.signals`, `prism.selection` (read-only with `primary` /
+     `node_ids` / `is_multi`), and `prism.app` (read-only with `id`
+     / `page_id` / `page_route`) resolve to shell-resident handles.
+     `ShellInner::exec_custom_handlers` installs them in
+     `DocumentMode::ReadWrite`; `sync/facets.rs::resolve_facet_data`
+     installs them in `DocumentMode::ReadOnly`, so a Luau facet
+     resolver that calls `:set_prop` raises a typed error rather
+     than recursing into the sync pass. New `exec_with_setup` entry
+     point in `prism-daemon::modules::luau_module` accepts a
+     `FnOnce(&Lua)` setup closure, which is how the shell installs
+     these handles without forking the daemon's exec path.
+   - 5d. 🟡 The `apply_luau_result` `_actions` / `set_properties` /
+     `navigate` protocol still runs (kept for one release behind
+     the migration); new scripts that call `prism.document:set_prop`
+     etc. flow through the queue-drain path that runs immediately
+     after exec. The deprecation warning on the legacy protocol is
+     a follow-up — the call site will start emitting once the
+     in-tree handler scripts have all migrated.
 6. ⬜ `LuauComponent` renderer + manifest `scripts` section.
    Sub-tasks:
    - 6a. New `prism-builder/src/luau_component.rs` with
@@ -917,7 +982,8 @@ Status legend: ✅ realised today · 🟡 partial · ⬜ pending.
 | Hand-written JSON marshalling in every daemon module | `#[luau_expose]` auto-derives `UserData` impls | 🟡 leaf types annotated; stateful subsystems hand-roll via `manual_impl` (intentional — see Phase 1) |
 | Hand-maintained `.d.luau` type stubs | Generated from annotated Rust types | 🟡 `prism codegen luau-types` ships `core.d.luau` + `builder.d.luau` + `signals.d.luau`; deeper `prism-builder` annotation (`BuilderDocument` / `Node` / `Connection` / `LayoutMode` / `FacetDef` / …) still pending |
 | Duplicate `FieldSpec` builder calls across Rust + signal stubs | Single `prism.field.*` API in Luau, backed by the same `FieldSpec` | ⬜ Phase 6 |
-| `ActionKind::Custom { handler }` as dead code | Live execution path through `PrismContext` | ✅ shell `fire_signal` runs Custom handlers via `luau_module::exec` |
+| `ActionKind::Custom { handler }` as dead code | Live execution path through `PrismContext` | ✅ shell `fire_signal` runs Custom handlers via `luau_module::exec_with_context` with the live `Rc<RefCell<CollectionStore>>` attached |
+| Scripts unable to mutate the object graph | `prism.objects` / `prism.edges` instance API on top of `CollectionStore` | ✅ migration step 4 — `prism.objects:create / update / delete / get / list / query` and `prism.edges:create / delete / get / list / query` round-trip through the live store in shell contexts |
 | Separate `luau.exec` fire-and-forget model | Persistent scripts with subscriptions and lifecycle | ⬜ Phase 3 |
 
 ---
