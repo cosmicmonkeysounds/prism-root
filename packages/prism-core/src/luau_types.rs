@@ -87,6 +87,10 @@ pub fn type_defs() -> Vec<(&'static str, &'static str)> {
             crate::luau_bindings_consts::OBJECTS_HANDLE_TYPE_DEF,
         ),
         (
+            crate::luau_bindings_consts::EDGES_HANDLE_TYPE_NAME,
+            crate::luau_bindings_consts::EDGES_HANDLE_TYPE_DEF,
+        ),
+        (
             crate::luau_bindings_consts::CONFIG_HANDLE_TYPE_NAME,
             crate::luau_bindings_consts::CONFIG_HANDLE_TYPE_DEF,
         ),
@@ -169,6 +173,7 @@ mod tests {
         assert!(names.contains(&"GraphObject"));
         assert!(names.contains(&"ObjectEdge"));
         assert!(names.contains(&"Objects"));
+        assert!(names.contains(&"Edges"));
         assert!(names.contains(&"Config"));
     }
 

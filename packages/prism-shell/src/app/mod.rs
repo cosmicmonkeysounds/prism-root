@@ -58,8 +58,13 @@ use crate::{
 // removed; excess slots are hidden via a companion `*-count` property
 // and `visible: i < root.*-count` in the Slint for-repeater.
 
-/// Update a persistent VecModel in-place.  Returns the active count.
-fn sync_model<T: Clone + 'static>(model: &VecModel<T>, new_data: &[T]) -> i32 {
+/// Update a persistent VecModel in-place and push the active count to
+/// the paired Slint `*-count` property via `set_count`.
+fn sync_model<T: Clone + 'static>(
+    model: &VecModel<T>,
+    new_data: &[T],
+    set_count: impl FnOnce(i32),
+) {
     let old_len = model.row_count();
     let new_len = new_data.len();
     for (i, item) in new_data.iter().enumerate() {
@@ -69,7 +74,7 @@ fn sync_model<T: Clone + 'static>(model: &VecModel<T>, new_data: &[T]) -> i32 {
             model.push(item.clone());
         }
     }
-    new_len as i32
+    set_count(new_len as i32);
 }
 
 macro_rules! persistent_models {
@@ -387,8 +392,12 @@ struct ShellInner {
     last_selected_node: Option<String>,
     nav_link_source: Option<usize>,
     persistence: ProjectPersistence,
+    // Wrapped in `Rc<RefCell<…>>` so the Phase 4 Luau bindings
+    // (`prism.objects` / `prism.edges`) can hold the same handle the
+    // shell mutates from its own callbacks. See
+    // `docs/dev/luau-integration-plan.md` Phase 4.
     #[cfg(feature = "native")]
-    collection: CollectionStore,
+    collection: std::rc::Rc<std::cell::RefCell<CollectionStore>>,
     #[cfg(feature = "native")]
     project: Option<crate::project::ProjectManager>,
 }
@@ -1324,6 +1333,7 @@ mod tests {
             },
         );
 
+        let store = std::rc::Rc::new(std::cell::RefCell::new(store));
         resolve_facet_data(&mut doc, &store);
         let resolved = doc
             .facets
@@ -1381,6 +1391,7 @@ mod tests {
             },
         );
 
+        let store = std::rc::Rc::new(std::cell::RefCell::new(store));
         resolve_facet_data(&mut doc, &store);
         let resolved = doc
             .facets
@@ -1450,6 +1461,7 @@ mod tests {
             },
         );
 
+        let store = std::rc::Rc::new(std::cell::RefCell::new(store));
         resolve_facet_data(&mut doc, &store);
         let resolved = doc
             .facets
@@ -1491,6 +1503,7 @@ mod tests {
             },
         );
 
+        let store = std::rc::Rc::new(std::cell::RefCell::new(store));
         resolve_facet_data(&mut doc, &store);
         assert!(doc.facets.get("facet:e").unwrap().resolved_data.is_none());
     }
@@ -1528,6 +1541,7 @@ mod tests {
             },
         );
 
+        let store = std::rc::Rc::new(std::cell::RefCell::new(store));
         resolve_facet_data(&mut doc, &store);
         let resolved = doc
             .facets

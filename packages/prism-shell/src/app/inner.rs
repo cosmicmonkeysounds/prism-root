@@ -277,7 +277,19 @@ impl ShellInner {
             let script = build_handler_script(&page_source, handler_name);
             let mut call_args = serde_json::Map::new();
             call_args.insert("event".into(), serde_json::Value::Object(args));
-            match prism_daemon::modules::luau_module::exec(&script, Some(&call_args)) {
+            // Phase 4: scripts in the shell see a live collection so
+            // `prism.objects` / `prism.edges` mutations land in the
+            // same store the UI mutates from. The daemon's bare
+            // `luau.exec` keeps the default (no collection) context
+            // and surfaces a typed error when scripts reach for the
+            // instance API there.
+            let ctx = prism_daemon::modules::prism_context::PrismContext::default()
+                .with_collection(self.collection.clone());
+            match prism_daemon::modules::luau_module::exec_with_context(
+                &script,
+                Some(&call_args),
+                ctx,
+            ) {
                 Ok(result) => {
                     self.apply_luau_result(&result);
                 }

@@ -49,8 +49,9 @@ pub(crate) fn push_builder_preview(
     let node_count = count_nodes(doc.root.as_ref());
     window.set_builder_node_count(node_count);
     let palette = component_palette_items(doc);
-    let count = sync_model(&models.component_palette, &palette);
-    window.set_component_palette_count(count);
+    sync_model(&models.component_palette, &palette, |c| {
+        window.set_component_palette_count(c)
+    });
 }
 
 pub(crate) fn count_nodes(root: Option<&Node>) -> i32 {
@@ -78,8 +79,9 @@ pub(crate) fn push_live_preview(
     let root = match &doc.root {
         Some(r) => r,
         None => {
-            sync_model(&models.preview_nodes, &[]);
-            window.set_preview_nodes_count(0);
+            sync_model(&models.preview_nodes, &[], |c| {
+                window.set_preview_nodes_count(c)
+            });
             return;
         }
     };
@@ -181,8 +183,9 @@ pub(crate) fn push_live_preview(
     }
 
     walk_preview(root, &layout, selection, &mut items, 0.0, 0.0);
-    let count = sync_model(&models.preview_nodes, &items);
-    window.set_preview_nodes_count(count);
+    sync_model(&models.preview_nodes, &items, |c| {
+        window.set_preview_nodes_count(c)
+    });
 }
 
 pub(crate) fn push_wysiwyg_preview(

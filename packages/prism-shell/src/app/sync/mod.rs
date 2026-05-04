@@ -464,7 +464,7 @@ pub(super) fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
             .values()
             .any(|f| f.is_scalar());
         #[cfg(feature = "native")]
-        let widget_data = resolve_widget_data(&state.builder_document, &inner.collection);
+        let widget_data = resolve_widget_data(&state.builder_document, &inner.collection.borrow());
         #[cfg(not(feature = "native"))]
         let widget_data = HashMap::new();
         let needs_clone = has_dynamic_facets || has_scalar_facets;
@@ -565,7 +565,7 @@ pub(super) fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
         #[cfg(feature = "native")]
         let project_files = {
             use prism_core::foundation::persistence::ObjectFilter;
-            let file_objects = inner.collection.list_objects(Some(&ObjectFilter {
+            let file_objects = inner.collection.borrow().list_objects(Some(&ObjectFilter {
                 types: Some(vec!["file".into()]),
                 exclude_deleted: true,
                 ..Default::default()
@@ -610,8 +610,7 @@ pub(super) fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
     } else {
         Vec::new()
     };
-    let count = sync_model(&inner.models.tabs, &tab_items);
-    window.set_tabs_count(count);
+    sync_model(&inner.models.tabs, &tab_items, |c| window.set_tabs_count(c));
 
     // Command palette
     window.set_command_palette_visible(state.command_palette_open);
@@ -624,8 +623,9 @@ pub(super) fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
             category: SharedString::from(&c.category),
         })
         .collect();
-    let count = sync_model(&inner.models.command_results, &cmd_items);
-    window.set_command_results_count(count);
+    sync_model(&inner.models.command_results, &cmd_items, |c| {
+        window.set_command_results_count(c)
+    });
 
     // Notifications
     let toast_items: Vec<ToastItem> = state
@@ -638,8 +638,9 @@ pub(super) fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
             kind: SharedString::from(&t.kind),
         })
         .collect();
-    let count = sync_model(&inner.models.notifications, &toast_items);
-    window.set_notifications_count(count);
+    sync_model(&inner.models.notifications, &toast_items, |c| {
+        window.set_notifications_count(c)
+    });
 
     // Undo/redo state
     UndoBindings::from_shell(inner).bind_to(window);
@@ -660,25 +661,29 @@ pub(super) fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
             })
             .collect()
     };
-    let count = sync_model(&inner.models.search_results, &search_items);
-    window.set_search_results_count(count);
+    sync_model(&inner.models.search_results, &search_items, |c| {
+        window.set_search_results_count(c)
+    });
 }
 
 fn clear_panel_slots(models: &PersistentModels, window: &AppWindow) {
-    sync_model(&models.actions, &[]);
-    window.set_actions_count(0);
+    sync_model(&models.actions, &[], |c| window.set_actions_count(c));
     window.set_builder_node_count(0);
     window.set_builder_source(SharedString::new());
     window.set_inspector_tree(SharedString::new());
-    sync_model(&models.inspector_nodes, &[]);
-    window.set_inspector_nodes_count(0);
-    sync_model(&models.grid_edge_handles, &[]);
-    window.set_grid_edge_handles_count(0);
+    sync_model(&models.inspector_nodes, &[], |c| {
+        window.set_inspector_nodes_count(c)
+    });
+    sync_model(&models.grid_edge_handles, &[], |c| {
+        window.set_grid_edge_handles_count(c)
+    });
     window.set_selected_component(SharedString::new());
-    sync_model(&models.component_palette, &[]);
-    window.set_component_palette_count(0);
-    sync_model(&models.widget_toolbar, &[]);
-    window.set_widget_toolbar_count(0);
+    sync_model(&models.component_palette, &[], |c| {
+        window.set_component_palette_count(c)
+    });
+    sync_model(&models.widget_toolbar, &[], |c| {
+        window.set_widget_toolbar_count(c)
+    });
 }
 
 pub(super) fn field_row_data_to_slint(r: &crate::panels::properties::FieldRowData) -> FieldRow {
@@ -897,10 +902,12 @@ pub(super) fn push_dock_layout(
         }
     }
 
-    let count = sync_model(&models.dock_panels, &panels);
-    window.set_dock_panels_count(count);
-    let count = sync_model(&models.dock_dividers, &dividers);
-    window.set_dock_dividers_count(count);
+    sync_model(&models.dock_panels, &panels, |c| {
+        window.set_dock_panels_count(c)
+    });
+    sync_model(&models.dock_dividers, &dividers, |c| {
+        window.set_dock_dividers_count(c)
+    });
 
     // Workflow pages
     let active_page_id = workspace.active_page().id.as_str();
@@ -913,8 +920,9 @@ pub(super) fn push_dock_layout(
             active: p.id == active_page_id,
         })
         .collect();
-    let count = sync_model(&models.workflow_pages, &page_items);
-    window.set_workflow_pages_count(count);
+    sync_model(&models.workflow_pages, &page_items, |c| {
+        window.set_workflow_pages_count(c)
+    });
 }
 
 pub(super) fn field_kind_for_key(inner: &ShellInner, key: &str) -> Option<String> {

@@ -63,8 +63,9 @@ pub(crate) fn push_explorer_nodes(
             is_active: n.is_active,
         })
         .collect();
-    let count = sync_model(&models.explorer_nodes, &items);
-    window.set_explorer_nodes_count(count);
+    sync_model(&models.explorer_nodes, &items, |c| {
+        window.set_explorer_nodes_count(c)
+    });
 }
 
 pub(crate) fn push_menu_defs(
@@ -95,8 +96,7 @@ pub(crate) fn push_menu_defs(
             }
         })
         .collect();
-    let count = sync_model(&models.menu_defs, &defs);
-    window.set_menu_defs_count(count);
+    sync_model(&models.menu_defs, &defs, |c| window.set_menu_defs_count(c));
 }
 
 pub(crate) fn push_app_cards(models: &PersistentModels, window: &AppWindow, apps: &[PrismApp]) {
@@ -111,8 +111,7 @@ pub(crate) fn push_app_cards(models: &PersistentModels, window: &AppWindow, apps
             page_count: app.pages.len() as i32,
         })
         .collect();
-    let count = sync_model(&models.app_cards, &items);
-    window.set_app_cards_count(count);
+    sync_model(&models.app_cards, &items, |c| window.set_app_cards_count(c));
 }
 
 pub(crate) fn push_navigation_panel_data(
@@ -136,8 +135,9 @@ pub(crate) fn push_navigation_panel_data(
                 .collect()
         })
         .unwrap_or_default();
-    let count = sync_model(&models.nav_pages, &nav_items);
-    window.set_nav_pages_count(count);
+    sync_model(&models.nav_pages, &nav_items, |c| {
+        window.set_nav_pages_count(c)
+    });
 
     let nav_style_label = app
         .map(|app| match app.navigation.style {
@@ -171,8 +171,9 @@ pub(crate) fn push_navigation_panel_data(
                 .collect()
         })
         .unwrap_or_default();
-    let gn_count = sync_model(&models.nav_graph_nodes, &graph_nodes);
-    window.set_nav_graph_nodes_count(gn_count);
+    sync_model(&models.nav_graph_nodes, &graph_nodes, |c| {
+        window.set_nav_graph_nodes_count(c)
+    });
 
     // Graph edges — pre-compute line endpoints from node centers
     let graph_edges: Vec<crate::NavGraphEdge> = app
@@ -203,8 +204,9 @@ pub(crate) fn push_navigation_panel_data(
                 .collect()
         })
         .unwrap_or_default();
-    let ge_count = sync_model(&models.nav_graph_edges, &graph_edges);
-    window.set_nav_graph_edges_count(ge_count);
+    sync_model(&models.nav_graph_edges, &graph_edges, |c| {
+        window.set_nav_graph_edges_count(c)
+    });
 }
 
 pub(crate) fn clear_href_on_node(node: &mut prism_builder::document::Node, target_id: &str) {
@@ -240,8 +242,9 @@ pub(crate) fn push_breadcrumbs(
     } else {
         Vec::new()
     };
-    let count = sync_model(&models.breadcrumbs, &items);
-    window.set_breadcrumbs_count(count);
+    sync_model(&models.breadcrumbs, &items, |c| {
+        window.set_breadcrumbs_count(c)
+    });
 }
 
 pub(crate) fn find_path_to_node(

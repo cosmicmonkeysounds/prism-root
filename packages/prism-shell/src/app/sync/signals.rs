@@ -71,8 +71,9 @@ pub(crate) fn push_signal_panel_data(
             action_summary: SharedString::from(r.action_summary.as_str()),
         })
         .collect();
-    let count = sync_model(&models.signal_connections, &conn_items);
-    window.set_signal_connections_count(count);
+    sync_model(&models.signal_connections, &conn_items, |c| {
+        window.set_signal_connections_count(c)
+    });
 
     let sig_items: Vec<crate::SignalItem> = if let Some(node_id) = &selected {
         let available = SignalsPanel::available_signals(node_id, doc, registry);
@@ -87,8 +88,9 @@ pub(crate) fn push_signal_panel_data(
     } else {
         vec![]
     };
-    let count = sync_model(&models.signal_list, &sig_items);
-    window.set_signal_list_count(count);
+    sync_model(&models.signal_list, &sig_items, |c| {
+        window.set_signal_list_count(c)
+    });
 
     let targets = SignalsPanel::available_targets(doc);
     let target_items: Vec<crate::TargetNodeItem> = targets
@@ -99,8 +101,9 @@ pub(crate) fn push_signal_panel_data(
             component: SharedString::from(t.component.as_str()),
         })
         .collect();
-    let count = sync_model(&models.signal_target_nodes, &target_items);
-    window.set_signal_target_nodes_count(count);
+    sync_model(&models.signal_target_nodes, &target_items, |c| {
+        window.set_signal_target_nodes_count(c)
+    });
 
     let mut target_labels: Vec<SharedString> = Vec::with_capacity(targets.len() + 1);
     target_labels.push(SharedString::from("(self)"));

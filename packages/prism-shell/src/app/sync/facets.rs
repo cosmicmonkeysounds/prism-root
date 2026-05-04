@@ -42,7 +42,10 @@ use crate::{
 };
 
 #[cfg(feature = "native")]
-pub(crate) fn resolve_facet_data(doc: &mut BuilderDocument, collection: &CollectionStore) {
+pub(crate) fn resolve_facet_data(
+    doc: &mut BuilderDocument,
+    collection_rc: &std::rc::Rc<std::cell::RefCell<CollectionStore>>,
+) {
     for facet in doc.facets.values_mut() {
         match &facet.kind {
             FacetKind::Script {
@@ -74,7 +77,20 @@ pub(crate) fn resolve_facet_data(doc: &mut BuilderDocument, collection: &Collect
                     facet.resolved_data = None;
                     continue;
                 }
-                match prism_daemon::modules::luau_module::exec(&effective_source, None) {
+                // Phase 4: facet scripts run with a live collection
+                // so `prism.objects` / `prism.edges` reads return the
+                // same data the rest of the shell sees. Writes are
+                // technically permitted but discouraged from facet
+                // resolvers — a sync pass that mutates the document
+                // mid-resolution would loop. Phase 5d turns the
+                // facet-side context read-only as a follow-up.
+                let ctx = prism_daemon::modules::prism_context::PrismContext::default()
+                    .with_collection(collection_rc.clone());
+                match prism_daemon::modules::luau_module::exec_with_context(
+                    &effective_source,
+                    None,
+                    ctx,
+                ) {
                     Ok(result) => {
                         if let Some(arr) = result.as_array() {
                             facet.resolved_data = Some(arr.clone());
@@ -96,6 +112,7 @@ pub(crate) fn resolve_facet_data(doc: &mut BuilderDocument, collection: &Collect
                         continue;
                     }
                 };
+                let collection = collection_rc.borrow();
                 let objects = collection.list_objects(Some(&ObjectFilter {
                     types: Some(vec![entity_type.clone()]),
                     exclude_deleted: true,
@@ -118,6 +135,7 @@ pub(crate) fn resolve_facet_data(doc: &mut BuilderDocument, collection: &Collect
                     facet.resolved_data = None;
                     continue;
                 }
+                let collection = collection_rc.borrow();
                 let sources = collection.list_objects(Some(&ObjectFilter {
                     types: Some(vec![source_entity.clone()]),
                     exclude_deleted: true,

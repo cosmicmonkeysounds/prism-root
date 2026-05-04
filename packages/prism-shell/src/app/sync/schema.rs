@@ -57,8 +57,9 @@ pub(crate) fn push_schema_list(
             selected: selected_id == Some(s.id.as_str()),
         })
         .collect();
-    let count = sync_model(&models.schema_list, &items);
-    window.set_schema_list_count(count);
+    sync_model(&models.schema_list, &items, |c| {
+        window.set_schema_list_count(c)
+    });
     let label = selected_id
         .and_then(|id| doc.facet_schemas.get(id))
         .map(|s| s.label.as_str())

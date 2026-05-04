@@ -149,8 +149,9 @@ pub(crate) fn push_editor_data(models: &PersistentModels, window: &AppWindow, es
         i += 1;
     }
 
-    let count = sync_model(&models.editor_lines, &lines);
-    window.set_editor_lines_count(count);
+    sync_model(&models.editor_lines, &lines, |c| {
+        window.set_editor_lines_count(c)
+    });
 
     let cursor_prefix: String = es
         .buffer

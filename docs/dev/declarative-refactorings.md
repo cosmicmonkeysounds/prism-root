@@ -393,7 +393,7 @@ attribute when the Rust body can't trivially translate.
 
 ---
 
-## 5. `#[derive(SlintBinding)]` — Rust↔Slint property bridge  ✅ derive shipped, scalar clusters migrated
+## 5. `#[derive(SlintBinding)]` — Rust↔Slint property bridge  ✅ derive shipped, scalar clusters migrated, model-count setters folded into `sync_model`
 
 ### Current state
 
@@ -473,12 +473,18 @@ declared in `.slint` get matched to Rust fns by name.
   Some(...)` defaults) so the call site is one bind. Renaming any
   field without updating its Slint counterpart now fails to
   compile.
-- ⬜ Remaining `set_*` calls are model-count setters (`set_X_count`
-  paired with a `sync_model` of a `VecModel`). They don't fit the
-  mirror-struct pattern because the count is a return value of
-  `sync_model`, not an `AppState` projection. Folding those into
-  `sync_model` itself (so it pushes both the model and the count)
-  would be a separate refactor.
+- ✅ Model-count setters folded into `sync_model`: the helper now
+  takes a `set_count: impl FnOnce(i32)` closure and pushes both the
+  `VecModel` rows and the paired `*-count` Slint property in a single
+  call. Every `let count = sync_model(&models.X, &items); window.set_X_count(count);`
+  pair across `prism-shell/src/app/sync/` (~25 call sites in
+  `widget.rs`, `properties.rs`, `inspector.rs`, `signals.rs`,
+  `preview.rs`, `grid.rs`, `editor.rs`, `navigation.rs`,
+  `schema.rs`, and `sync/mod.rs`) collapses to one
+  `sync_model(&models.X, &items, |c| window.set_X_count(c))`. Empty-clear
+  sites (e.g. `clear_panel_slots`) likewise drop the manual `set_X_count(0)`
+  follow-up — passing `&[]` makes the closure push `0`. The count is no
+  longer a return value, so callers can't forget to push it.
 
 ---
 

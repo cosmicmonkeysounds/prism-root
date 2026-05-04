@@ -52,8 +52,9 @@ pub(crate) fn push_inspector_nodes(
     } else {
         flatten_inspector_nodes(doc.root.as_ref(), selection)
     };
-    let count = sync_model(&models.inspector_nodes, &items);
-    window.set_inspector_nodes_count(count);
+    sync_model(&models.inspector_nodes, &items, |c| {
+        window.set_inspector_nodes_count(c)
+    });
 }
 
 pub(crate) fn flatten_inspector_nodes(

@@ -85,8 +85,9 @@ pub(crate) fn push_property_sections(
                     .into_iter()
                     .map(|r| field_row_data_to_slint(&r))
                     .collect();
-                let count = sync_model(&models.property_rows, &rows);
-                window.set_property_rows_count(count);
+                sync_model(&models.property_rows, &rows, |c| {
+                    window.set_property_rows_count(c)
+                });
                 return;
             }
         }
@@ -105,8 +106,9 @@ pub(crate) fn push_property_sections(
         .into_iter()
         .map(|r| field_row_data_to_slint(&r))
         .collect();
-    let count = sync_model(&models.property_rows, &rows);
-    window.set_property_rows_count(count);
+    sync_model(&models.property_rows, &rows, |c| {
+        window.set_property_rows_count(c)
+    });
 
     if let Some(selected_id) = &selected {
         if let Some(node) = doc.root.as_ref().and_then(|n| n.find(selected_id)) {

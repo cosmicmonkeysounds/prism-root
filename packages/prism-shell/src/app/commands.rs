@@ -729,12 +729,18 @@ pub(super) fn execute_command(
                 match crate::project::ProjectManager::open(&path) {
                     Ok(mut proj) => {
                         let objects = proj.collection().list_objects(None);
-                        for obj in &objects {
-                            let _ = s.collection.put_object(obj);
+                        {
+                            let mut col = s.collection.borrow_mut();
+                            for obj in &objects {
+                                let _ = col.put_object(obj);
+                            }
                         }
                         let edges = proj.collection().list_edges(None);
-                        for edge in &edges {
-                            let _ = s.collection.put_edge(edge);
+                        {
+                            let mut col = s.collection.borrow_mut();
+                            for edge in &edges {
+                                let _ = col.put_edge(edge);
+                            }
                         }
                         let name = path
                             .file_name()
@@ -758,7 +764,7 @@ pub(super) fn execute_command(
             let mut s = shared.borrow_mut();
             if s.project.is_some() {
                 s.project = None;
-                s.collection = CollectionStore::new();
+                *s.collection.borrow_mut() = CollectionStore::new();
                 s.add_toast("Folder closed", "Project folder closed", "info");
             }
         }

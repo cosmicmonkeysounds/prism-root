@@ -10,23 +10,35 @@
 //! daemon command. Each later phase plugs another subsystem onto
 //! this same struct without changing the injection plumbing.
 
+#[cfg(feature = "crdt")]
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use mlua::{Lua, UserData, UserDataFields};
 use prism_core::design_tokens::{DesignTokens, DEFAULT_TOKENS};
+#[cfg(feature = "crdt")]
+use prism_core::foundation::persistence::CollectionStore;
 use prism_core::kernel::config::model::ConfigModel;
 use prism_core::kernel::config::registry::ConfigRegistry;
-use prism_core::luau_bindings::{ConfigHandle, ObjectsHandle};
+use prism_core::luau_bindings::{ConfigHandle, EdgesHandle, ObjectsHandle};
 use prism_core::shell_mode::{Permission, ShellMode};
 
 /// What every Luau script sees as the `prism` global. Cheap to clone:
-/// `objects` / `config` are `Rc`-backed handles, the rest is `Copy`.
+/// `objects` / `edges` / `config` are `Rc`-backed handles, the rest
+/// is `Copy`.
+///
+/// Phase 4 of `docs/dev/luau-integration-plan.md` adds [`edges`] and
+/// the instance-API on [`objects`]; both light up only when the host
+/// constructs the context with [`PrismContext::with_collection`].
+/// Daemon-only callers stick with [`PrismContext::default`] and see
+/// the read-only registry surface they had before.
 #[derive(Clone)]
 pub struct PrismContext {
     pub tokens: DesignTokens,
     pub shell_mode: ShellMode,
     pub permission: Permission,
     pub objects: ObjectsHandle,
+    pub edges: EdgesHandle,
     pub config: ConfigHandle,
 }
 
@@ -37,8 +49,24 @@ impl Default for PrismContext {
             shell_mode: ShellMode::Build,
             permission: Permission::Dev,
             objects: ObjectsHandle::default(),
+            edges: EdgesHandle::default(),
             config: ConfigHandle::new(ConfigModel::new(Rc::new(ConfigRegistry::new()))),
         }
+    }
+}
+
+impl PrismContext {
+    /// Attach a live [`CollectionStore`] so the `prism.objects` and
+    /// `prism.edges` instance APIs (`get` / `create` / `update` /
+    /// `delete` / `list` / `query`) become available to scripts.
+    /// Hosts running outside a shell context (the daemon's bare
+    /// `luau.exec`) skip this call so the same scripts surface a
+    /// typed error instead of silently mutating no state.
+    #[cfg(feature = "crdt")]
+    pub fn with_collection(mut self, collection: Rc<RefCell<CollectionStore>>) -> Self {
+        self.objects = self.objects.with_collection(collection.clone());
+        self.edges = self.edges.with_collection(collection);
+        self
     }
 }
 
@@ -56,6 +84,7 @@ impl UserData for PrismContext {
         // owner of the underlying `Rc<...>`, so script-side mutations
         // are visible in subsequent calls and to the host.
         fields.add_field_method_get("objects", |_, this| Ok(this.objects.clone()));
+        fields.add_field_method_get("edges", |_, this| Ok(this.edges.clone()));
         fields.add_field_method_get("config", |_, this| Ok(this.config.clone()));
     }
 }
@@ -159,6 +188,72 @@ mod tests {
             .eval()
             .unwrap();
         assert_eq!(label, "Task");
+    }
+
+    #[cfg(feature = "crdt")]
+    #[test]
+    fn objects_instance_api_lights_up_when_collection_is_attached() {
+        use prism_core::foundation::persistence::CollectionStore;
+        let store = Rc::new(RefCell::new(CollectionStore::new()));
+        let ctx = PrismContext::default().with_collection(store.clone());
+        let lua = Lua::new();
+        install(&lua, ctx).unwrap();
+        let id: String = lua
+            .load("return prism.objects:create('task', { name = 'Wire it up' })")
+            .eval()
+            .unwrap();
+        assert!(!id.is_empty());
+        let name: String = lua
+            .load(format!("return prism.objects:get('{id}').name"))
+            .eval()
+            .unwrap();
+        assert_eq!(name, "Wire it up");
+        // Mutation must be visible to the host through the same store.
+        let host_view = store
+            .borrow()
+            .get_object(&prism_core::foundation::object_model::types::ObjectId(
+                id.clone(),
+            ))
+            .unwrap();
+        assert_eq!(host_view.name, "Wire it up");
+    }
+
+    #[cfg(feature = "crdt")]
+    #[test]
+    fn edges_instance_api_round_trips_through_prism_global() {
+        use prism_core::foundation::persistence::CollectionStore;
+        let store = Rc::new(RefCell::new(CollectionStore::new()));
+        let ctx = PrismContext::default().with_collection(store);
+        let lua = Lua::new();
+        install(&lua, ctx).unwrap();
+        let id: String = lua
+            .load(
+                "return prism.edges:create('depends-on', \
+                 { source_id = 'a', target_id = 'b' })",
+            )
+            .eval()
+            .unwrap();
+        assert!(!id.is_empty());
+        let listed: i64 = lua
+            .load("return #prism.edges:list({ source_id = 'a' })")
+            .eval()
+            .unwrap();
+        assert_eq!(listed, 1);
+    }
+
+    #[cfg(feature = "crdt")]
+    #[test]
+    fn objects_instance_api_errors_in_default_daemon_context() {
+        // Default `PrismContext` has no collection — the same script
+        // that works in the shell must surface a typed error in the
+        // daemon's bare `luau.exec` path.
+        let lua = Lua::new();
+        install(&lua, PrismContext::default()).unwrap();
+        let err = lua
+            .load("return prism.objects:get('anything')")
+            .eval::<mlua::Value>()
+            .unwrap_err();
+        assert!(err.to_string().contains("instance API unavailable"));
     }
 
     #[test]

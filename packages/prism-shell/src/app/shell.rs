@@ -116,7 +116,7 @@ impl Shell {
             nav_link_source: None,
             persistence: ProjectPersistence::new(),
             #[cfg(feature = "native")]
-            collection: CollectionStore::new(),
+            collection: std::rc::Rc::new(std::cell::RefCell::new(CollectionStore::new())),
             #[cfg(feature = "native")]
             project: None,
         }));
@@ -218,7 +218,9 @@ impl Shell {
         if let Some(ref mut proj) = inner.project {
             f(proj.collection())
         } else {
-            f(&mut inner.collection)
+            let collection = inner.collection.clone();
+            let mut borrow = collection.borrow_mut();
+            f(&mut borrow)
         }
     }
 
@@ -230,12 +232,18 @@ impl Shell {
         let mut proj = crate::project::ProjectManager::open(path)?;
         let mut inner = self.inner.borrow_mut();
         let objects = proj.collection().list_objects(None);
-        for obj in &objects {
-            let _ = inner.collection.put_object(obj);
+        {
+            let mut col = inner.collection.borrow_mut();
+            for obj in &objects {
+                let _ = col.put_object(obj);
+            }
         }
         let edges = proj.collection().list_edges(None);
-        for edge in &edges {
-            let _ = inner.collection.put_edge(edge);
+        {
+            let mut col = inner.collection.borrow_mut();
+            for edge in &edges {
+                let _ = col.put_edge(edge);
+            }
         }
         inner.project = Some(proj);
         Ok(())

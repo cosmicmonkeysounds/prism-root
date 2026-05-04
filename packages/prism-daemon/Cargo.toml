@@ -78,7 +78,10 @@ embedded = ["crdt"]
 wasm = ["crdt", "luau", "vfs", "crypto"]
 
 # Individual capabilities.
-crdt = ["dep:loro"]
+# `prism-core?/crdt` propagates the CRDT feature into prism-core when
+# both are on, so the Phase 4 `prism.objects` / `prism.edges` instance
+# API (which needs `CollectionStore`) compiles in.
+crdt = ["dep:loro", "prism-core?/crdt"]
 luau = ["dep:mlua", "dep:prism-core"]
 build = []
 watcher = ["dep:notify"]

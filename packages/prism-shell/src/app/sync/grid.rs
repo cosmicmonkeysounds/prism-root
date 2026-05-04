@@ -94,10 +94,12 @@ pub(crate) fn push_page_layout_data(
 
     // Gutters are no longer needed with the recursive grid model —
     // each split has its own gap handled by flatten_cells.
-    sync_model(&models.column_gutters, &[]);
-    window.set_column_gutters_count(0);
-    sync_model(&models.row_gutters, &[]);
-    window.set_row_gutters_count(0);
+    sync_model(&models.column_gutters, &[], |c| {
+        window.set_column_gutters_count(c)
+    });
+    sync_model(&models.row_gutters, &[], |c| {
+        window.set_row_gutters_count(c)
+    });
 }
 
 pub(crate) fn push_composition_counts(
@@ -132,8 +134,7 @@ pub(crate) fn push_grid_cells(
     viewport_width: f32,
 ) {
     if !doc.page_layout.has_grid() {
-        sync_model(&models.grid_cells, &[]);
-        window.set_grid_cells_count(0);
+        sync_model(&models.grid_cells, &[], |c| window.set_grid_cells_count(c));
         return;
     }
 
@@ -188,8 +189,9 @@ pub(crate) fn push_grid_cells(
         })
         .collect();
 
-    let count = sync_model(&models.grid_cells, &cells);
-    window.set_grid_cells_count(count);
+    sync_model(&models.grid_cells, &cells, |c| {
+        window.set_grid_cells_count(c)
+    });
 }
 
 pub(crate) fn push_grid_edge_handles(
@@ -199,8 +201,9 @@ pub(crate) fn push_grid_edge_handles(
     viewport_width: f32,
 ) {
     if !doc.page_layout.has_grid() {
-        sync_model(&models.grid_edge_handles, &[]);
-        window.set_grid_edge_handles_count(0);
+        sync_model(&models.grid_edge_handles, &[], |c| {
+            window.set_grid_edge_handles_count(c)
+        });
         return;
     }
 
@@ -241,6 +244,7 @@ pub(crate) fn push_grid_edge_handles(
         })
         .collect();
 
-    let count = sync_model(&models.grid_edge_handles, &handles);
-    window.set_grid_edge_handles_count(count);
+    sync_model(&models.grid_edge_handles, &handles, |c| {
+        window.set_grid_edge_handles_count(c)
+    });
 }

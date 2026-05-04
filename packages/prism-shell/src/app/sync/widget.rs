@@ -62,6 +62,7 @@ pub(crate) fn push_widget_toolbar(
             group: SharedString::from(a.group.as_deref().unwrap_or("")),
         })
         .collect();
-    let count = sync_model(&models.widget_toolbar, &items);
-    window.set_widget_toolbar_count(count);
+    sync_model(&models.widget_toolbar, &items, |c| {
+        window.set_widget_toolbar_count(c)
+    });
 }

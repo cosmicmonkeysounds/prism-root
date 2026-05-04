@@ -38,7 +38,7 @@ mod vault_manager;
 
 pub use collection_store::{
     CollectionChange, CollectionChangeKind, CollectionStore, CollectionStoreOptions, EdgeFilter,
-    ObjectFilter, PersistenceError, Subscription,
+    ObjectFilter, ParentIdFilter, PersistenceError, Subscription,
 };
 pub use fs_adapter::FileSystemAdapter;
 pub use vault_manager::{MemoryAdapter, PersistenceAdapter, VaultManager, VaultManagerOptions};
