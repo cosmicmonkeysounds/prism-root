@@ -23,6 +23,35 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+// ── Error type ─────────────────────────────────────────────────────────
+
+/// Structured errors returned from [`run_build_step`] and the
+/// `build.run_step` command. Replaces the pre-refactor
+/// `Result<T, String>` so callers can distinguish I/O failures from
+/// spawn failures from non-zero-exit failures without substring
+/// matching on prose.
+#[derive(Debug, thiserror::Error)]
+pub enum BuildError {
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("failed to spawn '{command}' in {cwd}: {source}")]
+    Spawn {
+        command: String,
+        cwd: String,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("command '{command}' exited with code {code}\nstdout:\n{stdout}\nstderr:\n{stderr}")]
+    CommandFailed {
+        command: String,
+        code: String,
+        stdout: String,
+        stderr: String,
+    },
+    #[error("invoke-ipc step '{0}' is not yet supported by the daemon")]
+    UnsupportedInvokeIpc(String),
+}
+
 // ── Wire types (mirror @prism/core/builder) ─────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,7 +88,7 @@ pub struct BuildStepOutput {
 pub struct BuildModule;
 
 #[daemon_command(id = "build.run_step")]
-fn run_step(args: RunStepArgs) -> Result<BuildStepOutput, String> {
+fn run_step(args: RunStepArgs) -> Result<BuildStepOutput, BuildError> {
     let cwd = args
         .working_dir
         .map(PathBuf::from)
@@ -83,27 +112,26 @@ pub fn run_build_step(
     step: &BuildStep,
     working_dir: &Path,
     env: &HashMap<String, String>,
-) -> Result<BuildStepOutput, String> {
+) -> Result<BuildStepOutput, BuildError> {
     match step {
         BuildStep::EmitFile { path, contents, .. } => emit_file(working_dir, path, contents),
         BuildStep::RunCommand {
             command, args, cwd, ..
         } => run_command(working_dir, command, args, cwd.as_deref(), env),
-        BuildStep::InvokeIpc { name, .. } => Err(format!(
-            "invoke-ipc step '{}' is not yet supported by the daemon",
-            name
-        )),
+        BuildStep::InvokeIpc { name, .. } => Err(BuildError::UnsupportedInvokeIpc(name.clone())),
     }
 }
 
-fn emit_file(working_dir: &Path, path: &str, contents: &str) -> Result<BuildStepOutput, String> {
+fn emit_file(
+    working_dir: &Path,
+    path: &str,
+    contents: &str,
+) -> Result<BuildStepOutput, BuildError> {
     let resolved = resolve_path(working_dir, path);
     if let Some(parent) = resolved.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("failed to create {}: {}", parent.display(), e))?;
+        std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(&resolved, contents)
-        .map_err(|e| format!("failed to write {}: {}", resolved.display(), e))?;
+    std::fs::write(&resolved, contents)?;
     Ok(BuildStepOutput {
         stdout: Some(format!(
             "wrote {} ({} bytes)",
@@ -120,7 +148,7 @@ fn run_command(
     args: &[String],
     cwd: Option<&str>,
     env: &HashMap<String, String>,
-) -> Result<BuildStepOutput, String> {
+) -> Result<BuildStepOutput, BuildError> {
     let effective_cwd = match cwd {
         Some(c) => resolve_path(working_dir, c),
         None => working_dir.to_path_buf(),
@@ -132,13 +160,10 @@ fn run_command(
         cmd.env(k, v);
     }
 
-    let output = cmd.output().map_err(|e| {
-        format!(
-            "failed to spawn '{}' in {}: {}",
-            command,
-            effective_cwd.display(),
-            e
-        )
+    let output = cmd.output().map_err(|source| BuildError::Spawn {
+        command: command.to_string(),
+        cwd: effective_cwd.display().to_string(),
+        source,
     })?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
@@ -150,14 +175,12 @@ fn run_command(
             .code()
             .map(|c| c.to_string())
             .unwrap_or_else(|| "signal".to_string());
-        return Err(format!(
-            "command '{} {}' exited with code {}\nstdout:\n{}\nstderr:\n{}",
-            command,
-            args.join(" "),
+        return Err(BuildError::CommandFailed {
+            command: format!("{} {}", command, args.join(" ")),
             code,
             stdout,
-            stderr
-        ));
+            stderr,
+        });
     }
 
     Ok(BuildStepOutput {
@@ -270,7 +293,7 @@ mod tests {
         };
 
         let err = run_build_step(&step, dir.path(), &empty_env()).unwrap_err();
-        assert!(err.contains("exited with code"));
+        assert!(err.to_string().contains("exited with code"));
     }
 
     #[test]
@@ -319,7 +342,7 @@ mod tests {
         };
 
         let err = run_build_step(&step, dir.path(), &empty_env()).unwrap_err();
-        assert!(err.contains("failed to spawn"));
+        assert!(err.to_string().contains("failed to spawn"));
     }
 
     #[test]
@@ -332,8 +355,9 @@ mod tests {
         };
 
         let err = run_build_step(&step, dir.path(), &empty_env()).unwrap_err();
-        assert!(err.contains("invoke-ipc"));
-        assert!(err.contains("some.ipc"));
+        let msg = err.to_string();
+        assert!(msg.contains("invoke-ipc"));
+        assert!(msg.contains("some.ipc"));
     }
 
     #[test]

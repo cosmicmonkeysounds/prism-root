@@ -114,7 +114,7 @@ pub use transport::ipc_local::{
 };
 
 #[cfg(feature = "vfs")]
-pub use modules::vfs_module::{VfsEntry, VfsManager, VfsStats};
+pub use modules::vfs_module::{VfsEntry, VfsError, VfsManager, VfsStats};
 
 #[cfg(feature = "actors")]
 pub use modules::actors_module::{ActorKind, ActorMessage, ActorStatus, ActorsManager};

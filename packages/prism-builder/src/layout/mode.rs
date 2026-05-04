@@ -3,7 +3,7 @@
 //! Submodule of [`crate::layout`]. Re-exported from there.
 
 use prism_core::foundation::geometry::Edges;
-use prism_luau_derive::Editable;
+use prism_luau_derive::{luau_expose, Editable};
 use serde::{Deserialize, Serialize};
 use taffy::prelude::*;
 
@@ -251,6 +251,7 @@ impl Default for FlowProps {
 }
 
 /// Display mode for flow nodes.
+#[luau_expose]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Editable)]
 #[serde(rename_all = "kebab-case")]
 pub enum FlowDisplay {
@@ -272,6 +273,7 @@ impl FlowDisplay {
 }
 
 /// A length dimension — auto, fixed, or percentage.
+#[luau_expose]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize, Editable)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum Dimension {
@@ -296,6 +298,7 @@ impl Dimension {
 }
 
 /// Flex direction.
+#[luau_expose]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Editable)]
 #[serde(rename_all = "kebab-case")]
 pub enum FlexDirection {
@@ -318,6 +321,7 @@ impl FlexDirection {
 }
 
 /// Alignment option (maps to CSS align-items / align-self).
+#[luau_expose]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Editable)]
 #[serde(rename_all = "kebab-case")]
 pub enum AlignOption {
@@ -344,6 +348,7 @@ impl AlignOption {
 }
 
 /// Justify-content option.
+#[luau_expose]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Editable)]
 #[serde(rename_all = "kebab-case")]
 pub enum JustifyOption {
@@ -372,6 +377,7 @@ impl JustifyOption {
 }
 
 /// Grid placement for a node within a CSS Grid parent.
+#[luau_expose]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Editable)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum GridPlacement {

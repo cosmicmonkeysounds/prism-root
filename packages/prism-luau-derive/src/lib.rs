@@ -33,6 +33,13 @@
 //! * `enum Foo { A, B, C }` — unit-only enums become a Luau string
 //!   union (`type Foo = "A" | "B" | "C"`). The runtime side emits
 //!   `IntoLua` / `FromLua` impls that round-trip through strings.
+//! * `enum Foo { A, B(Inner), C { x: i32 } }` — tagged unions become a
+//!   Luau table union with the literal discriminator key `tag` (we
+//!   intentionally don't honour `#[serde(tag = "...")]` — scripts see
+//!   one shape regardless of how the type serialises elsewhere).
+//!   Single-tuple variants project the inner value under `value`;
+//!   struct-like variants flatten their fields into the table.
+//!   Multi-tuple variants are rejected.
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
@@ -306,19 +313,16 @@ fn expand_enum(
     data: &DataEnum,
     args: &ExposeArgs,
 ) -> syn::Result<TokenStream2> {
-    let ident = &input.ident;
-    let luau_name = luau_name(input, args);
-
-    if data
+    let all_unit = data
         .variants
         .iter()
-        .any(|v| !matches!(v.fields, Fields::Unit))
-    {
-        return Err(syn::Error::new_spanned(
-            input,
-            "#[luau_expose] enums currently only support unit variants (Phase 1). Tagged unions land in Phase 2.",
-        ));
+        .all(|v| matches!(v.fields, Fields::Unit));
+    if !all_unit {
+        return expand_tagged_enum(input, data, args);
     }
+
+    let ident = &input.ident;
+    let luau_name = luau_name(input, args);
 
     let variant_idents: Vec<&Ident> = data.variants.iter().map(|v| &v.ident).collect();
     let variant_strs: Vec<String> = variant_idents.iter().map(|i| i.to_string()).collect();
@@ -373,6 +377,174 @@ fn expand_enum(
                             from: "string",
                             to: stringify!(#ident).to_string(),
                             message: Some(format!("unknown variant `{}`", other)),
+                        }),
+                    }
+                }
+            }
+        }
+    };
+
+    Ok(quote! {
+        impl #ident {
+            pub const LUAU_TYPE_NAME: &'static str = #luau_name;
+            pub const LUAU_TYPE_DEF: &'static str = #type_def;
+        }
+        #lua_impls
+    })
+}
+
+// ───── tagged-union enum expansion (Phase 1.1) ──────────────────────
+
+/// Expand an enum with at least one non-unit variant into a Luau
+/// tagged-union type. The discriminator is always the literal string
+/// `tag` (we deliberately don't honour `#[serde(tag = "...")]` —
+/// scripts always see the same shape regardless of how the type
+/// serialises elsewhere). Unit variants stay as `{ tag: "X" }`,
+/// single-tuple variants project into `{ tag: "X", value: T }`, and
+/// struct-like variants flatten their fields into the table.
+///
+/// Multi-tuple variants are rejected — there's no obvious table
+/// projection and no use case in the current codebase.
+fn expand_tagged_enum(
+    input: &DeriveInput,
+    data: &DataEnum,
+    args: &ExposeArgs,
+) -> syn::Result<TokenStream2> {
+    let ident = &input.ident;
+    let luau_name = luau_name(input, args);
+
+    let mut stub_arms: Vec<String> = Vec::with_capacity(data.variants.len());
+    let mut into_arms: Vec<TokenStream2> = Vec::with_capacity(data.variants.len());
+    let mut from_arms: Vec<TokenStream2> = Vec::with_capacity(data.variants.len());
+    let mut variant_strs: Vec<String> = Vec::with_capacity(data.variants.len());
+
+    for variant in &data.variants {
+        let v_ident = &variant.ident;
+        let v_str = v_ident.to_string();
+        variant_strs.push(v_str.clone());
+
+        match &variant.fields {
+            Fields::Unit => {
+                stub_arms.push(format!("    {{ tag: \"{v_str}\" }}"));
+                into_arms.push(quote! {
+                    #ident::#v_ident => {
+                        let t = lua.create_table()?;
+                        t.set("tag", #v_str)?;
+                        Ok(::mlua::Value::Table(t))
+                    }
+                });
+                from_arms.push(quote! {
+                    #v_str => Ok(#ident::#v_ident),
+                });
+            }
+            Fields::Unnamed(unnamed) => {
+                if unnamed.unnamed.len() != 1 {
+                    return Err(syn::Error::new_spanned(
+                        variant,
+                        "#[luau_expose] tagged-union variants must have 0 or 1 unnamed fields, or named fields",
+                    ));
+                }
+                let inner_ty = &unnamed.unnamed.first().unwrap().ty;
+                let luau_ty = rust_type_to_luau(inner_ty);
+                stub_arms.push(format!("    {{ tag: \"{v_str}\", value: {luau_ty} }}"));
+                into_arms.push(quote! {
+                    #ident::#v_ident(inner) => {
+                        let t = lua.create_table()?;
+                        t.set("tag", #v_str)?;
+                        t.set("value", ::mlua::IntoLua::into_lua(inner, lua)?)?;
+                        Ok(::mlua::Value::Table(t))
+                    }
+                });
+                from_arms.push(quote! {
+                    #v_str => {
+                        let raw: ::mlua::Value = table.get("value")?;
+                        let inner: #inner_ty = ::mlua::FromLua::from_lua(raw, lua)?;
+                        Ok(#ident::#v_ident(inner))
+                    }
+                });
+            }
+            Fields::Named(named) => {
+                let mut field_lines: Vec<String> = Vec::with_capacity(named.named.len() + 1);
+                let mut into_field_sets: Vec<TokenStream2> = Vec::with_capacity(named.named.len());
+                let mut from_field_reads: Vec<TokenStream2> = Vec::with_capacity(named.named.len());
+                let mut field_idents: Vec<&Ident> = Vec::with_capacity(named.named.len());
+
+                for f in &named.named {
+                    let fname = f.ident.as_ref().expect("named");
+                    let fname_str = fname.to_string();
+                    let luau_ty = rust_type_to_luau(&f.ty);
+                    field_lines.push(format!("{fname_str}: {luau_ty}"));
+                    let f_ty = &f.ty;
+                    into_field_sets.push(quote! {
+                        t.set(#fname_str, ::mlua::IntoLua::into_lua(#fname, lua)?)?;
+                    });
+                    from_field_reads.push(quote! {
+                        let #fname: #f_ty = {
+                            let raw: ::mlua::Value = table.get(#fname_str)?;
+                            ::mlua::FromLua::from_lua(raw, lua)?
+                        };
+                    });
+                    field_idents.push(fname);
+                }
+
+                let body = field_lines.join(", ");
+                stub_arms.push(format!("    {{ tag: \"{v_str}\", {body} }}"));
+                into_arms.push(quote! {
+                    #ident::#v_ident { #(#field_idents),* } => {
+                        let t = lua.create_table()?;
+                        t.set("tag", #v_str)?;
+                        #(#into_field_sets)*
+                        Ok(::mlua::Value::Table(t))
+                    }
+                });
+                from_arms.push(quote! {
+                    #v_str => {
+                        #(#from_field_reads)*
+                        Ok(#ident::#v_ident { #(#field_idents),* })
+                    }
+                });
+            }
+        }
+    }
+
+    let type_def = format!("export type {luau_name} =\n{}", stub_arms.join("\n  |"));
+
+    let lua_impls = if args.manual_impl {
+        quote! {}
+    } else {
+        quote! {
+            #[cfg(feature = "luau")]
+            impl ::mlua::IntoLua for #ident {
+                fn into_lua(self, lua: &::mlua::Lua) -> ::mlua::Result<::mlua::Value> {
+                    match self {
+                        #(#into_arms)*
+                    }
+                }
+            }
+            #[cfg(feature = "luau")]
+            impl ::mlua::FromLua for #ident {
+                fn from_lua(value: ::mlua::Value, lua: &::mlua::Lua) -> ::mlua::Result<Self> {
+                    let table = match value {
+                        ::mlua::Value::Table(t) => t,
+                        other => {
+                            return Err(::mlua::Error::FromLuaConversionError {
+                                from: other.type_name(),
+                                to: stringify!(#ident).to_string(),
+                                message: Some("expected table with `tag` field".to_string()),
+                            });
+                        }
+                    };
+                    let tag: String = table.get("tag")?;
+                    match tag.as_str() {
+                        #(#from_arms)*
+                        other => Err(::mlua::Error::FromLuaConversionError {
+                            from: "string",
+                            to: stringify!(#ident).to_string(),
+                            message: Some(format!(
+                                "unknown variant tag `{}` (expected one of {:?})",
+                                other,
+                                [#(#variant_strs),*],
+                            )),
                         }),
                     }
                 }

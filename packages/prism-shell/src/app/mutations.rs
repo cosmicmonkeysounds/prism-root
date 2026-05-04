@@ -849,8 +849,15 @@ pub(super) fn apply_layout_to_node(node: &mut Node, key: &str, value: &str) {
     // Per-edge writes: `padding_top` / `margin_left` / etc. translate
     // to `<variant>.<padding|margin>.<edge>` on the active variant.
     if let Some(prefix) = active_variant_prefix(&node.layout_mode) {
-        if let Some(edge) = sub.strip_prefix("padding_").or_else(|| sub.strip_prefix("margin_")) {
-            let parent = if sub.starts_with("padding_") { "padding" } else { "margin" };
+        if let Some(edge) = sub
+            .strip_prefix("padding_")
+            .or_else(|| sub.strip_prefix("margin_"))
+        {
+            let parent = if sub.starts_with("padding_") {
+                "padding"
+            } else {
+                "margin"
+            };
             node.layout_mode
                 .apply_path(&format!("{prefix}.{parent}.{edge}"), value);
             return;

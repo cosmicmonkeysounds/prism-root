@@ -393,7 +393,7 @@ attribute when the Rust body can't trivially translate.
 
 ---
 
-## 5. `#[derive(SlintBinding)]` — Rust↔Slint property bridge  ✅ derive shipped, first migration landed
+## 5. `#[derive(SlintBinding)]` — Rust↔Slint property bridge  ✅ derive shipped, scalar clusters migrated
 
 ### Current state
 
@@ -450,21 +450,35 @@ declared in `.slint` get matched to Rust fns by name.
   `sync_ui_from_shared`, so the migration scope is exclusively
   `sync.rs`.
 - ✅ First migration: `ChromeBindings` in
-  `prism-shell/src/app/sync.rs` collapses the four shell-chrome
+  `prism-shell/src/app/sync/mod.rs` collapses the four shell-chrome
   setters (`set_show_activity_bar` / `set_show_left_sidebar` /
   `set_show_right_sidebar` / `set_viewport_width`) into a single
   `ChromeBindings::from(state).bind_to(window)`. Push-only because
   the Slint properties are `in`. Renaming an `AppState` field
   without updating the Slint property of the same name now fails
   to compile rather than silently dropping the push.
-- 🟡 Wider migration deferred: the remaining ~100 `set_*` call sites
-  are interleaved with derived state (`SharedString::from(match …)`,
-  conditional pushes guarded by `if let Some(...)`, model-driven
-  pushes that compute a count alongside the value). Each cluster
-  needs its own mirror struct with a `From<&AppState>` constructor;
-  `ChromeBindings` is the template. Worth tackling cluster-by-cluster
-  once the `app/` decomposition (#21) splits `sync.rs` along
-  panel-feature lines.
+- ✅ Wider migration: every scalar `in`-property cluster in `sync/`
+  now flows through a typed mirror struct. Nine mirrors in total —
+  `ChromeBindings`, `WorkflowBindings` (launchpad gate, app/page
+  names, viewport preset, panel id, drag-component, transform
+  tool), `ProjectBindings` (name + dirty), `ToolbarBindings`
+  (selection / clipboard flags + panel title/hint),
+  `UndoBindings` (can-undo/redo + labels), `PickerBindings`
+  (component-picker overlay), `ContextMenuBindings` (scalar half
+  of the context-menu overlay), `EditorCursorBindings` (in
+  `sync/editor.rs`), `TransformBindings` (in `sync/properties.rs`),
+  `CompositionCounts` (in `sync/grid.rs`). Each has a
+  `From<&AppState>` / `from_shell` constructor that absorbs the
+  derived state (`SharedString::from(match …)`, `if let
+  Some(...)` defaults) so the call site is one bind. Renaming any
+  field without updating its Slint counterpart now fails to
+  compile.
+- ⬜ Remaining `set_*` calls are model-count setters (`set_X_count`
+  paired with a `sync_model` of a `VecModel`). They don't fit the
+  mirror-struct pattern because the count is a return value of
+  `sync_model`, not an `AppState` projection. Folding those into
+  `sync_model` itself (so it pushes both the model and the count)
+  would be a separate refactor.
 
 ---
 
@@ -787,7 +801,7 @@ to a single macro invocation over the annotated types.
 
 ---
 
-## 11. `#[derive(Editable)]` — shell stringly-typed field dispatch  🟡 derive shipped + extended; `apply_style_edit` + `apply_page_layout_edit` migrated
+## 11. `#[derive(Editable)]` — path-walker for shell stringly-typed field dispatch  ✅ unified path-walker shipped; transform / page-layout / layout / style migrated; facet stays explicit
 
 ### Current state
 
@@ -868,64 +882,125 @@ The 8 `apply_*` fns in `mutations.rs` become 8 one-liners:
   semantics, the parse-failure-clears-`Option<numeric>` semantics, and
   the unknown-key no-op. 12 builder tests (was 8) + workspace clippy
   clean.
-- ✅ Derive extended with two new field attributes covering nested
-  delegation and sibling fan-out:
-  - `#[edit(nested)]` (and `#[edit(nested, prefix = "...")]`) —
-    when the inbound key starts with `<field_name>.` (or the explicit
-    prefix), strip it and delegate to `self.<field>.apply_field(rest,
-    value)`. The nested type just needs an inherent `apply_field`
-    method; typically that comes from the same derive but it can also
-    be hand-written (e.g. the new `Edges<f32>::apply_field` in
-    `prism-core::foundation::geometry`, keyed on `top` / `right` /
-    `bottom` / `left`). Nested arms are emitted *before* the flat
-    `match key` table.
-  - `#[edit(also = "name")]` — replicate the parsed value into a
-    sibling field of the same type. The value is parsed and clamped
-    once and the same `__v` binding is written to both targets, so
-    fan-out can never drift between fields. Stack multiple `also` on
-    one field for N-way fan-out.
-- ✅ Migration: `prism-builder::layout::PageLayout` now derives
-  `Editable`; `apply_page_layout_edit` shrank from a 28-line match
-  block to a 4-line wrapper that handles only the `page_size` enum
-  (which carries a `Custom { width, height }` payload — outside the
-  flat-struct derive's lane) before delegating to the derived
-  `apply_field`. `margin_top` / `margin_right` / `margin_bottom` /
-  `margin_left` route through `#[edit(nested, prefix = "margin_")]`
-  to the new `Edges<f32>::apply_field`; `column_gap` writes both gap
-  axes via `#[edit(also = "row_gap")]`. 5 new builder tests +
-  2 new core tests covering the nested + fan-out + skip + parse-fail +
-  unknown-key surface.
-- 🟡 Remaining hand-rolled `apply_*` fns in `mutations.rs` —
-  `apply_facet_edit`, `apply_layout_to_node`, `apply_node_layout_edit`,
-  `apply_transform_to_node`. These aren't blocked on the derive
-  surface anymore; they're blocked on the underlying *type shape*:
-  - `apply_transform_to_node` writes `position[0]` / `position[1]` /
-    `scale[0]` / `scale[1]` (i.e. it edits *array indices*, not named
-    fields), converts `transform.rotation` from degrees to radians on
-    the way in, and maps free-form strings (`"top-left"`, etc.) to
-    `Anchor` variants. A clean derive migration would first refactor
-    `Transform2D::position` / `scale` from `[f32; 2]` to a struct
-    with `x` / `y` fields, then add a sibling `#[derive(EditableEnum)]`
-    that honours `serde(rename_all = "kebab-case")` for `Anchor`.
-    Both are larger refactors than the value extraction here.
-  - `apply_layout_to_node` is a state machine that branches on
-    `LayoutMode::{Flow, Absolute, Free, Relative}` *and* mutates the
-    enum variant in place when `layout.display` changes. That kind
-    of cross-arm transition can't be expressed as a flat field table
-    — it'd need a `#[derive(EditableEnum)]` over tagged enums plus a
-    way to reseat the variant from a key.
-  - `apply_facet_edit` is the same shape one level worse: it routes
-    by enum variant (`FacetKind::ObjectQuery { query }` etc.), by
-    string-prefix dotted paths (`binding.<slot>`,
-    `record.<idx>.<field>`, `variant_rule.<idx>.<name>`), and reseats
-    `FacetDataSource` / `FacetTemplate` / `FacetOutput` variants
-    based on `source_kind` / `template_type` / `output_type`
-    selectors. It's better thought of as a small interpreter than a
-    dispatch table.
-  - `apply_node_layout_edit` / `apply_node_transform_edit` are tree
-    walkers that find the target node by id and then call the two
-    `apply_*_to_node` fns above; they'll fall out naturally once
-    those migrate.
+### Unification — path-addressable mutation
+
+The earlier flat-struct-only derive was rebuilt around a single
+primitive. Every editable type now generates an inherent
+
+```rust
+fn apply_path(&mut self, path: &str, value: &str)
+```
+
+where `path` is a dot-separated sequence of segments. Each segment
+addresses a child of the current node:
+
+| Segment shape       | Meaning                                                  |
+|---------------------|----------------------------------------------------------|
+| `field_name`        | recurse into a struct field                              |
+| `<idx>` (digits)    | index into a `[T; N]` / `Vec<T>` field (`#[edit(index)]`)|
+| `<variant>`         | match if the active enum variant tag is `<variant>`      |
+| `@kind` *terminal*  | re-seat an enum to the variant named in `value`          |
+| empty path          | terminal — leaf assign or (on enums) reseat by `value`   |
+
+Variant tags follow `serde(rename_all)` (typically `kebab-case`).
+Renaming a Rust field is a compile error rather than a silent
+dispatch miss because the segment matches a real ident the codegen
+sees. Tagged enums with single-field tuple payloads
+(`LayoutMode::Flow(FlowProps)`) and named struct payloads
+(`PageSize::Custom { width, height }`) both round-trip; struct-variant
+fields are inline-parsed when primitive and recursed into via
+`apply_path` otherwise.
+
+Per-field attributes available:
+
+- `#[edit(skip)]` — drop from dispatch.
+- `#[edit(rename = "key")]` — match against this string instead of
+  the field name (legacy compatibility).
+- `#[edit(clamp(min, max))]` — for numeric leaves.
+- `#[edit(also = "name")]` — replicate the parsed leaf value into a
+  sibling field of the same type. Stackable; the parsed `__v` is
+  written to every target so they can't drift.
+- `#[edit(with = "fn_path")]` — escape hatch: replaces the default
+  leaf parser with `fn_path(&mut self.<field>, value: &str)`. Used
+  for `Transform2D::rotation` (degrees → radians).
+- `#[edit(index)]` — opts an array/`Vec` field into numeric-segment
+  indexing. Primitive elements parse inline; non-primitive elements
+  recurse via their own `apply_path`.
+
+`Edges<f32>` carries a hand-written `apply_path` in
+`prism-core::foundation::geometry` keyed on `top` / `right` /
+`bottom` / `left` so it can sit as a leaf of any derived dispatcher.
+
+### Migration status
+
+- ✅ Path-walker `Editable` derived on `StyleProperties`,
+  `PageLayout`, `PageSize`, `Transform2D`, `Anchor`, `LayoutMode`,
+  `FlowProps`, `AbsoluteProps`, `Dimension`, `GridPlacement`,
+  `FlowDisplay`, `FlexDirection`, `AlignOption`, `JustifyOption`.
+- ✅ `apply_transform_to_node` collapsed to one line: strip the
+  `transform.` routing prefix and delegate to
+  `node.transform.apply_path(rest, value)`. Canonical paths now run
+  `transform.position.0` / `.1`, `transform.scale.0` / `.1`,
+  `transform.rotation` (degrees, converted via `with`),
+  `transform.anchor` (kebab-case `Anchor` variant). Slint emit sites
+  + the panel `transform_rows` builders updated.
+- ✅ `apply_page_layout_edit` is a small wrapper that handles
+  `page_size`'s legacy PascalCase ComboBox values (`"A4"` → `"a4"` to
+  match `serde(rename_all = "kebab-case")`; `"Custom"` seeds
+  `Custom { 1280.0, 800.0 }` rather than zeros) and then delegates
+  to the derived `apply_path`. `margins.top` and the
+  `column_gap` → `row_gap` fan-out flow through the derive directly.
+- ✅ `apply_layout_to_node` collapsed from a ~250-line state machine
+  to ~150 LOC of focused dispatcher that:
+  - resolves `display`'s legacy overload (a single key that both
+    reseats the variant *and* sets `FlowDisplay`) by switching on
+    the value;
+  - parses CSS-shorthand `padding` / `margin` (`"8 16"` →
+    `Edges::symmetric`) up front and writes the whole edge struct;
+  - parses `width` / `height` (`"auto"` / `"16px"` / `"50%"`) into a
+    `Dimension` with `parse_dimension`, then writes the whole enum
+    to whichever variant payload owns the field;
+  - tracks scalar across `width_unit` ↔ `width_value` and
+    `grid_column_type` ↔ `grid_column_value` two-step UIs;
+  - delegates everything else (`gap`, `flex_direction`,
+    `align_items`, per-edge `padding_top` / `margin_left`, …) via
+    `node.layout_mode.apply_path("<active_variant>.<key>", value)`.
+- ✅ `apply_node_layout_edit` / `apply_node_transform_edit` —
+  unchanged tree walkers. They find the target node by id and call
+  the now-tiny `apply_*_to_node` helpers.
+- 🟡 `apply_facet_edit` intentionally stays hand-rolled. Three of
+  its responsibilities don't fit the path-walker model and would
+  fight a forced migration:
+  - **Side effects on writes.** Setting `script_language` triggers
+    `sync_script_language(def)`, which decompiles existing source
+    to a `ScriptGraph` (or compiles the graph back to source) via
+    `LuauVisualLanguage`. The derive only writes; it doesn't fire a
+    "post-write" hook. Adding one would essentially re-introduce the
+    ad-hoc `apply_*` fn one layer deeper.
+  - **Imperative collection ops.** `add_variant_rule` /
+    `remove_variant_rule.<idx>` are not value writes — they're
+    structural Vec mutations. Same with `binding.<slot_key>` keying
+    into a `Vec<FacetBinding>` by an inner field. And
+    `record.<idx>.<field>` writes a `serde_json::Value` whose
+    coercion (`true` / `false` / number / string fallback) lives
+    inside the function.
+  - **Cross-variant state preservation.** When the user flips
+    `source_kind` from `resource` to `query`, the existing string
+    payload (`id` / `source`) needs to migrate into the new
+    variant's slot. The derive's `@kind` reseat constructs from
+    `Default::default()` and discards the previous payload.
+
+  Future-extension hooks worth wiring once a second consumer needs
+  them:
+  1. `#[edit(after = "fn_path")]` — post-write side-effect callback.
+  2. `#[derive(EditableCollection)]` for keyed `Vec<T>` access by an
+     inner field, so `binding.<slot_key>` becomes
+     `bindings.<slot_key>.item_field`.
+  3. `#[edit_variant(default = "fn_path")]` — variant-specific
+     constructors for `@kind` reseat that preserve neighbouring
+     payload state.
+- Test totals: workspace `cargo test` runs **3,122 tests, 0 failures**.
+  `cargo clippy --workspace --all-targets -- -D warnings` clean.
 
 ---
 
@@ -1205,7 +1280,7 @@ The existing `SignalDef::new` / `.with_payload` pattern in
 
 ---
 
-## 16. `VfsBackend` / `build_module` stringly-typed errors  ⬜ not started
+## 16. `VfsBackend` / `build_module` stringly-typed errors  ✅ shipped
 
 ### Current state
 
@@ -1261,11 +1336,19 @@ work unchanged.
 
 ### Status
 
-- ⬜ Not started. `thiserror` is already in the workspace.
-  `vfs_module.rs` changes are self-contained — the error type is
-  visible only inside the module (backends call each other, not
-  the outside world). `build_module.rs` changes are similarly
-  internal. No cross-crate impact.
+- ✅ Shipped. `VfsError` (`NotFound` / `InvalidHash` / `Io` / `Poisoned`
+  / `Backend`) replaces every `Result<T, String>` on the `VfsBackend`
+  trait, all four backends (`LocalVfsBackend`, `InMemoryVfsBackend`,
+  `S3VfsBackend`, `GcsVfsBackend`), and `VfsManager`'s public API.
+  `BuildError` (`Io` / `Spawn` / `CommandFailed` / `UnsupportedInvokeIpc`)
+  replaces the same on `run_build_step` and the `build.run_step`
+  command. `VfsError` is re-exported from the crate root so callers
+  can pattern-match. `From<String> for VfsError` keeps the s3
+  HttpTransport's stringly error compatible with `?` inside backend
+  methods. All 108 default + 125 with-features unit tests pass; the
+  `invalid_hash_is_rejected_structurally` and build-module
+  `err.contains` assertions are unchanged in spirit (now via
+  `err.to_string().contains(…)` since `err` is a typed error).
 
 ---
 
@@ -1580,8 +1663,10 @@ Implementation order optimises for value × independence:
     `vfs_module` are gone. Option A (macro special-case for `()`) was
     rejected — `()` doesn't deserialize from `{}` cleanly through
     `register_typed`, and the workaround would split the dispatch path.
-19. **#16 VfsBackend / build_module typed errors**: self-contained in
-    `prism-daemon`; `thiserror` already in workspace.
+19. **#16 VfsBackend / build_module typed errors**: ✅ shipped —
+    `VfsError` + `BuildError` thiserror enums replace every
+    `Result<T, String>` on the trait + four backends + `VfsManager` and
+    on `run_build_step` + `build.run_step`.
 20. **#20 ObjectSnapshot boxing**: check `GraphObject` size first; only
     worth doing if the allocation saving is measurable.
 21. **#19 module_inception cleanup**: cosmetic, 2-file change per

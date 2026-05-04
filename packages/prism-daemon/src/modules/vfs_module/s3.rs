@@ -38,7 +38,7 @@
 //!
 //! [S3-interoperability endpoint]: https://cloud.google.com/storage/docs/aws-simple-migration
 
-use super::{VfsBackend, VfsEntry};
+use super::{VfsBackend, VfsEntry, VfsError};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -290,36 +290,36 @@ impl S3VfsBackend {
 }
 
 impl VfsBackend for S3VfsBackend {
-    fn put(&self, hash: &str, bytes: &[u8]) -> Result<(), String> {
+    fn put(&self, hash: &str, bytes: &[u8]) -> Result<(), VfsError> {
         let req = self.signed("PUT", hash, bytes);
         let resp = self.transport.execute(req)?;
         if (200..300).contains(&resp.status) {
             Ok(())
         } else {
-            Err(format!(
+            Err(VfsError::Backend(format!(
                 "{}: put failed with HTTP {}: {}",
                 self.label,
                 resp.status,
                 String::from_utf8_lossy(&resp.body)
-            ))
+            )))
         }
     }
 
-    fn get(&self, hash: &str) -> Result<Vec<u8>, String> {
+    fn get(&self, hash: &str) -> Result<Vec<u8>, VfsError> {
         let req = self.signed("GET", hash, &[]);
         let resp = self.transport.execute(req)?;
         match resp.status {
             200 => Ok(resp.body),
-            404 => Err(format!("{}: hash not found: {hash}", self.label)),
-            other => Err(format!(
+            404 => Err(VfsError::NotFound(hash.to_string())),
+            other => Err(VfsError::Backend(format!(
                 "{}: get failed with HTTP {other}: {}",
                 self.label,
                 String::from_utf8_lossy(&resp.body)
-            )),
+            ))),
         }
     }
 
-    fn has(&self, hash: &str) -> Result<Option<u64>, String> {
+    fn has(&self, hash: &str) -> Result<Option<u64>, VfsError> {
         let req = self.signed("HEAD", hash, &[]);
         let resp = self.transport.execute(req)?;
         match resp.status {
@@ -333,37 +333,40 @@ impl VfsBackend for S3VfsBackend {
                 Ok(Some(size))
             }
             404 => Ok(None),
-            other => Err(format!("{}: head failed with HTTP {other}", self.label)),
+            other => Err(VfsError::Backend(format!(
+                "{}: head failed with HTTP {other}",
+                self.label
+            ))),
         }
     }
 
-    fn delete(&self, hash: &str) -> Result<bool, String> {
+    fn delete(&self, hash: &str) -> Result<bool, VfsError> {
         let req = self.signed("DELETE", hash, &[]);
         let resp = self.transport.execute(req)?;
         match resp.status {
             200 | 204 => Ok(true),
             404 => Ok(false),
-            other => Err(format!(
+            other => Err(VfsError::Backend(format!(
                 "{}: delete failed with HTTP {other}: {}",
                 self.label,
                 String::from_utf8_lossy(&resp.body)
-            )),
+            ))),
         }
     }
 
-    fn list(&self) -> Result<Vec<VfsEntry>, String> {
+    fn list(&self) -> Result<Vec<VfsEntry>, VfsError> {
         let req = self.signed_list();
         let resp = self.transport.execute(req)?;
         if !(200..300).contains(&resp.status) {
-            return Err(format!(
+            return Err(VfsError::Backend(format!(
                 "{}: list failed with HTTP {}: {}",
                 self.label,
                 resp.status,
                 String::from_utf8_lossy(&resp.body)
-            ));
+            )));
         }
         let body = std::str::from_utf8(&resp.body)
-            .map_err(|e| format!("list body is not valid utf-8: {e}"))?;
+            .map_err(|e| VfsError::Backend(format!("list body is not valid utf-8: {e}")))?;
         let entries = parse_list_v2_xml(body, &self.config.prefix);
         Ok(entries)
     }
@@ -404,19 +407,19 @@ impl GcsVfsBackend {
 
 #[cfg(feature = "vfs-gcs")]
 impl VfsBackend for GcsVfsBackend {
-    fn put(&self, hash: &str, bytes: &[u8]) -> Result<(), String> {
+    fn put(&self, hash: &str, bytes: &[u8]) -> Result<(), VfsError> {
         self.inner.put(hash, bytes)
     }
-    fn get(&self, hash: &str) -> Result<Vec<u8>, String> {
+    fn get(&self, hash: &str) -> Result<Vec<u8>, VfsError> {
         self.inner.get(hash)
     }
-    fn has(&self, hash: &str) -> Result<Option<u64>, String> {
+    fn has(&self, hash: &str) -> Result<Option<u64>, VfsError> {
         self.inner.has(hash)
     }
-    fn delete(&self, hash: &str) -> Result<bool, String> {
+    fn delete(&self, hash: &str) -> Result<bool, VfsError> {
         self.inner.delete(hash)
     }
-    fn list(&self) -> Result<Vec<VfsEntry>, String> {
+    fn list(&self) -> Result<Vec<VfsEntry>, VfsError> {
         self.inner.list()
     }
     fn backend_name(&self) -> &'static str {

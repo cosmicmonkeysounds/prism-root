@@ -347,7 +347,8 @@ fn expand_enum(input: &DeriveInput, data: &DataEnum) -> syn::Result<TokenStream2
                 })?;
             }
         }
-        let tag = vrename.unwrap_or_else(|| apply_rename(&vident.to_string(), rename_all.as_deref()));
+        let tag =
+            vrename.unwrap_or_else(|| apply_rename(&vident.to_string(), rename_all.as_deref()));
 
         match &v.fields {
             Fields::Unit => {
@@ -376,8 +377,7 @@ fn expand_enum(input: &DeriveInput, data: &DataEnum) -> syn::Result<TokenStream2
             Fields::Named(fs) => {
                 let field_idents: Vec<&Ident> =
                     fs.named.iter().map(|f| f.ident.as_ref().unwrap()).collect();
-                let field_strs: Vec<String> =
-                    field_idents.iter().map(|i| i.to_string()).collect();
+                let field_strs: Vec<String> = field_idents.iter().map(|i| i.to_string()).collect();
                 let field_tys: Vec<&Type> = fs.named.iter().map(|f| &f.ty).collect();
                 tag_ctors.push(quote! {
                     #tag => {
@@ -657,7 +657,19 @@ fn type_leaf_name(ty: &Type) -> Option<String> {
 fn is_numeric(name: &str) -> bool {
     matches!(
         name,
-        "f32" | "f64" | "i8" | "i16" | "i32" | "i64" | "i128" | "isize" |
-        "u8" | "u16" | "u32" | "u64" | "u128" | "usize"
+        "f32"
+            | "f64"
+            | "i8"
+            | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "isize"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "usize"
     )
 }

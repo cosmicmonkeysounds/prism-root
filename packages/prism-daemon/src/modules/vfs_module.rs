@@ -48,6 +48,32 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+// ── Error type ─────────────────────────────────────────────────────────
+
+/// Structured errors returned from [`VfsBackend`] implementations and
+/// [`VfsManager`]. Replaces the pre-refactor `Result<T, String>` so
+/// callers can pattern-match on the cause instead of substring-matching
+/// on prose.
+#[derive(Debug, thiserror::Error)]
+pub enum VfsError {
+    #[error("hash not found: {0}")]
+    NotFound(String),
+    #[error("invalid vfs hash {0:?}: expected 64 lowercase hex characters")]
+    InvalidHash(String),
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("vfs lock poisoned")]
+    Poisoned,
+    #[error("{0}")]
+    Backend(String),
+}
+
+impl From<String> for VfsError {
+    fn from(s: String) -> Self {
+        VfsError::Backend(s)
+    }
+}
+
 #[cfg(any(feature = "vfs-s3", feature = "vfs-gcs"))]
 pub mod s3;
 
@@ -69,21 +95,21 @@ pub use s3::GcsVfsBackend;
 pub trait VfsBackend: Send + Sync {
     /// Write `bytes` under `hash`. If `hash` already exists the call is
     /// a successful no-op (content-addressed: same hash ⇒ same bytes).
-    fn put(&self, hash: &str, bytes: &[u8]) -> Result<(), String>;
+    fn put(&self, hash: &str, bytes: &[u8]) -> Result<(), VfsError>;
 
     /// Read a blob by hash.
-    fn get(&self, hash: &str) -> Result<Vec<u8>, String>;
+    fn get(&self, hash: &str) -> Result<Vec<u8>, VfsError>;
 
     /// Return `Some(size)` if the hash is present, else `None`.
-    fn has(&self, hash: &str) -> Result<Option<u64>, String>;
+    fn has(&self, hash: &str) -> Result<Option<u64>, VfsError>;
 
     /// Remove a blob. Returns true if it was present, false if it
     /// wasn't (not an error).
-    fn delete(&self, hash: &str) -> Result<bool, String>;
+    fn delete(&self, hash: &str) -> Result<bool, VfsError>;
 
     /// Enumerate every blob in the store. Intended for dev tools and
     /// small stores — remote backends may choose to cap the result set.
-    fn list(&self) -> Result<Vec<VfsEntry>, String>;
+    fn list(&self) -> Result<Vec<VfsEntry>, VfsError>;
 
     /// Human-readable name for logs / diagnostics.
     fn backend_name(&self) -> &'static str;
@@ -117,7 +143,7 @@ pub struct VfsManager {
 impl VfsManager {
     /// Create a manager backed by the on-disk [`LocalVfsBackend`] under
     /// `root`. Same semantics as the pre-refactor constructor.
-    pub fn new(root: impl Into<PathBuf>) -> Result<Self, String> {
+    pub fn new(root: impl Into<PathBuf>) -> Result<Self, VfsError> {
         let backend = LocalVfsBackend::new(root)?;
         Ok(Self::with_backend(Arc::new(backend)))
     }
@@ -158,12 +184,9 @@ impl VfsManager {
     }
 
     /// Write `bytes`, returning the content hash.
-    pub fn put(&self, bytes: &[u8]) -> Result<String, String> {
+    pub fn put(&self, bytes: &[u8]) -> Result<String, VfsError> {
         let hash = Self::hash(bytes);
-        let _guard = self
-            .write_lock
-            .lock()
-            .map_err(|_| "vfs write lock poisoned".to_string())?;
+        let _guard = self.write_lock.lock().map_err(|_| VfsError::Poisoned)?;
         if self.backend.has(&hash)?.is_some() {
             return Ok(hash);
         }
@@ -172,36 +195,33 @@ impl VfsManager {
     }
 
     /// Read a blob by hash.
-    pub fn get(&self, hash: &str) -> Result<Vec<u8>, String> {
+    pub fn get(&self, hash: &str) -> Result<Vec<u8>, VfsError> {
         validate_hash(hash)?;
         self.backend.get(hash)
     }
 
     /// Check whether `hash` is present.
-    pub fn has(&self, hash: &str) -> Result<Option<u64>, String> {
+    pub fn has(&self, hash: &str) -> Result<Option<u64>, VfsError> {
         validate_hash(hash)?;
         self.backend.has(hash)
     }
 
     /// Remove a blob by hash. Returns false if it didn't exist.
-    pub fn delete(&self, hash: &str) -> Result<bool, String> {
+    pub fn delete(&self, hash: &str) -> Result<bool, VfsError> {
         validate_hash(hash)?;
-        let _guard = self
-            .write_lock
-            .lock()
-            .map_err(|_| "vfs write lock poisoned".to_string())?;
+        let _guard = self.write_lock.lock().map_err(|_| VfsError::Poisoned)?;
         self.backend.delete(hash)
     }
 
     /// Enumerate every blob in the store.
-    pub fn list(&self) -> Result<Vec<VfsEntry>, String> {
+    pub fn list(&self) -> Result<Vec<VfsEntry>, VfsError> {
         let mut entries = self.backend.list()?;
         entries.sort_by(|a, b| a.hash.cmp(&b.hash));
         Ok(entries)
     }
 
     /// Aggregate statistics — entry count + total bytes.
-    pub fn stats(&self) -> Result<VfsStats, String> {
+    pub fn stats(&self) -> Result<VfsStats, VfsError> {
         let entries = self.list()?;
         let total_bytes: u64 = entries.iter().map(|e| e.size).sum();
         Ok(VfsStats {
@@ -219,10 +239,9 @@ pub struct LocalVfsBackend {
 }
 
 impl LocalVfsBackend {
-    pub fn new(root: impl Into<PathBuf>) -> Result<Self, String> {
+    pub fn new(root: impl Into<PathBuf>) -> Result<Self, VfsError> {
         let root = root.into();
-        fs::create_dir_all(&root)
-            .map_err(|e| format!("failed to create vfs root {}: {e}", root.display()))?;
+        fs::create_dir_all(&root)?;
         Ok(Self { root })
     }
 
@@ -236,7 +255,7 @@ impl LocalVfsBackend {
 }
 
 impl VfsBackend for LocalVfsBackend {
-    fn put(&self, hash: &str, bytes: &[u8]) -> Result<(), String> {
+    fn put(&self, hash: &str, bytes: &[u8]) -> Result<(), VfsError> {
         use std::sync::atomic::{AtomicU64, Ordering};
         static WRITE_SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -250,45 +269,49 @@ impl VfsBackend for LocalVfsBackend {
         let tmp = self
             .root
             .join(format!("{hash}.{}.{seq}.tmp", std::process::id()));
-        fs::write(&tmp, bytes)
-            .map_err(|e| format!("failed to write temp {}: {e}", tmp.display()))?;
+        fs::write(&tmp, bytes)?;
         if let Err(e) = fs::rename(&tmp, &final_path) {
             let _ = fs::remove_file(&tmp);
-            return Err(format!("failed to rename temp into place: {e}"));
+            return Err(VfsError::Io(e));
         }
         Ok(())
     }
 
-    fn get(&self, hash: &str) -> Result<Vec<u8>, String> {
+    fn get(&self, hash: &str) -> Result<Vec<u8>, VfsError> {
         let path = self.path_for(hash);
-        fs::read(&path).map_err(|e| format!("failed to read {}: {e}", path.display()))
+        match fs::read(&path) {
+            Ok(bytes) => Ok(bytes),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                Err(VfsError::NotFound(hash.to_string()))
+            }
+            Err(e) => Err(VfsError::Io(e)),
+        }
     }
 
-    fn has(&self, hash: &str) -> Result<Option<u64>, String> {
+    fn has(&self, hash: &str) -> Result<Option<u64>, VfsError> {
         let path = self.path_for(hash);
         match fs::metadata(&path) {
             Ok(meta) if meta.is_file() => Ok(Some(meta.len())),
             Ok(_) => Ok(None),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(format!("failed to stat {}: {e}", path.display())),
+            Err(e) => Err(VfsError::Io(e)),
         }
     }
 
-    fn delete(&self, hash: &str) -> Result<bool, String> {
+    fn delete(&self, hash: &str) -> Result<bool, VfsError> {
         let path = self.path_for(hash);
         match fs::remove_file(&path) {
             Ok(()) => Ok(true),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
-            Err(e) => Err(format!("failed to delete {}: {e}", path.display())),
+            Err(e) => Err(VfsError::Io(e)),
         }
     }
 
-    fn list(&self) -> Result<Vec<VfsEntry>, String> {
-        let iter = fs::read_dir(&self.root)
-            .map_err(|e| format!("failed to read vfs root {}: {e}", self.root.display()))?;
+    fn list(&self) -> Result<Vec<VfsEntry>, VfsError> {
+        let iter = fs::read_dir(&self.root)?;
         let mut entries = Vec::new();
         for entry in iter {
-            let entry = entry.map_err(|e| format!("vfs read_dir entry: {e}"))?;
+            let entry = entry?;
             let path = entry.path();
             let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
                 continue;
@@ -296,8 +319,7 @@ impl VfsBackend for LocalVfsBackend {
             if name.ends_with(".tmp") || !looks_like_hash(name) {
                 continue;
             }
-            let meta = fs::metadata(&path)
-                .map_err(|e| format!("failed to stat {}: {e}", path.display()))?;
+            let meta = fs::metadata(&path)?;
             if meta.is_file() {
                 entries.push(VfsEntry {
                     hash: name.to_string(),
@@ -340,46 +362,43 @@ impl InMemoryVfsBackend {
 }
 
 impl VfsBackend for InMemoryVfsBackend {
-    fn put(&self, hash: &str, bytes: &[u8]) -> Result<(), String> {
+    fn put(&self, hash: &str, bytes: &[u8]) -> Result<(), VfsError> {
         self.inner
             .lock()
-            .map_err(|_| "in-memory vfs poisoned".to_string())?
+            .map_err(|_| VfsError::Poisoned)?
             .insert(hash.to_string(), bytes.to_vec());
         Ok(())
     }
 
-    fn get(&self, hash: &str) -> Result<Vec<u8>, String> {
+    fn get(&self, hash: &str) -> Result<Vec<u8>, VfsError> {
         self.inner
             .lock()
-            .map_err(|_| "in-memory vfs poisoned".to_string())?
+            .map_err(|_| VfsError::Poisoned)?
             .get(hash)
             .cloned()
-            .ok_or_else(|| format!("hash not found: {hash}"))
+            .ok_or_else(|| VfsError::NotFound(hash.to_string()))
     }
 
-    fn has(&self, hash: &str) -> Result<Option<u64>, String> {
+    fn has(&self, hash: &str) -> Result<Option<u64>, VfsError> {
         Ok(self
             .inner
             .lock()
-            .map_err(|_| "in-memory vfs poisoned".to_string())?
+            .map_err(|_| VfsError::Poisoned)?
             .get(hash)
             .map(|b| b.len() as u64))
     }
 
-    fn delete(&self, hash: &str) -> Result<bool, String> {
+    fn delete(&self, hash: &str) -> Result<bool, VfsError> {
         Ok(self
             .inner
             .lock()
-            .map_err(|_| "in-memory vfs poisoned".to_string())?
+            .map_err(|_| VfsError::Poisoned)?
             .remove(hash)
             .is_some())
     }
 
-    fn list(&self) -> Result<Vec<VfsEntry>, String> {
-        let guard = self
-            .inner
-            .lock()
-            .map_err(|_| "in-memory vfs poisoned".to_string())?;
+    fn list(&self) -> Result<Vec<VfsEntry>, VfsError> {
+        let guard = self.inner.lock().map_err(|_| VfsError::Poisoned)?;
         Ok(guard
             .iter()
             .map(|(hash, bytes)| VfsEntry {
@@ -410,12 +429,9 @@ pub struct VfsStats {
     pub total_bytes: u64,
 }
 
-fn validate_hash(hash: &str) -> Result<(), String> {
+fn validate_hash(hash: &str) -> Result<(), VfsError> {
     if !looks_like_hash(hash) {
-        return Err(format!(
-            "invalid vfs hash {:?}: expected 64 lowercase hex characters",
-            hash
-        ));
+        return Err(VfsError::InvalidHash(hash.to_string()));
     }
     Ok(())
 }
@@ -446,18 +462,18 @@ fn looks_like_hash(s: &str) -> bool {
 pub struct VfsModule;
 
 #[daemon_command(id = "vfs.put")]
-fn put(mgr: &VfsManager, args: PutArgs) -> Result<PutResp, String> {
+fn put(mgr: &VfsManager, args: PutArgs) -> Result<PutResp, VfsError> {
     let size = args.bytes.len() as u64;
     mgr.put(&args.bytes).map(|hash| PutResp { hash, size })
 }
 
 #[daemon_command(id = "vfs.get")]
-fn get(mgr: &VfsManager, args: HashArgs) -> Result<GetResp, String> {
+fn get(mgr: &VfsManager, args: HashArgs) -> Result<GetResp, VfsError> {
     mgr.get(&args.hash).map(|bytes| GetResp { bytes })
 }
 
 #[daemon_command(id = "vfs.has")]
-fn has(mgr: &VfsManager, args: HashArgs) -> Result<HasResp, String> {
+fn has(mgr: &VfsManager, args: HashArgs) -> Result<HasResp, VfsError> {
     mgr.has(&args.hash).map(|maybe_size| HasResp {
         present: maybe_size.is_some(),
         size: maybe_size,
@@ -465,17 +481,17 @@ fn has(mgr: &VfsManager, args: HashArgs) -> Result<HasResp, String> {
 }
 
 #[daemon_command(id = "vfs.delete")]
-fn delete(mgr: &VfsManager, args: HashArgs) -> Result<DeleteResp, String> {
+fn delete(mgr: &VfsManager, args: HashArgs) -> Result<DeleteResp, VfsError> {
     mgr.delete(&args.hash).map(|deleted| DeleteResp { deleted })
 }
 
 #[daemon_command(id = "vfs.list")]
-fn list(mgr: &VfsManager, _: EmptyArgs) -> Result<ListResp, String> {
+fn list(mgr: &VfsManager, _: EmptyArgs) -> Result<ListResp, VfsError> {
     mgr.list().map(|entries| ListResp { entries })
 }
 
 #[daemon_command(id = "vfs.stats")]
-fn stats(mgr: &VfsManager, _: EmptyArgs) -> Result<StatsResp, String> {
+fn stats(mgr: &VfsManager, _: EmptyArgs) -> Result<StatsResp, VfsError> {
     mgr.stats().map(|stats| StatsResp {
         entries: stats.entries,
         total_bytes: stats.total_bytes,

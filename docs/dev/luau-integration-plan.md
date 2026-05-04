@@ -19,14 +19,14 @@ fire signals, or run as long-lived watchers.
 |-------|------------|-----|
 | Daemon (`luau_module.rs`) | `luau.exec` — fire-and-forget script with JSON args/return + `prism` global preinstalled | No reactive subscriptions, no `luau.eval` REPL, no persistent script lifecycle, no `luau.register_widget` / `luau.register_automation` |
 | Daemon (`prism_context.rs`) | `PrismContext { tokens, shell_mode, permission, objects, config }` | No `document` / `app` / `selection` / `vfs` / `signals` / `commands` / `crypto` / `automation` surfaces |
-| Macro (`prism-luau-derive`) | `#[luau_expose]` for named-field structs + unit-only enums; `manual_impl` / `mutable` / `read_only` / `rename` / `luau_skip` opts | Tagged-union enum support (Phase 1 ticket); `#[luau_expose]` on free functions |
+| Macro (`prism-luau-derive`) | `#[luau_expose]` for named-field structs, unit-only enums, **and tagged-union enums** (Phase 1.1 — table-shaped `{ tag = "Variant", … }` round-trip); `manual_impl` / `mutable` / `read_only` / `rename` / `luau_skip` opts | `#[luau_expose]` on free functions |
 | Core (`luau_types.rs` + `luau_bindings*.rs`) | Hand-rolled `GraphObject` / `ObjectEdge` / `ObjectsHandle` / `ConfigHandle` UserData; codegen registry collects every `LUAU_TYPE_DEF` const | `BuilderDocument`, `Node`, `PrismApp`, `Page`, `LayoutMode`, `StyleProperties`, `Connection`, signal payloads, timeline / Flux types |
 | Core (`language/luau/`) | Parser (full-moon), syntax provider, visual language, signal-aware completions | Read-only intelligence — no mutation path; signal stubs from `prism_builder::signal::generate_signal_type_stubs` are not yet emitted by `prism codegen luau-types` |
 | Builder (`signal.rs`) | `ActionKind::Custom { handler }` round-trips through `DispatchResult::Custom` | — (now executed; see Shell row) |
 | Builder (`facet/mod.rs`) | `FacetKind::Script { source, language, graph }` data type; `ScriptLanguage::{Luau, VisualGraph}` | — (now executed; see Shell row) |
 | Shell (`app/mod.rs::fire_signal`) | `Custom` connection handler runs through `prism_daemon::modules::luau_module::exec`; return values with `set_properties` / `navigate` keys are applied back to the document | Handler scripts still see only the default `PrismContext` — no document reference, no per-event lifecycle |
 | Shell (`app/sync.rs`) | `FacetKind::Script` resolves through `luau_module::exec` per facet evaluation | No incremental re-eval on dependency change; one-shot per sync pass |
-| CLI (`codegen.rs`) | `prism codegen luau-types` emits `<workspace>/types/core.d.luau` from the `prism-core` registry | Doesn't fan out to `prism-builder` types or per-component signal stubs; no per-crate `.d.luau` tree |
+| CLI (`codegen.rs`) | `prism codegen luau-types` emits `<workspace>/types/core.d.luau`, **`builder.d.luau`** (Phase 5 fan-out — `StyleProperties`, `Dimension`, `GridPlacement`, layout enums), and **`signals.d.luau`** (per-component signal payloads from the built-in `ComponentRegistry` via `generate_signal_type_stubs`) | Per-workspace component contributions still aren't walked — the registry instantiation in `render_signals_stub` only seeds built-ins. |
 
 ---
 
@@ -54,19 +54,22 @@ fire signals, or run as long-lived watchers.
 
 ---
 
-## Phase 1: Derive Macro — `#[luau_expose]`  ✅ shipped
+## Phase 1: Derive Macro — `#[luau_expose]`  ✅ shipped (incl. Phase 1.1 tagged unions)
 
 ### Crate: `prism-luau-derive`
 
 A proc-macro crate that generates mlua bindings + type stubs from Rust types.
-Ships today: named-field structs (read-only by default, `mutable` opt-in)
-and unit-only enums (round-trip as Luau strings via `IntoLua` / `FromLua`).
-The `manual_impl` escape hatch suppresses the auto-generated `UserData` /
-`IntoLua` / `FromLua` impls so stateful subsystems (`ObjectRegistry`,
-`ConfigModel`, `GraphObject`, `ObjectEdge`) hand-write a method API and
-still surface their type stub through `LUAU_TYPE_NAME` / `LUAU_TYPE_DEF`
-constants. **Open ticket**: tagged-union enums (data variants) — the
-plan's `LayoutMode` example below still needs a Phase 1.1 follow-up.
+Ships today: named-field structs (read-only by default, `mutable` opt-in),
+unit-only enums (round-trip as Luau strings via `IntoLua` / `FromLua`), and
+**tagged-union enums** (Phase 1.1 — `{ tag = "Variant", value = … }` /
+`{ tag = "Variant", field1 = …, field2 = … }` table round-trip; the
+discriminator is always the literal key `tag`, deliberately not driven
+by `#[serde(tag = "...")]` so scripts see one shape regardless of how
+the type serialises elsewhere). The `manual_impl` escape hatch
+suppresses the auto-generated `UserData` / `IntoLua` / `FromLua` impls
+so stateful subsystems (`ObjectRegistry`, `ConfigModel`, `GraphObject`,
+`ObjectEdge`) hand-write a method API and still surface their type
+stub through `LUAU_TYPE_NAME` / `LUAU_TYPE_DEF` constants.
 
 ```rust
 // In prism-core/src/design_tokens.rs
@@ -558,20 +561,28 @@ end
 
 ## Phase 5: Type Stub Generation Pipeline  🟡 partial
 
-`prism codegen luau-types` exists today and emits
-`<workspace>/types/core.d.luau` from the hand-curated registry in
-`prism_core::luau_types::type_defs()`. The registry is one
-`Vec<(name, def)>` rather than an `inventory!`-style link-time
-collection because `cdylib` + WASM targets don't reliably surface
-distributed slices.
+`prism codegen luau-types` exists today and emits three files into
+`<workspace>/types/`:
 
-**Open**: per-crate fan-out. The current pipeline only walks
-`prism-core`; `prism-builder` types (`BuilderDocument`, `Node`,
-`PrismApp`, `Page`, `LayoutMode`, `StyleProperties`, `Connection`,
-`SignalDef`, …) need their own annotations + registry. Per-component
-signal payload stubs from `prism_builder::signal::generate_signal_type_stubs`
-should also flow through this command — today they're a free function
-nobody calls in production.
+1. `core.d.luau` from `prism_core::luau_types::type_defs()`.
+2. `builder.d.luau` from `prism_builder::luau_types::type_defs()` —
+   the leaf set today is `FlowDisplay`, `FlexDirection`, `AlignOption`,
+   `JustifyOption`, `Dimension`, `GridPlacement`, `StyleProperties`.
+3. `signals.d.luau` from
+   `prism_builder::signal::generate_signal_type_stubs(&registry, "prism")`
+   over a freshly-built `ComponentRegistry` seeded with `register_builtins`.
+
+Each registry is one `Vec<(name, def)>` rather than an
+`inventory!`-style link-time collection because `cdylib` + WASM
+targets don't reliably surface distributed slices.
+
+**Open**: deeper `prism-builder` annotation. The leaf set above is a
+starter; `BuilderDocument`, `Node`, `PrismApp`, `Page`, `LayoutMode`,
+`Connection`, `SignalDef`, `ResourceDef`, `PrefabDef`, `FacetDef`
+still need `#[luau_expose]` (most are tagged unions, now unblocked
+by Phase 1.1). Per-workspace component contributions also aren't
+walked yet — the registry instantiation in
+`render_signals_stub` only seeds built-ins.
 
 At build time (or as a `prism codegen luau-types` command):
 
@@ -904,7 +915,7 @@ Status legend: ✅ realised today · 🟡 partial · ⬜ pending.
 | Hand-written `WidgetContribution` struct per widget (20+ fields) | `prism.widget { ... }` in Luau — 10 lines | ⬜ Phase 6 |
 | `impl Component for X` + `impl HtmlBlock for X` per widget | `render` function in Luau, walker handles both targets | ⬜ Phase 6 |
 | Hand-written JSON marshalling in every daemon module | `#[luau_expose]` auto-derives `UserData` impls | 🟡 leaf types annotated; stateful subsystems hand-roll via `manual_impl` (intentional — see Phase 1) |
-| Hand-maintained `.d.luau` type stubs | Generated from annotated Rust types | 🟡 `prism codegen luau-types` ships for `prism-core`; `prism-builder` types + per-component signal stubs still pending |
+| Hand-maintained `.d.luau` type stubs | Generated from annotated Rust types | 🟡 `prism codegen luau-types` ships `core.d.luau` + `builder.d.luau` + `signals.d.luau`; deeper `prism-builder` annotation (`BuilderDocument` / `Node` / `Connection` / `LayoutMode` / `FacetDef` / …) still pending |
 | Duplicate `FieldSpec` builder calls across Rust + signal stubs | Single `prism.field.*` API in Luau, backed by the same `FieldSpec` | ⬜ Phase 6 |
 | `ActionKind::Custom { handler }` as dead code | Live execution path through `PrismContext` | ✅ shell `fire_signal` runs Custom handlers via `luau_module::exec` |
 | Separate `luau.exec` fire-and-forget model | Persistent scripts with subscriptions and lifecycle | ⬜ Phase 3 |

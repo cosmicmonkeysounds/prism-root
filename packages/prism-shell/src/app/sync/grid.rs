@@ -16,7 +16,18 @@ use prism_core::editor::EditorState;
 #[cfg(feature = "native")]
 use prism_core::foundation::persistence::{CollectionStore, EdgeFilter, ObjectFilter};
 use prism_core::foundation::vfs::VfsManager;
+use prism_luau_derive::SlintBinding;
 use slint::{ComponentHandle, Model, ModelRc, SharedString, TimerMode, VecModel};
+
+/// Counts of secondary builder collections (connections, resources,
+/// prefabs) for the composition status row.
+#[derive(SlintBinding)]
+#[slint(global = "AppWindow", push_only)]
+struct CompositionCounts {
+    connection_count: i32,
+    resource_count: i32,
+    prefab_count: i32,
+}
 
 use super::super::commands::build_context_menu_items;
 use super::super::{
@@ -105,9 +116,12 @@ pub(crate) fn push_composition_counts(
                 .is_some_and(|id| c.source_node == *id || c.target_node == *id)
         })
         .count();
-    window.set_connection_count(conn_count as i32);
-    window.set_resource_count(doc.resources.len() as i32);
-    window.set_prefab_count(doc.prefabs.len() as i32);
+    CompositionCounts {
+        connection_count: conn_count as i32,
+        resource_count: doc.resources.len() as i32,
+        prefab_count: doc.prefabs.len() as i32,
+    }
+    .bind_to(window);
 }
 
 pub(crate) fn push_grid_cells(

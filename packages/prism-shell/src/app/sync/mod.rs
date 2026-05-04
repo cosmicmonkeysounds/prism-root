@@ -28,6 +28,195 @@ impl ChromeBindings {
     }
 }
 
+/// Workflow / app-level scalar properties: launchpad gate, active app and
+/// page names, viewport preset label, panel id, drag-component type, and
+/// transform tool. The `active_app_name` / `active_page_name` fields are
+/// blank on the launchpad — derive that here so the call site is one bind.
+#[derive(SlintBinding)]
+#[slint(global = "AppWindow", push_only)]
+struct WorkflowBindings {
+    is_launchpad: bool,
+    preview_mode: bool,
+    active_app_name: SharedString,
+    active_page_name: SharedString,
+    viewport_preset: SharedString,
+    active_panel_id: i32,
+    drag_component_type: SharedString,
+    transform_tool: SharedString,
+}
+
+impl WorkflowBindings {
+    fn from_shell(state: &AppState, inner: &ShellInner) -> Self {
+        let is_launchpad = state.shell_view.is_launchpad();
+        let (app_name, page_name) = if is_launchpad {
+            (SharedString::new(), SharedString::new())
+        } else {
+            let app = state.active_app();
+            (
+                SharedString::from(app.map(|a| a.name.as_str()).unwrap_or("")),
+                SharedString::from(
+                    app.and_then(|a| a.pages.get(a.active_page))
+                        .map(|p| p.title.as_str())
+                        .unwrap_or(""),
+                ),
+            )
+        };
+        let preset = match state.viewport_width as u32 {
+            768 => "Tablet",
+            375 => "Mobile",
+            _ => "Desktop",
+        };
+        let tool = match state.transform_tool {
+            TransformTool::Move => "move",
+            TransformTool::Rotate => "rotate",
+            TransformTool::Scale => "scale",
+        };
+        Self {
+            is_launchpad,
+            preview_mode: super::is_preview_mode(&state.workspace),
+            active_app_name: app_name,
+            active_page_name: page_name,
+            viewport_preset: SharedString::from(preset),
+            active_panel_id: panel_id_for_slint(&state.workspace),
+            drag_component_type: SharedString::from(inner.drag_component_type.as_str()),
+            transform_tool: SharedString::from(tool),
+        }
+    }
+}
+
+/// Project name + dirty state from the persistence and (native-only)
+/// `ProjectManager` surfaces. The branching is around platform features,
+/// not state shape, so the constructor handles it once.
+#[derive(SlintBinding)]
+#[slint(global = "AppWindow", push_only)]
+struct ProjectBindings {
+    project_name: SharedString,
+    project_dirty: bool,
+}
+
+impl ProjectBindings {
+    fn from_shell(inner: &ShellInner) -> Self {
+        let mut name = inner.persistence.project_name().unwrap_or_default();
+        let mut dirty = inner.persistence.is_dirty();
+        #[cfg(feature = "native")]
+        if let Some(ref proj) = inner.project {
+            if name.is_empty() {
+                name = proj
+                    .root()
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+            }
+            dirty = dirty || proj.is_dirty();
+        }
+        Self {
+            project_name: SharedString::from(name),
+            project_dirty: dirty,
+        }
+    }
+}
+
+/// Toolbar state — selection / clipboard flags + active panel title and
+/// hint string derived from the dock workspace.
+#[derive(SlintBinding)]
+#[slint(global = "AppWindow", push_only)]
+struct ToolbarBindings {
+    has_selection: bool,
+    has_clipboard: bool,
+    panel_title: SharedString,
+    panel_hint: SharedString,
+}
+
+impl ToolbarBindings {
+    fn from_shell(state: &AppState, inner: &ShellInner) -> Self {
+        let (title, hint) = panel_metadata_from_workspace(&state.workspace);
+        Self {
+            has_selection: !state.selection.is_empty(),
+            has_clipboard: inner.clipboard.is_some(),
+            panel_title: SharedString::from(title),
+            panel_hint: SharedString::from(hint),
+        }
+    }
+}
+
+/// Undo/redo button state — enabled flags plus the description label of
+/// the snapshot at the top of each stack.
+#[derive(SlintBinding)]
+#[slint(global = "AppWindow", push_only)]
+struct UndoBindings {
+    can_undo: bool,
+    can_redo: bool,
+    undo_label: SharedString,
+    redo_label: SharedString,
+}
+
+impl UndoBindings {
+    fn from_shell(inner: &ShellInner) -> Self {
+        Self {
+            can_undo: !inner.undo_past.is_empty(),
+            can_redo: !inner.undo_future.is_empty(),
+            undo_label: SharedString::from(
+                inner
+                    .undo_past
+                    .last()
+                    .map(|s| s.description.as_str())
+                    .unwrap_or(""),
+            ),
+            redo_label: SharedString::from(
+                inner
+                    .undo_future
+                    .last()
+                    .map(|s| s.description.as_str())
+                    .unwrap_or(""),
+            ),
+        }
+    }
+}
+
+/// Component-picker overlay state. When `pending_picker` is `None` the
+/// fields default to empty / zero / hidden so a single push covers both
+/// branches of the original `if let Some(...)`.
+#[derive(SlintBinding)]
+#[slint(global = "AppWindow", push_only)]
+struct PickerBindings {
+    pending_add_path: SharedString,
+    pending_add_x: f32,
+    pending_add_y: f32,
+    show_component_picker: bool,
+}
+
+impl PickerBindings {
+    fn from_shell(inner: &ShellInner) -> Self {
+        if let Some((ref path, x, y)) = inner.pending_picker {
+            Self {
+                pending_add_path: SharedString::from(path.as_str()),
+                pending_add_x: x,
+                pending_add_y: y,
+                show_component_picker: true,
+            }
+        } else {
+            Self {
+                pending_add_path: SharedString::new(),
+                pending_add_x: 0.0,
+                pending_add_y: 0.0,
+                show_component_picker: false,
+            }
+        }
+    }
+}
+
+/// Scalar half of the context-menu overlay (visibility + position +
+/// item count). The item-list `VecModel` is pushed separately because it
+/// is a model, not a Slint property.
+#[derive(SlintBinding)]
+#[slint(global = "AppWindow", push_only)]
+struct ContextMenuBindings {
+    show_context_menu: bool,
+    context_menu_x: f32,
+    context_menu_y: f32,
+    context_menu_items_count: i32,
+}
+
 use super::commands::build_context_menu_items;
 use super::{
     panel_id_for_slint, sync_model, AppState, PersistentModels, ShellInner, TransformTool,
@@ -183,85 +372,31 @@ pub(super) fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
 
     // Launchpad vs App view
     let is_launchpad = state.shell_view.is_launchpad();
-    window.set_is_launchpad(is_launchpad);
-    window.set_preview_mode(super::is_preview_mode(&state.workspace));
-
     if is_launchpad {
         push_app_cards(&inner.models, window, &state.apps);
-        window.set_active_app_name(SharedString::new());
-        window.set_active_page_name(SharedString::new());
-    } else {
-        let app = state.active_app();
-        window.set_active_app_name(SharedString::from(
-            app.map(|a| a.name.as_str()).unwrap_or(""),
-        ));
-        window.set_active_page_name(SharedString::from(
-            app.and_then(|a| a.pages.get(a.active_page))
-                .map(|p| p.title.as_str())
-                .unwrap_or(""),
-        ));
     }
 
-    // Project name and dirty state
-    let mut proj_name = inner.persistence.project_name().unwrap_or_default();
-    #[cfg(feature = "native")]
-    if proj_name.is_empty() {
-        if let Some(ref proj) = inner.project {
-            proj_name = proj
-                .root()
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
-        }
-    }
-    window.set_project_name(SharedString::from(proj_name));
-    let mut is_dirty = inner.persistence.is_dirty();
-    #[cfg(feature = "native")]
-    if let Some(ref proj) = inner.project {
-        is_dirty = is_dirty || proj.is_dirty();
-    }
-    window.set_project_dirty(is_dirty);
+    // Workflow / app-level scalar state — launchpad gate, app/page names,
+    // viewport preset, panel id, drag-component, transform tool.
+    WorkflowBindings::from_shell(state, inner).bind_to(window);
+
+    // Project name + dirty state.
+    ProjectBindings::from_shell(inner).bind_to(window);
 
     // Shell chrome visibility + viewport — pushed through the typed
     // `ChromeBindings` mirror so a renamed AppState field that no longer
     // matches a Slint property fails to compile instead of silently
     // dropping the push.
     ChromeBindings::from(state).bind_to(window);
-    let preset = match state.viewport_width as u32 {
-        768 => "Tablet",
-        375 => "Mobile",
-        _ => "Desktop",
-    };
-    window.set_viewport_preset(SharedString::from(preset));
 
     // Menu bar
     push_menu_defs(&inner.models, window, &inner.menus, &inner.commands);
 
-    // Activity bar panel selection — derived from dock workspace
-    let slint_panel_id = panel_id_for_slint(&state.workspace);
-    window.set_active_panel_id(slint_panel_id);
-
-    // Drag/place mode
-    window.set_drag_component_type(SharedString::from(inner.drag_component_type.as_str()));
-
-    // Transform tool
-    window.set_transform_tool(SharedString::from(match state.transform_tool {
-        TransformTool::Move => "move",
-        TransformTool::Rotate => "rotate",
-        TransformTool::Scale => "scale",
-    }));
-
     // Component picker overlay
-    if let Some((ref path, x, y)) = inner.pending_picker {
-        window.set_pending_add_path(SharedString::from(path.as_str()));
-        window.set_pending_add_x(x);
-        window.set_pending_add_y(y);
-        window.set_show_component_picker(true);
-    } else {
-        window.set_show_component_picker(false);
-    }
+    PickerBindings::from_shell(inner).bind_to(window);
 
-    // Context menu overlay
+    // Context menu overlay — scalar half via the mirror struct, item
+    // model still pushed manually because it's a `VecModel`.
     if let Some(ref ctx) = inner.pending_context_menu {
         let items = build_context_menu_items(inner, &ctx.target_kind, &ctx.target_id);
         let slint_items: Vec<MenuItem> = items
@@ -276,22 +411,25 @@ pub(super) fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
             .collect();
         let model = Rc::new(slint::VecModel::from(slint_items));
         window.set_context_menu_items(model.into());
-        window.set_context_menu_items_count(items.len() as i32);
-        window.set_context_menu_x(ctx.x);
-        window.set_context_menu_y(ctx.y);
-        window.set_show_context_menu(true);
+        ContextMenuBindings {
+            show_context_menu: true,
+            context_menu_x: ctx.x,
+            context_menu_y: ctx.y,
+            context_menu_items_count: items.len() as i32,
+        }
+        .bind_to(window);
     } else {
-        window.set_show_context_menu(false);
+        ContextMenuBindings {
+            show_context_menu: false,
+            context_menu_x: 0.0,
+            context_menu_y: 0.0,
+            context_menu_items_count: 0,
+        }
+        .bind_to(window);
     }
 
-    // Toolbar state
-    window.set_has_selection(!state.selection.is_empty());
-    window.set_has_clipboard(inner.clipboard.is_some());
-
-    // Panel title + hint
-    let (title, hint) = panel_metadata_from_workspace(&state.workspace);
-    window.set_panel_title(SharedString::from(title));
-    window.set_panel_hint(SharedString::from(hint));
+    // Toolbar + panel header (selection / clipboard flags + workspace title).
+    ToolbarBindings::from_shell(state, inner).bind_to(window);
 
     // Dock layout is pushed on a SEPARATE event-loop tick (dock_check_timer)
     // to avoid Slint property-evaluation recursion. Replacing the dock-panels
@@ -504,22 +642,7 @@ pub(super) fn sync_ui_impl(inner: &ShellInner, window: &AppWindow) {
     window.set_notifications_count(count);
 
     // Undo/redo state
-    window.set_can_undo(!inner.undo_past.is_empty());
-    window.set_can_redo(!inner.undo_future.is_empty());
-    window.set_undo_label(SharedString::from(
-        inner
-            .undo_past
-            .last()
-            .map(|s| s.description.as_str())
-            .unwrap_or(""),
-    ));
-    window.set_redo_label(SharedString::from(
-        inner
-            .undo_future
-            .last()
-            .map(|s| s.description.as_str())
-            .unwrap_or(""),
-    ));
+    UndoBindings::from_shell(inner).bind_to(window);
 
     // Search results
     let search_items: Vec<SearchResultItem> = if state.search_query.is_empty() {

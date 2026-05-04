@@ -16,7 +16,24 @@ use prism_core::editor::EditorState;
 #[cfg(feature = "native")]
 use prism_core::foundation::persistence::{CollectionStore, EdgeFilter, ObjectFilter};
 use prism_core::foundation::vfs::VfsManager;
+use prism_luau_derive::SlintBinding;
 use slint::{ComponentHandle, Model, ModelRc, SharedString, TimerMode, VecModel};
+
+/// Transform-section property panel: position / rotation / scale / anchor
+/// for the currently selected node. Only pushed when there is a selection;
+/// callers gate the bind to keep the previous values when nothing is
+/// selected (preserving the in-out Slint property semantics for the
+/// number editors).
+#[derive(SlintBinding)]
+#[slint(global = "AppWindow", push_only)]
+struct TransformBindings {
+    transform_pos_x: f32,
+    transform_pos_y: f32,
+    transform_rotation_deg: f32,
+    node_scale_x: f32,
+    node_scale_y: f32,
+    transform_anchor_value: SharedString,
+}
 
 use super::super::commands::build_context_menu_items;
 use super::super::{
@@ -94,14 +111,17 @@ pub(crate) fn push_property_sections(
     if let Some(selected_id) = &selected {
         if let Some(node) = doc.root.as_ref().and_then(|n| n.find(selected_id)) {
             let t = &node.transform;
-            window.set_transform_pos_x(t.position[0]);
-            window.set_transform_pos_y(t.position[1]);
-            window.set_transform_rotation_deg(t.rotation.to_degrees());
-            window.set_node_scale_x(t.scale[0]);
-            window.set_node_scale_y(t.scale[1]);
-            window.set_transform_anchor_value(SharedString::from(
-                crate::panels::properties::format_anchor(t.anchor),
-            ));
+            TransformBindings {
+                transform_pos_x: t.position[0],
+                transform_pos_y: t.position[1],
+                transform_rotation_deg: t.rotation.to_degrees(),
+                node_scale_x: t.scale[0],
+                node_scale_y: t.scale[1],
+                transform_anchor_value: SharedString::from(
+                    crate::panels::properties::format_anchor(t.anchor),
+                ),
+            }
+            .bind_to(window);
         }
     }
 }

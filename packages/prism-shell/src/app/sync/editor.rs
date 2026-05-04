@@ -16,7 +16,23 @@ use prism_core::editor::EditorState;
 #[cfg(feature = "native")]
 use prism_core::foundation::persistence::{CollectionStore, EdgeFilter, ObjectFilter};
 use prism_core::foundation::vfs::VfsManager;
+use prism_luau_derive::SlintBinding;
 use slint::{ComponentHandle, Model, ModelRc, SharedString, TimerMode, VecModel};
+
+/// Editor-cursor scalar properties pushed in lockstep at the end of
+/// `push_editor_data`. The line model is replaced separately because it's
+/// a `VecModel`, not a Slint property.
+#[derive(SlintBinding)]
+#[slint(global = "AppWindow", push_only)]
+struct EditorCursorBindings {
+    editor_cursor_line: i32,
+    editor_cursor_col: i32,
+    editor_cursor_visible: bool,
+    editor_cursor_prefix: SharedString,
+    editor_language: SharedString,
+    editor_line_count: i32,
+    editor_char_count: i32,
+}
 
 use super::super::commands::build_context_menu_items;
 use super::super::{
@@ -135,9 +151,6 @@ pub(crate) fn push_editor_data(models: &PersistentModels, window: &AppWindow, es
 
     let count = sync_model(&models.editor_lines, &lines);
     window.set_editor_lines_count(count);
-    window.set_editor_cursor_line(cursor_line as i32);
-    window.set_editor_cursor_col(cursor_col as i32);
-    window.set_editor_cursor_visible(true);
 
     let cursor_prefix: String = es
         .buffer
@@ -147,10 +160,17 @@ pub(crate) fn push_editor_data(models: &PersistentModels, window: &AppWindow, es
         .chars()
         .take(cursor_col)
         .collect();
-    window.set_editor_cursor_prefix(SharedString::from(cursor_prefix));
-    window.set_editor_language(SharedString::from(&es.language));
-    window.set_editor_line_count(line_count as i32);
-    window.set_editor_char_count(es.buffer.len_chars() as i32);
+
+    EditorCursorBindings {
+        editor_cursor_line: cursor_line as i32,
+        editor_cursor_col: cursor_col as i32,
+        editor_cursor_visible: true,
+        editor_cursor_prefix: SharedString::from(cursor_prefix),
+        editor_language: SharedString::from(&es.language),
+        editor_line_count: line_count as i32,
+        editor_char_count: es.buffer.len_chars() as i32,
+    }
+    .bind_to(window);
 }
 
 pub(crate) fn display_row_to_buffer_line(es: &EditorState, display_row: usize) -> usize {

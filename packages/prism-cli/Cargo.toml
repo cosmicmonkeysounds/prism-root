@@ -22,11 +22,14 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "io
 # rebuild decisions.
 notify = { workspace = true }
 # `prism codegen luau-types` walks the workspace's `#[luau_expose]`
-# annotations through `prism-core`'s curated registry. The Luau runtime
-# itself is *not* needed here — only the type-stub constants — so we
-# pull `prism-core` in without the `luau` feature to keep the CLI's
-# build cheap.
+# annotations through `prism-core`'s + `prism-builder`'s curated
+# registries. The Luau runtime itself is *not* needed here — only the
+# type-stub constants — so we pull both crates in without their `luau`
+# feature to keep the CLI's build cheap. `prism-builder` also exposes
+# the per-component signal stub generator (`generate_signal_type_stubs`),
+# which the codegen subcommand fans out alongside the type registry.
 prism-core = { path = "../prism-core" }
+prism-builder = { path = "../prism-builder" }
 
 [dev-dependencies]
 filetime = "0.2"

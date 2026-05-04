@@ -19,6 +19,13 @@ default = []
 # leaves it off so its dep graph stays free of Slint entirely; `prism-shell`
 # flips it on so Studio's builder panel can materialise live components.
 interpreter = ["dep:slint", "dep:slint-interpreter", "dep:spin_on"]
+# Phase 1.1+ of `docs/dev/luau-integration-plan.md`. Off by default so
+# the relay's HTML-only render path doesn't drag mlua's vendored Luau
+# build in. `#[luau_expose]` annotations are always present (constants
+# only) — flipping this feature on materialises the `UserData` /
+# `IntoLua` / `FromLua` impls the macro emits behind `cfg(feature =
+# "luau")`. Mirrors the `luau` feature on `prism-core`.
+luau = ["dep:mlua"]
 
 [dependencies]
 serde = { workspace = true }
@@ -36,6 +43,8 @@ prism-luau-derive = { workspace = true }
 slint = { workspace = true, optional = true }
 slint-interpreter = { workspace = true, optional = true }
 spin_on = { workspace = true, optional = true }
+# Optional — only materialised when the `luau` feature is on (see above).
+mlua = { workspace = true, optional = true }
 
 [dev-dependencies]
 insta = { workspace = true }

@@ -4,9 +4,10 @@
 //! follows CSS-like cascade order: component > page > app. For each
 //! field, the most specific non-`None` value wins.
 
-use prism_luau_derive::Editable;
+use prism_luau_derive::{luau_expose, Editable};
 use serde::{Deserialize, Serialize};
 
+#[luau_expose]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Editable)]
 pub struct StyleProperties {
     #[serde(default, skip_serializing_if = "Option::is_none")]

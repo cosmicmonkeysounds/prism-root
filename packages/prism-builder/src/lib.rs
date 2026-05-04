@@ -29,6 +29,7 @@ pub mod html;
 pub mod html_block;
 pub mod html_starter;
 pub mod layout;
+pub mod luau_types;
 pub mod modifier;
 pub mod prefab;
 pub mod project;
