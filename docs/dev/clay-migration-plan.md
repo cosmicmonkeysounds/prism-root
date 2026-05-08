@@ -1106,6 +1106,165 @@ CLI surface unchanged.
     - **Overlay-blocked:** `Toast`, command-palette, help tooltip.
     Hover-state vocabulary unblocks the largest cluster, so it's
     the next runtime extension to land.
+- **Update 2026-05-08 (hover-state vocabulary lands; NavButton + IconButton
+  hover wired):** the runtime grew a sparse, declarative hover-overrides
+  vocabulary — *no* state machine, *no* parallel render path, and the
+  retained-mode dirty-bit contract is preserved.
+  - **`HoverOverrides` struct** in `prism-ui-runtime/src/layout/mod.rs`:
+    `{ background: Option<Color>, radius: Option<CornerRadius> }`. Sparse
+    so unset fields fall through to the resting paint state. `is_empty`
+    helper for the dirty-bit short-circuit.
+  - **`ContainerProps::hover: Option<HoverOverrides>`** — declarative
+    field, serde-skipped when empty so existing JSON round-trips
+    unchanged. SSR backends ignore it (hover is paint-only). Text
+    hover deferred until a primitive demands it.
+  - **`compute_with_hover(tree, viewport, hovered_id: Option<&str>)`**
+    — sibling of `compute`, threads the hovered id through
+    `build_taffy_subtree`. The Container arm folds overrides into the
+    `NodeContext` only when `id == hovered_id`. Layout box model is
+    untouched — hover affects paint only, by design.
+  - **`Surface::set_hovered(Option<String>)`** — host-driven hover
+    state. Marks dirty *only* when the transition crosses a node that
+    declares non-empty `hover` overrides (helper `node_has_hover`
+    walks the tree once). Idempotent on same-id calls; transitioning
+    between two non-affecting nodes never recomputes. Preserves the
+    retained-mode contract: `commands()` re-runs layout iff
+    `dirty == true`.
+  - **Hit-testing intentionally NOT wired in this turn.** The runtime
+    exposes `set_hovered(Option<String>)`; the host (input dispatcher)
+    owns the hit-test for now. A `Surface::hit_test(x, y) -> Option<&str>`
+    helper lands when the first concrete native input pipeline needs
+    it — currently the IconButton hover state is fully expressible
+    in storage and ready for the host wire-up.
+  - **4 new layout tests:** `hover_overrides_swap_in_when_id_matches`,
+    `hover_overrides_ignored_when_id_does_not_match`,
+    `surface_set_hovered_dirty_only_when_paint_actually_changes` (covers
+    enter / leave / drift / idempotent), `surface_hover_swap_round_trip`.
+  - **Block migrations using the new vocabulary:**
+    - `IconButton` — enabled buttons declare a translucent foreground
+      hover bg (`#1f000000`); disabled buttons leave `props.hover =
+      None` so they stay static under the pointer. Two new tests.
+    - **`shell.nav-button` (5th primitive, hover-state-blocked → unblocked):**
+      48×48 activity-bar button with a 3px accent rail on the left
+      edge that paints when `selected=true`. Resting buttons declare
+      a hover-bg override; selected buttons keep their accent bg
+      under the pointer (no double-state). SSR semantic is
+      `<button type="button">` with `aria-pressed="true"` when
+      selected. Reuses `bare_container` / `image_node` / `parse_color`
+      — the rail is a 3px-wide grow-height bare container, the body
+      is a centred glyph in a padding-resolved bare container, the
+      outer is the standard `synthetic_container`. Zero hand-rolled
+      `UiNode::Container { … }` literals. 3 unit tests.
+  - **Phase-4 chrome scoreboard:** **4 of 13** primitives migrated
+    (`shell.icon-button`, `shell.toolbar-separator`,
+    `shell.section-header`, `shell.nav-button`). Hover-state half of
+    the cluster is now unblocked — `MenuBarRow` items, Tab pills, and
+    every other "highlight on hover" primitive can declare their
+    hover shape immediately. Remaining blockers are `<slot/>`,
+    control-flow lowering, `TextInput`, and overlay z-layer.
+- **Update 2026-05-08 (interactive-chrome helper extraction):** with
+  IconButton + NavButton both shipping, the duplicated boilerplate at
+  the bottom of every button-shaped `lower_ui` impl had clear
+  shape — and the user explicitly called out smart-pattern factoring.
+  Two thin helpers landed, each on the layer that already owns the
+  primitive:
+  - **`Semantic::button()`** (in `prism-ui-runtime/src/layout/mod.rs`)
+    — pre-shapes a `<button type="button">` Semantic; chainable from
+    the existing fluent builder.
+  - **`Semantic::with_attr_if(bool, k, v)`** — folds the
+    `if cond { semantic = semantic.with_attr(k, v); }` two-liner into
+    one chainable call. Used for `aria-pressed` / `disabled` /
+    future per-state attrs.
+  - **`Semantic::with_aria_label_opt(Option<&str>)`** — same shape
+    for `Option`-shaped tooltip / help-id sources.
+  - **`hover_bg(&str) -> Option<HoverOverrides>`** (in
+    `prism-builder/src/ui_lower.rs`) — one-line constructor for the
+    "hover swaps the background only" pattern. Returns `None` when
+    the colour string fails to parse, so callers assign
+    `props.hover = hover_bg(...)` unconditionally and the parse-error
+    path stays paint-free.
+  - **Both refactored callers shrank by ~10 lines each** with no
+    behaviour change beyond IconButton picking up `type="button"` on
+    its `<button>` (correct/desired — matches NavButton). All 808
+    tests stay green; 6 new helper tests cover the conditional
+    branches and parse failures.
+  - **Why this is the right level of abstraction:** the helpers
+    *compose* with the existing fluent builder rather than wrapping
+    it in a new struct. No new "ButtonShape"/"ChromeBuilder" type,
+    no DI registration, no parallel lowering path — just two more
+    nodes on the existing `Semantic` builder graph and one ergonomic
+    constructor on the existing `ui_lower` namespace. Future
+    button-shaped primitives (Tab pill, MenuBarRow item, future
+    StatusBar buttons) get the same density without picking up new
+    vocabulary.
+- **Update 2026-05-08 (overlay z-layer lands; Toast migrated):** the
+  third runtime gap from the punch list filled. The smart-pattern
+  shape mirrors `HoverOverrides` exactly — sparse vocabulary, retained-
+  mode dirty-bit contract preserved, *zero* per-primitive z-order
+  knowledge in the runtime, and Block lowering signature unchanged.
+  - **`Overlay { id, anchor, node }`** in
+    `prism-ui-runtime/src/layout/mod.rs`. An overlay is **just an
+    existing `Node` plus an anchor**. No new layout vocabulary; the
+    overlay's subtree lays out via the same `build_taffy_subtree` /
+    `compute_layout` / `emit_commands` path as the main tree. Hover
+    overrides, semantic SSR hints, and child recursion all flow
+    through unchanged.
+  - **`OverlayAnchor` enum** with three variants closed at design
+    time: `Corner { corner, inset }` (toasts, fixed badges),
+    `Point { x, y }` (help tooltip pinned to pointer / context menu),
+    `Center { offset_y }` (command palette, modal dialogs). Anchors
+    requiring a query against the *main* tree's resolved layout
+    (e.g. "anchored to the rect of node `nav-button-3`") are
+    deliberately deferred — that case lands behind a new variant
+    only when the first concrete primitive demands it.
+  - **`Surface::push_overlay` / `remove_overlay` / `clear_overlays` /
+    `set_overlays`** — same dirty-bit shape as `set_tree`. `push_overlay`
+    replaces in place when the id collides, so a host can call it on
+    every state tick (toast list updated, palette query changed)
+    without juggling z-order. Hover hit-testing extends naturally:
+    `set_hovered` walks both the main tree *and* every overlay subtree
+    when deciding whether to flip the dirty bit.
+  - **`compute_full(tree, overlays, viewport, hovered_id)`** — the
+    main tree paints first, then each overlay in declaration order
+    with its anchor-resolved origin folded in. Z-order = stack order;
+    last `push_overlay` wins. Existing `compute` / `compute_with_hover`
+    delegate, so every existing call site is unchanged.
+  - **Block authoring contract unchanged.** A Toast's `lower_ui`
+    produces a `Node` exactly like every other primitive. The host
+    (`prism-shell`) decides whether to mount it inside the main
+    tree or on the overlay stack. This separation is what makes the
+    same Toast lowering reusable inside a hypothetical "notification
+    list" panel — no overlay knowledge baked into the Block.
+  - **`shell.toast` (6th primitive, overlay-blocked → unblocked):**
+    320px-wide notification card. Kind-tinted left rail (`info` /
+    `success` / `warning` / `error`) + title-and-body column.
+    Reuses `bare_container` / `parse_color` / `text_node` /
+    `uniform_radius` from `ui_lower` — zero hand-rolled
+    `UiNode::Container { … }` literals. SSR semantic is `<aside>`
+    with kind-driven `role` (`status` / `alert`) and `data-kind`
+    attribute so screen readers announce errors as alerts. The
+    one-line `kind_chrome` lookup table replaces a four-way branch
+    inside the lowering body. 5 unit tests covering rail/column
+    shape, body-omission when the prop is empty, kind→role/data
+    table, schema, and the merged `dismissed` + universal-signals
+    list.
+  - **5 new layout tests** (`overlay_paints_after_main_tree_at_resolved_corner`,
+    `overlay_anchor_center_resolves_to_viewport_centre_with_offset`,
+    `overlay_anchor_point_translates_verbatim`,
+    `surface_overlay_lifecycle_marks_dirty_only_when_stack_changes`,
+    `surface_overlay_hover_swap_dirties_through_overlay_subtree`)
+    cover anchor math, paint order, the in-place replace path, the
+    no-op-on-empty `clear_overlays` short-circuit, and that the
+    hover dirty-bit walks overlay subtrees too.
+  - **Phase-4 chrome scoreboard:** **5 of 13** primitives migrated
+    (`shell.icon-button`, `shell.toolbar-separator`,
+    `shell.section-header`, `shell.nav-button`, `shell.toast`). The
+    overlay z-layer cluster — Toast, command-palette, help-tooltip —
+    is unblocked: the remaining two will lower with the same recipe
+    (Block produces a card-shaped Node; host pushes onto the surface
+    with the appropriate `OverlayAnchor::Center` or `Point`).
+    Remaining blockers narrow to `<slot/>`, control-flow lowering,
+    and `TextInput`.
 - **Phase-4 runtime gaps to fill** (each one lands just-in-time as
   the next shell primitive demands it; the IconButton lowering above
   flagged the first):
@@ -1139,10 +1298,12 @@ CLI surface unchanged.
      `DragNumberField`, `FieldEditor`, search box. cosmic-text
      already owns text editing; the runtime gap is exposing it as a
      layout-leaf with focus + IME flow.
-  6. **Overlay / popup z-layer** — required by Toast, command
-     palette, help tooltip, docs panel. Probably a top-level
-     `Surface::overlays: Vec<UiNode>` with absolute-positioned
-     anchors, rather than a per-Node z-index.
+  6. **Overlay / popup z-layer** — *landed 2026-05-08* via
+     `Surface::overlays: Vec<Overlay>` + `OverlayAnchor` (Corner /
+     Point / Center). `shell.toast` migrated as the first consumer.
+     Command-palette and help-tooltip lower with the same recipe
+     (Block → Node, host pushes onto the overlay stack with the
+     appropriate anchor).
 
 ### Phase 5 — Cutover
 - Delete `slint`, `slint-build`, `slint-interpreter`, `.slint` files,
@@ -1167,6 +1328,9 @@ CLI surface unchanged.
 | 2026-05-04 | Phase 0 accepted; three decisions locked | Licence → `MIT OR Apache-2.0` at cutover; Clay binding **vendored fork** at `vendor/clay-layout/`; DSL flavour **HTMX-inspired** (tag-element + attribute-namespace) — see ADR-008 |
 | 2026-05-04 | Retained-mode runtime contract added (decision #4) | Editor-class UIs idle most frames; recomputing layout per vsync is wasted CPU. `Surface` caches `Vec<RenderCommand>`, dirty bit flips only on tree mutation / resize / scroll / animation tick / theme change / explicit `invalidate()`. Backends always go through `Surface::commands()`. |
 | 2026-05-04 | Luau-authorable Clay components (decision #5) | Preserve today's `LuauComponent` capability into the post-Slint world: Luau must author / edit / generate / hook into Clay-backed components. Imposes value-type design on `Node` / props / `Surface` so `prism-luau-derive` can wrap them mechanically. See §11. |
+| 2026-05-08 | Hover-state vocabulary lands (`HoverOverrides` + `Surface::set_hovered`) | Sparse paint-only override bundle on `ContainerProps`; dirty bit only flips when the hover transition crosses an affecting node. Unblocks every "highlight on hover" chrome primitive without a state machine or shadow render path. |
+| 2026-05-08 | Interactive-chrome helper extraction (`Semantic::button` / `with_attr_if` / `with_aria_label_opt` / `hover_bg`) | IconButton + NavButton revealed the same "button-shaped Semantic + conditional ARIA + hover swap" boilerplate. Helpers compose with the existing fluent builder — no new abstraction layer, no DI/registration, just two nodes on `Semantic` and one constructor in `ui_lower`. Future button-shaped chrome primitives inherit the density automatically. |
+| 2026-05-08 | Overlay z-layer lands (`Overlay` + `OverlayAnchor` + `Surface::push_overlay`); `shell.toast` migrated | Sparse anchor enum (Corner / Point / Center) covers Toast + command-palette + help-tooltip without forking the layout vocabulary — overlays are just `(Node, anchor)` pairs that flow through the same `build_taffy_subtree` / `emit_commands` pipeline as the main tree. Block lowering is unchanged: a Toast produces a Node; the host decides whether to mount it inline or on the overlay stack. Hover hit-testing extends naturally to overlay subtrees. Unblocks the third of the four chrome clusters identified in the punch list. |
 
 ## 10. Appendix — file-by-file Slint footprint to retire
 

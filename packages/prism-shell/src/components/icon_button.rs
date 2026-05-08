@@ -21,18 +21,22 @@ use prism_builder::{
     schemas, // unused — reserved for shared field factories as we grow
     signal::SignalDef,
     style::StyleProperties,
-    ui_lower::{image_node, uniform_radius, LowerCtx},
+    ui_lower::{hover_bg, image_node, uniform_radius, LowerCtx},
     Block,
     ComponentId,
     RenderError,
     RenderSlintContext,
 };
-use prism_ui_runtime::layout::{Node as UiNode, Sizing};
+use prism_ui_runtime::layout::{Node as UiNode, Semantic, Sizing};
 use serde_json::Value;
 
 const ICON_BUTTON_SIZE: f32 = 28.0;
 const ICON_BUTTON_RADIUS: f32 = 6.0;
 const ICON_GLYPH_SIZE: f32 = 16.0;
+/// Hover background — `Palette.control-background` in the original
+/// Slint version, hard-coded here until the design-tokens cascade
+/// resolves the value at lower-time.
+const ICON_BUTTON_HOVER_BG: &str = "#1f000000";
 
 /// `shell.icon-button` block. Schema mirrors the four `in property`
 /// declarations on the original Slint component.
@@ -110,32 +114,30 @@ impl Block for IconButton {
         );
 
         // 28×28 container with a centred 16×16 glyph. `synthetic_container`
-        // owns cascade resolution + flow props; we override only the four
+        // owns cascade resolution + flow props; we override only the
         // fields that make this an icon button rather than a generic box.
+        let enabled = !matches!(node.props.get("enabled"), Some(Value::Bool(false)));
         ctx.synthetic_container(node, style, vec![glyph], |props| {
             props.width = Sizing::Fixed(ICON_BUTTON_SIZE);
             props.height = Sizing::Fixed(ICON_BUTTON_SIZE);
             props.radius = uniform_radius(ICON_BUTTON_RADIUS);
-            // Resting state: transparent. Hover/pressed visual state
-            // lands once the runtime grows hover-state vocabulary —
-            // see clay-migration-plan.md Phase 4 runtime gaps.
-            //
+            // Resting bg stays at whatever the cascade resolved (typically
+            // None → transparent). Disabled buttons stay static under
+            // the pointer, so only enabled buttons declare a hover swap.
+            if enabled {
+                props.hover = hover_bg(ICON_BUTTON_HOVER_BG);
+            }
             // SSR semantic: <button>. ARIA label is filled from the
             // tooltip prop so screen readers get the same text the
             // pointer-hover tooltip shows.
-            let mut semantic = prism_ui_runtime::layout::Semantic::tag("button");
-            if let Some(tooltip) = node
+            let tooltip = node
                 .props
                 .get("tooltip-text")
                 .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty())
-            {
-                semantic = semantic.with_aria_label(tooltip);
-            }
-            if matches!(node.props.get("enabled"), Some(Value::Bool(false))) {
-                semantic = semantic.with_attr("disabled", "disabled");
-            }
-            props.semantic = semantic;
+                .filter(|s| !s.is_empty());
+            props.semantic = Semantic::button()
+                .with_aria_label_opt(tooltip)
+                .with_attr_if(!enabled, "disabled", "disabled");
         })
     }
 }
@@ -246,6 +248,30 @@ mod tests {
         let schema = block.schema();
         let keys: Vec<&str> = schema.iter().map(|f| f.key.as_str()).collect();
         assert_eq!(keys, vec!["icon", "enabled", "tooltip-text", "help-id"]);
+    }
+
+    #[test]
+    fn enabled_button_declares_hover_background() {
+        let node = icon_node(json!({ "icon": "icons/x.svg", "enabled": true }));
+        if let UiNode::Container { props, .. } = lower_one(&node) {
+            let hover = props.hover.expect("enabled button declares hover");
+            assert!(hover.background.is_some());
+        } else {
+            panic!("not a container")
+        }
+    }
+
+    #[test]
+    fn disabled_button_omits_hover_overrides() {
+        let node = icon_node(json!({ "icon": "icons/x.svg", "enabled": false }));
+        if let UiNode::Container { props, .. } = lower_one(&node) {
+            assert!(
+                props.hover.is_none(),
+                "disabled buttons stay static under the pointer"
+            );
+        } else {
+            panic!("not a container")
+        }
     }
 
     #[test]

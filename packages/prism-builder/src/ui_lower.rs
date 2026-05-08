@@ -30,7 +30,7 @@
 
 use prism_ui_runtime::command::{Color, CornerRadius};
 use prism_ui_runtime::layout::{
-    ContainerProps, Direction, Node as UiNode, Padding, Semantic, Sizing, TextProps,
+    ContainerProps, Direction, HoverOverrides, Node as UiNode, Padding, Semantic, Sizing, TextProps,
 };
 
 use crate::document::Node;
@@ -226,6 +226,19 @@ pub fn with_semantic(node: UiNode, semantic: Semantic) -> UiNode {
     }
 }
 
+/// One-line constructor for the most common interactive-primitive
+/// hover shape: "swap the background only". Returns `None` when the
+/// colour string fails to parse so the caller can `props.hover = ...`
+/// unconditionally without a `parse_color`/`HoverOverrides` two-liner
+/// at every call site. The full `HoverOverrides` struct stays
+/// available for primitives that animate radius / future fields too.
+pub fn hover_bg(color: &str) -> Option<HoverOverrides> {
+    parse_color(color).map(|c| HoverOverrides {
+        background: Some(c),
+        radius: None,
+    })
+}
+
 /// Convenience: equal corner radius on all four corners. Most blocks
 /// want this; the long-form struct literal is noise.
 pub fn uniform_radius(r: f32) -> CornerRadius {
@@ -400,4 +413,29 @@ pub fn parse_color(s: &str) -> Option<Color> {
         b: bytes[2],
         a: bytes[3],
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hover_bg_returns_some_for_valid_color() {
+        let h = hover_bg("#1f000000").expect("valid color");
+        assert!(h.background.is_some());
+        assert!(h.radius.is_none());
+    }
+
+    #[test]
+    fn hover_bg_returns_none_for_invalid_color() {
+        assert!(hover_bg("not-a-color").is_none());
+    }
+
+    #[test]
+    fn hover_bg_round_trips_alpha() {
+        // #RRGGBBAA — last byte is alpha.
+        let h = hover_bg("#0000001f").unwrap();
+        let c = h.background.unwrap();
+        assert_eq!(c.a, 0x1f);
+    }
 }

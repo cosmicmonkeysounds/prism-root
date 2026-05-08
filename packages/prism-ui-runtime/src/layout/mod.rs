@@ -192,6 +192,33 @@ pub struct ContainerProps {
     /// the walker resolves to a plain `<div>`.
     #[serde(default, skip_serializing_if = "Semantic::is_empty")]
     pub semantic: Semantic,
+    /// Declarative hover-state overrides. Sparse — only the fields
+    /// that *change* on hover are listed. The runtime swaps these in
+    /// at command-emit time when the container's `id` matches
+    /// [`Surface::hovered_id`]. SSR backends ignore this field —
+    /// hover is a native-render-only concern.
+    ///
+    /// Authoring pattern: a block's `lower_ui` declares the hover
+    /// shape alongside the resting shape, in the same impl. No
+    /// imperative state machine, no shadow render path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hover: Option<HoverOverrides>,
+}
+
+/// Sparse override bundle applied when a node is hovered. Each field
+/// is independently optional — most blocks override only `background`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct HoverOverrides {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<Color>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub radius: Option<CornerRadius>,
+}
+
+impl HoverOverrides {
+    pub fn is_empty(&self) -> bool {
+        self.background.is_none() && self.radius.is_none()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -252,6 +279,15 @@ impl Semantic {
         }
     }
 
+    /// Pre-shaped `<button type="button">` constructor — every shell
+    /// button-shaped primitive (IconButton, NavButton, future Tab pill,
+    /// MenuBarRow item) starts here and folds in conditional ARIA via
+    /// the `*_if` / `*_opt` helpers below. Avoids two lines of
+    /// boilerplate per primitive.
+    pub fn button() -> Self {
+        Self::tag("button").with_attr("type", "button")
+    }
+
     pub fn with_class(mut self, c: impl Into<String>) -> Self {
         self.class = Some(c.into());
         self
@@ -262,9 +298,30 @@ impl Semantic {
         self
     }
 
+    /// Conditional attribute — folds the `if cond { semantic =
+    /// semantic.with_attr(k, v) }` boilerplate into a single chainable
+    /// call. The attribute is emitted iff `cond` is true.
+    pub fn with_attr_if(self, cond: bool, k: impl Into<String>, v: impl Into<String>) -> Self {
+        if cond {
+            self.with_attr(k, v)
+        } else {
+            self
+        }
+    }
+
     pub fn with_aria_label(mut self, label: impl Into<String>) -> Self {
         self.aria_label = Some(label.into());
         self
+    }
+
+    /// Conditional `aria-label`. Common in chrome lowering where the
+    /// label comes from an `Option<&str>` prop (tooltip text, help id).
+    /// `None` leaves the field unset.
+    pub fn with_aria_label_opt(self, label: Option<impl Into<String>>) -> Self {
+        match label {
+            Some(l) => self.with_aria_label(l),
+            None => self,
+        }
     }
 
     pub fn with_role(mut self, role: impl Into<String>) -> Self {
@@ -297,10 +354,57 @@ impl Default for TextProps {
 /// resolved layout to emit `RenderCommand`s. The walk preserves
 /// document order, which is the order Prism's renderers paint in.
 pub fn compute(tree: &Node, viewport: Viewport) -> Vec<RenderCommand> {
+    compute_with_hover(tree, viewport, None)
+}
+
+/// Same as [`compute`] but with a hovered-node id. When a container
+/// declares `props.hover` and its id matches `hovered_id`, the
+/// overrides are folded in at the moment its `NodeContext` is built —
+/// layout itself doesn't shift (hover affects paint, not box model),
+/// so the only commands that change are the rectangle's colour /
+/// radius. Pass `None` for the resting state.
+pub fn compute_with_hover(
+    tree: &Node,
+    viewport: Viewport,
+    hovered_id: Option<&str>,
+) -> Vec<RenderCommand> {
+    compute_full(tree, &[], viewport, hovered_id)
+}
+
+/// Hot-path entry point: compute the main tree, then each overlay in
+/// declaration order, concatenating the command streams. Overlays
+/// paint **after** the main tree, achieving z-order naturally — the
+/// last overlay declared sits on top.
+///
+/// Each overlay lays out independently against the viewport (so
+/// `Sizing::Fit` works the same as a top-level tree), then its commands
+/// are translated by the resolved anchor offset. The same hover
+/// pipeline applies to overlay subtrees, so e.g. a button inside the
+/// command-palette overlay can declare a `hover` swap.
+pub fn compute_full(
+    tree: &Node,
+    overlays: &[Overlay],
+    viewport: Viewport,
+    hovered_id: Option<&str>,
+) -> Vec<RenderCommand> {
+    let mut out = Vec::new();
+    compute_subtree_into(tree, viewport, hovered_id, 0.0, 0.0, &mut out);
+    for overlay in overlays {
+        compute_overlay_into(overlay, viewport, hovered_id, &mut out);
+    }
+    out
+}
+
+fn compute_subtree_into(
+    tree: &Node,
+    viewport: Viewport,
+    hovered_id: Option<&str>,
+    origin_x: f32,
+    origin_y: f32,
+    out: &mut Vec<RenderCommand>,
+) -> Option<Size<f32>> {
     let mut taffy: TaffyTree<NodeContext> = TaffyTree::new();
-    // Root has no parent flex container — pass `None` so its own
-    // sizing is honoured directly.
-    let root = build_taffy_subtree(&mut taffy, tree, None);
+    let root = build_taffy_subtree(&mut taffy, tree, None, hovered_id);
     let available = Size {
         width: AvailableSpace::Definite(viewport.width),
         height: AvailableSpace::Definite(viewport.height),
@@ -309,11 +413,139 @@ pub fn compute(tree: &Node, viewport: Viewport) -> Vec<RenderCommand> {
         .compute_layout_with_measure(root, available, measure_text)
         .is_err()
     {
-        return Vec::new();
+        return None;
     }
-    let mut out = Vec::new();
-    emit_commands(&taffy, root, 0.0, 0.0, &mut out);
-    out
+    let size = taffy.layout(root).map(|l| l.size).ok()?;
+    emit_commands(&taffy, root, origin_x, origin_y, out);
+    Some(size)
+}
+
+fn compute_overlay_into(
+    overlay: &Overlay,
+    viewport: Viewport,
+    hovered_id: Option<&str>,
+    out: &mut Vec<RenderCommand>,
+) {
+    // Two-pass: lay out at (0,0) to learn the overlay's resolved size,
+    // then re-emit with the anchor-resolved origin. Cost is one extra
+    // Taffy build per overlay per dirty cycle; overlays are by nature
+    // small subtrees so this is negligible. Keeping the second pass
+    // separate avoids threading "post-resolve translate" through
+    // `emit_commands`, which would couple the main-tree path to the
+    // overlay path.
+    let mut probe: TaffyTree<NodeContext> = TaffyTree::new();
+    let probe_root = build_taffy_subtree(&mut probe, &overlay.node, None, hovered_id);
+    let available = Size {
+        width: AvailableSpace::Definite(viewport.width),
+        height: AvailableSpace::Definite(viewport.height),
+    };
+    if probe
+        .compute_layout_with_measure(probe_root, available, measure_text)
+        .is_err()
+    {
+        return;
+    }
+    let size = match probe.layout(probe_root) {
+        Ok(l) => l.size,
+        Err(_) => return,
+    };
+    let (ox, oy) = overlay.anchor.resolve(viewport, size.width, size.height);
+    emit_commands(&probe, probe_root, ox, oy, out);
+}
+
+/// A sub-tree painted in its own viewport-anchored coordinate space,
+/// after the main tree. Overlays cover the chrome use cases the
+/// runtime can't express in flow: Toasts (bottom-right corner),
+/// the command palette (centred), help tooltips (anchored to a point),
+/// modal dialogs (centred), context menus (point-anchored), and so on.
+///
+/// Smart-pattern shape: an overlay is **just a `Node` plus an anchor**.
+/// Layout, paint, hover, SSR semantics — all reuse the existing
+/// vocabulary. The Block authoring contract is unchanged: a primitive's
+/// `lower_ui` produces a `Node`; the *host* decides whether to mount
+/// it inside the main tree or as an overlay. This keeps Block impls
+/// reusable across contexts (a Toast card can equally well render
+/// inline in a notification list panel) and the runtime free of
+/// per-primitive z-order knowledge.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Overlay {
+    /// Stable identifier — `Surface::remove_overlay` matches on this,
+    /// hover hit-testing scopes by it, and the host can dedupe.
+    pub id: String,
+    pub anchor: OverlayAnchor,
+    pub node: Node,
+}
+
+impl Overlay {
+    pub fn new(id: impl Into<String>, anchor: OverlayAnchor, node: Node) -> Self {
+        Self {
+            id: id.into(),
+            anchor,
+            node,
+        }
+    }
+}
+
+/// Where on the viewport an overlay's top-left corner lands. Sparse
+/// vocabulary: three variants cover the chrome cases (Toast, command
+/// palette, help tooltip / context menu / dialog). Adding more is
+/// possible but each new case must justify itself — anchors that
+/// require a layout-of-the-main-tree query (e.g. "anchored to node
+/// `nav-button-3`") are deliberately deferred.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum OverlayAnchor {
+    /// Pin to a viewport corner with optional inset in logical pixels.
+    /// Toast → `BottomRight` with `(16, 16)` inset.
+    Corner { corner: Corner, inset: Inset },
+    /// Absolute viewport coordinates (top-left of the overlay box).
+    /// Help tooltip → `Point { x: pointer_x + 12, y: pointer_y + 12 }`.
+    Point { x: f32, y: f32 },
+    /// Centred horizontally; vertical position controlled by `offset_y`
+    /// (0 = vertical-centred, positive = below centre, negative = above).
+    /// Command palette → `Center { offset_y: -200.0 }`.
+    Center { offset_y: f32 },
+}
+
+impl OverlayAnchor {
+    fn resolve(&self, viewport: Viewport, w: f32, h: f32) -> (f32, f32) {
+        match *self {
+            OverlayAnchor::Corner { corner, inset } => match corner {
+                Corner::TopLeft => (inset.x, inset.y),
+                Corner::TopRight => (viewport.width - w - inset.x, inset.y),
+                Corner::BottomLeft => (inset.x, viewport.height - h - inset.y),
+                Corner::BottomRight => {
+                    (viewport.width - w - inset.x, viewport.height - h - inset.y)
+                }
+            },
+            OverlayAnchor::Point { x, y } => (x, y),
+            OverlayAnchor::Center { offset_y } => (
+                (viewport.width - w) * 0.5,
+                (viewport.height - h) * 0.5 + offset_y,
+            ),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Corner {
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct Inset {
+    pub x: f32,
+    pub y: f32,
+}
+
+impl Inset {
+    pub fn all(v: f32) -> Self {
+        Self { x: v, y: v }
+    }
 }
 
 /// Per-Taffy-node context — what `measure_text` and `emit_commands`
@@ -339,21 +571,32 @@ fn build_taffy_subtree(
     taffy: &mut TaffyTree<NodeContext>,
     node: &Node,
     parent_direction: Option<Direction>,
+    hovered_id: Option<&str>,
 ) -> NodeId {
     match node {
         Node::Container {
-            props, children, ..
+            id,
+            props,
+            children,
         } => {
             let style = container_style(props, parent_direction);
             let own_direction = Some(props.direction);
             let child_ids: Vec<NodeId> = children
                 .iter()
-                .map(|c| build_taffy_subtree(taffy, c, own_direction))
+                .map(|c| build_taffy_subtree(taffy, c, own_direction, hovered_id))
                 .collect();
-            let ctx = NodeContext::Container {
-                background: props.background,
-                radius: props.radius,
+            // Fold hover overrides into the resting paint state when
+            // this container is the one being hovered. Layout-affecting
+            // hover changes would need to live on `style` instead;
+            // intentionally not supported — hover is paint-only.
+            let (background, radius) = match (props.hover.as_ref(), hovered_id) {
+                (Some(h), Some(hov)) if hov == id => (
+                    h.background.or(props.background),
+                    h.radius.unwrap_or(props.radius),
+                ),
+                _ => (props.background, props.radius),
             };
+            let ctx = NodeContext::Container { background, radius };
             taffy
                 .new_with_children(style, &child_ids)
                 .and_then(|id| {
@@ -556,18 +799,94 @@ fn emit_commands(
 #[derive(Debug, Clone)]
 pub struct Surface {
     tree: Node,
+    overlays: Vec<Overlay>,
     viewport: Viewport,
     cache: Vec<RenderCommand>,
     dirty: bool,
+    hovered_id: Option<String>,
 }
 
 impl Surface {
     pub fn new(tree: Node, viewport: Viewport) -> Self {
         Self {
             tree,
+            overlays: Vec::new(),
             viewport,
             cache: Vec::new(),
             dirty: true,
+            hovered_id: None,
+        }
+    }
+
+    /// Currently hovered node id, if any. The host (input dispatcher)
+    /// owns hit-testing and feeds this through [`Self::set_hovered`].
+    pub fn hovered_id(&self) -> Option<&str> {
+        self.hovered_id.as_deref()
+    }
+
+    /// Update the hovered node. Marks the surface dirty when the id
+    /// transitions across a node that declares `props.hover` — there's
+    /// no point recomputing if neither the leaving nor the entering
+    /// node has hover overrides. Called by the host on every pointer
+    /// move whose hit-test result changed.
+    pub fn set_hovered(&mut self, id: Option<String>) {
+        if id == self.hovered_id {
+            return;
+        }
+        let affects = |i: &str| {
+            node_has_hover(&self.tree, i)
+                || self.overlays.iter().any(|o| node_has_hover(&o.node, i))
+        };
+        let prev_affects = self.hovered_id.as_deref().is_some_and(affects);
+        let next_affects = id.as_deref().is_some_and(affects);
+        self.hovered_id = id;
+        if prev_affects || next_affects {
+            self.dirty = true;
+        }
+    }
+
+    /// Snapshot of the current overlay stack, in z-order (last → top).
+    pub fn overlays(&self) -> &[Overlay] {
+        &self.overlays
+    }
+
+    /// Replace the entire overlay stack. Always marks dirty — use the
+    /// finer-grained `push_overlay` / `remove_overlay` for partial
+    /// updates.
+    pub fn set_overlays(&mut self, overlays: Vec<Overlay>) {
+        self.overlays = overlays;
+        self.dirty = true;
+    }
+
+    /// Push an overlay on top of the stack (it paints last → on top).
+    /// If an overlay with the same id is already present it's replaced
+    /// in place, preserving stacking order — so a host can call this
+    /// every time a toast or palette state changes without bouncing
+    /// the z-order around.
+    pub fn push_overlay(&mut self, overlay: Overlay) {
+        if let Some(slot) = self.overlays.iter_mut().find(|o| o.id == overlay.id) {
+            *slot = overlay;
+        } else {
+            self.overlays.push(overlay);
+        }
+        self.dirty = true;
+    }
+
+    /// Remove the overlay with `id`. Returns `true` if one was removed.
+    pub fn remove_overlay(&mut self, id: &str) -> bool {
+        let before = self.overlays.len();
+        self.overlays.retain(|o| o.id != id);
+        let removed = self.overlays.len() != before;
+        if removed {
+            self.dirty = true;
+        }
+        removed
+    }
+
+    pub fn clear_overlays(&mut self) {
+        if !self.overlays.is_empty() {
+            self.overlays.clear();
+            self.dirty = true;
         }
     }
 
@@ -617,10 +936,35 @@ impl Surface {
     /// call.** Calling it every frame is cheap when nothing changed.
     pub fn commands(&mut self) -> &[RenderCommand] {
         if self.dirty {
-            self.cache = compute(&self.tree, self.viewport);
+            self.cache = compute_full(
+                &self.tree,
+                &self.overlays,
+                self.viewport,
+                self.hovered_id.as_deref(),
+            );
             self.dirty = false;
         }
         &self.cache
+    }
+}
+
+/// Walk the tree looking for a container with `id` whose `hover`
+/// override is set. Used by [`Surface::set_hovered`] to skip dirty
+/// flips when neither the leaving nor entering node would change
+/// paint anyway.
+fn node_has_hover(tree: &Node, id: &str) -> bool {
+    match tree {
+        Node::Container {
+            id: nid,
+            props,
+            children,
+        } => {
+            if nid == id && props.hover.as_ref().is_some_and(|h| !h.is_empty()) {
+                return true;
+            }
+            children.iter().any(|c| node_has_hover(c, id))
+        }
+        Node::Text { .. } | Node::Spacer { .. } | Node::Image { .. } => false,
     }
 }
 
@@ -805,5 +1149,360 @@ mod tests {
         assert_eq!(rects[1].width, 50.0);
         assert_eq!(rects[2].x, 50.0);
         assert_eq!(rects[2].width, 70.0);
+    }
+
+    fn hover_button_tree() -> Node {
+        Node::Container {
+            id: "btn".into(),
+            props: ContainerProps {
+                width: Sizing::Fixed(28.0),
+                height: Sizing::Fixed(28.0),
+                background: Some(rgb(255, 255, 255)),
+                hover: Some(HoverOverrides {
+                    background: Some(rgb(0, 100, 200)),
+                    radius: None,
+                }),
+                ..Default::default()
+            },
+            children: vec![],
+        }
+    }
+
+    fn rectangle_color(commands: &[RenderCommand]) -> Color {
+        commands
+            .iter()
+            .find_map(|c| match c {
+                RenderCommand::Rectangle { color, .. } => Some(*color),
+                _ => None,
+            })
+            .expect("at least one rectangle")
+    }
+
+    #[test]
+    fn hover_overrides_swap_in_when_id_matches() {
+        let resting = compute_with_hover(
+            &hover_button_tree(),
+            Viewport {
+                width: 100.0,
+                height: 100.0,
+            },
+            None,
+        );
+        assert_eq!(rectangle_color(&resting), rgb(255, 255, 255));
+
+        let hovered = compute_with_hover(
+            &hover_button_tree(),
+            Viewport {
+                width: 100.0,
+                height: 100.0,
+            },
+            Some("btn"),
+        );
+        assert_eq!(rectangle_color(&hovered), rgb(0, 100, 200));
+    }
+
+    #[test]
+    fn hover_overrides_ignored_when_id_does_not_match() {
+        let cmds = compute_with_hover(
+            &hover_button_tree(),
+            Viewport {
+                width: 100.0,
+                height: 100.0,
+            },
+            Some("some-other-node"),
+        );
+        assert_eq!(rectangle_color(&cmds), rgb(255, 255, 255));
+    }
+
+    #[test]
+    fn surface_set_hovered_dirty_only_when_paint_actually_changes() {
+        let mut surface = Surface::new(
+            hover_button_tree(),
+            Viewport {
+                width: 100.0,
+                height: 100.0,
+            },
+        );
+        let _ = surface.commands();
+        assert!(!surface.is_dirty());
+
+        // Entering a hover-affecting node → dirty (need to paint hover state).
+        surface.set_hovered(Some("btn".into()));
+        assert!(surface.is_dirty());
+        let _ = surface.commands();
+
+        // Leaving a hover-affecting node → dirty (need to paint resting state).
+        surface.set_hovered(Some("nonexistent".into()));
+        assert!(surface.is_dirty());
+        let _ = surface.commands();
+
+        // Drift between two non-affecting nodes → no recompute.
+        surface.set_hovered(Some("also-nonexistent".into()));
+        assert!(
+            !surface.is_dirty(),
+            "moves between non-affecting nodes shouldn't recompute"
+        );
+
+        // Idempotent: same id doesn't dirty.
+        surface.set_hovered(Some("also-nonexistent".into()));
+        assert!(!surface.is_dirty());
+    }
+
+    #[test]
+    fn surface_hover_swap_round_trip() {
+        let mut surface = Surface::new(
+            hover_button_tree(),
+            Viewport {
+                width: 100.0,
+                height: 100.0,
+            },
+        );
+        assert_eq!(rectangle_color(surface.commands()), rgb(255, 255, 255));
+        surface.set_hovered(Some("btn".into()));
+        assert_eq!(rectangle_color(surface.commands()), rgb(0, 100, 200));
+        surface.set_hovered(None);
+        assert_eq!(rectangle_color(surface.commands()), rgb(255, 255, 255));
+    }
+
+    #[test]
+    fn semantic_button_constructor_includes_type_attr() {
+        let s = Semantic::button();
+        assert_eq!(s.tag.as_deref(), Some("button"));
+        assert!(s.attrs.iter().any(|(k, v)| k == "type" && v == "button"));
+    }
+
+    #[test]
+    fn semantic_with_attr_if_branches_on_cond() {
+        let on = Semantic::button().with_attr_if(true, "aria-pressed", "true");
+        assert!(on
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "aria-pressed" && v == "true"));
+
+        let off = Semantic::button().with_attr_if(false, "aria-pressed", "true");
+        assert!(off.attrs.iter().all(|(k, _)| k != "aria-pressed"));
+    }
+
+    fn fixed_box(id: &str, w: f32, h: f32, color: Color) -> Node {
+        Node::Container {
+            id: id.into(),
+            props: ContainerProps {
+                width: Sizing::Fixed(w),
+                height: Sizing::Fixed(h),
+                background: Some(color),
+                ..Default::default()
+            },
+            children: vec![],
+        }
+    }
+
+    fn rectangle_at(commands: &[RenderCommand], color: Color) -> Rect {
+        commands
+            .iter()
+            .find_map(|c| match c {
+                RenderCommand::Rectangle {
+                    bounds, color: c2, ..
+                } if *c2 == color => Some(*bounds),
+                _ => None,
+            })
+            .expect("expected rectangle of given color")
+    }
+
+    #[test]
+    fn overlay_paints_after_main_tree_at_resolved_corner() {
+        let main = fixed_box("main", 100.0, 100.0, rgb(10, 10, 10));
+        let toast = fixed_box("toast", 200.0, 60.0, rgb(20, 20, 20));
+        let overlay = Overlay::new(
+            "toast",
+            OverlayAnchor::Corner {
+                corner: Corner::BottomRight,
+                inset: Inset::all(16.0),
+            },
+            toast,
+        );
+        let cmds = compute_full(
+            &main,
+            std::slice::from_ref(&overlay),
+            Viewport {
+                width: 800.0,
+                height: 600.0,
+            },
+            None,
+        );
+        // Main tree paints first, overlay second — z-order via order.
+        let main_idx = cmds
+            .iter()
+            .position(
+                |c| matches!(c, RenderCommand::Rectangle { color, .. } if *color == rgb(10,10,10)),
+            )
+            .unwrap();
+        let toast_idx = cmds
+            .iter()
+            .position(
+                |c| matches!(c, RenderCommand::Rectangle { color, .. } if *color == rgb(20,20,20)),
+            )
+            .unwrap();
+        assert!(toast_idx > main_idx, "overlay must paint after main");
+
+        let bounds = rectangle_at(&cmds, rgb(20, 20, 20));
+        // BottomRight at (800-200-16, 600-60-16) = (584, 524)
+        assert_eq!(bounds.x, 584.0);
+        assert_eq!(bounds.y, 524.0);
+    }
+
+    #[test]
+    fn overlay_anchor_center_resolves_to_viewport_centre_with_offset() {
+        let palette = fixed_box("p", 400.0, 100.0, rgb(50, 60, 70));
+        let overlay = Overlay::new(
+            "palette",
+            OverlayAnchor::Center { offset_y: -100.0 },
+            palette,
+        );
+        let cmds = compute_full(
+            &fixed_box("root", 1.0, 1.0, rgb(0, 0, 0)),
+            std::slice::from_ref(&overlay),
+            Viewport {
+                width: 800.0,
+                height: 600.0,
+            },
+            None,
+        );
+        let bounds = rectangle_at(&cmds, rgb(50, 60, 70));
+        // x = (800-400)/2 = 200, y = (600-100)/2 - 100 = 250 - 100 = 150
+        assert_eq!(bounds.x, 200.0);
+        assert_eq!(bounds.y, 150.0);
+    }
+
+    #[test]
+    fn overlay_anchor_point_translates_verbatim() {
+        let tip = fixed_box("tip", 80.0, 24.0, rgb(99, 99, 99));
+        let overlay = Overlay::new("tip", OverlayAnchor::Point { x: 312.5, y: 48.0 }, tip);
+        let cmds = compute_full(
+            &fixed_box("root", 1.0, 1.0, rgb(0, 0, 0)),
+            std::slice::from_ref(&overlay),
+            Viewport {
+                width: 1000.0,
+                height: 600.0,
+            },
+            None,
+        );
+        let bounds = rectangle_at(&cmds, rgb(99, 99, 99));
+        assert_eq!(bounds.x, 312.5);
+        assert_eq!(bounds.y, 48.0);
+    }
+
+    #[test]
+    fn surface_overlay_lifecycle_marks_dirty_only_when_stack_changes() {
+        let mut surface = Surface::new(
+            fixed_box("root", 1.0, 1.0, rgb(0, 0, 0)),
+            Viewport {
+                width: 400.0,
+                height: 300.0,
+            },
+        );
+        let _ = surface.commands();
+        assert!(!surface.is_dirty());
+
+        // Push → dirty.
+        surface.push_overlay(Overlay::new(
+            "t1",
+            OverlayAnchor::Corner {
+                corner: Corner::BottomRight,
+                inset: Inset::all(8.0),
+            },
+            fixed_box("t1", 100.0, 40.0, rgb(11, 22, 33)),
+        ));
+        assert!(surface.is_dirty());
+        let cmds = surface.commands();
+        assert!(cmds.iter().any(|c| matches!(
+            c,
+            RenderCommand::Rectangle { color, .. } if *color == rgb(11, 22, 33)
+        )));
+        assert!(!surface.is_dirty());
+
+        // Push same id → replaces, still dirty.
+        surface.push_overlay(Overlay::new(
+            "t1",
+            OverlayAnchor::Corner {
+                corner: Corner::BottomRight,
+                inset: Inset::all(8.0),
+            },
+            fixed_box("t1", 100.0, 40.0, rgb(44, 55, 66)),
+        ));
+        assert!(surface.is_dirty());
+        assert_eq!(surface.overlays().len(), 1, "same id replaces in place");
+        let cmds = surface.commands();
+        assert!(cmds.iter().any(|c| matches!(
+            c,
+            RenderCommand::Rectangle { color, .. } if *color == rgb(44, 55, 66)
+        )));
+
+        // Remove unknown → no-op.
+        let removed = surface.remove_overlay("does-not-exist");
+        assert!(!removed);
+        assert!(!surface.is_dirty());
+
+        // Remove existing → dirty.
+        let removed = surface.remove_overlay("t1");
+        assert!(removed);
+        assert!(surface.is_dirty());
+
+        // Clear empty → no-op.
+        let _ = surface.commands();
+        assert!(!surface.is_dirty());
+        surface.clear_overlays();
+        assert!(!surface.is_dirty(), "clearing empty stack is a no-op");
+    }
+
+    #[test]
+    fn surface_overlay_hover_swap_dirties_through_overlay_subtree() {
+        // Overlay subtree contains a hover-affecting node.
+        let inner = Node::Container {
+            id: "btn".into(),
+            props: ContainerProps {
+                width: Sizing::Fixed(40.0),
+                height: Sizing::Fixed(20.0),
+                background: Some(rgb(255, 255, 255)),
+                hover: Some(HoverOverrides {
+                    background: Some(rgb(1, 2, 3)),
+                    radius: None,
+                }),
+                ..Default::default()
+            },
+            children: vec![],
+        };
+        let mut surface = Surface::new(
+            fixed_box("root", 1.0, 1.0, rgb(0, 0, 0)),
+            Viewport {
+                width: 400.0,
+                height: 300.0,
+            },
+        );
+        surface.push_overlay(Overlay::new(
+            "popup",
+            OverlayAnchor::Center { offset_y: 0.0 },
+            inner,
+        ));
+        let _ = surface.commands();
+        assert!(!surface.is_dirty());
+
+        // Hovering the overlay's interior must dirty — the lookup
+        // walks both main + overlay subtrees.
+        surface.set_hovered(Some("btn".into()));
+        assert!(surface.is_dirty());
+        let cmds = surface.commands().to_vec();
+        assert!(cmds.iter().any(|c| matches!(
+            c,
+            RenderCommand::Rectangle { color, .. } if *color == rgb(1, 2, 3)
+        )));
+    }
+
+    #[test]
+    fn semantic_with_aria_label_opt_handles_some_and_none() {
+        let labelled = Semantic::button().with_aria_label_opt(Some("Close"));
+        assert_eq!(labelled.aria_label.as_deref(), Some("Close"));
+
+        let unlabelled: Semantic = Semantic::button().with_aria_label_opt(None::<&str>);
+        assert!(unlabelled.aria_label.is_none());
     }
 }

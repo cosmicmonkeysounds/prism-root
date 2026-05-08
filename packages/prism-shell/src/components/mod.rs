@@ -6,11 +6,15 @@
 //! documented in `docs/dev/clay-migration-plan.md` §12.
 
 pub mod icon_button;
+pub mod nav_button;
 pub mod registry;
 pub mod section_header;
+pub mod toast;
 pub mod toolbar_separator;
 
 pub use icon_button::IconButton;
+pub use nav_button::NavButton;
 pub use registry::{register_shell_builtins, ShellComponentRegistry};
 pub use section_header::SectionHeader;
+pub use toast::Toast;
 pub use toolbar_separator::ToolbarSeparator;
