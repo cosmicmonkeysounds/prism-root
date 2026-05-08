@@ -1264,7 +1264,14 @@ CLI surface unchanged.
     (Block produces a card-shaped Node; host pushes onto the surface
     with the appropriate `OverlayAnchor::Center` or `Point`).
     Remaining blockers narrow to `<slot/>`, control-flow lowering,
-    and `TextInput`.
+    and `TextInput` — **all three landed 2026-05-08** via the
+    `LowerScope` / `SlotBindings` refactor in
+    `prism_ui_runtime::interpret`, the sibling-pre-pass
+    `expand_control_flow` for `<if>`/`<else-if>`/`<else>`/`<for>`,
+    and the new `Node::TextInput` variant + `<input>` DSL tag (see
+    decision-log entry below). The Phase-4 chrome scoreboard is now
+    fully unblocked: every remaining primitive has runtime support
+    for the layout vocabulary it needs.
 - **Phase-4 runtime gaps to fill** (each one lands just-in-time as
   the next shell primitive demands it; the IconButton lowering above
   flagged the first):
@@ -1279,25 +1286,43 @@ CLI surface unchanged.
      vocabulary on `ContainerProps` / `TextProps` whose lowering
      declares the swap, instead of authors writing imperative
      handlers.
-  2. **`<slot/>` semantics** for component composition — required
-     by every wrapper-shaped primitive (MenuBarRow with embedded
-     tabs, SectionHeader with body, AppCard with content). Reuse
-     `prism_builder::prefab::ExposedSlot` if shapes match, else
-     extend the DSL grammar with one new element `<slot/>` whose
-     children come from the parent invocation.
+  2. **`<slot/>` semantics** for component composition — *landed
+     2026-05-08* via `prism_ui_runtime::interpret::SlotBindings` +
+     `LowerScope::with_slots`. `<slot/>` (default) and
+     `<slot name="x"/>` (named) resolve through the lowering scope's
+     slot map; un-bound slots fall back to their own children as
+     fallback content. Component-instantiation paths (Phase 3)
+     populate the slot map from the caller's children. Smart pattern:
+     slots stay at the AST/lowering level — they never reach the
+     runtime `Node` enum, so the layout/paint/SSR backends are
+     unchanged, and the component-instantiation pass is a one-line
+     scope construction.
   3. **`Image::colorize`** — icon tinting (palette foreground +
      transparency variants). Add `tint: Option<Color>` to
      `Node::Image`; the femtovg backend already pre-multiplies mask
      glyphs with a colour, the same code resolves an image's tint.
-  4. **`<if>` / `<else-if>` / `<else>` / `<for>` lowering** — the
-     namespace exists in the AST (`AttributeNamespace::ControlFlow`),
-     `interpret::lower_document` doesn't act on it yet. Land alongside
-     the first primitive that needs it (likely TabBar's pill loop
-     or MenuBarRow's menu list).
-  5. **`TextInput`** primitive on `Node` — required by
-     `DragNumberField`, `FieldEditor`, search box. cosmic-text
-     already owns text editing; the runtime gap is exposing it as a
-     layout-leaf with focus + IME flow.
+  4. **`<if>` / `<else-if>` / `<else>` / `<for>` lowering** —
+     *landed 2026-05-08* via the sibling pre-pass
+     `expand_control_flow` in `interpret.rs`. Single helper resolves
+     the whole control-flow vocabulary against a `LowerScope`'s
+     bindings; per-element lowering bodies stay unchanged. `for`
+     parses `"<var> in <source>"` and forks a child scope per item;
+     `if` / `else-if` / `else` chain across siblings, with
+     whitespace-only text deliberately *not* breaking the chain so
+     formatted source round-trips cleanly. Adding a new control-flow
+     keyword is one match arm in `control_flow_attr`.
+  5. **`TextInput`** primitive on `Node` — *landed 2026-05-08* as
+     `Node::TextInput { id, value, placeholder, props, width, height,
+     radius, semantic }` plus the `<input>` DSL tag and a
+     `prism_builder::ui_lower::text_input_node` constructor. Smart
+     pattern: the leaf composes from existing render commands at
+     emit time (`Rectangle` background + `Border` + `Text` for
+     value-or-placeholder), so the four backends (femtovg, web,
+     html, semantic_html) needed only the `semantic_html` `<input>`
+     arm — no new `RenderCommand` variant, no per-backend dispatch
+     branch. cosmic-text editing / focus / IME flow lands in a later
+     pass when the host wires keyboard events through
+     `event::EventHandler`.
   6. **Overlay / popup z-layer** — *landed 2026-05-08* via
      `Surface::overlays: Vec<Overlay>` + `OverlayAnchor` (Corner /
      Point / Center). `shell.toast` migrated as the first consumer.
@@ -1331,6 +1356,7 @@ CLI surface unchanged.
 | 2026-05-08 | Hover-state vocabulary lands (`HoverOverrides` + `Surface::set_hovered`) | Sparse paint-only override bundle on `ContainerProps`; dirty bit only flips when the hover transition crosses an affecting node. Unblocks every "highlight on hover" chrome primitive without a state machine or shadow render path. |
 | 2026-05-08 | Interactive-chrome helper extraction (`Semantic::button` / `with_attr_if` / `with_aria_label_opt` / `hover_bg`) | IconButton + NavButton revealed the same "button-shaped Semantic + conditional ARIA + hover swap" boilerplate. Helpers compose with the existing fluent builder — no new abstraction layer, no DI/registration, just two nodes on `Semantic` and one constructor in `ui_lower`. Future button-shaped chrome primitives inherit the density automatically. |
 | 2026-05-08 | Overlay z-layer lands (`Overlay` + `OverlayAnchor` + `Surface::push_overlay`); `shell.toast` migrated | Sparse anchor enum (Corner / Point / Center) covers Toast + command-palette + help-tooltip without forking the layout vocabulary — overlays are just `(Node, anchor)` pairs that flow through the same `build_taffy_subtree` / `emit_commands` pipeline as the main tree. Block lowering is unchanged: a Toast produces a Node; the host decides whether to mount it inline or on the overlay stack. Hover hit-testing extends naturally to overlay subtrees. Unblocks the third of the four chrome clusters identified in the punch list. |
+| 2026-05-08 | The three remaining Phase-4 blockers land in one declarative refactor: `LowerScope` + `SlotBindings`, `expand_control_flow`, and `Node::TextInput` | All three concerns funnel through `prism_ui_runtime::interpret`, so a single `LowerScope` carrier (bindings + slot map) serves both `{ident}` interpolation and the control-flow predicate evaluator — no per-feature scope stack. Slots stay at the AST level so backends don't grow a new `Node` variant. Control flow is a sibling pre-pass that returns `Vec<(node, optional-child-scope)>`, keeping per-element lowering branch-free. `TextInput` composes a `Rectangle` + `Border` + `Text` at emit time, so all four backends inherit it for free; only `semantic_html` grew an `<input>` arm. Net effect: Phase-4 chrome scoreboard fully unblocked with ~600 LoC across one file refactor + thin runtime additions, no new abstractions, no new infrastructure. |
 
 ## 10. Appendix — file-by-file Slint footprint to retire
 

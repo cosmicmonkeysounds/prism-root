@@ -103,6 +103,35 @@ pub enum Node {
         #[serde(default, skip_serializing_if = "Semantic::is_empty")]
         semantic: Semantic,
     },
+    /// Editable single-line text input. Composes from existing render
+    /// commands at emit time (background `Rectangle` + `Border` +
+    /// `Text` for value-or-placeholder), so backends don't grow a new
+    /// `RenderCommand` variant — the same paint pipeline that handles
+    /// containers and labels handles inputs.
+    ///
+    /// Editing / focus / IME are deferred: the runtime currently treats
+    /// the value as authoritative and re-renders on `Surface::set_tree`.
+    /// The host wires keyboard and pointer events through
+    /// `event::EventHandler` (the same path button signals already
+    /// take) and pushes a new tree on each character.
+    TextInput {
+        #[serde(default)]
+        id: String,
+        #[serde(default)]
+        value: String,
+        #[serde(default)]
+        placeholder: String,
+        #[serde(default)]
+        props: TextProps,
+        #[serde(default)]
+        width: Sizing,
+        #[serde(default)]
+        height: Sizing,
+        #[serde(default)]
+        radius: CornerRadius,
+        #[serde(default, skip_serializing_if = "Semantic::is_empty")]
+        semantic: Semantic,
+    },
 }
 
 impl Node {
@@ -111,7 +140,8 @@ impl Node {
             Node::Container { id, .. }
             | Node::Text { id, .. }
             | Node::Spacer { id, .. }
-            | Node::Image { id, .. } => id,
+            | Node::Image { id, .. }
+            | Node::TextInput { id, .. } => id,
         }
     }
 
@@ -125,6 +155,7 @@ impl Node {
             Node::Text { .. } => "text",
             Node::Spacer { .. } => "spacer",
             Node::Image { .. } => "image",
+            Node::TextInput { .. } => "text-input",
         }
     }
 }
@@ -565,6 +596,16 @@ enum NodeContext {
         source: String,
         radius: CornerRadius,
     },
+    /// `value` is whatever the input should *paint*, computed at build
+    /// time as `value` if non-empty else `placeholder`. The
+    /// `is_placeholder` flag lets the painter dim the colour without
+    /// an extra walk of the source tree.
+    TextInput {
+        text: String,
+        is_placeholder: bool,
+        props: TextProps,
+        radius: CornerRadius,
+    },
 }
 
 fn build_taffy_subtree(
@@ -626,6 +667,46 @@ fn build_taffy_subtree(
             taffy
                 .new_leaf_with_context(style, NodeContext::Spacer)
                 .expect("taffy: spacer insert")
+        }
+        Node::TextInput {
+            value,
+            placeholder,
+            props,
+            width,
+            height,
+            radius,
+            ..
+        } => {
+            // Same Grow→flex_grow rule the container/image arms use — a
+            // `width: grow` input fills the parent's main axis exactly
+            // like a sized container would.
+            let flex_grow = match parent_direction {
+                Some(Direction::Row) if matches!(width, Sizing::Grow) => 1.0,
+                Some(Direction::Column) if matches!(height, Sizing::Grow) => 1.0,
+                _ => 0.0,
+            };
+            let style = Style {
+                size: Size {
+                    width: sizing_to_taffy(*width),
+                    height: sizing_to_taffy(*height),
+                },
+                flex_grow,
+                ..Default::default()
+            };
+            let (text, is_placeholder) = if value.is_empty() {
+                (placeholder.clone(), true)
+            } else {
+                (value.clone(), false)
+            };
+            let ctx = NodeContext::TextInput {
+                text,
+                is_placeholder,
+                props: props.clone(),
+                radius: *radius,
+            };
+            taffy
+                .new_leaf_with_context(style, ctx)
+                .expect("taffy: text-input leaf insert")
         }
         Node::Image {
             source,
@@ -733,6 +814,20 @@ fn measure_text(
             let height = known_dimensions.height.unwrap_or(props.font_size * 1.2);
             Size { width, height }
         }
+        // Inputs measure off the same heuristic as text but keep a 1ch
+        // floor so an empty input still has clickable extent. Vertical
+        // padding (4px top + 4px bottom) makes the leaf slightly
+        // taller than a bare `Text`, matching native input affordances.
+        Some(NodeContext::TextInput { text, props, .. }) => {
+            let glyph_count = text.chars().count().max(1);
+            let width = known_dimensions
+                .width
+                .unwrap_or_else(|| glyph_count as f32 * props.font_size * 0.55 + 12.0);
+            let height = known_dimensions
+                .height
+                .unwrap_or(props.font_size * 1.2 + 8.0);
+            Size { width, height }
+        }
         _ => Size::ZERO,
     }
 }
@@ -781,6 +876,61 @@ fn emit_commands(
                 bounds,
                 source: source.clone(),
                 radius: *radius,
+            });
+        }
+        // Composed leaf — paint a background Rectangle, a 1px Border,
+        // and a Text command for value-or-placeholder. Existing
+        // backends consume all three primitives unchanged; no new
+        // RenderCommand variant.
+        Some(NodeContext::TextInput {
+            text,
+            is_placeholder,
+            props,
+            radius,
+        }) => {
+            out.push(RenderCommand::Rectangle {
+                bounds,
+                color: Color {
+                    r: 255,
+                    g: 255,
+                    b: 255,
+                    a: 255,
+                },
+                radius: *radius,
+            });
+            out.push(RenderCommand::Border {
+                bounds,
+                color: Color {
+                    r: 200,
+                    g: 200,
+                    b: 200,
+                    a: 255,
+                },
+                width: 1.0,
+                radius: *radius,
+            });
+            // Inset the text by the same 6px the measure callback
+            // budgeted for, so the glyphs sit centred in the box.
+            let text_color = if *is_placeholder {
+                Color {
+                    r: props.color.r,
+                    g: props.color.g,
+                    b: props.color.b,
+                    a: (props.color.a as u16 * 153 / 255) as u8,
+                }
+            } else {
+                props.color
+            };
+            out.push(RenderCommand::Text {
+                bounds: Rect {
+                    x: bounds.x + 6.0,
+                    y: bounds.y + 4.0,
+                    width: (bounds.width - 12.0).max(0.0),
+                    height: (bounds.height - 8.0).max(0.0),
+                },
+                content: text.clone(),
+                color: text_color,
+                font_size: props.font_size,
             });
         }
         Some(NodeContext::Spacer) | None => {}
@@ -964,7 +1114,9 @@ fn node_has_hover(tree: &Node, id: &str) -> bool {
             }
             children.iter().any(|c| node_has_hover(c, id))
         }
-        Node::Text { .. } | Node::Spacer { .. } | Node::Image { .. } => false,
+        Node::Text { .. } | Node::Spacer { .. } | Node::Image { .. } | Node::TextInput { .. } => {
+            false
+        }
     }
 }
 

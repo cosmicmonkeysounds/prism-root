@@ -106,7 +106,8 @@ const CONTAINER_PROPS: &str = "export type ContainerProps = {
 const NODE: &str = "export type Node =
     { kind: \"container\", id: string, props: ContainerProps, children: { Node } }
     | { kind: \"text\", id: string, content: string, props: TextProps }
-    | { kind: \"spacer\", id: string, width: number, height: number }";
+    | { kind: \"spacer\", id: string, width: number, height: number }
+    | { kind: \"text_input\", id: string, value: string, placeholder: string, props: TextProps, width: Sizing, height: Sizing }";
 
 const RECT: &str = "export type Rect = {
     x: number,
@@ -154,11 +155,12 @@ mod tests {
     }
 
     #[test]
-    fn node_def_is_tagged_union_with_three_variants() {
+    fn node_def_is_tagged_union_with_four_variants() {
         let def = NODE;
         assert!(def.contains("kind: \"container\""));
         assert!(def.contains("kind: \"text\""));
         assert!(def.contains("kind: \"spacer\""));
+        assert!(def.contains("kind: \"text_input\""));
     }
 
     #[test]

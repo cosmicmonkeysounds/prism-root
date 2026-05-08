@@ -222,6 +222,25 @@ pub fn with_semantic(node: UiNode, semantic: Semantic) -> UiNode {
             radius,
             semantic,
         },
+        UiNode::TextInput {
+            id,
+            value,
+            placeholder,
+            props,
+            width,
+            height,
+            radius,
+            ..
+        } => UiNode::TextInput {
+            id,
+            value,
+            placeholder,
+            props,
+            width,
+            height,
+            radius,
+            semantic,
+        },
         UiNode::Spacer { .. } => node,
     }
 }
@@ -346,6 +365,44 @@ pub fn spacer_node(node_id: String, width: f32, height: f32) -> UiNode {
         id: node_id,
         width,
         height,
+    }
+}
+
+/// Construct a `UiNode::TextInput` — the editable single-line input
+/// leaf. Same builder shape as [`text_node`] / [`image_node`]: the
+/// caller hands over the few fields that vary, and cascade-resolved
+/// font_size / colour are pulled from `style`. `value` is what the
+/// user has typed (often empty); `placeholder` paints when the value
+/// is empty. Width / height drive the runtime `Sizing` policy — most
+/// inputs want `Sizing::Grow` along the parent's main axis.
+pub fn text_input_node(
+    node_id: String,
+    value: String,
+    placeholder: String,
+    style: &StyleProperties,
+    width: Sizing,
+    height: Sizing,
+    default_size: f32,
+) -> UiNode {
+    let font_size = style.font_size.unwrap_or(default_size);
+    let color = style
+        .color
+        .as_deref()
+        .and_then(parse_color)
+        .unwrap_or(DEFAULT_TEXT_COLOR);
+    UiNode::TextInput {
+        id: node_id,
+        value,
+        placeholder,
+        props: TextProps {
+            font_size,
+            color,
+            ..Default::default()
+        },
+        width,
+        height,
+        radius: style.border_radius.map(uniform_radius).unwrap_or_default(),
+        semantic: Semantic::default(),
     }
 }
 

@@ -128,6 +128,35 @@ fn write_node(node: &Node, out: &mut String) {
             }
             out.push_str("/>");
         }
+        Node::TextInput {
+            value,
+            placeholder,
+            semantic,
+            ..
+        } => {
+            // `<input>` is void — single self-closing tag, value /
+            // placeholder always emitted, free-form attrs from the
+            // semantic hint flow through after. The block can override
+            // `type` (e.g. `email`, `search`) via `Semantic::with_attr`;
+            // we default to `text` so the HTML is always valid.
+            let has_type_override = semantic.attrs.iter().any(|(k, _)| k == "type");
+            out.push_str("<input");
+            if !has_type_override {
+                out.push_str(" type=\"text\"");
+            }
+            if !value.is_empty() {
+                out.push_str(" value=\"");
+                push_escaped_attr(out, value);
+                out.push('"');
+            }
+            if !placeholder.is_empty() {
+                out.push_str(" placeholder=\"");
+                push_escaped_attr(out, placeholder);
+                out.push('"');
+            }
+            write_class_aria_role_attrs(out, semantic);
+            out.push_str("/>");
+        }
         Node::Spacer { width, height, .. } => {
             // No content; render as a sized div so the SSR output keeps
             // the spacing the editor authored. No semantic hint on
