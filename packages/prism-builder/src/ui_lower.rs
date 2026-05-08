@@ -30,7 +30,7 @@
 
 use prism_ui_runtime::command::{Color, CornerRadius};
 use prism_ui_runtime::layout::{
-    ContainerProps, Direction, Node as UiNode, Padding, Sizing, TextProps,
+    ContainerProps, Direction, Node as UiNode, Padding, Semantic, Sizing, TextProps,
 };
 
 use crate::document::Node;
@@ -89,14 +89,64 @@ impl<'a> LowerCtx<'a> {
     /// back to when a block doesn't override the method. Mirrors the
     /// pre-migration `translate_container` behaviour exactly.
     pub fn default_container(&self, node: &Node, style: &StyleProperties) -> UiNode {
+        self.container_with(node, style, |_| {})
+    }
+
+    /// Declarative container lowering. Builds the same `UiNode::Container`
+    /// [`Self::default_container`] would, threading cascade + flow props
+    /// through [`container_props_from`], then hands the resulting
+    /// `ContainerProps` to `customize` so a block can tweak the few
+    /// fields it actually owns (direction, gap, padding, background…)
+    /// without restating the whole construction.
+    ///
+    /// This is the seam every "I'm a container with one knob different"
+    /// block uses — `ColumnsBlock` flips direction to `Row`,
+    /// `ListBlock` overrides `gap`, `ContainerBlock` adds padding and
+    /// border-derived background, etc. The cascade, sizing,
+    /// colour-parsing, and child recursion live exactly once (here +
+    /// in `container_props_from`); blocks contribute only their
+    /// difference.
+    pub fn container_with(
+        &self,
+        node: &Node,
+        style: &StyleProperties,
+        customize: impl FnOnce(&mut ContainerProps),
+    ) -> UiNode {
         let flow = match &node.layout_mode {
             LayoutMode::Flow(f) | LayoutMode::Relative(f) => Some(f),
             _ => None,
         };
+        let mut props = container_props_from(flow, style);
+        customize(&mut props);
         UiNode::Container {
             id: node.id.clone(),
-            props: container_props_from(flow, style),
+            props,
             children: self.lower_children(&node.children),
+        }
+    }
+
+    /// Like [`Self::container_with`] but for blocks that synthesise
+    /// children (a button rendering its own label, a code block
+    /// rendering pre-formatted text) rather than walking
+    /// `node.children`. Saves the per-block "build a container with
+    /// these children and these prop tweaks" boilerplate.
+    pub fn synthetic_container(
+        &self,
+        node: &Node,
+        style: &StyleProperties,
+        children: Vec<UiNode>,
+        customize: impl FnOnce(&mut ContainerProps),
+    ) -> UiNode {
+        let flow = match &node.layout_mode {
+            LayoutMode::Flow(f) | LayoutMode::Relative(f) => Some(f),
+            _ => None,
+        };
+        let mut props = container_props_from(flow, style);
+        customize(&mut props);
+        UiNode::Container {
+            id: node.id.clone(),
+            props,
+            children,
         }
     }
 
@@ -105,6 +155,85 @@ impl<'a> LowerCtx<'a> {
     /// without owning the cascade machinery.
     pub fn parent_style(&self) -> &StyleProperties {
         self.parent_style
+    }
+}
+
+/// Build a `UiNode::Container` *without* going through a builder
+/// `Node`. Used by composite blocks that synthesise nested sub-trees
+/// (table headers, tab strips, accordion bars) where there's no
+/// `Node` to drive cascade resolution from.
+///
+/// Defaults to a zero-padded, no-background, fit-sized container —
+/// the closure is the *only* way fields move off the default. This
+/// keeps every "build a styled box with these children" call
+/// boilerplate-free at the call site.
+pub fn bare_container(
+    id: impl Into<String>,
+    children: Vec<UiNode>,
+    customize: impl FnOnce(&mut ContainerProps),
+) -> UiNode {
+    let mut props = ContainerProps::default();
+    customize(&mut props);
+    UiNode::Container {
+        id: id.into(),
+        props,
+        children,
+    }
+}
+
+/// Attach a [`Semantic`] hint to whichever variant carries one. Used
+/// by blocks to declare SSR markup (`<h1>`, `<section>`, alt text)
+/// alongside layout vocabulary, in the same `lower_ui` impl, with no
+/// per-block walker. `Spacer` ignores the hint (no semantic field).
+pub fn with_semantic(node: UiNode, semantic: Semantic) -> UiNode {
+    match node {
+        UiNode::Container {
+            id,
+            mut props,
+            children,
+        } => {
+            props.semantic = semantic;
+            UiNode::Container {
+                id,
+                props,
+                children,
+            }
+        }
+        UiNode::Text {
+            id,
+            content,
+            mut props,
+        } => {
+            props.semantic = semantic;
+            UiNode::Text { id, content, props }
+        }
+        UiNode::Image {
+            id,
+            source,
+            width,
+            height,
+            radius,
+            ..
+        } => UiNode::Image {
+            id,
+            source,
+            width,
+            height,
+            radius,
+            semantic,
+        },
+        UiNode::Spacer { .. } => node,
+    }
+}
+
+/// Convenience: equal corner radius on all four corners. Most blocks
+/// want this; the long-form struct literal is noise.
+pub fn uniform_radius(r: f32) -> CornerRadius {
+    CornerRadius {
+        tl: r,
+        tr: r,
+        br: r,
+        bl: r,
     }
 }
 
@@ -155,6 +284,7 @@ pub fn container_props_from(flow: Option<&FlowProps>, style: &StyleProperties) -
         height,
         background,
         radius,
+        ..Default::default()
     }
 }
 
@@ -188,7 +318,11 @@ pub fn text_node(
     UiNode::Text {
         id: node_id,
         content,
-        props: TextProps { font_size, color },
+        props: TextProps {
+            font_size,
+            color,
+            ..Default::default()
+        },
     }
 }
 
@@ -199,6 +333,28 @@ pub fn spacer_node(node_id: String, width: f32, height: f32) -> UiNode {
         id: node_id,
         width,
         height,
+    }
+}
+
+/// Construct a `UiNode::Image`. Width/height default to `Grow` so an
+/// image inside a sized container fills its slot — the same shape
+/// `render_slint`'s `Image { width: parent.width; height: parent.height }`
+/// produces.
+pub fn image_node(
+    node_id: String,
+    source: String,
+    style: &StyleProperties,
+    width: Sizing,
+    height: Sizing,
+) -> UiNode {
+    let radius = style.border_radius.map(uniform_radius).unwrap_or_default();
+    UiNode::Image {
+        id: node_id,
+        source,
+        width,
+        height,
+        radius,
+        semantic: prism_ui_runtime::layout::Semantic::default(),
     }
 }
 

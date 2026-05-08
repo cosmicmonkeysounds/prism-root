@@ -12,3 +12,6 @@ pub mod web;
 
 #[cfg(feature = "html")]
 pub mod html;
+
+#[cfg(feature = "html")]
+pub mod semantic_html;

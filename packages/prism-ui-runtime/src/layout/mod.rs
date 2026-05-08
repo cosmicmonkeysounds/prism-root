@@ -83,12 +83,48 @@ pub enum Node {
         width: f32,
         height: f32,
     },
+    /// External or VFS-resolved image. Same `Sizing` policy as a
+    /// container so `grow` / `fit` / fixed-pixel images flow through
+    /// Taffy identically. The `source` is whatever the host's renderer
+    /// understands (URL, `/asset/<hash>`, file path) — the layout pass
+    /// is source-agnostic and just round-trips the string.
+    Image {
+        #[serde(default)]
+        id: String,
+        source: String,
+        #[serde(default)]
+        width: Sizing,
+        #[serde(default)]
+        height: Sizing,
+        #[serde(default)]
+        radius: CornerRadius,
+        /// SSR hint — `alt` text usually goes in `attrs`, ARIA in
+        /// `aria_label`. Native renderers ignore this field.
+        #[serde(default, skip_serializing_if = "Semantic::is_empty")]
+        semantic: Semantic,
+    },
 }
 
 impl Node {
     pub fn id(&self) -> &str {
         match self {
-            Node::Container { id, .. } | Node::Text { id, .. } | Node::Spacer { id, .. } => id,
+            Node::Container { id, .. }
+            | Node::Text { id, .. }
+            | Node::Spacer { id, .. }
+            | Node::Image { id, .. } => id,
+        }
+    }
+
+    /// Variant tag as a stable kebab-case string. Single source of
+    /// truth for "what is this node?" — Luau bindings, debugging, and
+    /// any future hint dispatch all route through here so adding a
+    /// variant is one place to update, not three.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Node::Container { .. } => "container",
+            Node::Text { .. } => "text",
+            Node::Spacer { .. } => "spacer",
+            Node::Image { .. } => "image",
         }
     }
 }
@@ -134,7 +170,7 @@ pub enum Sizing {
     Fixed(f32),
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ContainerProps {
     #[serde(default)]
     pub direction: Direction,
@@ -150,12 +186,91 @@ pub struct ContainerProps {
     pub background: Option<Color>,
     #[serde(default)]
     pub radius: CornerRadius,
+    /// Semantic-HTML hint carried into the SSR lowering. Backends
+    /// that produce semantic markup (`backends::semantic_html`) read
+    /// this; native rendering ignores it. Defaults to "no hint", which
+    /// the walker resolves to a plain `<div>`.
+    #[serde(default, skip_serializing_if = "Semantic::is_empty")]
+    pub semantic: Semantic,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TextProps {
     pub font_size: f32,
     pub color: Color,
+    /// Semantic-HTML hint — see [`ContainerProps::semantic`]. The
+    /// walker uses `tag` to pick `<h1>`/`<p>`/`<span>` etc.; when
+    /// empty, font_size buckets to a sensible default.
+    #[serde(default, skip_serializing_if = "Semantic::is_empty")]
+    pub semantic: Semantic,
+}
+
+/// Per-node semantic-HTML hint. Carries the information SSR needs
+/// to emit meaningful markup (tag override, CSS class, ARIA, free-form
+/// attributes) that the layout pass and native renderers don't care
+/// about. Defaults to "no hint" so unset fields skip serialisation
+/// and existing JSON round-trips unchanged.
+///
+/// Each field is independently optional — a block can declare just a
+/// tag (`<section>`), just a class (still a `<div>` but with styling),
+/// or both, without ceremony.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Semantic {
+    /// HTML tag override. `None` falls back to the variant default
+    /// (container → div, text → span/p/h1, image → img, spacer → div).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag: Option<String>,
+    /// CSS class — multiple classes space-separated, like in HTML.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub class: Option<String>,
+    /// `aria-label` value when one is needed for accessibility.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aria_label: Option<String>,
+    /// `role` attribute.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    /// Free-form attributes (e.g. `alt` on images, `href` on links,
+    /// `data-*`). Emitted verbatim after the structural attributes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attrs: Vec<(String, String)>,
+}
+
+impl Semantic {
+    pub fn is_empty(&self) -> bool {
+        self.tag.is_none()
+            && self.class.is_none()
+            && self.aria_label.is_none()
+            && self.role.is_none()
+            && self.attrs.is_empty()
+    }
+
+    /// Builder shorthand: a hint that overrides the tag only.
+    pub fn tag(t: impl Into<String>) -> Self {
+        Self {
+            tag: Some(t.into()),
+            ..Default::default()
+        }
+    }
+
+    pub fn with_class(mut self, c: impl Into<String>) -> Self {
+        self.class = Some(c.into());
+        self
+    }
+
+    pub fn with_attr(mut self, k: impl Into<String>, v: impl Into<String>) -> Self {
+        self.attrs.push((k.into(), v.into()));
+        self
+    }
+
+    pub fn with_aria_label(mut self, label: impl Into<String>) -> Self {
+        self.aria_label = Some(label.into());
+        self
+    }
+
+    pub fn with_role(mut self, role: impl Into<String>) -> Self {
+        self.role = Some(role.into());
+        self
+    }
 }
 
 impl Default for TextProps {
@@ -168,6 +283,7 @@ impl Default for TextProps {
                 b: 0,
                 a: 255,
             },
+            semantic: Semantic::default(),
         }
     }
 }
@@ -213,6 +329,10 @@ enum NodeContext {
         props: TextProps,
     },
     Spacer,
+    Image {
+        source: String,
+        radius: CornerRadius,
+    },
 }
 
 fn build_taffy_subtree(
@@ -246,7 +366,7 @@ fn build_taffy_subtree(
             let style = Style::default();
             let ctx = NodeContext::Text {
                 content: content.clone(),
-                props: *props,
+                props: props.clone(),
             };
             taffy
                 .new_leaf_with_context(style, ctx)
@@ -263,6 +383,38 @@ fn build_taffy_subtree(
             taffy
                 .new_leaf_with_context(style, NodeContext::Spacer)
                 .expect("taffy: spacer insert")
+        }
+        Node::Image {
+            source,
+            width,
+            height,
+            radius,
+            ..
+        } => {
+            // Same sizing vocabulary as containers — `Grow` along the
+            // parent main axis becomes `flex_grow: 1`, otherwise lowers
+            // through `sizing_to_taffy`. Keeps images interchangeable
+            // with sized containers in flex layouts.
+            let flex_grow = match parent_direction {
+                Some(Direction::Row) if matches!(width, Sizing::Grow) => 1.0,
+                Some(Direction::Column) if matches!(height, Sizing::Grow) => 1.0,
+                _ => 0.0,
+            };
+            let style = Style {
+                size: Size {
+                    width: sizing_to_taffy(*width),
+                    height: sizing_to_taffy(*height),
+                },
+                flex_grow,
+                ..Default::default()
+            };
+            let ctx = NodeContext::Image {
+                source: source.clone(),
+                radius: *radius,
+            };
+            taffy
+                .new_leaf_with_context(style, ctx)
+                .expect("taffy: image leaf insert")
         }
     }
 }
@@ -377,6 +529,17 @@ fn emit_commands(
                 font_size: props.font_size,
             });
         }
+        Some(NodeContext::Image { source, radius }) => {
+            // The source string is round-tripped verbatim — host code
+            // resolves it to a concrete asset (URL, `/asset/<hash>`,
+            // file path). Radius flows through to the renderer the
+            // same way a `Rectangle` carries its corner radius.
+            out.push(RenderCommand::Image {
+                bounds,
+                source: source.clone(),
+                radius: *radius,
+            });
+        }
         Some(NodeContext::Spacer) | None => {}
     }
 }
@@ -488,6 +651,7 @@ mod tests {
                     props: TextProps {
                         font_size: 24.0,
                         color: rgb(20, 20, 20),
+                        ..Default::default()
                     },
                 },
                 Node::Container {

@@ -762,6 +762,224 @@ CLI surface unchanged.
   input, button, code, divider, columns, list, table, tabs, accordion)
   fall through the default and migrate one-at-a-time as their bespoke
   layout vocabulary is needed.
+- **Update 2026-05-08 (declarative container lowering + 6 more
+  builtins):** the `Block::lower_ui` migration moves forward without
+  duplicating cascade/sizing/colour logic per block. New helpers in
+  `crate::ui_lower`:
+  - `LowerCtx::container_with(node, style, customize)` — builds the
+    same `UiNode::Container` `default_container` would, then hands the
+    `ContainerProps` to a closure so the block tweaks only the fields
+    it actually owns. Cascade resolution, flow-props lowering, child
+    recursion live exactly once.
+  - `LowerCtx::synthetic_container(node, style, children, customize)`
+    — same shape for blocks that synthesise their own children
+    (button-with-label, code-with-text) instead of walking
+    `node.children`.
+  Six builtins migrated through these helpers — all 5–15 line impls,
+  no per-block boilerplate: `ContainerBlock` (schema spacing/padding
+  → flow gap/padding), `ColumnsBlock` (direction=Row + gap),
+  `ListBlock` (gap from item_spacing), `DividerBlock` (1px stroke
+  with cascade-aware bg), `CodeBlock` (synthetic text child + bg /
+  radius / padding defaults matching `render_slint`), `ButtonBlock`
+  (centred label + fixed 36px height). Eight Phase-3 acceptance
+  tests in `ui_runtime::tests` cover the new lowerings end-to-end.
+  Remaining 6 builtins (image, form, input, table, tabs, accordion)
+  fall through to the registry-aware default-container path; image
+  lands when the runtime grows an `Image` primitive (plan §5.3).
+  *(Resolved 2026-05-08 — see "all 13 builtins migrated" update below.)*
+- **Update 2026-05-08 (5 more builtins → all non-image migrated):**
+  `FormBlock`, `InputBlock`, `TableBlock`, `TabsBlock`, `AccordionBlock`
+  picked up `Block::lower_ui` overrides. Two new helpers in
+  `ui_lower.rs` keep the composite blocks duplication-free:
+  - `bare_container(id, children, customize)` — builds a
+    `UiNode::Container` *without* a builder `Node` driving it.
+    Composite blocks (table headers, tab strips, accordion bars,
+    input field rows) synthesise nested layout using this single
+    constructor; `customize: FnOnce(&mut ContainerProps)` is the only
+    way fields move off `ContainerProps::default()`.
+  - `uniform_radius(r)` — equal-on-all-corners `CornerRadius`.
+    `CodeBlock` / `ButtonBlock` / `TableBlock` / `AccordionBlock` /
+    `InputBlock` all route through it, replacing the prior 4-field
+    struct-literal duplication.
+  Test registry collapsed from per-block `register_block` calls into
+  a `register_all! { "id" => Type, ... }` macro — adding a new block
+  to the test stack is one line. Six new acceptance tests cover the
+  new lowerings end-to-end (form/input × 2/table/tabs/accordion);
+  `lower_single` + `expect_container` test helpers eliminate the
+  per-test fixture / pattern-match boilerplate, so each test reads as
+  pure assertions on layout shape. **Phase-3 scoreboard:** 12 of 13
+  non-image builtins now have dedicated `lower_ui` impls (text,
+  spacer, container, columns, list, divider, code, button, form,
+  input, table, tabs, accordion). Image is the lone holdout, blocked
+  on a runtime `Image` primitive (plan §5.3). 25 `ui_runtime` tests +
+  403 total `prism-builder` tests green; clippy `-D warnings` clean.
+- **Update 2026-05-08 (all 13 builtins migrated — `Image` primitive
+  lands):** `prism-ui-runtime` grows a `Node::Image` variant alongside
+  the existing `Container` / `Text` / `Spacer` — same retained-mode
+  shape, same Taffy-leaf integration, same `RenderCommand::Image`
+  pass-through. The `Image` variant carries a stable id, a `source`
+  string the host renderer resolves (URL / `/asset/<hash>` / file
+  path), `Sizing` width/height (so `grow` / `fit` / fixed-pixel
+  images flow through Taffy identically to containers), and a
+  `CornerRadius` that round-trips into the render command (the html
+  backend now emits `<img>` with `border-radius`; the femtovg backend
+  remains a stub until the asset decoder phase). `RenderCommand::Image`
+  picks up a matching `radius` field — same shape `Rectangle` already
+  has, no new vocabulary. New `ui_lower::image_node(id, source, style,
+  width, height)` helper sits next to `text_node` / `spacer_node` /
+  `bare_container` so any block that needs an image is one call.
+  `ImageBlock::lower_ui` is 12 lines: resolve `src` through
+  `AssetSource::from_prop().to_html_src()` (the *same* path the SSR
+  walker uses — single source of truth for asset URL resolution, no
+  parallel logic), then call `image_node` with `Sizing::Grow` to match
+  `render_slint`'s `width: parent.width; height: parent.height`. The
+  `full_registry` test stack adds `"image" => ImageBlock` — one line.
+  Two new acceptance tests (`image_block_lowers_to_image_node_with_url_source`,
+  `image_block_propagates_cascade_radius`) cover URL pass-through and
+  cascade-radius propagation. **Phase-3 scoreboard:** 13/13 non-prefab
+  builtins now have dedicated `lower_ui` impls. 27 `ui_runtime` tests
+  green; full workspace `cargo test` green; clippy `-D warnings`
+  clean.
+- **Update 2026-05-08 (semantic HTML lowering; relay cuts over to
+  the unified pipeline):** Phase 5's "drop `Component::render_html`
+  + `HtmlRegistry`" now has its replacement landed and live in the
+  relay.
+  - **`Semantic` value type** in `prism-ui-runtime/src/layout/mod.rs`
+    — `{ tag, class, aria_label, role, attrs }`, all skip-if-empty
+    so existing JSON round-trips unchanged. Builder methods
+    (`Semantic::tag(t).with_class(c).with_attr(k, v)`) keep the
+    block-side declaration to one or two lines per migration.
+    Drops `Copy` from `ContainerProps`/`TextProps` (they now own
+    `Semantic` strings); construction sites updated mechanically.
+  - **`prism-ui-runtime::backends::semantic_html`** — pure
+    tree-walking emitter, no layout pass, no render commands.
+    Dispatches by `Semantic::tag` first, then per-variant default
+    (`<div>` / `<span>` / `<p>` / `<img>`). Default text tag
+    buckets by font-size so blocks that haven't migrated yet still
+    produce something sensible. When an explicit semantic tag is
+    set the walker omits inline layout styles — semantic HTML
+    defers chrome to stylesheets, the pixel-faithful
+    `backends::html` lowering remains the place for inline-style
+    layout reproduction. 7 dedicated tests cover the walker.
+  - **Builder helpers** in `ui_lower.rs`:
+    - `with_semantic(node, hint)` attaches a `Semantic` to any
+      Container / Text / Image variant in one call. `Spacer`
+      ignores it (no semantic anchor — layout-only).
+    - Existing `text_node` / `bare_container` / `image_node`
+      compose with `with_semantic` so each block's `lower_ui`
+      override stays a 5-15 line declaration of layout +
+      semantic, no duplication of cascade / sizing / colour /
+      child-recursion logic.
+  - **`prism-builder::ui_runtime::lower_semantic_html` /
+    `lower_semantic_html_with_registry`** — `BuilderDocument` →
+    semantic HTML in one call. Registry-aware version is what the
+    relay calls.
+  - **Block migrations (5 of 13):** TextBlock declares
+    `<h1>`-`<h6>` / `<p>` based on the `level` prop, and wraps the
+    content in `<a href="…">` when `href` is set (single source of
+    truth for the level→tag table is `level_to_html_tag` in
+    `starter.rs`). ImageBlock pulls `alt` onto the hint. FormBlock
+    declares `<form method="…" action="…">`. ContainerBlock
+    declares `<section>`. ListBlock declares `<ul>` / `<ol>`.
+    Remaining 8 blocks (table, tabs, accordion, code, divider,
+    button, input, columns) keep the per-variant default `<div>`
+    until they declare their own hint — the relay output is
+    correct for them, just less expressive.
+  - **Relay cutover** in `prism-relay/src/ssr_routes.rs` — the
+    portal-detail handler now calls
+    `lower_semantic_html_with_registry(doc, &state.registry)`
+    instead of `render_document_html(doc, &state.html_registry,
+    &state.tokens)`. Single SSR pipeline, single chokepoint.
+    Integration test (`portal_detail_renders_welcome_page`)
+    asserts the new output's structural shape — `<section>` from
+    container, `<h1>Welcome…</h1>` from heading text,
+    `<p><a href="/portals">…</a></p>` from anchored text — all
+    green. `render_error_response` removed (semantic walker is
+    infallible).
+  - **What still has to happen for the full Phase 5 cutover:**
+    migrate the remaining 8 block `lower_ui` impls to declare
+    their semantic shape; then delete `Component::render_html`,
+    the `HtmlBlock` trait, `HtmlRegistry`, `register_html_widgets`,
+    `register_html_builtins`, `html_starter.rs`, and the SSR-only
+    half of `core_widget.rs` / `render.rs`. The relay no longer
+    calls any of that code, so deletion is mechanical from here.
+
+- **Update 2026-05-08 (Image lands in §11 Luau surface; declarative
+  variant dispatch):** the new `Node::Image` variant is now first-class
+  in the `prism_ui_runtime::luau` bindings — `ui.image({ id, source,
+  width, height, radius })` constructor takes the same value-shape
+  `Node::Image` carries on the Rust side, so authoring an image from
+  Luau is one call. The `LuaNode:kind()` method now delegates to a
+  single `Node::kind() -> &'static str` helper on the runtime side
+  instead of an inline match — adding a Node variant updates one
+  arm, not three (Luau, debug, future hint dispatch). One new test
+  (`ui_image_constructs_an_image_node`) covers the constructor +
+  `kind()` round-trip. 25 luau tests + 405 builder tests + clippy
+  `-D warnings` clean.
+
+- **Update 2026-05-08 (semantic catalogue closed; void-tag walker;
+  declarative semantic via `props.semantic`):** the remaining 8 block
+  `lower_ui` impls now declare their own SSR semantic shape, finishing
+  the per-block migration started by the 2026-05-08 "5 of 13" update
+  above. **No new dispatcher**, **no per-block walker**, and **no
+  duplicate `with_semantic` wrapping** — every block sets
+  `props.semantic = Semantic::tag("…")` directly inside its
+  `customize` closure on `synthetic_container` / `bare_container`,
+  reusing the *same* container constructor that already owns sizing,
+  cascade resolution, and child recursion. Adding a semantic shape is
+  one line.
+  - **Void-tag handling** in `prism-ui-runtime::backends::semantic_html`
+    — a single `VOID_TAGS` constant lists the spec's full set; the
+    walker checks it once. Containers tagged `<hr>` / `<input>` etc.
+    emit self-closing markup with their `Semantic` attrs and *drop*
+    their children (which were layout-only anyway). Single source of
+    truth: a new void-tag block doesn't have to teach the walker
+    about itself, it just sets `props.semantic = Semantic::tag(…)`.
+  - **Block migrations (8 of 13):**
+    - `ButtonBlock` — `<button type=…>` paired, or `<a href… role="button">`
+      when the `href` prop is set; `disabled="disabled"` propagates.
+    - `DividerBlock` — `<hr>` (void; no children, no inline styles).
+    - `CodeBlock` — outer `<pre>` wrapping inner `<code>` with a
+      `class="language-{lang}"` matching `render_html`. The inner
+      `<code>` semantic is set via `with_semantic` on the `text_node`
+      since it's a child rather than the outer container.
+    - `InputBlock` — outer `<label>` (when a label prop is set),
+      inner `<input>` (void) carrying `type` / `name` / `placeholder`
+      / `value` / `required` attrs declared once on
+      `Semantic::tag("input").with_attr(…)`.
+    - `TableBlock` — outer `<table>`, caption text → `<caption>`,
+      header strip → `<thead>` containing a `<tr>` of `<th>` cells.
+      Each layer adds exactly one `props.semantic` line.
+    - `TabsBlock` — strip → `role="tablist"`, each pill →
+      `<button role="tab" aria-selected=…>`, panel host →
+      `role="tabpanel"`. The first pill / panel get `aria-selected="true"`.
+    - `AccordionBlock` — `<details open="open"?>` with `<summary>`
+      header; content host stays a default `<div>` so children's
+      own semantics flow through unchanged.
+    - `ColumnsBlock` — left as default `<div>` flex container; no
+      semantic anchor in the HTML spec for "side-by-side columns",
+      and adding `role="group"` here is noisier than letting the
+      `<div>` defer to the parent's stylesheet.
+  - **One acceptance test** — `lower_semantic_html_covers_the_phase3_block_catalog`
+    in `prism-builder/src/ui_runtime.rs` walks a single document
+    that touches every migrated block and asserts the SSR markup
+    `render_html` would have produced (`<button>`, `<a href>`,
+    `<hr>`, `<pre><code class="language-…">`, `<label><input>`,
+    `role="tablist"`/`tab`/`tabpanel`, `<details open><summary>`,
+    `<table><caption><thead><tr><th>`). Two new dedicated tests in
+    `backends::semantic_html::tests` cover the void-tag walker
+    (`void_tag_container_emits_self_closing_and_drops_children`,
+    `input_void_tag_carries_attrs`).
+  - **Phase-5 deletion punch list (now mechanically empty):**
+    every relay-facing block has a semantic-HTML shape declared in
+    its `lower_ui` impl, so the parallel `Component::render_html`,
+    `HtmlBlock`, `HtmlRegistry`, `register_html_widgets`,
+    `register_html_builtins`, `html_starter.rs`, and the SSR-only
+    half of `core_widget.rs` / `render.rs` are no longer load-bearing
+    on any caller. Phase 5 deletes them in one mechanical pass
+    (next session); the relay already calls
+    `lower_semantic_html_with_registry` and nothing else.
+
 - **Update 2026-05-08 (unified pipeline entry point):** added
   `prism_builder::ui_runtime::render_commands(doc, viewport) ->
   Vec<RenderCommand>` and `lower_html(doc, viewport) -> String` —

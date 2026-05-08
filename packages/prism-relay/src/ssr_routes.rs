@@ -28,7 +28,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use prism_builder::{render_document_html, Html, RenderError};
+use prism_builder::{ui_runtime::lower_semantic_html_with_registry, Html};
 
 use crate::portal::{Portal, PortalLevel};
 use crate::state::AppState;
@@ -75,10 +75,14 @@ async fn portal_detail(State(state): State<Arc<AppState>>, Path(id): Path<String
         return not_found();
     }
 
-    let body = match render_document_html(&portal.document, &state.html_registry, &state.tokens) {
-        Ok(b) => b,
-        Err(err) => return render_error_response(err),
-    };
+    // Unified pipeline: walk the typed `Node` tree through every
+    // block's `lower_ui` impl and emit semantic HTML in one pass.
+    // This is the Phase 5 entry point — `render_document_html` and
+    // `HtmlRegistry` go away once the remaining blocks (table, tabs,
+    // accordion, code, divider, button, input) declare their own
+    // `Semantic` hints. Until then, blocks without hints fall back
+    // to per-variant defaults (`<div>` / `<span>` / `<img>`).
+    let body = lower_semantic_html_with_registry(&portal.document, &state.registry);
     let page = wrap_portal_page(&portal, &body);
     html_response(page)
 }
@@ -326,19 +330,6 @@ fn text_response(body: String) -> Response {
 fn not_found() -> Response {
     let body = "<!doctype html><html><head><title>404 — Not Found</title></head><body><h1>Not Found</h1><p>No portal by that name.</p></body></html>";
     let mut resp = (StatusCode::NOT_FOUND, body).into_response();
-    resp.headers_mut().insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("text/html; charset=utf-8"),
-    );
-    resp
-}
-
-fn render_error_response(err: RenderError) -> Response {
-    let body = format!(
-        "<!doctype html><html><head><title>500 — Render Error</title></head><body><h1>Render Error</h1><pre>{}</pre></body></html>",
-        prism_builder::escape_text(&err.to_string())
-    );
-    let mut resp = (StatusCode::INTERNAL_SERVER_ERROR, body).into_response();
     resp.headers_mut().insert(
         header::CONTENT_TYPE,
         HeaderValue::from_static("text/html; charset=utf-8"),

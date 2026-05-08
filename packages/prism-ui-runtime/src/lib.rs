@@ -126,6 +126,7 @@ mod tests {
                             b: 20,
                             a: 255,
                         },
+                        ..Default::default()
                     },
                 },
                 Node::Container {

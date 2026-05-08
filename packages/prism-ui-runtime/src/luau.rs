@@ -56,8 +56,8 @@ use mlua::{
 };
 use serde::Deserialize;
 
-use crate::command::RenderCommand;
-use crate::layout::{ContainerProps, Node, Surface, TextProps, Viewport};
+use crate::command::{CornerRadius, RenderCommand};
+use crate::layout::{ContainerProps, Node, Sizing, Surface, TextProps, Viewport};
 
 /// The Luau-side wrapper around a `Node`. Wrapping in
 /// `Rc<RefCell<Node>>` lets multiple Luau handles point at the same
@@ -87,14 +87,7 @@ impl UserData for LuaNode {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_method("id", |_, this, ()| Ok(this.0.borrow().id().to_owned()));
 
-        methods.add_method("kind", |_, this, ()| {
-            let kind = match &*this.0.borrow() {
-                Node::Container { .. } => "container",
-                Node::Text { .. } => "text",
-                Node::Spacer { .. } => "spacer",
-            };
-            Ok(kind)
-        });
+        methods.add_method("kind", |_, this, ()| Ok(this.0.borrow().kind()));
 
         methods.add_method("to_json", |lua, this, ()| {
             let value =
@@ -269,6 +262,34 @@ pub fn install(lua: &Lua) -> LuaResult<()> {
     })?;
     ui.set("spacer", spacer)?;
 
+    // `ui.image({ id, source, width, height, radius })` — same value
+    // shape `Node::Image` carries on the Rust side. Every field
+    // optional; the source string is what the host renderer resolves.
+    let image = lua.create_function(|lua, spec: Value| {
+        #[derive(Default, Deserialize)]
+        struct ImageSpec {
+            #[serde(default)]
+            id: String,
+            #[serde(default)]
+            source: String,
+            #[serde(default)]
+            width: Sizing,
+            #[serde(default)]
+            height: Sizing,
+            #[serde(default)]
+            radius: CornerRadius,
+        }
+        let s: ImageSpec = lua.from_value(spec)?;
+        Ok(LuaNode::new(Node::Image {
+            id: s.id,
+            source: s.source,
+            width: s.width,
+            height: s.height,
+            radius: s.radius,
+        }))
+    })?;
+    ui.set("image", image)?;
+
     let surface_ctor = lua.create_function(|lua, (node, vp): (AnyUserData, Value)| {
         let tree = node.borrow::<LuaNode>()?.snapshot();
         let viewport: Viewport = lua.from_value(vp)?;
@@ -421,6 +442,34 @@ mod tests {
             .eval()
             .unwrap();
         assert!(updated);
+    }
+
+    #[test]
+    fn ui_image_constructs_an_image_node() {
+        let lua = lua();
+        let node: LuaNode = lua
+            .load(
+                r#"
+                return ui.image({
+                  id = "hero",
+                  source = "/asset/abc",
+                  width = { mode = "grow" },
+                  height = { mode = "grow" },
+                  radius = { tl = 4, tr = 4, br = 4, bl = 4 },
+                })
+                "#,
+            )
+            .eval()
+            .unwrap();
+        let snapshot = node.snapshot();
+        assert_eq!(snapshot.kind(), "image");
+        match snapshot {
+            Node::Image { id, source, .. } => {
+                assert_eq!(id, "hero");
+                assert_eq!(source, "/asset/abc");
+            }
+            other => panic!("expected image, got {other:?}"),
+        }
     }
 
     #[test]

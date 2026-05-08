@@ -53,6 +53,8 @@ pub enum RenderCommand {
     Image {
         bounds: Rect,
         source: String,
+        #[serde(default)]
+        radius: CornerRadius,
     },
     ScissorStart {
         bounds: Rect,

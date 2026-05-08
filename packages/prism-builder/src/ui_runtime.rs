@@ -96,6 +96,31 @@ pub fn lower_html_with_registry(
     prism_ui_runtime::backends::html::lower(&cmds)
 }
 
+/// `BuilderDocument` → **semantic** HTML via the unified pipeline.
+/// Walks the typed `Node` tree directly (no layout pass, no render
+/// commands) and emits SEO/accessibility-friendly markup driven by
+/// each block's `Semantic` hint declarations. This is the entry
+/// point that obsoletes `Component::render_html` + `HtmlRegistry`
+/// for SSR — every block's `lower_ui` impl is the single source of
+/// truth for both layout vocabulary and HTML flavour.
+pub fn lower_semantic_html(doc: &BuilderDocument) -> String {
+    document_to_ui_tree(doc)
+        .map(|tree| prism_ui_runtime::backends::semantic_html::lower(&tree))
+        .unwrap_or_default()
+}
+
+/// Registry-aware semantic HTML lowering — what the relay calls
+/// post-cutover. Picks up every block's `lower_ui` impl, including
+/// its `Semantic` declarations.
+pub fn lower_semantic_html_with_registry(
+    doc: &BuilderDocument,
+    registry: &ComponentRegistry,
+) -> String {
+    document_to_ui_tree_with_registry(doc, registry)
+        .map(|tree| prism_ui_runtime::backends::semantic_html::lower(&tree))
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -103,7 +128,11 @@ mod tests {
     use crate::document::Node;
     use crate::html_block::HtmlRegistry;
     use crate::layout::{FlexDirection, FlowDisplay, FlowProps, LayoutMode};
-    use crate::starter::{SpacerBlock, TextBlock};
+    use crate::starter::{
+        AccordionBlock, ButtonBlock, CodeBlock, ColumnsBlock, ContainerBlock, DividerBlock,
+        FormBlock, ImageBlock, InputBlock, ListBlock, SpacerBlock, TableBlock, TabsBlock,
+        TextBlock,
+    };
     use prism_core::foundation::geometry::Edges;
     use prism_ui_runtime::layout::Direction;
     use serde_json::json;
@@ -135,6 +164,39 @@ mod tests {
             }),
         )
         .unwrap();
+        comps
+    }
+
+    /// Full builtin-flavoured registry covering the blocks with
+    /// dedicated `lower_ui` impls. Phase 3 progress is gated on this
+    /// stack producing the expected runtime nodes. New blocks join
+    /// the table below — no per-block registration boilerplate.
+    fn full_registry() -> ComponentRegistry {
+        let mut comps = ComponentRegistry::new();
+        let mut html = HtmlRegistry::new();
+        // Macro keeps registration declarative — each row is just
+        // `(component-id, BlockType)`. Adding a block is one line.
+        macro_rules! register_all {
+            ($($id:literal => $ty:ident),* $(,)?) => {
+                $(register_block(&mut comps, &mut html, Arc::new($ty { id: $id.into() })).unwrap();)*
+            };
+        }
+        register_all! {
+            "text" => TextBlock,
+            "spacer" => SpacerBlock,
+            "columns" => ColumnsBlock,
+            "list" => ListBlock,
+            "container" => ContainerBlock,
+            "divider" => DividerBlock,
+            "code" => CodeBlock,
+            "button" => ButtonBlock,
+            "form" => FormBlock,
+            "input" => InputBlock,
+            "table" => TableBlock,
+            "tabs" => TabsBlock,
+            "accordion" => AccordionBlock,
+            "image" => ImageBlock,
+        }
         comps
     }
 
@@ -353,6 +415,157 @@ mod tests {
     }
 
     #[test]
+    fn lower_semantic_html_emits_meaningful_tags_per_block() {
+        let reg = full_registry();
+        // text(level=h2) → <h2>; image with alt → <img alt=…>;
+        // form → <form method=get>; list(ordered) → <ol>.
+        let doc = BuilderDocument {
+            root: Some(Node {
+                id: "root".into(),
+                component: "form".into(),
+                props: json!({ "method": "get" }),
+                children: vec![
+                    Node {
+                        id: "title".into(),
+                        component: "text".into(),
+                        props: json!({ "level": "h2", "body": "Sign up" }),
+                        ..Default::default()
+                    },
+                    Node {
+                        id: "logo".into(),
+                        component: "image".into(),
+                        props: json!({ "src": "/asset/abc", "alt": "Logo" }),
+                        ..Default::default()
+                    },
+                    Node {
+                        id: "items".into(),
+                        component: "list".into(),
+                        props: json!({ "ordered": true }),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let html = lower_semantic_html_with_registry(&doc, &reg);
+        assert!(html.contains("<form "));
+        assert!(html.contains("method=\"get\""));
+        assert!(html.contains("<h2"));
+        assert!(html.contains(">Sign up</h2>"));
+        assert!(html.contains("<img src=\"/asset/abc\""));
+        assert!(html.contains("alt=\"Logo\""));
+        assert!(html.contains("<ol"));
+        assert!(html.ends_with("</form>"));
+    }
+
+    #[test]
+    fn lower_semantic_html_covers_the_phase3_block_catalog() {
+        // Every non-prefab built-in declares its semantic shape inside
+        // its own `lower_ui` impl — no walker fan-out, no per-block
+        // fork in the relay. This test pins the contract: each block
+        // emits the SSR markup `render_html` would have, just by
+        // setting `props.semantic` declaratively in the lowering.
+        let reg = full_registry();
+        let mk = |id: &str, comp: &str, props: serde_json::Value, children: Vec<Node>| Node {
+            id: id.into(),
+            component: comp.into(),
+            props,
+            children,
+            ..Default::default()
+        };
+        let doc = BuilderDocument {
+            root: Some(mk(
+                "root",
+                "container",
+                json!({}),
+                vec![
+                    mk("btn", "button", json!({ "text": "Save" }), vec![]),
+                    mk(
+                        "btn-link",
+                        "button",
+                        json!({ "text": "Help", "href": "/help" }),
+                        vec![],
+                    ),
+                    mk("hr", "divider", json!({}), vec![]),
+                    mk(
+                        "code",
+                        "code",
+                        json!({ "code": "print(1)", "language": "lua" }),
+                        vec![],
+                    ),
+                    mk(
+                        "in",
+                        "input",
+                        json!({ "name": "email", "type": "email", "label": "Email" }),
+                        vec![],
+                    ),
+                    mk("tab", "tabs", json!({ "labels": "One, Two" }), vec![]),
+                    mk(
+                        "acc",
+                        "accordion",
+                        json!({ "title": "More", "open": true }),
+                        vec![],
+                    ),
+                    mk(
+                        "tbl",
+                        "table",
+                        json!({ "headers": "Name, Email", "caption": "Users" }),
+                        vec![],
+                    ),
+                ],
+            )),
+            ..Default::default()
+        };
+        let html = lower_semantic_html_with_registry(&doc, &reg);
+
+        // Button (paired) and anchor variant.
+        assert!(html.contains("<button"));
+        assert!(html.contains("type=\"submit\""));
+        // The button label is a child text node, so the closing
+        // `</button>` lives after the inner text element — assert it
+        // wraps the label rather than expecting an exact slice.
+        assert!(html.contains("Save"));
+        assert!(html.contains("</button>"));
+        assert!(html.contains("<a"));
+        assert!(html.contains("href=\"/help\""));
+        // Divider — void.
+        assert!(html.contains("<hr"));
+        assert!(!html.contains("</hr>"));
+        // Code — `<pre><code class="language-lua">`.
+        assert!(html.contains("<pre"));
+        assert!(html.contains("<code class=\"language-lua\""));
+        assert!(html.contains("print(1)"));
+        assert!(html.contains("</code>"));
+        assert!(html.contains("</pre>"));
+        // Input — outer `<label>`, inner `<input>` void with attrs.
+        assert!(html.contains("<label"));
+        assert!(html.contains("<input"));
+        assert!(html.contains("type=\"email\""));
+        assert!(html.contains("name=\"email\""));
+        // Tabs — role=tablist + role=tab buttons + role=tabpanel.
+        assert!(html.contains("role=\"tablist\""));
+        assert!(html.contains("role=\"tab\""));
+        assert!(html.contains("aria-selected=\"true\""));
+        assert!(html.contains("role=\"tabpanel\""));
+        // Accordion — `<details open>` with `<summary>`.
+        assert!(html.contains("<details"));
+        assert!(html.contains("open=\"open\""));
+        assert!(html.contains("<summary"));
+        // Table — `<table>`/`<caption>`/`<thead>`/`<tr>`/`<th>`.
+        assert!(html.contains("<table"));
+        assert!(html.contains("<caption"));
+        assert!(html.contains("<thead"));
+        assert!(html.contains("<tr"));
+        assert!(html.contains("<th"));
+    }
+
+    #[test]
+    fn lower_semantic_html_returns_empty_for_empty_doc() {
+        assert_eq!(lower_semantic_html(&BuilderDocument::default()), "");
+    }
+
+    #[test]
     fn lower_html_round_trips_to_string() {
         let doc = BuilderDocument {
             root: Some(Node {
@@ -389,6 +602,365 @@ mod tests {
         );
         assert!(html.starts_with("<div"));
         assert!(html.ends_with("</div>"));
+    }
+
+    #[test]
+    fn columns_block_lowers_to_row_container() {
+        let reg = full_registry();
+        let node = Node {
+            id: "c".into(),
+            component: "columns".into(),
+            props: json!({ "gap": 24 }),
+            ..Default::default()
+        };
+        let doc = BuilderDocument {
+            root: Some(node),
+            ..Default::default()
+        };
+        let tree = document_to_ui_tree_with_registry(&doc, &reg).unwrap();
+        let UiNode::Container { props, .. } = tree else {
+            panic!("expected container");
+        };
+        assert_eq!(props.direction, Direction::Row);
+        assert_eq!(props.gap, 24.0);
+    }
+
+    #[test]
+    fn list_block_uses_item_spacing_as_gap() {
+        let reg = full_registry();
+        let node = Node {
+            id: "l".into(),
+            component: "list".into(),
+            props: json!({ "item_spacing": 12 }),
+            ..Default::default()
+        };
+        let doc = BuilderDocument {
+            root: Some(node),
+            ..Default::default()
+        };
+        let tree = document_to_ui_tree_with_registry(&doc, &reg).unwrap();
+        let UiNode::Container { props, .. } = tree else {
+            panic!("expected container");
+        };
+        assert_eq!(props.direction, Direction::Column);
+        assert_eq!(props.gap, 12.0);
+    }
+
+    #[test]
+    fn container_block_props_resolve_into_runtime_container() {
+        let reg = full_registry();
+        let node = Node {
+            id: "c".into(),
+            component: "container".into(),
+            props: json!({ "spacing": 10, "padding": 16 }),
+            ..Default::default()
+        };
+        let doc = BuilderDocument {
+            root: Some(node),
+            ..Default::default()
+        };
+        let tree = document_to_ui_tree_with_registry(&doc, &reg).unwrap();
+        let UiNode::Container { props, .. } = tree else {
+            panic!("expected container");
+        };
+        assert_eq!(props.gap, 10.0);
+        assert_eq!(props.padding.left, 16.0);
+        assert_eq!(props.padding.top, 16.0);
+    }
+
+    #[test]
+    fn divider_block_lowers_to_one_pixel_bar() {
+        let reg = full_registry();
+        let node = Node {
+            id: "d".into(),
+            component: "divider".into(),
+            ..Default::default()
+        };
+        let doc = BuilderDocument {
+            root: Some(node),
+            ..Default::default()
+        };
+        let tree = document_to_ui_tree_with_registry(&doc, &reg).unwrap();
+        let UiNode::Container {
+            props, children, ..
+        } = tree
+        else {
+            panic!("expected container");
+        };
+        assert!(children.is_empty());
+        assert!(matches!(
+            props.height,
+            prism_ui_runtime::layout::Sizing::Fixed(v) if v == 1.0
+        ));
+        assert!(props.background.is_some());
+    }
+
+    #[test]
+    fn code_block_wraps_text_in_padded_container() {
+        let reg = full_registry();
+        let node = Node {
+            id: "code".into(),
+            component: "code".into(),
+            props: json!({ "code": "fn main() {}" }),
+            ..Default::default()
+        };
+        let doc = BuilderDocument {
+            root: Some(node),
+            ..Default::default()
+        };
+        let tree = document_to_ui_tree_with_registry(&doc, &reg).unwrap();
+        let UiNode::Container {
+            props, children, ..
+        } = tree
+        else {
+            panic!("expected container");
+        };
+        assert_eq!(children.len(), 1);
+        let UiNode::Text { content, .. } = &children[0] else {
+            panic!("expected text child");
+        };
+        assert_eq!(content, "fn main() {}");
+        assert!(props.background.is_some(), "code blocks have a backdrop");
+        assert_eq!(props.padding.left, 12.0);
+    }
+
+    #[test]
+    fn button_block_centers_label_in_container() {
+        let reg = full_registry();
+        let node = Node {
+            id: "b".into(),
+            component: "button".into(),
+            props: json!({ "text": "Save" }),
+            ..Default::default()
+        };
+        let doc = BuilderDocument {
+            root: Some(node),
+            ..Default::default()
+        };
+        let tree = document_to_ui_tree_with_registry(&doc, &reg).unwrap();
+        let UiNode::Container {
+            props, children, ..
+        } = tree
+        else {
+            panic!("expected container");
+        };
+        assert_eq!(children.len(), 1);
+        let UiNode::Text {
+            content,
+            props: tprops,
+            ..
+        } = &children[0]
+        else {
+            panic!("expected text child");
+        };
+        assert_eq!(content, "Save");
+        assert_eq!(tprops.color.r, 0xff);
+        assert!(matches!(
+            props.height,
+            prism_ui_runtime::layout::Sizing::Fixed(v) if v == 36.0
+        ));
+    }
+
+    /// Build a single-node `BuilderDocument` and lower it through the
+    /// full registry. Most lower_ui tests want the same skeleton —
+    /// component id + props, single root, lower, expect a Container.
+    /// Helper keeps each test focused on the assertions that matter.
+    fn lower_single(component: &str, props: serde_json::Value) -> UiNode {
+        let reg = full_registry();
+        let doc = BuilderDocument {
+            root: Some(Node {
+                id: "root".into(),
+                component: component.into(),
+                props,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        document_to_ui_tree_with_registry(&doc, &reg).unwrap()
+    }
+
+    fn expect_container(node: UiNode) -> (prism_ui_runtime::layout::ContainerProps, Vec<UiNode>) {
+        match node {
+            UiNode::Container {
+                props, children, ..
+            } => (props, children),
+            _ => panic!("expected container"),
+        }
+    }
+
+    #[test]
+    fn form_block_lowers_to_vertical_container_with_gap_8() {
+        let (props, _) = expect_container(lower_single("form", json!({})));
+        assert_eq!(props.direction, Direction::Column);
+        assert_eq!(props.gap, 8.0);
+    }
+
+    #[test]
+    fn input_block_synthesises_label_and_field() {
+        let (props, children) = expect_container(lower_single(
+            "input",
+            json!({ "label": "Email", "placeholder": "you@example.com" }),
+        ));
+        assert_eq!(props.gap, 4.0);
+        // [label-text, field-rect-with-placeholder]
+        assert_eq!(children.len(), 2);
+        let UiNode::Text { content, .. } = &children[0] else {
+            panic!("expected label text first");
+        };
+        assert_eq!(content, "Email");
+        let UiNode::Container {
+            props: field_props,
+            children: field_kids,
+            ..
+        } = &children[1]
+        else {
+            panic!("expected field container");
+        };
+        assert!(matches!(
+            field_props.height,
+            prism_ui_runtime::layout::Sizing::Fixed(v) if v == 32.0
+        ));
+        assert!(field_props.background.is_some());
+        let UiNode::Text { content, .. } = &field_kids[0] else {
+            panic!("expected placeholder text");
+        };
+        assert_eq!(content, "you@example.com");
+    }
+
+    #[test]
+    fn input_block_uses_ellipsis_when_placeholder_empty() {
+        let (_, children) = expect_container(lower_single("input", json!({ "name": "email" })));
+        // Without label, only the field row is emitted.
+        assert_eq!(children.len(), 1);
+        let UiNode::Container {
+            children: field, ..
+        } = &children[0]
+        else {
+            panic!();
+        };
+        let UiNode::Text { content, .. } = &field[0] else {
+            panic!();
+        };
+        assert_eq!(content, "...");
+    }
+
+    #[test]
+    fn table_block_lowers_to_caption_plus_header_row() {
+        let (props, children) = expect_container(lower_single(
+            "table",
+            json!({ "headers": "Name, Age, Email", "caption": "Users" }),
+        ));
+        assert_eq!(props.padding.left, 8.0);
+        assert!(props.radius.tl > 0.0);
+        // [caption text, thead container > tr container > th cells]
+        assert_eq!(children.len(), 2);
+        let UiNode::Text { content, .. } = &children[0] else {
+            panic!("caption first");
+        };
+        assert_eq!(content, "Users");
+        let (_thead_props, thead_kids) = expect_container(children[1].clone());
+        assert_eq!(thead_kids.len(), 1);
+        let (row_props, cells) = expect_container(thead_kids[0].clone());
+        assert_eq!(row_props.direction, Direction::Row);
+        assert_eq!(row_props.gap, 16.0);
+        assert_eq!(cells.len(), 3);
+    }
+
+    #[test]
+    fn tabs_block_lowers_to_strip_and_panel() {
+        let (_props, children) =
+            expect_container(lower_single("tabs", json!({ "labels": "One, Two, Three" })));
+        assert_eq!(children.len(), 2);
+        let (strip_props, pills) = expect_container(children[0].clone());
+        assert_eq!(strip_props.direction, Direction::Row);
+        assert_eq!(pills.len(), 3);
+        // First pill highlighted, others dim.
+        let UiNode::Container {
+            props: first_pill, ..
+        } = &pills[0]
+        else {
+            panic!();
+        };
+        let UiNode::Container {
+            props: second_pill, ..
+        } = &pills[1]
+        else {
+            panic!();
+        };
+        assert_ne!(first_pill.background, second_pill.background);
+        // Panel container is empty (no children passed in this fixture).
+        let (panel_props, panel_kids) = expect_container(children[1].clone());
+        assert_eq!(panel_props.padding.left, 12.0);
+        assert!(panel_kids.is_empty());
+    }
+
+    #[test]
+    fn image_block_lowers_to_image_node_with_url_source() {
+        // External URL → straight pass-through. `to_html_src()` is the
+        // single source of truth for the rendered string; both the SSR
+        // walker and the runtime pipeline route through it, so no
+        // duplication of resolution logic.
+        let node = lower_single(
+            "image",
+            json!({ "src": "https://example.test/cat.png", "alt": "cat" }),
+        );
+        let UiNode::Image {
+            source,
+            width,
+            height,
+            ..
+        } = node
+        else {
+            panic!("expected image, got {node:?}");
+        };
+        assert_eq!(source, "https://example.test/cat.png");
+        assert!(matches!(width, prism_ui_runtime::layout::Sizing::Grow));
+        assert!(matches!(height, prism_ui_runtime::layout::Sizing::Grow));
+    }
+
+    #[test]
+    fn image_block_propagates_cascade_radius() {
+        let reg = full_registry();
+        let doc = BuilderDocument {
+            root: Some(Node {
+                id: "img".into(),
+                component: "image".into(),
+                props: json!({ "src": "https://example.test/x.png" }),
+                style: StyleProperties {
+                    border_radius: Some(8.0),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let UiNode::Image { radius, .. } = document_to_ui_tree_with_registry(&doc, &reg).unwrap()
+        else {
+            panic!("expected image");
+        };
+        assert_eq!(radius.tl, 8.0);
+        assert_eq!(radius.br, 8.0);
+    }
+
+    #[test]
+    fn accordion_block_lowers_to_header_and_content() {
+        let (props, children) = expect_container(lower_single(
+            "accordion",
+            json!({ "title": "Details", "section_gap": 6 }),
+        ));
+        assert_eq!(props.gap, 6.0);
+        assert_eq!(children.len(), 2);
+        let (header_props, header_kids) = expect_container(children[0].clone());
+        assert!(matches!(
+            header_props.height,
+            prism_ui_runtime::layout::Sizing::Fixed(v) if v == 32.0
+        ));
+        let UiNode::Text { content, .. } = &header_kids[0] else {
+            panic!();
+        };
+        assert!(content.contains("Details"));
+        let (content_props, _) = expect_container(children[1].clone());
+        assert_eq!(content_props.padding.left, 16.0);
     }
 
     #[test]

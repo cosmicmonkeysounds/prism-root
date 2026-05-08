@@ -39,12 +39,23 @@ pub fn lower(commands: &[RenderCommand]) -> String {
                     html_escape(content),
                 ));
             }
+            RenderCommand::Image {
+                bounds,
+                source,
+                radius,
+            } => {
+                out.push_str(&format!(
+                    "<img src=\"{}\" style=\"position:absolute;left:{}px;top:{}px;width:{}px;height:{}px;object-fit:cover;border-radius:{}px {}px {}px {}px\"/>",
+                    html_escape_attr(source),
+                    bounds.x, bounds.y, bounds.width, bounds.height,
+                    radius.tl, radius.tr, radius.br, radius.bl,
+                ));
+            }
             RenderCommand::Border { .. }
-            | RenderCommand::Image { .. }
             | RenderCommand::ScissorStart { .. }
             | RenderCommand::ScissorEnd
             | RenderCommand::Hint { .. } => {
-                // TODO Phase 1: image, border, scissor, hint pass-through.
+                // TODO Phase 1: border, scissor, hint pass-through.
             }
         }
     }
@@ -60,6 +71,16 @@ fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+/// Attribute-context escape — escapes the `"` quote that closes the
+/// attribute value, plus the structural ampersand / less-than. Same
+/// rules as `html_escape` but skips `>` since it's not significant
+/// inside an attribute value.
+fn html_escape_attr(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
         .replace('"', "&quot;")
 }
 
