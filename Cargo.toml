@@ -88,6 +88,23 @@ glam = { version = "0.29", features = ["serde"] }
 # composes with our own document tree. Used by Slint, Bevy, Dioxus.
 taffy = "0.7"
 
+# Direct GPU/text dependencies for `prism-ui-runtime`'s native +
+# web backends (Phase 1 of the Slint→Taffy migration —
+# `docs/dev/clay-migration-plan.md` §5.3). These are pulled directly
+# now that the Slint-bundled versions are on the way out; matching
+# the versions Slint already had transitively keeps the toolchain
+# stable through the cutover. `cosmic-text` does shaping + glyph
+# rasterization (replaces the heuristic measure callback); `femtovg`
+# is the GL-backed 2D canvas; `glutin`/`glutin-winit` give us a GL
+# context for winit on desktop; `raw-window-handle` is the shared
+# windowing ABI both layers speak.
+winit = { version = "0.30" }
+femtovg = { version = "0.23", default-features = false, features = ["image-loading"] }
+glutin = { version = "0.32" }
+glutin-winit = { version = "0.5" }
+raw-window-handle = { version = "0.6" }
+cosmic-text = { version = "0.12" }
+
 # State + data structures.
 slotmap = "1"
 indexmap = { version = "2", features = ["serde"] }

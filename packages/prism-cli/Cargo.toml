@@ -30,6 +30,11 @@ notify = { workspace = true }
 # which the codegen subcommand fans out alongside the type registry.
 prism-core = { path = "../prism-core" }
 prism-builder = { path = "../prism-builder" }
+# `prism codegen luau-types` also walks the runtime's value-type
+# registry to emit `prism-ui.d.luau` (clay-migration-plan.md §4.8).
+# Default features (HTML SSR only) keep the dep graph cheap — no
+# winit / femtovg / cosmic-text are pulled in for a CLI build.
+prism-ui-runtime = { path = "../prism-ui-runtime" }
 
 [dev-dependencies]
 filetime = "0.2"

@@ -6,6 +6,7 @@ license = "MIT OR Apache-2.0"
 description = "Build-time codegen for .prism-ui files — same role slint-build plays today, replaced as part of ADR-008"
 
 [dependencies]
+prism-core = { path = "../prism-core" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

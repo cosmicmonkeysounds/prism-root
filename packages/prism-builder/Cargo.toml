@@ -42,7 +42,7 @@ prism-luau-derive = { workspace = true }
 # tree into `prism_ui_runtime::layout::Node`. Direction is GPL → MIT/
 # Apache — the runtime crate stays Slint-/builder-free as planned for
 # the post-cutover world; only the builder side knows both vocabularies.
-prism-ui-runtime = { path = "../prism-ui-runtime", default-features = false }
+prism-ui-runtime = { path = "../prism-ui-runtime", default-features = false, features = ["html"] }
 
 # Optional — gated behind the `interpreter` feature so downstream crates
 # that only want the DSL text don't pay for the full Slint compiler.

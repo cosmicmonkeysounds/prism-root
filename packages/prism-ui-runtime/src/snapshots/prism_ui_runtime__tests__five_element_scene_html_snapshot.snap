@@ -1,0 +1,5 @@
+---
+source: packages/prism-ui-runtime/src/lib.rs
+expression: html
+---
+<div class="prism-ui-root" style="position:relative"><div style="position:absolute;left:0px;top:0px;width:800px;height:600px;background:rgba(240,240,240,1);border-radius:0px 0px 0px 0px"></div><span style="position:absolute;left:16px;top:16px;width:768px;height:29px;color:rgba(20,20,20,1);font-size:24px">Prism</span><div style="position:absolute;left:16px;top:53px;width:768px;height:40px;background:rgba(255,255,255,1);border-radius:0px 0px 0px 0px"></div><span style="position:absolute;left:16px;top:53px;width:8px;height:40px;color:rgba(0,0,0,1);font-size:14px">A</span><span style="position:absolute;left:56px;top:53px;width:7px;height:40px;color:rgba(0,0,0,1);font-size:14px">B</span></div>

@@ -16,9 +16,9 @@
 //! is clean. The translator lives here, in the GPL-3 builder, until
 //! Phase 5 collapses the two render paths.
 
-use prism_ui_runtime::command::{Color, CornerRadius};
+use prism_ui_runtime::command::{Color, CornerRadius, RenderCommand};
 use prism_ui_runtime::layout::{
-    ContainerProps, Direction, Node as UiNode, Padding, Sizing, TextProps,
+    compute, ContainerProps, Direction, Node as UiNode, Padding, Sizing, TextProps, Viewport,
 };
 
 use crate::document::{BuilderDocument, Node};
@@ -30,6 +30,26 @@ use crate::style::{resolve_cascade, StyleProperties};
 pub fn document_to_ui_tree(doc: &BuilderDocument) -> Option<UiNode> {
     let root = doc.root.as_ref()?;
     Some(translate_node(root, &StyleProperties::default()))
+}
+
+/// End-to-end: `BuilderDocument` → `UiNode` → Taffy layout pass →
+/// render-command stream. The single chokepoint Phase 3 wires the
+/// shell, web build, and relay through. Empty docs return an empty
+/// stream so callers can lower it unconditionally.
+pub fn render_commands(doc: &BuilderDocument, viewport: Viewport) -> Vec<RenderCommand> {
+    let Some(tree) = document_to_ui_tree(doc) else {
+        return Vec::new();
+    };
+    compute(&tree, viewport)
+}
+
+/// `BuilderDocument` → HTML/CSS string via the unified pipeline. This
+/// is the function `prism-relay` will call once the Phase 5 cutover
+/// retires `Component::render_html` + `HtmlRegistry`. Available now so
+/// the relay can switch incrementally during Phase 3.
+pub fn lower_html(doc: &BuilderDocument, viewport: Viewport) -> String {
+    let cmds = render_commands(doc, viewport);
+    prism_ui_runtime::backends::html::lower(&cmds)
 }
 
 /// Translate a single node against an inherited style cascade.
@@ -378,6 +398,70 @@ mod tests {
         assert_eq!(props.radius.tl, 8.0);
         assert!(matches!(children[0], UiNode::Text { .. }));
         assert!(matches!(children[1], UiNode::Spacer { .. }));
+    }
+
+    #[test]
+    fn render_commands_walks_full_pipeline() {
+        let doc = BuilderDocument {
+            root: Some(Node {
+                id: "root".into(),
+                component: "container".into(),
+                layout_mode: flow(FlexDirection::Column, 0.0),
+                style: StyleProperties {
+                    background: Some("#ffffff".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let cmds = render_commands(
+            &doc,
+            Viewport {
+                width: 320.0,
+                height: 240.0,
+            },
+        );
+        assert!(!cmds.is_empty(), "non-empty doc must emit commands");
+    }
+
+    #[test]
+    fn lower_html_round_trips_to_string() {
+        let doc = BuilderDocument {
+            root: Some(Node {
+                id: "root".into(),
+                component: "container".into(),
+                layout_mode: flow(FlexDirection::Column, 0.0),
+                style: StyleProperties {
+                    background: Some("#abcdef".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let html = lower_html(
+            &doc,
+            Viewport {
+                width: 100.0,
+                height: 50.0,
+            },
+        );
+        assert!(html.starts_with("<div"));
+        assert!(html.contains("rgba(171,205,239"));
+    }
+
+    #[test]
+    fn empty_doc_lowers_to_empty_root() {
+        let html = lower_html(
+            &BuilderDocument::default(),
+            Viewport {
+                width: 100.0,
+                height: 50.0,
+            },
+        );
+        assert!(html.starts_with("<div"));
+        assert!(html.ends_with("</div>"));
     }
 
     #[test]

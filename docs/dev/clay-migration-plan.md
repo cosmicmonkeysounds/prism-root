@@ -629,6 +629,56 @@ CLI surface unchanged.
   Phase-1 starter for §11 — `ui.container` / `ui.text` / `ui.spacer`
   / `ui.surface` constructors plus a `LuaSurface:edit(id, fn)`
   hook for the §11 "edit" capability.
+- **Update 2026-05-07:** vendor/clay-layout deleted; `prism-ui-runtime`
+  now drives `taffy::TaffyTree` end-to-end (per the 2026-05-04 pivot).
+  Added the Phase-1 snapshot acceptance test
+  (`tests::five_element_scene_html_snapshot`) — the canonical
+  five-element scene runs through `compute` → `backends::html::lower`
+  and is captured by `insta`. Re-run with `cargo insta review` after
+  intentional layout / lowering changes. Native (`femtovg`) and web
+  backends remain stubs until the renderer phase.
+- **Update 2026-05-08 (input + rAF):** Phase-4 input dispatch hook
+  + rAF loop wired. `event::EventHandler` is a
+  `Box<dyn FnMut(&Event, &mut Surface) + 'static>` the host installs
+  on `backends::femtovg::run` / `backends::web::mount`. Input
+  translation lives in `backends::input::translate` (private), shared
+  by both backends — pointer / wheel / mouse-button / modifier state /
+  keyboard / IME-commit / resize / focus all map onto the existing
+  `event::Event` vocabulary. The shell's hook into
+  `prism_builder::signal::dispatch_signal` is now a one-liner closure
+  the host writes; `prism-ui-runtime` itself stays signal-agnostic.
+  The web backend gained a real frame loop: it now runs winit's wasm
+  event loop via `EventLoopExtWebSys::spawn_app`, attaching to an
+  existing `<canvas>` through `WindowAttributesExtWebSys::with_canvas`
+  and rendering on every `RedrawRequested` (winit-on-wasm schedules
+  these via `requestAnimationFrame`, so the rAF cadence is automatic
+  — no hand-rolled rAF closure dance). Both backends honour the
+  retained-mode contract: a frame only requests a repaint when
+  `Surface::is_dirty()`.
+- **Update 2026-05-08 (initial backends):** native + web backends landed.
+  `paint::draw<R: Renderer>` is the shared render-command → femtovg
+  paint-list translator (rectangles with rounded corners, borders,
+  scissors, hint pass-through, text via cosmic-text). `text::TextSystem`
+  owns a `cosmic_text::FontSystem` + `SwashCache` plus a
+  `(CacheKey, RGBA)`-keyed glyph image cache; mask glyphs are baked
+  with the fill colour pre-multiplied (no femtovg "tint alpha image"
+  paint, so different colours can't share a texture), color glyphs
+  (emoji) blit straight through. `backends::femtovg::run(surface)`
+  drives a winit `ApplicationHandler` over a glutin GL context and a
+  `Canvas<OpenGl>` (resize / scale-factor / pointer / focus events
+  flow into the surface — `prism_builder` signal dispatch wires up
+  in Phase 4). `backends::web::mount(canvas_id, &mut surface)` grabs
+  an existing `<canvas>` and renders one frame through the same
+  `paint::draw` over `OpenGl::new_from_html_canvas`; the rAF/event
+  loop on the wasm side will be driven by the shell's
+  `#[wasm_bindgen(start)]` once Phase 4 retargets it. Workspace pulls
+  `winit 0.30 / femtovg 0.23 / glutin 0.32 / glutin-winit 0.5 /
+  raw-window-handle 0.6 / cosmic-text 0.12` directly (matched to
+  Slint's transitive versions to keep the toolchain stable through
+  cutover). Both `cargo build -p prism-ui-runtime --features
+  femtovg,html,web` (host) and `cargo build -p prism-ui-runtime
+  --target wasm32-unknown-unknown --no-default-features --features
+  web` are green; clippy is `-D warnings`-clean on both.
 
 ### Phase 2 — DSL + parser + codegen
 - New crate `packages/prism-ui-build` (compile-time codegen).
@@ -638,6 +688,43 @@ CLI surface unchanged.
   `prism-ui-types.rs` emitters.
 - Round-trip test: `.prism-ui` → AST → Rust → render commands → HTML →
   parse HTML → assert structural equivalence.
+- **Update 2026-05-08:** `prism-ui-build` now wires through
+  `prism_core::language::prism_ui::parse`. `compile_source` and
+  `compile(path)` produce a generated Rust module exposing `SOURCE:
+  &str` (round-trip preserved for the runtime interpret path) and
+  `COMPONENT_NAMES: &[&str]` (every `<component name="...">`
+  declaration in document order). Recoverable parse errors abort the
+  build via `CompileError::Parse { count, first }` so build-script
+  failures point at the offending line/column.
+- **Update 2026-05-08 (AST → Node lowering):** `prism-ui-runtime`
+  gains an `interpret` module — `interpret(source) -> Result<Vec<Node>,
+  Vec<ParseError>>` plus `lower_document(&Document) -> Vec<Node>`.
+  Handles the v0 surface end-to-end: `<container>` with `direction` /
+  `gap` / `padding[-{side}]` / `width` / `height` / `style:background`
+  / `style:radius`, `<text>` / `<heading level="N">` with `font-size`
+  / `style:color`, `<spacer width height/>`, plus hex `#rgb` / `#rrggbb`
+  / `#rrggbbaa` colours and `grow` / `fit` / `<px>` sizings. The
+  generated module from `prism-ui-build` now also emits a `pub fn
+  nodes() -> Vec<prism_ui_runtime::layout::Node>` runtime helper that
+  re-parses `SOURCE` through `interpret` (build-time validation
+  guarantees the parse succeeds). Round-trip test
+  `interpret::tests::five_element_source_round_trips_to_layout` walks
+  source → AST → `Node` → render commands and asserts the same five
+  commands the hand-built scene produces. Phase 2's "AST → Rust →
+  render commands" leg is closed; the HTML half of the round trip is
+  already covered by the Phase-1 snapshot test.
+- **Update 2026-05-08 (codegen fan-out):** `prism codegen luau-types`
+  learned the `prism-ui.d.luau` emitter (plan §4.8). New module
+  `prism_ui_runtime::luau_types` ships hand-rolled `export type`
+  stubs for every value type the runtime exposes — `Color`,
+  `CornerRadius`, `Padding`, `Sizing`, `Direction`, `Viewport`,
+  `TextProps`, `ContainerProps`, `Node`, `Rect`, `RenderCommand` —
+  curated leaf-first to match the rest of the workspace's stub
+  files. `prism-cli` writes it next to `core.d.luau` /
+  `builder.d.luau` / `signals.d.luau`, so Luau handlers authoring
+  `ui.container({...})` get strongly-typed completions and hover.
+  Three runtime tests + one CLI integration test cover the registry
+  shape + filesystem write.
 
 ### Phase 3 — Component model unification
 - Collapse `Component::render_slint` + `render_html` into
@@ -647,6 +734,19 @@ CLI surface unchanged.
 - Drop `HtmlRegistry`; `prism-relay` calls
   `prism_ui_runtime::html::lower_document` against the unified tree.
 - Source-first machinery (ADR-006) re-pointed at `.prism-ui` markers.
+- **Update 2026-05-08 (unified pipeline entry point):** added
+  `prism_builder::ui_runtime::render_commands(doc, viewport) ->
+  Vec<RenderCommand>` and `lower_html(doc, viewport) -> String` —
+  the single chokepoint Phase 5 will rewire the relay through.
+  Composition: `document_to_ui_tree` → `prism_ui_runtime::layout::compute`
+  → `backends::html::lower`. `prism-builder` now opts into
+  `prism-ui-runtime`'s `html` feature so the SSR lowering is callable
+  without dragging femtovg/cosmic-text into the relay's dep graph.
+  Three round-trip tests cover empty, non-empty, and color-bearing
+  documents end-to-end. `HtmlRegistry` and `Component::render_html`
+  stay in place during the parallel-build period; the next steps
+  migrate built-in blocks one at a time so their layout vocabulary
+  flows through `ui_runtime` instead of two parallel walkers.
 
 ### Phase 4 — Shell port
 - Translate `ui/app.slint` (~2500 lines, 7 components) into

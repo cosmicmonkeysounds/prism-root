@@ -12,11 +12,28 @@ description = "Prism UI runtime — Taffy-backed layout + pluggable backends (fe
 
 [features]
 default = ["html"]
-# Native: winit + femtovg. Pulled directly; replaces the bundled
-# Slint backend.
-femtovg = []
-# Web: winit-on-wasm + WebGL2 / canvas2d adapter.
-web = []
+# Native: winit + glutin + femtovg + cosmic-text. Pulled directly;
+# replaces the bundled Slint backend.
+femtovg = [
+    "dep:femtovg",
+    "dep:cosmic-text",
+    "dep:winit",
+    "dep:glutin",
+    "dep:glutin-winit",
+    "dep:raw-window-handle",
+]
+# Web: winit-on-wasm + WebGL2 (femtovg's OpenGl renderer over a
+# `<canvas>`-derived context).
+web = [
+    "dep:femtovg",
+    "dep:cosmic-text",
+    "dep:winit",
+    "dep:raw-window-handle",
+    "dep:wasm-bindgen",
+    "dep:web-sys",
+    "dep:js-sys",
+    "dep:console_error_panic_hook",
+]
 # SSR: pure render-command → HTML/CSS lowering. No event loop.
 # Always-on for `prism-relay`; default-on so a host pulling
 # `prism-ui-runtime` for SSR alone gets it for free.
@@ -29,6 +46,7 @@ html = []
 luau = ["dep:mlua"]
 
 [dependencies]
+prism-core = { path = "../prism-core" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -38,6 +56,36 @@ thiserror = { workspace = true }
 # layout pass — adopting it here unifies the two.
 taffy = { workspace = true }
 mlua = { workspace = true, optional = true }
+
+# Native + web rendering stack. All four are optional and pulled by
+# the `femtovg` / `web` features. `femtovg` ships its own text engine
+# (rustybuzz) but we deliberately turn that off and route shaping
+# through `cosmic-text` per the plan's text rendering contract
+# (clay-migration-plan.md §5.3 + §7.2).
+femtovg = { workspace = true, optional = true }
+cosmic-text = { workspace = true, optional = true }
+winit = { workspace = true, optional = true }
+raw-window-handle = { workspace = true, optional = true }
+
+# Native-only.
+glutin = { workspace = true, optional = true }
+glutin-winit = { workspace = true, optional = true }
+
+# Web-only.
+wasm-bindgen = { workspace = true, optional = true }
+console_error_panic_hook = { workspace = true, optional = true }
+js-sys = { workspace = true, optional = true }
+
+[dependencies.web-sys]
+workspace = true
+optional = true
+features = [
+    "Document",
+    "Element",
+    "HtmlCanvasElement",
+    "Window",
+    "WebGl2RenderingContext",
+]
 
 [dev-dependencies]
 insta = { workspace = true }

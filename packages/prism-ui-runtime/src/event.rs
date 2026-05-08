@@ -5,6 +5,16 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::layout::Surface;
+
+/// Boxed callback the runtime invokes on every translated input
+/// event. Hosts use this to mutate the [`Surface`] (which marks it
+/// dirty and triggers a re-layout on the next frame) and to forward
+/// events into `prism_builder::signal::dispatch_signal`. `'static`
+/// because the wasm runtime requires `App: 'static` for
+/// `spawn_app`; native respects the same bound for parity.
+pub type EventHandler = Box<dyn FnMut(&Event, &mut Surface) + 'static>;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Event {
     PointerMove {

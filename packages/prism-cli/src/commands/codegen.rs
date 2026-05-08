@@ -50,11 +50,13 @@ fn luau_types(args: &LuauTypesArgs, workspace: &Workspace, dry_run: bool) -> Res
     let core_stub = prism_core::luau_types::render_type_stubs();
     let builder_stub = prism_builder::luau_types::render_type_stubs();
     let signals_stub = render_signals_stub();
+    let ui_stub = prism_ui_runtime::luau_types::render_type_stubs();
 
     if args.stdout || dry_run {
         println!("// types/core.d.luau\n{core_stub}");
         println!("// types/builder.d.luau\n{builder_stub}");
         println!("// types/signals.d.luau\n{signals_stub}");
+        println!("// types/prism-ui.d.luau\n{ui_stub}");
         return Ok(0);
     }
 
@@ -69,6 +71,7 @@ fn luau_types(args: &LuauTypesArgs, workspace: &Workspace, dry_run: bool) -> Res
         ("core.d.luau", &core_stub),
         ("builder.d.luau", &builder_stub),
         ("signals.d.luau", &signals_stub),
+        ("prism-ui.d.luau", &ui_stub),
     ] {
         let path = out_dir.join(name);
         fs::write(&path, contents).with_context(|| format!("write {}", path.display()))?;
@@ -135,5 +138,11 @@ mod tests {
         // Built-in components include Button (clicked) — confirm the
         // per-component class made it into the file.
         assert!(!signals.is_empty(), "signals.d.luau should not be empty");
+
+        let ui = fs::read_to_string(tmp.path().join("prism-ui.d.luau")).unwrap();
+        assert!(ui.starts_with("--!strict\n"));
+        assert!(ui.contains("export type Node ="));
+        assert!(ui.contains("export type ContainerProps"));
+        assert!(ui.contains("export type Sizing"));
     }
 }
