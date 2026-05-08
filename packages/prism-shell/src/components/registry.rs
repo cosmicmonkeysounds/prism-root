@@ -86,6 +86,8 @@ pub fn register_shell_builtins(reg: &mut ShellComponentRegistry) -> Result<(), R
     reg!("shell.section-header", SectionHeader);
     reg!("shell.nav-button", NavButton);
     reg!("shell.toast", Toast);
+    reg!("shell.docs-content", DocsContent);
+    reg!("shell.app-card", AppCard);
 
     Ok(())
 }
@@ -103,7 +105,9 @@ mod tests {
         assert!(reg.get("shell.section-header").is_some());
         assert!(reg.get("shell.nav-button").is_some());
         assert!(reg.get("shell.toast").is_some());
-        assert_eq!(reg.len(), 5);
+        assert!(reg.get("shell.docs-content").is_some());
+        assert!(reg.get("shell.app-card").is_some());
+        assert_eq!(reg.len(), 7);
     }
 
     #[test]

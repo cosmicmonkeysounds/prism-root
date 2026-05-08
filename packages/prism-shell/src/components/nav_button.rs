@@ -17,7 +17,9 @@ use prism_builder::{
     registry::{FieldSpec, NumericBounds},
     signal::SignalDef,
     style::StyleProperties,
-    ui_lower::{bare_container, hover_bg, image_node, parse_color, LowerCtx},
+    ui_lower::{
+        bare_container, hover_bg, image_node, parse_color, prop_bool, prop_string, LowerCtx,
+    },
     Block, ComponentId,
 };
 use prism_ui_runtime::layout::{Node as UiNode, Padding, Semantic, Sizing};
@@ -68,13 +70,8 @@ impl Block for NavButton {
     }
 
     fn lower_ui(&self, ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> UiNode {
-        let icon = node
-            .props
-            .get("icon")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let selected = matches!(node.props.get("selected"), Some(Value::Bool(true)));
+        let icon = prop_string(node, "icon");
+        let selected = prop_bool(node, "selected", false);
 
         // Left accent rail — 3px-wide vertical stroke that's only painted
         // when selected. We always emit the container to keep the layout

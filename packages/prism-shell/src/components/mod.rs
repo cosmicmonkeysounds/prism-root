@@ -5,6 +5,8 @@
 //! sibling [`ShellComponentRegistry`]. The strategy and rationale are
 //! documented in `docs/dev/clay-migration-plan.md` §12.
 
+pub mod app_card;
+pub mod docs_content;
 pub mod icon_button;
 pub mod nav_button;
 pub mod registry;
@@ -12,6 +14,8 @@ pub mod section_header;
 pub mod toast;
 pub mod toolbar_separator;
 
+pub use app_card::AppCard;
+pub use docs_content::DocsContent;
 pub use icon_button::IconButton;
 pub use nav_button::NavButton;
 pub use registry::{register_shell_builtins, ShellComponentRegistry};

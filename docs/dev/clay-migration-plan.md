@@ -1272,6 +1272,64 @@ CLI surface unchanged.
     decision-log entry below). The Phase-4 chrome scoreboard is now
     fully unblocked: every remaining primitive has runtime support
     for the layout vocabulary it needs.
+- **Update 2026-05-08 (`prop_str` / `prop_bool` / `colored_text_node`
+  helpers; DocsContent + AppCard land — 7 of 13 chrome primitives):**
+  the recurring boilerplate at the top of every chrome `lower_ui`
+  impl had three clear shapes and the AppCard/DocsContent migrations
+  multiplied each. Promoted the shared helpers up into
+  `prism-builder/src/ui_lower.rs`, refactored the existing five
+  primitives onto them (zero behaviour change), and migrated the next
+  two primitives end-to-end with no further private helpers.
+  - **`prop_str(node, key) -> &str` / `prop_string(node, key) -> String`
+    / `prop_bool(node, key, default) -> bool`** — the
+    `node.props.get(k).and_then(|v| v.as_str()).unwrap_or("")` and
+    `matches!(node.props.get(k), Some(Value::Bool(true)))` patterns
+    every chrome primitive open-coded. One call site each instead of
+    a 5-line let-binding.
+  - **`colored_text_node(id, content, style, default_size, color)`** —
+    promoted from a private `recolor_text` helper inside `toast.rs`
+    (the original author flagged "promoting it is one move + one
+    import when the second caller arrives"). Wraps the
+    `let mut scoped = style.clone(); scoped.color = Some(c.into());
+    text_node(...)` shape that section-header, toast, docs-content,
+    and app-card all need. Builds correctly through `text_node` so
+    cascade resolution / font_size still flows through one path.
+  - **Existing primitives refactored:** IconButton, NavButton,
+    SectionHeader, Toast all dropped 4-10 lines each by routing
+    through the new helpers. Toast's private `recolor_text` deleted.
+    No new behaviour; existing tests pass unchanged.
+  - **`shell.docs-content` (6th primitive — text-only, no blocker):**
+    title + summary + optional body column with mode-driven font
+    sizing. **No per-row branching** in the lowering body — a
+    `Metrics` struct (`FULL` / `COMPACT` const) holds every size +
+    gap; the body reads from the picked struct. Adding a new mode
+    is one struct literal. SSR semantic is `<article>`. 4 unit tests.
+  - **`shell.app-card` (7th primitive):** 160px launchpad card with
+    accent rail, hover-bg swap, conditional create/standard body,
+    and a page-count badge. Single `icon_path` lookup table maps
+    design-token icon names (`globe` / `music` / `zap` / …) to
+    `icons/*.svg` paths — eight Slint `if` arms collapsed to one
+    `match` expression. SSR semantic is `<article>` with
+    `data-app="<id>"` (and `data-create="true"` for the create
+    affordance) so launchpad scripts can target cards without the
+    walker knowing about them. 6 unit tests covering both modes,
+    both badge pluralisations, the icon fallback, and schema shape.
+  - **Smart-pattern reinforcement:** every helper *composes* with
+    the existing fluent builders rather than wrapping them in a new
+    abstraction. No `ChromeBuilder` / `CardBuilder` types, no DI
+    layer for prop access, no parallel lowering path. The promotion
+    threshold is "same shape used in 3+ places"; the deletion of
+    `recolor_text` from toast.rs is the canonical example of
+    promote-when-needed, not promote-pre-emptively.
+  - **Phase-4 chrome scoreboard:** **7 of 13** primitives migrated
+    (`shell.icon-button`, `shell.toolbar-separator`,
+    `shell.section-header`, `shell.nav-button`, `shell.toast`,
+    `shell.docs-content`, `shell.app-card`). Remaining 6 cluster
+    around the input-field family (`DragNumberField`, `FieldEditor`,
+    `InspectorRow`) and the still-host-coupled chrome
+    (`MenuBarRow`, `TransformEditor`, `AppWindow`). All runtime
+    blockers cleared; remaining migrations are purely declarative.
+
 - **Phase-4 runtime gaps to fill** (each one lands just-in-time as
   the next shell primitive demands it; the IconButton lowering above
   flagged the first):
@@ -1356,6 +1414,7 @@ CLI surface unchanged.
 | 2026-05-08 | Hover-state vocabulary lands (`HoverOverrides` + `Surface::set_hovered`) | Sparse paint-only override bundle on `ContainerProps`; dirty bit only flips when the hover transition crosses an affecting node. Unblocks every "highlight on hover" chrome primitive without a state machine or shadow render path. |
 | 2026-05-08 | Interactive-chrome helper extraction (`Semantic::button` / `with_attr_if` / `with_aria_label_opt` / `hover_bg`) | IconButton + NavButton revealed the same "button-shaped Semantic + conditional ARIA + hover swap" boilerplate. Helpers compose with the existing fluent builder — no new abstraction layer, no DI/registration, just two nodes on `Semantic` and one constructor in `ui_lower`. Future button-shaped chrome primitives inherit the density automatically. |
 | 2026-05-08 | Overlay z-layer lands (`Overlay` + `OverlayAnchor` + `Surface::push_overlay`); `shell.toast` migrated | Sparse anchor enum (Corner / Point / Center) covers Toast + command-palette + help-tooltip without forking the layout vocabulary — overlays are just `(Node, anchor)` pairs that flow through the same `build_taffy_subtree` / `emit_commands` pipeline as the main tree. Block lowering is unchanged: a Toast produces a Node; the host decides whether to mount it inline or on the overlay stack. Hover hit-testing extends naturally to overlay subtrees. Unblocks the third of the four chrome clusters identified in the punch list. |
+| 2026-05-08 | `prop_str` / `prop_bool` / `colored_text_node` promoted into `prism-builder/src/ui_lower.rs`; `shell.docs-content` + `shell.app-card` migrated (7/13) | Refactor revealed three boilerplate shapes (string-prop, bool-prop, text-with-override-colour) repeated across every chrome primitive's `lower_ui`. Promoted them once instead of cloning per-block. The colored_text_node promotion follows the rule-of-three threshold the toast author already flagged in a comment. Refactored callers shrank by 4-10 lines each with no behaviour change; the two new primitives compose entirely from the shared helpers — zero hand-rolled `UiNode::Container { … }` literals, zero per-block private helpers. |
 | 2026-05-08 | The three remaining Phase-4 blockers land in one declarative refactor: `LowerScope` + `SlotBindings`, `expand_control_flow`, and `Node::TextInput` | All three concerns funnel through `prism_ui_runtime::interpret`, so a single `LowerScope` carrier (bindings + slot map) serves both `{ident}` interpolation and the control-flow predicate evaluator — no per-feature scope stack. Slots stay at the AST level so backends don't grow a new `Node` variant. Control flow is a sibling pre-pass that returns `Vec<(node, optional-child-scope)>`, keeping per-element lowering branch-free. `TextInput` composes a `Rectangle` + `Border` + `Text` at emit time, so all four backends inherit it for free; only `semantic_html` grew an `<input>` arm. Net effect: Phase-4 chrome scoreboard fully unblocked with ~600 LoC across one file refactor + thin runtime additions, no new abstractions, no new infrastructure. |
 
 ## 10. Appendix — file-by-file Slint footprint to retire

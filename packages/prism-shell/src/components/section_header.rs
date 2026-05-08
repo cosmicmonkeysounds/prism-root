@@ -17,7 +17,10 @@ use prism_builder::{
     registry::FieldSpec,
     signal::SignalDef,
     style::StyleProperties,
-    ui_lower::{bare_container, image_node, parse_color, text_node, LowerCtx},
+    ui_lower::{
+        bare_container, colored_text_node, image_node, parse_color, prop_bool, prop_string,
+        LowerCtx,
+    },
     Block, ComponentId,
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Sizing};
@@ -62,19 +65,9 @@ impl Block for SectionHeader {
     }
 
     fn lower_ui(&self, ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> UiNode {
-        let label = node
-            .props
-            .get("label")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let collapsed = matches!(node.props.get("collapsed"), Some(Value::Bool(true)));
-        let section_id = node
-            .props
-            .get("section-id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
+        let label = prop_string(node, "label");
+        let collapsed = prop_bool(node, "collapsed", false);
+        let section_id = prop_string(node, "section-id");
 
         let chevron_src = if collapsed {
             "icons/chevron-left.svg"
@@ -94,26 +87,22 @@ impl Block for SectionHeader {
         } else {
             LABEL_COLOR_EXPANDED
         };
-        // Override cascade colour just for the label text. text_node
-        // honours `style.color` when set; build a one-off scoped cascade.
-        let mut label_style = style.clone();
-        label_style.color = Some(label_color.into());
-        let label_text = text_node(
+        let label_text = colored_text_node(
             format!("{}::label", node.id),
             label,
-            &label_style,
+            style,
             LABEL_FONT_SIZE,
+            label_color,
         );
 
         let mut row_children = vec![chevron, label_text];
         if collapsed {
-            let mut badge_style = style.clone();
-            badge_style.color = Some(BADGE_COLOR.into());
-            row_children.push(text_node(
+            row_children.push(colored_text_node(
                 format!("{}::badge", node.id),
                 "(default)".into(),
-                &badge_style,
+                style,
                 BADGE_FONT_SIZE,
+                BADGE_COLOR,
             ));
         }
 

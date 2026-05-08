@@ -245,6 +245,57 @@ pub fn with_semantic(node: UiNode, semantic: Semantic) -> UiNode {
     }
 }
 
+/// Read a string-valued prop. Returns `""` when the key is missing
+/// or the value isn't a string. Most chrome primitives reach for the
+/// "give me the icon path / label / kind, defaulting to empty when
+/// unset" pattern several times per `lower_ui` impl — centralising
+/// the `node.props.get(k).and_then(|v| v.as_str()).unwrap_or("")`
+/// dance keeps each call site to one line.
+pub fn prop_str<'a>(node: &'a Node, key: &str) -> &'a str {
+    node.props.get(key).and_then(|v| v.as_str()).unwrap_or("")
+}
+
+/// Owned variant of [`prop_str`] for the (very common) case where the
+/// extracted prop is immediately interpolated into a child id /
+/// `text_node` content / `image_node` source.
+pub fn prop_string(node: &Node, key: &str) -> String {
+    prop_str(node, key).to_string()
+}
+
+/// Read a bool-valued prop with a fallback. Mirrors the
+/// `matches!(node.props.get(k), Some(Value::Bool(true)))` pattern
+/// every chrome primitive open-coded before this helper landed.
+pub fn prop_bool(node: &Node, key: &str, default: bool) -> bool {
+    node.props
+        .get(key)
+        .and_then(|v| v.as_bool())
+        .unwrap_or(default)
+}
+
+/// Build a [`UiNode::Text`] with the cascade colour overridden by an
+/// explicit per-block colour string. The "clone the cascade and stamp
+/// `color`" dance shows up at every chrome primitive that paints a
+/// label in a non-cascade tint (section-header label/badge, toast
+/// title/body, future docs/app-card text). Centralising it keeps
+/// every call site to one line and frees blocks from owning a tiny
+/// private helper for the same shape.
+///
+/// The colour string follows the same vocabulary as [`parse_color`]
+/// (`#rgb` / `#rrggbb` / `#rrggbbaa`); unparseable values silently
+/// fall through to the cascade (same shape `text_node` itself uses
+/// when `style.color` doesn't parse).
+pub fn colored_text_node(
+    node_id: String,
+    content: String,
+    style: &StyleProperties,
+    default_size: f32,
+    color: &str,
+) -> UiNode {
+    let mut scoped = style.clone();
+    scoped.color = Some(color.into());
+    text_node(node_id, content, &scoped, default_size)
+}
+
 /// One-line constructor for the most common interactive-primitive
 /// hover shape: "swap the background only". Returns `None` when the
 /// colour string fails to parse so the caller can `props.hover = ...`
@@ -486,6 +537,44 @@ mod tests {
     #[test]
     fn hover_bg_returns_none_for_invalid_color() {
         assert!(hover_bg("not-a-color").is_none());
+    }
+
+    #[test]
+    fn prop_helpers_extract_with_sensible_defaults() {
+        use crate::layout::LayoutMode;
+        use prism_core::foundation::spatial::Transform2D;
+        use serde_json::json;
+        let node = Node {
+            id: "n".into(),
+            component: "x".into(),
+            props: json!({ "label": "Hi", "selected": true }),
+            children: vec![],
+            layout_mode: LayoutMode::default(),
+            transform: Transform2D::default(),
+            modifiers: vec![],
+            style: StyleProperties::default(),
+        };
+        assert_eq!(prop_str(&node, "label"), "Hi");
+        assert_eq!(prop_str(&node, "missing"), "");
+        assert_eq!(prop_string(&node, "label"), "Hi");
+        assert!(prop_bool(&node, "selected", false));
+        assert!(!prop_bool(&node, "missing", false));
+        assert!(prop_bool(&node, "missing", true));
+    }
+
+    #[test]
+    fn colored_text_node_overrides_cascade_color() {
+        let cascade = StyleProperties {
+            color: Some("#000000".into()),
+            ..Default::default()
+        };
+        let UiNode::Text { props, .. } =
+            colored_text_node("t".into(), "hello".into(), &cascade, 14.0, "#ff0000")
+        else {
+            panic!("expected text")
+        };
+        assert_eq!(props.color.r, 0xff);
+        assert_eq!(props.color.g, 0x00);
     }
 
     #[test]

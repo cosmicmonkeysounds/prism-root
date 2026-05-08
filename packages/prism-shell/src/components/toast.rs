@@ -25,11 +25,13 @@ use prism_builder::{
     registry::FieldSpec,
     signal::SignalDef,
     style::StyleProperties,
-    ui_lower::{bare_container, parse_color, text_node, uniform_radius, LowerCtx},
+    ui_lower::{
+        bare_container, colored_text_node, parse_color, prop_str, prop_string, uniform_radius,
+        LowerCtx,
+    },
     Block, ComponentId,
 };
-use prism_ui_runtime::command::Color;
-use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing, TextProps};
+use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
 use serde_json::Value;
 
 const TOAST_WIDTH: f32 = 320.0;
@@ -80,24 +82,13 @@ impl Block for Toast {
         signals
     }
 
-    fn lower_ui(&self, _ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
-        let title = node
-            .props
-            .get("title")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let body = node
-            .props
-            .get("body")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let kind = node
-            .props
-            .get("kind")
-            .and_then(|v| v.as_str())
-            .unwrap_or("info");
+    fn lower_ui(&self, _ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> UiNode {
+        let title = prop_string(node, "title");
+        let body = prop_string(node, "body");
+        let kind = match prop_str(node, "kind") {
+            "" => "info",
+            other => other,
+        };
         let (rail_color, role) = kind_chrome(kind);
 
         // Left accent rail — kind-tinted vertical stroke. `bare_container`
@@ -109,21 +100,26 @@ impl Block for Toast {
             props.background = parse_color(rail_color);
         });
 
-        // Title + body column. `text_node` resolves cascaded text colour
-        // by default; toast colours are intentional overrides, so the
-        // post-construction colour swap is the cheapest way to express
-        // "use this exact colour here". Both texts share the same column
-        // so reordering is one Vec edit, not two.
-        let title_text = recolor_text(
-            text_node(format!("{}::title", node.id), title, _style, TITLE_FONT),
-            parse_color(TITLE_COLOR),
+        // Title + body column. `colored_text_node` is the shared
+        // "cascade-resolved text with a per-block override colour"
+        // builder — toast colours are intentional overrides, so this
+        // is the one-line shape. Reordering is one Vec edit, not two.
+        let title_text = colored_text_node(
+            format!("{}::title", node.id),
+            title,
+            style,
+            TITLE_FONT,
+            TITLE_COLOR,
         );
         let body_text = if body.is_empty() {
             None
         } else {
-            Some(recolor_text(
-                text_node(format!("{}::body", node.id), body, _style, BODY_FONT),
-                parse_color(BODY_COLOR),
+            Some(colored_text_node(
+                format!("{}::body", node.id),
+                body,
+                style,
+                BODY_FONT,
+                BODY_COLOR,
             ))
         };
         let mut column_children = vec![title_text];
@@ -154,24 +150,6 @@ impl Block for Toast {
                 .with_role(role)
                 .with_attr("data-kind", kind);
         })
-    }
-}
-
-/// Swap the resolved text colour. `text_node` builds the whole
-/// `UiNode::Text` (cascade resolution + font_size); this is the
-/// minimal post-construction nudge for blocks that want one exact
-/// colour. Lives here rather than in `ui_lower` because no other
-/// builder block needs it yet — promoting it is one move + one
-/// import when the second caller arrives.
-fn recolor_text(node: UiNode, color: Option<Color>) -> UiNode {
-    let Some(color) = color else { return node };
-    match node {
-        UiNode::Text { id, content, props } => UiNode::Text {
-            id,
-            content,
-            props: TextProps { color, ..props },
-        },
-        other => other,
     }
 }
 
