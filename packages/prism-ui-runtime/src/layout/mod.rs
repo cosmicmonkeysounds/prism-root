@@ -1,25 +1,26 @@
-//! Layout pass — typed `UiTree` of `Node`s plus a flex-style layout
-//! engine that emits a backend-neutral `Vec<RenderCommand>`.
+//! Layout pass — typed `UiTree` of `Node`s lowered onto a Taffy
+//! `TaffyTree<NodeContext>`, then walked to emit a backend-neutral
+//! `Vec<RenderCommand>`.
+//!
+//! ## Pivot 2026-05-04 — Taffy, not Clay
+//!
+//! The Phase 1 plan called for a vendored fork of `clay-layout`. We
+//! flipped to **Taffy** instead — pure Rust, already a workspace dep
+//! (powers `prism-builder`'s editor layout), real CSS Grid + Flex +
+//! Block, MIT-licensed. See the pivot note at the top of
+//! `docs/dev/clay-migration-plan.md` for the full rationale. The
+//! typed `Node` tree, `Surface` retained-mode contract, and
+//! `RenderCommand` shape are unchanged — only the engine behind
+//! [`compute`] moves.
 //!
 //! ## Retained-mode contract
 //!
-//! Layout is **not** recomputed every frame. Per the Clay-migration
-//! plan's runtime model (and explicit guidance from the design
-//! conversation on 2026-05-04), the layout cache is invalidated only
-//! when something changes: tree mutation, viewport resize, scroll, an
-//! animation tick, or an explicit `invalidate()`. Backends pull the
-//! cached `&[RenderCommand]` slice each frame and only pay the layout
-//! cost on a dirty cycle. See [`Surface`].
-//!
-//! ## Clay vs. this module
-//!
-//! Phase 1 of the migration vendors `clay-layout` as a placeholder
-//! (`vendor/clay-layout/`). Until the real Clay C sources land, this
-//! module ships a small hand-rolled flex layout that emits the *same*
-//! `RenderCommand` shape Clay will. Swapping in real Clay is a
-//! drop-in replacement for [`compute`] — every other surface in the
-//! crate (the [`Surface`] retained-mode wrapper, the backends, the
-//! HTML lowering) is layout-engine-agnostic.
+//! Layout is **not** recomputed every frame. Per the plan's runtime
+//! model, the layout cache is invalidated only when something changes:
+//! tree mutation, viewport resize, scroll, an animation tick, or an
+//! explicit `invalidate()`. Backends pull the cached `&[RenderCommand]`
+//! slice each frame and only pay the layout cost on a dirty cycle.
+//! See [`Surface`].
 //!
 //! ## Luau
 //!
@@ -30,6 +31,11 @@
 //! auto-memory for the full requirement.
 
 use serde::{Deserialize, Serialize};
+use taffy::prelude::*;
+use taffy::{
+    AvailableSpace, Dimension as TaffyDimension, FlexDirection as TaffyFlexDirection, Layout, Size,
+    Style, TaffyTree,
+};
 
 use crate::command::{Color, CornerRadius, Rect, RenderCommand};
 
@@ -49,10 +55,10 @@ impl Default for Viewport {
     }
 }
 
-/// One element in the UI tree. Mirrors Clay's element vocabulary —
-/// containers (flex-style layout parents), text leaves, and explicit
-/// spacers. Images and scroll containers land in the same enum once
-/// the real Clay binding arrives.
+/// One element in the UI tree. Mirrors a CSS-style element vocabulary
+/// — containers (flex / block layout parents), text leaves, and
+/// explicit spacers. Images and scroll containers land in the same
+/// enum once we grow the matching primitives.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Node {
@@ -115,7 +121,7 @@ impl Padding {
     }
 }
 
-/// Sizing policy for a single axis. Mirrors Clay's `Sizing` modes.
+/// Sizing policy for a single axis.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "mode", content = "value", rename_all = "snake_case")]
 pub enum Sizing {
@@ -169,44 +175,201 @@ impl Default for TextProps {
 /// Compute layout for `tree` against `viewport` and emit a backend-
 /// neutral render-command stream.
 ///
-/// **Replaceable seam.** When the real Clay C binding is wired up,
-/// this function becomes a thin adapter over `Clay_BeginLayout` /
-/// `Clay_EndLayout`. The hand-rolled flex pass below covers Phase 1's
-/// 5-element-scene acceptance and gives the rest of the crate
-/// something to integration-test against.
+/// **Engine.** Drives a `taffy::TaffyTree<NodeContext>` end-to-end:
+/// builds the Taffy tree, runs `compute_layout` against the viewport
+/// (using a measure callback for text leaves), then walks the
+/// resolved layout to emit `RenderCommand`s. The walk preserves
+/// document order, which is the order Prism's renderers paint in.
 pub fn compute(tree: &Node, viewport: Viewport) -> Vec<RenderCommand> {
-    let mut out = Vec::new();
-    let bounds = Rect {
-        x: 0.0,
-        y: 0.0,
-        width: viewport.width,
-        height: viewport.height,
+    let mut taffy: TaffyTree<NodeContext> = TaffyTree::new();
+    // Root has no parent flex container — pass `None` so its own
+    // sizing is honoured directly.
+    let root = build_taffy_subtree(&mut taffy, tree, None);
+    let available = Size {
+        width: AvailableSpace::Definite(viewport.width),
+        height: AvailableSpace::Definite(viewport.height),
     };
-    layout_node(tree, bounds, &mut out);
+    if taffy
+        .compute_layout_with_measure(root, available, measure_text)
+        .is_err()
+    {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    emit_commands(&taffy, root, 0.0, 0.0, &mut out);
     out
 }
 
-fn layout_node(node: &Node, bounds: Rect, out: &mut Vec<RenderCommand>) {
+/// Per-Taffy-node context — what `measure_text` and `emit_commands`
+/// need to do their jobs without re-walking the source tree.
+#[derive(Debug, Clone)]
+enum NodeContext {
+    Container {
+        background: Option<Color>,
+        radius: CornerRadius,
+    },
+    Text {
+        content: String,
+        props: TextProps,
+    },
+    Spacer,
+}
+
+fn build_taffy_subtree(
+    taffy: &mut TaffyTree<NodeContext>,
+    node: &Node,
+    parent_direction: Option<Direction>,
+) -> NodeId {
     match node {
         Node::Container {
             props, children, ..
         } => {
-            if let Some(bg) = props.background {
-                out.push(RenderCommand::Rectangle {
-                    bounds,
-                    color: bg,
-                    radius: props.radius,
-                });
-            }
-            let inner = Rect {
-                x: bounds.x + props.padding.left,
-                y: bounds.y + props.padding.top,
-                width: (bounds.width - props.padding.left - props.padding.right).max(0.0),
-                height: (bounds.height - props.padding.top - props.padding.bottom).max(0.0),
+            let style = container_style(props, parent_direction);
+            let own_direction = Some(props.direction);
+            let child_ids: Vec<NodeId> = children
+                .iter()
+                .map(|c| build_taffy_subtree(taffy, c, own_direction))
+                .collect();
+            let ctx = NodeContext::Container {
+                background: props.background,
+                radius: props.radius,
             };
-            layout_children(props, &inner, children, out);
+            taffy
+                .new_with_children(style, &child_ids)
+                .and_then(|id| {
+                    taffy.set_node_context(id, Some(ctx))?;
+                    Ok(id)
+                })
+                .expect("taffy: container insert")
         }
         Node::Text { content, props, .. } => {
+            let style = Style::default();
+            let ctx = NodeContext::Text {
+                content: content.clone(),
+                props: *props,
+            };
+            taffy
+                .new_leaf_with_context(style, ctx)
+                .expect("taffy: text leaf insert")
+        }
+        Node::Spacer { width, height, .. } => {
+            let style = Style {
+                size: Size {
+                    width: TaffyDimension::Length(*width),
+                    height: TaffyDimension::Length(*height),
+                },
+                ..Default::default()
+            };
+            taffy
+                .new_leaf_with_context(style, NodeContext::Spacer)
+                .expect("taffy: spacer insert")
+        }
+    }
+}
+
+fn container_style(props: &ContainerProps, parent_direction: Option<Direction>) -> Style {
+    let direction = match props.direction {
+        Direction::Row => TaffyFlexDirection::Row,
+        Direction::Column => TaffyFlexDirection::Column,
+    };
+    // `Grow` on the parent's main axis lowers to `flex_grow: 1` —
+    // Taffy's first-class way to consume free space along the parent
+    // direction. On the cross axis (or for the root), `Grow` lowers
+    // to `Percent(1.0)` via `sizing_to_taffy`, which fills the
+    // available cross-axis extent.
+    let flex_grow = match parent_direction {
+        Some(Direction::Row) if matches!(props.width, Sizing::Grow) => 1.0,
+        Some(Direction::Column) if matches!(props.height, Sizing::Grow) => 1.0,
+        _ => 0.0,
+    };
+    Style {
+        display: Display::Flex,
+        flex_direction: direction,
+        size: Size {
+            width: sizing_to_taffy(props.width),
+            height: sizing_to_taffy(props.height),
+        },
+        flex_grow,
+        padding: taffy::Rect {
+            left: LengthPercentage::Length(props.padding.left),
+            right: LengthPercentage::Length(props.padding.right),
+            top: LengthPercentage::Length(props.padding.top),
+            bottom: LengthPercentage::Length(props.padding.bottom),
+        },
+        gap: Size {
+            width: LengthPercentage::Length(props.gap),
+            height: LengthPercentage::Length(props.gap),
+        },
+        ..Default::default()
+    }
+}
+
+fn sizing_to_taffy(s: Sizing) -> TaffyDimension {
+    match s {
+        Sizing::Fit => TaffyDimension::Auto,
+        Sizing::Grow => TaffyDimension::Percent(1.0),
+        Sizing::Fixed(v) => TaffyDimension::Length(v),
+    }
+}
+
+/// Crude text measurement — width estimated as `chars * font_size *
+/// 0.55`, height as `font_size * 1.2`. Replaced by a real
+/// `cosmic-text` shaping pass once the text Phase lands. Same
+/// heuristic the Phase-1 hand-rolled engine used, lifted here so
+/// snapshot tests remain stable across the pivot.
+fn measure_text(
+    known_dimensions: Size<Option<f32>>,
+    _available: Size<AvailableSpace>,
+    _node_id: NodeId,
+    node_context: Option<&mut NodeContext>,
+    _style: &Style,
+) -> Size<f32> {
+    if let (Some(w), Some(h)) = (known_dimensions.width, known_dimensions.height) {
+        return Size {
+            width: w,
+            height: h,
+        };
+    }
+    match node_context {
+        Some(NodeContext::Text { content, props }) => {
+            let width = known_dimensions
+                .width
+                .unwrap_or_else(|| content.chars().count() as f32 * props.font_size * 0.55);
+            let height = known_dimensions.height.unwrap_or(props.font_size * 1.2);
+            Size { width, height }
+        }
+        _ => Size::ZERO,
+    }
+}
+
+fn emit_commands(
+    taffy: &TaffyTree<NodeContext>,
+    id: NodeId,
+    parent_x: f32,
+    parent_y: f32,
+    out: &mut Vec<RenderCommand>,
+) {
+    let layout: &Layout = taffy.layout(id).expect("taffy: layout missing");
+    let bounds = Rect {
+        x: parent_x + layout.location.x,
+        y: parent_y + layout.location.y,
+        width: layout.size.width,
+        height: layout.size.height,
+    };
+    match taffy.get_node_context(id) {
+        Some(NodeContext::Container { background, radius }) => {
+            if let Some(bg) = background {
+                out.push(RenderCommand::Rectangle {
+                    bounds,
+                    color: *bg,
+                    radius: *radius,
+                });
+            }
+            for child in taffy.children(id).unwrap_or_default() {
+                emit_commands(taffy, child, bounds.x, bounds.y, out);
+            }
+        }
+        Some(NodeContext::Text { content, props }) => {
             out.push(RenderCommand::Text {
                 bounds,
                 content: content.clone(),
@@ -214,120 +377,7 @@ fn layout_node(node: &Node, bounds: Rect, out: &mut Vec<RenderCommand>) {
                 font_size: props.font_size,
             });
         }
-        Node::Spacer { .. } => {}
-    }
-}
-
-/// One-pass flex sizing: fixed children take their pixels, fit
-/// children take an intrinsic estimate, grow children share the
-/// remainder. Good enough for the 5-element scene; real Clay handles
-/// the tricky cases (min/max, percentages, wrapping).
-fn layout_children(
-    props: &ContainerProps,
-    inner: &Rect,
-    children: &[Node],
-    out: &mut Vec<RenderCommand>,
-) {
-    if children.is_empty() {
-        return;
-    }
-    let axis_extent = match props.direction {
-        Direction::Row => inner.width,
-        Direction::Column => inner.height,
-    };
-    let total_gap = props.gap * (children.len().saturating_sub(1)) as f32;
-
-    let intrinsic: Vec<f32> = children.iter().map(|c| intrinsic_main(c, props)).collect();
-    let grow_count = children.iter().filter(|c| is_grow(c, props)).count();
-
-    let fixed_total: f32 = children
-        .iter()
-        .zip(&intrinsic)
-        .map(|(c, sz)| if is_grow(c, props) { 0.0 } else { *sz })
-        .sum();
-    let leftover = (axis_extent - fixed_total - total_gap).max(0.0);
-    let grow_each = if grow_count > 0 {
-        leftover / grow_count as f32
-    } else {
-        0.0
-    };
-
-    let mut cursor = match props.direction {
-        Direction::Row => inner.x,
-        Direction::Column => inner.y,
-    };
-    for (child, intrinsic_size) in children.iter().zip(&intrinsic) {
-        let main_size = if is_grow(child, props) {
-            grow_each
-        } else {
-            *intrinsic_size
-        };
-        let cross_size = match props.direction {
-            Direction::Row => inner.height,
-            Direction::Column => inner.width,
-        };
-        let child_bounds = match props.direction {
-            Direction::Row => Rect {
-                x: cursor,
-                y: inner.y,
-                width: main_size,
-                height: cross_size,
-            },
-            Direction::Column => Rect {
-                x: inner.x,
-                y: cursor,
-                width: cross_size,
-                height: main_size,
-            },
-        };
-        layout_node(child, child_bounds, out);
-        cursor += main_size + props.gap;
-    }
-}
-
-fn is_grow(node: &Node, parent: &ContainerProps) -> bool {
-    match node {
-        Node::Container { props, .. } => {
-            matches!(axis_sizing(props, parent.direction), Sizing::Grow)
-        }
-        _ => false,
-    }
-}
-
-fn intrinsic_main(node: &Node, parent: &ContainerProps) -> f32 {
-    match node {
-        Node::Container {
-            props, children, ..
-        } => match axis_sizing(props, parent.direction) {
-            Sizing::Fixed(v) => v,
-            Sizing::Grow => 0.0,
-            Sizing::Fit => {
-                let pad = match parent.direction {
-                    Direction::Row => props.padding.left + props.padding.right,
-                    Direction::Column => props.padding.top + props.padding.bottom,
-                };
-                let gap = props.gap * children.len().saturating_sub(1) as f32;
-                let kids: f32 = children.iter().map(|c| intrinsic_main(c, props)).sum();
-                pad + gap + kids
-            }
-        },
-        Node::Text { content, props, .. } => match parent.direction {
-            // Crude width estimate — real Clay uses a measure callback
-            // into the active text shaper. Phase 1 placeholder.
-            Direction::Row => content.chars().count() as f32 * props.font_size * 0.55,
-            Direction::Column => props.font_size * 1.2,
-        },
-        Node::Spacer { width, height, .. } => match parent.direction {
-            Direction::Row => *width,
-            Direction::Column => *height,
-        },
-    }
-}
-
-fn axis_sizing(props: &ContainerProps, direction: Direction) -> Sizing {
-    match direction {
-        Direction::Row => props.width,
-        Direction::Column => props.height,
+        Some(NodeContext::Spacer) | None => {}
     }
 }
 

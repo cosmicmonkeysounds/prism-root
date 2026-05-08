@@ -8,6 +8,110 @@
 > the UI layer, with no impedance mismatch and no second render path
 > for SSR.
 
+## ⚠ Pivot 2026-05-04 — Taffy, not Clay
+
+After Phase 1 stood up the vendored `clay-layout` fork end-to-end
+(real `cc`-built `clay.h`, FFI live, sanity test green), we hit
+clippy hostility on the upstream Rust binding's tests and were
+reminded that the binding is *young* (~2 KLOC, 0.4.0, single
+maintainer) while we already pull in **Taffy 0.7** in the workspace
+(used by `prism-builder` for the CSS Grid / Flex / Block layout pass
+that powers the editor today).
+
+**Decision:** swap Clay for Taffy. Everything else in this plan —
+the `prism-ui` DSL, the retained `Surface`, the render-command
+contract, the HTML lowering, the Luau authoring surface, the
+phasing, the Slint tear-out list — stays exactly as written. The
+only thing that changes is *which engine sits behind
+[`compute()`](#51-layout--clay-vendored-fork)*.
+
+### Why Taffy beats Clay for us
+
+1. **Already a workspace dep.** Builder uses `taffy::TaffyTree` to
+   resolve the page grid + per-node `LayoutMode`. Adopting it for the
+   runtime collapses two layout engines into one — `prism-builder`
+   and `prism-ui-runtime` agree on sizing semantics, percentages,
+   min/max, grid placement, and flex distribution by construction.
+2. **Pure Rust.** No `cc` build, no `clay.h` vendoring, no FFI
+   lifetimes, no clippy-on-upstream friction, no Windows C++ branch
+   in `build.rs`. WASM is a `--target wasm32-unknown-unknown` away;
+   no JS-side memory management.
+3. **CSS Grid is real.** Clay does flex + scroll containers. Taffy
+   does flex + grid + block, all CSS-spec'd. The builder's existing
+   page-grid story (ADR-003) carries straight through; Clay would
+   have made us hand-roll a grid layer on top.
+4. **MIT-licensed already.** Same licence destination as the
+   migration plan locks for Phase 5 (`MIT OR Apache-2.0`). No vendor
+   step, no fork, no upstream-velocity risk — Taffy is shipped by
+   the same folks who maintain large Rust UI ecosystems and is
+   actively developed.
+5. **Mature text-measure callback.** Taffy's measure-function shape
+   (`Fn(known_dimensions, available_space) -> Size<f32>`) drops
+   `cosmic-text` straight in. Clay's measure callback works too —
+   but Taffy's is the more obviously documented one.
+6. **Render commands stay ours.** Clay's value-add was the
+   ready-made `Vec<RenderCommand>` stream. Taffy outputs
+   *rectangles*, not draw calls — but our `Vec<RenderCommand>` was
+   always going to be ours anyway (we own the HTML lowering, the
+   z-order, the hint pass-throughs). Generating commands from
+   Taffy's per-node `Layout` is a small visitor pass.
+
+### Trade-offs we accept
+
+- **No "render commands for free".** We walk the resolved Taffy
+  tree and emit `RenderCommand` entries ourselves. Cost: ~one
+  small visitor file. Already paid in part: the Phase-1 hand-rolled
+  `compute()` already does this against our own intermediate tree.
+- **No native scroll/clip primitives.** Taffy doesn't track scroll
+  offsets — that's a Prism concern anyway (we want them in the
+  `Surface` for invalidation), so this is barely a regression.
+- **No built-in hit testing.** We add a small AABB walk over the
+  cached layout — same shape Clay's `pointer_over` would have
+  needed wrapping for our event model.
+
+### What gets ripped out
+
+- `vendor/clay-layout/` — gone. The fork served its purpose proving
+  the FFI shape; now redundant.
+- `clay-layout` workspace member + `prism-ui-runtime` dep — gone.
+- `prism-ui-runtime::tests::vendored_clay_binding_is_live` — gone;
+  replaced by a `taffy_layout_pass_runs` sanity test.
+- Workspace `Cargo.toml` `vendor/clay-layout` entry — gone.
+- Build-side `cc` dependency — gone.
+
+### What stays exactly the same
+
+- `Node` / `ContainerProps` / `TextProps` / `Sizing` / `Padding` /
+  `Color` / `CornerRadius` / `Viewport` — the typed value-tree shape
+  is layout-engine-agnostic. (This was the explicit Phase 1 design
+  goal.)
+- `RenderCommand` — backend-neutral, stays.
+- `Surface` retained-mode contract — stays. Dirty bit, invalidation
+  triggers, `commands()` chokepoint — all unchanged.
+- `prism-builder::ui_runtime` translator — stays. It produces the
+  same `Node` tree.
+- The `prism_ui_runtime::luau` module — stays. Luau scripts don't
+  see the layout engine.
+- The HTML lowering — stays.
+- The phasing (Phase 0–6) — stays.
+- §11 Luau authoring contract — stays.
+- The `prism-ui` DSL design — stays.
+
+### Naming
+
+The plan filename and the doc title say "Clay". We keep them: the
+*plan* is the migration off Slint and onto a CSS-derived layout
+engine wrapped in a Prism-native DSL. Whether the engine is called
+Clay or Taffy is a leaf detail compared to the rest of the
+architecture being described. A future cleanup pass renames
+`docs/dev/clay-migration-plan.md` → `docs/dev/ui-migration-plan.md`
+and search-and-replaces "Clay" → "Taffy" throughout (or just "the
+layout engine"). Until then: read every "Clay" below as "Taffy",
+read every "Phase 1 ships Clay" as "Phase 1 ships Taffy", and the
+contract is unchanged.
+
+---
+
 **Status:** Phase 0 accepted 2026-05-04. Supersedes
 `docs/dev/slint-migration-plan.md` at Phase 5 cutover.
 **Owner:** TBD

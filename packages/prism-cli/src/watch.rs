@@ -186,6 +186,13 @@ mod tests {
     fn try_next_batch_is_none_when_idle() {
         let dir = tempdir().expect("tempdir");
         let loop_ = WatchLoop::new(dir.path()).expect("watcher");
+        // Same priming-event drain `next_batch_times_out_on_quiet_dir`
+        // does — macOS FSEvents replays one or two events as the
+        // watcher attaches, and on a loaded machine they can land
+        // after the watcher returns from `new` but before the
+        // assertion runs.
+        thread::sleep(Duration::from_millis(100));
+        while loop_.try_next_batch().is_some() {}
         assert!(loop_.try_next_batch().is_none());
     }
 

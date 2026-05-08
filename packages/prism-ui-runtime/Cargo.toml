@@ -3,7 +3,7 @@ name = "prism-ui-runtime"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-description = "Prism UI runtime — Clay-backed layout + pluggable backends (femtovg native, web canvas, HTML SSR)"
+description = "Prism UI runtime — Taffy-backed layout + pluggable backends (femtovg native, web canvas, HTML SSR)"
 
 # This crate ships under MIT OR Apache-2.0 from day one to mark the
 # Slint→Clay licence boundary. The rest of the workspace stays on
@@ -32,7 +32,11 @@ luau = ["dep:mlua"]
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-clay-layout = { path = "../../vendor/clay-layout" }
+# Pivot 2026-05-04: layout engine is Taffy, not Clay (see the pivot
+# note at the top of `docs/dev/clay-migration-plan.md`). Pure Rust,
+# no FFI, already used by `prism-builder` for the editor's grid
+# layout pass — adopting it here unifies the two.
+taffy = { workspace = true }
 mlua = { workspace = true, optional = true }
 
 [dev-dependencies]

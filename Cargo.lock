@@ -1288,13 +1288,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
-name = "clay-layout"
-version = "0.4.0-prism"
-dependencies = [
- "cc",
-]
-
-[[package]]
 name = "clipboard-win"
 version = "5.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5997,11 +5990,11 @@ dependencies = [
 name = "prism-ui-runtime"
 version = "0.1.0"
 dependencies = [
- "clay-layout",
  "insta",
  "mlua",
  "serde",
  "serde_json",
+ "taffy 0.7.7",
  "thiserror 2.0.18",
 ]
 
