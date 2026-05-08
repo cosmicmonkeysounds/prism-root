@@ -483,4 +483,25 @@ pub trait Component: Send + Sync {
         })?;
         Ok(())
     }
+
+    /// Lower this component into a `prism_ui_runtime::layout::Node`.
+    ///
+    /// This is the third render path called out in the Clay/Taffy
+    /// migration plan (`docs/dev/clay-migration-plan.md` §3): the
+    /// runtime walker dispatches through the registry and asks each
+    /// component how to lower itself, replacing the old hard-coded
+    /// string match in `crate::ui_runtime`.
+    ///
+    /// Default: a generic container — same shape `ui_runtime` always
+    /// gave to unknown component ids. Built-ins that need bespoke
+    /// runtime nodes (text, headings, spacers, …) override this; the
+    /// shared helpers in [`crate::ui_lower`] keep the impls trivial.
+    fn lower_ui(
+        &self,
+        ctx: &crate::ui_lower::LowerCtx<'_>,
+        node: &Node,
+        style: &StyleProperties,
+    ) -> prism_ui_runtime::layout::Node {
+        ctx.default_container(node, style)
+    }
 }

@@ -235,6 +235,30 @@ impl Block for TextBlock {
         out.close(tag);
         Ok(())
     }
+    fn lower_ui(
+        &self,
+        _ctx: &crate::ui_lower::LowerCtx<'_>,
+        node: &Node,
+        style: &StyleProperties,
+    ) -> prism_ui_runtime::layout::Node {
+        let p = schemas::TextProps::from_value(&node.props);
+        // `TextProps` is the schema authored by the Studio panel. Old
+        // `BuilderDocument`s authored before this schema may carry the
+        // text under `text`/`content` instead of `body`; honour both
+        // so legacy fixtures keep round-tripping.
+        let content = if !p.body.is_empty() {
+            p.body
+        } else {
+            node.props
+                .get("text")
+                .or_else(|| node.props.get("content"))
+                .and_then(|v| v.as_str())
+                .map(str::to_owned)
+                .unwrap_or_default()
+        };
+        let default_size = level_font_size(p.level.as_str()) as f32;
+        crate::ui_lower::text_node(node.id.clone(), content, style, default_size)
+    }
 }
 
 /// Image block. Accepts a VFS binary ref or an external URL via
@@ -913,6 +937,24 @@ impl Block for SpacerBlock {
         out.open_attrs("div", &[("style", &style), ("aria-hidden", "true")]);
         out.close("div");
         Ok(())
+    }
+    fn lower_ui(
+        &self,
+        _ctx: &crate::ui_lower::LowerCtx<'_>,
+        node: &Node,
+        _style: &StyleProperties,
+    ) -> prism_ui_runtime::layout::Node {
+        let p = schemas::SpacerProps::from_value(&node.props);
+        // Schema only carries `height`; legacy `width` prop on raw
+        // documents is honoured as a fallback so existing fixtures
+        // produce the same Spacer they did pre-migration.
+        let width = node
+            .props
+            .get("width")
+            .and_then(|v| v.as_f64())
+            .map(|f| f as f32)
+            .unwrap_or(0.0);
+        crate::ui_lower::spacer_node(node.id.clone(), width, p.height as f32)
     }
 }
 

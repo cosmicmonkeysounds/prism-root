@@ -734,6 +734,34 @@ CLI surface unchanged.
 - Drop `HtmlRegistry`; `prism-relay` calls
   `prism_ui_runtime::html::lower_document` against the unified tree.
 - Source-first machinery (ADR-006) re-pointed at `.prism-ui` markers.
+- **Update 2026-05-08 (Block::lower_ui — first three blocks migrated):**
+  built-in lowering moved from a string-dispatch branch in
+  `ui_runtime::translate_node` to a `Component::lower_ui` method every
+  block implements. New module `prism-builder/src/ui_lower.rs` owns
+  the shared primitives every block reuses — `LowerCtx` (registry +
+  cascade carrier with `lower` / `lower_children` / `default_container`),
+  `container_props_from`, `parse_color`, `text_node`, `spacer_node`,
+  `sizing_from_dimension`. `Component::lower_ui` (default) and
+  `Block::lower_ui` (forwarded by the blanket impl) both default to
+  the generic container fallback, so structural blocks (containers,
+  columns, lists, …) inherit correct behaviour without writing any
+  code. `TextBlock` and `SpacerBlock` override `lower_ui` to produce
+  `UiNode::Text` / `UiNode::Spacer` directly — `TextBlock` honours the
+  `level` prop (`paragraph` / `h1`–`h6`) for default font size via
+  the existing `level_font_size` helper that `render_slint` /
+  `render_html` already share, and reads body from the schema's `body`
+  field with a fallback to legacy `text`/`content` props for old
+  fixtures. `ui_runtime` exposes parallel registry-aware (`*_with_registry`)
+  and registry-less APIs during the parallel-build period; the
+  registry-less path falls through to the container default for every
+  node, the registry-aware path is what Phase 5 promotes to canonical.
+  No duplication: cascade resolution, colour parsing, sizing, and
+  container-prop construction live exactly once each in `ui_lower`,
+  and every block lowering is a 5–15 line override that calls the
+  helpers. Remaining 12 builtins (image, container[explicit], form,
+  input, button, code, divider, columns, list, table, tabs, accordion)
+  fall through the default and migrate one-at-a-time as their bespoke
+  layout vocabulary is needed.
 - **Update 2026-05-08 (unified pipeline entry point):** added
   `prism_builder::ui_runtime::render_commands(doc, viewport) ->
   Vec<RenderCommand>` and `lower_html(doc, viewport) -> String` —

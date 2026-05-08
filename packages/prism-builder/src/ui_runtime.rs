@@ -1,41 +1,63 @@
-//! Translation from `BuilderDocument` → `prism_ui_runtime::layout::Node`.
+//! `BuilderDocument` → `prism_ui_runtime::layout::Node` translator.
 //!
-//! This is the Phase 1 seam from the Clay migration plan
-//! (`docs/dev/clay-migration-plan.md` §3): the existing typed
-//! `BuilderDocument` tree is the runtime representation that feeds the
-//! new layout engine. The translator is intentionally narrow — it
-//! covers the structural primitives (containers + text + spacers) plus
-//! the subset of `StyleProperties` and `FlowProps` that map cleanly
-//! onto Clay's vocabulary. Anything richer (modifiers, transforms,
-//! grid placement, facets) is dropped on the floor for now and lands
-//! in later phases as the runtime grows the matching primitives.
+//! Phase-3 seam from the Clay/Taffy migration plan
+//! (`docs/dev/clay-migration-plan.md` §3, §6). The walker no longer
+//! string-matches on `node.component` to decide how to lower it —
+//! every component implements `Component::lower_ui`, and this module
+//! is just "look the component up in the registry, hand it a
+//! [`crate::ui_lower::LowerCtx`], let it produce a `UiNode`". Built-in
+//! lowerings live with their `Block` impls in `crate::starter`; the
+//! shared helpers (`container_props_from`, `parse_color`, `text_node`,
+//! `spacer_node`) live in `crate::ui_lower` so blocks compose them
+//! without duplicating cascade / colour / sizing logic.
 //!
-//! Direction of dependency is **builder → runtime**, never the other
-//! way: `prism-ui-runtime` ships under `MIT OR Apache-2.0` and stays
-//! free of any builder-side knowledge so the post-cutover crate graph
-//! is clean. The translator lives here, in the GPL-3 builder, until
-//! Phase 5 collapses the two render paths.
+//! Direction of dependency stays **builder → runtime** — the runtime
+//! crate (`MIT OR Apache-2.0`) never learns anything about the
+//! builder. The translator and registry indirection live here, in the
+//! GPL-3 builder, until Phase 5 collapses the two render paths.
+//!
+//! Both registry-aware and registry-less APIs are kept during the
+//! parallel-build period. Registry-less callers (`document_to_ui_tree`,
+//! `render_commands`, `lower_html`) get the generic container fallback
+//! for every node — useful for raw-fixture tests that don't want to
+//! seed a registry. Registry-aware variants
+//! (`*_with_registry`) dispatch each node through its block's
+//! `lower_ui`, which is the path Phase 5 promotes to the only path.
 
-use prism_ui_runtime::command::{Color, CornerRadius, RenderCommand};
-use prism_ui_runtime::layout::{
-    compute, ContainerProps, Direction, Node as UiNode, Padding, Sizing, TextProps, Viewport,
-};
+use prism_ui_runtime::command::RenderCommand;
+use prism_ui_runtime::layout::{compute, Node as UiNode, Viewport};
 
-use crate::document::{BuilderDocument, Node};
-use crate::layout::{Dimension, FlexDirection, FlowProps, LayoutMode};
-use crate::style::{resolve_cascade, StyleProperties};
+use crate::document::BuilderDocument;
+use crate::registry::ComponentRegistry;
+use crate::style::StyleProperties;
+use crate::ui_lower::LowerCtx;
 
-/// Translate a whole document. Returns `None` if the document has no
-/// root — caller decides whether that's fatal.
+/// Translate a whole document with no registry — every node falls
+/// through to the generic container lowering. Returns `None` if the
+/// document has no root.
 pub fn document_to_ui_tree(doc: &BuilderDocument) -> Option<UiNode> {
     let root = doc.root.as_ref()?;
-    Some(translate_node(root, &StyleProperties::default()))
+    let parent = StyleProperties::default();
+    let ctx = LowerCtx::new(None, &parent);
+    Some(ctx.lower(root))
 }
 
-/// End-to-end: `BuilderDocument` → `UiNode` → Taffy layout pass →
-/// render-command stream. The single chokepoint Phase 3 wires the
-/// shell, web build, and relay through. Empty docs return an empty
-/// stream so callers can lower it unconditionally.
+/// Registry-aware translation — each node is dispatched to its
+/// `Component::lower_ui` impl. Unknown component ids fall through to
+/// the same generic container the registry-less path produces.
+pub fn document_to_ui_tree_with_registry(
+    doc: &BuilderDocument,
+    registry: &ComponentRegistry,
+) -> Option<UiNode> {
+    let root = doc.root.as_ref()?;
+    let parent = StyleProperties::default();
+    let ctx = LowerCtx::new(Some(registry), &parent);
+    Some(ctx.lower(root))
+}
+
+/// End-to-end registry-less pipeline: document → tree → Taffy layout
+/// → render-command stream. Empty docs return an empty stream so
+/// callers can lower unconditionally.
 pub fn render_commands(doc: &BuilderDocument, viewport: Viewport) -> Vec<RenderCommand> {
     let Some(tree) = document_to_ui_tree(doc) else {
         return Vec::new();
@@ -43,223 +65,49 @@ pub fn render_commands(doc: &BuilderDocument, viewport: Viewport) -> Vec<RenderC
     compute(&tree, viewport)
 }
 
-/// `BuilderDocument` → HTML/CSS string via the unified pipeline. This
-/// is the function `prism-relay` will call once the Phase 5 cutover
-/// retires `Component::render_html` + `HtmlRegistry`. Available now so
-/// the relay can switch incrementally during Phase 3.
+/// Registry-aware variant of [`render_commands`] — Phase 5 promotes
+/// this to the canonical entry point.
+pub fn render_commands_with_registry(
+    doc: &BuilderDocument,
+    registry: &ComponentRegistry,
+    viewport: Viewport,
+) -> Vec<RenderCommand> {
+    let Some(tree) = document_to_ui_tree_with_registry(doc, registry) else {
+        return Vec::new();
+    };
+    compute(&tree, viewport)
+}
+
+/// `BuilderDocument` → HTML/CSS via the unified pipeline. The relay
+/// switches to this once the Phase 5 cutover retires
+/// `Component::render_html` + `HtmlRegistry`. Registry-less variant.
 pub fn lower_html(doc: &BuilderDocument, viewport: Viewport) -> String {
     let cmds = render_commands(doc, viewport);
     prism_ui_runtime::backends::html::lower(&cmds)
 }
 
-/// Translate a single node against an inherited style cascade.
-///
-/// Cascade rule: callers pass the parent-level resolved style; we
-/// merge the node's own style on top before lowering. This mirrors
-/// `style::resolve_cascade` but operates two-level (parent + node)
-/// because the page/app layers are folded in at the top of the walk.
-pub fn translate_node(node: &Node, parent_style: &StyleProperties) -> UiNode {
-    let style = resolve_cascade(parent_style, &StyleProperties::default(), &node.style);
-
-    if is_text_component(&node.component) {
-        return translate_text(node, &style);
-    }
-    if node.component == "spacer" {
-        return translate_spacer(node);
-    }
-
-    translate_container(node, &style)
-}
-
-fn is_text_component(component: &str) -> bool {
-    matches!(
-        component,
-        "text" | "heading" | "label" | "link" | "code" | "paragraph"
-    )
-}
-
-fn translate_text(node: &Node, style: &StyleProperties) -> UiNode {
-    let content = text_content(node).unwrap_or_default();
-    let font_size = style
-        .font_size
-        .unwrap_or_else(|| default_font_size_for(&node.component));
-    let color = style
-        .color
-        .as_deref()
-        .and_then(parse_color)
-        .unwrap_or(Color {
-            r: 20,
-            g: 20,
-            b: 20,
-            a: 255,
-        });
-    UiNode::Text {
-        id: node.id.clone(),
-        content,
-        props: TextProps { font_size, color },
-    }
-}
-
-fn default_font_size_for(component: &str) -> f32 {
-    match component {
-        "heading" => 24.0,
-        "code" => 13.0,
-        _ => 14.0,
-    }
-}
-
-fn text_content(node: &Node) -> Option<String> {
-    let value = node
-        .props
-        .get("text")
-        .or_else(|| node.props.get("content"))?;
-    value.as_str().map(str::to_owned)
-}
-
-fn translate_spacer(node: &Node) -> UiNode {
-    let width = node
-        .props
-        .get("width")
-        .and_then(|v| v.as_f64())
-        .map(|f| f as f32)
-        .unwrap_or(0.0);
-    let height = node
-        .props
-        .get("height")
-        .and_then(|v| v.as_f64())
-        .map(|f| f as f32)
-        .unwrap_or(0.0);
-    UiNode::Spacer {
-        id: node.id.clone(),
-        width,
-        height,
-    }
-}
-
-fn translate_container(node: &Node, style: &StyleProperties) -> UiNode {
-    let flow = match &node.layout_mode {
-        LayoutMode::Flow(f) | LayoutMode::Relative(f) => Some(f),
-        _ => None,
-    };
-    let props = container_props(flow, style);
-
-    let children = node
-        .children
-        .iter()
-        .map(|c| translate_node(c, style))
-        .collect();
-
-    UiNode::Container {
-        id: node.id.clone(),
-        props,
-        children,
-    }
-}
-
-fn container_props(flow: Option<&FlowProps>, style: &StyleProperties) -> ContainerProps {
-    let direction = flow
-        .map(|f| match f.flex_direction {
-            FlexDirection::Row | FlexDirection::RowReverse => Direction::Row,
-            FlexDirection::Column | FlexDirection::ColumnReverse => Direction::Column,
-        })
-        .unwrap_or_default();
-
-    let gap = flow.map(|f| f.gap).unwrap_or(0.0);
-
-    let padding = flow
-        .map(|f| Padding {
-            left: f.padding.left,
-            right: f.padding.right,
-            top: f.padding.top,
-            bottom: f.padding.bottom,
-        })
-        .unwrap_or_default();
-
-    let width = flow
-        .map(|f| sizing_from_dimension(f.width, f.flex_grow))
-        .unwrap_or_default();
-    let height = flow
-        .map(|f| sizing_from_dimension(f.height, f.flex_grow))
-        .unwrap_or_default();
-
-    let background = style.background.as_deref().and_then(parse_color);
-    let radius = style
-        .border_radius
-        .map(|r| CornerRadius {
-            tl: r,
-            tr: r,
-            br: r,
-            bl: r,
-        })
-        .unwrap_or_default();
-
-    ContainerProps {
-        direction,
-        gap,
-        padding,
-        width,
-        height,
-        background,
-        radius,
-    }
-}
-
-fn sizing_from_dimension(dim: Dimension, flex_grow: f32) -> Sizing {
-    match dim {
-        Dimension::Px { value } => Sizing::Fixed(value),
-        Dimension::Auto if flex_grow > 0.0 => Sizing::Grow,
-        // Clay has no first-class percentage today; the percentage
-        // case collapses to Grow as a best-effort. Real Clay handles
-        // percentages natively once the C binding is wired up.
-        Dimension::Percent { .. } => Sizing::Grow,
-        Dimension::Auto => Sizing::Fit,
-    }
-}
-
-/// Tiny CSS-color parser — `#rgb`, `#rrggbb`, `#rrggbbaa`. Anything
-/// else returns `None` and the caller falls back to a default. This
-/// keeps the translator self-contained; richer parsing (named colours,
-/// `rgb(...)`, `oklch(...)`) lives in the design-tokens module and
-/// will replace this once the cascade/token wiring lands.
-fn parse_color(s: &str) -> Option<Color> {
-    let s = s.trim();
-    let hex = s.strip_prefix('#')?;
-    let bytes = match hex.len() {
-        3 => {
-            let r = u8::from_str_radix(&hex[0..1], 16).ok()?;
-            let g = u8::from_str_radix(&hex[1..2], 16).ok()?;
-            let b = u8::from_str_radix(&hex[2..3], 16).ok()?;
-            [r * 17, g * 17, b * 17, 255]
-        }
-        6 => {
-            let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-            let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-            let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-            [r, g, b, 255]
-        }
-        8 => {
-            let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-            let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-            let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-            let a = u8::from_str_radix(&hex[6..8], 16).ok()?;
-            [r, g, b, a]
-        }
-        _ => return None,
-    };
-    Some(Color {
-        r: bytes[0],
-        g: bytes[1],
-        b: bytes[2],
-        a: bytes[3],
-    })
+/// Registry-aware HTML lowering — what the relay calls post-cutover.
+pub fn lower_html_with_registry(
+    doc: &BuilderDocument,
+    registry: &ComponentRegistry,
+    viewport: Viewport,
+) -> String {
+    let cmds = render_commands_with_registry(doc, registry, viewport);
+    prism_ui_runtime::backends::html::lower(&cmds)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::layout::{FlowDisplay, FlowProps, LayoutMode};
+    use crate::block::register_block;
+    use crate::document::Node;
+    use crate::html_block::HtmlRegistry;
+    use crate::layout::{FlexDirection, FlowDisplay, FlowProps, LayoutMode};
+    use crate::starter::{SpacerBlock, TextBlock};
     use prism_core::foundation::geometry::Edges;
+    use prism_ui_runtime::layout::Direction;
     use serde_json::json;
+    use std::sync::Arc;
 
     fn flow(direction: FlexDirection, gap: f32) -> LayoutMode {
         LayoutMode::Flow(FlowProps {
@@ -270,6 +118,26 @@ mod tests {
         })
     }
 
+    fn registry_with(text_id: &str, spacer_id: &str) -> ComponentRegistry {
+        let mut comps = ComponentRegistry::new();
+        let mut html = HtmlRegistry::new();
+        register_block(
+            &mut comps,
+            &mut html,
+            Arc::new(TextBlock { id: text_id.into() }),
+        )
+        .unwrap();
+        register_block(
+            &mut comps,
+            &mut html,
+            Arc::new(SpacerBlock {
+                id: spacer_id.into(),
+            }),
+        )
+        .unwrap();
+        comps
+    }
+
     #[test]
     fn empty_doc_translates_to_none() {
         let doc = BuilderDocument::default();
@@ -277,20 +145,102 @@ mod tests {
     }
 
     #[test]
-    fn heading_becomes_text_node_with_default_font_size() {
+    fn registry_dispatch_lowers_text_block_via_block_impl() {
+        let reg = registry_with("text", "spacer");
         let node = Node {
             id: "h".into(),
-            component: "heading".into(),
-            props: json!({ "text": "Hello" }),
+            component: "text".into(),
+            props: json!({ "body": "Hello", "level": "h2" }),
             ..Default::default()
         };
-        match translate_node(&node, &StyleProperties::default()) {
+        let doc = BuilderDocument {
+            root: Some(node),
+            ..Default::default()
+        };
+        let tree = document_to_ui_tree_with_registry(&doc, &reg).expect("root present");
+        match tree {
             UiNode::Text { content, props, .. } => {
                 assert_eq!(content, "Hello");
-                assert_eq!(props.font_size, 24.0);
+                // h2 default size = 26.0 (from level_font_size).
+                assert_eq!(props.font_size, 26.0);
             }
             other => panic!("expected Text, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn legacy_text_prop_still_works_via_text_block_lowering() {
+        let reg = registry_with("text", "spacer");
+        let node = Node {
+            id: "t".into(),
+            component: "text".into(),
+            props: json!({ "text": "Old fixture" }),
+            ..Default::default()
+        };
+        let doc = BuilderDocument {
+            root: Some(node),
+            ..Default::default()
+        };
+        let tree = document_to_ui_tree_with_registry(&doc, &reg).expect("root present");
+        let UiNode::Text { content, .. } = tree else {
+            panic!("expected Text");
+        };
+        assert_eq!(content, "Old fixture");
+    }
+
+    #[test]
+    fn spacer_block_lowering_reads_height_from_schema() {
+        let reg = registry_with("text", "spacer");
+        let node = Node {
+            id: "s".into(),
+            component: "spacer".into(),
+            props: json!({ "height": 32 }),
+            ..Default::default()
+        };
+        let doc = BuilderDocument {
+            root: Some(node),
+            ..Default::default()
+        };
+        let tree = document_to_ui_tree_with_registry(&doc, &reg).expect("root present");
+        let UiNode::Spacer { height, .. } = tree else {
+            panic!("expected Spacer");
+        };
+        assert_eq!(height, 32.0);
+    }
+
+    #[test]
+    fn unknown_component_falls_back_to_container() {
+        let reg = registry_with("text", "spacer");
+        let node = Node {
+            id: "x".into(),
+            component: "image".into(),
+            ..Default::default()
+        };
+        let doc = BuilderDocument {
+            root: Some(node),
+            ..Default::default()
+        };
+        let tree = document_to_ui_tree_with_registry(&doc, &reg).expect("root present");
+        assert!(matches!(tree, UiNode::Container { .. }));
+    }
+
+    #[test]
+    fn registry_less_path_falls_through_to_container_for_every_node() {
+        // Without a registry, even `component = "text"` lowers as a
+        // container — this is the "no registry seeded" parity path
+        // for raw fixtures during the migration.
+        let node = Node {
+            id: "t".into(),
+            component: "text".into(),
+            props: json!({ "body": "hi" }),
+            ..Default::default()
+        };
+        let doc = BuilderDocument {
+            root: Some(node),
+            ..Default::default()
+        };
+        let tree = document_to_ui_tree(&doc).expect("root present");
+        assert!(matches!(tree, UiNode::Container { .. }));
     }
 
     #[test]
@@ -301,7 +251,12 @@ mod tests {
             layout_mode: flow(FlexDirection::Row, 8.0),
             ..Default::default()
         };
-        match translate_node(&node, &StyleProperties::default()) {
+        let doc = BuilderDocument {
+            root: Some(node),
+            ..Default::default()
+        };
+        let tree = document_to_ui_tree(&doc).expect("root present");
+        match tree {
             UiNode::Container { props, .. } => {
                 assert_eq!(props.direction, Direction::Row);
                 assert_eq!(props.gap, 8.0);
@@ -312,24 +267,36 @@ mod tests {
 
     #[test]
     fn style_cascade_resolves_color_from_parent() {
-        let parent_style = StyleProperties {
-            color: Some("#112233".into()),
+        let reg = registry_with("text", "spacer");
+        let parent = Node {
+            id: "root".into(),
+            component: "container".into(),
+            style: StyleProperties {
+                color: Some("#112233".into()),
+                ..Default::default()
+            },
+            children: vec![Node {
+                id: "t".into(),
+                component: "text".into(),
+                props: json!({ "body": "hi" }),
+                ..Default::default()
+            }],
             ..Default::default()
         };
-        let node = Node {
-            id: "t".into(),
-            component: "text".into(),
-            props: json!({ "text": "hi" }),
+        let doc = BuilderDocument {
+            root: Some(parent),
             ..Default::default()
         };
-        match translate_node(&node, &parent_style) {
-            UiNode::Text { props, .. } => {
-                assert_eq!(props.color.r, 0x11);
-                assert_eq!(props.color.g, 0x22);
-                assert_eq!(props.color.b, 0x33);
-            }
-            other => panic!("expected Text, got {other:?}"),
-        }
+        let tree = document_to_ui_tree_with_registry(&doc, &reg).expect("root present");
+        let UiNode::Container { children, .. } = tree else {
+            panic!("expected container root");
+        };
+        let UiNode::Text { props, .. } = &children[0] else {
+            panic!("expected Text child");
+        };
+        assert_eq!(props.color.r, 0x11);
+        assert_eq!(props.color.g, 0x22);
+        assert_eq!(props.color.b, 0x33);
     }
 
     #[test]
@@ -346,58 +313,18 @@ mod tests {
             layout_mode: LayoutMode::Flow(flow_props),
             ..Default::default()
         };
-        match translate_node(&node, &StyleProperties::default()) {
+        let doc = BuilderDocument {
+            root: Some(node),
+            ..Default::default()
+        };
+        let tree = document_to_ui_tree(&doc).expect("root present");
+        match tree {
             UiNode::Container { props, .. } => {
                 assert_eq!(props.padding.top, 4.0);
                 assert_eq!(props.padding.left, 8.0);
             }
             other => panic!("expected Container, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn full_document_round_trips_through_translation() {
-        let doc = BuilderDocument {
-            root: Some(Node {
-                id: "root".into(),
-                component: "container".into(),
-                layout_mode: flow(FlexDirection::Column, 16.0),
-                style: StyleProperties {
-                    background: Some("#ffffff".into()),
-                    border_radius: Some(8.0),
-                    ..Default::default()
-                },
-                children: vec![
-                    Node {
-                        id: "title".into(),
-                        component: "heading".into(),
-                        props: json!({ "text": "Prism" }),
-                        ..Default::default()
-                    },
-                    Node {
-                        id: "spacer".into(),
-                        component: "spacer".into(),
-                        props: json!({ "width": 16, "height": 8 }),
-                        ..Default::default()
-                    },
-                ],
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        let tree = document_to_ui_tree(&doc).expect("root present");
-        let UiNode::Container {
-            props, children, ..
-        } = tree
-        else {
-            panic!("root must be container");
-        };
-        assert_eq!(children.len(), 2);
-        assert_eq!(props.gap, 16.0);
-        assert!(props.background.is_some());
-        assert_eq!(props.radius.tl, 8.0);
-        assert!(matches!(children[0], UiNode::Text { .. }));
-        assert!(matches!(children[1], UiNode::Spacer { .. }));
     }
 
     #[test]
@@ -465,15 +392,48 @@ mod tests {
     }
 
     #[test]
-    fn unknown_component_falls_back_to_container() {
-        let node = Node {
-            id: "x".into(),
-            component: "image".into(),
+    fn full_document_round_trips_through_registry_dispatch() {
+        let reg = registry_with("text", "spacer");
+        let doc = BuilderDocument {
+            root: Some(Node {
+                id: "root".into(),
+                component: "container".into(),
+                layout_mode: flow(FlexDirection::Column, 16.0),
+                style: StyleProperties {
+                    background: Some("#ffffff".into()),
+                    border_radius: Some(8.0),
+                    ..Default::default()
+                },
+                children: vec![
+                    Node {
+                        id: "title".into(),
+                        component: "text".into(),
+                        props: json!({ "body": "Prism", "level": "h1" }),
+                        ..Default::default()
+                    },
+                    Node {
+                        id: "spacer".into(),
+                        component: "spacer".into(),
+                        props: json!({ "height": 8 }),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }),
             ..Default::default()
         };
-        assert!(matches!(
-            translate_node(&node, &StyleProperties::default()),
-            UiNode::Container { .. }
-        ));
+        let tree = document_to_ui_tree_with_registry(&doc, &reg).expect("root present");
+        let UiNode::Container {
+            props, children, ..
+        } = tree
+        else {
+            panic!("root must be container");
+        };
+        assert_eq!(children.len(), 2);
+        assert_eq!(props.gap, 16.0);
+        assert!(props.background.is_some());
+        assert_eq!(props.radius.tl, 8.0);
+        assert!(matches!(children[0], UiNode::Text { .. }));
+        assert!(matches!(children[1], UiNode::Spacer { .. }));
     }
 }

@@ -68,6 +68,20 @@ pub trait Block: Send + Sync + 'static {
         })
     }
 
+    /// Lower the block to a `prism_ui_runtime::layout::Node`. Default:
+    /// generic container — same as [`Component::lower_ui`]'s default.
+    /// Override on text-shaped, image-shaped, or otherwise-bespoke
+    /// blocks; everything structural (containers, columns, lists)
+    /// inherits the default for free.
+    fn lower_ui(
+        &self,
+        ctx: &crate::ui_lower::LowerCtx<'_>,
+        node: &Node,
+        style: &crate::style::StyleProperties,
+    ) -> prism_ui_runtime::layout::Node {
+        ctx.default_container(node, style)
+    }
+
     /// HTML SSR emission. Default: a `<div data-component="…">` wrapper
     /// recursing into children — matches [`HtmlBlock`]'s default.
     fn render_html(
@@ -114,6 +128,14 @@ impl<T: Block> Component for T {
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
         Block::render_slint(self, ctx, props, children, out)
+    }
+    fn lower_ui(
+        &self,
+        ctx: &crate::ui_lower::LowerCtx<'_>,
+        node: &Node,
+        style: &crate::style::StyleProperties,
+    ) -> prism_ui_runtime::layout::Node {
+        Block::lower_ui(self, ctx, node, style)
     }
 }
 
