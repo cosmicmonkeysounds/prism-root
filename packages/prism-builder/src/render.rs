@@ -1,67 +1,19 @@
 //! Document-level render entry points.
 //!
 //! Walks a [`BuilderDocument`] against a [`ComponentRegistry`] and
-//! produces a rendered output for a given target backend. Two walkers
-//! ship today:
-//!
-//! * [`render_document_html`] — Sovereign Portal SSR path. `prism-relay`
-//!   calls this per request.
-//! * [`render_document_slint_source`] — Studio builder path. Emits a
-//!   self-contained `.slint` source string that declares a single
-//!   `BuilderRoot` component wrapping the walked tree. The shell
-//!   hands that source to [`slint_interpreter::Compiler`] via
-//!   [`compile_slint_source`] / [`instantiate_document`] (enabled
-//!   behind the `interpreter` crate feature so host crates that only
-//!   want the DSL text don't pay the compiler's dep weight).
+//! produces a `.slint` source string for the Studio builder. SSR has
+//! moved off this module — `prism-relay` calls
+//! [`crate::ui_runtime::lower_semantic_html_with_registry`] against
+//! the same `BuilderDocument` for HTML output.
 
 use prism_core::design_tokens::DesignTokens;
 
 use crate::component::{RenderError, RenderSlintContext};
 use crate::document::BuilderDocument;
-use crate::html::Html;
-use crate::html_block::{HtmlRegistry, HtmlRenderContext};
 use crate::layout::{GridCell, SplitDirection};
 use crate::registry::ComponentRegistry;
 use crate::slint_source::{rgba_to_slint_literal, SlintEmitter};
 use crate::source_map::{PropSpan, SourceMap, SourceSpan};
-
-/// Render a document to an HTML fragment via the [`HtmlRegistry`].
-/// Emits the root node's markup and every descendant in order.
-/// The caller wraps the returned fragment in its own chrome
-/// (doctype, `<head>`, OpenGraph meta, etc.).
-pub fn render_document_html(
-    doc: &BuilderDocument,
-    registry: &HtmlRegistry,
-    tokens: &DesignTokens,
-) -> Result<String, RenderError> {
-    render_document_html_with_data(doc, registry, tokens, std::collections::HashMap::new())
-}
-
-/// Like [`render_document_html`] but also accepts pre-resolved widget data.
-/// Nodes whose ID appears in `widget_data` get the resolved data merged
-/// into their props before rendering — the HTML SSR equivalent of
-/// [`render_document_slint_preview_with_assets_and_data`].
-pub fn render_document_html_with_data(
-    doc: &BuilderDocument,
-    registry: &HtmlRegistry,
-    tokens: &DesignTokens,
-    widget_data: std::collections::HashMap<String, serde_json::Value>,
-) -> Result<String, RenderError> {
-    let ctx = HtmlRenderContext {
-        tokens,
-        registry,
-        resources: &doc.resources,
-        prefabs: &doc.prefabs,
-        facets: &doc.facets,
-        facet_schemas: &doc.facet_schemas,
-        widget_data,
-    };
-    let mut out = Html::with_capacity(512);
-    if let Some(root) = &doc.root {
-        ctx.render_child(root, &mut out)?;
-    }
-    Ok(out.into_string())
-}
 
 /// Render a document to a self-contained `.slint` source string.
 ///
@@ -584,7 +536,6 @@ mod tests {
     use super::*;
     use crate::component::{Component, ComponentId, RenderSlintContext};
     use crate::document::Node;
-    use crate::html_block::HtmlBlock;
     use crate::layout::LayoutMode;
     use crate::registry::FieldSpec;
 
@@ -653,216 +604,6 @@ mod tests {
         }))
         .unwrap();
         reg
-    }
-
-    // ── HTML-side test components ─────────────────────────────────
-
-    struct HtmlHeading {
-        id: ComponentId,
-    }
-
-    impl HtmlBlock for HtmlHeading {
-        fn id(&self) -> &ComponentId {
-            &self.id
-        }
-        fn schema(&self) -> Vec<FieldSpec> {
-            vec![FieldSpec::text("text", "Text")]
-        }
-        fn render_html(
-            &self,
-            _ctx: &HtmlRenderContext<'_>,
-            props: &Value,
-            _children: &[Node],
-            out: &mut Html,
-        ) -> Result<(), RenderError> {
-            let text = props.get("text").and_then(|v| v.as_str()).unwrap_or("");
-            out.open("h1");
-            out.text(text);
-            out.close("h1");
-            Ok(())
-        }
-    }
-
-    struct HtmlSection {
-        id: ComponentId,
-    }
-
-    impl HtmlBlock for HtmlSection {
-        fn id(&self) -> &ComponentId {
-            &self.id
-        }
-        fn schema(&self) -> Vec<FieldSpec> {
-            vec![]
-        }
-        fn render_html(
-            &self,
-            ctx: &HtmlRenderContext<'_>,
-            _props: &Value,
-            children: &[Node],
-            out: &mut Html,
-        ) -> Result<(), RenderError> {
-            out.open("section");
-            ctx.render_children(children, out)?;
-            out.close("section");
-            Ok(())
-        }
-    }
-
-    fn html_registry() -> HtmlRegistry {
-        let mut reg = HtmlRegistry::new();
-        reg.register(Arc::new(HtmlHeading {
-            id: "heading".into(),
-        }))
-        .unwrap();
-        reg.register(Arc::new(HtmlSection {
-            id: "section".into(),
-        }))
-        .unwrap();
-        reg
-    }
-
-    // ── HTML walker tests ─────────────────────────────────────────
-
-    #[test]
-    fn renders_empty_document_to_empty_string() {
-        let doc = BuilderDocument::default();
-        let registry = HtmlRegistry::new();
-        let tokens = DesignTokens::default();
-        let html = render_document_html(&doc, &registry, &tokens).unwrap();
-        assert_eq!(html, "");
-    }
-
-    #[test]
-    fn renders_single_heading() {
-        let doc = BuilderDocument {
-            root: Some(Node {
-                id: "n1".into(),
-                component: "heading".into(),
-                props: json!({ "text": "Hello Prism" }),
-                children: vec![],
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        let registry = html_registry();
-        let tokens = DesignTokens::default();
-        let html = render_document_html(&doc, &registry, &tokens).unwrap();
-        assert_eq!(html, "<h1>Hello Prism</h1>");
-    }
-
-    #[test]
-    fn escapes_user_supplied_text() {
-        let doc = BuilderDocument {
-            root: Some(Node {
-                id: "n1".into(),
-                component: "heading".into(),
-                props: json!({ "text": "<script>alert('xss')</script>" }),
-                children: vec![],
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        let registry = html_registry();
-        let tokens = DesignTokens::default();
-        let html = render_document_html(&doc, &registry, &tokens).unwrap();
-        assert_eq!(
-            html,
-            "<h1>&lt;script&gt;alert(&#39;xss&#39;)&lt;/script&gt;</h1>"
-        );
-    }
-
-    #[test]
-    fn recursive_children_walk() {
-        let doc = BuilderDocument {
-            root: Some(Node {
-                id: "n1".into(),
-                component: "section".into(),
-                props: json!({}),
-                children: vec![
-                    Node {
-                        id: "n2".into(),
-                        component: "heading".into(),
-                        props: json!({ "text": "A" }),
-                        children: vec![],
-                        ..Default::default()
-                    },
-                    Node {
-                        id: "n3".into(),
-                        component: "heading".into(),
-                        props: json!({ "text": "B" }),
-                        children: vec![],
-                        ..Default::default()
-                    },
-                ],
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        let registry = html_registry();
-        let tokens = DesignTokens::default();
-        let html = render_document_html(&doc, &registry, &tokens).unwrap();
-        assert_eq!(html, "<section><h1>A</h1><h1>B</h1></section>");
-    }
-
-    #[test]
-    fn unknown_component_errors() {
-        let doc = BuilderDocument {
-            root: Some(Node {
-                id: "n1".into(),
-                component: "not-registered".into(),
-                props: json!({}),
-                children: vec![],
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        let registry = html_registry();
-        let tokens = DesignTokens::default();
-        let err = render_document_html(&doc, &registry, &tokens).unwrap_err();
-        assert!(matches!(err, RenderError::UnknownComponent(ref id) if id == "not-registered"));
-    }
-
-    #[test]
-    fn default_html_impl_emits_div_wrapper() {
-        struct Plain {
-            id: ComponentId,
-        }
-        impl HtmlBlock for Plain {
-            fn id(&self) -> &ComponentId {
-                &self.id
-            }
-            fn schema(&self) -> Vec<FieldSpec> {
-                vec![]
-            }
-        }
-
-        let mut reg = HtmlRegistry::new();
-        reg.register(Arc::new(Plain { id: "plain".into() }))
-            .unwrap();
-        reg.register(Arc::new(HtmlHeading {
-            id: "heading".into(),
-        }))
-        .unwrap();
-
-        let doc = BuilderDocument {
-            root: Some(Node {
-                id: "n1".into(),
-                component: "plain".into(),
-                props: json!({}),
-                children: vec![Node {
-                    id: "n2".into(),
-                    component: "heading".into(),
-                    props: json!({ "text": "Inside" }),
-                    children: vec![],
-                    ..Default::default()
-                }],
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        let tokens = DesignTokens::default();
-        let html = render_document_html(&doc, &reg, &tokens).unwrap();
-        assert_eq!(html, r#"<div data-component="plain"><h1>Inside</h1></div>"#);
     }
 
     // ── Slint walker tests ────────────────────────────────────────
@@ -1392,7 +1133,7 @@ mod tests {
     #[cfg(feature = "interpreter")]
     fn real_registry() -> ComponentRegistry {
         let mut reg = ComponentRegistry::new();
-        let _ = crate::starter::register_builtins(&mut reg, &mut crate::HtmlRegistry::new());
+        let _ = crate::starter::register_builtins(&mut reg);
         reg
     }
 

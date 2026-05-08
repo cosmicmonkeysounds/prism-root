@@ -1,18 +1,17 @@
 //! The unified [`Block`] trait — single source of truth for a renderable
 //! block type.
 //!
-//! Historically every built-in block type was authored twice: once as
-//! [`crate::component::Component`] (Slint DSL emission for Studio's live
-//! builder) and once as [`crate::html_block::HtmlBlock`] (HTML SSR for
-//! `prism-relay`). The non-renderer methods (`id`, `schema`, `signals`,
-//! `variants`, `help_entry`, `toolbar_actions`) were near-identical
-//! across the two impls.
+//! Historically every built-in was authored twice: a `Component` impl
+//! for Slint DSL emission and a parallel `HtmlBlock` impl for SSR. The
+//! Phase-5 cutover (`docs/dev/clay-migration-plan.md`) collapsed SSR
+//! onto `prism-ui-runtime`'s semantic-HTML walker, which dispatches
+//! through `Block::lower_ui` — the same lowering Studio's live
+//! preview consumes. Net result: one trait, one render method per
+//! target (Slint DSL for Studio, `lower_ui` for the unified Taffy
+//! pipeline that powers both shell rendering and relay SSR).
 //!
-//! `Block` collapses both into one trait with both render methods. A
-//! blanket impl gives every `Block` automatic `Component` *and*
-//! `HtmlBlock` impls so existing registries keep working unchanged.
-//!
-//! See `docs/dev/declarative-refactorings.md` for the broader context.
+//! A blanket impl gives every `Block` an automatic `Component` impl
+//! so existing `ComponentRegistry` callers keep working unchanged.
 
 use prism_core::help::HelpEntry;
 use prism_core::widget::ToolbarAction;
@@ -20,18 +19,14 @@ use serde_json::Value;
 
 use crate::component::{Component, ComponentId, RenderError, RenderSlintContext};
 use crate::document::Node;
-use crate::html::Html;
-use crate::html_block::{HtmlBlock, HtmlRegistry, HtmlRenderContext};
 use crate::registry::{ComponentRegistry, FieldSpec, RegistryError};
 use crate::signal::{common_signals, SignalDef};
 use crate::slint_source::SlintEmitter;
 use crate::variant::VariantAxis;
 
-/// One block type, both render targets.
-///
-/// Implement this once; both [`Component`] and [`HtmlBlock`] are derived
-/// via blanket impls below. Register a single instance into both
-/// registries via [`register_block`].
+/// One block type, one declaration. Implement once; the blanket impl
+/// below makes it a `Component` so it slots into `ComponentRegistry`
+/// directly. Register a single instance via [`register_block`].
 pub trait Block: Send + Sync + 'static {
     fn id(&self) -> &ComponentId;
     fn schema(&self) -> Vec<FieldSpec>;
@@ -81,25 +76,9 @@ pub trait Block: Send + Sync + 'static {
     ) -> prism_ui_runtime::layout::Node {
         ctx.default_container(node, style)
     }
-
-    /// HTML SSR emission. Default: a `<div data-component="…">` wrapper
-    /// recursing into children — matches [`HtmlBlock`]'s default.
-    fn render_html(
-        &self,
-        ctx: &HtmlRenderContext<'_>,
-        props: &Value,
-        children: &[Node],
-        out: &mut Html,
-    ) -> Result<(), RenderError> {
-        let _ = props;
-        out.open_attrs("div", &[("data-component", self.id())]);
-        ctx.render_children(children, out)?;
-        out.close("div");
-        Ok(())
-    }
 }
 
-// ── Blanket impls so a Block is automatically Component + HtmlBlock ──
+// ── Blanket impl so a Block is automatically a Component ──
 
 impl<T: Block> Component for T {
     fn id(&self) -> &ComponentId {
@@ -139,38 +118,11 @@ impl<T: Block> Component for T {
     }
 }
 
-impl<T: Block> HtmlBlock for T {
-    fn id(&self) -> &ComponentId {
-        Block::id(self)
-    }
-    fn schema(&self) -> Vec<FieldSpec> {
-        Block::schema(self)
-    }
-    fn signals(&self) -> Vec<SignalDef> {
-        Block::signals(self)
-    }
-    fn variants(&self) -> Vec<VariantAxis> {
-        Block::variants(self)
-    }
-    fn render_html(
-        &self,
-        ctx: &HtmlRenderContext<'_>,
-        props: &Value,
-        children: &[Node],
-        out: &mut Html,
-    ) -> Result<(), RenderError> {
-        Block::render_html(self, ctx, props, children, out)
-    }
-}
-
-/// Register a [`Block`] into both registries. Every call sets up one
-/// type id with both render targets in lockstep.
+/// Register a [`Block`] into the component registry.
 pub fn register_block<T: Block + 'static>(
     components: &mut ComponentRegistry,
-    html: &mut HtmlRegistry,
     block: std::sync::Arc<T>,
 ) -> Result<(), RegistryError> {
-    components.register(block.clone() as std::sync::Arc<dyn Component>)?;
-    html.register(block as std::sync::Arc<dyn HtmlBlock>)?;
+    components.register(block as std::sync::Arc<dyn Component>)?;
     Ok(())
 }

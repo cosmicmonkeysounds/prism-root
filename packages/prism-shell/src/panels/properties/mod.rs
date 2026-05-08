@@ -716,7 +716,7 @@ mod tests {
 
     fn setup() -> (BuilderDocument, ComponentRegistry) {
         let mut reg = ComponentRegistry::new();
-        register_builtins(&mut reg, &mut prism_builder::HtmlRegistry::new()).unwrap();
+        register_builtins(&mut reg).unwrap();
         let doc = BuilderDocument {
             root: Some(Node {
                 id: "root".into(),
@@ -975,7 +975,7 @@ mod tests {
     fn sections_non_default_transform_expands() {
         use prism_core::foundation::spatial::Transform2D;
         let mut reg = ComponentRegistry::new();
-        register_builtins(&mut reg, &mut prism_builder::HtmlRegistry::new()).unwrap();
+        register_builtins(&mut reg).unwrap();
         let doc = BuilderDocument {
             root: Some(Node {
                 id: "n".into(),
@@ -1000,7 +1000,7 @@ mod tests {
     fn sections_non_default_layout_expands() {
         use prism_builder::layout::{FlowDisplay, FlowProps, LayoutMode};
         let mut reg = ComponentRegistry::new();
-        register_builtins(&mut reg, &mut prism_builder::HtmlRegistry::new()).unwrap();
+        register_builtins(&mut reg).unwrap();
         let doc = BuilderDocument {
             root: Some(Node {
                 id: "n".into(),
@@ -1022,7 +1022,7 @@ mod tests {
     #[test]
     fn sections_non_default_style_expands_appearance() {
         let mut reg = ComponentRegistry::new();
-        register_builtins(&mut reg, &mut prism_builder::HtmlRegistry::new()).unwrap();
+        register_builtins(&mut reg).unwrap();
         let doc = BuilderDocument {
             root: Some(Node {
                 id: "n".into(),
@@ -1109,7 +1109,7 @@ mod tests {
     fn appearance_rows_show_origin_in_label() {
         use prism_builder::PrismApp;
         let mut reg = ComponentRegistry::new();
-        register_builtins(&mut reg, &mut prism_builder::HtmlRegistry::new()).unwrap();
+        register_builtins(&mut reg).unwrap();
         let app = PrismApp {
             id: "test".into(),
             name: "Test".into(),
@@ -1170,7 +1170,7 @@ mod tests {
     #[test]
     fn button_sections_include_variants() {
         let mut reg = ComponentRegistry::new();
-        register_builtins(&mut reg, &mut prism_builder::HtmlRegistry::new()).unwrap();
+        register_builtins(&mut reg).unwrap();
         let doc = BuilderDocument {
             root: Some(Node {
                 id: "btn".into(),
@@ -1246,7 +1246,7 @@ mod tests {
         use prism_builder::{FacetDataSource, FacetDef, FacetKind, FacetLayout};
 
         let mut reg = ComponentRegistry::new();
-        register_builtins(&mut reg, &mut prism_builder::HtmlRegistry::new()).unwrap();
+        register_builtins(&mut reg).unwrap();
         let facet_id = "facet:f1".to_string();
         let mut doc = BuilderDocument {
             root: Some(Node {
@@ -1292,7 +1292,7 @@ mod tests {
         use prism_builder::{AggregateOp, FacetDef, FacetKind};
 
         let mut reg = ComponentRegistry::new();
-        register_builtins(&mut reg, &mut prism_builder::HtmlRegistry::new()).unwrap();
+        register_builtins(&mut reg).unwrap();
         let facet_id = "facet:agg".to_string();
         let mut doc = BuilderDocument {
             root: Some(Node {

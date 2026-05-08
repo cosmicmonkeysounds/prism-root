@@ -2,12 +2,10 @@
 //! exposes `template(props, children)` (and optionally `schema()`).
 //!
 //! The derive collapses the boilerplate of authoring a builder block
-//! into a single template-returning function. Both `render_slint` and
-//! `render_html` are derived; the macro routes them through the
-//! `render_template_node` / `render_template_html` walkers in
-//! `prism-builder`. Override either render method by hand if a block
-//! needs Slint-specific or HTML-specific chrome that the
-//! `TemplateNode` IR cannot express yet.
+//! into a single template-returning function. `render_slint` is routed
+//! through `render_template_node` in `prism-builder`. Override by hand
+//! if a block needs Slint-specific chrome the `TemplateNode` IR cannot
+//! express yet.
 //!
 //! Two attribute forms:
 //!
@@ -110,17 +108,6 @@ pub fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
             ) -> ::std::result::Result<(), ::prism_builder::RenderError> {
                 #template_extract
                 ::prism_builder::render_template_node(ctx, &template, props, children, out)
-            }
-
-            fn render_html(
-                &self,
-                ctx: &::prism_builder::HtmlRenderContext<'_>,
-                props: &::serde_json::Value,
-                children: &[::prism_builder::Node],
-                out: &mut ::prism_builder::Html,
-            ) -> ::std::result::Result<(), ::prism_builder::RenderError> {
-                #template_extract
-                ::prism_builder::render_template_html(ctx, &template, props, children, out)
             }
         }
     })

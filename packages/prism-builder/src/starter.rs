@@ -21,10 +21,8 @@ use crate::asset::AssetSource;
 use crate::block::{register_block, Block};
 use crate::component::{ComponentId, RenderError, RenderSlintContext};
 use crate::document::Node;
-use crate::facet::{FacetComponent, FacetHtmlBlock};
-use crate::html::Html;
-use crate::html_block::{HtmlRegistry, HtmlRenderContext};
-use crate::prefab::{ExposedSlot, PrefabComponent, PrefabDef, PrefabHtmlBlock};
+use crate::facet::FacetComponent;
+use crate::prefab::{ExposedSlot, PrefabComponent, PrefabDef};
 use crate::registry::{ComponentRegistry, FieldSpec, RegistryError};
 use crate::schemas;
 use crate::signal::{with_common_signals, SignalDef};
@@ -32,84 +30,36 @@ use crate::slint_source::{escape_slint_string, SlintEmitter};
 use crate::style::StyleProperties;
 use crate::variant::{presets as variant_presets, VariantAxis};
 
-/// Register the starter catalog into both registries. Single source of
-/// truth for the built-in block list — the Slint side and HTML SSR
-/// side stay in lockstep by construction.
-pub fn register_builtins(
-    components: &mut ComponentRegistry,
-    html: &mut HtmlRegistry,
-) -> Result<(), RegistryError> {
-    register_block(components, html, Arc::new(TextBlock { id: "text".into() }))?;
-    register_block(
-        components,
-        html,
-        Arc::new(ImageBlock { id: "image".into() }),
-    )?;
-    register_block(
-        components,
-        html,
-        Arc::new(ContainerBlock {
-            id: "container".into(),
-        }),
-    )?;
-    register_block(components, html, Arc::new(FormBlock { id: "form".into() }))?;
-    register_block(
-        components,
-        html,
-        Arc::new(InputBlock { id: "input".into() }),
-    )?;
-    register_block(
-        components,
-        html,
-        Arc::new(ButtonBlock {
-            id: "button".into(),
-        }),
-    )?;
-    register_block(components, html, Arc::new(CodeBlock { id: "code".into() }))?;
-    register_block(
-        components,
-        html,
-        Arc::new(DividerBlock {
-            id: "divider".into(),
-        }),
-    )?;
-    register_block(
-        components,
-        html,
-        Arc::new(SpacerBlock {
-            id: "spacer".into(),
-        }),
-    )?;
-    register_block(
-        components,
-        html,
-        Arc::new(ColumnsBlock {
-            id: "columns".into(),
-        }),
-    )?;
-    register_block(components, html, Arc::new(ListBlock { id: "list".into() }))?;
-    register_block(
-        components,
-        html,
-        Arc::new(TableBlock { id: "table".into() }),
-    )?;
-    register_block(components, html, Arc::new(TabsBlock { id: "tabs".into() }))?;
-    register_block(
-        components,
-        html,
-        Arc::new(AccordionBlock {
-            id: "accordion".into(),
-        }),
-    )?;
+/// Register the starter catalog. Single source of truth for the
+/// built-in block list — every entry is one [`Block`] impl, so the
+/// Slint DSL emit path and the unified Taffy/SSR pipeline stay in
+/// lockstep by construction.
+pub fn register_builtins(components: &mut ComponentRegistry) -> Result<(), RegistryError> {
+    macro_rules! reg {
+        ($id:literal, $ty:ident) => {
+            register_block(components, Arc::new($ty { id: $id.into() }))?;
+        };
+    }
+    reg!("text", TextBlock);
+    reg!("image", ImageBlock);
+    reg!("container", ContainerBlock);
+    reg!("form", FormBlock);
+    reg!("input", InputBlock);
+    reg!("button", ButtonBlock);
+    reg!("code", CodeBlock);
+    reg!("divider", DividerBlock);
+    reg!("spacer", SpacerBlock);
+    reg!("columns", ColumnsBlock);
+    reg!("list", ListBlock);
+    reg!("table", TableBlock);
+    reg!("tabs", TabsBlock);
+    reg!("accordion", AccordionBlock);
 
-    // `card` is a prefab — separate Slint/HTML impls share the same def.
-    let card = card_prefab_def();
-    components.register(Arc::new(PrefabComponent::new(card.clone())))?;
-    html.register(Arc::new(PrefabHtmlBlock::new(card)))?;
+    // `card` is a prefab.
+    components.register(Arc::new(PrefabComponent::new(card_prefab_def())))?;
 
-    // `facet` likewise has parallel Slint/HTML impls.
+    // `facet` is a one-off Component impl.
     components.register(Arc::new(FacetComponent::new()))?;
-    html.register(Arc::new(FacetHtmlBlock::new()))?;
 
     // `graph-view` is Slint-only.
     components.register(Arc::new(GraphViewBlock {
@@ -206,36 +156,7 @@ impl Block for TextBlock {
             emit_text_style(out, &style);
             Ok(())
         })
-    }
-    fn render_html(
-        &self,
-        _ctx: &HtmlRenderContext<'_>,
-        props: &Value,
-        _children: &[Node],
-        out: &mut Html,
-    ) -> Result<(), RenderError> {
-        let p = schemas::TextProps::from_value(props);
-        let tag = match p.level.as_str() {
-            "h1" => "h1",
-            "h2" => "h2",
-            "h3" => "h3",
-            "h4" => "h4",
-            "h5" => "h5",
-            "h6" => "h6",
-            _ => "p",
-        };
-        out.open(tag);
-        if !p.href.is_empty() {
-            out.open_attrs("a", &[("href", &p.href)]);
-            out.text(&p.body);
-            out.close("a");
-        } else {
-            out.text(&p.body);
-        }
-        out.close(tag);
-        Ok(())
-    }
-    fn lower_ui(
+    }    fn lower_ui(
         &self,
         _ctx: &crate::ui_lower::LowerCtx<'_>,
         node: &Node,
@@ -425,36 +346,7 @@ impl Block for ImageBlock {
             hint = hint.with_attr("alt", alt);
         }
         crate::ui_lower::with_semantic(img, hint)
-    }
-    fn render_html(
-        &self,
-        _ctx: &HtmlRenderContext<'_>,
-        props: &Value,
-        _children: &[Node],
-        out: &mut Html,
-    ) -> Result<(), RenderError> {
-        let p = schemas::ImageProps::from_value(props);
-        let border_radius = p.border_radius.max(0);
-        let src = props
-            .get("src")
-            .and_then(AssetSource::from_prop)
-            .map(|s| s.to_html_src())
-            .unwrap_or_default();
-        let style = if border_radius > 0 {
-            format!("object-fit:{};border-radius:{border_radius}px", p.fit)
-        } else {
-            format!("object-fit:{}", p.fit)
-        };
-        if !p.href.is_empty() {
-            out.open_attrs("a", &[("href", &p.href)]);
-        }
-        out.void("img", &[("src", &src), ("alt", &p.alt), ("style", &style)]);
-        if !p.href.is_empty() {
-            out.close("a");
-        }
-        Ok(())
-    }
-}
+    }}
 
 /// Semantic `<section>` wrapper with children rendered inside.
 /// Useful as a layout block in the portal body.
@@ -567,40 +459,7 @@ impl Block for ContainerBlock {
             container,
             prism_ui_runtime::layout::Semantic::tag("section"),
         )
-    }
-    fn render_html(
-        &self,
-        ctx: &HtmlRenderContext<'_>,
-        props: &Value,
-        children: &[Node],
-        out: &mut Html,
-    ) -> Result<(), RenderError> {
-        let p = schemas::ContainerProps::from_value(props);
-        let padding = p.padding;
-        let border_width = p.border_width;
-        let mut parts: Vec<String> = Vec::new();
-        if padding > 0 {
-            parts.push(format!("padding:{padding}px"));
-        }
-        if border_width > 0 {
-            let color = if p.border_color.is_empty() {
-                "#000"
-            } else {
-                p.border_color.as_str()
-            };
-            parts.push(format!("border:{border_width}px solid {color}"));
-        }
-        if parts.is_empty() {
-            out.open("section");
-        } else {
-            let style = parts.join(";");
-            out.open_attrs("section", &[("style", &style)]);
-        }
-        ctx.render_children(children, out)?;
-        out.close("section");
-        Ok(())
-    }
-}
+    }}
 
 /// HTML `<form>` wrapper. Renders children inside a `<form method="post">`.
 /// L3 portals use this for interactive submissions.
@@ -666,25 +525,7 @@ impl Block for FormBlock {
             hint = hint.with_attr("action", p.action.as_str());
         }
         crate::ui_lower::with_semantic(container, hint)
-    }
-    fn render_html(
-        &self,
-        ctx: &HtmlRenderContext<'_>,
-        props: &Value,
-        children: &[Node],
-        out: &mut Html,
-    ) -> Result<(), RenderError> {
-        let p = schemas::FormProps::from_value(props);
-        let mut attrs: Vec<(&str, &str)> = vec![("method", p.method.as_str())];
-        if !p.action.is_empty() {
-            attrs.push(("action", p.action.as_str()));
-        }
-        out.open_attrs("form", &attrs);
-        ctx.render_children(children, out)?;
-        out.close("form");
-        Ok(())
-    }
-}
+    }}
 
 /// HTML `<input>`. Renders as a void element with name, type, and placeholder.
 pub struct InputBlock {
@@ -833,37 +674,7 @@ impl Block for InputBlock {
             }
             props.semantic = outer_semantic;
         })
-    }
-    fn render_html(
-        &self,
-        _ctx: &HtmlRenderContext<'_>,
-        props: &Value,
-        _children: &[Node],
-        out: &mut Html,
-    ) -> Result<(), RenderError> {
-        let p = schemas::InputProps::from_value(props);
-
-        if !p.label.is_empty() {
-            out.open("label");
-            out.text(&p.label);
-        }
-        let mut attrs = vec![("type", p.r#type.as_str()), ("name", p.name.as_str())];
-        if !p.placeholder.is_empty() {
-            attrs.push(("placeholder", p.placeholder.as_str()));
-        }
-        if !p.value.is_empty() {
-            attrs.push(("value", p.value.as_str()));
-        }
-        if p.required {
-            attrs.push(("required", "required"));
-        }
-        out.void("input", &attrs);
-        if !p.label.is_empty() {
-            out.close("label");
-        }
-        Ok(())
-    }
-}
+    }}
 
 /// Built-in card prefab: Container + title text + body text.
 pub fn card_prefab_def() -> PrefabDef {
@@ -1076,34 +887,7 @@ impl Block for CodeBlock {
             }
             props.semantic = prism_ui_runtime::layout::Semantic::tag("pre");
         })
-    }
-    fn render_html(
-        &self,
-        _ctx: &HtmlRenderContext<'_>,
-        props: &Value,
-        _children: &[Node],
-        out: &mut Html,
-    ) -> Result<(), RenderError> {
-        let p = schemas::CodeProps::from_value(props);
-        let bg = if p.bg.is_empty() { "#1a1e28" } else { &p.bg };
-        let color = if p.color.is_empty() {
-            "#a3be8c"
-        } else {
-            &p.color
-        };
-        let style = format!("background:{bg};color:{color};padding:12px;border-radius:6px");
-        out.open_attrs("pre", &[("style", &style)]);
-        if p.language.is_empty() {
-            out.open("code");
-        } else {
-            out.open_attrs("code", &[("class", &format!("language-{}", p.language))]);
-        }
-        out.text(&p.code);
-        out.close("code");
-        out.close("pre");
-        Ok(())
-    }
-}
+    }}
 
 /// Horizontal rule / visual separator.
 /// Horizontal separator line between content sections.
@@ -1143,18 +927,7 @@ impl Block for DividerBlock {
             out.line("background: #3b4252;");
             Ok(())
         })
-    }
-    fn render_html(
-        &self,
-        _ctx: &crate::html_block::HtmlRenderContext<'_>,
-        _props: &Value,
-        _children: &[Node],
-        out: &mut crate::html::Html,
-    ) -> Result<(), RenderError> {
-        out.void("hr", &[]);
-        Ok(())
-    }
-    fn lower_ui(
+    }    fn lower_ui(
         &self,
         ctx: &crate::ui_lower::LowerCtx<'_>,
         node: &Node,
@@ -1208,22 +981,7 @@ impl Block for SpacerBlock {
             out.prop_px("height", p.height as f64);
             Ok(())
         })
-    }
-    fn render_html(
-        &self,
-        _ctx: &crate::html_block::HtmlRenderContext<'_>,
-        props: &Value,
-        _children: &[Node],
-        out: &mut crate::html::Html,
-    ) -> Result<(), RenderError> {
-        let p = schemas::SpacerProps::from_value(props);
-        let height = p.height;
-        let style = format!("height:{height}px");
-        out.open_attrs("div", &[("style", &style), ("aria-hidden", "true")]);
-        out.close("div");
-        Ok(())
-    }
-    fn lower_ui(
+    }    fn lower_ui(
         &self,
         _ctx: &crate::ui_lower::LowerCtx<'_>,
         node: &Node,
@@ -1294,27 +1052,7 @@ impl Block for ColumnsBlock {
                 props.gap = p.gap as f32;
             }
         })
-    }
-    fn render_html(
-        &self,
-        ctx: &HtmlRenderContext<'_>,
-        props: &Value,
-        children: &[Node],
-        out: &mut Html,
-    ) -> Result<(), RenderError> {
-        let p = schemas::ColumnsProps::from_value(props);
-        let gap = p.gap;
-        let style = format!("display:flex;gap:{gap}px");
-        out.open_attrs("div", &[("style", &style)]);
-        for child in children {
-            out.open_attrs("div", &[("style", "flex:1")]);
-            ctx.render_child(child, out)?;
-            out.close("div");
-        }
-        out.close("div");
-        Ok(())
-    }
-}
+    }}
 
 /// Ordered or unordered list wrapper. Each child becomes a list item.
 pub struct ListBlock {
@@ -1386,26 +1124,7 @@ impl Block for ListBlock {
         // hint or the walker grows variant-specific child rules).
         let tag = if p.ordered { "ol" } else { "ul" };
         crate::ui_lower::with_semantic(container, prism_ui_runtime::layout::Semantic::tag(tag))
-    }
-    fn render_html(
-        &self,
-        ctx: &HtmlRenderContext<'_>,
-        props: &Value,
-        children: &[Node],
-        out: &mut Html,
-    ) -> Result<(), RenderError> {
-        let p = schemas::ListProps::from_value(props);
-        let tag = if p.ordered { "ol" } else { "ul" };
-        out.open(tag);
-        for child in children {
-            out.open("li");
-            ctx.render_child(child, out)?;
-            out.close("li");
-        }
-        out.close(tag);
-        Ok(())
-    }
-}
+    }}
 
 /// Simple data table with header columns and optional caption.
 pub struct TableBlock {
@@ -1562,37 +1281,7 @@ impl Block for TableBlock {
             }
             props.semantic = prism_ui_runtime::layout::Semantic::tag("table");
         })
-    }
-    fn render_html(
-        &self,
-        _ctx: &HtmlRenderContext<'_>,
-        props: &Value,
-        _children: &[Node],
-        out: &mut Html,
-    ) -> Result<(), RenderError> {
-        let p = schemas::TableProps::from_value(props);
-        out.open("table");
-        if !p.caption.is_empty() {
-            out.open("caption");
-            out.text(&p.caption);
-            out.close("caption");
-        }
-        out.open("thead");
-        out.open("tr");
-        for col in p.headers.split(',') {
-            let col = col.trim();
-            if !col.is_empty() {
-                out.open("th");
-                out.text(col);
-                out.close("th");
-            }
-        }
-        out.close("tr");
-        out.close("thead");
-        out.close("table");
-        Ok(())
-    }
-}
+    }}
 
 /// Tabbed content container. Children map to tab panels; the `labels`
 /// prop names each panel.
@@ -1732,41 +1421,7 @@ impl Block for TabsBlock {
             },
         );
         ctx.synthetic_container(node, style, vec![strip, panel], |_| {})
-    }
-    fn render_html(
-        &self,
-        ctx: &HtmlRenderContext<'_>,
-        props: &Value,
-        children: &[Node],
-        out: &mut Html,
-    ) -> Result<(), RenderError> {
-        let p = schemas::TabsProps::from_value(props);
-        let tab_labels: Vec<&str> = p
-            .labels
-            .split(',')
-            .map(|l| l.trim())
-            .filter(|l| !l.is_empty())
-            .collect();
-        out.open_attrs("div", &[("role", "tablist")]);
-        for (i, label) in tab_labels.iter().enumerate() {
-            let selected = if i == 0 { "true" } else { "false" };
-            out.open_attrs("button", &[("role", "tab"), ("aria-selected", selected)]);
-            out.text(label);
-            out.close("button");
-        }
-        out.close("div");
-        for (i, child) in children.iter().take(tab_labels.len()).enumerate() {
-            if i == 0 {
-                out.open_attrs("div", &[("role", "tabpanel")]);
-            } else {
-                out.open_attrs("div", &[("role", "tabpanel"), ("hidden", "true")]);
-            }
-            ctx.render_child(child, out)?;
-            out.close("div");
-        }
-        Ok(())
-    }
-}
+    }}
 
 /// Collapsible section with a title. Renders as `<details>/<summary>` in HTML.
 pub struct AccordionBlock {
@@ -1892,28 +1547,7 @@ impl Block for AccordionBlock {
             }
             props.semantic = hint;
         })
-    }
-    fn render_html(
-        &self,
-        ctx: &HtmlRenderContext<'_>,
-        props: &Value,
-        children: &[Node],
-        out: &mut Html,
-    ) -> Result<(), RenderError> {
-        let p = schemas::AccordionProps::from_value(props);
-        if p.open {
-            out.open_attrs("details", &[("open", "open")]);
-        } else {
-            out.open("details");
-        }
-        out.open("summary");
-        out.text(&p.title);
-        out.close("summary");
-        ctx.render_children(children, out)?;
-        out.close("details");
-        Ok(())
-    }
-}
+    }}
 
 /// HTML `<button>`. Renders as `<button type="submit">text</button>`.
 pub struct ButtonBlock {
@@ -2028,31 +1662,7 @@ impl Block for ButtonBlock {
                 s
             };
         })
-    }
-    fn render_html(
-        &self,
-        _ctx: &HtmlRenderContext<'_>,
-        props: &Value,
-        _children: &[Node],
-        out: &mut Html,
-    ) -> Result<(), RenderError> {
-        let p = schemas::ButtonProps::from_value(props);
-        if !p.href.is_empty() {
-            out.open_attrs("a", &[("href", p.href.as_str()), ("role", "button")]);
-            out.text(&p.text);
-            out.close("a");
-        } else {
-            let mut attrs = vec![("type", p.r#type.as_str())];
-            if p.disabled {
-                attrs.push(("disabled", "disabled"));
-            }
-            out.open_attrs("button", &attrs);
-            out.text(&p.text);
-            out.close("button");
-        }
-        Ok(())
-    }
-}
+    }}
 
 /// Interactive node-and-edge graph visualization. Renders nodes as
 /// positioned circles on a canvas with label text.
@@ -2192,8 +1802,7 @@ mod tests {
 
     fn setup() -> (ComponentRegistry, DesignTokens) {
         let mut reg = ComponentRegistry::new();
-        let mut html = HtmlRegistry::new();
-        register_builtins(&mut reg, &mut html).expect("register builtins");
+        register_builtins(&mut reg).expect("register builtins");
         (reg, DesignTokens::default())
     }
 

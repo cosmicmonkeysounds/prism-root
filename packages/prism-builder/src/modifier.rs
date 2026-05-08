@@ -4,17 +4,14 @@
 //! The render walker applies modifiers as wrapper layers around the
 //! component's output (e.g., `ScrollOverflow` wraps in `Flickable`).
 //!
-//! Both render walkers (`RenderSlintContext::apply_slint_modifiers`
-//! in `component.rs` and `HtmlRenderContext::apply_html_modifiers`
-//! in `html_block.rs`) delegate per-modifier wrapping to the
-//! [`Modifier::wrap_slint`] and [`Modifier::wrap_html`] methods
-//! defined here, so kind-specific markup lives in one place.
+//! `RenderSlintContext::apply_slint_modifiers` delegates per-modifier
+//! wrapping to the [`Modifier::wrap_slint`] method defined here so
+//! kind-specific markup lives in one place.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::component::RenderError;
-use crate::html::Html;
 use crate::registry::{prop_str, prop_u64, FieldSpec, NumericBounds, SelectOption};
 use crate::slint_source::SlintEmitter;
 
@@ -349,116 +346,6 @@ impl Modifier {
         })
     }
 
-    /// Wrap inner HTML output with the modifier's effect. Mirrors
-    /// [`Self::wrap_slint`]; each kind emits a wrapper `<div>` whose
-    /// body is the next modifier (or the block itself).
-    pub fn wrap_html<F>(&self, out: &mut Html, body: F) -> Result<(), RenderError>
-    where
-        F: FnOnce(&mut Html) -> Result<(), RenderError>,
-    {
-        match self.kind {
-            ModifierKind::ScrollOverflow => {
-                out.open_attrs("div", &[("style", "overflow:auto")]);
-                let r = body(out);
-                out.close("div");
-                r
-            }
-            ModifierKind::HoverEffect => {
-                let effect = prop_str(&self.props, "effect", "fade");
-                let duration = prop_u64(&self.props, "duration_ms", 200);
-                let class = format!("prism-hover prism-hover-{effect}");
-                let style = format!("transition: all {duration}ms ease;");
-                let duration_str = duration.to_string();
-                out.open_attrs(
-                    "div",
-                    &[
-                        ("class", class.as_str()),
-                        ("style", style.as_str()),
-                        ("data-hover-effect", effect),
-                        ("data-hover-duration", duration_str.as_str()),
-                    ],
-                );
-                let r = body(out);
-                out.close("div");
-                r
-            }
-            ModifierKind::EnterAnimation => {
-                let animation = prop_str(&self.props, "animation", "fade-in");
-                let duration = prop_u64(&self.props, "duration_ms", 300);
-                let delay = prop_u64(&self.props, "delay_ms", 0);
-                let class = format!("prism-enter prism-enter-{animation}");
-                let style = format!(
-                    "animation-name: prism-{animation}; animation-duration: {duration}ms; animation-delay: {delay}ms; animation-fill-mode: both;"
-                );
-                out.open_attrs(
-                    "div",
-                    &[("class", class.as_str()), ("style", style.as_str())],
-                );
-                let r = body(out);
-                out.close("div");
-                r
-            }
-            ModifierKind::ResponsiveVisibility => {
-                let mobile = prop_bool_or(&self.props, "show_mobile", true);
-                let tablet = prop_bool_or(&self.props, "show_tablet", true);
-                let desktop = prop_bool_or(&self.props, "show_desktop", true);
-                let mut class = String::from("prism-resp");
-                if !mobile {
-                    class.push_str(" prism-resp-hide-mobile");
-                }
-                if !tablet {
-                    class.push_str(" prism-resp-hide-tablet");
-                }
-                if !desktop {
-                    class.push_str(" prism-resp-hide-desktop");
-                }
-                out.open_attrs("div", &[("class", class.as_str())]);
-                let r = body(out);
-                out.close("div");
-                r
-            }
-            ModifierKind::Tooltip => {
-                let text = prop_str(&self.props, "text", "");
-                let placement = prop_str(&self.props, "placement", "top");
-                if text.is_empty() {
-                    return body(out);
-                }
-                out.open_attrs(
-                    "div",
-                    &[("title", text), ("data-tooltip-placement", placement)],
-                );
-                let r = body(out);
-                out.close("div");
-                r
-            }
-            ModifierKind::AccessibilityOverride => {
-                let role = prop_str(&self.props, "role", "");
-                let label = prop_str(&self.props, "label", "");
-                let description = prop_str(&self.props, "description", "");
-                let hidden = prop_bool_or(&self.props, "hidden", false);
-                let mut attrs: Vec<(&str, &str)> = Vec::new();
-                if !role.is_empty() {
-                    attrs.push(("role", role));
-                }
-                if !label.is_empty() {
-                    attrs.push(("aria-label", label));
-                }
-                if !description.is_empty() {
-                    attrs.push(("aria-description", description));
-                }
-                if hidden {
-                    attrs.push(("aria-hidden", "true"));
-                }
-                if attrs.is_empty() {
-                    return body(out);
-                }
-                out.open_attrs("div", &attrs);
-                let r = body(out);
-                out.close("div");
-                r
-            }
-        }
-    }
 }
 
 fn prop_bool_or(props: &Value, key: &str, default: bool) -> bool {
@@ -526,16 +413,6 @@ mod tests {
         out.build()
     }
 
-    fn run_html(modifier: Modifier) -> String {
-        let mut out = Html::new();
-        modifier
-            .wrap_html(&mut out, |out| {
-                out.text("inner");
-                Ok(())
-            })
-            .unwrap();
-        out.into_string()
-    }
 
     #[test]
     fn slint_scroll_overflow_emits_flickable() {
@@ -626,121 +503,4 @@ mod tests {
         assert!(s.contains("opacity: 0"));
     }
 
-    #[test]
-    fn html_scroll_overflow_emits_overflow_div() {
-        let s = run_html(Modifier {
-            kind: ModifierKind::ScrollOverflow,
-            props: json!({}),
-        });
-        assert_eq!(s, r#"<div style="overflow:auto">inner</div>"#);
-    }
-
-    #[test]
-    fn html_hover_emits_class_and_data_attrs() {
-        let s = run_html(Modifier {
-            kind: ModifierKind::HoverEffect,
-            props: json!({ "effect": "lift", "duration_ms": 150 }),
-        });
-        assert!(s.contains("prism-hover-lift"));
-        assert!(s.contains("data-hover-effect=\"lift\""));
-        assert!(s.contains("data-hover-duration=\"150\""));
-        assert!(s.contains("transition: all 150ms"));
-    }
-
-    #[test]
-    fn html_enter_emits_animation_style() {
-        let s = run_html(Modifier {
-            kind: ModifierKind::EnterAnimation,
-            props: json!({ "animation": "slide-up", "duration_ms": 400, "delay_ms": 50 }),
-        });
-        assert!(s.contains("prism-enter-slide-up"));
-        assert!(s.contains("animation-name: prism-slide-up"));
-        assert!(s.contains("animation-duration: 400ms"));
-        assert!(s.contains("animation-delay: 50ms"));
-    }
-
-    #[test]
-    fn html_responsive_emits_hide_classes() {
-        let s = run_html(Modifier {
-            kind: ModifierKind::ResponsiveVisibility,
-            props: json!({
-                "show_mobile": false,
-                "show_tablet": true,
-                "show_desktop": false,
-            }),
-        });
-        assert!(s.contains("prism-resp-hide-mobile"));
-        assert!(!s.contains("prism-resp-hide-tablet"));
-        assert!(s.contains("prism-resp-hide-desktop"));
-    }
-
-    #[test]
-    fn html_tooltip_uses_title_attribute() {
-        let s = run_html(Modifier {
-            kind: ModifierKind::Tooltip,
-            props: json!({ "text": "Help & info", "placement": "bottom" }),
-        });
-        assert!(s.contains(r#"title="Help &amp; info""#));
-        assert!(s.contains(r#"data-tooltip-placement="bottom""#));
-    }
-
-    #[test]
-    fn html_tooltip_with_empty_text_is_passthrough() {
-        let s = run_html(Modifier {
-            kind: ModifierKind::Tooltip,
-            props: json!({ "text": "" }),
-        });
-        assert_eq!(s, "inner");
-    }
-
-    #[test]
-    fn html_accessibility_emits_aria_attrs() {
-        let s = run_html(Modifier {
-            kind: ModifierKind::AccessibilityOverride,
-            props: json!({
-                "role": "navigation",
-                "label": "Main menu",
-                "hidden": true,
-            }),
-        });
-        assert!(s.contains(r#"role="navigation""#));
-        assert!(s.contains(r#"aria-label="Main menu""#));
-        assert!(s.contains(r#"aria-hidden="true""#));
-    }
-
-    #[test]
-    fn html_accessibility_no_overrides_is_passthrough() {
-        let s = run_html(Modifier {
-            kind: ModifierKind::AccessibilityOverride,
-            props: json!({}),
-        });
-        assert_eq!(s, "inner");
-    }
-
-    #[test]
-    fn modifier_chain_recurses_through_body() {
-        // Two stacked modifiers: outer ScrollOverflow, inner Tooltip,
-        // both wrap the inner content.
-        let outer = Modifier {
-            kind: ModifierKind::ScrollOverflow,
-            props: json!({}),
-        };
-        let inner = Modifier {
-            kind: ModifierKind::Tooltip,
-            props: json!({ "text": "tip" }),
-        };
-        let mut out = Html::new();
-        outer
-            .wrap_html(&mut out, |out| {
-                inner.wrap_html(out, |out| {
-                    out.text("inner");
-                    Ok(())
-                })
-            })
-            .unwrap();
-        let s = out.into_string();
-        // overflow div wraps tooltip div wraps inner text
-        assert!(s.starts_with(r#"<div style="overflow:auto"><div title="tip""#));
-        assert!(s.ends_with("inner</div></div>"));
-    }
 }

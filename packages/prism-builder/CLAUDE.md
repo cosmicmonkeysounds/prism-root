@@ -3,8 +3,15 @@
 The Slint-native page builder that replaces Puck. Owns the
 component-type registry, the document tree schema, the layout engine
 (Taffy-backed CSS Grid / Flexbox / Block + free-form positioning),
-two independent render paths (Slint DSL + HTML SSR), and the
+the unified render pipeline (Slint DSL emit + `lower_ui` →
+`prism_ui_runtime` for both shell rendering and relay SSR), and the
 property-panel field factories.
+
+> **Note:** The parallel `HtmlBlock` / `HtmlRegistry` SSR walker was
+> deleted on 2026-05-08 (Phase 5 of `docs/dev/clay-migration-plan.md`).
+> SSR now flows through `ui_runtime::lower_semantic_html_with_registry`,
+> which dispatches per-block `Component::lower_ui` impls — the same
+> path the unified Taffy renderer consumes.
 
 ## Build & Test
 - `cargo build -p prism-builder`
@@ -55,13 +62,17 @@ From `src/lib.rs`:
   `SyntaxProvider` with context-aware completions and hover.
 
 ### HTML SSR side
-- `HtmlBlock`, `HtmlRegistry`, `HtmlRenderContext` — separate trait
-  + registry for HTML rendering. Decoupled from `Component` so the
-  relay's dep graph stays Slint-free.
-- `register_html_builtins(&mut HtmlRegistry)` — seeds the 16-block
-  HTML catalog (same component IDs as the Slint side).
-- `render_document_html(doc, html_registry, tokens)` — walks a
-  document against an `HtmlRegistry` and returns an HTML fragment.
+SSR is the unified Taffy pipeline. `prism-relay` calls
+`ui_runtime::lower_semantic_html_with_registry(doc, registry)`, which
+walks every block's `Component::lower_ui` impl and emits semantic
+HTML via `prism_ui_runtime::backends::semantic_html::lower`. There
+is no parallel `HtmlBlock` trait or `HtmlRegistry` — one declaration
+per block, two consumers (shell renderer + relay SSR).
+
+`html.rs` (the `Html` buffer + `escape_text` / `escape_attr`)
+remains as a tiny chrome-composition helper for `prism-relay` page
+wrappers and the `prism-luau-derive` macro; it has no dependency on
+the deleted walker.
 
 ### Layout engine (ADR-003)
 - `PageLayout`, `PageSize`, `Orientation`, `TrackSize` — structural
@@ -165,13 +176,13 @@ From `src/lib.rs`:
 - `VariantAxis`, `VariantOption`, `apply_variant_overrides`,
   `apply_variant_defaults` — named bundles of prop overrides per axis.
   Render walker applies variant defaults before component render.
-- Both `Component` and `HtmlBlock` traits' `signals()` default impl
-  returns `common_signals()` (12 universal signals). Components
-  override with `with_common_signals(extras)` to add component-specific
+- The `Component` trait's `signals()` default impl returns
+  `common_signals()` (12 universal signals). Components override
+  with `with_common_signals(extras)` to add component-specific
   signals alongside the common set.
-- `RenderSlintContext` and `HtmlRenderContext` `render_child()` now
-  pipeline: resolve resource refs → apply variant defaults → chain
-  modifier wrappers → call component render.
+- `RenderSlintContext::render_child()` pipelines: resolve resource
+  refs → apply variant defaults → chain modifier wrappers → call
+  component render.
 
 ### Asset resolution
 - `AssetSource` — unified enum for component asset references: `Url`
@@ -219,16 +230,21 @@ Twenty-five modules in `src/` (excluding `lib.rs`):
 - `layout.rs` — the Taffy-backed layout engine (ADR-003). `PageLayout`,
   `LayoutMode` (Flow/Free/Absolute/Relative), `FlowProps`,
   `AbsoluteProps`, `compute_layout`. 34 unit tests.
-- `html_block.rs` — the `HtmlBlock` trait + `HtmlRegistry` +
-  `HtmlRenderContext`. Independent from `component.rs`.
-- `html_starter.rs` — 16 built-in HTML blocks + `register_html_builtins`.
 - `registry.rs` — `ComponentRegistry` + field-factory primitives.
-- `html.rs` — `Html` buffer + escape helpers.
+- `html.rs` — `Html` buffer + escape helpers (relay/luau-derive
+  chrome composition; no parallel walker any more).
 - `slint_source.rs` — `SlintEmitter` wrapping `SourceBuilder`.
-- `render.rs` — document-level walkers: `render_document_html`
-  (uses `HtmlRegistry`), `render_document_slint_source` (uses
-  `ComponentRegistry`), plus `compile_slint_source` /
-  `instantiate_document` behind `interpreter`.
+- `ui_lower.rs` — shared `LowerCtx` + helpers
+  (`container_with`, `synthetic_container`, `bare_container`,
+  `text_node`, `spacer_node`, `image_node`, `with_semantic`,
+  `uniform_radius`, `parse_color`) every block's `lower_ui` impl
+  composes from.
+- `ui_runtime.rs` — `BuilderDocument` → `prism_ui_runtime::layout::Node`
+  translator + `lower_semantic_html_with_registry` (relay SSR entry).
+- `render.rs` — document-level Slint walker:
+  `render_document_slint_source[_mapped]`, plus
+  `compile_slint_source` / `instantiate_document` behind
+  `interpreter`.
 - `modifier.rs` — `ModifierKind` enum, `Modifier` struct,
   `modifier_schema(kind)`. 6 unit tests.
 - `prefab.rs` — `PrefabDef`, `ExposedSlot`, `PrefabComponent`
@@ -239,8 +255,8 @@ Twenty-five modules in `src/` (excluding `lib.rs`):
   `FacetBinding`, `FacetLayout`, `AggregateOp` (Count/Sum/Min/Max/
   Avg/Join), `ScriptLanguage` (Luau/VisualGraph),
   `FacetVariantRule` (field condition → axis value mapping),
-  `FacetComponent` (Slint), `FacetHtmlBlock` (HTML),
-  `ResolvedFacetData` (Items/Single).
+  `FacetComponent` (Slint emitter — SSR flows through the unified
+  `lower_ui` path), `ResolvedFacetData` (Items/Single).
   Each kind resolves data differently: List uses FacetDataSource,
   Aggregate reduces to a single value via `apply_aggregate`,
   ObjectQuery/Script/Lookup use pre-resolved `resolved_data` from
@@ -282,8 +298,7 @@ Twenty-five modules in `src/` (excluding `lib.rs`):
 - `resource.rs` — `ResourceDef`, `ResourceKind`, `resolve_resource_refs`.
   7 unit tests.
 - `schemas.rs` — shared component field definitions (field specs for
-  common props like body, href, src, level) used by both Slint and
-  HTML render paths.
+  common props like body, href, src, level).
 - `signal.rs` — `SignalDef`, `Connection`, `ActionKind`, `SignalEvent`,
   `DispatchResult`, `dispatch_signal`, `common_signals` (12 universal),
   `with_common_signals` (merge/dedup), `signal_symbols` (codegen),
@@ -323,30 +338,24 @@ Twenty-five modules in `src/` (excluding `lib.rs`):
 
 ## Adding a new block type
 
-Prefer the unified `Block` trait (`src/block.rs`) — one impl, both
-render targets, registered in both registries via `register_block`.
-`Component` and `HtmlBlock` remain as the underlying traits with
-blanket impls so existing custom impls (`PrefabComponent`,
-`FacetComponent`) keep working. Core-engine widgets go through the
-unified `CoreWidgetBlock` (`src/core_widget.rs`) — a single `Block`
-impl wrapping a `WidgetContribution` that registers into both
-registries via the blanket impls.
+Use the unified `Block` trait (`src/block.rs`) — one impl, two
+render methods (`render_slint` for the Studio DSL, `lower_ui` for
+the Taffy/SSR pipeline), one registration call. `Component` keeps
+working as the underlying trait via the blanket impl so existing
+custom impls (`PrefabComponent`, `FacetComponent`) compose
+unchanged. Core-engine widgets go through `CoreWidgetBlock`
+(`src/core_widget.rs`) — a single `Block` impl wrapping a
+`WidgetContribution`.
 
-1. Add a struct implementing `Block` in `src/starter.rs`. The trait
-   carries both `render_slint` (`SlintEmitter`) and `render_html`
-   (`Html`) with sensible defaults — override whichever your block
-   needs.
+1. Add a struct implementing `Block` in `src/starter.rs`. Override
+   only the render methods that need bespoke behaviour — the
+   defaults already produce a sane container.
 2. Implement `schema` using `FieldSpec` builders.
-3. Optionally implement `signals()` and `variants()` if the block
+3. Optionally implement `signals()` / `variants()` if the block
    emits events or has named style/size axes.
-4. Register in `register_builtins` (for `ComponentRegistry`) and
-   `register_html_builtins` (for `HtmlRegistry`). The blanket impls
-   make the same `Arc<MyBlock>` valid for both registries.
-5. Add unit tests for both render paths.
-
-`DividerBlock` and `SpacerBlock` in `src/starter.rs` are the
-reference port. Migration of the remaining 14 builtins is tracked
-in `docs/dev/declarative-refactorings.md`.
+4. Add a row to `register_builtins` (the `reg!("id", BlockType)`
+   macro table) — one line per builtin.
+5. Add unit tests covering both `render_slint` and `lower_ui`.
 
 ## Dependencies
 - `prism-core` — `design_tokens`, `language::codegen::SourceBuilder`,

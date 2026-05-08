@@ -6,9 +6,7 @@
 //! the HTTP server can scale across tokio worker threads without
 //! contention on a single owner.
 
-use prism_builder::{
-    starter::register_builtins, BuilderDocument, ComponentRegistry, HtmlRegistry, Node,
-};
+use prism_builder::{starter::register_builtins, BuilderDocument, ComponentRegistry, Node};
 use prism_core::design_tokens::{DesignTokens, DEFAULT_TOKENS};
 use serde_json::json;
 
@@ -19,7 +17,6 @@ use crate::portal::{Portal, PortalLevel, PortalMeta, PortalStore};
 pub struct AppState {
     pub portals: PortalStore,
     pub registry: ComponentRegistry,
-    pub html_registry: HtmlRegistry,
     pub tokens: DesignTokens,
 }
 
@@ -29,15 +26,12 @@ impl AppState {
     /// upserting portals before the server is useful.
     pub fn new() -> Self {
         let mut registry = ComponentRegistry::new();
-        let mut html_registry = HtmlRegistry::new();
-        register_builtins(&mut registry, &mut html_registry)
-            .expect("builtin components must register");
-        prism_builder::register_core_html_widgets(&mut html_registry)
-            .expect("core html widgets must register");
+        register_builtins(&mut registry).expect("builtin components must register");
+        prism_builder::register_core_widgets(&mut registry)
+            .expect("core widgets must register");
         Self {
             portals: PortalStore::new(),
             registry,
-            html_registry,
             tokens: DEFAULT_TOKENS,
         }
     }
@@ -132,9 +126,8 @@ mod tests {
     #[test]
     fn new_registers_builtins() {
         let state = AppState::new();
-        assert_eq!(state.registry.len(), 17);
         let core_widget_count = prism_builder::collect_all_contributions().len();
-        assert_eq!(state.html_registry.len(), 16 + core_widget_count);
+        assert_eq!(state.registry.len(), 17 + core_widget_count);
         for id in [
             "text",
             "image",
@@ -154,10 +147,6 @@ mod tests {
             "facet",
         ] {
             assert!(state.registry.get(id).is_some(), "missing builtin: {id}");
-            assert!(
-                state.html_registry.get(id).is_some(),
-                "missing html builtin: {id}"
-            );
         }
     }
 

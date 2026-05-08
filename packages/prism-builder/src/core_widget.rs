@@ -4,13 +4,8 @@
 //! Core engines declare droppable widgets via pure-data
 //! [`WidgetContribution`]s with no builder dependency. This module wraps
 //! each contribution in a [`CoreWidgetBlock`] that implements [`Block`];
-//! the blanket impls in `crate::block` derive the matching `Component`
-//! (Slint) and `HtmlBlock` (HTML SSR) impls so a single instance feeds
-//! both registries.
-//!
-//! [`register_core_widgets`] / [`register_core_html_widgets`] collect
-//! all engine contributions and feed them into their respective
-//! registries.
+//! the blanket impl in `crate::block` derives the matching `Component`
+//! impl so a single instance feeds the [`ComponentRegistry`].
 
 use std::sync::Arc;
 
@@ -24,8 +19,6 @@ use crate::asset::AssetSource;
 use crate::block::Block;
 use crate::component::{ComponentId, RenderError, RenderSlintContext};
 use crate::document::Node;
-use crate::html::Html;
-use crate::html_block::{HtmlRegistry, HtmlRenderContext};
 use crate::registry::{ComponentRegistry, FieldSpec, RegistryError};
 use crate::signal::{with_common_signals, SignalDef};
 use crate::slint_source::escape_slint_string;
@@ -35,10 +28,9 @@ use crate::variant::{VariantAxis, VariantOption};
 // ── CoreWidgetBlock ─────────────────────────────────────────────
 
 /// Wraps a [`WidgetContribution`] from a core engine and implements
-/// the unified [`Block`] trait. The blanket impls in `crate::block`
-/// derive matching `Component` and `HtmlBlock` impls so the same
-/// `Arc<CoreWidgetBlock>` registers into both `ComponentRegistry`
-/// and `HtmlRegistry`.
+/// the unified [`Block`] trait. The blanket impl in `crate::block`
+/// derives a matching `Component` impl so the `Arc<CoreWidgetBlock>`
+/// registers into [`ComponentRegistry`] directly.
 pub struct CoreWidgetBlock {
     contribution: WidgetContribution,
 }
@@ -92,16 +84,6 @@ impl Block for CoreWidgetBlock {
         out: &mut SlintEmitter,
     ) -> Result<(), RenderError> {
         render_template_node(ctx, &self.contribution.template.root, props, children, out)
-    }
-
-    fn render_html(
-        &self,
-        ctx: &HtmlRenderContext<'_>,
-        props: &Value,
-        children: &[Node],
-        out: &mut Html,
-    ) -> Result<(), RenderError> {
-        render_template_html(ctx, &self.contribution.template.root, props, children, out)
     }
 }
 
@@ -307,157 +289,6 @@ fn merge_props(instance: &Value, template: &Value) -> Value {
     }
 }
 
-// ── HTML walker ─────────────────────────────────────────────────
-
-/// Walk a [`TemplateNode`] tree and emit HTML.
-pub fn render_template_html(
-    ctx: &HtmlRenderContext<'_>,
-    node: &TemplateNode,
-    props: &Value,
-    children: &[Node],
-    out: &mut Html,
-) -> Result<(), RenderError> {
-    match node {
-        TemplateNode::Container {
-            direction,
-            gap,
-            padding,
-            children: tmpl_children,
-        } => {
-            let dir = match direction {
-                LayoutDirection::Horizontal => "row",
-                LayoutDirection::Vertical => "column",
-            };
-            let mut style = format!("display:flex;flex-direction:{dir}");
-            if let Some(g) = gap {
-                style.push_str(&format!(";gap:{g}px"));
-            }
-            if let Some(p) = padding {
-                style.push_str(&format!(";padding:{p}px"));
-            }
-            out.open_attrs("div", &[("style", style.as_str())]);
-            for child in tmpl_children {
-                render_template_html(ctx, child, props, children, out)?;
-            }
-            out.close("div");
-            Ok(())
-        }
-
-        TemplateNode::Component {
-            component_id,
-            props: template_props,
-        } => {
-            let merged = merge_props(props, template_props);
-            let child_node = Node {
-                id: String::new(),
-                component: component_id.clone(),
-                props: merged,
-                ..Default::default()
-            };
-            ctx.render_child(&child_node, out)
-        }
-
-        TemplateNode::DataBinding {
-            field,
-            component_id,
-            prop_key,
-        } => {
-            let value = props.get(field).cloned().unwrap_or(Value::Null);
-            let binding_props = serde_json::json!({ prop_key: value });
-            let child_node = Node {
-                id: String::new(),
-                component: component_id.clone(),
-                props: binding_props,
-                ..Default::default()
-            };
-            ctx.render_child(&child_node, out)
-        }
-
-        TemplateNode::Repeater {
-            source,
-            item_template,
-            empty_label,
-        } => {
-            let items = props
-                .get(source.as_str())
-                .and_then(|v| v.as_array())
-                .cloned()
-                .unwrap_or_default();
-            if items.is_empty() {
-                let label = empty_label.as_deref().unwrap_or("No items");
-                out.open_attrs("p", &[("style", "font-size:12px;color:#888")]);
-                out.text(label);
-                out.close("p");
-                Ok(())
-            } else {
-                for item in &items {
-                    render_template_html(ctx, item_template, item, children, out)?;
-                }
-                Ok(())
-            }
-        }
-
-        TemplateNode::Conditional {
-            field,
-            child,
-            fallback,
-        } => {
-            let is_truthy = props
-                .get(field)
-                .map(|v| match v {
-                    Value::Bool(b) => *b,
-                    Value::Null => false,
-                    Value::String(s) => !s.is_empty(),
-                    Value::Number(n) => n.as_f64().unwrap_or(0.0) != 0.0,
-                    _ => true,
-                })
-                .unwrap_or(false);
-
-            if is_truthy {
-                render_template_html(ctx, child, props, children, out)
-            } else if let Some(fb) = fallback {
-                render_template_html(ctx, fb, props, children, out)
-            } else {
-                Ok(())
-            }
-        }
-
-        TemplateNode::Image {
-            src_field,
-            alt_field,
-            fit,
-        } => {
-            let src = props
-                .get(src_field)
-                .and_then(AssetSource::from_prop)
-                .map(|s| s.to_html_src())
-                .unwrap_or_default();
-            let alt = alt_field
-                .as_deref()
-                .and_then(|k| props.get(k))
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let fit = fit.as_deref().unwrap_or("cover");
-            let style = format!("object-fit:{fit}");
-            out.void("img", &[("src", &src), ("alt", alt), ("style", &style)]);
-            Ok(())
-        }
-
-        TemplateNode::Link { href_field, child } => {
-            let href = props.get(href_field).and_then(|v| v.as_str()).unwrap_or("");
-            if href.is_empty() {
-                render_template_html(ctx, child, props, children, out)
-            } else {
-                out.open_attrs("a", &[("href", href)]);
-                render_template_html(ctx, child, props, children, out)?;
-                out.close("a");
-                Ok(())
-            }
-        }
-
-        TemplateNode::Children => ctx.render_children(children, out),
-    }
-}
 
 // ── Registration ────────────────────────────────────────────────
 
@@ -496,10 +327,7 @@ pub fn collect_all_contributions() -> Vec<WidgetContribution> {
 }
 
 /// Wrap each core-engine [`WidgetContribution`] in a [`CoreWidgetBlock`]
-/// and register it into the given [`ComponentRegistry`]. The
-/// `Block`→`Component` blanket impl makes a single `Arc<CoreWidgetBlock>`
-/// register cleanly here; [`register_core_html_widgets`] takes the
-/// matching path into `HtmlRegistry`.
+/// and register it into the given [`ComponentRegistry`].
 pub fn register_core_widgets(registry: &mut ComponentRegistry) -> Result<(), RegistryError> {
     for contribution in collect_all_contributions() {
         registry.register(Arc::new(CoreWidgetBlock::new(contribution)))?;
@@ -507,15 +335,6 @@ pub fn register_core_widgets(registry: &mut ComponentRegistry) -> Result<(), Reg
     Ok(())
 }
 
-/// HTML-side counterpart to [`register_core_widgets`] — wraps each
-/// contribution in the same [`CoreWidgetBlock`] type and registers it
-/// into the [`HtmlRegistry`] via the `Block`→`HtmlBlock` blanket impl.
-pub fn register_core_html_widgets(registry: &mut HtmlRegistry) -> Result<(), RegistryError> {
-    for contribution in collect_all_contributions() {
-        registry.register(Arc::new(CoreWidgetBlock::new(contribution)))?;
-    }
-    Ok(())
-}
 
 // ── Tests ───────────────────────────────────────────────────────
 
@@ -628,7 +447,7 @@ mod tests {
         // Build a registry with the text component so the template
         // can resolve `component_id: "text"`.
         let mut registry = ComponentRegistry::new();
-        crate::starter::register_builtins(&mut registry, &mut crate::HtmlRegistry::new()).unwrap();
+        crate::starter::register_builtins(&mut registry).unwrap();
 
         let tokens = prism_core::design_tokens::DesignTokens::default();
         let resources = indexmap::IndexMap::new();
@@ -659,7 +478,7 @@ mod tests {
     #[test]
     fn render_slint_data_binding() {
         let mut registry = ComponentRegistry::new();
-        crate::starter::register_builtins(&mut registry, &mut crate::HtmlRegistry::new()).unwrap();
+        crate::starter::register_builtins(&mut registry).unwrap();
 
         let tokens = prism_core::design_tokens::DesignTokens::default();
         let resources = indexmap::IndexMap::new();
@@ -702,7 +521,7 @@ mod tests {
     #[test]
     fn render_slint_repeater_empty() {
         let mut registry = ComponentRegistry::new();
-        crate::starter::register_builtins(&mut registry, &mut crate::HtmlRegistry::new()).unwrap();
+        crate::starter::register_builtins(&mut registry).unwrap();
 
         let tokens = prism_core::design_tokens::DesignTokens::default();
         let resources = indexmap::IndexMap::new();
@@ -747,7 +566,7 @@ mod tests {
     #[test]
     fn render_slint_repeater_with_data() {
         let mut registry = ComponentRegistry::new();
-        crate::starter::register_builtins(&mut registry, &mut crate::HtmlRegistry::new()).unwrap();
+        crate::starter::register_builtins(&mut registry).unwrap();
 
         let tokens = prism_core::design_tokens::DesignTokens::default();
         let resources = indexmap::IndexMap::new();
@@ -802,7 +621,7 @@ mod tests {
     #[test]
     fn render_slint_conditional_truthy() {
         let mut registry = ComponentRegistry::new();
-        crate::starter::register_builtins(&mut registry, &mut crate::HtmlRegistry::new()).unwrap();
+        crate::starter::register_builtins(&mut registry).unwrap();
 
         let tokens = prism_core::design_tokens::DesignTokens::default();
         let resources = indexmap::IndexMap::new();
@@ -860,7 +679,7 @@ mod tests {
     #[test]
     fn render_slint_conditional_no_fallback() {
         let mut registry = ComponentRegistry::new();
-        crate::starter::register_builtins(&mut registry, &mut crate::HtmlRegistry::new()).unwrap();
+        crate::starter::register_builtins(&mut registry).unwrap();
 
         let tokens = prism_core::design_tokens::DesignTokens::default();
         let resources = indexmap::IndexMap::new();
@@ -904,7 +723,7 @@ mod tests {
     #[test]
     fn default_contribution_renders_empty_layout() {
         let mut registry = ComponentRegistry::new();
-        crate::starter::register_builtins(&mut registry, &mut crate::HtmlRegistry::new()).unwrap();
+        crate::starter::register_builtins(&mut registry).unwrap();
 
         let tokens = prism_core::design_tokens::DesignTokens::default();
         let resources = indexmap::IndexMap::new();
@@ -972,7 +791,7 @@ mod tests {
     #[test]
     fn horizontal_container_emits_horizontal_layout() {
         let mut registry = ComponentRegistry::new();
-        crate::starter::register_builtins(&mut registry, &mut crate::HtmlRegistry::new()).unwrap();
+        crate::starter::register_builtins(&mut registry).unwrap();
 
         let tokens = prism_core::design_tokens::DesignTokens::default();
         let resources = indexmap::IndexMap::new();
@@ -1017,7 +836,7 @@ mod tests {
         use std::collections::HashMap;
 
         let mut registry = ComponentRegistry::new();
-        crate::starter::register_builtins(&mut registry, &mut crate::HtmlRegistry::new()).unwrap();
+        crate::starter::register_builtins(&mut registry).unwrap();
 
         // Register a simple widget with a Repeater that reads "items"
         let test_widget = WidgetContribution {
@@ -1092,7 +911,7 @@ mod tests {
         use crate::document::Node;
 
         let mut registry = ComponentRegistry::new();
-        crate::starter::register_builtins(&mut registry, &mut crate::HtmlRegistry::new()).unwrap();
+        crate::starter::register_builtins(&mut registry).unwrap();
 
         let test_widget = WidgetContribution {
             id: "test-empty-widget".into(),
@@ -1140,56 +959,4 @@ mod tests {
         assert!(source.contains("Nothing here"));
     }
 
-    #[test]
-    fn register_core_html_widgets_populates_registry() {
-        let mut registry = HtmlRegistry::new();
-        register_core_html_widgets(&mut registry).unwrap();
-        let count = collect_all_contributions().len();
-        assert_eq!(registry.len(), count);
-    }
-
-    #[test]
-    fn html_block_renders_container() {
-        let mut comp_registry = crate::ComponentRegistry::new();
-        let mut html_registry = HtmlRegistry::new();
-        crate::starter::register_builtins(&mut comp_registry, &mut html_registry).unwrap();
-
-        let tokens = prism_core::design_tokens::DesignTokens::default();
-        let resources = indexmap::IndexMap::new();
-        let prefabs = indexmap::IndexMap::new();
-        let facets = indexmap::IndexMap::new();
-        let facet_schemas = indexmap::IndexMap::new();
-        let ctx = HtmlRenderContext {
-            tokens: &tokens,
-            registry: &html_registry,
-            resources: &resources,
-            prefabs: &prefabs,
-            facets: &facets,
-            facet_schemas: &facet_schemas,
-            widget_data: std::collections::HashMap::new(),
-        };
-
-        let c = WidgetContribution {
-            id: "html-test".into(),
-            template: WidgetTemplate {
-                root: TemplateNode::Container {
-                    direction: LayoutDirection::Horizontal,
-                    gap: Some(8),
-                    padding: None,
-                    children: vec![TemplateNode::Component {
-                        component_id: "text".into(),
-                        props: json!({"body": "Hello"}),
-                    }],
-                },
-            },
-            ..Default::default()
-        };
-        let block = CoreWidgetBlock::new(c);
-        let mut out = Html::new();
-        block.render_html(&ctx, &json!({}), &[], &mut out).unwrap();
-        let html = out.into_string();
-        assert!(html.contains("display:flex"));
-        assert!(html.contains("flex-direction:row"));
-        assert!(html.contains("gap:8px"));
-    }
 }

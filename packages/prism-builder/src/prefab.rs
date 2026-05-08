@@ -13,8 +13,6 @@ use prism_core::help::HelpEntry;
 
 use crate::component::{Component, ComponentId, RenderError, RenderSlintContext};
 use crate::document::{Node, NodeId};
-use crate::html::Html;
-use crate::html_block::{HtmlBlock, HtmlRenderContext};
 use crate::registry::FieldSpec;
 use crate::signal::{common_signals, SignalDef};
 use crate::slint_source::SlintEmitter;
@@ -91,54 +89,6 @@ impl Component for PrefabComponent {
         props: &Value,
         _children: &[Node],
         out: &mut SlintEmitter,
-    ) -> Result<(), RenderError> {
-        let mut root = self.def.root.clone();
-        for slot in &self.def.exposed {
-            if let Some(val) = props.get(&slot.key) {
-                apply_prop_to_node(&mut root, &slot.target_node, &slot.target_prop, val.clone());
-            }
-        }
-        ctx.render_child(&root, out)
-    }
-}
-
-pub struct PrefabHtmlBlock {
-    pub def: PrefabDef,
-}
-
-impl PrefabHtmlBlock {
-    pub fn new(def: PrefabDef) -> Self {
-        Self { def }
-    }
-}
-
-impl HtmlBlock for PrefabHtmlBlock {
-    fn id(&self) -> &ComponentId {
-        &self.def.id
-    }
-
-    fn schema(&self) -> Vec<FieldSpec> {
-        self.def
-            .exposed
-            .iter()
-            .map(|slot| slot.spec.clone())
-            .collect()
-    }
-
-    fn signals(&self) -> Vec<SignalDef> {
-        common_signals()
-    }
-
-    fn variants(&self) -> Vec<VariantAxis> {
-        self.def.variants.clone()
-    }
-
-    fn render_html(
-        &self,
-        ctx: &HtmlRenderContext<'_>,
-        props: &Value,
-        _children: &[Node],
-        out: &mut Html,
     ) -> Result<(), RenderError> {
         let mut root = self.def.root.clone();
         for slot in &self.def.exposed {

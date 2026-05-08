@@ -4,8 +4,8 @@
 //! `.luau` file. The table carries the same fields as a Rust
 //! [`WidgetContribution`] plus a `render` function. The render function
 //! returns a [`VirtualNode`] tree the host walks through the existing
-//! [`ComponentRegistry`] / [`HtmlRegistry`] — Slint DSL is never produced
-//! directly from Luau (per the plan's "node-tree intermediary" decision).
+//! [`ComponentRegistry`] — Slint DSL is never produced directly from
+//! Luau (per the plan's "node-tree intermediary" decision).
 //!
 //! ## Architecture
 //!
@@ -16,13 +16,12 @@
 //!   shell's [`ComponentRegistry`]. It carries only the contribution
 //!   metadata + the component id needed to look up the render function;
 //!   the `mlua::Lua` state is `!Send`, so it stays in the registry.
-//! - During render, [`LuauComponent::render_slint`] /
-//!   [`render_html`](LuauComponent::render_html) reach for the registry
-//!   through a thread-local because the [`Component`] trait is
-//!   `Send + Sync` and can't carry an `Rc`.
+//! - During render, [`LuauComponent::render_slint`] reaches for the
+//!   registry through a thread-local because the [`Component`] trait
+//!   is `Send + Sync` and can't carry an `Rc`.
 //! - The walker produces a [`VirtualNode`] tree, then recurses through
-//!   the existing component / html registries — so a Luau-defined
-//!   widget composes natively with `Card`, `Container`, etc.
+//!   the existing component registry — so a Luau-defined widget
+//!   composes natively with `Card`, `Container`, etc.
 //!
 //! ## Hot reload
 //!
@@ -49,8 +48,6 @@ use serde_json::Value;
 use crate::block::Block;
 use crate::component::{ComponentId, RenderError, RenderSlintContext};
 use crate::document::Node;
-use crate::html::Html;
-use crate::html_block::HtmlRenderContext;
 use crate::registry::FieldSpec as BuilderFieldSpec;
 use crate::signal::SignalDef;
 use crate::slint_source::SlintEmitter;
@@ -691,21 +688,6 @@ impl Block for LuauComponent {
         props: &Value,
         children: &[Node],
         out: &mut SlintEmitter,
-    ) -> Result<(), RenderError> {
-        let data = Value::Array(Vec::new());
-        let virt = self.render_virtual(props, &data)?;
-        let mut next_id: u64 = 0;
-        let node = virt.into_node(&mut next_id);
-        let _ = children;
-        ctx.render_child(&node, out)
-    }
-
-    fn render_html(
-        &self,
-        ctx: &HtmlRenderContext<'_>,
-        props: &Value,
-        children: &[Node],
-        out: &mut Html,
     ) -> Result<(), RenderError> {
         let data = Value::Array(Vec::new());
         let virt = self.render_virtual(props, &data)?;

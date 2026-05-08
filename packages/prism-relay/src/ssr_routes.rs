@@ -16,7 +16,8 @@
 //! follow-on phase. The spine here is the same one every
 //! follow-on plugs into: an `Arc<AppState>` passed by
 //! `Router::with_state`, handlers that walk the portal store and
-//! call [`prism_builder::render_document_html`] for the body.
+//! call [`prism_builder::ui_runtime::lower_semantic_html_with_registry`]
+//! for the body.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -77,11 +78,6 @@ async fn portal_detail(State(state): State<Arc<AppState>>, Path(id): Path<String
 
     // Unified pipeline: walk the typed `Node` tree through every
     // block's `lower_ui` impl and emit semantic HTML in one pass.
-    // This is the Phase 5 entry point — `render_document_html` and
-    // `HtmlRegistry` go away once the remaining blocks (table, tabs,
-    // accordion, code, divider, button, input) declare their own
-    // `Semantic` hints. Until then, blocks without hints fall back
-    // to per-variant defaults (`<div>` / `<span>` / `<img>`).
     let body = lower_semantic_html_with_registry(&portal.document, &state.registry);
     let page = wrap_portal_page(&portal, &body);
     html_response(page)

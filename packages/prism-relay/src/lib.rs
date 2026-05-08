@@ -8,9 +8,10 @@
 //! and portal templates.
 //!
 //! The SSR portal path walks [`prism_builder::BuilderDocument`] trees
-//! through [`prism_builder::render_document_html`]. The API surface
-//! (~80 endpoints) and WebSocket relay protocol are wired through
-//! [`build_full_router`].
+//! through `prism_builder::ui_runtime::lower_semantic_html_with_registry`,
+//! the unified entry point that drives both the shell renderer and the
+//! relay's semantic-HTML lowering. The API surface (~80 endpoints) and
+//! WebSocket relay protocol are wired through [`build_full_router`].
 
 pub mod config;
 pub mod middleware;

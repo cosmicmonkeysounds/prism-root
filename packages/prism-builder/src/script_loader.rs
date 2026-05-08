@@ -1,6 +1,6 @@
 //! Walks a project's `scripts.widgets` declaration and registers the
 //! resulting Luau widgets into a [`LuauRenderRegistry`] +
-//! [`ComponentRegistry`] + [`HtmlRegistry`].
+//! [`ComponentRegistry`].
 //!
 //! Phase 6d of `docs/dev/luau-integration-plan.md`. Capability scope
 //! enforcement, hot-reload via the VFS watcher, and the `automations`
@@ -14,7 +14,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::block::{register_block, Block};
-use crate::html_block::HtmlRegistry;
 use crate::luau_component::{LuauComponent, LuauRenderRegistry};
 use crate::registry::{ComponentRegistry, RegistryError};
 
@@ -42,8 +41,8 @@ fn resolve_widgets_dir(project_root: &Path, glob: &str) -> Option<PathBuf> {
 
 /// Iterate a directory of `.luau` files, parse each one through
 /// [`LuauRenderRegistry::compile`], and register the resulting
-/// [`LuauComponent`]s into both the Slint and HTML component
-/// registries via [`register_block`].
+/// [`LuauComponent`]s into the [`ComponentRegistry`] via
+/// [`register_block`].
 ///
 /// Files that fail to compile or register are *skipped*; the caller
 /// gets back the list of widget ids that loaded plus a list of
@@ -54,7 +53,6 @@ pub fn load_widgets(
     glob: &str,
     luau: &mut LuauRenderRegistry,
     components: &mut ComponentRegistry,
-    html: &mut HtmlRegistry,
 ) -> Result<LoadReport, ScriptLoadError> {
     let mut report = LoadReport::default();
     let Some(dir) = resolve_widgets_dir(project_root, glob) else {
@@ -89,7 +87,7 @@ pub fn load_widgets(
             // Component registry already contains the id? Skip with a
             // noted failure rather than tear the boot down — the user
             // probably re-declared a built-in.
-            if let Err(err) = register_block(components, html, arc.clone() as Arc<LuauComponent>) {
+            if let Err(err) = register_block(components, arc.clone() as Arc<LuauComponent>) {
                 report.failures.push((path.clone(), err.to_string()));
                 continue;
             }
@@ -146,13 +144,11 @@ mod tests {
 
         let mut luau = LuauRenderRegistry::new();
         let mut components = ComponentRegistry::new();
-        let mut html = HtmlRegistry::new();
         let report = load_widgets(
             &tmp,
             "widgets/*.luau",
             &mut luau,
             &mut components,
-            &mut html,
         )
         .unwrap();
         assert_eq!(report.loaded.len(), 2);
@@ -160,7 +156,7 @@ mod tests {
         assert!(report.loaded.contains(&"calendar-luau".to_string()));
         assert!(report.failures.is_empty());
         assert!(components.get("kanban-luau").is_some());
-        assert!(html.get("calendar-luau").is_some());
+        assert!(components.get("calendar-luau").is_some());
     }
 
     #[test]
@@ -168,9 +164,8 @@ mod tests {
         let tmp = tempdir_for_test();
         let mut luau = LuauRenderRegistry::new();
         let mut components = ComponentRegistry::new();
-        let mut html = HtmlRegistry::new();
         let report =
-            load_widgets(&tmp, "nope/*.luau", &mut luau, &mut components, &mut html).unwrap();
+            load_widgets(&tmp, "nope/*.luau", &mut luau, &mut components).unwrap();
         assert!(report.loaded.is_empty());
         assert!(report.failures.is_empty());
     }
@@ -193,13 +188,11 @@ mod tests {
         );
         let mut luau = LuauRenderRegistry::new();
         let mut components = ComponentRegistry::new();
-        let mut html = HtmlRegistry::new();
         let report = load_widgets(
             &tmp,
             "widgets/*.luau",
             &mut luau,
             &mut components,
-            &mut html,
         )
         .unwrap();
         assert_eq!(report.loaded, vec!["ok-luau".to_string()]);

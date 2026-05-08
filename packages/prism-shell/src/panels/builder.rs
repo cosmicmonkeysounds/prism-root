@@ -103,7 +103,7 @@ mod tests {
     #[test]
     fn builder_source_contains_text_body() {
         let mut reg = ComponentRegistry::new();
-        register_builtins(&mut reg, &mut prism_builder::HtmlRegistry::new()).unwrap();
+        register_builtins(&mut reg).unwrap();
         let doc = sample_doc();
         let src = BuilderPanel::source(&doc, &reg, &DEFAULT_TOKENS);
         assert!(src.contains(r#"text: "Hello";"#));

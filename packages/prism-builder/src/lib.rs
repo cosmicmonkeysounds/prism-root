@@ -1,22 +1,17 @@
-//! `prism-builder` — the Slint-native page builder.
+//! `prism-builder` — the page builder.
 //!
-//! Two independent render paths:
+//! Two render targets, one declaration:
 //!
-//! * **Slint** — [`component::Component`] + [`registry::ComponentRegistry`].
-//!   Components emit `.slint` DSL via [`slint_source::SlintEmitter`]; the
-//!   document walker compiles the result through `slint-interpreter`.
-//! * **HTML SSR** — [`html_block::HtmlBlock`] + [`html_block::HtmlRegistry`].
-//!   Separate trait + registry used by `prism-relay` for Sovereign Portals.
-//!   Decoupled from Slint so the relay's dep graph stays Slint-free.
+//! * **Slint DSL** — [`component::Component::render_slint`] feeds Studio's
+//!   live builder via [`slint_source::SlintEmitter`].
+//! * **Unified Taffy pipeline** — [`component::Component::lower_ui`] emits
+//!   `prism_ui_runtime::layout::Node` trees consumed by the shell renderer
+//!   *and* by the relay's semantic-HTML SSR walker
+//!   ([`ui_runtime::lower_semantic_html_with_registry`]).
 //!
-//! Supporting modules:
-//! * [`document`]     — the serializable document tree.
-//! * [`layout`]       — page grid, per-node layout mode, Taffy computation pass.
-//! * [`html`]         — allocation-light HTML builder for SSR.
-//! * [`slint_source`] — `.slint` DSL emitter.
-//! * [`render`]       — document-level walkers for both backends.
-//! * [`starter`]      — 15 built-in Slint components (14 + card prefab).
-//! * [`html_starter`] — 15 built-in HTML blocks (14 + card prefab).
+//! See `docs/dev/clay-migration-plan.md` for the migration history that
+//! collapsed the parallel `HtmlBlock` / `HtmlRegistry` SSR walker into
+//! the unified pipeline (Phase 5).
 
 pub mod app;
 pub mod asset;
@@ -26,8 +21,6 @@ pub mod core_widget;
 pub mod document;
 pub mod facet;
 pub mod html;
-pub mod html_block;
-pub mod html_starter;
 pub mod layout;
 #[cfg(feature = "luau")]
 pub mod luau_component;
@@ -56,8 +49,7 @@ pub use asset::{collect_vfs_hashes, AssetSource};
 pub use block::{register_block, Block};
 pub use component::{Component, ComponentId, RenderContext, RenderError, RenderSlintContext};
 pub use core_widget::{
-    collect_all_contributions, register_core_html_widgets, register_core_widgets,
-    render_template_html, render_template_node, CoreWidgetBlock,
+    collect_all_contributions, register_core_widgets, render_template_node, CoreWidgetBlock,
 };
 pub use document::{BuilderDocument, Node, NodeId};
 pub use facet::{
@@ -68,22 +60,21 @@ pub use facet::{
     ScriptLanguage, ValidationError, AGGREGATE_OP_TAGS, FACET_KIND_TAGS,
 };
 pub use html::{escape_attr, escape_text, Html};
-pub use html_block::{HtmlBlock, HtmlRegistry, HtmlRenderContext};
 pub use layout::{
     compute_layout, compute_track_sizes, path_from_string, path_to_string, AbsoluteProps, CellEdge,
     ComputedLayout, EdgeHandle, FlatCell, FlowProps, GridCell, GridEditError, GridPlacement,
     LayoutMode, NodeLayout, PageLayout, PageSize, SplitDirection, TrackSize,
 };
 pub use modifier::{Modifier, ModifierKind};
-pub use prefab::{ExposedSlot, PrefabComponent, PrefabDef, PrefabHtmlBlock};
+pub use prefab::{ExposedSlot, PrefabComponent, PrefabDef};
 pub use project::{ProjectFile, FILE_EXTENSION, FORMAT_VERSION};
 pub use registry::{
     ComponentRegistry, FieldKind, FieldSpec, FieldValue, FileFieldConfig, NumericBounds,
     RegistryError, SelectOption,
 };
 pub use render::{
-    build_source_map_from_markers, render_document_html, render_document_html_with_data,
-    render_document_slint_preview, render_document_slint_preview_with_assets,
+    build_source_map_from_markers, render_document_slint_preview,
+    render_document_slint_preview_with_assets,
     render_document_slint_preview_with_assets_and_data, render_document_slint_source,
     render_document_slint_source_mapped,
 };

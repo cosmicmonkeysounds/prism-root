@@ -214,7 +214,7 @@ mod tests {
     #[test]
     fn round_trip_preserves_app_metadata() {
         let mut reg = crate::registry::ComponentRegistry::new();
-        register_builtins(&mut reg, &mut crate::HtmlRegistry::new()).unwrap();
+        register_builtins(&mut reg).unwrap();
         let apps = vec![test_app()];
         let file = ProjectFile::from_apps(&apps, &reg, &DEFAULT_TOKENS);
         let json = file.to_json().unwrap();
@@ -229,7 +229,7 @@ mod tests {
     #[test]
     fn source_is_generated_when_empty() {
         let mut reg = crate::registry::ComponentRegistry::new();
-        register_builtins(&mut reg, &mut crate::HtmlRegistry::new()).unwrap();
+        register_builtins(&mut reg).unwrap();
         let apps = vec![test_app()];
         let file = ProjectFile::from_apps(&apps, &reg, &DEFAULT_TOKENS);
         assert!(!file.apps[0].pages[0].source.is_empty());
@@ -238,7 +238,7 @@ mod tests {
     #[test]
     fn into_apps_reconstructs_sidecar_data() {
         let mut reg = crate::registry::ComponentRegistry::new();
-        register_builtins(&mut reg, &mut crate::HtmlRegistry::new()).unwrap();
+        register_builtins(&mut reg).unwrap();
 
         let mut app = test_app();
         app.pages[0]
@@ -261,7 +261,7 @@ mod tests {
     #[test]
     fn version_field_is_set() {
         let mut reg = crate::registry::ComponentRegistry::new();
-        register_builtins(&mut reg, &mut crate::HtmlRegistry::new()).unwrap();
+        register_builtins(&mut reg).unwrap();
         let file = ProjectFile::from_apps(&[], &reg, &DEFAULT_TOKENS);
         assert_eq!(file.version, FORMAT_VERSION);
     }
@@ -269,7 +269,7 @@ mod tests {
     #[test]
     fn empty_project_round_trips() {
         let mut reg = crate::registry::ComponentRegistry::new();
-        register_builtins(&mut reg, &mut crate::HtmlRegistry::new()).unwrap();
+        register_builtins(&mut reg).unwrap();
         let file = ProjectFile::from_apps(&[], &reg, &DEFAULT_TOKENS);
         let json = file.to_json().unwrap();
         let restored = ProjectFile::from_json(&json).unwrap();

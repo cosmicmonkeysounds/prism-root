@@ -126,7 +126,6 @@ mod tests {
     use super::*;
     use crate::block::register_block;
     use crate::document::Node;
-    use crate::html_block::HtmlRegistry;
     use crate::layout::{FlexDirection, FlowDisplay, FlowProps, LayoutMode};
     use crate::starter::{
         AccordionBlock, ButtonBlock, CodeBlock, ColumnsBlock, ContainerBlock, DividerBlock,
@@ -149,16 +148,9 @@ mod tests {
 
     fn registry_with(text_id: &str, spacer_id: &str) -> ComponentRegistry {
         let mut comps = ComponentRegistry::new();
-        let mut html = HtmlRegistry::new();
+        register_block(&mut comps, Arc::new(TextBlock { id: text_id.into() })).unwrap();
         register_block(
             &mut comps,
-            &mut html,
-            Arc::new(TextBlock { id: text_id.into() }),
-        )
-        .unwrap();
-        register_block(
-            &mut comps,
-            &mut html,
             Arc::new(SpacerBlock {
                 id: spacer_id.into(),
             }),
@@ -173,12 +165,11 @@ mod tests {
     /// the table below — no per-block registration boilerplate.
     fn full_registry() -> ComponentRegistry {
         let mut comps = ComponentRegistry::new();
-        let mut html = HtmlRegistry::new();
         // Macro keeps registration declarative — each row is just
         // `(component-id, BlockType)`. Adding a block is one line.
         macro_rules! register_all {
             ($($id:literal => $ty:ident),* $(,)?) => {
-                $(register_block(&mut comps, &mut html, Arc::new($ty { id: $id.into() })).unwrap();)*
+                $(register_block(&mut comps, Arc::new($ty { id: $id.into() })).unwrap();)*
             };
         }
         register_all! {

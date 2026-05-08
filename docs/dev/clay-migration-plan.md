@@ -994,6 +994,41 @@ CLI surface unchanged.
   migrate built-in blocks one at a time so their layout vocabulary
   flows through `ui_runtime` instead of two parallel walkers.
 
+- **Update 2026-05-08 (Phase-5 punch list — parallel HTML pipeline
+  deleted):** the SSR-only half of `prism-builder` is gone in one
+  mechanical pass, since every relay-facing block already declared
+  its semantic shape via `lower_ui` and the relay had already cut
+  over to `lower_semantic_html_with_registry`. Net code removed:
+  - **Files:** `html_block.rs`, `html_starter.rs` deleted outright.
+  - **Trait surface:** `HtmlBlock`, `HtmlRegistry`, `HtmlRenderContext`,
+    `Block::render_html`, the `Block`→`HtmlBlock` blanket impl,
+    `PrefabHtmlBlock`, `FacetHtmlBlock`, `LuauComponent::render_html`,
+    `Modifier::wrap_html`, `CoreWidgetBlock::render_html`,
+    `render_template_html`, `register_html_builtins`,
+    `register_core_html_widgets`, `render_document_html` /
+    `render_document_html_with_data`. The `prism-luau-derive`
+    `#[derive(PrismBlock)]` macro no longer emits a `render_html`
+    arm — one render method per derive, end-to-end.
+  - **API simplification (smart-pattern reduction):**
+    `register_block(reg, html_reg, block)` collapsed to
+    `register_block(reg, block)`; `register_builtins(reg, html_reg)`
+    collapsed to `register_builtins(reg)`. The `starter::register_builtins`
+    body is now a `reg!("id", BlockType)` macro table — adding a
+    new builtin is one row, no per-call boilerplate. ~30 callsites
+    across `prism-shell`, `prism-relay`, `prism-cli`, and
+    `prism-builder` lost their second argument; `prism-relay::AppState`
+    lost its `html_registry` field entirely.
+  - **What stays:** `html.rs` (the `Html` buffer + `escape_attr` /
+    `escape_text`) is preserved — `prism-relay` and the
+    `prism-luau-derive` macro use these helpers for chrome
+    composition that has nothing to do with the deleted walker.
+  - **Verification:** `cargo test --workspace` (default features)
+    and `cargo check --all-targets --features prism-builder/luau`
+    both green; clippy `-D warnings` clean. Phase-5 punch list is
+    now empty for the SSR half; the Slint half (`render_slint`,
+    `SlintEmitter`, `slint_source.rs`, the `interpreter` feature
+    chain) stays load-bearing until the shell port lands.
+
 ### Phase 4 — Shell port
 - Translate `ui/app.slint` (~2500 lines, 7 components) into
   `ui/app.prism-ui`. Behind a `prism-ui` cargo feature on `prism-shell`
