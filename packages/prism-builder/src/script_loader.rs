@@ -144,13 +144,7 @@ mod tests {
 
         let mut luau = LuauRenderRegistry::new();
         let mut components = ComponentRegistry::new();
-        let report = load_widgets(
-            &tmp,
-            "widgets/*.luau",
-            &mut luau,
-            &mut components,
-        )
-        .unwrap();
+        let report = load_widgets(&tmp, "widgets/*.luau", &mut luau, &mut components).unwrap();
         assert_eq!(report.loaded.len(), 2);
         assert!(report.loaded.contains(&"kanban-luau".to_string()));
         assert!(report.loaded.contains(&"calendar-luau".to_string()));
@@ -164,8 +158,7 @@ mod tests {
         let tmp = tempdir_for_test();
         let mut luau = LuauRenderRegistry::new();
         let mut components = ComponentRegistry::new();
-        let report =
-            load_widgets(&tmp, "nope/*.luau", &mut luau, &mut components).unwrap();
+        let report = load_widgets(&tmp, "nope/*.luau", &mut luau, &mut components).unwrap();
         assert!(report.loaded.is_empty());
         assert!(report.failures.is_empty());
     }
@@ -188,13 +181,7 @@ mod tests {
         );
         let mut luau = LuauRenderRegistry::new();
         let mut components = ComponentRegistry::new();
-        let report = load_widgets(
-            &tmp,
-            "widgets/*.luau",
-            &mut luau,
-            &mut components,
-        )
-        .unwrap();
+        let report = load_widgets(&tmp, "widgets/*.luau", &mut luau, &mut components).unwrap();
         assert_eq!(report.loaded, vec!["ok-luau".to_string()]);
         assert_eq!(report.failures.len(), 1);
         assert!(report.failures[0].0.ends_with("broken.luau"));

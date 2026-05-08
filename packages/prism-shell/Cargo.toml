@@ -52,6 +52,7 @@ e2e = ["dep:image", "dep:enigo"]
 prism-core = { path = "../prism-core" }
 prism-builder = { path = "../prism-builder", features = ["interpreter"] }
 prism-dock = { path = "../prism-dock" }
+prism-ui-runtime = { path = "../prism-ui-runtime", default-features = false, features = ["html"] }
 prism-luau-derive = { workspace = true }
 
 # Daemon is a native-only dep — the browser build talks to a remote

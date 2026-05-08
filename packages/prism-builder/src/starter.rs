@@ -156,7 +156,8 @@ impl Block for TextBlock {
             emit_text_style(out, &style);
             Ok(())
         })
-    }    fn lower_ui(
+    }
+    fn lower_ui(
         &self,
         _ctx: &crate::ui_lower::LowerCtx<'_>,
         node: &Node,
@@ -346,7 +347,8 @@ impl Block for ImageBlock {
             hint = hint.with_attr("alt", alt);
         }
         crate::ui_lower::with_semantic(img, hint)
-    }}
+    }
+}
 
 /// Semantic `<section>` wrapper with children rendered inside.
 /// Useful as a layout block in the portal body.
@@ -459,7 +461,8 @@ impl Block for ContainerBlock {
             container,
             prism_ui_runtime::layout::Semantic::tag("section"),
         )
-    }}
+    }
+}
 
 /// HTML `<form>` wrapper. Renders children inside a `<form method="post">`.
 /// L3 portals use this for interactive submissions.
@@ -525,7 +528,8 @@ impl Block for FormBlock {
             hint = hint.with_attr("action", p.action.as_str());
         }
         crate::ui_lower::with_semantic(container, hint)
-    }}
+    }
+}
 
 /// HTML `<input>`. Renders as a void element with name, type, and placeholder.
 pub struct InputBlock {
@@ -674,7 +678,8 @@ impl Block for InputBlock {
             }
             props.semantic = outer_semantic;
         })
-    }}
+    }
+}
 
 /// Built-in card prefab: Container + title text + body text.
 pub fn card_prefab_def() -> PrefabDef {
@@ -887,7 +892,8 @@ impl Block for CodeBlock {
             }
             props.semantic = prism_ui_runtime::layout::Semantic::tag("pre");
         })
-    }}
+    }
+}
 
 /// Horizontal rule / visual separator.
 /// Horizontal separator line between content sections.
@@ -927,7 +933,8 @@ impl Block for DividerBlock {
             out.line("background: #3b4252;");
             Ok(())
         })
-    }    fn lower_ui(
+    }
+    fn lower_ui(
         &self,
         ctx: &crate::ui_lower::LowerCtx<'_>,
         node: &Node,
@@ -981,7 +988,8 @@ impl Block for SpacerBlock {
             out.prop_px("height", p.height as f64);
             Ok(())
         })
-    }    fn lower_ui(
+    }
+    fn lower_ui(
         &self,
         _ctx: &crate::ui_lower::LowerCtx<'_>,
         node: &Node,
@@ -1052,7 +1060,8 @@ impl Block for ColumnsBlock {
                 props.gap = p.gap as f32;
             }
         })
-    }}
+    }
+}
 
 /// Ordered or unordered list wrapper. Each child becomes a list item.
 pub struct ListBlock {
@@ -1124,7 +1133,8 @@ impl Block for ListBlock {
         // hint or the walker grows variant-specific child rules).
         let tag = if p.ordered { "ol" } else { "ul" };
         crate::ui_lower::with_semantic(container, prism_ui_runtime::layout::Semantic::tag(tag))
-    }}
+    }
+}
 
 /// Simple data table with header columns and optional caption.
 pub struct TableBlock {
@@ -1281,7 +1291,8 @@ impl Block for TableBlock {
             }
             props.semantic = prism_ui_runtime::layout::Semantic::tag("table");
         })
-    }}
+    }
+}
 
 /// Tabbed content container. Children map to tab panels; the `labels`
 /// prop names each panel.
@@ -1421,7 +1432,8 @@ impl Block for TabsBlock {
             },
         );
         ctx.synthetic_container(node, style, vec![strip, panel], |_| {})
-    }}
+    }
+}
 
 /// Collapsible section with a title. Renders as `<details>/<summary>` in HTML.
 pub struct AccordionBlock {
@@ -1547,7 +1559,8 @@ impl Block for AccordionBlock {
             }
             props.semantic = hint;
         })
-    }}
+    }
+}
 
 /// HTML `<button>`. Renders as `<button type="submit">text</button>`.
 pub struct ButtonBlock {
@@ -1662,7 +1675,8 @@ impl Block for ButtonBlock {
                 s
             };
         })
-    }}
+    }
+}
 
 /// Interactive node-and-edge graph visualization. Renders nodes as
 /// positioned circles on a canvas with label text.

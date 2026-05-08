@@ -345,7 +345,6 @@ impl Modifier {
             body(out)
         })
     }
-
 }
 
 fn prop_bool_or(props: &Value, key: &str, default: bool) -> bool {
@@ -412,7 +411,6 @@ mod tests {
             .unwrap();
         out.build()
     }
-
 
     #[test]
     fn slint_scroll_overflow_emits_flickable() {
@@ -502,5 +500,4 @@ mod tests {
         assert!(s.contains("accessible-label: \"Close\""));
         assert!(s.contains("opacity: 0"));
     }
-
 }

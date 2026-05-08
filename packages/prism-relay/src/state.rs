@@ -27,8 +27,7 @@ impl AppState {
     pub fn new() -> Self {
         let mut registry = ComponentRegistry::new();
         register_builtins(&mut registry).expect("builtin components must register");
-        prism_builder::register_core_widgets(&mut registry)
-            .expect("core widgets must register");
+        prism_builder::register_core_widgets(&mut registry).expect("core widgets must register");
         Self {
             portals: PortalStore::new(),
             registry,

@@ -1030,12 +1030,119 @@ CLI surface unchanged.
     chain) stays load-bearing until the shell port lands.
 
 ### Phase 4 — Shell port
-- Translate `ui/app.slint` (~2500 lines, 7 components) into
+- Translate `ui/app.slint` (now ~4400 lines, 13 components) into
   `ui/app.prism-ui`. Behind a `prism-ui` cargo feature on `prism-shell`
   for a parallel-build period; native bin and wasm bin both build both
   variants until parity is reached.
 - Re-target visual harness + `BuiltinScene` + `TestScript` /
   `E2eDriver` onto the new runtime.
+- **Update 2026-05-08 (sibling registry + first shell primitive):**
+  the shell's bespoke chrome components (`IconButton`,
+  `ToolbarSeparator`, `MenuBarRow`, `NavButton`, `SectionHeader`,
+  `DragNumberField`, `TransformEditor`, `FieldEditor`, `InspectorRow`,
+  `Toast`, `DocsContent`, `AppCard`, `AppWindow`) flow through the
+  *same* `Block::lower_ui` path the 13 content builtins use. New
+  module `prism-shell/src/components/` holds:
+  - `ShellComponentRegistry` — newtype around
+    `prism_builder::ComponentRegistry` so shell primitives stay out
+    of the user's document component palette while reusing the
+    cascade machinery, the `Block`/`Component` blanket impl, the
+    `LowerCtx` helpers (`synthetic_container`, `image_node`,
+    `uniform_radius`, `with_semantic`), and the
+    `lower_semantic_html_with_registry` SSR walker. Adding a shell
+    primitive is one row in `register_shell_builtins`'s `reg!` table
+    — the same shape as `prism_builder::starter::register_builtins`.
+    `as_component_registry()` exposes the inner `&ComponentRegistry`
+    so existing relay/lowering signatures plug in unchanged.
+  - `IconButton` — first primitive landed. `shell.icon-button`,
+    schema = `icon`/`enabled`/`tooltip-text`/`help-id`, signals add
+    `hover-start { help_id, x, y }` + `hover-end` to the 12 universal
+    common signals. `lower_ui` produces a 28×28 `Container` with
+    6px radius and a centred 16×16 `Image` glyph; SSR semantic is
+    `<button>` with `aria-label` derived from `tooltip-text` and
+    `disabled` propagated from `enabled=false`. Resting visual
+    state only — hover/pressed visual transitions land alongside
+    the runtime-level state vocabulary (see runtime gaps below).
+    8 unit tests cover lowering shape, ARIA propagation, disabled
+    attrs, schema, and registry registration.
+- **Update 2026-05-08 (two more chrome primitives — gap-free):**
+  `ToolbarSeparator` and `SectionHeader` landed via the same
+  `Block::lower_ui` recipe. Neither needed a runtime extension:
+  - **`shell.toolbar-separator`** — 1×20 fixed-size container with a
+    translucent foreground background. Empty schema, no signals.
+    SSR semantic is `role="separator"` + `aria-orientation="vertical"`
+    (the WAI-ARIA pattern for toolbar dividers — no native HTML
+    element exists for this shape). 1 unit test.
+  - **`shell.section-header`** — 36px collapsible-section header
+    with a *prop-conditional* chevron glyph (`chevron-left` when
+    collapsed, `chevron-down` when expanded). The conditional
+    resolves at lower-time, so no runtime state vocabulary is
+    needed; this is the canonical pattern for prop-driven visuals
+    until the runtime grows hover/pressed states. Synthesises a
+    column with two children — a row (chevron + label, plus a
+    "(default)" badge text node when collapsed) and a 1px hairline.
+    SSR semantic is `<header>` with `data-section` + (when
+    collapsed) `data-collapsed="true"` attrs so CSS / scripted
+    hosts can target sections without the runtime knowing about
+    them. Signals: `section-toggled { section_id }` + 12 universals.
+    5 unit tests.
+  - **Pattern reinforced — zero duplication:** both primitives reuse
+    `synthetic_container` / `bare_container` / `image_node` /
+    `text_node` / `parse_color` from `ui_lower`. Neither hand-rolls
+    a `UiNode::Container { … }` literal. Adding a primitive that
+    doesn't need a runtime extension is mechanically a 30-90 line
+    file plus one row in the `reg!` table.
+  - **Phase-4 chrome scoreboard:** 3 of 13 primitives migrated
+    (`shell.icon-button`, `shell.toolbar-separator`,
+    `shell.section-header`). Remaining 10 group by their blocker:
+    - **Hover-state-blocked:** `NavButton`, IconButton's hover bg,
+      MenuBarRow items, Tab pills.
+    - **Slot-blocked:** `AppWindow`, `MenuBarRow` (parent injects
+      children).
+    - **Control-flow-blocked:** any primitive with a `<for>` loop —
+      MenuBarRow, TabBar.
+    - **TextInput-blocked:** `DragNumberField`, `FieldEditor`,
+      `InspectorRow` editable fields.
+    - **Overlay-blocked:** `Toast`, command-palette, help tooltip.
+    Hover-state vocabulary unblocks the largest cluster, so it's
+    the next runtime extension to land.
+- **Phase-4 runtime gaps to fill** (each one lands just-in-time as
+  the next shell primitive demands it; the IconButton lowering above
+  flagged the first):
+  1. **Hover/pressed state vocabulary** on `Node` — needed for the
+     *visual* half of every interactive primitive (IconButton bg
+     change on hover, NavButton accent on selection, Tab pill on
+     active). Touch input already flows through
+     `event::EventHandler` → `prism_builder::signal::dispatch_signal`,
+     so the *behavioural* half is solved; the gap is purely a
+     declarative surface for "this Container's background switches
+     on the `hovered` signal". Smart-pattern target: a `States`
+     vocabulary on `ContainerProps` / `TextProps` whose lowering
+     declares the swap, instead of authors writing imperative
+     handlers.
+  2. **`<slot/>` semantics** for component composition — required
+     by every wrapper-shaped primitive (MenuBarRow with embedded
+     tabs, SectionHeader with body, AppCard with content). Reuse
+     `prism_builder::prefab::ExposedSlot` if shapes match, else
+     extend the DSL grammar with one new element `<slot/>` whose
+     children come from the parent invocation.
+  3. **`Image::colorize`** — icon tinting (palette foreground +
+     transparency variants). Add `tint: Option<Color>` to
+     `Node::Image`; the femtovg backend already pre-multiplies mask
+     glyphs with a colour, the same code resolves an image's tint.
+  4. **`<if>` / `<else-if>` / `<else>` / `<for>` lowering** — the
+     namespace exists in the AST (`AttributeNamespace::ControlFlow`),
+     `interpret::lower_document` doesn't act on it yet. Land alongside
+     the first primitive that needs it (likely TabBar's pill loop
+     or MenuBarRow's menu list).
+  5. **`TextInput`** primitive on `Node` — required by
+     `DragNumberField`, `FieldEditor`, search box. cosmic-text
+     already owns text editing; the runtime gap is exposing it as a
+     layout-leaf with focus + IME flow.
+  6. **Overlay / popup z-layer** — required by Toast, command
+     palette, help tooltip, docs panel. Probably a top-level
+     `Surface::overlays: Vec<UiNode>` with absolute-positioned
+     anchors, rather than a per-Node z-index.
 
 ### Phase 5 — Cutover
 - Delete `slint`, `slint-build`, `slint-interpreter`, `.slint` files,
@@ -1133,3 +1240,53 @@ must be able to:
   the DSL parser, so the DSL and Luau front-ends arrive together.
 - Phase 3: Existing `LuauComponent` impls in `prism-builder` migrate
   to the new surface during component-model unification.
+
+## 12. Shell components via the `Block` registry
+
+**Strategy locked 2026-05-08.** Every bespoke shell-chrome component
+(IconButton, ToolbarSeparator, MenuBarRow, NavButton, …) is a
+`prism_builder::Block` impl registered into a sibling
+`ShellComponentRegistry`. The registry is a newtype around
+`ComponentRegistry`, so the *trait surface, lowering helpers, cascade,
+and SSR walker stay singular*; the only thing the newtype buys is a
+separate namespace so document palettes do not surface chrome.
+
+**Why this beats a parallel walker / parallel trait:**
+
+- **One `lower_ui` per primitive.** Native rendering and SSR both
+  consume the same lowering — a shell component declared this way
+  is a first-class citizen of the unified Taffy/SSR pipeline, not a
+  shadow vocabulary the renderer only half understands.
+- **Helpers live exactly once.** Cascade resolution, `synthetic_container`,
+  `image_node`, `uniform_radius`, `with_semantic`, colour parsing —
+  every shell primitive uses the same `LowerCtx` helpers the 13
+  content builtins do. Adding a primitive is 5–15 lines.
+- **Authoring stays declarative.** A shell component is referenced
+  from `.prism-ui` source by tag name (`<shell.icon-button …/>`),
+  resolved through `lower_semantic_html_with_registry` /
+  `render_commands_with_registry` exactly like a content block. No
+  per-primitive walker arm, no string-dispatch branch.
+- **Smart pattern, not a new abstraction.** The newtype delegates to
+  `ComponentRegistry`, exposes `as_component_registry()`, and
+  registers via the same `register_block` flow. Zero new
+  infrastructure; the type distinction alone is what we wanted.
+
+**Recipe** for adding a shell primitive (mirrors the 4-step recipe
+in `prism-builder/CLAUDE.md`):
+
+1. Implement `Block` with a `lower_ui` override (and `render_slint`
+   during the parallel-build period). Reuse `LowerCtx` helpers; do
+   *not* hand-roll `UiNode::Container { … }` literals.
+2. Add a row to `register_shell_builtins`'s `reg!(…)` macro table
+   in `prism-shell/src/components/registry.rs`.
+3. Reference the component from `.prism-ui` source by its registered
+   id (`shell.<name>`). Resolution flows through the standard
+   lowering pipeline — no shell-specific dispatch.
+4. Cover lowering shape, ARIA / semantic propagation, schema, and
+   registry insertion in unit tests next to the impl.
+
+**Status.** `IconButton` landed 2026-05-08 as the template. The
+remaining 12 chrome components migrate one-at-a-time as their
+dependent runtime primitives (hover state, slot, image tint,
+control-flow lowering, text input, popup overlay) land — see the
+Phase-4 runtime-gap punch list under §8.

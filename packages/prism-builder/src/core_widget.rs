@@ -289,7 +289,6 @@ fn merge_props(instance: &Value, template: &Value) -> Value {
     }
 }
 
-
 // ── Registration ────────────────────────────────────────────────
 
 /// Concatenates `widget_contributions()` from every listed provider
@@ -334,7 +333,6 @@ pub fn register_core_widgets(registry: &mut ComponentRegistry) -> Result<(), Reg
     }
     Ok(())
 }
-
 
 // ── Tests ───────────────────────────────────────────────────────
 
@@ -958,5 +956,4 @@ mod tests {
         let source = out.build();
         assert!(source.contains("Nothing here"));
     }
-
 }
