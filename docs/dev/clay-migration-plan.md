@@ -2362,6 +2362,146 @@ No new test-infrastructure work is anticipated; the harness from
 | 2026-05-09 | §16 close-out: host-side bridge `prism_shell::panel_props` lands — typed `panels::*` data → JSON props for every shell block. 12 bridge fns (`inspector_rows`, `signals_panel_props`, `nav_page_row_entries`, `nav_graph_props`, `schema_designer_props`, `schema_list_entries`, `properties_panel_props`, `command_palette_props`, `toast_stack_entries`, `dock_tab_bar_props`, `workflow_page_bar_props`, `menu_bar_row_props`, `app_window_props`). | The "host-side wiring" half of the §16 close-out. Each function is a pure mapping from the existing typed `panels::*` data structures (`SignalsPanel::connection_rows`, `NavigationPanel::page_rows` / `graph_nodes` / `graph_edges`, `SchemaDesignerPanel::schema_list_rows`, `PropertySection`, `CommandRegistry::filter`, `ToastData`, `DockWorkspace::pages` / `active_dock`) into the JSON shape the corresponding shell block reads — single seam, zero new abstractions, pure data. The two end-to-end tests (`app_window_props_lower_through_registry_resolver`, `workflow_page_bar_props_lower_through_registry_resolver`) prove the bridge → registry → block-lowering pipeline by feeding the bridge output into a real registered block and asserting the resulting `UiNode` shape — the supervisor wire-up that Phase 5 needs is now mechanical. Verification: prism-shell 514 lib tests (17 new in `panel_props::tests`; up from 497); workspace `cargo check --workspace --lib` green; `cargo clippy --lib --all-targets -D warnings` clean. The remaining §16 close-out work is now purely the Phase 5 Slint tear-out — every block has a JSON-prop bridge from a typed source, and the resolver dispatches them end-to-end. |
 | 2026-05-09 | §16 panel-content batch lands the final 14 shell blocks: `shell.signal-connection-row`, `shell.signals-panel`, `shell.schema-row`, `shell.schema-designer`, `shell.nav-page-row`, `shell.nav-page-list`, `shell.nav-graph`, `shell.code-editor`, `shell.gizmo-move`, `shell.gizmo-rotate`, `shell.gizmo-scale`, `shell.resize-handle`, `shell.builder-canvas`, `shell.component-picker`. Registry now at 47 shell primitives; canonical `app.prism-ui` skeleton swaps the welcome `<text>` for `<shell.builder-canvas id="builder"/>` and adds `<shell.component-picker id="picker"/>` to the overlay siblings. | The two-bucket discipline §16 locked held a third time, with zero new runtime extensions: every panel-content target is a leaf (`signals-panel` and `schema-designer` are thin column hosts that dispatch their per-row props through `lower_as` exactly like `inspector-tree` / `nav-page-list`); the builder-canvas leaf composes its overlay layer from `lower_as("shell.resize-handle", …)` × 8 plus a `tool`-driven dispatch into one of `shell.gizmo-{move,rotate,scale}`, with a runtime fallback when no resolver is wired up. Every new block exposes its host-driven state purely through typed props or JSON arrays — `selection-rect`, `grid-cells`, `pages`, `edges`, `categories`, `lines` — so the host can drive them from `BuilderDocument` / `DockWorkspace` / `panels::*` snapshots without bespoke widget plumbing. Verification: prism-shell 497 lib tests (36 new across 14 files; up from 461); workspace `cargo clippy --workspace --lib -D warnings` clean. **Phase-4 scoreboard:** 26/26 panel-table targets now ✅ — every legacy `app.slint` region has a registered shell tag. Remaining work for the §17 close-out is purely host-side wiring (binding `panels::signals` / `panels::navigation` / schema editor / `BuilderDocument` snapshots into the JSON props each block reads) and the planned Slint tear-out (Phase 5). |
 
+## 19. Slot-typed `AppState` — three-layer no-duplication contract for the port wave
+
+**Problem the section addresses.** §17 left two surfaces that grow as
+panels port back in: the 47-row bindings table in
+`prism_shell::props` and the typed-shape helpers historically in
+`panel_props.rs`. Without a standing discipline, three failure modes
+compound across N panel ports:
+
+1. **JSON inlined inside closures** — a port's binding does
+   `json!({ "status": ctx.state.??? })` directly, bypassing the
+   typed-shape layer. The wire format is now hidden inside the
+   closure, so the second binding that needs the same shape
+   reinvents it.
+2. **Same shape duplicated across two bindings** — `status` is read
+   by both `shell.status-bar` and `shell.app-window`. If each
+   closure builds its own JSON, a future status field is a two-edit
+   change with the second edit easy to forget.
+3. **Cross-slot reach from inside a closure** — the closure for
+   `shell.foo` reads from selection, workspace, *and* overlay state,
+   so its data dependencies are invisible at the registration site.
+   The slot it "belongs to" is unknowable from the bindings table.
+
+All three are duplications of *intent*, not lines of code — the
+kind that compounds and corrodes a registration table over a
+multi-panel port wave.
+
+**The three layers.**
+
+```text
+slot owns data         — pub struct ChromeSlot { app_name, status }
+slot owns shape        — impl ChromeSlot { fn status_bar_props -> Value }
+table owns dispatch    — bind_slot!(reg, "shell.status-bar", |s: &AppState| s.chrome.status_bar_props())
+```
+
+Layer 1 (`AppState` slots) is *only* state. Layer 2 (slot methods) is
+*only* state-to-JSON. Layer 3 (bindings table) is *only* id-to-slot
+dispatch. Each layer composes one above by name only, never by
+inlining the layer below.
+
+**The macro.** `bind_slot!` is one-line sugar. It expands to the
+same `bind!` already shipped:
+
+```rust
+bind_slot!(reg, "shell.status-bar", |s: &AppState| s.chrome.status_bar_props());
+// expands to:
+bind!(reg, "shell.status-bar", |ctx: &PropCtx| {
+    PropEmission::from_props((|s: &AppState| s.chrome.status_bar_props())(ctx.state))
+});
+```
+
+It does not introduce a new abstraction. It enforces a *shape*: every
+row in the bindings table reads as one slot method call. A row that
+needs to compose two slots is an authoring smell — the right fix is
+to add a method on the slot that owns the primary datum, taking the
+secondary datum as an argument from the closure.
+
+**Adding a panel.** Two edits, in order:
+
+1. Define the slot. New file `state/<panel>.rs` (or new field on an
+   existing slot). Plain typed Rust: `pub struct ProjectSlot { pub
+   path: Option<PathBuf>, pub dirty: bool, … }`. `Default` returns
+   the zero-data shape.
+2. Add the JSON method(s). `impl ProjectSlot { pub fn
+   project_indicator_props(&self) -> Value { … } }`. One method per
+   block id that reads from the slot. Method names mirror block ids
+   — `app_window_props` ↔ `shell.app-window` — so a grep from one
+   side finds the other.
+3. Promote the row(s) out of the stub-loop in `register_builtin_bindings`:
+
+   ```rust
+   bind_slot!(reg, "shell.app-window",  |s: &AppState| s.chrome.app_window_props());
+   bind_slot!(reg, "shell.status-bar",  |s: &AppState| s.chrome.status_bar_props());
+   ```
+
+   The stub-loop's `for id in […]` array shrinks by one entry. The
+   `bindings_cover_every_registered_shell_block` keystone test still
+   passes — 47 entries, 47 bindings.
+
+**What changes per port.** A panel port is now *only* slot work
+plus the two-edit promotion above. The bindings table, the resolver,
+the skeleton, and the event router are not touched. The
+duplication-elimination is structural: closures cannot inline JSON
+because they have no `serde_json` import; two bindings that share a
+shape both call the same slot method by name; cross-slot reach is
+visible at registration as a non-`bind_slot!` row.
+
+**First slot landed.** `ChromeSlot { app_name, status }` in
+`packages/prism-shell/src/state.rs`. Two real bindings:
+`shell.app-window` and `shell.status-bar`. Three new tests:
+
+- `state::tests::default_chrome_emits_app_name_and_status` — slot
+  unit test: `ChromeSlot::default().app_window_props()` has
+  `app-name == "Prism"`, `status == "Ready"`, `menus` is an array.
+- `state::tests::status_bar_props_carries_status_only` — slot unit
+  test: `status_bar_props` is *only* `{ status }`, no chrome bleed.
+- `render::tests::slot_data_flows_through_snapshot_into_emissions`
+  — end-to-end: bumping `state.chrome.status = "Saving…"` propagates
+  through `bindings.snapshot(ctx)` into both
+  `["shell.status-bar"].props["status"]` *and*
+  `["shell.app-window"].props["status"]` — the same data flowing
+  through two bindings without duplicate shape construction.
+
+**Test discipline.** For every slot landed:
+
+- One unit test per JSON method on the slot, asserting the shape.
+  These are mechanical wrappers around the legacy `panel_props::tests`
+  fixtures, now scoped to the slot they describe.
+- One end-to-end *flow* test (per shape that is read by ≥2
+  bindings) that bumps the slot field and asserts the new value
+  reaches every consuming `emissions["shell.foo"].props` key. This
+  is the load-bearing duplication check — it would catch a
+  hypothetical `shell.app-window` binding that hand-rolled
+  `{ "status": "stale" }` instead of forwarding to the slot.
+
+**Why this is the right level of abstraction.** Same rule as §13,
+§15, §16, §17, §18: promote a registration table at the moment a
+per-id `match` (or, here, a per-binding closure body) starts
+growing. The threshold is *two* bindings consuming the same shape,
+which the chrome data already crosses (`status` is read twice). The
+slot pattern is the smallest seam that collapses the duplication —
+no new types, no new traits, one macro that's two lines of
+expansion. Doing it now (with one slot, two bindings) lets every
+subsequent panel port land as slot work; doing it later (after five
+ports have inlined JSON inside closures) is a much larger
+refactor.
+
+**What this unblocks.** The port wave is now mechanical. Each panel
+adds one slot + one or more methods + one promotion per binding.
+The bindings table never grows logic; it grows rows that all read
+identically. `panel_props.rs` (still on disk from the §17 deletion
+list, not in the build) can be deleted entirely — its 17 helpers
+fold onto their owning slots as those slots port in. By the time
+the last slot lands, the legacy file is empty and removed in one
+final cleanup commit.
+
+### Decision-log entry
+
+See the unified decision log at the foot of §17 (the slot pattern is
+a §17 follow-on, not a new architectural cut).
+
 ## 17. Slint tear-out: `ShellPropBindings` + `Surface` boot, rip-and-replace
 
 **Strategy locked 2026-05-09 (continuation of §16).** Phase 4 closed
@@ -2807,4 +2947,6 @@ for the run-loop), and that becomes a one-line change to
 
 | Date | Decision | Rationale |
 |---|---|---|
+| 2026-05-09 | §19 lands the slot-typed `AppState`: a struct of typed *slots*, one per data domain (chrome, workspace, selection, overlay, builder, project, …), each owning its typed accessors *and* its JSON emitters. Slots replace the unit `AppState` placeholder that existed between §17 and the panel ports. Three rules become structural and load-bearing: (1) **JSON shape lives on the slot**, never inside a binding closure — `ChromeSlot::status_bar_props(&self) -> Value` is the single source of the status string's wire format; (2) **bindings forward, never compute** — every row in `register_builtin_bindings` is one line via the new `bind_slot!(reg, "shell.foo", \|s: &AppState\| s.<slot>.<method>())` macro, which expands to a `bind!` whose closure does nothing but read the slot; (3) **adding a datum is always two edits** — one struct field on the right slot, one method that returns the JSON shape its block consumes. Existing bindings keep compiling; the bindings table never grows arms or branches. First slot landed: `ChromeSlot { app_name, status }` with two methods (`app_window_props`, `status_bar_props`); two rows promoted from the stub-loop into real `bind_slot!` calls (`shell.app-window`, `shell.status-bar`). New tests (3): two on the slot itself, one end-to-end (`slot_data_flows_through_snapshot_into_emissions`) asserting that bumping `state.chrome.status` shows up in `bindings.snapshot(ctx)["shell.status-bar"].props["status"]` *and* `["shell.app-window"].props["status"]` — the same data flowing through two bindings, with zero duplication of the JSON shape. The 47-binding parity test still passes; 172 lib tests green (was 169). | This is the standing discipline for every panel port that follows. The risk that §17 left open was: the bindings table is 47 closures and `panel_props.rs` is 17 typed-shape helpers — without a rule, ports could either (a) inline JSON construction inside closures (bypassing `panel_props.rs`), (b) duplicate the same shape across two bindings (e.g. `status` on app-window and status-bar), or (c) reach across slot boundaries from inside one closure. The slot pattern closes all three: (a) is impossible because the closure has no `serde_json` access — it just calls a method; (b) is structurally avoided because both bindings call the same slot method (or different methods on the same slot, which dedup the source data); (c) is avoided because `bind_slot!` takes a single slot path. The macro is one-line sugar (no new abstraction layer) — it expands to the same `bind!` already shipped, so the bindings table reads identically whether a row is stubbed or live. The "rule of three" check passes: chrome data is read by ≥2 bindings today, will be read by ≥3 once `shell.menu-bar-row` lands, and the alternative ("inline `json!({...})` in every closure") was already growing into the duplication this section prevents. The migration's terminal-state property holds: from this point forward, the only edits a new panel needs are slot-local. The bindings table, the resolver, the skeleton, and the event router are all "done" — they exist exactly once and grow only by registration. |
+| 2026-05-09 | §18 lands the §17 contract in code (still pre-port). Three host-runtime modules now exist as small, complete implementations — no per-block dispatch, no parallel render walker, no second prop-routing layer. **`render::Skeleton`** parses `ui/app.prism-ui` once via `prism_core::language::prism_ui::parse` and holds the `ast::Document`. **`render::fill_compositions`** is a single recursive walk: for each `<shell.foo>` element, look up `emissions["shell.foo"]`, merge its `Value::Object` keys as synthetic `Bare` attributes (author attrs win, JSON arrays/objects round-trip as serialised string attributes for blocks to decode via `serde_json::from_str`). **`render::render_tree`** is the four-line pipeline: `bindings.snapshot(ctx)` → `fill_compositions` → `LowerScope::default().with_resolver(resolver)` → `lower_document_with_scope`. **`Shell::run`** wraps the lowered `Vec<UiNode>` in a single root container and hands `(Surface, EventHandler)` to `prism_ui_runtime::backends::femtovg::run`; the handler calls `dispatch_event` and re-renders only when it returns `true`. **`events::dispatch_event`** has one arm per `Event` variant — `Resize` updates `inner.viewport` (the only datum currently observable through `bindings`); pointer/key/text/wheel/focus arms remain no-ops until each `app/callbacks/*.rs` body ports onto its `ShellInner` mutator. **`ShellInner`** caches `Arc<dyn TagResolver>` once at boot (no per-frame `Arc::clone(registry)` waste) and exposes `prop_ctx()` as the single carrier for every binding. New tests (7) exercise: skeleton parse, full-skeleton lower-through-resolver, prop merge, author-attribute precedence, JSON-array attribute round-trip, resize-redraws, and shell-render determinism. The 47-binding parity test still passes. | Builds the §17 surface end-to-end without touching any of the 47 chrome blocks, the resolver, or `panel_props`. Every emitter remains a *one-line forwarder* that future per-feature ports (panel_props rewrites against the new `ShellInner` shape) drop into place; the bindings table already has a row per id. The merge step's "author attr wins" rule is the property that lets the skeleton pin structural identity (`id="root"`, `panel-id="builder"`) while still letting the host inject every datum a panel needs. Wrapping the lowered roots in a synthetic container is the single unconditional shape adapter between "skeleton has N top-level overlay siblings" and "Surface takes one root Node" — no branching, no condition-on-overlay-count. The compile path is now load-bearing: any new shell block must register in both `register_shell_builtins` *and* `ShellPropBindings::with_builtins` or `bindings_cover_every_registered_shell_block` fails. The web build stays linkable via a `cfg(not(feature = "native"))` no-op `run`, so the §17 wiring doesn't block any in-flight web work — when `prism-ui-runtime/web::run` lands, that arm gets one line. Workspace `cargo check` is green; `cargo test -p prism-shell --lib` is green at 169 tests (was 162 before — the seven new tests above). |
 | 2026-05-09 | §17 locks the rip-and-replace: Slint deleted in one stroke, no parity layer. New host-runtime contract is three files — `prism_shell::props` (`ShellPropBindings` registration table mirroring `register_shell_builtins`, ~120 LoC), `prism_shell::render` (`render_tree` skeleton-fold + lower, ~80 LoC), `prism_shell::events` (one `dispatch_event` match over runtime events, ~150 LoC). Deletion targets: `ui/app.slint` (~4300 lines), `app/sync/` (9 files), `app/callbacks/` (6 files), the 30-line `bind_model!` block, every `slint::*` import, the `slint`/`slint-build`/`slint-interpreter` deps, the `live-preview` feature, the `cdylib` crate-type half. Net diff: ~5800 LoC out, ~250 LoC in. | The user's instruction was explicit: no parity, breakage is fine if the new system is better. The rip-and-replace makes the smart-pattern load-bearing — every duplication that the registration table eliminates *cannot be worked around*, because the alternative path is gone. The host-runtime contract collapses to two functions (`render_tree`, `dispatch_event`) and one declarative table (`ShellPropBindings::with_builtins`), each composing with already-shipped seams (the 47 registered blocks from §13–§16, the resolver from §7, the `host_children` slot from §14, the `lower_as` embedding from §15, the `panel_props::*` bridge functions). Every `pub struct …Item` Slint required deletes — bindings emit `serde_json::Value` directly into the prop bags blocks already speak. The `prism-studio/src-tauri` downstream is a one-line `shell.window().run()` → `shell.run()` change. The keystone test (`bindings_cover_every_registered_shell_block`) makes "forgot to wire a new block" a compile failure. Test-suite shrinkage is real and welcome: assertions against `window.get_*` Slint properties were testing that the binding fired, not that the user-visible shape was correct; assertions against `render_tree` output test the actual Node tree. After the rip lands, the migration is the terminal state — every subsequent change reads as "add a block" (two rows: registry + bindings) or "add an event" (one arm in `dispatch_event`). |

@@ -1,20 +1,28 @@
-//! Minimal `Shell` boot — the §17 terminal shape.
+//! `Shell` — the §17 terminal boot path.
 //!
 //! ```text
 //! Shell::new   → parse skeleton + build registry + bindings + Surface
-//! Shell::run   → femtovg::run with a handler that re-renders on event
+//! Shell::run   → backend::run with one event handler that re-renders
+//!                via `render_tree` whenever `dispatch_event` returns true
 //! ```
 //!
 //! Per-feature wiring (every command, every mutation, every panel)
 //! lands as it's ported off the legacy `app/` modules onto the new
-//! `props` / `render` / `events` contract.
+//! `props` / `render` / `events` contract — but the supervisor surface
+//! stays exactly this shape: one `render_tree` call, one
+//! `dispatch_event` arm per runtime variant.
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::Arc;
+
+use prism_ui_runtime::interpret::TagResolver;
+use prism_ui_runtime::layout::{Node as UiNode, Surface, Viewport};
 
 use crate::components::{register_shell_builtins, ShellComponentRegistry};
-use crate::props::ShellPropBindings;
-use crate::render::Skeleton;
+use crate::events::dispatch_event;
+use crate::props::{PropCtx, ShellPropBindings};
+use crate::render::{render_tree, Skeleton};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ShellError {
@@ -22,15 +30,33 @@ pub enum ShellError {
     Skeleton(String),
     #[error("registry: {0}")]
     Registry(String),
+    #[error("runtime: {0}")]
+    Runtime(String),
 }
 
 /// Per-frame shared state. Currently the registry + bindings + the
 /// reloadable `AppState`; legacy modules (store, undo, persistence,
-/// VFS, …) re-introduce themselves here as they're ported.
+/// VFS, …) re-introduce themselves as fields here as they're ported.
 pub struct ShellInner {
     pub registry: ShellComponentRegistry,
+    pub resolver: Arc<dyn TagResolver>,
     pub bindings: ShellPropBindings,
     pub state: crate::AppState,
+    pub viewport: Viewport,
+}
+
+impl ShellInner {
+    /// Build the per-frame `PropCtx` borrow-pack. Every binding closure
+    /// destructures the fields it needs; adding a new datum is one
+    /// field on `PropCtx` and one assignment here.
+    pub fn prop_ctx(&self) -> PropCtx<'_> {
+        PropCtx {
+            state: &self.state,
+            viewport_w: self.viewport.width,
+            viewport_h: self.viewport.height,
+            canvas_zoom: 1.0,
+        }
+    }
 }
 
 pub struct Shell {
@@ -42,25 +68,97 @@ impl Shell {
     pub fn new() -> Result<Self, ShellError> {
         let mut registry = ShellComponentRegistry::new();
         register_shell_builtins(&mut registry).map_err(|e| ShellError::Registry(e.to_string()))?;
+        let resolver = registry.tag_resolver();
         let bindings = ShellPropBindings::with_builtins();
         let skeleton = Skeleton::load().map_err(ShellError::Skeleton)?;
         let inner = Rc::new(RefCell::new(ShellInner {
             registry,
+            resolver,
             bindings,
-            state: crate::AppState,
+            state: crate::AppState::default(),
+            viewport: Viewport {
+                width: 1280.0,
+                height: 800.0,
+            },
         }));
         Ok(Self { inner, skeleton })
     }
 
+    /// Build the initial runtime tree. Pure function of `(skeleton,
+    /// bindings, resolver, ctx)` — exposed so tests, alternate hosts,
+    /// and the per-frame redraw closure all hit the same path.
+    pub fn render(&self) -> Vec<UiNode> {
+        let inner = self.inner.borrow();
+        render_tree(
+            &self.skeleton,
+            &inner.bindings,
+            Arc::clone(&inner.resolver),
+            &inner.prop_ctx(),
+        )
+    }
+
+    #[cfg(feature = "native")]
     pub fn run(self) -> Result<(), Box<dyn std::error::Error>> {
-        // TODO(§17): construct `prism_ui_runtime::layout::Surface` from
-        // `render::render_tree(&inner, &skeleton, registry, &ctx)`,
-        // wire `events::dispatch_event` into the EventHandler closure,
-        // then call `prism_ui_runtime::backends::femtovg::run(surface, handler)`.
-        // Stubbed until the panel ports land — boot today is a no-op
-        // so prism-studio can still link.
-        let _ = self.inner;
-        let _ = self.skeleton;
+        let initial = wrap_root(self.render());
+        let viewport = self.inner.borrow().viewport;
+        let surface = Surface::new(initial, viewport);
+
+        let inner = Rc::clone(&self.inner);
+        let skeleton = self.skeleton.clone();
+        let handler: prism_ui_runtime::event::EventHandler = Box::new(move |event, surface| {
+            if dispatch_event(&inner, event) {
+                let guard = inner.borrow();
+                let tree = render_tree(
+                    &skeleton,
+                    &guard.bindings,
+                    Arc::clone(&guard.resolver),
+                    &guard.prop_ctx(),
+                );
+                surface.set_tree(wrap_root(tree));
+            }
+        });
+
+        prism_ui_runtime::backends::femtovg::run(surface, handler)
+            .map_err(|e| Box::<dyn std::error::Error>::from(e.to_string()))
+    }
+
+    /// On the web target the femtovg backend isn't compiled in; the
+    /// stub returns immediately so `web_start` links until the
+    /// `prism-ui-runtime/web` backend's `run` is wired up.
+    #[cfg(not(feature = "native"))]
+    pub fn run(self) -> Result<(), Box<dyn std::error::Error>> {
+        let _ = self.render();
         Ok(())
+    }
+}
+
+/// `Surface` takes a single root `Node`. The skeleton lowers to a
+/// flat `Vec<Node>` (app-window + overlay siblings); wrap them in an
+/// anonymous container so the surface has one entry point.
+fn wrap_root(children: Vec<UiNode>) -> UiNode {
+    UiNode::Container {
+        id: String::new(),
+        props: Default::default(),
+        children,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shell_new_succeeds() {
+        let shell = Shell::new().expect("boot");
+        let nodes = shell.render();
+        assert!(!nodes.is_empty());
+    }
+
+    #[test]
+    fn render_is_deterministic() {
+        let shell = Shell::new().expect("boot");
+        let a = shell.render();
+        let b = shell.render();
+        assert_eq!(a, b, "two consecutive renders must be equal");
     }
 }

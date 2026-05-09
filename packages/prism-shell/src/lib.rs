@@ -30,18 +30,12 @@ pub mod components;
 pub mod events;
 pub mod props;
 pub mod render;
+pub mod state;
 
 mod shell;
 
 pub use shell::{Shell, ShellError};
-
-/// Minimal placeholder for the per-frame state every binding closure
-/// reads. The legacy `app::AppState` (with dock workspace, selection
-/// model, command palette, toasts, …) is on disk in `src/app/mod.rs`
-/// and will be re-introduced module-by-module as each panel is ported
-/// against the new shell shape.
-#[derive(Default, Clone)]
-pub struct AppState;
+pub use state::{AppState, ChromeSlot};
 
 /// Browser entry point. `wasm-bindgen` calls this automatically via
 /// its `(start)` attribute so the HTML loader only has to import the

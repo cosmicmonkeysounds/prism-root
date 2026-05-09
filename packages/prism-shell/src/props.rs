@@ -107,18 +107,40 @@ macro_rules! bind {
     };
 }
 
+/// Slot-forwarder sugar: `bind_slot!(reg, "shell.foo", |s| s.chrome.foo_props())`.
+/// Expands to a `bind!` whose closure pulls `&AppState` from `PropCtx`
+/// and hands it to the user's slot accessor — no per-binding ceremony,
+/// no JSON construction inside the closure body. See §19.
+#[macro_export]
+macro_rules! bind_slot {
+    ($reg:expr, $id:literal, $accessor:expr) => {
+        $crate::bind!($reg, $id, |ctx: &$crate::props::PropCtx| {
+            $crate::props::PropEmission::from_props(($accessor)(ctx.state))
+        })
+    };
+}
+
 /// The bindings table proper. Every entry forwards to a function in
 /// [`crate::panel_props`] — keep that module the single source of
 /// truth for "typed substate → JSON shape."
 fn register_builtin_bindings(reg: &mut ShellPropBindings) {
     use serde_json::json;
 
-    // Stub: every binding currently emits an empty prop bag. The
-    // per-id forwarders to `crate::panel_props::*` land as each
-    // file is rewritten against the new ShellInner / AppState
-    // shape (see §17 deletion punch list).
-    let blank = || PropEmission::from_props(json!({}));
+    // Real bindings — each forwards through one slot method on
+    // `AppState`. Adding another is one row here + one method on the
+    // owning slot. JSON construction lives on the slot, not in the
+    // closure (§19 discipline).
+    bind_slot!(reg, "shell.app-window", |s: &AppState| s
+        .chrome
+        .app_window_props());
+    bind_slot!(reg, "shell.status-bar", |s: &AppState| s
+        .chrome
+        .status_bar_props());
 
+    // Stub bindings — emit an empty prop bag until the owning slot
+    // lands. The skeleton's author-supplied attrs still render, so
+    // these blocks paint as a coherent (data-empty) chrome shell.
+    // Promote a row out of this list when its slot ports in.
     for id in [
         "shell.icon-button",
         "shell.toolbar-separator",
@@ -132,10 +154,8 @@ fn register_builtin_bindings(reg: &mut ShellPropBindings) {
         "shell.transform-editor",
         "shell.menu-bar-row",
         "shell.field-editor",
-        "shell.status-bar",
         "shell.workflow-page-button",
         "shell.workflow-page-bar",
-        "shell.app-window",
         "shell.dock-divider",
         "shell.dock-tab",
         "shell.dock-tab-bar",
@@ -168,7 +188,6 @@ fn register_builtin_bindings(reg: &mut ShellPropBindings) {
         "shell.builder-canvas",
         "shell.component-picker",
     ] {
-        let _ = blank; // placeholder for the per-id forwarder
         reg.register(
             id,
             Box::new(move |_ctx| PropEmission::from_props(json!({}))),
