@@ -15,8 +15,11 @@
 //! - `prism clean` — `cargo clean` to remove the entire `target/` tree.
 //!
 //! After every successful `build`, `test`, or `dev` (web preflight),
-//! the CLI automatically trims stale incremental compilation sessions
-//! older than 7 days via [`gc::trim_incremental`].
+//! the CLI automatically runs [`gc::sweep`]: it trims incremental
+//! session directories older than 3 days. Cargo always regenerates
+//! incremental data on the next compile, so this reclaim is provably
+//! safe. Use `prism clean` (or `cargo clean -p <crate>`) when you
+//! need a deeper, cargo-aware cleanup.
 //!
 //! The library half of this crate exposes the [`builder`] module
 //! (the [`CommandBuilder`] fluent API used to construct every shelled

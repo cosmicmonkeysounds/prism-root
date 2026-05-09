@@ -133,14 +133,25 @@ For routine housekeeping, rely on the automatic GC described below.
 
 ## Automatic build-artefact GC
 After every successful `prism build`, `prism test`, or `prism dev`
-(web preflight), the CLI runs a lightweight sweep
-(`gc::trim_incremental`) that removes per-session directories inside
-`target/{debug,release}/incremental/` and cross-compilation targets
-like `target/wasm32-unknown-unknown/*/incremental/` that haven't been
-modified in the last 7 days. Incremental session data is always
-regenerable on the next compile, so this is safe to run automatically.
+(web preflight), the CLI runs `gc::sweep` over `target/`. The sweep
+removes incremental session directories under
+`target/{debug,release}/incremental/` (and matching cross-compilation
+paths like `target/wasm32-unknown-unknown/*/incremental/`) that
+haven't been modified in 3 days. Incremental data is always
+regenerable on the next compile, so this reclaim is provably safe.
+
+**Why we don't dedup `deps/` / `.fingerprint/`.** An earlier draft
+deduped `<crate>-<hash>` artefacts down to the newest hash per
+`(lib_prefix, crate)`. That broke on workspaces where a single dep
+is compiled with different feature sets for different consumers —
+each consumer's dep-info pins a specific hash, and dropping a
+"duplicate" leaves the next compile with `extern location for X
+does not exist: …`. For deeper reclaim use `prism clean`
+(`cargo clean`) or `cargo clean -p <crate>` — both are cargo-aware
+and honour per-consumer hash pinning.
+
 The sweep is silent and best-effort — individual removal errors are
-ignored. Use `prism clean` when you need a full wipe.
+ignored.
 
 ## Library surface
 The crate is split into a library + a thin binary so tests and
@@ -174,12 +185,13 @@ sibling crates can reach into it without going through `std::process`.
   has a store-preserving reload path. Tests in `src/watch.rs`
   cover a tempfile round-trip, an idle non-block, and a quiet-dir
   timeout.
-- `gc::trim_incremental(target_dir)` — post-build GC that removes
-  incremental session directories older than 7 days from both native
+- `gc::sweep(target_dir)` — post-build GC. Removes incremental
+  session directories older than 3 days from both native
   (`target/{debug,release}/incremental/`) and cross-compilation
   (`target/<triple>/*/incremental/`) directories. Called automatically
   on successful `build`, `test`, and `dev` (web preflight) runs;
-  see § Automatic build-artefact GC.
+  see § Automatic build-artefact GC. `gc::trim_incremental` is
+  preserved as a thin alias for older callers.
 - `commands::{test, build, dev, lint, fmt, clean}` — each exposes a
   `plan(args, workspace) -> Vec<CommandBuilder>` pure function
   and a `run(...)` wrapper. Everything shell-worthy funnels

@@ -21,22 +21,16 @@ use prism_builder::{
     schemas, // unused — reserved for shared field factories as we grow
     signal::SignalDef,
     style::StyleProperties,
-    ui_lower::{hover_bg, image_node, prop_bool, prop_str, prop_string, uniform_radius, LowerCtx},
+    ui_lower::{prop_bool, prop_str, LowerCtx},
     Block,
     ComponentId,
     RenderError,
     RenderSlintContext,
 };
-use prism_ui_runtime::layout::{Node as UiNode, Semantic, Sizing};
+use prism_ui_runtime::layout::Node as UiNode;
 use serde_json::Value;
 
-const ICON_BUTTON_SIZE: f32 = 28.0;
-const ICON_BUTTON_RADIUS: f32 = 6.0;
-const ICON_GLYPH_SIZE: f32 = 16.0;
-/// Hover background — `Palette.control-background` in the original
-/// Slint version, hard-coded here until the design-tokens cascade
-/// resolves the value at lower-time.
-const ICON_BUTTON_HOVER_BG: &str = "#1f000000";
+use super::chrome::{icon_button_node, ICON_BUTTON_RADIUS, ICON_BUTTON_SIZE};
 
 /// `shell.icon-button` block. Schema mirrors the four `in property`
 /// declarations on the original Slint component.
@@ -97,39 +91,19 @@ impl Block for IconButton {
         })
     }
 
-    fn lower_ui(&self, ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> UiNode {
-        let icon = prop_string(node, "icon");
-
-        let glyph = image_node(
-            format!("{}::glyph", node.id),
-            icon,
-            style,
-            Sizing::Fixed(ICON_GLYPH_SIZE),
-            Sizing::Fixed(ICON_GLYPH_SIZE),
-        );
-
-        // 28×28 container with a centred 16×16 glyph. `synthetic_container`
-        // owns cascade resolution + flow props; we override only the
-        // fields that make this an icon button rather than a generic box.
+    fn lower_ui(&self, _ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+        // Visual recipe lives in `chrome::icon_button_node` so it's
+        // reusable from any chrome primitive that embeds a chevron /
+        // trash / move button (InspectorRow, Tab pills, MenuBar items).
+        // The Block layer's job is just prop → helper-arg translation.
         let enabled = prop_bool(node, "enabled", true);
-        ctx.synthetic_container(node, style, vec![glyph], |props| {
-            props.width = Sizing::Fixed(ICON_BUTTON_SIZE);
-            props.height = Sizing::Fixed(ICON_BUTTON_SIZE);
-            props.radius = uniform_radius(ICON_BUTTON_RADIUS);
-            // Resting bg stays at whatever the cascade resolved (typically
-            // None → transparent). Disabled buttons stay static under
-            // the pointer, so only enabled buttons declare a hover swap.
-            if enabled {
-                props.hover = hover_bg(ICON_BUTTON_HOVER_BG);
-            }
-            // SSR semantic: <button>. ARIA label is filled from the
-            // tooltip prop so screen readers get the same text the
-            // pointer-hover tooltip shows.
-            let tooltip = Some(prop_str(node, "tooltip-text")).filter(|s| !s.is_empty());
-            props.semantic = Semantic::button()
-                .with_aria_label_opt(tooltip)
-                .with_attr_if(!enabled, "disabled", "disabled");
-        })
+        let tooltip = Some(prop_str(node, "tooltip-text")).filter(|s| !s.is_empty());
+        icon_button_node(
+            node.id.clone(),
+            prop_str(node, "icon").to_string(),
+            enabled,
+            tooltip,
+        )
     }
 }
 
@@ -150,6 +124,7 @@ mod tests {
     use prism_builder::style::StyleProperties as Cascade;
     use prism_builder::ui_lower::LowerCtx;
     use prism_core::foundation::spatial::Transform2D;
+    use prism_ui_runtime::layout::Sizing;
     use serde_json::json;
 
     fn lower_one(node: &BuilderNode) -> UiNode {

@@ -822,7 +822,7 @@ fn measure_text(
             let glyph_count = text.chars().count().max(1);
             let width = known_dimensions
                 .width
-                .unwrap_or_else(|| glyph_count as f32 * props.font_size * 0.55 + 12.0);
+                .unwrap_or(glyph_count as f32 * props.font_size * 0.55 + 12.0);
             let height = known_dimensions
                 .height
                 .unwrap_or(props.font_size * 1.2 + 8.0);

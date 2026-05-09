@@ -1330,6 +1330,100 @@ CLI surface unchanged.
     (`MenuBarRow`, `TransformEditor`, `AppWindow`). All runtime
     blockers cleared; remaining migrations are purely declarative.
 
+- **Update 2026-05-08 (`shell.inspector-row` lands — 9/13; chrome
+  helper module extracted):** the icon-button visual recipe — 28×28
+  frame, 6px radius, 16×16 glyph, hover-bg swap, `<button>` SSR
+  semantic — graduated out of `IconButton::lower_ui` into a new
+  `prism-shell/src/components/chrome.rs` module the moment the second
+  consumer arrived. `IconButton` now delegates to
+  `chrome::icon_button_node(id, icon, enabled, aria_label)`; its
+  `lower_ui` body shrunk to a five-line prop-translation call. The
+  `InspectorRow` migration uses the same helper for the move-up /
+  move-down chevrons (selected-node rows) and the trash button
+  (`row`-kind + `show-delete=true`) — *zero* hand-rolled
+  `UiNode::Container { … }` literals, *zero* re-implementation of
+  the icon-button shape.
+  - **`chrome.rs` smart-pattern surface:** three composition helpers
+    that build on the existing `prism_builder::ui_lower` namespace
+    rather than wrapping it in a new abstraction.
+    - `icon_button_node(id, icon, enabled, aria_label) -> UiNode` —
+      the shared visual recipe. `bare_container`-driven (no
+      cascade), so it's safe to embed inside any other primitive's
+      lowering without inheriting unrelated parent styling.
+    - `indent_dot(id, color, radius_px) -> UiNode` — the 6×6 marker
+      every tree-shaped row (inspector, outline, dock list) uses.
+    - `color_or_transparent(hex) -> Color` — deterministic
+      "no colour" fallback for chrome that needs an always-defined
+      colour value (e.g. accent rails that paint nothing when the
+      kind is unrecognised).
+    Promotion threshold honoured: each helper has at least two
+    in-tree callers at landing, with at least one more on the
+    Phase-4 punch list.
+  - **`shell.inspector-row` (9th primitive — input-family blocker
+    cleared without a runtime extension):** 30px row with
+    depth-driven indent padding (`PAD_LEFT_BASE + depth *
+    INDENT_PX`), kind-driven palette (`node` / `row` / `empty`),
+    and the optional right-side button cluster. The lowering body
+    *never* branches on `kind` directly — a
+    `metrics_for_kind(&str) -> &KindMetrics` lookup returns one of
+    three `const KindMetrics` literals (`KIND_NODE` / `KIND_ROW` /
+    `KIND_EMPTY`) carrying every visual difference (background,
+    selected-background, dot color and radius, label size and
+    color, whether the secondary id text shows, whether selected
+    flips chevrons in, whether `show-delete` allows a trash
+    button, ARIA role). Adding a fourth kind is one struct
+    literal + one match arm; the lowering body is unchanged.
+    Hover-on-row visibility (the original Slint version's
+    `inspector-row-hover.has-hover` gate on the trash button)
+    becomes a `show-delete: bool` prop the host flips on enter /
+    leave — declarative storage, no runtime state machine, dirty
+    bit only flips when the prop transitions. SSR semantic is
+    `<div role="treeitem|group|none" aria-selected? aria-level?>`.
+    10 unit tests cover the kind table, depth-indent math,
+    chevron / trash visibility rules, ARIA propagation, and the
+    "unknown kind falls through to node" default arm.
+  - **`IconButton` refactor:** the constants
+    (`ICON_BUTTON_SIZE` / `ICON_BUTTON_RADIUS` / `ICON_GLYPH_SIZE`
+    / `ICON_BUTTON_HOVER_BG`) moved into `chrome.rs` as `pub const`
+    so the lone `render_slint` consumer in `IconButton` re-imports
+    them through `super::chrome`. No behaviour change; existing 7
+    `IconButton` tests stay green. The `synthetic_container` →
+    `bare_container` swap drops the cascade-resolved resting
+    background, which was always `None` in practice (the original
+    Slint version painted the resting state transparent and only
+    activated `Palette.control-background` on hover).
+  - **Phase-4 chrome scoreboard:** **9 of 13** primitives migrated
+    (`shell.icon-button`, `shell.toolbar-separator`,
+    `shell.section-header`, `shell.nav-button`, `shell.toast`,
+    `shell.docs-content`, `shell.app-card`,
+    `shell.drag-number-field`, `shell.inspector-row`). Remaining 4:
+    `FieldEditor` (kind-driven editor row — fattest of the
+    remaining; will reuse `shell.drag-number-field` + a `<select>`
+    sibling + a switch primitive), `MenuBarRow` (slot + `<for>`;
+    both runtime gaps already filled), `TransformEditor` (composes
+    multiple `shell.drag-number-field` instances for X/Y/rotation/
+    scale rows), and `AppWindow` (host shell — composes every
+    other primitive plus dock layout). All four are pure
+    declarative compositions of already-shipped primitives — no
+    further runtime extensions blocked.
+
+- **Update 2026-05-08 (`shell.drag-number-field` lands — 8/13):**
+  the first input-family primitive flows through the same
+  `Block::lower_ui` recipe as the prior seven. The drag / commit /
+  inline-edit interactivity is pure host concern (input dispatch +
+  signal emission); the lowering is purely visual structure — a
+  24px-tall outer container with a 3px radius and a
+  `hover_bg(...)`-driven swap, holding a row with the optional
+  11px label and the formatted value. No new helpers needed:
+  `bare_container` / `colored_text_node` / `hover_bg` /
+  `parse_color` / `uniform_radius` / `prop_str` / `prop_string`
+  cover every shape. SSR semantic is `<label data-key=…
+  aria-label=…>` so screen readers announce the field by its
+  intended caption. Two signals (`changed`, `committed`) describe
+  the drag / inline-commit pair the original Slint version
+  declared. 5 unit tests cover row shape, label conditional, value
+  formatting, semantic / aria propagation, and signal surface.
+
 - **Phase-4 runtime gaps to fill** (each one lands just-in-time as
   the next shell primitive demands it; the IconButton lowering above
   flagged the first):
@@ -1415,6 +1509,7 @@ CLI surface unchanged.
 | 2026-05-08 | Interactive-chrome helper extraction (`Semantic::button` / `with_attr_if` / `with_aria_label_opt` / `hover_bg`) | IconButton + NavButton revealed the same "button-shaped Semantic + conditional ARIA + hover swap" boilerplate. Helpers compose with the existing fluent builder — no new abstraction layer, no DI/registration, just two nodes on `Semantic` and one constructor in `ui_lower`. Future button-shaped chrome primitives inherit the density automatically. |
 | 2026-05-08 | Overlay z-layer lands (`Overlay` + `OverlayAnchor` + `Surface::push_overlay`); `shell.toast` migrated | Sparse anchor enum (Corner / Point / Center) covers Toast + command-palette + help-tooltip without forking the layout vocabulary — overlays are just `(Node, anchor)` pairs that flow through the same `build_taffy_subtree` / `emit_commands` pipeline as the main tree. Block lowering is unchanged: a Toast produces a Node; the host decides whether to mount it inline or on the overlay stack. Hover hit-testing extends naturally to overlay subtrees. Unblocks the third of the four chrome clusters identified in the punch list. |
 | 2026-05-08 | `prop_str` / `prop_bool` / `colored_text_node` promoted into `prism-builder/src/ui_lower.rs`; `shell.docs-content` + `shell.app-card` migrated (7/13) | Refactor revealed three boilerplate shapes (string-prop, bool-prop, text-with-override-colour) repeated across every chrome primitive's `lower_ui`. Promoted them once instead of cloning per-block. The colored_text_node promotion follows the rule-of-three threshold the toast author already flagged in a comment. Refactored callers shrank by 4-10 lines each with no behaviour change; the two new primitives compose entirely from the shared helpers — zero hand-rolled `UiNode::Container { … }` literals, zero per-block private helpers. |
+| 2026-05-08 | `chrome.rs` shared visual-helpers module; `IconButton` recipe extracted; `shell.inspector-row` lands as 9th chrome primitive | The icon-button shape (28×28 frame, 16×16 glyph, 6px radius, hover swap, `<button>` SSR) graduated out of `IconButton::lower_ui` into `prism-shell/src/components/chrome.rs` the moment the second consumer (InspectorRow's chevron / trash buttons) arrived. Helper composes through the existing `prism_builder::ui_lower` namespace — no new builder type, no DI layer. InspectorRow's three-way `kind` palette (`node` / `row` / `empty`) is a `const KindMetrics` lookup table; the lowering body never branches on `kind` directly. Adding a fourth kind is one struct literal + one match arm. Hover-driven trash-button visibility lives on a `show-delete: bool` prop the host flips on enter/leave — declarative storage, no runtime state machine. |
 | 2026-05-08 | The three remaining Phase-4 blockers land in one declarative refactor: `LowerScope` + `SlotBindings`, `expand_control_flow`, and `Node::TextInput` | All three concerns funnel through `prism_ui_runtime::interpret`, so a single `LowerScope` carrier (bindings + slot map) serves both `{ident}` interpolation and the control-flow predicate evaluator — no per-feature scope stack. Slots stay at the AST level so backends don't grow a new `Node` variant. Control flow is a sibling pre-pass that returns `Vec<(node, optional-child-scope)>`, keeping per-element lowering branch-free. `TextInput` composes a `Rectangle` + `Border` + `Text` at emit time, so all four backends inherit it for free; only `semantic_html` grew an `<input>` arm. Net effect: Phase-4 chrome scoreboard fully unblocked with ~600 LoC across one file refactor + thin runtime additions, no new abstractions, no new infrastructure. |
 
 ## 10. Appendix — file-by-file Slint footprint to retire
@@ -1534,8 +1629,15 @@ in `prism-builder/CLAUDE.md`):
 4. Cover lowering shape, ARIA / semantic propagation, schema, and
    registry insertion in unit tests next to the impl.
 
-**Status.** `IconButton` landed 2026-05-08 as the template. The
-remaining 12 chrome components migrate one-at-a-time as their
-dependent runtime primitives (hover state, slot, image tint,
-control-flow lowering, text input, popup overlay) land — see the
-Phase-4 runtime-gap punch list under §8.
+**Status.** `IconButton` landed 2026-05-08 as the template; eight
+more chrome primitives followed (toolbar-separator, section-header,
+nav-button, toast, docs-content, app-card, drag-number-field,
+inspector-row), bringing the scoreboard to **9 of 13** as of
+2026-05-08. Every runtime gap from the original punch list has
+landed (hover-state, slot, control-flow, text-input, overlay
+z-layer); image-tint is the lone deferred extension and is not on
+the critical path for the remaining four primitives. The shared
+`prism-shell/src/components/chrome.rs` module collects visual
+recipes that more than one chrome primitive composes (icon-button
+node, indent dot, transparent-fallback color); the rule-of-three
+promotion threshold gates entries.

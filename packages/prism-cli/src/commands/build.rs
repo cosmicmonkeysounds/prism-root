@@ -146,7 +146,7 @@ pub fn run(args: &BuildArgs, workspace: &Workspace, dry_run: bool) -> Result<u8>
     let plan = plan(args, workspace);
     let code = super::execute_plan(&plan, dry_run)?;
     if code == 0 {
-        crate::gc::trim_incremental(&workspace.target_dir());
+        crate::gc::sweep(&workspace.target_dir());
     }
     Ok(code)
 }

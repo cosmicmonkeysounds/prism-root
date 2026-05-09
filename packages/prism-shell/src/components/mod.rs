@@ -6,8 +6,11 @@
 //! documented in `docs/dev/clay-migration-plan.md` §12.
 
 pub mod app_card;
+pub mod chrome;
 pub mod docs_content;
+pub mod drag_number_field;
 pub mod icon_button;
+pub mod inspector_row;
 pub mod nav_button;
 pub mod registry;
 pub mod section_header;
@@ -16,7 +19,9 @@ pub mod toolbar_separator;
 
 pub use app_card::AppCard;
 pub use docs_content::DocsContent;
+pub use drag_number_field::DragNumberField;
 pub use icon_button::IconButton;
+pub use inspector_row::InspectorRow;
 pub use nav_button::NavButton;
 pub use registry::{register_shell_builtins, ShellComponentRegistry};
 pub use section_header::SectionHeader;

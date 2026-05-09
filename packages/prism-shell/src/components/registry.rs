@@ -88,6 +88,8 @@ pub fn register_shell_builtins(reg: &mut ShellComponentRegistry) -> Result<(), R
     reg!("shell.toast", Toast);
     reg!("shell.docs-content", DocsContent);
     reg!("shell.app-card", AppCard);
+    reg!("shell.drag-number-field", DragNumberField);
+    reg!("shell.inspector-row", InspectorRow);
 
     Ok(())
 }
@@ -107,7 +109,9 @@ mod tests {
         assert!(reg.get("shell.toast").is_some());
         assert!(reg.get("shell.docs-content").is_some());
         assert!(reg.get("shell.app-card").is_some());
-        assert_eq!(reg.len(), 7);
+        assert!(reg.get("shell.drag-number-field").is_some());
+        assert!(reg.get("shell.inspector-row").is_some());
+        assert_eq!(reg.len(), 9);
     }
 
     #[test]
