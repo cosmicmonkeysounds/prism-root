@@ -98,6 +98,15 @@ pub enum Node {
         height: Sizing,
         #[serde(default)]
         radius: CornerRadius,
+        /// Optional colour tint applied to the image. When `Some`,
+        /// the renderer treats `source` as a mask and paints `tint`
+        /// through it — the canonical icon-tinting pattern (palette
+        /// foreground, transparency variants). `None` paints the
+        /// image verbatim. Native backends pre-multiply the tint with
+        /// the mask alpha; the HTML backend lowers to a `mask-image`
+        /// + `background-color` pair.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tint: Option<Color>,
         /// SSR hint — `alt` text usually goes in `attrs`, ARIA in
         /// `aria_label`. Native renderers ignore this field.
         #[serde(default, skip_serializing_if = "Semantic::is_empty")]
@@ -595,6 +604,7 @@ enum NodeContext {
     Image {
         source: String,
         radius: CornerRadius,
+        tint: Option<Color>,
     },
     /// `value` is whatever the input should *paint*, computed at build
     /// time as `value` if non-empty else `placeholder`. The
@@ -713,6 +723,7 @@ fn build_taffy_subtree(
             width,
             height,
             radius,
+            tint,
             ..
         } => {
             // Same sizing vocabulary as containers — `Grow` along the
@@ -735,6 +746,7 @@ fn build_taffy_subtree(
             let ctx = NodeContext::Image {
                 source: source.clone(),
                 radius: *radius,
+                tint: *tint,
             };
             taffy
                 .new_leaf_with_context(style, ctx)
@@ -867,15 +879,22 @@ fn emit_commands(
                 font_size: props.font_size,
             });
         }
-        Some(NodeContext::Image { source, radius }) => {
+        Some(NodeContext::Image {
+            source,
+            radius,
+            tint,
+        }) => {
             // The source string is round-tripped verbatim — host code
             // resolves it to a concrete asset (URL, `/asset/<hash>`,
             // file path). Radius flows through to the renderer the
-            // same way a `Rectangle` carries its corner radius.
+            // same way a `Rectangle` carries its corner radius. Tint,
+            // when present, instructs the renderer to mask-paint the
+            // colour through the image.
             out.push(RenderCommand::Image {
                 bounds,
                 source: source.clone(),
                 radius: *radius,
+                tint: *tint,
             });
         }
         // Composed leaf — paint a background Rectangle, a 1px Border,

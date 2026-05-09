@@ -55,6 +55,12 @@ pub enum RenderCommand {
         source: String,
         #[serde(default)]
         radius: CornerRadius,
+        /// Optional colour tint. When `Some`, the renderer treats the
+        /// `source` as a mask and paints `tint` through it (the
+        /// canonical icon-tinting pattern). When `None`, the image is
+        /// painted as-is.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tint: Option<Color>,
     },
     ScissorStart {
         bounds: Rect,

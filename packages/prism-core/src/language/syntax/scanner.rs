@@ -138,6 +138,25 @@ impl<'s> Scanner<'s> {
         Some(ch)
     }
 
+    /// Consume the next full Unicode character, stepping `offset` by
+    /// its UTF-8 byte width so the cursor always lands on a char
+    /// boundary. Returns the actual `char` (not a byte coerced to
+    /// `char`). Use this in scanners whose body content may contain
+    /// non-ASCII text — e.g. `<!-- … -->` comments or text nodes —
+    /// where byte-by-byte `advance()` would land mid-codepoint and
+    /// poison subsequent `&str` slicing.
+    pub fn advance_unicode(&mut self) -> Option<char> {
+        let ch = self.source[self.offset..].chars().next()?;
+        self.offset += ch.len_utf8();
+        if ch == '\n' {
+            self.line += 1;
+            self.column = 0;
+        } else {
+            self.column += 1;
+        }
+        Some(ch)
+    }
+
     pub fn slice(&self, start: usize, end: usize) -> &'s str {
         &self.source[start..end]
     }

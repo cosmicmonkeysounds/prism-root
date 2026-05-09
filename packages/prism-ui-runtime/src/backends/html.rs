@@ -43,13 +43,30 @@ pub fn lower(commands: &[RenderCommand]) -> String {
                 bounds,
                 source,
                 radius,
+                tint,
             } => {
-                out.push_str(&format!(
-                    "<img src=\"{}\" style=\"position:absolute;left:{}px;top:{}px;width:{}px;height:{}px;object-fit:cover;border-radius:{}px {}px {}px {}px\"/>",
-                    html_escape_attr(source),
-                    bounds.x, bounds.y, bounds.width, bounds.height,
-                    radius.tl, radius.tr, radius.br, radius.bl,
-                ));
+                if let Some(tint) = tint {
+                    // Tinted icon — paint a masked block so the
+                    // monochrome SVG / PNG silhouette adopts the
+                    // palette colour. This is the canonical
+                    // CSS icon-tint hack (`mask-image` + a solid
+                    // `background-color`) and round-trips perfectly
+                    // for monochrome assets.
+                    out.push_str(&format!(
+                        "<span style=\"position:absolute;left:{}px;top:{}px;width:{}px;height:{}px;background-color:{};-webkit-mask-image:url('{src}');mask-image:url('{src}');-webkit-mask-size:cover;mask-size:cover;-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;border-radius:{}px {}px {}px {}px\"></span>",
+                        bounds.x, bounds.y, bounds.width, bounds.height,
+                        css_color(*tint),
+                        radius.tl, radius.tr, radius.br, radius.bl,
+                        src = html_escape_attr(source),
+                    ));
+                } else {
+                    out.push_str(&format!(
+                        "<img src=\"{}\" style=\"position:absolute;left:{}px;top:{}px;width:{}px;height:{}px;object-fit:cover;border-radius:{}px {}px {}px {}px\"/>",
+                        html_escape_attr(source),
+                        bounds.x, bounds.y, bounds.width, bounds.height,
+                        radius.tl, radius.tr, radius.br, radius.bl,
+                    ));
+                }
             }
             RenderCommand::Border { .. }
             | RenderCommand::ScissorStart { .. }
@@ -121,6 +138,48 @@ mod tests {
         let html = lower(&[cmd]);
         assert!(html.contains("left:10px"));
         assert!(html.contains("rgba(255,0,0,1)"));
+    }
+
+    #[test]
+    fn untinted_image_lowers_to_img_tag() {
+        let cmd = RenderCommand::Image {
+            bounds: Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 16.0,
+                height: 16.0,
+            },
+            source: "icons/x.svg".into(),
+            radius: CornerRadius::default(),
+            tint: None,
+        };
+        let html = lower(&[cmd]);
+        assert!(html.contains("<img src=\"icons/x.svg\""));
+        assert!(!html.contains("mask-image"));
+    }
+
+    #[test]
+    fn tinted_image_lowers_to_masked_span_with_background_color() {
+        let cmd = RenderCommand::Image {
+            bounds: Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 16.0,
+                height: 16.0,
+            },
+            source: "icons/x.svg".into(),
+            radius: CornerRadius::default(),
+            tint: Some(Color {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255,
+            }),
+        };
+        let html = lower(&[cmd]);
+        assert!(html.contains("mask-image:url('icons/x.svg')"));
+        assert!(html.contains("background-color:rgba(255,0,0,1)"));
+        assert!(!html.contains("<img"));
     }
 
     #[test]

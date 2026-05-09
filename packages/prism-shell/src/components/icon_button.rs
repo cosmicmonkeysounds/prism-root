@@ -21,7 +21,7 @@ use prism_builder::{
     schemas, // unused — reserved for shared field factories as we grow
     signal::SignalDef,
     style::StyleProperties,
-    ui_lower::{prop_bool, prop_str, LowerCtx},
+    ui_lower::{parse_color, prop_bool, prop_str, LowerCtx},
     Block,
     ComponentId,
     RenderError,
@@ -30,7 +30,7 @@ use prism_builder::{
 use prism_ui_runtime::layout::Node as UiNode;
 use serde_json::Value;
 
-use super::chrome::{icon_button_node, ICON_BUTTON_RADIUS, ICON_BUTTON_SIZE};
+use super::chrome::{icon_button_node_tinted, ICON_BUTTON_RADIUS, ICON_BUTTON_SIZE};
 
 /// `shell.icon-button` block. Schema mirrors the four `in property`
 /// declarations on the original Slint component.
@@ -49,6 +49,10 @@ impl Block for IconButton {
             FieldSpec::boolean("enabled", "Enabled").with_default(Value::Bool(true)),
             FieldSpec::text("tooltip-text", "Tooltip text"),
             FieldSpec::text("help-id", "Help ID"),
+            // Optional glyph tint — lowers to `Node::Image::tint`.
+            // Mirrors the original Slint `colorize` property on the
+            // icon's `Image` element.
+            FieldSpec::text("tint", "Glyph tint"),
         ]
     }
 
@@ -98,11 +102,13 @@ impl Block for IconButton {
         // The Block layer's job is just prop → helper-arg translation.
         let enabled = prop_bool(node, "enabled", true);
         let tooltip = Some(prop_str(node, "tooltip-text")).filter(|s| !s.is_empty());
-        icon_button_node(
+        let tint = parse_color(prop_str(node, "tint"));
+        icon_button_node_tinted(
             node.id.clone(),
             prop_str(node, "icon").to_string(),
             enabled,
             tooltip,
+            tint,
         )
     }
 }
@@ -207,13 +213,41 @@ mod tests {
     }
 
     #[test]
-    fn schema_declares_four_fields() {
+    fn schema_declares_five_fields() {
         let block = IconButton {
             id: "shell.icon-button".into(),
         };
         let schema = block.schema();
         let keys: Vec<&str> = schema.iter().map(|f| f.key.as_str()).collect();
-        assert_eq!(keys, vec!["icon", "enabled", "tooltip-text", "help-id"]);
+        assert_eq!(
+            keys,
+            vec!["icon", "enabled", "tooltip-text", "help-id", "tint"]
+        );
+    }
+
+    #[test]
+    fn tint_prop_propagates_to_glyph_image_tint() {
+        let node = icon_node(json!({ "icon": "icons/x.svg", "tint": "#ff0000" }));
+        let UiNode::Container { children, .. } = lower_one(&node) else {
+            panic!()
+        };
+        let UiNode::Image { tint, .. } = &children[0] else {
+            panic!("expected Image glyph")
+        };
+        let c = tint.expect("tint propagates");
+        assert_eq!((c.r, c.g, c.b), (255, 0, 0));
+    }
+
+    #[test]
+    fn missing_tint_prop_leaves_glyph_untinted() {
+        let node = icon_node(json!({ "icon": "icons/x.svg" }));
+        let UiNode::Container { children, .. } = lower_one(&node) else {
+            panic!()
+        };
+        let UiNode::Image { tint, .. } = &children[0] else {
+            panic!()
+        };
+        assert!(tint.is_none());
     }
 
     #[test]

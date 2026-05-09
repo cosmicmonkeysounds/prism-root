@@ -206,7 +206,7 @@ impl<'s> Parser<'s> {
                     },
                 };
             }
-            self.scanner.advance();
+            self.scanner.advance_unicode();
         }
     }
 
@@ -577,13 +577,13 @@ impl<'s> Parser<'s> {
             if ch == '<' || ch == '{' {
                 break;
             }
-            self.scanner.advance();
+            self.scanner.advance_unicode();
         }
         let end_offset = self.scanner.offset();
         if end_offset == start_offset {
             // Defensive: shouldn't happen, but advance one char to
             // guarantee progress.
-            self.scanner.advance();
+            self.scanner.advance_unicode();
             return;
         }
         let value = self.scanner.source()[start_offset..end_offset].to_string();
@@ -750,6 +750,31 @@ mod tests {
         match &doc.nodes[0] {
             Node::Comment { value, .. } => assert_eq!(value, " a note "),
             other => panic!("expected comment, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn comment_with_non_ascii_content_round_trips() {
+        // Em-dash, curly quotes, accented chars — anything multibyte
+        // in a comment body would previously panic the scanner.
+        let doc = parse_ok("<!-- résumé — “smart” quotes -->\n<spacer/>");
+        match &doc.nodes[0] {
+            Node::Comment { value, .. } => {
+                assert_eq!(value, " résumé — “smart” quotes ");
+            }
+            other => panic!("expected comment, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn text_node_with_non_ascii_content_round_trips() {
+        let doc = parse_ok("<text>résumé — naïve façade</text>");
+        let Node::Element(el) = &doc.nodes[0] else {
+            panic!()
+        };
+        match &el.children[0] {
+            Node::Text { value, .. } => assert_eq!(value, "résumé — naïve façade"),
+            other => panic!("expected text, got {other:?}"),
         }
     }
 

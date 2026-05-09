@@ -304,6 +304,7 @@ pub fn with_semantic(node: UiNode, semantic: Semantic) -> UiNode {
             width,
             height,
             radius,
+            tint,
             ..
         } => UiNode::Image {
             id,
@@ -311,6 +312,7 @@ pub fn with_semantic(node: UiNode, semantic: Semantic) -> UiNode {
             width,
             height,
             radius,
+            tint,
             semantic,
         },
         UiNode::TextInput {
@@ -566,6 +568,32 @@ pub fn image_node(
         width,
         height,
         radius,
+        tint: None,
+        semantic: prism_ui_runtime::layout::Semantic::default(),
+    }
+}
+
+/// Construct a `UiNode::Image` with a colour tint applied. Tint
+/// instructs the renderer to mask-paint the colour through the image
+/// (canonical icon-tint pattern). Same default sizing rules as
+/// [`image_node`] — `Grow`/`Grow` so an icon inside a sized container
+/// fills its slot.
+pub fn tinted_image_node(
+    node_id: String,
+    source: String,
+    style: &StyleProperties,
+    width: Sizing,
+    height: Sizing,
+    tint: prism_ui_runtime::command::Color,
+) -> UiNode {
+    let radius = style.border_radius.map(uniform_radius).unwrap_or_default();
+    UiNode::Image {
+        id: node_id,
+        source,
+        width,
+        height,
+        radius,
+        tint: Some(tint),
         semantic: prism_ui_runtime::layout::Semantic::default(),
     }
 }

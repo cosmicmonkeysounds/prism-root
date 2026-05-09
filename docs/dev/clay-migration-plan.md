@@ -2188,3 +2188,172 @@ threading is anticipated to translate any specific panel.
 | Date | Decision | Rationale |
 |---|---|---|
 | 2026-05-09 | `LowerCtx::lower_as` embedding seam; `AppWindow` refactored to dispatch embedded chrome through it; canonical `ui/app.prism-ui` skeleton landed with end-to-end test | Closes the embedded-chrome registry-bypass duplication noted at the bottom of §14. Single new method on the existing `LowerCtx` namespace lets composition blocks dispatch any registered chrome by id without importing the concrete `Block` impl — host-supplied overrides take effect for embedded chrome the same way they do for top-level resolver dispatch. AppWindow's `synth_menu_bar` / `synth_activity_bar` shrink to one-call helpers; the `derived_node` private helper and the per-block imports are deleted. The on-disk `ui/app.prism-ui` skeleton is the keystone artifact §14 promised — proves the Phase-4 authoring pipeline (parse → resolver → composition-block lowering with `host_children`) end-to-end through a registry-driven test. Phase-4 panel translations are now purely declarative additions; no further runtime extensions or DI seams anticipated. Filed: prism_ui parser bug at `grammar.rs:600` panics on non-ASCII inside comments (sidestepped via ASCII-only skeleton; 2-line scanner fix queued). |
+| 2026-05-09 | `Scanner::advance_unicode` lands; prism_ui comment + text scanners use it; non-ASCII content in `<!-- … -->` and text nodes round-trips | Closes the parser bug filed in the previous entry. The legacy `Scanner::advance` is byte-stepping by design (the syntactic vocabulary is ASCII-only); a sibling `advance_unicode` reads the full UTF-8 codepoint via `source[offset..].chars().next()` and steps `offset` by `len_utf8`, so the cursor always lands on a char boundary. Only the two scanners whose body content can hold non-ASCII (`parse_comment`, `parse_text_or_interpolation`) opt in — every other caller stays byte-precise. Two new prism_ui tests (`comment_with_non_ascii_content_round_trips`, `text_node_with_non_ascii_content_round_trips`) cover em-dash + curly-quote + accented content. `app.prism-ui` can now use typographic punctuation in author-written prose. |
+| 2026-05-09 | Image-tint runtime extension lands (`Node::Image::tint`, `RenderCommand::Image::tint`, `tinted_image_node` helper, `chrome::icon_button_node_tinted`, `IconButton` block `tint` prop) | The lone deferred runtime extension from the original Phase-4 punch list (gap #3 — "Image::colorize"). Sparse `Option<Color>` field on the existing `Node::Image` / `RenderCommand::Image` variants — `None` paints the image verbatim, `Some(c)` instructs the renderer to mask-paint the colour through it (the canonical icon-tint pattern). HTML backend lowers tinted images to a `mask-image` + `background-color` pair (CSS icon-tint hack); femtovg backend already pre-multiplies mask glyphs with a colour and resolves images the same way once the asset decoder phase lands. `IconButton` block now exposes a `tint` schema field so `<shell.icon-button icon="…" tint="#ff0000"/>` reproduces the Slint `colorize` behaviour from `.prism-ui` source. `chrome::icon_button_node_tinted` is the new sibling helper; `icon_button_node` delegates to it with `tint: None` so the four existing untinted call-sites (InspectorRow chevrons / trash, MenuBar add-page button, IconButton without prop) compile unchanged. Two new prism-shell tests cover the prop → glyph-tint propagation and the missing-prop fallback. Two new html-backend tests cover the masked-span + plain-img branches. Image-tint was the only "lone deferred extension" still on the list per the §13/§15 closing remarks; punch list is now empty. |
+
+## 16. Panel-by-panel translation: each region of `ui/app.slint` → one row in `register_shell_builtins` *or* one tag in `app.prism-ui`
+
+**Strategy locked 2026-05-09 (continuation of §15).** With the
+infrastructure case closed (parser, lowering pipeline, registry,
+resolver children slot, embedding seam, image-tint), every remaining
+region of the legacy `ui/app.slint` falls into exactly one of two
+buckets:
+
+1. **Leaf or self-contained chrome** → a new `Block` impl in
+   `prism-shell/src/components/<name>.rs`, registered as one row in
+   `register_shell_builtins`. The block owns its layout, reads its
+   data from typed props, and renders a `UiNode` subtree with no
+   composition children. Most overlays (toasts, tooltips, menus)
+   and most "content of a single dock panel" implementations land
+   here.
+2. **Composition chrome** → a tag in `app.prism-ui` whose body is
+   itself a tree of registered tags. The block reaches for
+   `ctx.host_children()` (§14) to adopt the inner subtree, and
+   delegates embedded-but-unrelated chrome to `ctx.lower_as`
+   (§15). `<shell.app-window>` is the canonical example;
+   `<shell.dock-panel>` and `<shell.workflow-page-bar>` are the
+   two remaining composition blocks anticipated.
+
+No third bucket. No new runtime types, no new context fields, no
+new resolver hooks are anticipated; if any region needs one, that
+is a §17 (and treat it as a defect of the plan, not a new feature).
+
+### Translation table
+
+The table below enumerates every section header from the legacy
+`ui/app.slint` (the `// ── Foo ──` markers between lines 1825 and
+4314 that delimit the rendered regions inside `AppWindow`) and
+maps each to its target in the registry-driven world.
+
+Status legend: ✅ landed · 🟡 partially landed (leaf primitives
+shipped, host block pending) · ⬜ pending.
+
+| Legacy region (line in `app.slint`) | Bucket | Target | Status |
+|---|---|---|---|
+| Menu bar (1825) | composition | `shell.menu-bar-row` block (drives `<shell.app-window>` synth) | ✅ §13 |
+| Activity bar (1844) | leaf list | `shell.nav-button` block × N, instantiated via AppWindow's `nav-buttons` JSON prop through `lower_as` | ✅ §13/§15 |
+| Status bar (4011) | leaf | `shell.status-bar` block — promote AppWindow's inline `synth_status_bar` into a registered block; AppWindow dispatches via `lower_as` for parity with the menu-bar/activity-bar pattern | ⬜ |
+| Workflow page bar (3983) | composition | `shell.workflow-page-bar` block reading a `pages` JSON array prop, each entry resolved through `shell.workflow-page-button` (new leaf) | ⬜ |
+| Launchpad (1872) | composition | `shell.launchpad` block hosting a grid of `<shell.app-card>` children via `host_children` (or via `app-cards` JSON prop, mirroring `nav-buttons`) | 🟡 (`shell.app-card` ✅; container ⬜) |
+| Dock panels (1938, absolutely positioned) | composition | `shell.dock-panel` block — adopts panel content as `host_children`, owns the per-panel tab bar via `shell.dock-tab-bar` (new leaf) | ⬜ |
+| Dock tab bar (1952) | leaf list | `shell.dock-tab-bar` block, `tabs` JSON prop, each entry dispatched as `shell.dock-tab` (new leaf) | ⬜ |
+| Panel content router (1981) | tag-only | one tag per registered editor in the dock-panel body; the router goes away — `ctx.lower_as("shell.<panel-id>", …)` is the dispatch | ⬜ |
+| Builder canvas (under 1981) | leaf | `shell.builder-canvas` block — `preview-nodes` + `grid-cells` JSON props, gizmo overlays (move/rotate/scale at 2593–2624) resolved through `shell.gizmo-{move,rotate,scale}` leaves; resize handles (2676) become an 8-row `shell.resize-handle` table driven from a JSON prop | ⬜ |
+| Component palette (panel content) | leaf | `shell.component-palette` block, items as JSON prop | ⬜ |
+| Inspector panel (panel content) | composition | `shell.inspector-tree` block hosting `<shell.inspector-row>` children — `shell.inspector-row` already ✅ | 🟡 |
+| Properties panel (panel content) | composition | `shell.properties-panel` block — `shell.section-header` + `shell.field-editor` + `shell.transform-editor` already ✅; the panel itself is a thin composition over its `property-rows` JSON prop | 🟡 |
+| Code editor (panel content) | leaf | `shell.code-editor` block, `editor-lines` JSON prop, cursor + fold callbacks routed via signals | ⬜ |
+| Explorer (panel content) | leaf | `shell.explorer` block, `explorer-nodes` JSON prop with one row dispatched as `shell.explorer-row` (new leaf) | ⬜ |
+| Navigation panel: graph header + canvas (3531/3538) | leaf | `shell.nav-graph` block, `nav-pages` + `graph-edges` JSON props | ⬜ |
+| Navigation panel: page list (3710) | leaf list | `shell.nav-page-row` block × N inside a `shell.nav-page-list` thin host | ⬜ |
+| Schema designer: header + list + actions (3800/3816/3874) | leaf | `shell.schema-designer` block, schema-fields JSON prop, per-row dispatch as `shell.schema-row` (new leaf) | ⬜ |
+| Signals panel (panel content) | leaf | `shell.signals-panel` block, `signal-connections` JSON prop, per-row dispatch as `shell.signal-connection-row` (new leaf) | ⬜ |
+| Dock dividers (3915) | leaf list | `shell.dock-divider` block × N from `dock-dividers` JSON prop on `shell.dock-panel`'s parent | ⬜ |
+| Docs sidebar overlay (3939) | leaf | `shell.docs-sidebar` block — `shell.docs-content` already ✅, sidebar is a thin chrome wrapper | 🟡 |
+| Docs full view (1919) | leaf | `shell.docs-view` block — same wrapper rationale | 🟡 |
+| Command palette (4043, overlay) | leaf | `shell.command-palette` block, `command-results` JSON prop | ⬜ |
+| Toasts overlay (4081) | leaf list | `shell.toast-stack` block hosting `shell.toast` children — `shell.toast` already ✅ | 🟡 |
+| Menu dropdown overlay (4087) | leaf | `shell.menu-dropdown` block, items JSON prop, each row dispatched as `shell.menu-item` (new leaf) | ⬜ |
+| Help tooltip overlay (4165) | leaf | `shell.help-tooltip` block, `HelpTooltipData` shape as typed props | ⬜ |
+| Context menu overlay (4227) | leaf | `shell.context-menu` block, `context-menu-items` JSON prop | ⬜ |
+| Component picker overlay (4314) | leaf | `shell.component-picker` block | ⬜ |
+
+That is **23 new `Block` impls** (one row each in
+`register_shell_builtins`) and **3 composition tags**
+(`shell.dock-panel`, `shell.workflow-page-bar`, `shell.launchpad`)
+to land before `app.prism-ui` is structurally complete. Six leaves
+already exist (`icon-button`, `nav-button`, `app-card`, `toast`,
+`docs-content`, `inspector-row`, `field-editor`, `section-header`,
+`transform-editor`, `drag-number-field`, `toolbar-separator`,
+`menu-bar-row`); six more compositions on top of those leaves
+collapse into thin wrappers (`shell.toast-stack`, `shell.docs-sidebar`,
+`shell.docs-view`, `shell.inspector-tree`, `shell.properties-panel`,
+`shell.launchpad`).
+
+### Order
+
+The order is dictated by the `app.prism-ui` skeleton's outside-in
+shape — once a region is registered, the skeleton can name it,
+and end-to-end tests (`canonical_app_prism_ui_skeleton_lowers_end_to_end`-style
+fixtures) lock the result.
+
+1. **Frame chrome.** `shell.status-bar`, `shell.workflow-page-bar`
+   (+ `shell.workflow-page-button`). AppWindow's inline status-bar
+   synthesis moves out behind `lower_as` for parity. After this
+   step, the entire outer frame of `app.prism-ui` is registry-driven.
+2. **Dock skeleton.** `shell.dock-panel` (composition),
+   `shell.dock-tab-bar` (+ `shell.dock-tab`), `shell.dock-divider`.
+   Establishes the body region as nested registered tags; the
+   panel-content router collapses into per-panel `lower_as` calls.
+3. **Per-panel content.** `shell.builder-canvas` first (largest
+   surface, exercises gizmo + resize-handle leaf families),
+   followed by `shell.properties-panel`, `shell.inspector-tree`,
+   `shell.signals-panel`, `shell.nav-graph` + `shell.nav-page-list`,
+   `shell.schema-designer`, `shell.code-editor`, `shell.explorer`,
+   `shell.component-palette`. Each panel is independent — they
+   parallelise once the dock skeleton lands.
+4. **Overlays.** `shell.command-palette`, `shell.toast-stack`,
+   `shell.menu-dropdown`, `shell.help-tooltip`, `shell.context-menu`,
+   `shell.component-picker`, `shell.docs-sidebar`, `shell.docs-view`,
+   `shell.launchpad`. Pure leaves; can land in any order.
+
+### Authoring shape (illustrative)
+
+By the end of the migration, `app.prism-ui` reads top-to-bottom as a
+flat composition of registered tags — every region above maps to
+one element:
+
+```prism-ui
+<shell.app-window id="root" status="Ready" app-name="Studio">
+  <shell.dock-panel id="body" layout="dock-tree">
+    <shell.builder-canvas id="builder"/>
+    <shell.properties-panel id="properties"/>
+    <shell.inspector-tree id="inspector"/>
+    <!-- one tag per registered panel -->
+  </shell.dock-panel>
+</shell.app-window>
+
+<shell.workflow-page-bar id="workflow"/>
+<shell.command-palette id="palette"/>
+<shell.toast-stack id="toasts"/>
+<shell.help-tooltip id="help"/>
+<shell.context-menu id="ctx"/>
+<shell.component-picker id="picker"/>
+<shell.menu-dropdown id="menu-dd"/>
+```
+
+Overlays sit as siblings of `<shell.app-window>` because their
+positioning is window-relative; `app-window` does not host them
+via `host_children`. The framing block (a thin
+`shell.studio-shell` over the whole document) is *deferred* —
+once every overlay is a registered tag, deciding whether to
+group them into a single composition root is a one-line
+authoring change, not a structural one.
+
+### Test discipline
+
+For every block landed in this section, the verification pattern
+established in §13–§15 holds without modification:
+
+- One Rust unit test per block in
+  `prism-shell/src/components/<name>.rs` covering prop → `UiNode`
+  shape, including the `Option::None` fallback for any embedded
+  chrome the block dispatches via `lower_as`.
+- One end-to-end test per *composition* block in
+  `prism-shell/src/components/registry.rs`, walking the full
+  `parse → lower_document_with_scope → RegistryTagResolver →
+  Block::lower_ui` pipeline against a `<shell.foo>…</shell.foo>`
+  string fixture.
+- The canonical `app.prism-ui` skeleton extends as each composition
+  block lands. The outside-in order above guarantees the skeleton
+  is always parseable and always renders — no half-registered
+  tag breaks the keystone test.
+
+No new test-infrastructure work is anticipated; the harness from
+§13/§15 already covers everything in this table.
+
+### Decision-log entry
+
+| Date | Decision | Rationale |
+|---|---|---|
+| 2026-05-09 | Phase-4 panel translation strategy locked: each region of legacy `ui/app.slint` is either a new `Block` impl in `register_shell_builtins` (leaves + leaf-list hosts) or a tag in `app.prism-ui` (composition blocks reading `host_children` and embedding chrome via `lower_as`). 23 new blocks, 3 composition tags, ordering frame-chrome → dock-skeleton → per-panel → overlays. | Crystallises the §15 closing claim ("Phase-4 panel translations are now purely declarative additions; no further runtime extensions or DI seams anticipated") into a concrete punch list. The two-bucket discipline is the load-bearing constraint: if any panel pushes for a third bucket, that is a defect of the plan rather than a new feature. The order is dictated by the `app.prism-ui` skeleton's outside-in shape — frame chrome first means the skeleton stays parseable end-to-end at every commit, eliminating a class of half-registered breakage. Test discipline carries forward unchanged from §13–§15: per-block unit tests for shape + fallback, per-composition end-to-end tests through the resolver, and an extending canonical skeleton fixture. No further infrastructure work is anticipated. |

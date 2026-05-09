@@ -15,7 +15,8 @@
 
 use prism_builder::style::StyleProperties;
 use prism_builder::ui_lower::{
-    bare_container, colored_text_node, hover_bg, image_node, parse_color, uniform_radius,
+    bare_container, colored_text_node, hover_bg, image_node, parse_color, tinted_image_node,
+    uniform_radius,
 };
 use prism_ui_runtime::command::Color;
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
@@ -46,17 +47,43 @@ pub fn icon_button_node(
     enabled: bool,
     aria_label: Option<&str>,
 ) -> UiNode {
+    icon_button_node_tinted(id, icon, enabled, aria_label, None)
+}
+
+/// Tinted variant of [`icon_button_node`] — paints the glyph through
+/// `tint` as a mask. The original Slint shell drove icon colour via
+/// the `colorize` property; in the runtime that's a `Node::Image`
+/// `tint`. `None` falls back to the as-authored monochrome render.
+pub fn icon_button_node_tinted(
+    id: impl Into<String>,
+    icon: impl Into<String>,
+    enabled: bool,
+    aria_label: Option<&str>,
+    tint: Option<Color>,
+) -> UiNode {
     let id = id.into();
-    let glyph = image_node(
-        format!("{id}::glyph"),
-        icon.into(),
-        // No cascade context here — embedded buttons don't inherit
-        // a parent text colour for their glyph. Image lowering only
-        // reads `style.color` as a default tint, which we don't want.
-        &Default::default(),
-        Sizing::Fixed(ICON_GLYPH_SIZE),
-        Sizing::Fixed(ICON_GLYPH_SIZE),
-    );
+    let glyph_id = format!("{id}::glyph");
+    let glyph_style = StyleProperties::default();
+    let glyph = match tint {
+        Some(c) => tinted_image_node(
+            glyph_id,
+            icon.into(),
+            &glyph_style,
+            Sizing::Fixed(ICON_GLYPH_SIZE),
+            Sizing::Fixed(ICON_GLYPH_SIZE),
+            c,
+        ),
+        None => image_node(
+            glyph_id,
+            icon.into(),
+            // No cascade context here — embedded buttons don't inherit
+            // a parent text colour for their glyph. Image lowering only
+            // reads `style.color` as a default tint, which we don't want.
+            &glyph_style,
+            Sizing::Fixed(ICON_GLYPH_SIZE),
+            Sizing::Fixed(ICON_GLYPH_SIZE),
+        ),
+    };
 
     bare_container(id, vec![glyph], |props| {
         props.width = Sizing::Fixed(ICON_BUTTON_SIZE);

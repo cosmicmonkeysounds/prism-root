@@ -394,6 +394,7 @@ mod tests {
             width: Sizing::Grow,
             height: Sizing::Grow,
             radius: CornerRadius::default(),
+            tint: None,
             semantic: Semantic::default().with_attr("alt", "A cat"),
         };
         let html = lower(&node);
