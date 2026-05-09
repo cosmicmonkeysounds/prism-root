@@ -1,0 +1,155 @@
+//! `shell.schema-designer` — Data workflow page panel composing
+//! `shell.schema-row` entries from a `fields` JSON array.
+//! Optional title/header text is exposed via the `title` prop.
+//!
+//! Slint origin: schema designer header + list around `ui/app.slint`
+//! lines 3800–3900.
+
+use prism_builder::{
+    document::Node,
+    registry::FieldSpec,
+    style::StyleProperties,
+    ui_lower::{bare_container, colored_text_node, prop_string, LowerCtx},
+    Block, ComponentId,
+};
+use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
+
+const HEADER_COLOR: &str = "#80000000";
+
+pub struct SchemaDesigner {
+    pub id: ComponentId,
+}
+
+impl Block for SchemaDesigner {
+    fn id(&self) -> &ComponentId {
+        &self.id
+    }
+
+    fn schema(&self) -> Vec<FieldSpec> {
+        vec![
+            FieldSpec::text("title", "Section title"),
+            FieldSpec::text("schema-name", "Schema name"),
+            FieldSpec::text("fields", "Fields (JSON array of schema-row props)"),
+        ]
+    }
+
+    fn lower_ui(&self, ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+        let style = StyleProperties::default();
+        let title = prop_string(node, "title");
+        let schema_name = prop_string(node, "schema-name");
+
+        let mut kids: Vec<UiNode> = Vec::new();
+
+        if !title.is_empty() {
+            kids.push(colored_text_node(
+                format!("{}::title", node.id),
+                title,
+                &style,
+                14.0,
+                "#000000",
+            ));
+        }
+        if !schema_name.is_empty() {
+            kids.push(colored_text_node(
+                format!("{}::schema", node.id),
+                format!("schema · {schema_name}"),
+                &style,
+                11.0,
+                HEADER_COLOR,
+            ));
+        }
+
+        // Author-driven children (e.g. an actions toolbar) come first
+        // after the header, then the fields-array dispatch.
+        let host = ctx
+            .host_children()
+            .map(|s| s.to_vec())
+            .unwrap_or_else(|| ctx.lower_children(&node.children));
+        kids.extend(host);
+
+        if let Some(arr) = node.props.get("fields").and_then(|v| v.as_array()) {
+            for (idx, item) in arr.iter().enumerate() {
+                if let Some(child) = ctx.lower_as(
+                    "shell.schema-row",
+                    format!("{}::row::{}", node.id, idx),
+                    item.clone(),
+                ) {
+                    kids.push(child);
+                }
+            }
+        }
+
+        bare_container(node.id.clone(), kids, |p| {
+            p.direction = Direction::Column;
+            p.gap = 6.0;
+            p.padding = Padding {
+                left: 16.0,
+                right: 16.0,
+                top: 14.0,
+                bottom: 14.0,
+            };
+            p.width = Sizing::Grow;
+            p.height = Sizing::Grow;
+            p.semantic = Semantic::tag("section")
+                .with_attr("aria-label", "Schema designer")
+                .with_attr("data-role", "schema-designer");
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::components::registry::{register_shell_builtins, ShellComponentRegistry};
+    use prism_builder::document::Node as BuilderNode;
+    use prism_builder::layout::LayoutMode;
+    use prism_core::foundation::spatial::Transform2D;
+    use serde_json::json;
+
+    fn lower(props: serde_json::Value) -> UiNode {
+        let block = SchemaDesigner {
+            id: "shell.schema-designer".into(),
+        };
+        let n = BuilderNode {
+            id: "sd".into(),
+            component: "shell.schema-designer".into(),
+            props,
+            children: vec![],
+            layout_mode: LayoutMode::default(),
+            transform: Transform2D::default(),
+            modifiers: vec![],
+            style: StyleProperties::default(),
+        };
+        let mut reg = ShellComponentRegistry::new();
+        register_shell_builtins(&mut reg).expect("register");
+        let cascade = StyleProperties::default();
+        let ctx = LowerCtx::new(Some(reg.as_component_registry()), &cascade);
+        block.lower_ui(&ctx, &n, &cascade)
+    }
+
+    #[test]
+    fn header_only_when_no_fields() {
+        let ui = lower(json!({ "title": "Posts", "schema-name": "post" }));
+        let UiNode::Container { children, .. } = ui else {
+            panic!()
+        };
+        assert_eq!(children.len(), 2);
+    }
+
+    #[test]
+    fn fields_dispatch_to_rows() {
+        let ui = lower(json!({
+            "title": "Posts",
+            "fields": [
+                { "field-name": "title", "field-kind": "text", "required": true },
+                { "field-name": "body", "field-kind": "rich-text" },
+                { "field-name": "tags", "field-kind": "list" },
+            ]
+        }));
+        let UiNode::Container { children, .. } = ui else {
+            panic!()
+        };
+        // title + 3 rows
+        assert_eq!(children.len(), 4);
+    }
+}

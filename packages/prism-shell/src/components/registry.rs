@@ -132,6 +132,20 @@ pub fn register_shell_builtins(reg: &mut ShellComponentRegistry) -> Result<(), R
     reg!("shell.properties-panel", PropertiesPanel);
     reg!("shell.component-palette", ComponentPalette);
     reg!("shell.explorer", Explorer);
+    reg!("shell.signal-connection-row", SignalConnectionRow);
+    reg!("shell.signals-panel", SignalsPanel);
+    reg!("shell.schema-row", SchemaRow);
+    reg!("shell.schema-designer", SchemaDesigner);
+    reg!("shell.nav-page-row", NavPageRow);
+    reg!("shell.nav-page-list", NavPageList);
+    reg!("shell.nav-graph", NavGraph);
+    reg!("shell.code-editor", CodeEditor);
+    reg!("shell.gizmo-move", GizmoMove);
+    reg!("shell.gizmo-rotate", GizmoRotate);
+    reg!("shell.gizmo-scale", GizmoScale);
+    reg!("shell.resize-handle", ResizeHandle);
+    reg!("shell.builder-canvas", BuilderCanvas);
+    reg!("shell.component-picker", ComponentPicker);
 
     Ok(())
 }
@@ -177,7 +191,21 @@ mod tests {
         assert!(reg.get("shell.properties-panel").is_some());
         assert!(reg.get("shell.component-palette").is_some());
         assert!(reg.get("shell.explorer").is_some());
-        assert_eq!(reg.len(), 33);
+        assert!(reg.get("shell.signal-connection-row").is_some());
+        assert!(reg.get("shell.signals-panel").is_some());
+        assert!(reg.get("shell.schema-row").is_some());
+        assert!(reg.get("shell.schema-designer").is_some());
+        assert!(reg.get("shell.nav-page-row").is_some());
+        assert!(reg.get("shell.nav-page-list").is_some());
+        assert!(reg.get("shell.nav-graph").is_some());
+        assert!(reg.get("shell.code-editor").is_some());
+        assert!(reg.get("shell.gizmo-move").is_some());
+        assert!(reg.get("shell.gizmo-rotate").is_some());
+        assert!(reg.get("shell.gizmo-scale").is_some());
+        assert!(reg.get("shell.resize-handle").is_some());
+        assert!(reg.get("shell.builder-canvas").is_some());
+        assert!(reg.get("shell.component-picker").is_some());
+        assert_eq!(reg.len(), 47);
     }
 
     #[test]
@@ -352,7 +380,11 @@ mod tests {
         assert_eq!(dock_id, "body");
         // dock-panel body is the last (or only) child since no `tabs` prop.
         let body_section = dock_kids.last().expect("dock-panel body");
-        let UiNode::Container { children: body_section_kids, .. } = body_section else {
+        let UiNode::Container {
+            children: body_section_kids,
+            ..
+        } = body_section
+        else {
             panic!()
         };
         let UiNode::Container { id: cr_id, .. } = &body_section_kids[0] else {

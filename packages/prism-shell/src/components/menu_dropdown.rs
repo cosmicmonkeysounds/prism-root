@@ -100,10 +100,17 @@ mod tests {
         let owned = reg;
         let cascade = StyleProperties::default();
         let ctx = LowerCtx::new(Some(owned.as_component_registry()), &cascade);
-        let UiNode::Container { children, props, .. } = block.lower_ui(&ctx, &n, &cascade) else {
+        let UiNode::Container {
+            children, props, ..
+        } = block.lower_ui(&ctx, &n, &cascade)
+        else {
             panic!()
         };
         assert_eq!(children.len(), 2);
-        assert!(props.semantic.attrs.iter().any(|(k, v)| k == "role" && v == "menu"));
+        assert!(props
+            .semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "role" && v == "menu"));
     }
 }

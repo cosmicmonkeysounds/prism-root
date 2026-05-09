@@ -45,9 +45,8 @@ impl Block for CommandPalette {
     fn schema(&self) -> Vec<FieldSpec> {
         vec![
             FieldSpec::text("query", "Search query"),
-            FieldSpec::text("placeholder", "Placeholder").with_default(Value::String(
-                "Search commands…".into(),
-            )),
+            FieldSpec::text("placeholder", "Placeholder")
+                .with_default(Value::String("Search commands…".into())),
             FieldSpec::text("results", "Results (JSON array)"),
             FieldSpec::integer(
                 "selected-index",
@@ -170,11 +169,9 @@ fn build_row(node: &Node, idx: usize, item: &Value, selected: bool) -> UiNode {
         } else {
             p.hover = hover_bg(ROW_HOVER);
         }
-        p.semantic = Semantic::tag("div").with_attr("role", "option").with_attr_if(
-            selected,
-            "aria-selected",
-            "true",
-        );
+        p.semantic = Semantic::tag("div")
+            .with_attr("role", "option")
+            .with_attr_if(selected, "aria-selected", "true");
     })
 }
 

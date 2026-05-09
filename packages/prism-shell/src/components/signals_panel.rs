@@ -1,54 +1,68 @@
-//! `shell.properties-panel` — right rail panel composing
-//! [`shell.section-header`] / [`shell.field-editor`] /
-//! [`shell.transform-editor`] children. The panel itself owns only
-//! the outer scroll-friendly column shape; the actual property rows
-//! are authored as children (or fed via the `rows` JSON prop, which
-//! routes each entry through the registry by component id).
+//! `shell.signals-panel` — composition panel for the signals editor.
+//! Reads a `connections` JSON array of row props (forwarded as-is to
+//! `shell.signal-connection-row`) and dispatches each through the
+//! registry. Optional `host_children` route lets `.prism-ui` source
+//! author bespoke headers / footers above the dispatched rows.
 
 use prism_builder::{
     document::Node,
     registry::FieldSpec,
     style::StyleProperties,
-    ui_lower::{bare_container, LowerCtx},
+    ui_lower::{bare_container, colored_text_node, prop_string, LowerCtx},
     Block, ComponentId,
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
 
-pub struct PropertiesPanel {
+const HEADER_COLOR: &str = "#80000000";
+
+pub struct SignalsPanel {
     pub id: ComponentId,
 }
 
-impl Block for PropertiesPanel {
+impl Block for SignalsPanel {
     fn id(&self) -> &ComponentId {
         &self.id
     }
 
     fn schema(&self) -> Vec<FieldSpec> {
-        vec![FieldSpec::text(
-            "rows",
-            "Rows (JSON array of {component, props})",
-        )]
+        vec![
+            FieldSpec::text("title", "Section title"),
+            FieldSpec::text(
+                "connections",
+                "Connections (JSON array of signal-connection-row props)",
+            ),
+        ]
     }
 
     fn lower_ui(&self, ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
-        // Either the source-driven path (host_children + recursed
-        // lower_children) OR the JSON-driven path: each entry in
-        // `rows` declares `{ component: "shell.section-header", props: { … }}`.
+        let style = StyleProperties::default();
+        let title = prop_string(node, "title");
+
         let mut kids = ctx
             .host_children()
             .map(|s| s.to_vec())
             .unwrap_or_else(|| ctx.lower_children(&node.children));
 
-        if let Some(arr) = node.props.get("rows").and_then(|v| v.as_array()) {
+        if !title.is_empty() {
+            kids.insert(
+                0,
+                colored_text_node(
+                    format!("{}::title", node.id),
+                    title,
+                    &style,
+                    11.0,
+                    HEADER_COLOR,
+                ),
+            );
+        }
+
+        if let Some(arr) = node.props.get("connections").and_then(|v| v.as_array()) {
             for (idx, item) in arr.iter().enumerate() {
-                let component = item.get("component").and_then(|v| v.as_str()).unwrap_or("");
-                let props = item
-                    .get("props")
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-                if let Some(child) =
-                    ctx.lower_as(component, format!("{}::row::{}", node.id, idx), props)
-                {
+                if let Some(child) = ctx.lower_as(
+                    "shell.signal-connection-row",
+                    format!("{}::row::{}", node.id, idx),
+                    item.clone(),
+                ) {
                     kids.push(child);
                 }
             }
@@ -56,7 +70,7 @@ impl Block for PropertiesPanel {
 
         bare_container(node.id.clone(), kids, |p| {
             p.direction = Direction::Column;
-            p.gap = 8.0;
+            p.gap = 4.0;
             p.padding = Padding {
                 left: 12.0,
                 right: 12.0,
@@ -66,8 +80,8 @@ impl Block for PropertiesPanel {
             p.width = Sizing::Grow;
             p.height = Sizing::Grow;
             p.semantic = Semantic::tag("section")
-                .with_attr("data-role", "properties-panel")
-                .with_attr("aria-label", "Properties");
+                .with_attr("aria-label", "Signals")
+                .with_attr("data-role", "signals-panel");
         })
     }
 }
@@ -82,12 +96,12 @@ mod tests {
     use serde_json::json;
 
     fn lower(props: serde_json::Value) -> UiNode {
-        let block = PropertiesPanel {
-            id: "shell.properties-panel".into(),
+        let block = SignalsPanel {
+            id: "shell.signals-panel".into(),
         };
         let n = BuilderNode {
-            id: "pp".into(),
-            component: "shell.properties-panel".into(),
+            id: "sp".into(),
+            component: "shell.signals-panel".into(),
             props,
             children: vec![],
             layout_mode: LayoutMode::default(),
@@ -97,14 +111,13 @@ mod tests {
         };
         let mut reg = ShellComponentRegistry::new();
         register_shell_builtins(&mut reg).expect("register");
-        let owned = reg;
         let cascade = StyleProperties::default();
-        let ctx = LowerCtx::new(Some(owned.as_component_registry()), &cascade);
+        let ctx = LowerCtx::new(Some(reg.as_component_registry()), &cascade);
         block.lower_ui(&ctx, &n, &cascade)
     }
 
     #[test]
-    fn empty_panel() {
+    fn empty_panel_has_section_role() {
         let ui = lower(json!({}));
         let UiNode::Container {
             children, props, ..
@@ -117,16 +130,18 @@ mod tests {
     }
 
     #[test]
-    fn rows_dispatch_through_registry() {
+    fn connections_dispatch_to_rows() {
         let ui = lower(json!({
-            "rows": [
-                { "component": "shell.section-header", "props": { "label": "Layout" } },
-                { "component": "shell.field-editor", "props": { "key": "x", "kind": "number", "value": 10 } },
+            "title": "Wired up",
+            "connections": [
+                { "source-signal": "clicked", "action-kind": "SetProperty", "target-label": "x" },
+                { "source-signal": "hovered", "action-kind": "EmitSignal", "target-label": "y" },
             ]
         }));
         let UiNode::Container { children, .. } = ui else {
             panic!()
         };
-        assert_eq!(children.len(), 2);
+        // title + 2 rows
+        assert_eq!(children.len(), 3);
     }
 }

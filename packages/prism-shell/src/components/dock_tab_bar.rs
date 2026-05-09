@@ -114,7 +114,10 @@ mod tests {
     #[test]
     fn empty_strip_when_no_tabs() {
         let ui = lower(json!({}), false);
-        let UiNode::Container { children, props, .. } = ui else {
+        let UiNode::Container {
+            children, props, ..
+        } = ui
+        else {
             panic!()
         };
         assert!(children.is_empty());

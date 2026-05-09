@@ -42,10 +42,7 @@ impl Block for ComponentPalette {
 
     fn signals(&self) -> Vec<SignalDef> {
         let mut s = common_signals();
-        s.push(SignalDef::new(
-            "item-activated",
-            "Palette item picked.",
-        ));
+        s.push(SignalDef::new("item-activated", "Palette item picked."));
         s
     }
 
@@ -83,7 +80,13 @@ impl Block for ComponentPalette {
     }
 }
 
-fn build_row(node: &Node, idx: usize, item: &Value, style: &StyleProperties, selected: &str) -> UiNode {
+fn build_row(
+    node: &Node,
+    idx: usize,
+    item: &Value,
+    style: &StyleProperties,
+    selected: &str,
+) -> UiNode {
     let id = item.get("id").and_then(|v| v.as_str()).unwrap_or("");
     let label = item.get("label").and_then(|v| v.as_str()).unwrap_or(id);
     let icon = item.get("icon").and_then(|v| v.as_str()).unwrap_or("");
@@ -123,11 +126,9 @@ fn build_row(node: &Node, idx: usize, item: &Value, style: &StyleProperties, sel
         } else {
             p.hover = hover_bg(ROW_HOVER);
         }
-        p.semantic = Semantic::tag("div").with_attr("role", "option").with_attr_if(
-            is_selected,
-            "aria-selected",
-            "true",
-        );
+        p.semantic = Semantic::tag("div")
+            .with_attr("role", "option")
+            .with_attr_if(is_selected, "aria-selected", "true");
     })
 }
 

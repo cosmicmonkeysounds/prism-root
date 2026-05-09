@@ -50,7 +50,11 @@ impl Block for MenuItem {
         let shortcut = prop_string(node, "shortcut");
         let disabled = prop_bool(node, "disabled", false);
         let style = StyleProperties::default();
-        let label_color = if disabled { DISABLED_COLOR } else { LABEL_COLOR };
+        let label_color = if disabled {
+            DISABLED_COLOR
+        } else {
+            LABEL_COLOR
+        };
 
         let mut kids = vec![colored_text_node(
             format!("{}::label", node.id),
@@ -83,11 +87,9 @@ impl Block for MenuItem {
             if !disabled {
                 p.hover = hover_bg(ROW_HOVER);
             }
-            p.semantic = Semantic::tag("div").with_attr("role", "menuitem").with_attr_if(
-                disabled,
-                "aria-disabled",
-                "true",
-            );
+            p.semantic = Semantic::tag("div")
+                .with_attr("role", "menuitem")
+                .with_attr_if(disabled, "aria-disabled", "true");
         })
     }
 }

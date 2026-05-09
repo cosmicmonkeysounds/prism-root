@@ -35,7 +35,11 @@ impl Block for DocsSidebar {
 
     fn lower_ui(&self, ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
         let mode = prop_string(node, "mode");
-        let mode = if mode.is_empty() { "compact".into() } else { mode };
+        let mode = if mode.is_empty() {
+            "compact".into()
+        } else {
+            mode
+        };
         let content_props = json!({
             "title": node.props.get("title").cloned().unwrap_or_default(),
             "summary": node.props.get("summary").cloned().unwrap_or_default(),
@@ -97,7 +101,10 @@ mod tests {
         let owned = reg;
         let cascade = StyleProperties::default();
         let ctx = LowerCtx::new(Some(owned.as_component_registry()), &cascade);
-        let UiNode::Container { children, props, .. } = block.lower_ui(&ctx, &n, &cascade) else {
+        let UiNode::Container {
+            children, props, ..
+        } = block.lower_ui(&ctx, &n, &cascade)
+        else {
             panic!()
         };
         assert_eq!(props.semantic.tag.as_deref(), Some("aside"));

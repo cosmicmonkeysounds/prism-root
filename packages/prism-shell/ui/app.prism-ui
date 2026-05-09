@@ -37,3 +37,4 @@
 <shell.help-tooltip id="help" title=""/>
 <shell.context-menu id="ctx"/>
 <shell.menu-dropdown id="menu-dd"/>
+<shell.component-picker id="picker"/>

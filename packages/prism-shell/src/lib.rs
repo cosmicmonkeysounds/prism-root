@@ -31,6 +31,7 @@ pub mod keyboard;
 #[cfg(feature = "native")]
 pub mod luau;
 pub mod menu;
+pub mod panel_props;
 pub mod panels;
 pub mod persistence;
 pub mod project;
