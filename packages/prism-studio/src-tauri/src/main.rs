@@ -15,9 +15,7 @@ mod sidecar;
 
 use prism_shell::Shell;
 
-fn main() -> Result<(), slint::PlatformError> {
-    // Capture full backtrace on panic so we can diagnose Slint
-    // property recursion. Writes to /tmp/prism-panic.txt.
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::panic::set_hook(Box::new(|info| {
         let bt = std::backtrace::Backtrace::force_capture();
         let msg = format!("{info}\n\nBacktrace:\n{bt}");
@@ -39,5 +37,6 @@ fn main() -> Result<(), slint::PlatformError> {
     };
 
     let shell = Shell::new()?;
-    shell.run()
+    shell.run()?;
+    Ok(())
 }

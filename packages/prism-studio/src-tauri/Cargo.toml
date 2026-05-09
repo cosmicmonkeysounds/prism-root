@@ -9,20 +9,12 @@ description = "Prism Studio — the packaged desktop shell. Thin Slint host that
 name = "prism-studio"
 path = "src/main.rs"
 
-[features]
-live-preview = ["prism-shell/live-preview"]
-
 [dependencies]
 # Shared types and the UI tree we render. Studio embeds the shell
 # as a library and drives the same `Shell::run()` entry point the
 # standalone dev binary does.
 prism-shell = { path = "../../prism-shell", default-features = false, features = ["native"] }
 prism-core = { path = "../../prism-core" }
-
-# Slint is pulled in so Studio can reach through to
-# `slint::PlatformError` when reporting boot failures. The shell
-# library already owns the actual event loop.
-slint = { workspace = true }
 
 # Daemon runs as a sidecar process — Studio does not link it as a
 # library. The `prism-daemon` crate is kept on the path so a dev

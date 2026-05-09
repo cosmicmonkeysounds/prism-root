@@ -1,59 +1,47 @@
 //! `prism-shell` — single source of truth for the Prism UI tree.
 //!
-//! Every Studio panel, the page builder, every lens — all of it lives
-//! behind a single Slint component tree whose properties are bound
-//! from the reloadable [`AppState`] struct. The [`Shell`] wrapper
-//! owns both a `prism_core::Store<AppState>` and the root `AppWindow`
-//! instance and funnels Slint callbacks back into the store so
-//! subscribers (inspector overlays, the IPC bridge, future panels)
-//! see every mutation.
+//! Renders through `prism-ui-runtime` (winit + femtovg native, wasm32 +
+//! webgl browser). The host-runtime contract is three modules:
 //!
-//! Phase 0 ships one hard-coded panel (`panels::identity`) with a
-//! sidebar of three buttons. Panels grow fan-out-style in Phase 1;
-//! adding one means: register its data in `panels/<name>.rs`, wire
-//! it into the dock workspace, and add a branch in `Shell::sync_ui`.
+//! - [`props`] — `ShellPropBindings` registration table mirroring
+//!   [`components::register_shell_builtins`].
+//! - [`render`] — per-frame `render_tree`: bindings.snapshot →
+//!   fill_compositions → lower.
+//! - [`events`] — single `dispatch_event` router from
+//!   `prism_ui_runtime::event::Event` into `ShellInner` mutations.
 //!
-//! ## Backend choice
+//! See `docs/dev/clay-migration-plan.md` §17 for the full
+//! architectural contract.
 //!
-//! Slint (1.8) owns layout, renderer, and windowing. The native
-//! build runs on winit + femtovg; the web build runs on winit's
-//! wasm32-unknown-unknown backend, also via femtovg over WebGL.
+//! ## Migration status
+//!
+//! The 2026-05-09 Slint tear-out (§17) deleted `ui/app.slint`,
+//! `app/sync/`, `app/callbacks/`, every Slint dep, and the
+//! `bind_model!` block in one stroke. The legacy feature surface
+//! (`app::commands`, `app::mutations`, `panels::*`, `panel_props`,
+//! `signals`, `input`, `command`, `keyboard`, `keybindings`, `menu`,
+//! `search`, `selection`, `persistence`, `project`, `explorer`,
+//! `help`, `telemetry`, `testing`, `e2e`, `luau`) is *on disk but
+//! not in the build* until each module is ported to the new
+//! `Shell` / `Surface` / `ShellInner` shape. Re-add them to the
+//! `pub mod` list below as each port lands.
 
-pub mod app;
-pub mod command;
 pub mod components;
-pub mod e2e;
-pub mod explorer;
-pub mod help;
-pub mod input;
-pub mod keybindings;
-pub mod keyboard;
-#[cfg(feature = "native")]
-pub mod luau;
-pub mod menu;
-pub mod panel_props;
-pub mod panels;
-pub mod persistence;
-pub mod project;
-pub mod search;
-pub mod selection;
-pub mod signals;
-pub mod telemetry;
-pub mod testing;
+pub mod events;
+pub mod props;
+pub mod render;
 
-pub use app::{AppState, Shell};
-pub use command::{CommandEntry, CommandRegistry};
-pub use input::{combo_from_slint, FocusRegion, InputManager, InputScheme, InputSchemeBuilder};
-pub use keybindings::UserKeybindings;
-pub use keyboard::{KeyBinding, KeyCombo, KeyboardModel, Modifiers};
-pub use search::{SearchIndex, SearchResult};
-pub use selection::SelectionModel;
-pub use telemetry::FirstPaint;
+mod shell;
 
-// `slint::include_modules!()` inlines the Rust code generated from
-// `ui/app.slint` by `build.rs`. It exposes `AppWindow` + the
-// `ButtonSpec` struct used by the sidebar model.
-slint::include_modules!();
+pub use shell::{Shell, ShellError};
+
+/// Minimal placeholder for the per-frame state every binding closure
+/// reads. The legacy `app::AppState` (with dock workspace, selection
+/// model, command palette, toasts, …) is on disk in `src/app/mod.rs`
+/// and will be re-introduced module-by-module as each panel is ported
+/// against the new shell shape.
+#[derive(Default, Clone)]
+pub struct AppState;
 
 /// Browser entry point. `wasm-bindgen` calls this automatically via
 /// its `(start)` attribute so the HTML loader only has to import the

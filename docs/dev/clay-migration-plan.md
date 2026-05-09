@@ -2361,3 +2361,450 @@ No new test-infrastructure work is anticipated; the harness from
 | 2026-05-09 | §16 step 1 lands: `shell.status-bar`, `shell.workflow-page-button`, `shell.workflow-page-bar` blocks registered; `AppWindow::synth_status_bar` refactored to dispatch via `lower_as`; canonical `app.prism-ui` skeleton extended with sibling `<shell.workflow-page-bar id="workflow"/>`; keystone test asserts both AppWindow and workflow-page-bar lower end-to-end. | Frame-chrome step of the §16 ordering. Three new rows in `register_shell_builtins` (16 total), zero new infrastructure: every change composes with seams already shipped — `lower_as` for embedded dispatch (§15), the existing `pages` → per-entry `lower_as` JSON-array idiom from `nav-buttons` (§13). Status-bar lowering is now registry-routed for parity with menu-bar/activity-bar; `AppWindow` no longer imports any concrete chrome `Block` impl. Workflow-page-bar mirrors activity-bar's prop-driven composition pattern (no `host_children`, since the legacy Slint version reads from a `[WorkflowPageItem]` model). Workflow-page-button mirrors nav-button's selected/resting visual fork via cascade props + `hover` overrides. Skeleton sibling placement validates the §16 claim that overlays / window-relative chrome live as top-level siblings rather than `host_children`. Verification: prism-shell 437 lib tests (8 new — 3 status-bar, 3 workflow-page-button, 4 workflow-page-bar; keystone test extended); workspace `cargo test --workspace --lib` green; `cargo clippy --workspace --all-targets -D warnings` clean. §16 status table updates: status-bar ✅, workflow-page-bar ✅. |
 | 2026-05-09 | §16 close-out: host-side bridge `prism_shell::panel_props` lands — typed `panels::*` data → JSON props for every shell block. 12 bridge fns (`inspector_rows`, `signals_panel_props`, `nav_page_row_entries`, `nav_graph_props`, `schema_designer_props`, `schema_list_entries`, `properties_panel_props`, `command_palette_props`, `toast_stack_entries`, `dock_tab_bar_props`, `workflow_page_bar_props`, `menu_bar_row_props`, `app_window_props`). | The "host-side wiring" half of the §16 close-out. Each function is a pure mapping from the existing typed `panels::*` data structures (`SignalsPanel::connection_rows`, `NavigationPanel::page_rows` / `graph_nodes` / `graph_edges`, `SchemaDesignerPanel::schema_list_rows`, `PropertySection`, `CommandRegistry::filter`, `ToastData`, `DockWorkspace::pages` / `active_dock`) into the JSON shape the corresponding shell block reads — single seam, zero new abstractions, pure data. The two end-to-end tests (`app_window_props_lower_through_registry_resolver`, `workflow_page_bar_props_lower_through_registry_resolver`) prove the bridge → registry → block-lowering pipeline by feeding the bridge output into a real registered block and asserting the resulting `UiNode` shape — the supervisor wire-up that Phase 5 needs is now mechanical. Verification: prism-shell 514 lib tests (17 new in `panel_props::tests`; up from 497); workspace `cargo check --workspace --lib` green; `cargo clippy --lib --all-targets -D warnings` clean. The remaining §16 close-out work is now purely the Phase 5 Slint tear-out — every block has a JSON-prop bridge from a typed source, and the resolver dispatches them end-to-end. |
 | 2026-05-09 | §16 panel-content batch lands the final 14 shell blocks: `shell.signal-connection-row`, `shell.signals-panel`, `shell.schema-row`, `shell.schema-designer`, `shell.nav-page-row`, `shell.nav-page-list`, `shell.nav-graph`, `shell.code-editor`, `shell.gizmo-move`, `shell.gizmo-rotate`, `shell.gizmo-scale`, `shell.resize-handle`, `shell.builder-canvas`, `shell.component-picker`. Registry now at 47 shell primitives; canonical `app.prism-ui` skeleton swaps the welcome `<text>` for `<shell.builder-canvas id="builder"/>` and adds `<shell.component-picker id="picker"/>` to the overlay siblings. | The two-bucket discipline §16 locked held a third time, with zero new runtime extensions: every panel-content target is a leaf (`signals-panel` and `schema-designer` are thin column hosts that dispatch their per-row props through `lower_as` exactly like `inspector-tree` / `nav-page-list`); the builder-canvas leaf composes its overlay layer from `lower_as("shell.resize-handle", …)` × 8 plus a `tool`-driven dispatch into one of `shell.gizmo-{move,rotate,scale}`, with a runtime fallback when no resolver is wired up. Every new block exposes its host-driven state purely through typed props or JSON arrays — `selection-rect`, `grid-cells`, `pages`, `edges`, `categories`, `lines` — so the host can drive them from `BuilderDocument` / `DockWorkspace` / `panels::*` snapshots without bespoke widget plumbing. Verification: prism-shell 497 lib tests (36 new across 14 files; up from 461); workspace `cargo clippy --workspace --lib -D warnings` clean. **Phase-4 scoreboard:** 26/26 panel-table targets now ✅ — every legacy `app.slint` region has a registered shell tag. Remaining work for the §17 close-out is purely host-side wiring (binding `panels::signals` / `panels::navigation` / schema editor / `BuilderDocument` snapshots into the JSON props each block reads) and the planned Slint tear-out (Phase 5). |
+
+## 17. Slint tear-out: `ShellPropBindings` + `Surface` boot, rip-and-replace
+
+**Strategy locked 2026-05-09 (continuation of §16).** Phase 4 closed
+with 47 registered shell blocks, a canonical `ui/app.prism-ui`
+skeleton that lowers end-to-end through `RegistryTagResolver`, and
+12 ad-hoc bridge functions in `prism_shell::panel_props` mapping
+typed `panels::*` / `DockWorkspace` / `BuilderDocument` snapshots
+into the JSON shapes each block consumes. The Phase-5 tear-out is
+a *wiring* problem, not an *infrastructure* problem — every leaf
+already exists, every composition tag already routes children
+through the resolver, every block already reads typed-or-JSON
+props. The remaining risk is **call-site duplication on the host
+side**: each frame the supervisor needs to know which block id maps
+to which bridge function, which prop bag flows where, and what
+sub-tree (host_children vs JSON array) each composition expects.
+
+The 12 free functions in `panel_props.rs` are the canary. They
+already share a shape — *pure `&AppState`-or-substate → `Value`* —
+but the call site that would assemble all of them into a single
+`BuilderDocument` for the runtime to lower has nowhere central to
+look up "for `shell.foo`, here is the function that produces its
+props." A naive Phase-5 supervisor would grow a 47-arm `match` over
+block ids; that is the same duplication §13's `register_shell_builtins`
+killed for blocks, just relocated to the host. The fix is the same
+fix.
+
+**Solution (~120 LoC, one new public type, one new macro).** A
+`ShellPropBindings` struct that mirrors `ComponentRegistry`'s shape
+on the host side: one row per registered block id, each row a typed
+binding closure `Fn(&PropCtx) -> PropEmission`. The closure produces
+either a JSON `Value` (for prop-driven blocks) or a `Vec<UiNode>`
+(for composition blocks that want host_children) or both. A single
+`bind!(...)` macro (sibling of `reg!`) registers each binding in
+one line. The supervisor walks the bindings table once per frame,
+emits a `BuilderDocument` whose root is the parsed `app.prism-ui`
+skeleton with each composition body filled from the matching
+`PropEmission::children`, and lowers the whole thing through the
+already-shipped `lower_document_with_scope` + `RegistryTagResolver`
+pipeline. No new dispatch loop, no per-block `if`s, no parallel
+prop-routing layer.
+
+**Smart-pattern wins (every constraint at the top of plan §0 honoured):**
+
+- **One registration table, not 47 wiring sites.** `ShellPropBindings::with_builtins`
+  reads as a flat list of `bind!(reg, "shell.inspector-tree",
+  |ctx| inspector_tree_emission(ctx))` rows — adding a new block
+  (or splitting one) is a one-line change. The supervisor never
+  imports `panels::*` or `panel_props::*` directly; it only calls
+  `bindings.snapshot(&state)`. Mirrors §13's `reg!` macro one-for-one.
+- **DI through the existing carrier.** `ShellPropBindings` lives on
+  `ShellInner` next to `Arc<ComponentRegistry>`. Tests, alternate
+  hosts (Studio, the WebSocket relay's headless renderer, future
+  per-app shells) can swap the bindings table to override which
+  block id resolves to which data — exactly the registry-bypass
+  problem §15's `lower_as` solved for embedded chrome, applied to
+  data flow.
+- **Builder-style `PropCtx`, not a 12-argument tuple.** A
+  `PropCtx<'a>` borrow-pack carries `&AppState`, `&BuilderDocument`,
+  `&DockWorkspace`, `&CommandRegistry`, `&[ToastData]`, current
+  selection, current viewport, etc. — every binding closure reads
+  exactly the fields it needs, the host packs the ctx once per
+  frame. Adding a new field to `PropCtx` is additive; existing
+  bindings ignore it. No closure ever needs to thread state through
+  free-function arguments again.
+- **The 12 `panel_props::*` functions stay pure.** They are the
+  *implementation* of each binding closure — `PropCtx` extracts
+  the borrow they need and forwards it. No deletion churn, no
+  behavioural change, no second source of truth. Each binding is
+  a one-line forwarder; the bridge functions remain unit-testable
+  in isolation.
+- **Composition vs leaf, declared once.** `PropEmission` is a struct
+  with `props: Value` and `children: Vec<UiNode>` — leaves return
+  `PropEmission { props, children: vec![] }`, compositions return
+  both. The supervisor folds `children` into the `host_children`
+  slot via the same `LowerCtx::with_host_children` (§14) the
+  resolver pre-pass uses. Zero new context fields.
+
+**Surface added (~120 LoC across 3 files):**
+
+- **`prism_shell::props::ShellPropBindings`** — host-side registry,
+  one row per shell block id. `with_builtins() -> Self` populates
+  every binding from the existing `panel_props::*` functions. `get(id)
+  -> Option<&Binding>` for tests / alternate hosts. `snapshot(ctx)
+  -> HashMap<String, PropEmission>` walks every binding once, used
+  by the supervisor to drive the per-frame document rebuild.
+- **`prism_shell::props::PropCtx<'a>`** — borrow-pack carrying every
+  typed datum a binding might need. Built once per frame from
+  `ShellInner` via `ShellInner::prop_ctx(&self) -> PropCtx<'_>`.
+- **`prism_shell::props::PropEmission`** — `{ props: Value, children:
+  Vec<UiNode> }`. The single shape every binding returns; covers
+  leaves (children empty), JSON-list compositions (children empty,
+  array nested in props), and `host_children` compositions (children
+  populated, props minimal).
+- **`prism_shell::props::bind!`** — the `reg!` analogue. One line per
+  binding: `bind!(reg, "shell.inspector-tree", inspector_tree_emit);`
+  expands to a typed entry in the table.
+
+**Supervisor delta (~40 LoC, replaces the 30-line `bind_model!`
+block in `app/shell.rs`).** The Phase-5 boot path:
+
+```rust
+// Phase 5 supervisor (replaces the AppWindow::new + bind_model! block)
+let skeleton = parse(include_str!("../ui/app.prism-ui"))?;
+let bindings = ShellPropBindings::with_builtins();
+let surface  = Surface::new(viewport)?;          // prism-ui-runtime backend
+// per-frame loop (driven by the runtime's redraw notifier):
+let ctx = inner.borrow().prop_ctx();
+let emissions = bindings.snapshot(&ctx);
+let doc = skeleton.fill_compositions(&emissions);  // ~20 LoC pure fold
+let nodes = lower_document_with_scope(&doc, &scope);
+surface.render(nodes);
+```
+
+Three observations:
+
+1. **No 47-arm match.** `fill_compositions` is a single recursive
+   walk that, on each `<shell.foo>` element, looks up
+   `emissions["shell.foo"]` and (a) merges its `props` into the
+   element's attributes, (b) replaces the element's children with
+   `emission.children` (or, for JSON-array compositions, leaves
+   children empty since the array lives in props). One function,
+   one rule, every block.
+2. **No host imports any `Block` type.** `ShellInner` no longer
+   knows `MenuBarRow`, `AppWindow`, `BuilderCanvas` exist as types
+   — only as ids in the bindings table. Crate-internal visibility
+   on every `components::*` module can drop from `pub` to `pub(crate)`
+   in the same change, removing 47 leaked symbols from the public
+   surface.
+3. **The 30 `bind_model!` lines disappear.** The Slint
+   `ModelRc<…>` wiring (`set_grid_cells`, `set_inspector_nodes`,
+   `set_workflow_pages`, …) was *the duplication that the bindings
+   table replaces*. Every `Vec<…>` model the supervisor was pushing
+   into Slint is the `props` field of a `PropEmission` now;
+   per-frame the supervisor pushes a single `HashMap` instead of
+   30 individual model handles.
+
+**Block migration (zero blocks touched).** The bindings layer is
+purely additive on top of the 47 already-shipped blocks. No
+`Block` impl changes; no schema changes; no JSON-shape changes.
+The bridge functions in `panel_props.rs` are reused verbatim —
+each becomes the body of one binding closure. This is the §15
+discipline applied at the data layer: the `lower_as` seam left
+every block's `lower_ui` untouched, this seam leaves every
+block's prop schema untouched.
+
+**Tear-out shape (rip-and-replace, no parity).** Slint is deleted
+in one stroke; the new system stands on its own. Breakage is
+acceptable, and is the *signal* that load-bearing duplication is
+gone — every path that was doing the same job through both stacks
+collapses to the runtime path or disappears.
+
+The deletion targets, listed by what they were doing and what
+replaces them:
+
+| Deleted | Was doing | Replaced by |
+|---|---|---|
+| `ui/app.slint` (~4300 lines) | declarative root component, every chrome region duplicated as a `Rectangle`+`Text` tree | `ui/app.prism-ui` (already on disk, §15) parsed once, lowered through `RegistryTagResolver` per frame |
+| `build.rs` `slint_build::compile` line | codegen of the `AppWindow` Rust type | nothing — `Surface` is constructed directly from a `Node` tree |
+| `slint`, `slint-build`, `slint-interpreter` deps | the entire UI stack | `prism-ui-runtime` (already a workspace dep) |
+| `slint::include_modules!()` in `lib.rs` | injects `AppWindow` + every model item type (`GridCellItem`, `InspectorNode`, `WorkflowPageItem`, …) into the crate root | nothing — every "model item type" was a Slint-shaped DTO; the bindings emit `serde_json::Value` directly into block prop bags |
+| `app/sync/` (9 files, ~1500 LoC of `bind_model!` + per-frame setter calls) | per-panel push of typed state into Slint `VecModel`s | one `ShellPropBindings::snapshot(&ctx)` call per frame |
+| `app/callbacks/` (6 files) | wiring Slint callbacks (`dispatch-key`, `help-hover`, `node-drag-*`, `grid-cell-clicked`, …) to `ShellInner` mutations | one `EventHandler` closure on `Surface` that translates `prism_ui_runtime::event::Event` into the same `ShellInner` mutations |
+| 30-line `bind_model!` block in `app/shell.rs` | binding 30 `Rc<VecModel<…>>` instances to Slint properties | replaced by the per-frame `bindings.snapshot(&ctx)` → `Surface::set_tree` flow |
+| `crate-type = ["cdylib", "rlib"]`'s `cdylib` half | required by `wasm-bindgen` against the Slint codegen | dropped — wasm builds target the `rlib` directly via `prism_ui_runtime::backends::web` |
+| `live-preview` feature | Slint's `LiveReloadingComponent` interpreter wrapper | dropped — `prism-ui` already parses at runtime; reload is a file-watch + `Surface::set_tree` re-lower |
+
+**The new boot path (one screen, no branches).** `app/shell.rs`'s
+`Shell::new` becomes:
+
+```rust
+pub fn new() -> Result<Self, ShellError> {
+    let skeleton = parse_prism_ui(include_str!("../ui/app.prism-ui"))?;
+    let registry = build_shell_registry();
+    let bindings = ShellPropBindings::with_builtins();
+    let inner    = Rc::new(RefCell::new(ShellInner::new(registry, bindings)));
+    let tree     = render_tree(&inner.borrow(), &skeleton);   // bindings → fold → lower
+    let viewport = Viewport::new(1280, 800);
+    let surface  = Surface::new(tree, viewport);
+    Ok(Self { inner, surface, skeleton })
+}
+
+pub fn run(self) -> Result<(), Box<dyn std::error::Error>> {
+    let inner    = Rc::clone(&self.inner);
+    let skeleton = self.skeleton.clone();
+    let handler: EventHandler = Box::new(move |event, surface| {
+        if dispatch_event(&inner, event) {
+            surface.set_tree(render_tree(&inner.borrow(), &skeleton));
+        }
+    });
+    prism_ui_runtime::backends::femtovg::run(self.surface, handler)
+}
+```
+
+That is the *entire* surface area where the host meets the runtime.
+Nine `app/sync/*.rs` files, six `app/callbacks/*.rs` files, the
+`bind_model!` macro, every `set_grid_cells` / `set_inspector_nodes`
+/ `set_workflow_pages` setter call collapse into two functions
+(`render_tree`, `dispatch_event`) and one declarative table
+(`ShellPropBindings::with_builtins`). Every screen of code that
+was *moving the same data through two shapes* (typed → Slint
+model → Slint property → declarative `.slint` binding) is gone.
+
+**Smart-pattern wins (the rip-and-replace makes them load-bearing,
+not optional):**
+
+- **One registration table replaces 30 setter sites.** Adding a
+  block before: register in `register_shell_builtins`, add a
+  `bind_model!`, add a `set_*` push in the relevant `app/sync/*.rs`,
+  add a Slint property + binding in `ui/app.slint`, add a callback
+  in `app/callbacks/*.rs`. Adding a block after: register in
+  `register_shell_builtins`, register in `ShellPropBindings`. Two
+  edits, both declarative, both in the same crate.
+- **Events flow through one router, not 50 callback closures.**
+  `dispatch_event(inner, event)` is a single `match` on
+  `prism_ui_runtime::event::Event` that walks to `ShellInner`'s
+  mutation methods. Each event arm is one line; the 6 `app/callbacks/*`
+  files compress to ~150 LoC total.
+- **No second model-type vocabulary.** `GridCellItem`,
+  `InspectorNode`, `WorkflowPageItem`, `BreadcrumbItem`, `TabItem`,
+  `ToastItem`, `ButtonSpec`, `MenuDef`, `EditorLine`, every
+  `pub struct …Item` Slint required — *all* deleted. Bindings emit
+  `serde_json::Value` directly. The `panels::*` typed structs stay
+  as the source-of-truth domain types; the JSON shape is the wire
+  format the blocks already speak.
+- **Composition vs leaf, declared once.** `PropEmission { props,
+  children }` — leaves return empty `children`, compositions return
+  populated ones, the `render_tree` walker folds `children` into
+  the matching `<shell.foo>` element via §14's `LowerCtx::with_host_children`.
+  No third bucket, no per-block dispatch.
+- **DI through the existing registry seam.** `ShellPropBindings`
+  lives next to `Arc<ComponentRegistry>` on `ShellInner`. Tests,
+  alternate hosts (the WebSocket relay's headless renderer,
+  per-product Studio variants) override bindings the same way they
+  override block impls. Same shape, two layers.
+
+**Surface added (~250 LoC, three new modules):**
+
+- **`prism_shell::props`** (~120 LoC) —
+  - `PropCtx<'a>`: borrow-pack of every typed datum (`&AppState`,
+    `&BuilderDocument`, `&DockWorkspace`, `&CommandRegistry`,
+    `&[ToastData]`, current selection, viewport).
+  - `PropEmission { props: Value, children: Vec<UiNode> }`.
+  - `ShellPropBindings`: `HashMap<&'static str, Box<dyn Fn(&PropCtx) -> PropEmission>>`.
+  - `with_builtins()`: one `bind!()` line per registered shell
+    block, each forwarding to a `panel_props::*` function.
+  - `bind!` macro: sibling of `reg!`.
+- **`prism_shell::render`** (~80 LoC) —
+  - `render_tree(&ShellInner, &Skeleton) -> Node`: builds
+    `PropCtx`, calls `bindings.snapshot`, folds emissions into the
+    skeleton, lowers through `lower_document_with_scope` +
+    `RegistryTagResolver`.
+  - `fill_compositions(&Skeleton, &HashMap<String, PropEmission>) -> BuilderDocument`:
+    pure recursive walk, one rule (merge `props`, replace `children`).
+- **`prism_shell::events`** (~150 LoC, replaces `app/callbacks/`) —
+  - `dispatch_event(&Rc<RefCell<ShellInner>>, Event) -> bool`:
+    one `match` on every runtime event variant (Pointer, Key,
+    Resize, Focus, …), routes to the existing `ShellInner`
+    mutation methods. Returns `true` if the tree needs re-rendering.
+  - `combo_from_runtime_event`: the existing helper, now the
+    only key-translation site (the Slint sibling
+    `combo_from_slint` deletes with the rest of `input.rs`'s
+    Slint coupling).
+
+**Deletion targets (concrete, one PR landing the rip):**
+
+- `packages/prism-shell/ui/app.slint` — delete file (~4300 lines).
+- `packages/prism-shell/ui/icons/` — keep; `prism-ui-runtime`
+  loads SVGs the same way through `Node::Image`.
+- `packages/prism-shell/build.rs` — delete the `slint_build::compile`
+  call. Build script becomes empty (or the file deletes if no other
+  build-time work lands).
+- `packages/prism-shell/Cargo.toml` — drop `slint`, `slint-build`,
+  `slint-interpreter` deps; drop the `live-preview` feature; drop
+  `cdylib` from `crate-type` (rlib only — wasm-bindgen targets the
+  rlib via the workspace's `wasm32-unknown-unknown` profile). Add
+  `prism-ui-runtime = { workspace = true }` if it isn't already on
+  the dep list (it is, transitively via `prism-builder`, but the
+  shell needs it directly for `Surface` / `EventHandler` /
+  `backends::femtovg::run`).
+- `packages/prism-shell/src/lib.rs` — delete `slint::include_modules!()`,
+  delete every model-item re-export, replace `pub use AppWindow`
+  with `pub use crate::shell::Shell`.
+- `packages/prism-shell/src/app/sync/` — delete the whole
+  directory (9 files).
+- `packages/prism-shell/src/app/callbacks/` — delete the whole
+  directory (6 files); replace with `src/events.rs`.
+- `packages/prism-shell/src/app/shell.rs` — rewrite as the
+  ~30-line `Shell::new` / `Shell::run` shown above.
+- `packages/prism-shell/src/app/mod.rs` — strip every `AppWindow`
+  reference (currently 1938 lines, much of which is Slint glue);
+  the `panel_id_for_slint` / `push_dock_layout` helpers delete
+  (their job moves into the corresponding bindings).
+- `packages/prism-shell/src/app/inner.rs` — drop the
+  `models: PersistentModels` field and the per-model `Rc<VecModel<…>>`
+  declarations; `ShellInner` keeps `store`, `registry`, `bindings`,
+  `input`, `commands`, `menus`, `vfs`, `persistence`, …
+- `packages/prism-shell/src/app/commands.rs` — strip
+  `&AppWindow` parameters from every command body; commands now
+  mutate `ShellInner` only and the next `render_tree` call picks
+  up the change.
+- `packages/prism-shell/src/app/mutations.rs` — same; drop the
+  `&AppWindow` arg, drop the explicit `set_*` push calls.
+- `packages/prism-shell/src/bin/native.rs` — replace
+  `Shell::new()?.run()?` chain (already this shape) with the new
+  `Shell::new` signature; CLI flags route to the same store
+  mutations they always did.
+- `packages/prism-shell/src/testing.rs` and `src/e2e.rs` — drop
+  Slint screenshot path (use `prism_ui_runtime::backends::femtovg`'s
+  offscreen capture); `TestHarness` drives `dispatch_event`
+  directly with synthetic `Event`s instead of Slint callbacks.
+  This *is* a behavioural change but it's strictly a simplification
+  — one input path replaces two.
+- `packages/prism-shell/src/panel_props.rs` — keep verbatim; its
+  12 functions are the binding bodies.
+- `packages/prism-shell/CLAUDE.md` — flip every "Slint owns
+  layout/windowing/rendering", every `ui/app.slint` reference,
+  every `bind_model!` mention, every Slint feature/dep paragraph
+  to the `prism-ui-runtime` story. The "Phase 4 status" feature
+  bullets stay accurate (the *features* still work) but the
+  implementation paragraphs underneath update.
+- `packages/prism-studio/src-tauri/src/main.rs` — replace its
+  `slint::ComponentHandle` import + `shell.window().run()` call
+  with `shell.run()`. One-line change downstream of the rip.
+- Workspace `Cargo.toml` — drop `slint*` workspace deps if no
+  other crate needs them (none should after this lands).
+
+**What breaks (and is fine):**
+
+- The `live-preview` feature and `prism dev shell --no-hot-reload`
+  flag stop existing. File-watch reload comes back as a `Surface::set_tree`
+  re-lower against the same `app.prism-ui` source — strictly simpler.
+- The current `prism e2e --record` screenshot baselines invalidate
+  (different renderer = different pixels). Re-record once after
+  the rip; new baselines are the canonical set.
+- `prism-studio/src-tauri` rebuilds against the new `Shell::run`
+  signature. No other downstream consumer exists.
+- Any in-flight branch with `app/sync/*` or `app/callbacks/*`
+  edits hard-conflicts — that work re-targets the new
+  `events.rs` / `bindings.rs` / `panel_props.rs` shape, which
+  is a deletion-and-rewrite, not a merge.
+
+**Test discipline.** The test suite shrinks. Specifically:
+
+- The 461 `prism-shell` lib tests stay valid; the chunk that
+  currently asserts Slint property values (`window.get_*`) rewrites
+  to assert `render_tree` output (a `Node` tree), which is more
+  precise — Slint's get/set asserted that the *binding* fired,
+  not that the user-visible shape was correct.
+- One new keystone test
+  (`bindings_cover_every_registered_shell_block`) asserts
+  `ShellPropBindings::with_builtins()` has an entry for every id
+  in `register_shell_builtins`'s table. Forgetting to wire up a
+  new block is a compile-or-test failure, not a silent blank
+  panel.
+- One supervisor-level test
+  (`render_tree_lowers_full_app_prism_ui_against_populated_state`)
+  builds a populated `AppState` (every panel has data: dock pages,
+  toasts, command-palette query, signals, nav graph, schema rows,
+  builder doc), runs the full pipeline (`bindings.snapshot` →
+  `fill_compositions` → `lower_document_with_scope`), and asserts
+  the result is a finite `Node` tree with no unresolved tags.
+  This is the *complete* parity check, in one test, against the
+  populated path.
+
+**Why this is the right level of abstraction.** The same reason
+§13/§15/§16 worked: the registration-table pattern is the smallest
+seam that collapses N call sites into one. Doing it as a
+rip-and-replace (no feature flag, no setter adapters, no parallel
+codepaths) makes the smart-pattern *load-bearing* — it can't be
+worked around. Every line that's left is either declarative
+registration or pure data transformation. Three files
+(`props.rs`, `render.rs`, `events.rs`) carry the entire
+host-runtime contract.
+
+The duplication elimination is concrete and measurable: ~5800 LoC
+deleted (`ui/app.slint` + `app/sync/` + `app/callbacks/` + the
+Slint-coupled halves of `app/mod.rs`, `app/shell.rs`,
+`app/commands.rs`, `app/mutations.rs`, `lib.rs`), ~250 LoC added,
+one workspace dep tree pruned of `slint`, `i-slint-*`, `slint-build`,
+`slint-interpreter`. The "smart pattern" claim from the title of
+this section is finally settled by the diff statistics, not by
+prose.
+
+**What this unblocks.** With the rip landed, the migration is
+done. Every section above this point describes a *transition*; §17
+is the *terminal state*. Subsequent work in this codebase reads as
+"add a block" (one row in `register_shell_builtins`, one row in
+`ShellPropBindings`) or "add an event" (one arm in `dispatch_event`).
+No further infrastructure work, no further DI seams, no further
+runtime extensions are anticipated — and any pressure to add one
+is a defect of the plan, not a new requirement.
+
+**Test discipline.** For every binding landed in step 1 of the
+table:
+
+- One unit test in `prism_shell::props::tests` per binding,
+  asserting `bind!(…)` emits the expected `PropEmission` shape
+  given a representative `PropCtx`. These are mechanical wrappers
+  around the existing `panel_props::tests` — same fixtures, one
+  level of indirection.
+- One end-to-end test
+  (`bindings_emit_for_every_registered_block`) walks
+  `ShellPropBindings::with_builtins().snapshot(&ctx)` against a
+  populated `AppState` and asserts every id in
+  `register_shell_builtins`'s table has a matching entry. This is
+  the load-bearing parity check — it makes "forgot to wire up the
+  new block" a compile-or-test failure rather than a silent
+  blank panel at runtime.
+- One supervisor-level test
+  (`fill_compositions_round_trips_through_resolver`) parses the
+  on-disk `app.prism-ui` skeleton, runs the bindings snapshot
+  against a fixture state, folds emissions into the document, and
+  asserts the resolver lowers the result without unresolved tags
+  and without panic. This is the §15
+  `canonical_app_prism_ui_skeleton_lowers_end_to_end` test
+  extended to cover the *populated* path, not just the structural
+  one.
+
+**Why this is the right level of abstraction.** Every prior
+smart-pattern landing in this plan promoted a registration table at
+the moment a per-id `match` started growing on the host: the
+component registry (§7) for runtime tag dispatch, `register_shell_builtins`
+(§13) for block dispatch, `LowerCtx::lower_as` (§15) for embedded
+chrome dispatch. `ShellPropBindings` is the same move at the host
+data layer — the *fourth* application of the same pattern, by
+design. The threshold for promotion (rule-of-three on the host
+side, where the cost is "every new block requires editing N
+unrelated wiring files") is met at 12 `panel_props` functions and
+30 `bind_model!` lines today; it would be catastrophic at 47 if
+deferred until the Slint tear-out forced the issue. Adding the
+table now lets step 2 of the tear-out be a *deletion-only* PR.
+
+**What this unblocks.** Phase 5 (Slint tear-out) is now a
+mechanical execution of the three-step plan above. No further
+infrastructure work, no further DI seams, no further runtime
+extensions are anticipated. After step 3 lands, the only consumer
+of `slint::*` in the workspace is the `prism-studio/src-tauri`
+shell's `main.rs` (which already only uses `slint::ComponentHandle`
+for the run-loop), and that becomes a one-line change to
+`prism_ui_runtime::Surface::run`. The migration is then done.
+
+### Decision-log entry
+
+| Date | Decision | Rationale |
+|---|---|---|
+| 2026-05-09 | §17 locks the rip-and-replace: Slint deleted in one stroke, no parity layer. New host-runtime contract is three files — `prism_shell::props` (`ShellPropBindings` registration table mirroring `register_shell_builtins`, ~120 LoC), `prism_shell::render` (`render_tree` skeleton-fold + lower, ~80 LoC), `prism_shell::events` (one `dispatch_event` match over runtime events, ~150 LoC). Deletion targets: `ui/app.slint` (~4300 lines), `app/sync/` (9 files), `app/callbacks/` (6 files), the 30-line `bind_model!` block, every `slint::*` import, the `slint`/`slint-build`/`slint-interpreter` deps, the `live-preview` feature, the `cdylib` crate-type half. Net diff: ~5800 LoC out, ~250 LoC in. | The user's instruction was explicit: no parity, breakage is fine if the new system is better. The rip-and-replace makes the smart-pattern load-bearing — every duplication that the registration table eliminates *cannot be worked around*, because the alternative path is gone. The host-runtime contract collapses to two functions (`render_tree`, `dispatch_event`) and one declarative table (`ShellPropBindings::with_builtins`), each composing with already-shipped seams (the 47 registered blocks from §13–§16, the resolver from §7, the `host_children` slot from §14, the `lower_as` embedding from §15, the `panel_props::*` bridge functions). Every `pub struct …Item` Slint required deletes — bindings emit `serde_json::Value` directly into the prop bags blocks already speak. The `prism-studio/src-tauri` downstream is a one-line `shell.window().run()` → `shell.run()` change. The keystone test (`bindings_cover_every_registered_shell_block`) makes "forgot to wire a new block" a compile failure. Test-suite shrinkage is real and welcome: assertions against `window.get_*` Slint properties were testing that the binding fired, not that the user-visible shape was correct; assertions against `render_tree` output test the actual Node tree. After the rip lands, the migration is the terminal state — every subsequent change reads as "add a block" (two rows: registry + bindings) or "add an event" (one arm in `dispatch_event`). |

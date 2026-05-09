@@ -3,99 +3,44 @@ name = "prism-shell"
 version = "0.1.0"
 edition = "2021"
 license.workspace = true
-description = "Prism Shell — the single-source UI tree for Studio. Slint-based, running natively via winit + femtovg on desktop and on wasm32-unknown-unknown + webgl in the browser. Owns every panel and the page builder surface."
+description = "Prism Shell — the single-source UI tree for Studio. Renders through prism-ui-runtime (winit + femtovg native, wasm32 + webgl browser)."
 
 [lib]
 name = "prism_shell"
 path = "src/lib.rs"
-# Native target uses `rlib` (the Studio shell embeds it as a library).
-# The browser target (wasm32-unknown-unknown + wasm-bindgen) needs
-# `cdylib` so `wasm-bindgen` can produce its JS glue module. Emitting
-# both crate types unconditionally is the simplest cross-target
-# invariant and matches Slint's own template.
-crate-type = ["cdylib", "rlib"]
 
-# Native dev binary — opens a winit window via Slint's event loop and
-# runs the same `Shell` the Studio host does. The packaged desktop
-# app is `prism-studio` in `packages/prism-studio/src-tauri`; both
-# entry points drive the same Slint component through `Shell::run`.
 [[bin]]
 name = "prism-shell"
 path = "src/bin/native.rs"
 required-features = ["native"]
 
 [features]
-# `native` pulls in the desktop stack (Slint + winit + femtovg +
-# prism-daemon sidecar). `web` flips to the wasm-bindgen entry point
-# for `wasm32-unknown-unknown`; the browser build does not depend on
-# `prism-daemon` (daemon runs remote via a relay on web). Pick one
-# per target triple — they are mutually exclusive at link time
-# because only one Slint backend is valid for each triple.
-#
-# `live-preview` turns on Slint's native hot-reload path: `slint-build`
-# notices `SLINT_LIVE_PREVIEW=1` at compile time and replaces the
-# baked `AppWindow` codegen with a `LiveReloadingComponent` wrapper
-# that parses `ui/app.slint` at runtime via `slint-interpreter` and
-# reloads it whenever the file changes on disk. The public `AppWindow`
-# API (`new`, getters, setters, callbacks) is unchanged, so
-# `Shell::sync_ui` keeps working. `prism dev shell` enables this by
-# default (env var + `--features live-preview`); `prism build` leaves
-# it off so release binaries don't pull in the interpreter.
 default = ["native"]
-native = ["dep:prism-daemon", "dep:rfd", "dep:mlua", "prism-core/crdt"]
-live-preview = ["slint/live-preview"]
-web = ["dep:wasm-bindgen", "dep:console_error_panic_hook", "dep:getrandom", "uuid/js"]
+native = ["dep:prism-daemon", "dep:rfd", "dep:mlua", "prism-core/crdt", "prism-ui-runtime/femtovg"]
+web = ["dep:wasm-bindgen", "dep:console_error_panic_hook", "dep:getrandom", "uuid/js", "prism-ui-runtime/web"]
 e2e = ["dep:image", "dep:enigo"]
 
 [dependencies]
-# Shared Prism foundations.
 prism-core = { path = "../prism-core" }
 prism-builder = { path = "../prism-builder", features = ["interpreter"] }
 prism-dock = { path = "../prism-dock" }
 prism-ui-runtime = { path = "../prism-ui-runtime", default-features = false, features = ["html"] }
 prism-luau-derive = { workspace = true }
 
-# Daemon is a native-only dep — the browser build talks to a remote
-# relay, not a local daemon. Feature-gated so the WASM target stays
-# small.
 prism-daemon = { path = "../prism-daemon", optional = true, default-features = false, features = ["crdt", "luau", "vfs", "crypto"] }
 
-# Luau host runtime — phase 5 of the integration plan installs shell-
-# resident handles (`prism.document`, `prism.signals`, …) onto the
-# same `Lua` state the daemon's `luau_module::exec_with_setup` builds.
-# Native-only for the same reason `prism-daemon` is.
 mlua = { workspace = true, optional = true }
 
-# Slint — the full UI toolkit. Owns layout, renderer, and windowing
-# for both native (winit + femtovg) and browser (winit on
-# wasm32-unknown-unknown + webgl via femtovg). Replaces the Clay
-# layout DSL + the hand-vendored wgpu pipeline + tao windowing in one
-# stroke. 2026-04-15 Clay → Slint pivot; see
-# `docs/dev/slint-migration-plan.md`.
-slint = { workspace = true }
-
-# Browser glue — only pulled under `web`. Slint's wasm build wires
-# itself into a `<canvas>` via winit's wasm32 backend; wasm-bindgen
-# provides the ABI glue, and `console_error_panic_hook` routes Rust
-# panics to the browser console. `getrandom` with `js` feature is
-# required by slint's dependency chain on wasm.
 wasm-bindgen = { workspace = true, optional = true }
 console_error_panic_hook = { workspace = true, optional = true }
 getrandom = { workspace = true, optional = true, features = ["js"] }
 
-# CLI argument parsing for the native dev binary and test harness.
 clap = { version = "4", features = ["derive"] }
 
-# Screenshot comparison + visual diff generation for the e2e harness.
 image = { workspace = true, optional = true }
-
-# Native file dialog — OS file picker for image/asset imports.
 rfd = { workspace = true, optional = true }
-
-# OS-level keyboard/mouse injection for full end-to-end testing.
 enigo = { workspace = true, optional = true }
 
-# Shared.
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -103,11 +48,6 @@ uuid = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
 chrono = { workspace = true }
-
-[build-dependencies]
-# Compiles `ui/app.slint` into Rust code at build time. The generated
-# module is pulled in via `slint::include_modules!()` in `src/lib.rs`.
-slint-build = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }

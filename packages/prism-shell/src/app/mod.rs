@@ -315,11 +315,9 @@ impl Default for AppState {
     }
 }
 
-mod callbacks;
 mod commands;
 mod mutations;
 mod samples;
-mod sync;
 
 use commands::*;
 use mutations::*;
