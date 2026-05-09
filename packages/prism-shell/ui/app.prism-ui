@@ -1,0 +1,17 @@
+<!--
+  Prism Studio shell skeleton. Source-driven replacement for the
+  legacy ui/app.slint. Every shell-chrome primitive is referenced
+  by its registered tag; RegistryTagResolver dispatches to the
+  matching Block::lower_ui in prism-shell/src/components/.
+  See docs/dev/clay-migration-plan.md sections 13 to 15.
+-->
+<shell.app-window
+    id="root"
+    status="Ready"
+    app-name="Studio">
+
+  <container id="content-root">
+    <text id="welcome">Prism Studio</text>
+  </container>
+
+</shell.app-window>

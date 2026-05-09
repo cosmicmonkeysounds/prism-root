@@ -250,6 +250,60 @@ mod tests {
     }
 
     #[test]
+    fn canonical_app_prism_ui_skeleton_lowers_end_to_end() {
+        // The keystone artifact: `ui/app.prism-ui` is the source-driven
+        // replacement for `ui/app.slint`. This test loads it from disk
+        // (via `include_str!`) and proves the full pipeline — parse →
+        // resolver → AppWindow lowering with host_children — produces
+        // a coherent UI tree with the inner subtree flowing into the
+        // `<main>` content area.
+        use prism_core::language::prism_ui::parse;
+        use prism_ui_runtime::interpret::{lower_document_with_scope, LowerScope};
+        use prism_ui_runtime::layout::Node as UiNode;
+
+        let mut reg = ShellComponentRegistry::new();
+        register_shell_builtins(&mut reg).expect("register");
+
+        let source = include_str!("../../ui/app.prism-ui");
+        let (doc, errs) = parse(source);
+        assert!(errs.is_empty(), "parse errors in app.prism-ui: {errs:?}");
+
+        let scope = LowerScope::default().with_resolver(reg.tag_resolver());
+        let nodes = lower_document_with_scope(&doc, &scope);
+
+        // Outer node is the AppWindow (column with menu + body + status).
+        let UiNode::Container { id, children, .. } = &nodes[0] else {
+            panic!("root not a container")
+        };
+        assert_eq!(id, "root");
+        assert_eq!(children.len(), 3, "menu + body + status");
+
+        // Body row → [activity-bar, content]; the content area carries
+        // the `<container id="content-root">` from source.
+        let UiNode::Container {
+            children: body_kids,
+            ..
+        } = &children[1]
+        else {
+            panic!()
+        };
+        let UiNode::Container {
+            children: content_kids,
+            props: content_props,
+            ..
+        } = &body_kids[1]
+        else {
+            panic!("content area not a container")
+        };
+        assert_eq!(content_props.semantic.tag.as_deref(), Some("main"));
+        assert_eq!(content_kids.len(), 1);
+        let UiNode::Container { id: cr_id, .. } = &content_kids[0] else {
+            panic!("content-root not a container")
+        };
+        assert_eq!(cr_id, "content-root");
+    }
+
+    #[test]
     fn underlying_component_registry_is_borrowable() {
         let mut reg = ShellComponentRegistry::new();
         register_shell_builtins(&mut reg).expect("register");

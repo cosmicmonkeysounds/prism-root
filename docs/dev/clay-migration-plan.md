@@ -2004,3 +2004,187 @@ the inner subtree flowing into the `<main>` content area. Authoring
 | Date | Decision | Rationale |
 |---|---|---|
 | 2026-05-09 | `LowerCtx::host_children` slot + `lower_ast_children` runtime helper; `RegistryTagResolver` pre-lowers AST children; `AppWindow` opts in via fallback chain | Closes the §13 resolver-children deferral. Single sparse field on the existing `LowerCtx` is the smallest seam that lets composition-style blocks consume `<shell.app-window>…</shell.app-window>` subtrees from `.prism-ui` source. No new abstraction, no parallel context type, no marker trait — opt-in by reading the accessor. Plain blocks unchanged. Resolver pre-lowering routes through the runtime's existing scope (control-flow / `<slot/>` / nested resolver dispatch all propagate uniformly). Slot intentionally drops on `LowerCtx::lower` recursion so it stays bound to one block per resolver call. Phase-4 `ui/app.prism-ui` authoring is now fully unblocked end-to-end. |
+
+## 15. Embedded chrome via `LowerCtx::lower_as` + canonical `ui/app.prism-ui` skeleton
+
+**Strategy locked 2026-05-09 (continuation of §14).** With the
+resolver-children seam in place, the next blocker for the Phase-4
+shell port was a quieter form of duplication inside `AppWindow`:
+its embedded chrome (the menu-bar row, the activity-bar's nav
+buttons) was being rendered by **importing the concrete `Block`
+impls and instantiating them by hand** —
+
+```rust
+// before: registry-bypassing, single-impl-locked
+use super::menu_bar_row::MenuBarRow;
+use super::nav_button::NavButton;
+
+let block = MenuBarRow { id: "shell.menu-bar-row".into() };
+let cascade = StyleProperties::default();
+let ctx = LowerCtx::new(None, &cascade);
+block.lower_ui(&ctx, &derived, &cascade)
+```
+
+The dispatch lived twice: once in `register_shell_builtins`'s
+`reg!(…)` table, again inside `app_window.rs` as imports + literal
+instantiation. The fresh `LowerCtx::new(None, …)` discarded any
+registry the host had attached, so a host-supplied alternative
+`shell.menu-bar-row` impl was silently ignored — registration
+existed but was *bypassed* for embedded chrome.
+
+**Solution (~50 LoC, single new public method).** A
+`LowerCtx::lower_as(component_id, derived_id, props_json) ->
+Option<UiNode>` helper that synthesises a derived `Node` and
+dispatches through whichever `ComponentRegistry` is on the ctx —
+the *same* registry the resolver path uses. AppWindow's two
+`synth_*` helpers shrink to a one-call dispatch each; the
+`MenuBarRow` / `NavButton` imports and the per-call-site
+`derived_node()` private helper disappear entirely.
+
+**Smart-pattern wins (every constraint at the top of plan §0 honoured):**
+
+- **One seam, not three.** The method lives on the existing
+  `LowerCtx` namespace alongside `lower` / `lower_children` /
+  `default_container`. No new context type, no new trait, no
+  parallel "EmbedRegistry" abstraction. Composition-style blocks
+  reach for `ctx.lower_as(...)` the same way they already reach
+  for `ctx.lower_children(...)`.
+- **DI through the existing carrier.** The registry that
+  `RegistryTagResolver` already attaches to `LowerCtx::new(Some(®),
+  …)` is the same registry `lower_as` resolves against. No new
+  threading, no parallel injection point. A host that registers a
+  custom `shell.menu-bar-row` (e.g. a per-product variant of the
+  Studio shell) automatically wins for embedded chrome.
+- **Fallback by `Option`, not branching.** `lower_as` returns
+  `Option<UiNode>`: `None` when no registry is attached or the id
+  isn't registered. Composition blocks fold the option with
+  `unwrap_or_else(|| placeholder(...))` and stay branch-free over
+  registry presence. Headless / no-registry tests get coherent
+  structural shapes (still column with three sections, body row
+  with activity-bar + content) without any block-type knowledge in
+  the test path.
+- **No duplicate cascade machinery.** `lower_as` runs the same
+  `resolve_cascade` call the runtime's own `LowerCtx::lower` does,
+  forks a child `LowerCtx` with the resolved style, and hands it
+  to the dispatched `Component::lower_ui` — every cascade
+  invariant the rest of the codebase relies on is preserved.
+
+**Surface added (1 new public method, ~50 LoC):**
+
+- **`LowerCtx::lower_as(&self, component_id: &str, derived_id:
+  impl Into<String>, props: serde_json::Value) -> Option<UiNode>`**
+  — the single embedding seam. Synthesises a transient `Node` with
+  default layout/transform/style, runs cascade resolution, and
+  dispatches through the registry on `self`. Returns `None` only
+  when no dispatch can happen (no registry / unregistered id).
+
+**Block migration (one block, one helper module).** Only
+`AppWindow` consumed embedded chrome at landing; its `synth_menu_bar`
+and `synth_activity_bar` were the canonical cleanup target.
+After the refactor:
+
+- `synth_menu_bar(ctx, node)` is a 5-line `ctx.lower_as` call
+  with the JSON props shape derived once via
+  `json_object_with_keys`.
+- `synth_activity_bar(ctx, node)` iterates the `nav-buttons` JSON
+  array (already declarative since the §13 chrome scoreboard
+  closed) and `filter_map`s each entry through `ctx.lower_as`.
+- The local `derived_node` private helper and the
+  `super::menu_bar_row::MenuBarRow` / `super::nav_button::NavButton`
+  imports are deleted. AppWindow no longer knows the *type* of
+  any embedded chrome block.
+- A 4-line `placeholder(id, role)` helper is the no-registry
+  fallback — produces a `<div data-role="…">` bare container
+  so the structural-shape tests stay independent of registry
+  attachment.
+
+**Canonical `ui/app.prism-ui` skeleton landed.** The §14 keystone
+example now exists on disk at
+`packages/prism-shell/ui/app.prism-ui` as the source-driven
+replacement for the legacy `ui/app.slint`. Contents:
+
+```prism-ui
+<!-- Prism Studio shell skeleton. … -->
+<shell.app-window id="root" status="Ready" app-name="Studio">
+  <container id="content-root">
+    <text id="welcome">Prism Studio</text>
+  </container>
+</shell.app-window>
+```
+
+The `canonical_app_prism_ui_skeleton_lowers_end_to_end` test in
+`prism-shell/src/components/registry.rs` loads the file via
+`include_str!`, runs it through `parse` →
+`lower_document_with_scope` with the full
+`ShellComponentRegistry`'s tag resolver, and asserts the AppWindow
+root produces a 3-section column whose `<main>` content area
+adopts the inner `<container id="content-root">` subtree
+verbatim. Authoring the rest of `ui/app.slint`'s panels is now
+pure declarative composition — every chrome region has a
+registered tag, every content region has a registered block, and
+embedded chrome routes through one DI seam.
+
+**Parser caveat (filed for follow-up):** the `prism-core` prism_ui
+grammar's HTML-style comment scanner (`grammar.rs:600`,
+`consume_until_gt`) panics when a multi-byte UTF-8 character (e.g.
+em-dash) appears inside a `<!-- … -->` block — it slices the
+source by byte offset without char-boundary checks. The
+`app.prism-ui` skeleton sidesteps the bug by sticking to ASCII in
+comments. Fix is a 2-line check in the scanner; not on the
+critical path for Phase-4 authoring, but should land before the
+panel translations import author-written prose with typographic
+punctuation.
+
+**Verification (2026-05-09):**
+
+- `prism-builder`: 429 lib tests (3 new in `ui_lower::tests` —
+  `lower_as_resolves_through_registry_when_attached`,
+  `lower_as_returns_none_when_no_registry`,
+  `lower_as_returns_none_when_id_unregistered`).
+- `prism-shell`: 423 lib tests (1 new in
+  `components::registry::tests` —
+  `canonical_app_prism_ui_skeleton_lowers_end_to_end` walks the
+  on-disk `ui/app.prism-ui` through the full pipeline). The
+  pre-existing `app_window` tests (`menu_bar_includes_menus_from_props`,
+  `activity_bar_lowers_each_nav_button_from_props`) now opt into a
+  `lower_with_full_registry` helper that attaches the real shell
+  registry — they assert the *behaviour* (pills present, buttons
+  present) without depending on the concrete embedded `Block`
+  impl. Structural-shape tests stay no-registry and exercise the
+  `Option::None` placeholder path.
+- `prism-ui-runtime`: 56 lib tests (no count change — `lower_as`
+  is purely additive on `LowerCtx`).
+- Workspace `cargo test --workspace --lib` green; clippy
+  `--all-targets -D warnings` clean across every crate.
+
+**Why this is the right level of abstraction.** The shape mirrors
+every prior smart-pattern landing in this plan: a single new
+method on the existing fluent context type, composing with
+already-shipped accessors (`registry`, `parent_style`,
+`host_children`), reused by the *one* current consumer with a
+clear path for future composition blocks (a `<shell.tab-panel>`
+that hosts arbitrary tab bodies, a `<shell.docked-region>` that
+embeds nav chrome, …) to inherit the density automatically. The
+rule-of-three threshold is honoured *for embedding specifically* —
+the threshold is one, because the cost of retrofitting the seam
+later (after every composition block had grown its own
+hand-rolled "instantiate the Block, build a fresh LowerCtx, call
+lower_ui" boilerplate) would have been linear in the number of
+composition blocks. Adding the method now costs less than
+deduplicating two callers, let alone four.
+
+**What this unblocks.** With the canonical skeleton landed and
+embedded chrome routing through DI, the rest of Phase-4 is
+*purely additive*: each remaining region of the legacy
+`ui/app.slint` (sidebars, dock layout, builder canvas, properties
+panel, code editor, command palette overlay) becomes either a
+new `Block` impl (one row in `register_shell_builtins`) or a tag
+in `app.prism-ui` (one element). The infrastructure case is
+closed — no further runtime extensions, DI seams, or context
+threading is anticipated to translate any specific panel.
+
+**Decision-log entry:**
+
+| Date | Decision | Rationale |
+|---|---|---|
+| 2026-05-09 | `LowerCtx::lower_as` embedding seam; `AppWindow` refactored to dispatch embedded chrome through it; canonical `ui/app.prism-ui` skeleton landed with end-to-end test | Closes the embedded-chrome registry-bypass duplication noted at the bottom of §14. Single new method on the existing `LowerCtx` namespace lets composition blocks dispatch any registered chrome by id without importing the concrete `Block` impl — host-supplied overrides take effect for embedded chrome the same way they do for top-level resolver dispatch. AppWindow's `synth_menu_bar` / `synth_activity_bar` shrink to one-call helpers; the `derived_node` private helper and the per-block imports are deleted. The on-disk `ui/app.prism-ui` skeleton is the keystone artifact §14 promised — proves the Phase-4 authoring pipeline (parse → resolver → composition-block lowering with `host_children`) end-to-end through a registry-driven test. Phase-4 panel translations are now purely declarative additions; no further runtime extensions or DI seams anticipated. Filed: prism_ui parser bug at `grammar.rs:600` panics on non-ASCII inside comments (sidestepped via ASCII-only skeleton; 2-line scanner fix queued). |

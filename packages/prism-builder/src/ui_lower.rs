@@ -196,6 +196,57 @@ impl<'a> LowerCtx<'a> {
     pub fn parent_style(&self) -> &StyleProperties {
         self.parent_style
     }
+
+    /// Resolve and lower an *embedded* block by its registered component
+    /// id, synthesising a derived `Node` from a JSON props value. The
+    /// dispatch goes through whichever [`ComponentRegistry`] is on this
+    /// `LowerCtx`, so a host that registers an alternative
+    /// `shell.menu-bar-row` impl transparently overrides the default —
+    /// no `lower_ui` call site has to import a concrete block type.
+    ///
+    /// Returns `None` when the ctx has no registry, or the id is
+    /// unregistered. Composition-style blocks (`AppWindow`, future
+    /// `TabPanel`, …) call this for each chrome region they host and
+    /// fall back to a placeholder when None — the structural shape
+    /// stays correct under headless / no-registry test contexts, and
+    /// production paths (resolver-driven, registry-attached) get full
+    /// rendering with zero block-type knowledge baked into the host.
+    ///
+    /// Smart pattern: the *only* way to embed one registered block
+    /// inside another's lowering. Eliminates the "import the impl,
+    /// instantiate it manually, build a fresh `LowerCtx`" duplication
+    /// that AppWindow originally carried — that pattern bypassed the
+    /// registry and silently ignored host-side overrides.
+    pub fn lower_as(
+        &self,
+        component_id: &str,
+        derived_id: impl Into<String>,
+        props: serde_json::Value,
+    ) -> Option<UiNode> {
+        let reg = self.registry?;
+        let comp = reg.get(component_id)?;
+        let derived = Node {
+            id: derived_id.into(),
+            component: component_id.into(),
+            props,
+            children: Vec::new(),
+            layout_mode: LayoutMode::default(),
+            transform: prism_core::foundation::spatial::Transform2D::default(),
+            modifiers: Vec::new(),
+            style: StyleProperties::default(),
+        };
+        let style = resolve_cascade(
+            self.parent_style,
+            &StyleProperties::default(),
+            &derived.style,
+        );
+        let child = LowerCtx {
+            registry: self.registry,
+            parent_style: &style,
+            host_children: None,
+        };
+        Some(comp.lower_ui(&child, &derived, &style))
+    }
 }
 
 /// Build a `UiNode::Container` *without* going through a builder
@@ -566,6 +617,77 @@ pub fn parse_color(s: &str) -> Option<Color> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lower_as_resolves_through_registry_when_attached() {
+        use crate::block::{register_block, Block};
+        use crate::registry::{ComponentRegistry, FieldSpec};
+        use crate::ComponentId;
+        use prism_ui_runtime::layout::{ContainerProps, Sizing};
+        use std::sync::Arc;
+
+        struct Tag {
+            id: ComponentId,
+        }
+        impl Block for Tag {
+            fn id(&self) -> &ComponentId {
+                &self.id
+            }
+            fn schema(&self) -> Vec<FieldSpec> {
+                vec![]
+            }
+            fn lower_ui(&self, _: &LowerCtx<'_>, node: &Node, _: &StyleProperties) -> UiNode {
+                UiNode::Container {
+                    id: node.id.clone(),
+                    props: ContainerProps {
+                        width: Sizing::Fixed(99.0),
+                        ..Default::default()
+                    },
+                    children: vec![],
+                }
+            }
+        }
+
+        let mut reg = ComponentRegistry::new();
+        register_block(
+            &mut reg,
+            Arc::new(Tag {
+                id: "demo.tag".into(),
+            }),
+        )
+        .unwrap();
+        let cascade = StyleProperties::default();
+        let ctx = LowerCtx::new(Some(&reg), &cascade);
+
+        let out = ctx
+            .lower_as("demo.tag", "derived", serde_json::json!({}))
+            .expect("registered tag resolves");
+        let UiNode::Container { id, props, .. } = out else {
+            panic!()
+        };
+        assert_eq!(id, "derived");
+        assert_eq!(props.width, Sizing::Fixed(99.0));
+    }
+
+    #[test]
+    fn lower_as_returns_none_when_no_registry() {
+        let cascade = StyleProperties::default();
+        let ctx = LowerCtx::new(None, &cascade);
+        assert!(ctx
+            .lower_as("anything", "x", serde_json::json!({}))
+            .is_none());
+    }
+
+    #[test]
+    fn lower_as_returns_none_when_id_unregistered() {
+        use crate::registry::ComponentRegistry;
+        let reg = ComponentRegistry::new();
+        let cascade = StyleProperties::default();
+        let ctx = LowerCtx::new(Some(&reg), &cascade);
+        assert!(ctx
+            .lower_as("never.registered", "x", serde_json::json!({}))
+            .is_none());
+    }
 
     #[test]
     fn hover_bg_returns_some_for_valid_color() {

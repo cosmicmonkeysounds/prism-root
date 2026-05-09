@@ -32,8 +32,6 @@ use prism_builder::{
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
 use serde_json::Value;
 
-use super::{menu_bar_row::MenuBarRow, nav_button::NavButton};
-
 const ACTIVITY_BAR_WIDTH: f32 = 40.0;
 const STATUS_BAR_HEIGHT: f32 = 26.0;
 const ACTIVITY_BAR_BG: &str = "#0d000000";
@@ -72,8 +70,8 @@ impl Block for AppWindow {
     }
 
     fn lower_ui(&self, ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
-        let menu_bar = synth_menu_bar(node);
-        let activity_bar = synth_activity_bar(node);
+        let menu_bar = synth_menu_bar(ctx, node);
+        let activity_bar = synth_activity_bar(ctx, node);
         let status_bar = synth_status_bar(node);
 
         // Content area — the document's own children flow through
@@ -115,36 +113,29 @@ impl Block for AppWindow {
     }
 }
 
-/// Synthesise the menu-bar row by delegating to `MenuBarRow::lower_ui`
-/// over a derived child Node. Single source of truth: AppWindow does
-/// not duplicate menu-pill rendering; it produces a virtual MenuBarRow
-/// node and runs that block's lowering.
-fn synth_menu_bar(node: &Node) -> UiNode {
-    let derived = derived_node(
-        format!("{}::menu", node.id),
-        "shell.menu-bar-row",
-        json_object_with_keys(
-            node,
-            &["menus", "tabs", "show-tabs", "app-name", "active-menu"],
-        ),
+/// Synthesise the menu-bar row by resolving `shell.menu-bar-row`
+/// through the registry on `ctx`. Single source of truth: AppWindow
+/// does not import or instantiate `MenuBarRow` directly; the dispatch
+/// goes through the same registry that `RegistryTagResolver` uses, so
+/// a host-supplied override transparently takes effect. When no
+/// registry is attached (headless tests, isolated lowering) the
+/// section is rendered as a placeholder bare container — structural
+/// shape is preserved.
+fn synth_menu_bar(ctx: &LowerCtx<'_>, node: &Node) -> UiNode {
+    let props = json_object_with_keys(
+        node,
+        &["menus", "tabs", "show-tabs", "app-name", "active-menu"],
     );
-    let block = MenuBarRow {
-        id: "shell.menu-bar-row".into(),
-    };
-    let cascade = StyleProperties::default();
-    let ctx = LowerCtx::new(None, &cascade);
-    block.lower_ui(&ctx, &derived, &cascade)
+    ctx.lower_as("shell.menu-bar-row", format!("{}::menu", node.id), props)
+        .unwrap_or_else(|| placeholder(format!("{}::menu", node.id), "menu-bar"))
 }
 
-/// Activity bar = vertical column of `shell.nav-button` instances
-/// (lowered through `NavButton::lower_ui`), centred horizontally in a
-/// 40px wide column.
-fn synth_activity_bar(node: &Node) -> UiNode {
-    let cascade = StyleProperties::default();
-    let ctx = LowerCtx::new(None, &cascade);
-    let block = NavButton {
-        id: "shell.nav-button".into(),
-    };
+/// Activity bar = vertical column of `shell.nav-button` instances,
+/// each resolved through the same registry seam. The `nav-buttons`
+/// JSON array is the *declarative* source of truth — adding a
+/// button is one entry in the prop, with zero changes to the
+/// lowering body.
+fn synth_activity_bar(ctx: &LowerCtx<'_>, node: &Node) -> UiNode {
     let buttons: Vec<UiNode> = node
         .props
         .get("nav-buttons")
@@ -152,13 +143,12 @@ fn synth_activity_bar(node: &Node) -> UiNode {
         .map(|arr| {
             arr.iter()
                 .enumerate()
-                .map(|(idx, item)| {
-                    let derived = derived_node(
-                        format!("{}::nav::{}", node.id, idx),
+                .filter_map(|(idx, item)| {
+                    ctx.lower_as(
                         "shell.nav-button",
+                        format!("{}::nav::{}", node.id, idx),
                         item.clone(),
-                    );
-                    block.lower_ui(&ctx, &derived, &cascade)
+                    )
                 })
                 .collect()
         })
@@ -172,6 +162,16 @@ fn synth_activity_bar(node: &Node) -> UiNode {
         p.semantic = Semantic::tag("nav")
             .with_attr("role", "navigation")
             .with_attr("aria-label", "Activity bar");
+    })
+}
+
+/// Headless / no-registry placeholder. The structural-shape tests
+/// (column with three sections, body row with activity-bar + content)
+/// exercise this path; production paths always have a registry and
+/// dispatch through `lower_as`.
+fn placeholder(id: String, role: &str) -> UiNode {
+    bare_container(id, vec![], |p| {
+        p.semantic = Semantic::tag("div").with_attr("data-role", role);
     })
 }
 
@@ -199,23 +199,6 @@ fn synth_status_bar(node: &Node) -> UiNode {
     })
 }
 
-/// Build a synthetic builder Node for the embedded MenuBarRow /
-/// NavButton lowerings. We don't mutate the source document; this is a
-/// transient wrapper that gives the embedded block a `node.props`
-/// shape it expects.
-fn derived_node(id: String, component: &str, props: Value) -> Node {
-    Node {
-        id,
-        component: component.into(),
-        props,
-        children: vec![],
-        layout_mode: prism_builder::layout::LayoutMode::default(),
-        transform: prism_core::foundation::spatial::Transform2D::default(),
-        modifiers: vec![],
-        style: StyleProperties::default(),
-    }
-}
-
 fn json_object_with_keys(node: &Node, keys: &[&str]) -> Value {
     let mut map = serde_json::Map::new();
     for k in keys {
@@ -235,6 +218,30 @@ mod tests {
     use serde_json::json;
 
     fn lower(props: Value, children: Vec<BuilderNode>) -> UiNode {
+        lower_with(props, children, None)
+    }
+
+    /// Lower with the full shell registry attached so embedded chrome
+    /// (menu bar, nav buttons) dispatches through the same registry
+    /// the resolver path uses. Used by tests that assert on the
+    /// rendered content of those sections.
+    fn lower_with_full_registry(props: Value, children: Vec<BuilderNode>) -> UiNode {
+        use crate::components::registry::{register_shell_builtins, ShellComponentRegistry};
+        let mut reg = ShellComponentRegistry::new();
+        register_shell_builtins(&mut reg).expect("register");
+        // Borrow the inner ComponentRegistry through `as_component_registry`.
+        // We have to keep the registry alive for the LowerCtx lifetime;
+        // build it locally and pass a borrow.
+        let owned = reg;
+        let cr = owned.as_component_registry();
+        lower_with(props, children, Some(cr))
+    }
+
+    fn lower_with(
+        props: Value,
+        children: Vec<BuilderNode>,
+        registry: Option<&prism_builder::ComponentRegistry>,
+    ) -> UiNode {
         let block = AppWindow {
             id: "shell.app-window".into(),
         };
@@ -249,7 +256,7 @@ mod tests {
             style: StyleProperties::default(),
         };
         let cascade = StyleProperties::default();
-        let ctx = LowerCtx::new(None, &cascade);
+        let ctx = LowerCtx::new(registry, &cascade);
         block.lower_ui(&ctx, &n, &cascade)
     }
 
@@ -291,7 +298,10 @@ mod tests {
 
     #[test]
     fn menu_bar_includes_menus_from_props() {
-        let ui = lower(json!({ "menus": [{ "id": "f", "label": "File" }] }), vec![]);
+        // Embedded MenuBarRow lowering goes through the registry on
+        // the LowerCtx, so this test attaches the full shell registry.
+        let ui =
+            lower_with_full_registry(json!({ "menus": [{ "id": "f", "label": "File" }] }), vec![]);
         let UiNode::Container { children, .. } = ui else {
             panic!()
         };
@@ -366,7 +376,9 @@ mod tests {
 
     #[test]
     fn activity_bar_lowers_each_nav_button_from_props() {
-        let ui = lower(
+        // Embedded NavButton lowering dispatches through the registry,
+        // so this test attaches the full shell registry.
+        let ui = lower_with_full_registry(
             json!({
                 "nav-buttons": [
                     { "icon": "icons/home.svg", "selected": true, "help-id": "home" },
