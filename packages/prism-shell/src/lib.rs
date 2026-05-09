@@ -35,7 +35,11 @@ pub mod state;
 mod shell;
 
 pub use shell::{Shell, ShellError};
-pub use state::{AppState, ChromeSlot};
+pub use state::{
+    AppState, BuilderSlot, ChromeSlot, CommandPalette, CommandResult, HelpTooltip, InspectorNode,
+    MenuLabel, NavButton, NavEdge, NavEdgeKind, NavPage, NavigationSlot, OverlaySlot, PropertyRow,
+    SchemaDoc, SchemaField, SignalConnection, Toast, ToastKind, WorkspaceSlot,
+};
 
 /// Browser entry point. `wasm-bindgen` calls this automatically via
 /// its `(start)` attribute so the HTML loader only has to import the

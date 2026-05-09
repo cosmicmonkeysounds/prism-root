@@ -214,6 +214,92 @@ mod tests {
     }
 
     #[test]
+    fn workspace_page_switch_propagates_to_three_bindings() {
+        // §19 cross-slot test: a single mutation on `state.workspace`
+        // must show up consistently in every binding that reads it,
+        // without any binding inlining its own JSON shape.
+        let bindings = ShellPropBindings::with_builtins();
+        let mut state = AppState::default();
+        let target_idx = 2usize;
+        let target_id = state.workspace.workspace.pages()[target_idx].id.clone();
+        state.workspace.workspace.switch_page_by_id(&target_id);
+
+        let emissions = bindings.snapshot(&ctx(&state));
+
+        let pages = emissions["shell.workflow-page-bar"].props["pages"]
+            .as_array()
+            .expect("pages array");
+        assert_eq!(pages[target_idx]["active"], true);
+
+        let menu_tabs = emissions["shell.menu-bar-row"].props["tabs"]
+            .as_array()
+            .expect("menu tabs");
+        assert_eq!(menu_tabs[target_idx]["active"], true);
+
+        let win_tabs = emissions["shell.app-window"].props["tabs"]
+            .as_array()
+            .expect("app-window tabs");
+        assert_eq!(win_tabs[target_idx]["active"], true);
+    }
+
+    #[test]
+    fn nav_active_flag_propagates_to_list_and_graph_bindings() {
+        // §20 cross-binding parity: a single mutation on the
+        // navigation slot must show up in *both* its consumer
+        // emissions (`shell.nav-page-list`, `shell.nav-graph`)
+        // — the load-bearing duplication check for the
+        // navigation port wave.
+        use crate::state::{NavEdge, NavEdgeKind, NavPage};
+        let bindings = ShellPropBindings::with_builtins();
+        let mut state = AppState::default();
+        state.navigation.pages = vec![
+            NavPage {
+                id: "home".into(),
+                title: "Home".into(),
+                route: "/".into(),
+                x: 0.0,
+                y: 0.0,
+                node_count: 0,
+                link_count: 0,
+                is_active: false,
+            },
+            NavPage {
+                id: "about".into(),
+                title: "About".into(),
+                route: "/about".into(),
+                x: 200.0,
+                y: 0.0,
+                node_count: 0,
+                link_count: 0,
+                is_active: true,
+            },
+        ];
+        state.navigation.edges.push(NavEdge {
+            from: 0,
+            to: 1,
+            kind: NavEdgeKind::Href,
+        });
+        let emissions = bindings.snapshot(&ctx(&state));
+        let list = &emissions["shell.nav-page-list"].props;
+        let graph = &emissions["shell.nav-graph"].props;
+        assert_eq!(list["pages"][1]["is-active"], true);
+        assert_eq!(graph["pages"][1]["is-active"], true);
+        assert_eq!(graph["edges"][0]["kind"], "href");
+    }
+
+    #[test]
+    fn overlay_command_palette_open_propagates_to_emission() {
+        let bindings = ShellPropBindings::with_builtins();
+        let mut state = AppState::default();
+        state.overlay.command_palette.open = true;
+        state.overlay.command_palette.query = "save".into();
+        let emissions = bindings.snapshot(&ctx(&state));
+        let cp = &emissions["shell.command-palette"].props;
+        assert_eq!(cp["open"], true);
+        assert_eq!(cp["query"], "save");
+    }
+
+    #[test]
     fn fill_compositions_merges_props_as_attributes() {
         let skel = Skeleton::from_source(r#"<shell.status-bar id="sb"/>"#).expect("parse");
         let mut emissions: HashMap<&'static str, PropEmission> = HashMap::new();

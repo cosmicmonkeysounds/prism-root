@@ -14,8 +14,16 @@
 //!   one method that returns the JSON shape its block consumes.
 //!   Existing bindings keep compiling.
 //!
+//! Cross-slot composition (e.g. `shell.app-window` mixes chrome data
+//! with workspace tabs) takes the *secondary slot as a `&` argument*
+//! to the *primary slot's* method — `ChromeSlot::app_window_props(&self,
+//! ws: &WorkspaceSlot)`. The bindings table still reads as one row,
+//! the JSON shape still lives on exactly one method, and the
+//! data-dependency graph stays visible at the call site.
+//!
 //! See `docs/dev/clay-migration-plan.md` §19.
 
+use prism_dock::DockWorkspace;
 use serde_json::{json, Value};
 
 /// Reloadable root state. `Default` returns the zero-data shell that
@@ -24,16 +32,44 @@ use serde_json::{json, Value};
 #[derive(Default, Clone)]
 pub struct AppState {
     pub chrome: ChromeSlot,
+    pub workspace: WorkspaceSlot,
+    pub overlay: OverlaySlot,
+    pub builder: BuilderSlot,
+    pub navigation: NavigationSlot,
 }
 
+// ── chrome ────────────────────────────────────────────────────────
+
 /// Static chrome strings — app name in the menu row, status string
-/// in the bottom bar. Two bindings (`shell.app-window`,
-/// `shell.status-bar`) read from this slot; both go through methods
-/// here, never inline JSON construction in the closures.
+/// in the bottom bar. The four nav-buttons (Home/etc.) live here too;
+/// they're pure chrome ornament with no data dependencies.
+///
+/// Three bindings read from this slot:
+/// `shell.status-bar` (status only), `shell.menu-bar-row` (chrome +
+/// workspace tabs), `shell.app-window` (chrome + workspace tabs +
+/// nav-buttons).
 #[derive(Clone, Debug)]
 pub struct ChromeSlot {
     pub app_name: String,
     pub status: String,
+    pub nav_buttons: Vec<NavButton>,
+    pub menus: Vec<MenuLabel>,
+}
+
+/// Top-bar menu pill. Rendered in `shell.menu-bar-row` and reused by
+/// `shell.app-window` for embedded chrome.
+#[derive(Clone, Debug)]
+pub struct MenuLabel {
+    pub label: String,
+}
+
+/// Activity-bar button. The runtime block reads `icon`/`selected`;
+/// the underlying `panel_id` (where the click would route) is not
+/// emitted yet — wired up when the navigation slot lands.
+#[derive(Clone, Debug)]
+pub struct NavButton {
+    pub icon: String,
+    pub selected: bool,
 }
 
 impl Default for ChromeSlot {
@@ -41,26 +77,42 @@ impl Default for ChromeSlot {
         Self {
             app_name: "Prism".into(),
             status: "Ready".into(),
+            nav_buttons: vec![NavButton {
+                icon: "icons/home.svg".into(),
+                selected: true,
+            }],
+            menus: ["File", "Edit", "View", "Help"]
+                .into_iter()
+                .map(|l| MenuLabel { label: l.into() })
+                .collect(),
         }
     }
 }
 
 impl ChromeSlot {
-    /// JSON for `shell.app-window`. The skeleton's structural attrs
-    /// (`id`, `panel-id`) win over emissions, so this method emits
-    /// only data attrs — chrome, not identity.
-    pub fn app_window_props(&self) -> Value {
+    /// JSON for `shell.app-window`. Composes chrome data with the
+    /// workspace's tab list — the secondary-arg pattern from §19.
+    /// The skeleton's structural attrs (`id`, `panel-id`) win over
+    /// emissions, so this method emits only data attrs.
+    pub fn app_window_props(&self, workspace: &WorkspaceSlot) -> Value {
         json!({
             "app-name": self.app_name,
             "status": self.status,
-            "menus": [
-                { "label": "File" },
-                { "label": "Edit" },
-                { "label": "View" },
-                { "label": "Help" },
-            ],
-            "tabs": [],
-            "nav-buttons": [{ "icon": "icons/home.svg", "selected": true }],
+            "menus": self.menus_json(),
+            "tabs": workspace.tabs_json(),
+            "nav-buttons": self.nav_buttons_json(),
+        })
+    }
+
+    /// JSON for `shell.menu-bar-row` — top chrome with menu pills,
+    /// app name, and the workflow page tabs. Same secondary-arg
+    /// composition as `app_window_props` (chrome owns the row, tabs
+    /// flow in by reference).
+    pub fn menu_bar_row_props(&self, workspace: &WorkspaceSlot) -> Value {
+        json!({
+            "app-name": self.app_name,
+            "menus": self.menus_json(),
+            "tabs": workspace.tabs_json(),
         })
     }
 
@@ -68,6 +120,488 @@ impl ChromeSlot {
     /// only, no structural keys.
     pub fn status_bar_props(&self) -> Value {
         json!({ "status": self.status })
+    }
+
+    fn menus_json(&self) -> Value {
+        Value::Array(
+            self.menus
+                .iter()
+                .map(|m| json!({ "label": m.label }))
+                .collect(),
+        )
+    }
+
+    fn nav_buttons_json(&self) -> Value {
+        Value::Array(
+            self.nav_buttons
+                .iter()
+                .map(|b| json!({ "icon": b.icon, "selected": b.selected }))
+                .collect(),
+        )
+    }
+}
+
+// ── workspace ─────────────────────────────────────────────────────
+
+/// Workflow-page state — the seven DaVinci-style pages and the
+/// active index. Wraps `prism_dock::DockWorkspace` directly so dock
+/// ports (panels, dividers, tab bars) all read from the same source.
+///
+/// Two bindings consume this slot today:
+/// `shell.workflow-page-bar` (the bottom mode bar) and
+/// `shell.menu-bar-row` (top tabs). Both go through `tabs_json` /
+/// `workflow_page_bar_props` — never inline JSON construction.
+#[derive(Clone, Debug)]
+pub struct WorkspaceSlot {
+    pub workspace: DockWorkspace,
+}
+
+impl Default for WorkspaceSlot {
+    fn default() -> Self {
+        Self {
+            workspace: DockWorkspace::with_builtins(),
+        }
+    }
+}
+
+impl WorkspaceSlot {
+    /// JSON for `shell.workflow-page-bar`: one row per page with the
+    /// active flag pre-resolved.
+    pub fn workflow_page_bar_props(&self) -> Value {
+        json!({ "pages": self.pages_json() })
+    }
+
+    /// Tab list shape consumed by both `shell.menu-bar-row` and
+    /// `shell.app-window` (top-bar tabs). Crate-public so the chrome
+    /// slot's composition methods can borrow it without duplicating
+    /// the JSON shape.
+    pub(crate) fn tabs_json(&self) -> Value {
+        let active = self.workspace.active_index();
+        Value::Array(
+            self.workspace
+                .pages()
+                .iter()
+                .enumerate()
+                .map(|(i, p)| {
+                    json!({
+                        "tab-id": p.id,
+                        "label": p.label,
+                        "active": i == active,
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    fn pages_json(&self) -> Value {
+        let active = self.workspace.active_index();
+        Value::Array(
+            self.workspace
+                .pages()
+                .iter()
+                .enumerate()
+                .map(|(i, p)| {
+                    json!({
+                        "page-id": p.id,
+                        "label": p.label,
+                        "icon-hint": p.icon_hint,
+                        "active": i == active,
+                    })
+                })
+                .collect(),
+        )
+    }
+}
+
+// ── overlay ───────────────────────────────────────────────────────
+
+/// Floating chrome — toasts, the command palette, and the help
+/// tooltip. None of these own a dock panel; they paint on top of
+/// the app-window via the parsed skeleton's overlay siblings.
+///
+/// Three bindings consume this slot:
+/// `shell.toast-stack`, `shell.command-palette`, `shell.help-tooltip`.
+/// Each method emits the JSON shape its block already speaks (see
+/// `components/{toast,command_palette,help_tooltip}.rs`).
+#[derive(Clone, Debug, Default)]
+pub struct OverlaySlot {
+    pub toasts: Vec<Toast>,
+    pub command_palette: CommandPalette,
+    pub help_tooltip: Option<HelpTooltip>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Toast {
+    pub title: String,
+    pub body: String,
+    pub kind: ToastKind,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub enum ToastKind {
+    #[default]
+    Info,
+    Success,
+    Warning,
+    Error,
+}
+
+impl ToastKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Info => "info",
+            Self::Success => "success",
+            Self::Warning => "warning",
+            Self::Error => "error",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct CommandPalette {
+    pub open: bool,
+    pub query: String,
+    pub results: Vec<CommandResult>,
+    pub selected_index: usize,
+}
+
+#[derive(Clone, Debug)]
+pub struct CommandResult {
+    pub id: String,
+    pub label: String,
+    pub shortcut: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct HelpTooltip {
+    pub title: String,
+    pub summary: String,
+}
+
+impl OverlaySlot {
+    /// JSON for `shell.toast-stack`. Empty list is valid — the block
+    /// renders the empty container.
+    pub fn toast_stack_props(&self) -> Value {
+        json!({ "toasts": self.toasts_json() })
+    }
+
+    /// JSON for `shell.command-palette`. The block reads `query`,
+    /// `results`, and `selected-index`; visibility is gated by `open`
+    /// (skeleton-side `visible="…"` author attr binds against it).
+    pub fn command_palette_props(&self) -> Value {
+        json!({
+            "open": self.command_palette.open,
+            "query": self.command_palette.query,
+            "results": self.results_json(),
+            "selected-index": self.command_palette.selected_index,
+        })
+    }
+
+    /// JSON for `shell.help-tooltip`. When no tooltip is showing, all
+    /// fields are empty strings — the block paints nothing.
+    pub fn help_tooltip_props(&self) -> Value {
+        match &self.help_tooltip {
+            Some(t) => json!({ "title": t.title, "summary": t.summary, "visible": true }),
+            None => json!({ "title": "", "summary": "", "visible": false }),
+        }
+    }
+
+    fn toasts_json(&self) -> Value {
+        Value::Array(
+            self.toasts
+                .iter()
+                .map(|t| {
+                    json!({
+                        "title": t.title,
+                        "body": t.body,
+                        "kind": t.kind.as_str(),
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    fn results_json(&self) -> Value {
+        Value::Array(
+            self.command_palette
+                .results
+                .iter()
+                .map(|r| {
+                    let mut o = json!({ "id": r.id, "label": r.label });
+                    if let Some(sc) = &r.shortcut {
+                        o["shortcut"] = json!(sc);
+                    }
+                    o
+                })
+                .collect(),
+        )
+    }
+}
+
+// ── builder ───────────────────────────────────────────────────────
+
+/// Inspector / properties / signals / schema — the four panels that
+/// describe the *currently selected* document node. Each panel is a
+/// distinct binding, but every shape ultimately reads from the same
+/// `selection` cursor + the document tree, so they all live on one
+/// slot. Cross-binding consistency (selecting a node updates all four
+/// panels) is enforced by the slot owning the resolution code path
+/// once.
+///
+/// Four bindings consume this slot:
+/// `shell.inspector-tree`, `shell.properties-panel`,
+/// `shell.signals-panel`, `shell.schema-designer`. Per-row blocks
+/// (`shell.signal-connection-row`, `shell.schema-row`,
+/// `shell.inspector-row`, `shell.field-editor`) stay stubs — their
+/// data flows down inside the parent's `rows` / `connections` /
+/// `fields` JSON arrays, never through their own binding row.
+#[derive(Clone, Debug, Default)]
+pub struct BuilderSlot {
+    pub inspector: Vec<InspectorNode>,
+    pub property_rows: Vec<PropertyRow>,
+    pub signal_connections: Vec<SignalConnection>,
+    pub schema: SchemaDoc,
+}
+
+#[derive(Clone, Debug)]
+pub struct InspectorNode {
+    pub id: String,
+    pub label: String,
+    pub depth: u32,
+    pub selected: bool,
+}
+
+/// One row in the properties panel. The block already speaks a
+/// generic `{component, props}` shape (see `properties_panel.rs`'s
+/// example), so the slot stores it as typed pairs and the JSON
+/// emitter folds them.
+#[derive(Clone, Debug)]
+pub struct PropertyRow {
+    pub component: String,
+    pub props: Value,
+}
+
+#[derive(Clone, Debug)]
+pub struct SignalConnection {
+    pub source_signal: String,
+    pub action_kind: String,
+    pub target_label: String,
+    pub selected: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct SchemaDoc {
+    pub title: String,
+    pub schema_name: String,
+    pub fields: Vec<SchemaField>,
+}
+
+#[derive(Clone, Debug)]
+pub struct SchemaField {
+    pub name: String,
+    pub kind: String,
+    pub required: bool,
+}
+
+impl BuilderSlot {
+    pub fn inspector_tree_props(&self) -> Value {
+        json!({ "nodes": self.inspector_json() })
+    }
+
+    pub fn properties_panel_props(&self) -> Value {
+        json!({ "rows": self.property_rows_json() })
+    }
+
+    pub fn signals_panel_props(&self) -> Value {
+        json!({
+            "title": "Signals",
+            "connections": self.connections_json(),
+        })
+    }
+
+    pub fn schema_designer_props(&self) -> Value {
+        json!({
+            "title": self.schema.title,
+            "schema-name": self.schema.schema_name,
+            "fields": self.schema_fields_json(),
+        })
+    }
+
+    fn inspector_json(&self) -> Value {
+        Value::Array(
+            self.inspector
+                .iter()
+                .map(|n| {
+                    json!({
+                        "node-id": n.id,
+                        "label": n.label,
+                        "depth": n.depth,
+                        "selected": n.selected,
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    fn property_rows_json(&self) -> Value {
+        Value::Array(
+            self.property_rows
+                .iter()
+                .map(|r| json!({ "component": r.component, "props": r.props }))
+                .collect(),
+        )
+    }
+
+    fn connections_json(&self) -> Value {
+        Value::Array(
+            self.signal_connections
+                .iter()
+                .map(|c| {
+                    json!({
+                        "source-signal": c.source_signal,
+                        "action-kind": c.action_kind,
+                        "target-label": c.target_label,
+                        "selected": c.selected,
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    fn schema_fields_json(&self) -> Value {
+        Value::Array(
+            self.schema
+                .fields
+                .iter()
+                .map(|f| {
+                    json!({
+                        "field-name": f.name,
+                        "field-kind": f.kind,
+                        "required": f.required,
+                    })
+                })
+                .collect(),
+        )
+    }
+}
+
+// ── navigation ────────────────────────────────────────────────────
+
+/// Page list + graph — the two lenses on the multi-page authoring
+/// model. `pages_json` is the load-bearing helper consumed by both
+/// bindings; the graph adds positions and cross-page edges on top.
+///
+/// Two bindings consume this slot:
+/// `shell.nav-page-list`, `shell.nav-graph`. The per-row block
+/// (`shell.nav-page-row`) stays a stub — page rows render inside the
+/// parent list's `pages` array.
+#[derive(Clone, Debug, Default)]
+pub struct NavigationSlot {
+    pub pages: Vec<NavPage>,
+    pub edges: Vec<NavEdge>,
+}
+
+#[derive(Clone, Debug)]
+pub struct NavPage {
+    pub id: String,
+    pub title: String,
+    pub route: String,
+    pub x: f32,
+    pub y: f32,
+    pub node_count: u32,
+    pub link_count: u32,
+    pub is_active: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct NavEdge {
+    pub from: usize,
+    pub to: usize,
+    pub kind: NavEdgeKind,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum NavEdgeKind {
+    Href,
+    Signal,
+}
+
+impl NavEdgeKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Href => "href",
+            Self::Signal => "signal",
+        }
+    }
+}
+
+impl NavigationSlot {
+    /// JSON for `shell.nav-page-list`. The block reads only the page
+    /// list — graph positions and edges are dropped here.
+    pub fn nav_page_list_props(&self) -> Value {
+        json!({ "pages": self.pages_list_json() })
+    }
+
+    /// JSON for `shell.nav-graph`. Composes the same page list with
+    /// graph positions + edges. The shared subset (page-title, route,
+    /// is-active) flows through the same `iter().map()` shape — no
+    /// duplicated emitter.
+    pub fn nav_graph_props(&self) -> Value {
+        json!({
+            "title": "Pages",
+            "pages": self.pages_graph_json(),
+            "edges": self.edges_json(),
+        })
+    }
+
+    fn pages_list_json(&self) -> Value {
+        Value::Array(
+            self.pages
+                .iter()
+                .map(|p| {
+                    json!({
+                        "page-id": p.id,
+                        "page-title": p.title,
+                        "route": p.route,
+                        "node-count": p.node_count,
+                        "link-count": p.link_count,
+                        "is-active": p.is_active,
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    fn pages_graph_json(&self) -> Value {
+        Value::Array(
+            self.pages
+                .iter()
+                .map(|p| {
+                    json!({
+                        "label": p.title,
+                        "route": p.route,
+                        "x": p.x,
+                        "y": p.y,
+                        "is-active": p.is_active,
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    fn edges_json(&self) -> Value {
+        Value::Array(
+            self.edges
+                .iter()
+                .map(|e| {
+                    json!({
+                        "from": e.from,
+                        "to": e.to,
+                        "kind": e.kind.as_str(),
+                    })
+                })
+                .collect(),
+        )
     }
 }
 
@@ -78,10 +612,11 @@ mod tests {
     #[test]
     fn default_chrome_emits_app_name_and_status() {
         let state = AppState::default();
-        let props = state.chrome.app_window_props();
+        let props = state.chrome.app_window_props(&state.workspace);
         assert_eq!(props["app-name"], "Prism");
         assert_eq!(props["status"], "Ready");
         assert!(props["menus"].is_array());
+        assert!(props["nav-buttons"].is_array());
     }
 
     #[test]
@@ -91,5 +626,240 @@ mod tests {
         let props = state.chrome.status_bar_props();
         assert_eq!(props["status"], "Saving…");
         assert!(props.get("app-name").is_none());
+    }
+
+    #[test]
+    fn workflow_page_bar_marks_exactly_one_active() {
+        let state = AppState::default();
+        let props = state.workspace.workflow_page_bar_props();
+        let pages = props["pages"].as_array().expect("pages array");
+        assert_eq!(pages.len(), state.workspace.workspace.pages().len());
+        let active_count = pages.iter().filter(|p| p["active"] == true).count();
+        assert_eq!(active_count, 1);
+        assert_eq!(pages[0]["active"], true);
+    }
+
+    #[test]
+    fn switching_page_moves_active_flag() {
+        let mut state = AppState::default();
+        let target = state.workspace.workspace.pages()[2].id.clone();
+        state.workspace.workspace.switch_page_by_id(&target);
+        let props = state.workspace.workflow_page_bar_props();
+        let pages = props["pages"].as_array().unwrap();
+        assert_eq!(pages[2]["active"], true);
+        assert_eq!(pages[0]["active"], false);
+    }
+
+    #[test]
+    fn menu_bar_row_pulls_tabs_from_workspace() {
+        let state = AppState::default();
+        let props = state.chrome.menu_bar_row_props(&state.workspace);
+        assert_eq!(props["app-name"], "Prism");
+        let tabs = props["tabs"].as_array().expect("tabs array");
+        assert_eq!(tabs.len(), state.workspace.workspace.pages().len());
+        // First page is active in the default workspace.
+        assert_eq!(tabs[0]["active"], true);
+    }
+
+    #[test]
+    fn app_window_composes_chrome_with_workspace_tabs() {
+        let mut state = AppState::default();
+        let target = state.workspace.workspace.pages()[1].id.clone();
+        state.workspace.workspace.switch_page_by_id(&target);
+        let props = state.chrome.app_window_props(&state.workspace);
+        let tabs = props["tabs"].as_array().unwrap();
+        assert_eq!(tabs[1]["active"], true, "tabs reflect active page");
+        assert_eq!(props["app-name"], "Prism", "chrome data still flows");
+    }
+
+    // ── overlay ───────────────────────────────────────────────────
+
+    #[test]
+    fn toast_stack_props_serialise_kind_as_string() {
+        let mut overlay = OverlaySlot::default();
+        overlay.toasts.push(Toast {
+            title: "Saved".into(),
+            body: "Project flushed".into(),
+            kind: ToastKind::Success,
+        });
+        let props = overlay.toast_stack_props();
+        let toasts = props["toasts"].as_array().unwrap();
+        assert_eq!(toasts.len(), 1);
+        assert_eq!(toasts[0]["kind"], "success");
+        assert_eq!(toasts[0]["title"], "Saved");
+    }
+
+    #[test]
+    fn command_palette_props_default_is_closed_with_empty_query() {
+        let props = OverlaySlot::default().command_palette_props();
+        assert_eq!(props["open"], false);
+        assert_eq!(props["query"], "");
+        assert_eq!(props["results"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn help_tooltip_props_collapses_to_invisible_when_none() {
+        let props = OverlaySlot::default().help_tooltip_props();
+        assert_eq!(props["visible"], false);
+        assert_eq!(props["title"], "");
+    }
+
+    #[test]
+    fn help_tooltip_props_emits_visible_when_present() {
+        let overlay = OverlaySlot {
+            help_tooltip: Some(HelpTooltip {
+                title: "Save".into(),
+                summary: "Persist project".into(),
+            }),
+            ..Default::default()
+        };
+        let props = overlay.help_tooltip_props();
+        assert_eq!(props["visible"], true);
+        assert_eq!(props["title"], "Save");
+    }
+
+    // ── builder ───────────────────────────────────────────────────
+
+    #[test]
+    fn properties_panel_props_round_trips_typed_rows() {
+        let mut builder = BuilderSlot::default();
+        builder.property_rows.push(PropertyRow {
+            component: "shell.section-header".into(),
+            props: json!({ "label": "Layout" }),
+        });
+        builder.property_rows.push(PropertyRow {
+            component: "shell.field-editor".into(),
+            props: json!({ "key": "x", "kind": "number", "value": 10 }),
+        });
+        let props = builder.properties_panel_props();
+        let rows = props["rows"].as_array().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["component"], "shell.section-header");
+        assert_eq!(rows[1]["props"]["value"], 10);
+    }
+
+    #[test]
+    fn signals_panel_props_emits_connection_array() {
+        let mut builder = BuilderSlot::default();
+        builder.signal_connections.push(SignalConnection {
+            source_signal: "clicked".into(),
+            action_kind: "SetProperty".into(),
+            target_label: "x".into(),
+            selected: false,
+        });
+        let props = builder.signals_panel_props();
+        assert_eq!(props["title"], "Signals");
+        let conns = props["connections"].as_array().unwrap();
+        assert_eq!(conns[0]["source-signal"], "clicked");
+        assert_eq!(conns[0]["action-kind"], "SetProperty");
+    }
+
+    #[test]
+    fn schema_designer_props_carries_fields() {
+        let builder = BuilderSlot {
+            schema: SchemaDoc {
+                title: "Posts".into(),
+                schema_name: "post".into(),
+                fields: vec![SchemaField {
+                    name: "title".into(),
+                    kind: "text".into(),
+                    required: true,
+                }],
+            },
+            ..Default::default()
+        };
+        let props = builder.schema_designer_props();
+        assert_eq!(props["title"], "Posts");
+        assert_eq!(props["schema-name"], "post");
+        let fields = props["fields"].as_array().unwrap();
+        assert_eq!(fields[0]["field-name"], "title");
+        assert_eq!(fields[0]["required"], true);
+    }
+
+    #[test]
+    fn inspector_tree_props_carries_typed_nodes() {
+        let mut builder = BuilderSlot::default();
+        builder.inspector.push(InspectorNode {
+            id: "n1".into(),
+            label: "Root".into(),
+            depth: 0,
+            selected: true,
+        });
+        let props = builder.inspector_tree_props();
+        let nodes = props["nodes"].as_array().unwrap();
+        assert_eq!(nodes[0]["selected"], true);
+        assert_eq!(nodes[0]["depth"], 0);
+    }
+
+    // ── navigation ────────────────────────────────────────────────
+
+    fn sample_nav() -> NavigationSlot {
+        NavigationSlot {
+            pages: vec![
+                NavPage {
+                    id: "home".into(),
+                    title: "Home".into(),
+                    route: "/".into(),
+                    x: 0.0,
+                    y: 0.0,
+                    node_count: 4,
+                    link_count: 1,
+                    is_active: true,
+                },
+                NavPage {
+                    id: "about".into(),
+                    title: "About".into(),
+                    route: "/about".into(),
+                    x: 200.0,
+                    y: 0.0,
+                    node_count: 1,
+                    link_count: 0,
+                    is_active: false,
+                },
+            ],
+            edges: vec![NavEdge {
+                from: 0,
+                to: 1,
+                kind: NavEdgeKind::Href,
+            }],
+        }
+    }
+
+    #[test]
+    fn nav_page_list_props_emits_list_only() {
+        let nav = sample_nav();
+        let props = nav.nav_page_list_props();
+        let pages = props["pages"].as_array().unwrap();
+        assert_eq!(pages.len(), 2);
+        assert_eq!(pages[0]["page-title"], "Home");
+        assert_eq!(pages[0]["node-count"], 4);
+        assert!(props.get("edges").is_none(), "list does not leak edges");
+    }
+
+    #[test]
+    fn nav_graph_props_emits_pages_with_positions_and_edges() {
+        let nav = sample_nav();
+        let props = nav.nav_graph_props();
+        assert_eq!(props["title"], "Pages");
+        let pages = props["pages"].as_array().unwrap();
+        assert_eq!(pages[0]["label"], "Home");
+        assert_eq!(pages[1]["x"], 200.0);
+        let edges = props["edges"].as_array().unwrap();
+        assert_eq!(edges[0]["kind"], "href");
+        assert_eq!(edges[0]["from"], 0);
+    }
+
+    #[test]
+    fn nav_active_flag_propagates_through_both_emitters() {
+        // §19 cross-binding parity: bumping `is_active` shows up in
+        // both shapes — list and graph — without duplicate emitter
+        // logic. The shared subset is the load-bearing check.
+        let mut nav = sample_nav();
+        nav.pages[0].is_active = false;
+        nav.pages[1].is_active = true;
+        let list = nav.nav_page_list_props();
+        let graph = nav.nav_graph_props();
+        assert_eq!(list["pages"][1]["is-active"], true);
+        assert_eq!(graph["pages"][1]["is-active"], true);
     }
 }

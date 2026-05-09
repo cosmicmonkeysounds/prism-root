@@ -130,12 +130,61 @@ fn register_builtin_bindings(reg: &mut ShellPropBindings) {
     // `AppState`. Adding another is one row here + one method on the
     // owning slot. JSON construction lives on the slot, not in the
     // closure (§19 discipline).
+    // Cross-slot composition takes the secondary slot as a `&` arg
+    // — chrome owns the row, workspace tabs flow in by reference.
+    // The closure stays declarative; the JSON shape lives on
+    // exactly one method (§19).
     bind_slot!(reg, "shell.app-window", |s: &AppState| s
         .chrome
-        .app_window_props());
+        .app_window_props(&s.workspace));
+    bind_slot!(reg, "shell.menu-bar-row", |s: &AppState| s
+        .chrome
+        .menu_bar_row_props(&s.workspace));
     bind_slot!(reg, "shell.status-bar", |s: &AppState| s
         .chrome
         .status_bar_props());
+    bind_slot!(reg, "shell.workflow-page-bar", |s: &AppState| s
+        .workspace
+        .workflow_page_bar_props());
+
+    // Overlay slot — toasts, command palette, help tooltip. Floating
+    // chrome that paints over the app-window via the skeleton's
+    // overlay siblings.
+    bind_slot!(reg, "shell.toast-stack", |s: &AppState| s
+        .overlay
+        .toast_stack_props());
+    bind_slot!(reg, "shell.command-palette", |s: &AppState| s
+        .overlay
+        .command_palette_props());
+    bind_slot!(reg, "shell.help-tooltip", |s: &AppState| s
+        .overlay
+        .help_tooltip_props());
+
+    // Builder slot — inspector / properties / signals / schema. All
+    // four read from the same `selection`-driven model, so cross-panel
+    // consistency is automatic: the slot owns the resolution path
+    // once and every binding pulls from it.
+    bind_slot!(reg, "shell.inspector-tree", |s: &AppState| s
+        .builder
+        .inspector_tree_props());
+    bind_slot!(reg, "shell.properties-panel", |s: &AppState| s
+        .builder
+        .properties_panel_props());
+    bind_slot!(reg, "shell.signals-panel", |s: &AppState| s
+        .builder
+        .signals_panel_props());
+    bind_slot!(reg, "shell.schema-designer", |s: &AppState| s
+        .builder
+        .schema_designer_props());
+
+    // Navigation slot — page list and graph. Two lenses on the same
+    // page array; the graph adds positions + edges on top.
+    bind_slot!(reg, "shell.nav-page-list", |s: &AppState| s
+        .navigation
+        .nav_page_list_props());
+    bind_slot!(reg, "shell.nav-graph", |s: &AppState| s
+        .navigation
+        .nav_graph_props());
 
     // Stub bindings — emit an empty prop bag until the owning slot
     // lands. The skeleton's author-supplied attrs still render, so
@@ -152,34 +201,23 @@ fn register_builtin_bindings(reg: &mut ShellPropBindings) {
         "shell.drag-number-field",
         "shell.inspector-row",
         "shell.transform-editor",
-        "shell.menu-bar-row",
         "shell.field-editor",
         "shell.workflow-page-button",
-        "shell.workflow-page-bar",
         "shell.dock-divider",
         "shell.dock-tab",
         "shell.dock-tab-bar",
         "shell.dock-panel",
-        "shell.toast-stack",
-        "shell.inspector-tree",
         "shell.launchpad",
-        "shell.command-palette",
-        "shell.help-tooltip",
         "shell.menu-item",
         "shell.menu-dropdown",
         "shell.context-menu",
         "shell.docs-sidebar",
         "shell.docs-view",
-        "shell.properties-panel",
         "shell.component-palette",
         "shell.explorer",
         "shell.signal-connection-row",
-        "shell.signals-panel",
         "shell.schema-row",
-        "shell.schema-designer",
         "shell.nav-page-row",
-        "shell.nav-page-list",
-        "shell.nav-graph",
         "shell.code-editor",
         "shell.gizmo-move",
         "shell.gizmo-rotate",
