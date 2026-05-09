@@ -3,15 +3,37 @@
   legacy ui/app.slint. Every shell-chrome primitive is referenced
   by its registered tag; RegistryTagResolver dispatches to the
   matching Block::lower_ui in prism-shell/src/components/.
-  See docs/dev/clay-migration-plan.md sections 13 to 15.
+  See docs/dev/clay-migration-plan.md sections 13 to 17.
 -->
 <shell.app-window
     id="root"
     status="Ready"
     app-name="Studio">
 
-  <container id="content-root">
-    <text id="welcome">Prism Studio</text>
-  </container>
+  <shell.dock-panel id="body" panel-id="builder">
+    <container id="content-root">
+      <text id="welcome">Prism Studio</text>
+    </container>
+  </shell.dock-panel>
 
 </shell.app-window>
+
+<!--
+  Bottom workflow page bar. Renders as a sibling of the app-window
+  because its positioning is window-relative. The host populates the
+  `pages` JSON prop from DockWorkspace at runtime; here it renders
+  as an empty strip until the host hands it data.
+-->
+<shell.workflow-page-bar id="workflow"/>
+
+<!--
+  Window-relative overlays. The host pushes these onto the runtime's
+  overlay z-layer (Surface::push_overlay) with the appropriate anchor
+  when activated. Authoring them as siblings keeps the source declarative
+  end-to-end; whether they paint at any given frame is host state.
+-->
+<shell.command-palette id="palette"/>
+<shell.toast-stack id="toasts"/>
+<shell.help-tooltip id="help" title=""/>
+<shell.context-menu id="ctx"/>
+<shell.menu-dropdown id="menu-dd"/>

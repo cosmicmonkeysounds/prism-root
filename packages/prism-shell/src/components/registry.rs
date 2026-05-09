@@ -111,7 +111,27 @@ pub fn register_shell_builtins(reg: &mut ShellComponentRegistry) -> Result<(), R
     reg!("shell.transform-editor", TransformEditor);
     reg!("shell.menu-bar-row", MenuBarRow);
     reg!("shell.field-editor", FieldEditor);
+    reg!("shell.status-bar", StatusBar);
+    reg!("shell.workflow-page-button", WorkflowPageButton);
+    reg!("shell.workflow-page-bar", WorkflowPageBar);
     reg!("shell.app-window", AppWindow);
+    reg!("shell.dock-divider", DockDivider);
+    reg!("shell.dock-tab", DockTab);
+    reg!("shell.dock-tab-bar", DockTabBar);
+    reg!("shell.dock-panel", DockPanel);
+    reg!("shell.toast-stack", ToastStack);
+    reg!("shell.inspector-tree", InspectorTree);
+    reg!("shell.launchpad", Launchpad);
+    reg!("shell.command-palette", CommandPalette);
+    reg!("shell.help-tooltip", HelpTooltip);
+    reg!("shell.menu-item", MenuItem);
+    reg!("shell.menu-dropdown", MenuDropdown);
+    reg!("shell.context-menu", ContextMenu);
+    reg!("shell.docs-sidebar", DocsSidebar);
+    reg!("shell.docs-view", DocsView);
+    reg!("shell.properties-panel", PropertiesPanel);
+    reg!("shell.component-palette", ComponentPalette);
+    reg!("shell.explorer", Explorer);
 
     Ok(())
 }
@@ -136,8 +156,28 @@ mod tests {
         assert!(reg.get("shell.transform-editor").is_some());
         assert!(reg.get("shell.menu-bar-row").is_some());
         assert!(reg.get("shell.field-editor").is_some());
+        assert!(reg.get("shell.status-bar").is_some());
+        assert!(reg.get("shell.workflow-page-button").is_some());
+        assert!(reg.get("shell.workflow-page-bar").is_some());
         assert!(reg.get("shell.app-window").is_some());
-        assert_eq!(reg.len(), 13);
+        assert!(reg.get("shell.dock-divider").is_some());
+        assert!(reg.get("shell.dock-tab").is_some());
+        assert!(reg.get("shell.dock-tab-bar").is_some());
+        assert!(reg.get("shell.dock-panel").is_some());
+        assert!(reg.get("shell.toast-stack").is_some());
+        assert!(reg.get("shell.inspector-tree").is_some());
+        assert!(reg.get("shell.launchpad").is_some());
+        assert!(reg.get("shell.command-palette").is_some());
+        assert!(reg.get("shell.help-tooltip").is_some());
+        assert!(reg.get("shell.menu-item").is_some());
+        assert!(reg.get("shell.menu-dropdown").is_some());
+        assert!(reg.get("shell.context-menu").is_some());
+        assert!(reg.get("shell.docs-sidebar").is_some());
+        assert!(reg.get("shell.docs-view").is_some());
+        assert!(reg.get("shell.properties-panel").is_some());
+        assert!(reg.get("shell.component-palette").is_some());
+        assert!(reg.get("shell.explorer").is_some());
+        assert_eq!(reg.len(), 33);
     }
 
     #[test]
@@ -297,10 +337,45 @@ mod tests {
         };
         assert_eq!(content_props.semantic.tag.as_deref(), Some("main"));
         assert_eq!(content_kids.len(), 1);
-        let UiNode::Container { id: cr_id, .. } = &content_kids[0] else {
+        // The content area now hosts a `<shell.dock-panel>` which itself
+        // adopts the `<container id="content-root">` author wrote inside
+        // it via `host_children` (§14). Walk through the dock-panel to
+        // confirm the inner subtree round-trips.
+        let UiNode::Container {
+            id: dock_id,
+            children: dock_kids,
+            ..
+        } = &content_kids[0]
+        else {
+            panic!("dock-panel not a container")
+        };
+        assert_eq!(dock_id, "body");
+        // dock-panel body is the last (or only) child since no `tabs` prop.
+        let body_section = dock_kids.last().expect("dock-panel body");
+        let UiNode::Container { children: body_section_kids, .. } = body_section else {
+            panic!()
+        };
+        let UiNode::Container { id: cr_id, .. } = &body_section_kids[0] else {
             panic!("content-root not a container")
         };
         assert_eq!(cr_id, "content-root");
+
+        // The workflow page bar is a sibling of the app-window —
+        // overlays / window-relative chrome live as top-level
+        // siblings rather than `host_children` of `<shell.app-window>`.
+        // §16 frame-chrome step locks this in.
+        assert!(
+            nodes.len() >= 2,
+            "skeleton has at least app-window + workflow-page-bar"
+        );
+        let UiNode::Container {
+            id: wf_id, props, ..
+        } = &nodes[1]
+        else {
+            panic!("workflow-page-bar not a container")
+        };
+        assert_eq!(wf_id, "workflow");
+        assert_eq!(props.semantic.tag.as_deref(), Some("nav"));
     }
 
     #[test]

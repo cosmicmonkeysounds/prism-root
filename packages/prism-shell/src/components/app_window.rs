@@ -26,18 +26,14 @@ use prism_builder::{
     registry::FieldSpec,
     signal::SignalDef,
     style::StyleProperties,
-    ui_lower::{bare_container, colored_text_node, parse_color, prop_str, LowerCtx},
+    ui_lower::{bare_container, parse_color, LowerCtx},
     Block, ComponentId,
 };
-use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
-use serde_json::Value;
+use prism_ui_runtime::layout::{Direction, Node as UiNode, Semantic, Sizing};
+use serde_json::{json, Value};
 
 const ACTIVITY_BAR_WIDTH: f32 = 40.0;
-const STATUS_BAR_HEIGHT: f32 = 26.0;
 const ACTIVITY_BAR_BG: &str = "#0d000000";
-const STATUS_BAR_BG: &str = "#08000000";
-const STATUS_TEXT_COLOR: &str = "#99000000";
-const STATUS_FONT_SIZE: f32 = 11.0;
 const CONTENT_BG: &str = "#ffffff";
 
 pub struct AppWindow {
@@ -72,7 +68,7 @@ impl Block for AppWindow {
     fn lower_ui(&self, ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
         let menu_bar = synth_menu_bar(ctx, node);
         let activity_bar = synth_activity_bar(ctx, node);
-        let status_bar = synth_status_bar(node);
+        let status_bar = synth_status_bar(ctx, node);
 
         // Content area — the document's own children flow through
         // here. AppWindow does not pre-stylise them; they get the same
@@ -175,28 +171,21 @@ fn placeholder(id: String, role: &str) -> UiNode {
     })
 }
 
-fn synth_status_bar(node: &Node) -> UiNode {
-    let status_text = prop_str(node, "status");
-    let style = StyleProperties::default();
-    let label = colored_text_node(
-        format!("{}::status::label", node.id),
-        status_text.into(),
-        &style,
-        STATUS_FONT_SIZE,
-        STATUS_TEXT_COLOR,
-    );
-    bare_container(format!("{}::status", node.id), vec![label], |p| {
-        p.direction = Direction::Row;
-        p.height = Sizing::Fixed(STATUS_BAR_HEIGHT);
-        p.padding = Padding {
-            left: 12.0,
-            right: 12.0,
-            top: 0.0,
-            bottom: 0.0,
-        };
-        p.background = parse_color(STATUS_BAR_BG);
-        p.semantic = Semantic::tag("footer").with_attr("role", "contentinfo");
-    })
+/// Status bar dispatches through the same registry seam as the menu
+/// bar and activity bar (§15). AppWindow forwards its `status` prop
+/// as `text` on the synthesised `shell.status-bar` node — no other
+/// fields, since the §16 v1 leaf renders a single label. Headless /
+/// no-registry tests fall through to a placeholder; production paths
+/// always have the registry attached.
+fn synth_status_bar(ctx: &LowerCtx<'_>, node: &Node) -> UiNode {
+    let status = node
+        .props
+        .get("status")
+        .cloned()
+        .unwrap_or_else(|| Value::String(String::new()));
+    let props = json!({ "text": status });
+    ctx.lower_as("shell.status-bar", format!("{}::status", node.id), props)
+        .unwrap_or_else(|| placeholder(format!("{}::status", node.id), "status-bar"))
 }
 
 fn json_object_with_keys(node: &Node, keys: &[&str]) -> Value {
@@ -319,19 +308,20 @@ mod tests {
 
     #[test]
     fn status_bar_paints_text_when_set() {
-        let ui = lower(json!({ "status": "Saved." }), vec![]);
+        // Status-bar lowering dispatches through the registry seam, so
+        // this test attaches the full shell registry. Without one the
+        // section falls through to the no-registry placeholder.
+        let ui = lower_with_full_registry(json!({ "status": "Saved." }), vec![]);
         let UiNode::Container { children, .. } = ui else {
             panic!()
         };
         let UiNode::Container {
             children: status_kids,
-            props,
             ..
         } = &children[2]
         else {
             panic!()
         };
-        assert_eq!(props.height, Sizing::Fixed(STATUS_BAR_HEIGHT));
         let UiNode::Text { content, .. } = &status_kids[0] else {
             panic!()
         };
