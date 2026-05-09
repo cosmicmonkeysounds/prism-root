@@ -25,7 +25,9 @@
 
 use std::sync::Arc;
 
-use prism_builder::{ui_resolver::RegistryTagResolver, Block, Component, ComponentRegistry, RegistryError};
+use prism_builder::{
+    ui_resolver::RegistryTagResolver, Block, Component, ComponentRegistry, RegistryError,
+};
 use prism_ui_runtime::interpret::TagResolver;
 
 /// Component registry for shell-only primitives. Distinct type from
@@ -192,6 +194,59 @@ mod tests {
         let nodes = lower_document_with_scope(&doc, &scope);
         // Unknown tag drops the wrapper, surfaces children.
         assert!(matches!(nodes[0], UiNode::Text { .. }));
+    }
+
+    #[test]
+    fn tag_resolver_lowers_app_window_with_prism_ui_authored_children() {
+        // Composition-style block: `<shell.app-window>…</shell.app-window>`
+        // hosting real subtrees from `.prism-ui` source. Exercises the
+        // resolver-children seam (RegistryTagResolver pre-lowers AST
+        // children → LowerCtx::host_children → AppWindow consumes).
+        // 12/13 chrome blocks ignore the slot; AppWindow is the
+        // canonical opt-in consumer.
+        use prism_core::language::prism_ui::parse;
+        use prism_ui_runtime::interpret::{lower_document_with_scope, LowerScope};
+        use prism_ui_runtime::layout::Node as UiNode;
+
+        let mut reg = ShellComponentRegistry::new();
+        register_shell_builtins(&mut reg).expect("register");
+
+        let (doc, errs) = parse(
+            r##"<shell.app-window id="aw" status="Ready">
+                <text>greeting</text>
+                <text>tagline</text>
+            </shell.app-window>"##,
+        );
+        assert!(errs.is_empty(), "parse errors: {errs:?}");
+
+        let scope = LowerScope::default().with_resolver(reg.tag_resolver());
+        let nodes = lower_document_with_scope(&doc, &scope);
+        let UiNode::Container { id, children, .. } = &nodes[0] else {
+            panic!("expected app-window container")
+        };
+        assert_eq!(id, "aw");
+        assert_eq!(children.len(), 3, "menu + body + status");
+        // Body row → [activity-bar, content]; content adopts the
+        // pre-lowered AST children verbatim.
+        let UiNode::Container {
+            children: body_kids,
+            ..
+        } = &children[1]
+        else {
+            panic!()
+        };
+        let UiNode::Container {
+            children: content_kids,
+            props: content_props,
+            ..
+        } = &body_kids[1]
+        else {
+            panic!("content area not a container")
+        };
+        assert_eq!(content_props.semantic.tag.as_deref(), Some("main"));
+        assert_eq!(content_kids.len(), 2);
+        assert!(matches!(content_kids[0], UiNode::Text { .. }));
+        assert!(matches!(content_kids[1], UiNode::Text { .. }));
     }
 
     #[test]

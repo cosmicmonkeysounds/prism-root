@@ -78,17 +78,23 @@ impl Block for AppWindow {
 
         // Content area — the document's own children flow through
         // here. AppWindow does not pre-stylise them; they get the same
-        // cascade resolution every other Block does.
-        let content = bare_container(
-            format!("{}::content", node.id),
-            ctx.lower_children(&node.children),
-            |p| {
-                p.width = Sizing::Grow;
-                p.height = Sizing::Grow;
-                p.background = parse_color(CONTENT_BG);
-                p.semantic = Semantic::tag("main").with_attr("role", "main");
-            },
-        );
+        // cascade resolution every other Block does. When the resolver
+        // (`RegistryTagResolver`) has already pre-lowered AST children
+        // for us — i.e. the block was reached via `<shell.app-window>
+        // …</shell.app-window>` from `.prism-ui` source — we adopt that
+        // slice directly and skip the builder-Node walk. The fallback
+        // chain keeps the host-driven path (`Shell` constructs builder
+        // Nodes by hand) working unchanged.
+        let content_children = ctx
+            .host_children()
+            .map(|s| s.to_vec())
+            .unwrap_or_else(|| ctx.lower_children(&node.children));
+        let content = bare_container(format!("{}::content", node.id), content_children, |p| {
+            p.width = Sizing::Grow;
+            p.height = Sizing::Grow;
+            p.background = parse_color(CONTENT_BG);
+            p.semantic = Semantic::tag("main").with_attr("role", "main");
+        });
 
         let body = bare_container(
             format!("{}::body", node.id),

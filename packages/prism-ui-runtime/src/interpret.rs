@@ -89,7 +89,10 @@ impl std::fmt::Debug for LowerScope {
         f.debug_struct("LowerScope")
             .field("bindings", &self.bindings)
             .field("slots", &self.slots)
-            .field("resolver", &self.resolver.as_ref().map(|_| "<dyn TagResolver>"))
+            .field(
+                "resolver",
+                &self.resolver.as_ref().map(|_| "<dyn TagResolver>"),
+            )
             .finish()
     }
 }
@@ -208,6 +211,17 @@ pub fn lower_document(document: &AstDocument) -> Vec<Node> {
 
 pub fn lower_document_with_scope(document: &AstDocument, scope: &LowerScope) -> Vec<Node> {
     lower_children(&document.nodes, scope)
+}
+
+/// Lower an arbitrary AST sibling list with the given scope. Public
+/// so [`TagResolver`] impls can pre-lower an element's children
+/// before invoking a host-supplied component (e.g. composition-style
+/// blocks like `shell.app-window` that host real subtrees from
+/// `.prism-ui` source). Re-uses the same control-flow + slot +
+/// resolver-propagation logic the document walk uses — single
+/// chokepoint for every "lower these AST children" call.
+pub fn lower_ast_children(nodes: &[AstNode], scope: &LowerScope) -> Vec<Node> {
+    lower_children(nodes, scope)
 }
 
 /// Walk a sibling list, expanding control flow then dispatching each

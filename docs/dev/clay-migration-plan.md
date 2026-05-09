@@ -1855,3 +1855,152 @@ infrastructure work.
 | Date | Decision | Rationale |
 |---|---|---|
 | 2026-05-09 | `TagResolver` DI seam in `prism-ui-runtime::interpret` + `RegistryTagResolver` impl in `prism-builder`; `ShellComponentRegistry::tag_resolver()` wraps the shell registry | Closed tag vocabulary in the runtime was the last blocker for translating `ui/app.slint` into `ui/app.prism-ui`. Single trait extension (one method, `Option<Vec<Node>>` return) lets every host-supplied component vocabulary plug into the same lowering pipeline. No parallel walker, no new abstraction layer — every block's existing `Component::lower_ui` is reused. Parser tag-scanner widened to allow `.` and `-` in tag names so `<shell.icon-button>` parses. Verified end-to-end via `prism-shell` test that lowers a `.prism-ui` source containing `<shell.icon-button …/>` through the registered IconButton block. |
+
+## 14. Resolver children — `LowerCtx::host_children` opt-in slot
+
+**Strategy locked 2026-05-09 (same-day follow-up to §13).** Closing
+the resolver-children deferral noted at the bottom of §13. With
+`<shell.app-window>…</shell.app-window>` now reachable from
+`.prism-ui` source, composition-style blocks need a way to receive
+the *AST children* the author wrote between the open/close tags.
+The v0 resolver discarded them. The deferred plan was to "pre-lower
+AST children through the runtime and inject them via the existing
+`<slot/>` mechanism" — but `<slot/>` is an AST/lowering concept
+(resolved during `interpret`), and blocks lower through Rust code
+that never reaches `<slot/>`. So the slot mechanism, as-is, can't
+help blocks like AppWindow that are imperatively constructed.
+
+**Solution (~70 LoC).** A single sparse `host_children:
+Option<&[UiNode]>` slot on `LowerCtx`, populated by the resolver
+from the element's pre-lowered AST children, consumed by exactly
+those blocks that opt in. Plain blocks (the 12/13 chrome primitives
+whose visual structure comes from props) ignore it; `AppWindow`
+reads it through a one-line fallback chain. Zero new abstraction,
+zero new context type, and the same `LowerCtx` continues to thread
+cascade + registry through every existing call site.
+
+**Smart-pattern wins (§0 constraints honoured):**
+
+- **One seam, not two.** The existing `LowerCtx` gains a sparse
+  optional field — the same context type already threading cascade
+  and registry through every block's `lower_ui`. No parallel
+  `CompositionContext`, no new trait, no per-block dispatch arm in
+  the resolver.
+- **Opt-in by reading.** Blocks that don't recurse never observe
+  the slot. Composition blocks declare interest by *reading* the
+  accessor — no marker trait, no schema annotation, no blanket impl
+  to re-derive. `AppWindow::lower_ui` becomes:
+
+  ```rust
+  let content_children = ctx
+      .host_children()
+      .map(|s| s.to_vec())
+      .unwrap_or_else(|| ctx.lower_children(&node.children));
+  ```
+
+  Two-line fallback chain. Host-driven path (Shell constructs
+  builder Nodes) and source-driven path (resolver feeds pre-lowered
+  UiNodes) converge on the same downstream code.
+- **Resolver pre-lowers through the same scope.** The resolver
+  calls a new `prism_ui_runtime::interpret::lower_ast_children`
+  (a public alias for the previously-private `lower_children` —
+  the *single chokepoint* for "lower this AST sibling list"). That
+  helper routes through the same control-flow pre-pass, the same
+  `<slot/>` resolution, the same nested resolver dispatch the
+  document walk uses. So `<for>` loops, `<slot/>` placeholders, and
+  even nested `<shell.app-window>` instantiation inside the children
+  all work uniformly.
+- **Slot intentionally does not propagate.** `LowerCtx::lower(&node)`
+  forks a child context that drops `host_children` to `None` —
+  the slot belongs to the one block the resolver is delegating
+  to. Without this, a host block that chooses to also recurse into
+  `node.children` would accidentally hand the same pre-lowered
+  slice to every descendant. Verified by an explicit
+  `resolver_host_children_does_not_propagate_to_recursive_lower`
+  test that nests a composition block inside another composition
+  block.
+
+**Surface added (3 new public items, ~70 LoC across three files):**
+
+- **`prism_ui_runtime::interpret::lower_ast_children(&[AstNode],
+  &LowerScope) -> Vec<Node>`** — re-exported alias of the
+  formerly-private `lower_children`. Single chokepoint: every "lower
+  these AST children" caller (resolver pre-pass, future plugin
+  hooks, test scaffolding) goes through this one function.
+- **`prism_builder::ui_lower::LowerCtx::with_host_children(&[UiNode])
+  -> Self`** — builder-style installer. Composes with the existing
+  `LowerCtx::new` surface; child scopes deliberately do not inherit.
+- **`prism_builder::ui_lower::LowerCtx::host_children() ->
+  Option<&[UiNode]>`** — accessor blocks read in their fallback
+  chain.
+
+**Resolver delta (8 lines net).** `RegistryTagResolver::resolve`
+gained a single pre-pass: when `element.children` is non-empty,
+it calls `lower_ast_children(&element.children, scope)` and threads
+the resulting `Vec<UiNode>` through `LowerCtx::with_host_children`.
+The block path is unchanged.
+
+**Block migration (one block, opt-in).** Only `AppWindow` reads the
+slot, since it is the only composition-style chrome block. The
+12/13 prop-driven blocks (`IconButton`, `ToolbarSeparator`,
+`NavButton`, `DragNumberField`, `TransformEditor`, `FieldEditor`,
+`Toast`, `AppCard`, `DocsContent`, `InspectorRow`, `MenuBarRow`,
+`SectionHeader`) compile and run unchanged because they never read
+`ctx.host_children()`. Future composition blocks (a `<shell.tab-panel>`
+that hosts arbitrary tab bodies, a `<shell.docked-region>` that hosts
+a panel subtree, …) get density for free by reading the same
+accessor.
+
+**Verification (2026-05-09):**
+
+- `prism-ui-runtime`: 56 lib tests (no count change — `lower_ast_children`
+  exercised through every existing test that flows through
+  `lower_document_with_scope`).
+- `prism-builder`: 422 lib tests (3 new in `ui_resolver::tests` —
+  `resolver_pre_lowers_ast_children_into_host_children_slot`,
+  `resolver_host_children_is_empty_when_source_has_none`,
+  `resolver_host_children_does_not_propagate_to_recursive_lower`).
+- `prism-shell`: 422 lib tests (1 new in `components::registry::tests`
+  — `tag_resolver_lowers_app_window_with_prism_ui_authored_children`
+  walks `<shell.app-window id="aw" status="Ready"><text>greeting</text>
+  <text>tagline</text></shell.app-window>` end-to-end through `parse`
+  → `lower_document_with_scope` → `RegistryTagResolver::resolve` →
+  `lower_ast_children` → `LowerCtx::with_host_children` →
+  `AppWindow::lower_ui` → runtime Node, asserting both text children
+  land verbatim in the `<main>` content area).
+- Workspace `cargo test --workspace --lib` green; clippy `-D warnings`
+  clean across every crate.
+
+**Why this is the right level of abstraction.** Composition blocks
+reach for `ctx.host_children()` the same way they already reach for
+`ctx.lower_children()` and `ctx.default_container()` — one more
+accessor on the existing `LowerCtx` namespace, no new vocabulary
+to learn. The promotion threshold from the rest of the migration
+(rule-of-three, "compose with the existing fluent builder rather
+than wrapping it in a new abstraction") is honoured: the slot has
+exactly one consumer at landing (`AppWindow`), but the threshold
+*for slots specifically* is one — adding the field at the moment
+the first composition block needs it costs less than retrofitting
+a `CompositionContext` newtype later, and every other block was
+unaffected by the change.
+
+**What this unblocks.** The Phase-4 tail at the end of §13 ("the
+Phase-4 tail is now mechanical authoring rather than blocked
+infrastructure work") is now also unblocked for composition: the
+canonical `ui/app.prism-ui` skeleton —
+
+```prism-ui
+<shell.app-window id="root" status="Ready" app-name="Studio">
+  <!-- the document's actual content tree -->
+</shell.app-window>
+```
+
+— resolves end-to-end through the registered AppWindow block with
+the inner subtree flowing into the `<main>` content area. Authoring
+`ui/app.prism-ui` now requires zero further runtime extensions.
+
+**Decision-log entry:**
+
+| Date | Decision | Rationale |
+|---|---|---|
+| 2026-05-09 | `LowerCtx::host_children` slot + `lower_ast_children` runtime helper; `RegistryTagResolver` pre-lowers AST children; `AppWindow` opts in via fallback chain | Closes the §13 resolver-children deferral. Single sparse field on the existing `LowerCtx` is the smallest seam that lets composition-style blocks consume `<shell.app-window>…</shell.app-window>` subtrees from `.prism-ui` source. No new abstraction, no parallel context type, no marker trait — opt-in by reading the accessor. Plain blocks unchanged. Resolver pre-lowering routes through the runtime's existing scope (control-flow / `<slot/>` / nested resolver dispatch all propagate uniformly). Slot intentionally drops on `LowerCtx::lower` recursion so it stays bound to one block per resolver call. Phase-4 `ui/app.prism-ui` authoring is now fully unblocked end-to-end. |

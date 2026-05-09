@@ -48,6 +48,17 @@ use crate::style::{resolve_cascade, StyleProperties};
 pub struct LowerCtx<'a> {
     registry: Option<&'a ComponentRegistry>,
     parent_style: &'a StyleProperties,
+    /// Pre-lowered children supplied by a host upstream of `lower_ui`
+    /// — currently the [`crate::ui_resolver::RegistryTagResolver`]
+    /// path, which lowers an element's AST children through the
+    /// runtime before delegating to the registered block. Composition-
+    /// style blocks (`shell.app-window`) consume this slice in
+    /// preference to walking `node.children`. Plain blocks — the 12/13
+    /// chrome primitives whose layout comes from props — never read
+    /// it; the field is `None` on every other path. Single-seam DI:
+    /// no new abstraction, no parallel context type, the existing
+    /// `LowerCtx` simply carries a sparse extra slot.
+    host_children: Option<&'a [UiNode]>,
 }
 
 impl<'a> LowerCtx<'a> {
@@ -58,7 +69,32 @@ impl<'a> LowerCtx<'a> {
         Self {
             registry,
             parent_style,
+            host_children: None,
         }
+    }
+
+    /// Builder-style installer for host-supplied pre-lowered children.
+    /// Composes with the existing [`Self::new`] surface — child scopes
+    /// (control-flow forks, recursive `lower` calls) deliberately do
+    /// **not** inherit this slot, since the children belong to the one
+    /// block the resolver is delegating to.
+    pub fn with_host_children(mut self, children: &'a [UiNode]) -> Self {
+        self.host_children = Some(children);
+        self
+    }
+
+    /// Pre-lowered children, if a host upstream of `lower_ui`
+    /// supplied any. Composition blocks read this in preference to
+    /// walking `node.children`:
+    ///
+    /// ```ignore
+    /// let kids = ctx
+    ///     .host_children()
+    ///     .map(|s| s.to_vec())
+    ///     .unwrap_or_else(|| ctx.lower_children(&node.children));
+    /// ```
+    pub fn host_children(&self) -> Option<&[UiNode]> {
+        self.host_children
     }
 
     /// Lower a single node. The cascade is resolved internally and a
@@ -67,9 +103,13 @@ impl<'a> LowerCtx<'a> {
     /// Unknown ids fall back to [`Self::default_container`].
     pub fn lower(&self, node: &Node) -> UiNode {
         let style = resolve_cascade(self.parent_style, &StyleProperties::default(), &node.style);
+        // Note: host_children is intentionally not propagated — it
+        // belongs to the block currently being resolved, not its
+        // recursive sub-children.
         let child = LowerCtx {
             registry: self.registry,
             parent_style: &style,
+            host_children: None,
         };
         if let Some(reg) = self.registry {
             if let Some(comp) = reg.get(&node.component) {
