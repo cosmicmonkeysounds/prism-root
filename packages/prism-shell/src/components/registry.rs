@@ -25,7 +25,8 @@
 
 use std::sync::Arc;
 
-use prism_builder::{Block, Component, ComponentRegistry, RegistryError};
+use prism_builder::{ui_resolver::RegistryTagResolver, Block, Component, ComponentRegistry, RegistryError};
+use prism_ui_runtime::interpret::TagResolver;
 
 /// Component registry for shell-only primitives. Distinct type from
 /// `ComponentRegistry` so shell components and document blocks never
@@ -69,6 +70,21 @@ impl ShellComponentRegistry {
     pub fn as_component_registry(&self) -> &ComponentRegistry {
         &self.inner
     }
+
+    /// Build a [`TagResolver`] for `.prism-ui` source that references
+    /// any registered shell primitive by tag (e.g.
+    /// `<shell.icon-button …/>`). Hand the returned `Arc` to
+    /// [`prism_ui_runtime::interpret::LowerScope::with_resolver`] and
+    /// the runtime will dispatch unknown tags through this registry's
+    /// `Component::lower_ui` impls.
+    ///
+    /// Smart-pattern note: this is one method, not a separate
+    /// "shell-DSL renderer" — the runtime extension seam is the same
+    /// `TagResolver` trait every other host (relay SSR, future
+    /// plugin-provided component sets) plugs into.
+    pub fn tag_resolver(&self) -> Arc<dyn TagResolver> {
+        Arc::new(RegistryTagResolver::new(Arc::new(self.inner.clone())))
+    }
 }
 
 /// Register every built-in shell component. Mirrors
@@ -90,6 +106,10 @@ pub fn register_shell_builtins(reg: &mut ShellComponentRegistry) -> Result<(), R
     reg!("shell.app-card", AppCard);
     reg!("shell.drag-number-field", DragNumberField);
     reg!("shell.inspector-row", InspectorRow);
+    reg!("shell.transform-editor", TransformEditor);
+    reg!("shell.menu-bar-row", MenuBarRow);
+    reg!("shell.field-editor", FieldEditor);
+    reg!("shell.app-window", AppWindow);
 
     Ok(())
 }
@@ -111,7 +131,11 @@ mod tests {
         assert!(reg.get("shell.app-card").is_some());
         assert!(reg.get("shell.drag-number-field").is_some());
         assert!(reg.get("shell.inspector-row").is_some());
-        assert_eq!(reg.len(), 9);
+        assert!(reg.get("shell.transform-editor").is_some());
+        assert!(reg.get("shell.menu-bar-row").is_some());
+        assert!(reg.get("shell.field-editor").is_some());
+        assert!(reg.get("shell.app-window").is_some());
+        assert_eq!(reg.len(), 13);
     }
 
     #[test]
@@ -120,6 +144,54 @@ mod tests {
         register_shell_builtins(&mut reg).expect("first");
         let err = register_shell_builtins(&mut reg).expect_err("dup");
         assert!(matches!(err, RegistryError::AlreadyRegistered(_)));
+    }
+
+    #[test]
+    fn tag_resolver_lowers_shell_icon_button_from_prism_ui_source() {
+        use prism_core::language::prism_ui::parse;
+        use prism_ui_runtime::interpret::{lower_document_with_scope, LowerScope};
+        use prism_ui_runtime::layout::Node as UiNode;
+
+        let mut reg = ShellComponentRegistry::new();
+        register_shell_builtins(&mut reg).expect("register");
+
+        let scope = LowerScope::default().with_resolver(reg.tag_resolver());
+        let (doc, errs) = parse(
+            r##"<container>
+                <shell.icon-button id="ib" icon="icons/x.svg" tooltip-text="Close"/>
+            </container>"##,
+        );
+        assert!(errs.is_empty(), "parse errors: {errs:?}");
+
+        let nodes = lower_document_with_scope(&doc, &scope);
+        let UiNode::Container { children, .. } = &nodes[0] else {
+            panic!("root not a container")
+        };
+        assert_eq!(children.len(), 1);
+        // Resolver dispatched into IconButton::lower_ui — the result
+        // is the 28×28 icon-button frame from `chrome.rs`.
+        let UiNode::Container { id, props, .. } = &children[0] else {
+            panic!("icon button did not lower to a container")
+        };
+        assert_eq!(id, "ib");
+        assert_eq!(props.semantic.tag.as_deref(), Some("button"));
+        assert_eq!(props.semantic.aria_label.as_deref(), Some("Close"));
+    }
+
+    #[test]
+    fn tag_resolver_unknown_tag_falls_through_to_runtime_default() {
+        use prism_core::language::prism_ui::parse;
+        use prism_ui_runtime::interpret::{lower_document_with_scope, LowerScope};
+        use prism_ui_runtime::layout::Node as UiNode;
+
+        let mut reg = ShellComponentRegistry::new();
+        register_shell_builtins(&mut reg).expect("register");
+
+        let (doc, _) = parse(r##"<scene><text>kept</text></scene>"##);
+        let scope = LowerScope::default().with_resolver(reg.tag_resolver());
+        let nodes = lower_document_with_scope(&doc, &scope);
+        // Unknown tag drops the wrapper, surfaces children.
+        assert!(matches!(nodes[0], UiNode::Text { .. }));
     }
 
     #[test]

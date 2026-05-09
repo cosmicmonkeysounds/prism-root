@@ -34,7 +34,7 @@ pub enum RegistryError {
 
 /// Registry of component types keyed by stable [`ComponentId`]. Single
 /// DI surface — no side registries, no hand-rolled `Node` factories.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ComponentRegistry {
     components: IndexMap<ComponentId, Arc<dyn Component>>,
 }

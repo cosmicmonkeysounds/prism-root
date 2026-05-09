@@ -21,23 +21,13 @@ use prism_builder::{
     registry::{FieldSpec, NumericBounds},
     signal::SignalDef,
     style::StyleProperties,
-    ui_lower::{
-        bare_container, colored_text_node, hover_bg, parse_color, prop_str, prop_string,
-        uniform_radius, LowerCtx,
-    },
+    ui_lower::{prop_str, prop_string, LowerCtx},
     Block, ComponentId,
 };
-use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
+use prism_ui_runtime::layout::Node as UiNode;
 use serde_json::Value;
 
-const FIELD_HEIGHT: f32 = 24.0;
-const FIELD_RADIUS: f32 = 3.0;
-const FIELD_RESTING_BG: &str = "#08000000";
-const FIELD_HOVER_BG: &str = "#14000000";
-const LABEL_COLOR: &str = "#99000000";
-const VALUE_COLOR: &str = "#000000";
-const LABEL_SIZE: f32 = 11.0;
-const VALUE_SIZE: f32 = 11.0;
+use super::chrome::{drag_number_field_node, format_drag_value, DRAG_NUMBER_LABEL_COLOR};
 
 pub struct DragNumberField {
     pub id: ComponentId,
@@ -89,7 +79,7 @@ impl Block for DragNumberField {
         signals
     }
 
-    fn lower_ui(&self, _ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> UiNode {
+    fn lower_ui(&self, _ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
         let label = prop_str(node, "label");
         let value = node
             .props
@@ -97,66 +87,13 @@ impl Block for DragNumberField {
             .and_then(|v| v.as_f64())
             .unwrap_or(0.0);
         let key = prop_string(node, "key");
-
-        let mut row_children: Vec<UiNode> = Vec::with_capacity(2);
-        if !label.is_empty() {
-            row_children.push(colored_text_node(
-                format!("{}::label", node.id),
-                label.into(),
-                style,
-                LABEL_SIZE,
-                LABEL_COLOR,
-            ));
-        }
-        row_children.push(colored_text_node(
-            format!("{}::value", node.id),
-            format_value(value),
-            style,
-            VALUE_SIZE,
-            VALUE_COLOR,
-        ));
-
-        let row = bare_container(format!("{}::row", node.id), row_children, |p| {
-            p.direction = Direction::Row;
-            p.gap = 4.0;
-            p.padding = Padding {
-                left: 6.0,
-                right: 6.0,
-                top: 0.0,
-                bottom: 0.0,
-            };
-            p.height = Sizing::Grow;
-        });
-
-        bare_container(node.id.clone(), vec![row], |props| {
-            props.height = Sizing::Fixed(FIELD_HEIGHT);
-            props.radius = uniform_radius(FIELD_RADIUS);
-            props.background = parse_color(FIELD_RESTING_BG);
-            props.hover = hover_bg(FIELD_HOVER_BG);
-            // SSR semantic: a labelled <input type="number"> wrapped by
-            // <label> when a label prop is set. The void-tag walker
-            // already handles the inner <input> as a self-closing tag,
-            // and the outer <label> defers chrome to stylesheets.
-            let mut semantic = Semantic::tag("label").with_attr("data-key", &key);
-            if !label.is_empty() {
-                semantic = semantic.with_attr("aria-label", label);
-            }
-            props.semantic = semantic;
-        })
-    }
-}
-
-/// Match the original Slint `Math.round(value * 100) / 100` formatting:
-/// up to two decimals, trailing-zero / trailing-dot trimmed so integer
-/// values render as `"3"` not `"3.00"`.
-fn format_value(v: f64) -> String {
-    let rounded = (v * 100.0).round() / 100.0;
-    let raw = format!("{rounded:.2}");
-    let trimmed = raw.trim_end_matches('0').trim_end_matches('.');
-    if trimmed.is_empty() {
-        "0".into()
-    } else {
-        trimmed.to_string()
+        drag_number_field_node(
+            node.id.clone(),
+            label,
+            DRAG_NUMBER_LABEL_COLOR,
+            format_drag_value(value),
+            &key,
+        )
     }
 }
 
@@ -167,6 +104,7 @@ mod tests {
     use prism_builder::layout::LayoutMode;
     use prism_builder::style::StyleProperties as Cascade;
     use prism_core::foundation::spatial::Transform2D;
+    use prism_ui_runtime::layout::Sizing;
     use serde_json::json;
 
     fn lower(node: &BuilderNode) -> UiNode {
@@ -237,12 +175,12 @@ mod tests {
 
     #[test]
     fn value_formats_with_at_most_two_decimals() {
-        assert_eq!(format_value(3.0), "3");
-        assert_eq!(format_value(3.1), "3.1");
-        assert_eq!(format_value(3.12), "3.12");
-        assert_eq!(format_value(3.129), "3.13");
-        assert_eq!(format_value(0.0), "0");
-        assert_eq!(format_value(-2.5), "-2.5");
+        assert_eq!(format_drag_value(3.0), "3");
+        assert_eq!(format_drag_value(3.1), "3.1");
+        assert_eq!(format_drag_value(3.12), "3.12");
+        assert_eq!(format_drag_value(3.129), "3.13");
+        assert_eq!(format_drag_value(0.0), "0");
+        assert_eq!(format_drag_value(-2.5), "-2.5");
     }
 
     #[test]

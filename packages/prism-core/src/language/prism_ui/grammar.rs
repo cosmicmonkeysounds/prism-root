@@ -215,17 +215,27 @@ impl<'s> Parser<'s> {
         // Consume `<`.
         self.scanner.advance();
 
-        // Tag name.
+        // Tag name. Tags may carry namespaced ids (`shell.icon-button`,
+        // `app.foo-bar`) so we scan a wider character class than the
+        // generic identifier scanner — alpha start, then alphanumeric
+        // / `_` / `-` / `.`. Keeps the registry-resolved component
+        // tags addressable from `.prism-ui` source without forcing the
+        // host to encode dots as some other separator.
         let tag_start = self.scanner.position();
-        let tag = match self.scanner.scan_identifier() {
-            Ok(s) => s.to_string(),
-            Err(err) => {
-                self.push_scan_error(err);
-                // Recover: consume up to the next `>`.
-                self.consume_until_gt();
-                return None;
-            }
-        };
+        let first = self.scanner.peek();
+        if !matches!(first, Some(c) if c.is_ascii_alphabetic() || c == '_') {
+            let err = self.scanner.error(&format!(
+                "Expected tag name, got '{}'",
+                first.map(|c| c.to_string()).unwrap_or_else(|| "EOF".into())
+            ));
+            self.push_scan_error(err);
+            self.consume_until_gt();
+            return None;
+        }
+        let tag = self
+            .scanner
+            .scan_while(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
+            .to_string();
         let tag_range = SourceRange {
             start: tag_start,
             end: self.scanner.position(),
@@ -270,14 +280,17 @@ impl<'s> Parser<'s> {
         if self.peek_str("</") {
             self.scanner.advance();
             self.scanner.advance();
-            let close_name = match self.scanner.scan_identifier() {
-                Ok(s) => s.to_string(),
-                Err(err) => {
-                    self.push_scan_error(err);
-                    self.consume_until_gt();
-                    String::new()
-                }
-            };
+            // Closing tag uses the same wider char class as the
+            // opening tag so `</shell.icon-button>` round-trips.
+            let close_name = self
+                .scanner
+                .scan_while(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
+                .to_string();
+            if close_name.is_empty() {
+                let err = self.scanner.error("Expected tag name in closing tag");
+                self.push_scan_error(err);
+                self.consume_until_gt();
+            }
             self.scanner.skip_whitespace_and_newlines();
             if !self.scanner.match_str(">") {
                 self.errors.push(ParseError {

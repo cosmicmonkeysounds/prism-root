@@ -13,9 +13,12 @@
 //! layer, no new builder type — just composition over the
 //! already-shared `ui_lower` namespace.
 
-use prism_builder::ui_lower::{bare_container, hover_bg, image_node, parse_color, uniform_radius};
+use prism_builder::style::StyleProperties;
+use prism_builder::ui_lower::{
+    bare_container, colored_text_node, hover_bg, image_node, parse_color, uniform_radius,
+};
 use prism_ui_runtime::command::Color;
-use prism_ui_runtime::layout::{Node as UiNode, Semantic, Sizing};
+use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
 
 /// 28×28 fixed-size, 6px-radius button frame holding a 16×16 icon
 /// glyph. Resting background transparent; hover swaps to a translucent
@@ -78,6 +81,92 @@ pub fn indent_dot(id: impl Into<String>, color: &str, radius_px: f32) -> UiNode 
         props.radius = uniform_radius(radius_px);
         props.background = parse_color(color);
     })
+}
+
+/// 24px-tall horizontal-drag-to-edit number scrubber. Visual recipe
+/// shared between [`super::DragNumberField`] (the standalone Block)
+/// and [`super::TransformEditor`] (which embeds 5+ instances per
+/// rendered row). Outer 24px container with 3px radius and a hover-bg
+/// swap; inner row carries the optional 11px label and the formatted
+/// value, with `label_color` controlling the per-axis tint
+/// (red/green/transparent etc.).
+///
+/// `key` populates the SSR `data-key` attr; aria-label is derived from
+/// `label` when set.
+pub const DRAG_NUMBER_HEIGHT: f32 = 24.0;
+pub const DRAG_NUMBER_RADIUS: f32 = 3.0;
+pub const DRAG_NUMBER_RESTING_BG: &str = "#08000000";
+pub const DRAG_NUMBER_HOVER_BG: &str = "#14000000";
+pub const DRAG_NUMBER_VALUE_COLOR: &str = "#000000";
+pub const DRAG_NUMBER_LABEL_COLOR: &str = "#99000000";
+pub const DRAG_NUMBER_LABEL_SIZE: f32 = 11.0;
+pub const DRAG_NUMBER_VALUE_SIZE: f32 = 11.0;
+
+pub fn drag_number_field_node(
+    id: impl Into<String>,
+    label: &str,
+    label_color: &str,
+    value_text: String,
+    key: &str,
+) -> UiNode {
+    let id = id.into();
+    let style = StyleProperties::default();
+    let mut row_children: Vec<UiNode> = Vec::with_capacity(2);
+    if !label.is_empty() {
+        row_children.push(colored_text_node(
+            format!("{id}::label"),
+            label.into(),
+            &style,
+            DRAG_NUMBER_LABEL_SIZE,
+            label_color,
+        ));
+    }
+    row_children.push(colored_text_node(
+        format!("{id}::value"),
+        value_text,
+        &style,
+        DRAG_NUMBER_VALUE_SIZE,
+        DRAG_NUMBER_VALUE_COLOR,
+    ));
+
+    let row = bare_container(format!("{id}::row"), row_children, |p| {
+        p.direction = Direction::Row;
+        p.gap = 4.0;
+        p.padding = Padding {
+            left: 6.0,
+            right: 6.0,
+            top: 0.0,
+            bottom: 0.0,
+        };
+        p.height = Sizing::Grow;
+    });
+
+    bare_container(id, vec![row], |props| {
+        props.height = Sizing::Fixed(DRAG_NUMBER_HEIGHT);
+        props.radius = uniform_radius(DRAG_NUMBER_RADIUS);
+        props.background = parse_color(DRAG_NUMBER_RESTING_BG);
+        props.hover = hover_bg(DRAG_NUMBER_HOVER_BG);
+        let mut semantic = Semantic::tag("label").with_attr("data-key", key);
+        if !label.is_empty() {
+            semantic = semantic.with_attr("aria-label", label);
+        }
+        props.semantic = semantic;
+    })
+}
+
+/// Format a number Slint-DragNumberField-style: `Math.round(value * 100) / 100`,
+/// trailing-zero / trailing-dot trimmed (so integers render as `"3"`,
+/// not `"3.00"`). Shared between standalone `DragNumberField` and
+/// the composite `TransformEditor`.
+pub fn format_drag_value(v: f64) -> String {
+    let rounded = (v * 100.0).round() / 100.0;
+    let raw = format!("{rounded:.2}");
+    let trimmed = raw.trim_end_matches('0').trim_end_matches('.');
+    if trimmed.is_empty() {
+        "0".into()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 /// Resolve a hex string to a [`Color`], falling back to fully

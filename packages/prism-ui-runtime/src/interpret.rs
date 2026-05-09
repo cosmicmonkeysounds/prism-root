@@ -28,6 +28,7 @@
 //! thin wrappers that supply an empty scope.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use prism_core::language::prism_ui::{
     parse, AttributeNamespace, AttributeValue, Document as AstDocument, Element, Node as AstNode,
@@ -36,6 +37,36 @@ use prism_core::language::prism_ui::{
 
 use crate::command::{Color, CornerRadius};
 use crate::layout::{ContainerProps, Direction, Node, Padding, Semantic, Sizing, TextProps};
+
+// ---------------------------------------------------------------------------
+// Tag resolver — DI hook for unknown tags
+// ---------------------------------------------------------------------------
+
+/// Resolve a `.prism-ui` element whose tag the runtime doesn't own
+/// (`<shell.icon-button …/>`, `<my.card …/>`, …) into runtime
+/// [`Node`]s.
+///
+/// The runtime's built-in vocabulary (`container`, `text`, `heading`,
+/// `spacer`, `input`, `slot`) is closed by design — a host that
+/// registers component blocks supplies a [`TagResolver`] through
+/// [`LowerScope::with_resolver`]. The resolver sees the raw [`Element`]
+/// (so it can read namespaced attributes like `style:bg` or `data:key`
+/// without re-parsing) plus the active [`LowerScope`] (so it can fork
+/// child scopes for binding/slot propagation).
+///
+/// Returning `None` signals "I don't know this tag" and the runtime
+/// falls through to its default behaviour (drop the wrapper, keep
+/// children). Returning `Some(vec![...])` short-circuits the default
+/// path with the resolver's nodes.
+///
+/// **Smart pattern.** This is the *only* extension seam the runtime
+/// exposes — every host-specific component vocabulary (Prism Builder
+/// blocks, shell chrome, future plugin-provided components) plugs in
+/// through one trait, not three parallel hooks. The runtime stays
+/// component-registry-agnostic; resolvers compose freely.
+pub trait TagResolver: Send + Sync {
+    fn resolve(&self, element: &Element, scope: &LowerScope) -> Option<Vec<Node>>;
+}
 
 /// Scope handed to every element lowering. Owns the bindings used by
 /// `{ident}` interpolations and control-flow predicates, plus the
@@ -46,10 +77,21 @@ use crate::layout::{ContainerProps, Direction, Node, Padding, Semantic, Sizing, 
 /// scopes constantly via [`Self::with_binding`]. Keeping the API
 /// builder-shaped means a child scope reads as one expression at the
 /// call site rather than three lines of `let mut child = parent.clone();`.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct LowerScope {
     bindings: HashMap<String, serde_json::Value>,
     slots: SlotBindings,
+    resolver: Option<Arc<dyn TagResolver>>,
+}
+
+impl std::fmt::Debug for LowerScope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LowerScope")
+            .field("bindings", &self.bindings)
+            .field("slots", &self.slots)
+            .field("resolver", &self.resolver.as_ref().map(|_| "<dyn TagResolver>"))
+            .finish()
+    }
 }
 
 impl LowerScope {
@@ -73,8 +115,22 @@ impl LowerScope {
         self
     }
 
+    /// Install a tag resolver. Subsequent lowering passes consult this
+    /// resolver before falling through to the unknown-tag default.
+    /// Resolver propagates through child scopes (control-flow forks,
+    /// slot expansion) automatically — the same scope chain carries
+    /// it.
+    pub fn with_resolver(mut self, resolver: Arc<dyn TagResolver>) -> Self {
+        self.resolver = Some(resolver);
+        self
+    }
+
     pub fn binding(&self, name: &str) -> Option<&serde_json::Value> {
         self.bindings.get(name)
+    }
+
+    pub fn resolver(&self) -> Option<&Arc<dyn TagResolver>> {
+        self.resolver.as_ref()
     }
 }
 
@@ -239,10 +295,23 @@ fn lower_element(el: &Element, scope: &LowerScope) -> Vec<Node> {
                 None => lower_children(&el.children, scope),
             }
         }
-        // Unknown tag — drop the wrapping element, keep its children.
-        // Lets a host nest a scene inside e.g. `<scene>` without
-        // forcing the runtime to know about it.
-        _ => lower_children(&el.children, scope),
+        // Unknown tag — first ask the host's tag resolver (if any).
+        // Hosts plug a `TagResolver` (e.g. `prism-builder`'s
+        // `RegistryTagResolver`) through `LowerScope::with_resolver`
+        // so registered component vocabularies (`shell.icon-button`,
+        // user prefabs) materialise into runtime nodes here. If no
+        // resolver claims the tag, fall back to the default behaviour:
+        // drop the wrapping element and keep its children, so a host
+        // can nest a scene inside `<scene>` without forcing the runtime
+        // to know about it.
+        _ => {
+            if let Some(resolver) = scope.resolver() {
+                if let Some(nodes) = resolver.resolve(el, scope) {
+                    return nodes;
+                }
+            }
+            lower_children(&el.children, scope)
+        }
     }
 }
 
@@ -1106,6 +1175,78 @@ mod tests {
         );
         // Background rectangle + border + text = 3 commands.
         assert_eq!(cmds.len(), 3);
+    }
+
+    // ---------- TagResolver ----------
+
+    /// Stand-in resolver for the unit tests — turns `<my.box>` into a
+    /// fixed-size container, leaves every other tag untouched. The
+    /// real resolver lives in `prism-builder` and dispatches through
+    /// `ComponentRegistry`.
+    struct FakeResolver;
+    impl TagResolver for FakeResolver {
+        fn resolve(&self, element: &Element, _scope: &LowerScope) -> Option<Vec<Node>> {
+            if element.tag != "my.box" {
+                return None;
+            }
+            Some(vec![Node::Container {
+                id: "from-resolver".into(),
+                props: ContainerProps {
+                    width: Sizing::Fixed(40.0),
+                    height: Sizing::Fixed(40.0),
+                    ..Default::default()
+                },
+                children: vec![],
+            }])
+        }
+    }
+
+    #[test]
+    fn resolver_handles_unknown_tag_when_returning_some() {
+        let (doc, errs) = parse(r#"<container><my.box/></container>"#);
+        assert!(errs.is_empty());
+        let scope = LowerScope::default().with_resolver(Arc::new(FakeResolver));
+        let nodes = lower_document_with_scope(&doc, &scope);
+        let Node::Container { children, .. } = &nodes[0] else {
+            panic!()
+        };
+        assert_eq!(children.len(), 1);
+        let Node::Container {
+            id, props: cprops, ..
+        } = &children[0]
+        else {
+            panic!("resolver did not produce container")
+        };
+        assert_eq!(id, "from-resolver");
+        assert_eq!(cprops.width, Sizing::Fixed(40.0));
+    }
+
+    #[test]
+    fn resolver_returning_none_falls_back_to_default_unknown_tag() {
+        // `<scene>` is not handled by FakeResolver, so it falls through
+        // to the runtime's default "drop the wrapper, keep children"
+        // behaviour — same shape as the no-resolver case.
+        let (doc, _) = parse(r#"<scene><text>kept</text></scene>"#);
+        let scope = LowerScope::default().with_resolver(Arc::new(FakeResolver));
+        let nodes = lower_document_with_scope(&doc, &scope);
+        assert_eq!(nodes.len(), 1);
+        let Node::Text { content, .. } = &nodes[0] else {
+            panic!()
+        };
+        assert_eq!(content, "kept");
+    }
+
+    #[test]
+    fn resolver_propagates_through_for_loop_child_scopes() {
+        let (doc, _) = parse(r#"<container><my.box for="x in items"/></container>"#);
+        let scope = LowerScope::default()
+            .with_binding("items", json!([1, 2, 3]))
+            .with_resolver(Arc::new(FakeResolver));
+        let nodes = lower_document_with_scope(&doc, &scope);
+        let Node::Container { children, .. } = &nodes[0] else {
+            panic!()
+        };
+        assert_eq!(children.len(), 3, "resolver fired once per iteration");
     }
 
     #[test]

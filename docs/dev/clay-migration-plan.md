@@ -1407,6 +1407,90 @@ CLI surface unchanged.
     declarative compositions of already-shipped primitives — no
     further runtime extensions blocked.
 
+- **Update 2026-05-08 (final 4 chrome primitives — scoreboard
+  closes at 13/13):** `TransformEditor`, `MenuBarRow`, `FieldEditor`,
+  and `AppWindow` all migrated in one pass. The smart-pattern
+  through-line was *promote-then-reuse*: every shape that two of
+  the new primitives shared graduated up into `chrome.rs` once,
+  consumed by all callers.
+  - **`chrome::drag_number_field_node` + `format_drag_value`** —
+    the 24px-tall scrubber visual recipe lifted out of
+    `DragNumberField::lower_ui` into a shared helper. The standalone
+    `DragNumberField` now delegates to it (lowering body shrunk
+    from ~50 lines to ~15); `TransformEditor` calls it 5× per
+    instance (Position x/y, Rotation, Scale x/y) and `FieldEditor`
+    calls it once for the `number`/`integer` kind. Adding a
+    seventh consumer (a future `Slider` shell primitive, say) is
+    one helper call. Promotion threshold honoured: two consumers
+    arrived together, so the helper was lifted in the same pass.
+  - **`shell.transform-editor` (10th)** — Godot-style Position /
+    Rotation / Scale / Anchor stack. Smart pattern: a single
+    `ROW_SPECS` declarative table drives the whole layout. Each
+    row is a `RowSpec { label, fields: &[AxisSpec] }` carrying
+    label string + per-axis (label letter, axis colour, key
+    suffix, value prop). The lowering body iterates `ROW_SPECS`
+    and never branches on row identity. Adding a fifth row
+    (Skew, Pivot, …) is one struct literal; adding a third axis
+    to an existing row is one `AxisSpec` literal. SSR semantic is
+    `<section data-role="transform-editor">`. 6 unit tests cover
+    row count, per-row field count, anchor-pill shape, semantic
+    propagation, and schema. Zero hand-rolled `UiNode::Container
+    { … }` literals; every shape comes from `bare_container` /
+    `colored_text_node` / `drag_number_field_node`.
+  - **`shell.menu-bar-row` (11th)** — 28px top chrome carrying
+    menu pills + optional separator + app-name pill + tab strip
+    + add-page button. The `menus` and `tabs` props are JSON
+    arrays (the runtime's `<for>` lowering would normally drive
+    these; the Block consumes the resolved data shape directly).
+    Three local helpers: `menu_pill_node`, `app_name_pill_node`,
+    `tab_pill_node` — kept local until a second consumer arrives.
+    The trailing add-page button reuses `chrome::icon_button_node`
+    at native 28×28 (same shape `IconButton` itself uses). Outer
+    semantic is `<nav role="menubar">`; tabs declare
+    `role="tab"` with `aria-selected`; menu pills declare
+    `role="menuitem"` with `aria-expanded`. 6 unit tests.
+  - **`shell.field-editor` (12th)** — kind-driven property row
+    (boolean / select / color / number / integer / text / file).
+    Smart pattern: a `KIND_TABLE: &[KindEntry { kind, body,
+    aria_role }]` lookup with `body: fn(&Node) -> Vec<UiNode>`
+    function pointers. The lowering body is one branch: pick the
+    builder, run it, wrap with the shared label + padding chrome.
+    Adding a new kind is one `KindEntry` row + one body fn.
+    Existing helpers carry every visual shape: `drag_number_field_node`
+    for numeric kinds, `text_input_node` for text/file/color hex
+    input, `bare_container` for the boolean switch and color
+    swatch, a local `pill_with_chevron` for the select dropdown
+    trigger (single-consumer; promoted later if a second caller
+    arrives). Unknown kinds fall through to text. SSR semantic
+    declares `data-key` and `data-kind` for stylesheet hooks. 8
+    unit tests.
+  - **`shell.app-window` (13th — capstone)** — top-level Studio
+    shell scaffold. Lowers to a column (`<menu-bar>`, `<body
+    row>`, `<status-bar>`) where the body row is `<activity-bar>
+    + <main content>`. The content area uses
+    `LowerCtx::lower_children(&node.children)` so any document
+    subtree the host hands AppWindow flows through registered
+    blocks unchanged — AppWindow has zero knowledge of what
+    content blocks exist. Embedded chrome reuses `MenuBarRow::lower_ui`
+    and `NavButton::lower_ui` directly: AppWindow constructs a
+    derived `Node` for each (a transient wrapper, not a document
+    mutation) and runs the existing block lowerings. **Zero
+    duplication** of menu-pill / nav-button rendering — AppWindow
+    is purely structural composition. SSR semantic uses `<main>`
+    for the content area, `<nav role="navigation">` for the
+    activity bar, `<footer role="contentinfo">` for the status
+    bar. 7 unit tests cover the three-section column shape, body
+    row composition, menu prop propagation, status text, content
+    children pass-through, activity-bar nav-button instantiation,
+    and outer `data-role`.
+  - **Verification:** all 419 `prism-shell` lib tests pass; clippy
+    `-D warnings` clean; registry `len()` is now 13 (up from 9).
+    The Phase-4 chrome scoreboard is **closed**: every primitive
+    in `ui/app.slint`'s shell-component vocabulary has a
+    `Block::lower_ui` implementation. Image-tint remains the lone
+    deferred runtime extension and is still not on the critical
+    path (no migrated primitive blocks on it).
+
 - **Update 2026-05-08 (`shell.drag-number-field` lands — 8/13):**
   the first input-family primitive flows through the same
   `Block::lower_ui` recipe as the prior seven. The drag / commit /
@@ -1510,6 +1594,7 @@ CLI surface unchanged.
 | 2026-05-08 | Overlay z-layer lands (`Overlay` + `OverlayAnchor` + `Surface::push_overlay`); `shell.toast` migrated | Sparse anchor enum (Corner / Point / Center) covers Toast + command-palette + help-tooltip without forking the layout vocabulary — overlays are just `(Node, anchor)` pairs that flow through the same `build_taffy_subtree` / `emit_commands` pipeline as the main tree. Block lowering is unchanged: a Toast produces a Node; the host decides whether to mount it inline or on the overlay stack. Hover hit-testing extends naturally to overlay subtrees. Unblocks the third of the four chrome clusters identified in the punch list. |
 | 2026-05-08 | `prop_str` / `prop_bool` / `colored_text_node` promoted into `prism-builder/src/ui_lower.rs`; `shell.docs-content` + `shell.app-card` migrated (7/13) | Refactor revealed three boilerplate shapes (string-prop, bool-prop, text-with-override-colour) repeated across every chrome primitive's `lower_ui`. Promoted them once instead of cloning per-block. The colored_text_node promotion follows the rule-of-three threshold the toast author already flagged in a comment. Refactored callers shrank by 4-10 lines each with no behaviour change; the two new primitives compose entirely from the shared helpers — zero hand-rolled `UiNode::Container { … }` literals, zero per-block private helpers. |
 | 2026-05-08 | `chrome.rs` shared visual-helpers module; `IconButton` recipe extracted; `shell.inspector-row` lands as 9th chrome primitive | The icon-button shape (28×28 frame, 16×16 glyph, 6px radius, hover swap, `<button>` SSR) graduated out of `IconButton::lower_ui` into `prism-shell/src/components/chrome.rs` the moment the second consumer (InspectorRow's chevron / trash buttons) arrived. Helper composes through the existing `prism_builder::ui_lower` namespace — no new builder type, no DI layer. InspectorRow's three-way `kind` palette (`node` / `row` / `empty`) is a `const KindMetrics` lookup table; the lowering body never branches on `kind` directly. Adding a fourth kind is one struct literal + one match arm. Hover-driven trash-button visibility lives on a `show-delete: bool` prop the host flips on enter/leave — declarative storage, no runtime state machine. |
+| 2026-05-08 | Phase-4 chrome scoreboard closes at 13/13 — `TransformEditor`, `MenuBarRow`, `FieldEditor`, `AppWindow` all migrated in one pass | Promote-then-reuse smart pattern: `chrome::drag_number_field_node` + `format_drag_value` lifted out of `DragNumberField::lower_ui` so the same scrubber recipe drives `TransformEditor` (5× per instance), `FieldEditor` (numeric kinds), and `DragNumberField` itself with zero duplication. `TransformEditor` is fully driven by a `ROW_SPECS` declarative table; `FieldEditor` dispatches via a `KIND_TABLE` of `(kind, body_fn, aria_role)` rows; `AppWindow` composes by *running* `MenuBarRow::lower_ui` and `NavButton::lower_ui` over derived nodes rather than re-implementing pill/button rendering. Adding a new transform row, field-editor kind, or app-window section is one literal in the relevant table. Every primitive's lowering body is branch-free over its cross-instance variation. |
 | 2026-05-08 | The three remaining Phase-4 blockers land in one declarative refactor: `LowerScope` + `SlotBindings`, `expand_control_flow`, and `Node::TextInput` | All three concerns funnel through `prism_ui_runtime::interpret`, so a single `LowerScope` carrier (bindings + slot map) serves both `{ident}` interpolation and the control-flow predicate evaluator — no per-feature scope stack. Slots stay at the AST level so backends don't grow a new `Node` variant. Control flow is a sibling pre-pass that returns `Vec<(node, optional-child-scope)>`, keeping per-element lowering branch-free. `TextInput` composes a `Rectangle` + `Border` + `Text` at emit time, so all four backends inherit it for free; only `semantic_html` grew an `<input>` arm. Net effect: Phase-4 chrome scoreboard fully unblocked with ~600 LoC across one file refactor + thin runtime additions, no new abstractions, no new infrastructure. |
 
 ## 10. Appendix — file-by-file Slint footprint to retire
@@ -1629,15 +1714,144 @@ in `prism-builder/CLAUDE.md`):
 4. Cover lowering shape, ARIA / semantic propagation, schema, and
    registry insertion in unit tests next to the impl.
 
-**Status.** `IconButton` landed 2026-05-08 as the template; eight
-more chrome primitives followed (toolbar-separator, section-header,
-nav-button, toast, docs-content, app-card, drag-number-field,
-inspector-row), bringing the scoreboard to **9 of 13** as of
-2026-05-08. Every runtime gap from the original punch list has
-landed (hover-state, slot, control-flow, text-input, overlay
-z-layer); image-tint is the lone deferred extension and is not on
-the critical path for the remaining four primitives. The shared
-`prism-shell/src/components/chrome.rs` module collects visual
-recipes that more than one chrome primitive composes (icon-button
-node, indent dot, transparent-fallback color); the rule-of-three
-promotion threshold gates entries.
+**Status.** `IconButton` landed 2026-05-08 as the template; the
+scoreboard closed at **13 of 13** the same day after `TransformEditor`,
+`MenuBarRow`, `FieldEditor`, and `AppWindow` migrated in a single
+pass. The shared `prism-shell/src/components/chrome.rs` module
+now collects four reusable recipes: `icon_button_node` (consumed
+by IconButton, InspectorRow), `drag_number_field_node` +
+`format_drag_value` (consumed by DragNumberField, TransformEditor,
+FieldEditor), `indent_dot` (InspectorRow), and `color_or_transparent`.
+The rule-of-three promotion threshold gates entries — every helper
+has at least two in-tree callers at landing. Every runtime gap
+from the original punch list has landed (hover-state, slot,
+control-flow, text-input, overlay z-layer); image-tint is the
+lone deferred extension and is not on the critical path. 419
+prism-shell tests + clippy `-D warnings` clean.
+
+## 13. Tag-resolver DI — `.prism-ui` source addresses every registered component
+
+**Strategy locked 2026-05-09.** With the chrome scoreboard closed at
+13/13, the next blocker for translating `ui/app.slint` into
+`ui/app.prism-ui` was the runtime's closed tag vocabulary: the
+`prism_ui_runtime::interpret` lowering only knew six built-in tags
+(`container`, `text`, `heading`, `spacer`, `input`, `slot`) and
+silently dropped everything else. Author-side, that meant
+`<shell.icon-button …/>` in source was indistinguishable from a
+typo — the wrapper element would be discarded and only its children
+survived.
+
+**Solution.** A single `TagResolver` trait + `LowerScope::with_resolver`
+hook on the runtime, plus one `RegistryTagResolver` impl in
+`prism-builder` that wraps a [`ComponentRegistry`]. The runtime stays
+component-registry-agnostic; the builder owns the `Block` →
+`Component::lower_ui` dispatch.
+
+**Smart-pattern wins (every constraint at the top of plan §0 honoured):**
+
+- **One extension seam, not three.** No parallel "runtime block"
+  trait, no `RuntimeRegistry`, no string-dispatch arm in the runtime
+  for each new tag. Every component vocabulary (Prism Builder blocks,
+  shell chrome, future plugin-supplied components, user prefabs) plugs
+  into the same `TagResolver` trait. Runtime dependency direction
+  preserved: `prism-ui-runtime` declares the trait, downstream crates
+  implement it.
+- **Composition over inheritance.** `RegistryTagResolver` re-uses
+  every block's existing `Component::lower_ui` impl unchanged — adding
+  a new tag to the `.prism-ui` vocabulary is **zero additional work**
+  beyond the standard `register_block` call. The same `lower_ui` body
+  drives the editor render path (`document_to_ui_tree` → `lower`),
+  the SSR path (`lower_semantic_html_with_registry`), *and* now the
+  source-driven path (`<my.tag …/>` resolves through the resolver).
+  Three consumers, one declaration.
+- **DI through the scope, not a global.** The resolver lives on
+  `LowerScope` as `Option<Arc<dyn TagResolver>>`, so callers opt in
+  per-scope. Tests inject a fake resolver; production wires the real
+  registry; the runtime has no notion of "the resolver" anywhere.
+- **Builder pattern preserved.** `LowerScope::with_resolver(arc)`
+  composes with the existing `with_binding` / `with_slots` builder
+  surface — child scopes (control-flow forks, slot expansions) inherit
+  the resolver via the same `Clone` path that already propagates
+  bindings.
+- **AST → builder Node translation lives once.** `element_to_builder_node`
+  is the single seam for the namespace mapping (bare → props, `data:k`
+  → props[k], `aria:k` → props["aria-{k}"], `id` → node.id, `style:*`
+  / `on:*` / `bind:*` deferred). Every resolver consumer goes through
+  this one helper; adding a new namespace handling is one match arm.
+- **Boolean-attribute and numeric-attribute coercion live exactly
+  once** in `value_for(raw)`, mirroring HTML's "boolean attribute"
+  convention. Schema-aware coercion is the block's job at read-time.
+
+**Surface added (9 new public items, ~250 LoC across two files):**
+
+- **`prism_ui_runtime::interpret::TagResolver`** — the trait. One
+  method: `fn resolve(&self, element: &Element, scope: &LowerScope)
+  -> Option<Vec<Node>>`. `Some` short-circuits the unknown-tag
+  fall-through; `None` lets the runtime apply its default (drop the
+  wrapper, keep children).
+- **`LowerScope::with_resolver(Arc<dyn TagResolver>)`** /
+  **`LowerScope::resolver()`** — installation + accessor.
+- **`prism_builder::ui_resolver::RegistryTagResolver`** — the
+  `TagResolver` impl. Constructor takes `Arc<ComponentRegistry>`;
+  `from_registry(reg)` convenience wraps a freshly built registry.
+- **`prism_shell::components::ShellComponentRegistry::tag_resolver()`**
+  — one-call helper that returns an `Arc<dyn TagResolver>` ready to
+  hand to a `LowerScope`. The shell host code reads as
+  `LowerScope::default().with_resolver(reg.tag_resolver())`.
+
+**Parser extension (one-line, source-class widening):** the
+`prism-core::language::prism_ui` grammar's tag-name scanner picked up
+`.` and `-` as legal characters, since registered ids carry namespaces
+(`shell.icon-button`, future `app.foo-bar`). The closing-tag scanner
+got the same widening so `</shell.icon-button>` round-trips. No new
+identifier rules elsewhere — the change is local to `parse_element`'s
+opening / closing tag paths.
+
+**Verification (2026-05-09):**
+
+- `prism-ui-runtime`: 56 lib tests (3 new — `resolver_handles_unknown_tag_when_returning_some`,
+  `resolver_returning_none_falls_back_to_default_unknown_tag`,
+  `resolver_propagates_through_for_loop_child_scopes`).
+- `prism-builder`: 423 lib tests (5 new in `ui_resolver::tests` —
+  `registered_tag_lowers_through_block`, `unregistered_tag_falls_through_to_default`,
+  `boolean_attribute_coerces_to_true`, `numeric_attribute_coerces_to_number`,
+  `aria_attribute_lands_with_aria_prefix`).
+- `prism-core`: 2045 lib tests (parser changes covered by existing
+  prism_ui suite — closing-tag round-trips and dotted-tag parsing
+  exercised by the downstream resolver tests).
+- `prism-shell`: 421 lib tests (2 new in
+  `components::registry::tests` —
+  `tag_resolver_lowers_shell_icon_button_from_prism_ui_source` walks
+  `<container><shell.icon-button id="ib" icon="icons/x.svg"
+  tooltip-text="Close"/></container>` end-to-end through `parse` →
+  `lower_document_with_scope` → `IconButton::lower_ui` → runtime Node
+  with `<button>` semantic + `aria-label="Close"`;
+  `tag_resolver_unknown_tag_falls_through_to_runtime_default` confirms
+  the default behaviour is preserved). 13/13 chrome primitives now
+  reachable from `.prism-ui` source by tag.
+
+**Children deferred.** The v0 resolver passes `children: Vec::new()`
+to the block — fine for the 12/13 chrome primitives whose visual
+structure comes from props (IconButton, ToolbarSeparator, NavButton,
+DragNumberField, TransformEditor, FieldEditor, Toast, AppCard,
+DocsContent, InspectorRow, MenuBarRow, SectionHeader). `AppWindow` is
+the lone composition-style block that walks `node.children`; once
+`ui/app.prism-ui` lands and AppWindow needs to host real subtrees from
+source, the resolver will pre-lower AST children through the runtime
+and inject them via the existing `<slot/>` mechanism — a one-method
+extension that keeps every other primitive unchanged.
+
+**Why this is the keystone.** With this in, `ui/app.prism-ui` can
+*finally* be authored: every shell-chrome primitive is referenceable
+by tag, every runtime gap from the original punch list is filled, and
+the cascade / SSR / native render paths all converge on the same
+`Component::lower_ui` declarations the chrome scoreboard already
+landed. The Phase-4 tail ("translate `ui/app.slint` into
+`ui/app.prism-ui`") is now mechanical authoring rather than blocked
+infrastructure work.
+
+**Decision-log entry:**
+
+| Date | Decision | Rationale |
+|---|---|---|
+| 2026-05-09 | `TagResolver` DI seam in `prism-ui-runtime::interpret` + `RegistryTagResolver` impl in `prism-builder`; `ShellComponentRegistry::tag_resolver()` wraps the shell registry | Closed tag vocabulary in the runtime was the last blocker for translating `ui/app.slint` into `ui/app.prism-ui`. Single trait extension (one method, `Option<Vec<Node>>` return) lets every host-supplied component vocabulary plug into the same lowering pipeline. No parallel walker, no new abstraction layer — every block's existing `Component::lower_ui` is reused. Parser tag-scanner widened to allow `.` and `-` in tag names so `<shell.icon-button>` parses. Verified end-to-end via `prism-shell` test that lowers a `.prism-ui` source containing `<shell.icon-button …/>` through the registered IconButton block. |
