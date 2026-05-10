@@ -1,17 +1,16 @@
 //! `prism-builder` — the page builder.
 //!
-//! Two render targets, one declaration:
+//! One render target: the unified Taffy pipeline.
+//! [`component::Component::lower_ui`] emits `prism_ui_runtime::layout::Node`
+//! trees consumed by the shell renderer *and* by the relay's
+//! semantic-HTML SSR walker
+//! ([`ui_runtime::lower_semantic_html_with_registry`]).
 //!
-//! * **Slint DSL** — [`component::Component::render_slint`] feeds Studio's
-//!   live builder via [`slint_source::SlintEmitter`].
-//! * **Unified Taffy pipeline** — [`component::Component::lower_ui`] emits
-//!   `prism_ui_runtime::layout::Node` trees consumed by the shell renderer
-//!   *and* by the relay's semantic-HTML SSR walker
-//!   ([`ui_runtime::lower_semantic_html_with_registry`]).
-//!
-//! See `docs/dev/clay-migration-plan.md` for the migration history that
-//! collapsed the parallel `HtmlBlock` / `HtmlRegistry` SSR walker into
-//! the unified pipeline (Phase 5).
+//! The Slint DSL emission path (`render_slint` / `SlintEmitter` / source
+//! map / source parse / `render_document_slint_*`) was deleted in the
+//! Phase 5 cutover follow-up — the Slint runtime had already been
+//! removed from the workspace and the source emitter had no consumers
+//! left. See `docs/dev/clay-migration-plan.md`.
 
 pub mod app;
 pub mod asset;
@@ -29,15 +28,11 @@ pub mod modifier;
 pub mod prefab;
 pub mod project;
 pub mod registry;
-pub mod render;
 pub mod resource;
 pub mod schemas;
 #[cfg(feature = "luau")]
 pub mod script_loader;
 pub mod signal;
-pub mod slint_source;
-pub mod source_map;
-pub mod source_parse;
 pub mod starter;
 pub mod style;
 pub mod ui_lower;
@@ -48,10 +43,8 @@ pub mod variant;
 pub use app::{AppIcon, AppId, NavigationConfig, NavigationStyle, Page, PrismApp};
 pub use asset::{collect_vfs_hashes, AssetSource};
 pub use block::{register_block, Block};
-pub use component::{Component, ComponentId, RenderContext, RenderError, RenderSlintContext};
-pub use core_widget::{
-    collect_all_contributions, register_core_widgets, render_template_node, CoreWidgetBlock,
-};
+pub use component::{Component, ComponentId, RenderContext, RenderError};
+pub use core_widget::{collect_all_contributions, register_core_widgets, CoreWidgetBlock};
 pub use document::{BuilderDocument, Node, NodeId};
 pub use facet::{
     apply_aggregate, apply_scalar_bindings, collect_expression_fields, evaluate_calculations,
@@ -73,20 +66,12 @@ pub use registry::{
     ComponentRegistry, FieldKind, FieldSpec, FieldValue, FileFieldConfig, NumericBounds,
     RegistryError, SelectOption,
 };
-pub use render::{
-    build_source_map_from_markers, render_document_slint_preview,
-    render_document_slint_preview_with_assets, render_document_slint_preview_with_assets_and_data,
-    render_document_slint_source, render_document_slint_source_mapped,
-};
 pub use resource::{ResourceDef, ResourceId, ResourceKind};
 pub use signal::{
     common_signals, dispatch_signal, generate_signal_type_stubs, signal_contexts, signal_symbols,
     with_common_signals, ActionKind, Connection, ConnectionId, DispatchResult, SignalDef,
     SignalEvent,
 };
-pub use slint_source::{SlintEmitter, SlintIdent};
-pub use source_map::{MappedEmitter, PropSpan, SourceMap, SourceSpan};
-pub use source_parse::{derive_document_from_source, format_slint_value, parse_slint_value};
 pub use starter::{builtin_prefab, card_prefab_def, materialize_prefab, register_builtins};
 pub use style::{resolve_cascade, StyleProperties};
 pub use variant::{VariantAxis, VariantOption};

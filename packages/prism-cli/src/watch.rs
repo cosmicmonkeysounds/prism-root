@@ -1,17 +1,9 @@
-//! Notify-driven filesystem watcher scaffold.
+//! Notify-driven filesystem watcher.
 //!
-//! Phase 1 of the Slint migration plan (§11) calls for a
-//! "notify-driven watch loop scaffold" — the piece later phases will
-//! grow into `subsecond` hot-reload and the `slint-interpreter`-based
-//! builder re-parse. This module is that scaffold. It is deliberately
-//! small: wrap `notify::RecommendedWatcher`, debounce raw filesystem
-//! events into batches, and hand the caller an iterator-style
-//! `next_batch` API so the dev server can act on them.
-//!
-//! The scaffold is a pure library module — `prism dev` does not yet
-//! wire a rebuild reaction because that belongs to Phase 2/3 once the
-//! shell has an in-process reload path. Until then the watcher ships
-//! with tests (a tempfile round-trip) so the module stays honest.
+//! Wraps `notify::RecommendedWatcher`, debounces raw filesystem events
+//! into batches, and hands the caller an iterator-style `next_batch`
+//! API. Used by [`crate::dev_loop::DevLoop`] to drive the `.rs` →
+//! respawn loop for `prism dev shell`.
 //!
 //! Why roll our own debouncer instead of pulling in
 //! `notify-debouncer-full`? The scaffold only needs millisecond-range

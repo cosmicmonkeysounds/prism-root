@@ -1,27 +1,17 @@
 //! The unified [`Block`] trait — single source of truth for a renderable
-//! block type.
-//!
-//! Historically every built-in was authored twice: a `Component` impl
-//! for Slint DSL emission and a parallel `HtmlBlock` impl for SSR. The
-//! Phase-5 cutover (`docs/dev/clay-migration-plan.md`) collapsed SSR
-//! onto `prism-ui-runtime`'s semantic-HTML walker, which dispatches
-//! through `Block::lower_ui` — the same lowering Studio's live
-//! preview consumes. Net result: one trait, one render method per
-//! target (Slint DSL for Studio, `lower_ui` for the unified Taffy
-//! pipeline that powers both shell rendering and relay SSR).
+//! block type. One declaration, one render method (`lower_ui`), shared
+//! across the shell renderer and the relay's semantic-HTML SSR walker.
 //!
 //! A blanket impl gives every `Block` an automatic `Component` impl
 //! so existing `ComponentRegistry` callers keep working unchanged.
 
 use prism_core::help::HelpEntry;
 use prism_core::widget::ToolbarAction;
-use serde_json::Value;
 
-use crate::component::{Component, ComponentId, RenderError, RenderSlintContext};
+use crate::component::{Component, ComponentId};
 use crate::document::Node;
 use crate::registry::{ComponentRegistry, FieldSpec, RegistryError};
 use crate::signal::{common_signals, SignalDef};
-use crate::slint_source::SlintEmitter;
 use crate::variant::VariantAxis;
 
 /// One block type, one declaration. Implement once; the blanket impl
@@ -45,22 +35,6 @@ pub trait Block: Send + Sync + 'static {
 
     fn toolbar_actions(&self) -> Vec<ToolbarAction> {
         vec![]
-    }
-
-    /// Slint DSL emission. Default: a transparent `Rectangle` wrapper
-    /// recursing into children — matches [`Component`]'s default.
-    fn render_slint(
-        &self,
-        ctx: &RenderSlintContext<'_>,
-        props: &Value,
-        children: &[Node],
-        out: &mut SlintEmitter,
-    ) -> Result<(), RenderError> {
-        let _ = props;
-        let id = self.id().clone();
-        out.block(format!("// component: {id}\nRectangle"), |out| {
-            ctx.render_children(children, out)
-        })
     }
 
     /// Lower the block to a `prism_ui_runtime::layout::Node`. Default:
@@ -98,15 +72,6 @@ impl<T: Block> Component for T {
     }
     fn toolbar_actions(&self) -> Vec<ToolbarAction> {
         Block::toolbar_actions(self)
-    }
-    fn render_slint(
-        &self,
-        ctx: &RenderSlintContext<'_>,
-        props: &Value,
-        children: &[Node],
-        out: &mut SlintEmitter,
-    ) -> Result<(), RenderError> {
-        Block::render_slint(self, ctx, props, children, out)
     }
     fn lower_ui(
         &self,

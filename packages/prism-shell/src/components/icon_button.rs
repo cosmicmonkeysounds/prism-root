@@ -24,13 +24,11 @@ use prism_builder::{
     ui_lower::{parse_color, prop_bool, prop_str, LowerCtx},
     Block,
     ComponentId,
-    RenderError,
-    RenderSlintContext,
 };
 use prism_ui_runtime::layout::Node as UiNode;
 use serde_json::Value;
 
-use super::chrome::{icon_button_node_tinted, ICON_BUTTON_RADIUS, ICON_BUTTON_SIZE};
+use super::chrome::icon_button_node_tinted;
 
 /// `shell.icon-button` block. Schema mirrors the four `in property`
 /// declarations on the original Slint component.
@@ -75,24 +73,6 @@ impl Block for IconButton {
         );
         signals.push(SignalDef::new("hover-end", "Pointer left the button."));
         signals
-    }
-
-    fn render_slint(
-        &self,
-        _ctx: &RenderSlintContext<'_>,
-        _props: &Value,
-        _children: &[Node],
-        out: &mut prism_builder::slint_source::SlintEmitter,
-    ) -> Result<(), RenderError> {
-        // The shell still emits Slint during the parallel-build period
-        // (Phase 4 cargo feature). Once `ui/app.prism-ui` lands and the
-        // shell stops compiling Slint, this method goes away.
-        out.block("Rectangle", |out| {
-            out.prop_px("width", ICON_BUTTON_SIZE as f64);
-            out.prop_px("height", ICON_BUTTON_SIZE as f64);
-            out.prop_px("border-radius", ICON_BUTTON_RADIUS as f64);
-            Ok(())
-        })
     }
 
     fn lower_ui(&self, _ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {

@@ -91,10 +91,9 @@ impl Workspace {
     }
 
     /// Source tree the `prism dev shell` hot-reload loop watches for
-    /// `.rs` changes. Currently scoped to the shell's own `src/`
-    /// directory — Slint's native live-preview handles the `.slint`
-    /// half, and watching `prism-core`/other transitive crates is
-    /// deferred until the dev loop grows a broader policy.
+    /// `.rs` changes. Scoped to the shell's own `src/` directory;
+    /// watching `prism-core`/other transitive crates is deferred until
+    /// the dev loop grows a broader policy.
     pub fn shell_src_dir(&self) -> PathBuf {
         self.package("prism-shell").join("src")
     }

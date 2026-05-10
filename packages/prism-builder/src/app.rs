@@ -89,18 +89,14 @@ pub struct Page {
 }
 
 impl Page {
+    /// Legacy hook from the Slint era. Kept as a no-op so existing
+    /// callers don't have to drop the call; once a `.prism-ui` source
+    /// emitter lands this is where it would auto-populate.
     pub fn ensure_source(
         &mut self,
-        registry: &crate::registry::ComponentRegistry,
-        tokens: &prism_core::design_tokens::DesignTokens,
+        _registry: &crate::registry::ComponentRegistry,
+        _tokens: &prism_core::design_tokens::DesignTokens,
     ) {
-        if self.source.is_empty() && self.document.root.is_some() {
-            if let Ok((src, _)) =
-                crate::render::render_document_slint_source_mapped(&self.document, registry, tokens)
-            {
-                self.source = src;
-            }
-        }
     }
 }
 

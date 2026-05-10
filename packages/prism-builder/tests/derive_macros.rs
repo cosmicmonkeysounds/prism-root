@@ -241,6 +241,7 @@ impl DemoCardBlock {
         vec![FieldSpec::text("title", "Title")]
     }
 
+    #[allow(dead_code)]
     fn template(
         _props: &serde_json::Value,
         _children: &[prism_builder::Node],
@@ -272,37 +273,6 @@ fn prism_block_derive_emits_block_impl_with_id_and_schema() {
     assert_eq!(schema[0].key, "title");
 }
 
-#[test]
-fn prism_block_derive_renders_slint_via_template_walker() {
-    use prism_builder::{Block, ComponentRegistry, RenderSlintContext, SlintEmitter};
-    let mut registry = ComponentRegistry::new();
-    prism_builder::starter::register_builtins(&mut registry).unwrap();
-
-    let tokens = prism_core::design_tokens::DesignTokens::default();
-    let resources = indexmap::IndexMap::new();
-    let prefabs = indexmap::IndexMap::new();
-    let facets = indexmap::IndexMap::new();
-    let facet_schemas = indexmap::IndexMap::new();
-    let ctx = RenderSlintContext::new(
-        &tokens,
-        &registry,
-        &resources,
-        &prefabs,
-        &facets,
-        &facet_schemas,
-        false,
-    );
-
-    let block = DemoCardBlock;
-    let mut out = SlintEmitter::new();
-    block
-        .render_slint(&ctx, &serde_json::json!({"title": "Hello"}), &[], &mut out)
-        .unwrap();
-    let source = out.build();
-    assert!(source.contains("VerticalLayout") || source.contains("HorizontalLayout"));
-    assert!(source.contains("Hello"));
-}
-
 // ── PrismBlock with typed `props = "..."` attribute ──────────────────
 
 #[derive(PrismField, Default)]
@@ -322,6 +292,7 @@ impl TypedCardBlock {
     // Note: receives `&TypedCardProps`, not `&Value`. The derive
     // extracts the typed struct via `TypedCardProps::from_value(props)`
     // before calling this fn.
+    #[allow(dead_code)]
     fn template(
         p: &TypedCardProps,
         _children: &[prism_builder::Node],
@@ -357,53 +328,4 @@ fn prism_block_typed_props_derives_schema_from_props_struct() {
     let schema = block.schema();
     let keys: Vec<&str> = schema.iter().map(|s| s.key.as_str()).collect();
     assert_eq!(keys, vec!["title", "subtitle"]);
-}
-
-#[test]
-fn prism_block_typed_props_extracts_typed_props_for_template() {
-    use prism_builder::{Block, ComponentRegistry, RenderSlintContext, SlintEmitter};
-    let mut registry = ComponentRegistry::new();
-    prism_builder::starter::register_builtins(&mut registry).unwrap();
-
-    let tokens = prism_core::design_tokens::DesignTokens::default();
-    let resources = indexmap::IndexMap::new();
-    let prefabs = indexmap::IndexMap::new();
-    let facets = indexmap::IndexMap::new();
-    let facet_schemas = indexmap::IndexMap::new();
-    let ctx = RenderSlintContext::new(
-        &tokens,
-        &registry,
-        &resources,
-        &prefabs,
-        &facets,
-        &facet_schemas,
-        false,
-    );
-
-    let block = TypedCardBlock;
-
-    // With subtitle set, both bindings render.
-    let mut out = SlintEmitter::new();
-    block
-        .render_slint(
-            &ctx,
-            &serde_json::json!({"title": "Hi", "subtitle": "Yo"}),
-            &[],
-            &mut out,
-        )
-        .unwrap();
-    let source = out.build();
-    assert!(source.contains("Hi"));
-    assert!(source.contains("Yo"));
-
-    // With subtitle missing, only the title binding renders — proves
-    // the typed extraction (subtitle defaulted to "") gated the
-    // template branch.
-    let mut out = SlintEmitter::new();
-    block
-        .render_slint(&ctx, &serde_json::json!({"title": "Hi"}), &[], &mut out)
-        .unwrap();
-    let source = out.build();
-    assert!(source.contains("Hi"));
-    assert!(!source.contains("Yo"));
 }

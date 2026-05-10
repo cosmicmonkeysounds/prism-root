@@ -1,28 +1,16 @@
 //! Rebuild-and-respawn dev loop for `prism dev shell`.
 //!
-//! Phase 1 of the Slint migration plan (§7 + §11) splits hot-reload
-//! into two orthogonal layers:
+//! Rust source changes can't be hot-swapped without something like
+//! `subsecond` (Phase 6 of the clay-migration plan). Until then the
+//! dev loop wraps the cargo child in a [`WatchLoop`], and any `.rs`
+//! change under the watched crate roots triggers a kill + cargo
+//! respawn. cargo's incremental compilation keeps iteration fast.
 //!
-//! 1. **`.slint` → Slint's native live-preview.** When the shell is
-//!    built with `SLINT_LIVE_PREVIEW=1` + the
-//!    `prism-shell/live-preview` feature, `slint-build` replaces the
-//!    baked `AppWindow` codegen with a `LiveReloadingComponent` wrapper
-//!    that parses `ui/app.slint` at runtime via `slint-interpreter`
-//!    and reloads it automatically whenever the file changes. That
-//!    leg is entirely in-process — the dev loop does not need to
-//!    know anything about `.slint` files.
-//! 2. **`.rs` → respawn.** Rust source changes can't be hot-swapped
-//!    without something like `subsecond` (Phase 4). Until then the
-//!    dev loop wraps the cargo child in a [`WatchLoop`], and any
-//!    `.rs` change under the watched crate roots triggers a kill +
-//!    cargo respawn. cargo's incremental compilation keeps iteration
-//!    reasonably fast.
-//!
-//! This module is the second half. Callers build a [`DevLoop`] with
-//! a child [`CommandBuilder`] and one or more paths to watch; the
-//! loop spawns the child, routes its stdout/stderr through the same
-//! [`LineSink`] contract `supervisor` uses, and on each filesystem
-//! batch kills the child and respawns a fresh one.
+//! Callers build a [`DevLoop`] with a child [`CommandBuilder`] and
+//! one or more paths to watch; the loop spawns the child, routes its
+//! stdout/stderr through the same [`LineSink`] contract `supervisor`
+//! uses, and on each filesystem batch kills the child and respawns
+//! a fresh one.
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -522,7 +510,7 @@ mod tests {
         let paths = vec![
             PathBuf::from("/ws/src/lib.rs"),
             PathBuf::from("/ws/README.md"),
-            PathBuf::from("/ws/ui/app.slint"),
+            PathBuf::from("/ws/ui/app.prism-ui"),
         ];
         let batch = WatchBatch { paths };
         let filtered = filter_batch(&batch, &["rs".to_string()]);

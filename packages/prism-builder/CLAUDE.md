@@ -1,78 +1,59 @@
 # prism-builder
 
-The Slint-native page builder that replaces Puck. Owns the
-component-type registry, the document tree schema, the layout engine
-(Taffy-backed CSS Grid / Flexbox / Block + free-form positioning),
-the unified render pipeline (Slint DSL emit + `lower_ui` →
-`prism_ui_runtime` for both shell rendering and relay SSR), and the
-property-panel field factories.
+The page builder that replaced Puck. Owns the component-type
+registry, the document tree schema, the layout engine (Taffy-backed
+CSS Grid / Flexbox / Block + free-form positioning), the unified
+render pipeline (`lower_ui` → `prism_ui_runtime` for both shell
+rendering and relay SSR), and the property-panel field factories.
 
-> **Note:** The parallel `HtmlBlock` / `HtmlRegistry` SSR walker was
-> deleted on 2026-05-08 (Phase 5 of `docs/dev/clay-migration-plan.md`).
-> SSR now flows through `ui_runtime::lower_semantic_html_with_registry`,
+> **Migration note:** Both the Slint stack and the parallel
+> `HtmlBlock` / `HtmlRegistry` SSR walker have been deleted. SSR now
+> flows through `ui_runtime::lower_semantic_html_with_registry`,
 > which dispatches per-block `Component::lower_ui` impls — the same
-> path the unified Taffy renderer consumes.
+> path the unified Taffy renderer consumes. The Slint source emitter
+> (`render_slint`, `SlintEmitter`, `render_document_slint_source*`,
+> `LiveDocument`, `BuilderSyntaxProvider`, `source_parse`,
+> `source_map`) was deleted in the Phase 5 cutover follow-up; see
+> `docs/dev/clay-migration-plan.md`.
 
 ## Build & Test
 - `cargo build -p prism-builder`
-- `cargo build -p prism-builder --features interpreter` — pulls in
-  `slint` + `slint-interpreter` + `spin_on` so the runtime compile
-  path (`compile_slint_source` / `instantiate_document`) is
-  available. `prism-shell` and `prism-studio` flip this on; the
-  relay leaves it off so its dep graph stays Slint-free.
-- `cargo test -p prism-builder` — 367+ unit tests.
-- `cargo test -p prism-builder --features interpreter` — adds
-  live document, syntax provider, and compile round-trip tests.
+- `cargo test -p prism-builder` — 313+ unit tests (post-cutover).
+- `cargo build -p prism-builder --features luau` — pulls in the
+  Luau-derive + `LuauComponent` glue when Luau-authored blocks need
+  to live next to the Rust ones.
 
 ## Public surface
 From `src/lib.rs`:
 
-### Slint side
-- `Component`, `ComponentId`, `RenderContext`, `RenderSlintContext`,
-  `RenderError` — the Slint render trait. `Component::schema`
-  returns `Vec<FieldSpec>`; `render_slint` emits `.slint` DSL into
-  a shared `SlintEmitter`; `help_entry` returns an optional
-  `HelpEntry` for context-sensitive tooltips (default `None`).
-  Default render impl emits a transparent `Rectangle` wrapper.
-- `ComponentRegistry`, `RegistryError` — the DI entry point.
-  Implements `HelpProvider` — collects help entries from all
-  registered components via `Component::help_entry()`.
+### Component contract
+- `Component`, `ComponentId`, `RenderContext`, `RenderError` — the
+  render trait. One method that matters: `lower_ui(ctx, node, style)
+  -> prism_ui_runtime::layout::Node`. `schema()` returns
+  `Vec<FieldSpec>` for the property panel; `signals()`,
+  `variants()`, `toolbar_actions()`, `help_entry()` are the rest of
+  the surface.
+- `Block` — single-trait sugar layer over `Component`. Implementing
+  `Block` gives you a `Component` for free via the blanket impl in
+  `src/block.rs`. New built-ins implement `Block`.
+- `register_block(&mut registry, Arc::new(YourBlock))` — one-line
+  registration.
+- `ComponentRegistry`, `RegistryError` — DI entry point. Implements
+  `HelpProvider` to collect entries from registered components.
 - `starter::register_builtins(&mut ComponentRegistry)` — seeds the
-  16-component Slint catalog.
-- `render_document_slint_source(doc, registry, tokens)` — walks a
-  document and returns a self-contained `.slint` source string.
-- `render_document_slint_source_mapped(doc, registry, tokens)` —
-  same walk but injects marker comments and returns `(source, SourceMap)`.
-- `build_source_map_from_markers(source)` — parses `// @node-start`
-  / `// @node-end` marker comments to build a `SourceMap`.
-- `SourceMap`, `SourceSpan`, `PropSpan`, `MappedEmitter` — bidirectional
-  source mapping types (ADR-006).
-- `compile_slint_source` / `instantiate_document` — gated behind
-  `interpreter` feature.
-- `LiveDocument`, `LiveDiagnostic`, `SourceSelection`,
-  `SourceEditError` — gated behind `interpreter`. Source-first
-  compile loop: `.slint` source is canonical, `BuilderDocument`
-  derived on demand. Source mutations via `edit_prop_in_source`,
-  `insert_node_in_source`, `remove_node_from_source`,
-  `move_node_in_source`.
-- `derive_document_from_source`, `parse_slint_value`,
-  `format_slint_value` — parse marker-annotated `.slint` source
-  back into structured types.
-- `BuilderSyntaxProvider` — gated behind `interpreter`. Compiler-backed
-  `SyntaxProvider` with context-aware completions and hover.
+  17-block default catalog (`text`, `image`, `container`, `form`,
+  `input`, `button`, `card`, `code`, `divider`, `spacer`, `columns`,
+  `list`, `table`, `tabs`, `accordion`, `facet`, `graph-view`).
 
-### HTML SSR side
-SSR is the unified Taffy pipeline. `prism-relay` calls
-`ui_runtime::lower_semantic_html_with_registry(doc, registry)`, which
-walks every block's `Component::lower_ui` impl and emits semantic
-HTML via `prism_ui_runtime::backends::semantic_html::lower`. There
-is no parallel `HtmlBlock` trait or `HtmlRegistry` — one declaration
-per block, two consumers (shell renderer + relay SSR).
-
-`html.rs` (the `Html` buffer + `escape_text` / `escape_attr`)
+### SSR
+The relay calls
+`ui_runtime::lower_semantic_html_with_registry(doc, registry)`,
+which walks every block's `Component::lower_ui` impl and emits
+semantic HTML via `prism_ui_runtime::backends::semantic_html::lower`.
+One declaration per block, two consumers (shell renderer + relay
+SSR). `html.rs` (`Html` buffer + `escape_text` / `escape_attr`)
 remains as a tiny chrome-composition helper for `prism-relay` page
-wrappers and the `prism-luau-derive` macro; it has no dependency on
-the deleted walker.
+wrappers and the `prism-luau-derive` macro.
 
 ### Layout engine (ADR-003)
 - `PageLayout`, `PageSize`, `Orientation`, `TrackSize` — structural
@@ -82,286 +63,164 @@ the deleted walker.
   `FlexDirection`, `AlignOption`, `JustifyOption`,
   `GridPlacement` — per-node layout participation.
   - `Flow(FlowProps)` — positioned by parent's flex/grid/block flow.
-  - `Free` — legacy mode: `position: absolute` in Taffy, Transform2D only.
+  - `Free` — `position: absolute` in Taffy, Transform2D only.
   - `Absolute(AbsoluteProps)` — removed from flow, positioned by
     `Transform2D.position` + `Transform2D.anchor` relative to the
-    parent's rect. Parent is the anchor (grid cell, container, or page).
+    parent's rect.
   - `Relative(FlowProps)` — participates in flow, then Transform2D
-    position is applied as a post-flow offset (like CSS `position: relative`).
-  - `LayoutMode::is_in_flow()`, `is_positioned()`, `flow_props()` — helpers.
-- `compute_layout(doc, viewport_size) -> ComputedLayout` — runs
-  the Taffy layout pass + transform propagation, returns per-node
+    position is applied as a post-flow offset (CSS `position: relative`).
+- `compute_layout(doc, viewport_size) -> ComputedLayout` — Taffy
+  layout pass + transform propagation, returns per-node
   `NodeLayout { rect, transform }`.
-- `Node` now carries `layout_mode: LayoutMode` and
+- `Node` carries `layout_mode: LayoutMode` and
   `transform: Transform2D` (from `prism-core::foundation::spatial`).
-- `BuilderDocument` now carries `page_layout: PageLayout`.
+- `BuilderDocument` carries `page_layout: PageLayout`.
 - `GridCell` — recursive grid tree (`Leaf` with optional `node_id`,
-  or `Split` with direction/tracks/gap/children). Each cell can be
-  independently subdivided horizontally or vertically.
+  or `Split` with direction/tracks/gap/children).
 - `SplitDirection` (`Horizontal` | `Vertical`), `CellEdge`
-  (`Top`/`Bottom`/`Left`/`Right`) — subdivision types.
-- `FlatCell`, `EdgeHandle` — output of `flatten_cells` /
-  `flatten_edge_handles`: pixel-positioned leaf cells and interactive
-  edge handles with cell paths.
-- `path_to_string(path)` / `path_from_string(s)` — dot-separated
-  cell path encoding (e.g. "1.0.2").
-- `compute_track_sizes(tracks, gap, available) -> Vec<f32>` —
-  resolves `TrackSize` values to pixel widths.
-- `GridEditError` — error enum for grid operations
-  (IndexOutOfBounds, CannotRemoveLastCell, NoGrid, NotALeaf).
+  (`Top`/`Bottom`/`Left`/`Right`).
+- `FlatCell`, `EdgeHandle`, `path_to_string`/`path_from_string`,
+  `compute_track_sizes`, `GridEditError` — grid query/layout helpers.
 - `PageLayout::has_grid()`, `leaf_count()`, `flatten_cells()`,
-  `flatten_edge_handles()` — grid query/layout methods.
-- `PageLayout::insert_at_edge(path, edge)`, `remove_cell(path)`,
-  `place_node_at(path, node_id)`, `clear_cell(path)` — interactive
-  grid manipulation via cell paths.
-- `GridPlacement::resolved_index()` — converts 1-based line index
-  to 0-based cell index.
-- `BuilderDocument::place_in_grid(node_id, path)` — place a node
-  at a specific grid cell path.
-- `BuilderDocument::page_shell()` — factory for new pages: returns
-  a document with a single leaf grid cell, root container, and
-  24/32px margins. Every new page starts from this shell rather
-  than an empty document.
+  `flatten_edge_handles()`, `insert_at_edge`, `remove_cell`,
+  `place_node_at`, `clear_cell` — interactive grid manipulation.
+- `BuilderDocument::place_in_grid(node_id, path)`,
+  `BuilderDocument::page_shell()` — page factory: 1×1 grid, root
+  container, 24/32px margins.
 
 ### Style cascade
 - `StyleProperties` — 10-field all-`Option` struct (font_family,
   font_size, font_weight, line_height, letter_spacing, color,
   background, accent, base_spacing, border_radius). Serde-friendly
-  with `skip_serializing_if = "Option::is_none"` on every field.
-- `resolve_cascade(app, page, node) -> StyleProperties` — merges
-  three levels; most-specific non-None wins.
-- `PrismApp`, `Page`, and `Node` all carry
-  `#[serde(default)] style: StyleProperties`.
-- `PrismApp` — multi-page application container. Pages are
-  `Vec<Page>` with `active_page: usize`. Page management:
-  `add_page`, `remove_page` (adjusts active_page, prevents
-  removing last page), `find_page_by_route`, `find_page_by_id`.
-  `active_document()` / `active_document_mut()` access the current
-  page's `BuilderDocument`. `NavigationConfig` holds the
-  `NavigationStyle` (Tabs/Sidebar/BottomBar/None).
+  with `skip_serializing_if = "Option::is_none"`.
+- `resolve_cascade(app, page, node)` — three-level cascade,
+  most-specific non-None wins.
+- `PrismApp`, `Page`, `Node` all carry `style: StyleProperties`.
+- `PrismApp` — multi-page application container. `Vec<Page>`,
+  `active_page`, `add_page`, `remove_page`, `find_page_by_route`,
+  `find_page_by_id`, `active_document()`, `active_document_mut()`.
+  `NavigationConfig { style: NavigationStyle }`
+  (Tabs/Sidebar/BottomBar/None).
 
-### Composition patterns (ADR-004)
+### Composition (ADR-004)
 - `Modifier`, `ModifierKind`, `modifier_schema(kind)` — attachable
   behaviors (ScrollOverflow, HoverEffect, EnterAnimation,
-  ResponsiveVisibility, Tooltip, AccessibilityOverride). Nodes carry
-  `modifiers: Vec<Modifier>`; render walkers chain them as wrappers.
+  ResponsiveVisibility, Tooltip, AccessibilityOverride).
 - `PrefabDef`, `PrefabComponent`, `ExposedSlot` — user-authored
-  compound components. `PrefabComponent` implements `Component`;
-  exposed slots pin inner-node props as instance-editable fields.
+  compound components. `PrefabComponent` implements `Component`.
 - `ResourceDef`, `ResourceId`, `ResourceKind`,
   `resolve_resource_refs(props, resources)` — typed shareable data
-  objects referenced via `{ "$ref": "resource:<id>" }`. Render walker
-  resolves refs transparently before component render.
-- `SignalDef`, `Connection`, `ConnectionId`, `ActionKind` — event
-  wiring. Components declare signals; documents store connections
-  (source signal → target action: SetProperty, ToggleVisibility,
-  NavigateTo, PlayAnimation, EmitSignal, Custom).
-- `common_signals()` — 12 universal interaction signals every
-  component gets automatically (clicked, double-clicked, hovered,
-  hover-ended, drag-started/moved/ended, changed, focused, blurred,
-  deleted, mounted). `with_common_signals(component_signals)` merges
-  component-specific + common (component wins on name collision).
-- `SignalEvent`, `DispatchResult`, `dispatch_signal(event, connections)`
-  — runtime signal dispatch. Evaluates a fired signal against the
-  document's connection list and returns actions for the shell to
-  execute.
-- `signal_symbols(component_id, signals)` — codegen bridge that
-  produces a `SymbolDef` class for LuaLS `.d.luau` type stubs.
-  `generate_signal_type_stubs(registry, project_name)` iterates the
-  full registry and emits a complete `signals.d.luau` file via
-  `SymbolEmmyDocEmitter`.
-- `signal_contexts(signals)` — bridge from builder `SignalDef`s to
-  syntax engine `SignalContext`s for the Luau provider's signal-aware
-  completions and hover.
+  via `{ "$ref": "resource:<id>" }`.
+- `SignalDef`, `Connection`, `ConnectionId`, `ActionKind`,
+  `SignalEvent`, `DispatchResult`, `dispatch_signal`,
+  `common_signals` (12 universal), `with_common_signals`,
+  `signal_symbols`, `generate_signal_type_stubs`,
+  `signal_contexts` — runtime signal dispatch + codegen.
 - `VariantAxis`, `VariantOption`, `apply_variant_overrides`,
-  `apply_variant_defaults` — named bundles of prop overrides per axis.
-  Render walker applies variant defaults before component render.
-- The `Component` trait's `signals()` default impl returns
-  `common_signals()` (12 universal signals). Components override
-  with `with_common_signals(extras)` to add component-specific
-  signals alongside the common set.
-- `RenderSlintContext::render_child()` pipelines: resolve resource
-  refs → apply variant defaults → chain modifier wrappers → call
-  component render.
+  `apply_variant_defaults` — named bundles of prop overrides.
 
 ### Asset resolution
-- `AssetSource` — unified enum for component asset references: `Url`
-  (external string) or `Vfs` (content-addressed `BinaryRef`-shaped
-  object with hash/filename/mimeType/size). `from_prop(Value)` parses
-  either form; `to_html_src()` resolves VFS to `/asset/{hash}` for
-  relay SSR; `to_prop()` serializes back to `Value`.
-- `collect_vfs_hashes(node)` — walks a document tree and returns all
-  VFS hashes referenced in node props.
-- `FileFieldConfig` — MIME type filter for `FieldKind::File` fields.
+- `AssetSource` — VFS (content-addressed `BinaryRef`) or URL.
+  `from_prop`, `to_html_src`, `to_prop`.
+- `collect_vfs_hashes(node)` — returns all VFS hashes referenced.
+- `FileFieldConfig` — MIME filter for `FieldKind::File`.
 
 ### Shared
-- `BuilderDocument`, `Node`, `NodeId` — the serializable document
-  tree (extended with layout + transform fields per ADR-003, modifiers
-  per ADR-004). `BuilderDocument` also carries `resources`, `connections`,
-  `prefabs`, and `facets`.
+- `BuilderDocument`, `Node`, `NodeId` — serializable document tree.
+  Carries `resources`, `connections`, `prefabs`, `facets`.
 - `FieldSpec`, `FieldKind`, `NumericBounds`, `SelectOption`,
-  `FieldValue` — the property-panel field factories. `FieldKind::File`
-  enables file/asset picker UI with MIME filtering.
-- `Html`, `escape_text`, `escape_attr` — HTML builder.
-- `SlintEmitter`, `SlintIdent` — `.slint` DSL emitter.
+  `FieldValue` — property-panel field factories.
+- `Html`, `escape_text`, `escape_attr` — HTML buffer helpers.
 
 ## Architecture
-Twenty-five modules in `src/` (excluding `lib.rs`):
+Modules in `src/` (excluding `lib.rs`):
 
 - `app.rs` — `PrismApp`, `Page`, `AppIcon`, `NavigationConfig`,
-  `NavigationStyle`. Multi-page app container with page CRUD and
-  active-document accessors. 7 unit tests.
-- `asset.rs` — `AssetSource` enum (URL vs VFS), prop parsing,
-  `collect_vfs_hashes`, `FileFieldConfig`. 10 unit tests.
-- `component.rs` — the `Component` trait (Slint-only) + `RenderError`
-  + `RenderSlintContext` / `RenderContext`. `emit_layout_props` emits
-  x/y for Absolute, Free, and Relative (non-zero offset) nodes;
-  Absolute also emits width/height. `emit_transform_props` emits
-  `transform-rotation` (deg), `transform-scale-x`, `transform-scale-y`
-  when non-default. `emit_flow_props` is the shared helper for Flow
-  and Relative flow properties. Positioned children (those that emit
-  x/y) are automatically separated from flow children during rendering:
-  `render_component_inner` wraps the component in a Rectangle and
-  renders positioned children as siblings outside the component's
-  layout element, preventing Slint's "cannot set x/y in layout"
-  compile error.
-- `document.rs` — `BuilderDocument` + `Node` + `NodeId`. Nodes now
-  carry `layout_mode` and `transform`; documents carry `page_layout`.
-- `layout.rs` — the Taffy-backed layout engine (ADR-003). `PageLayout`,
-  `LayoutMode` (Flow/Free/Absolute/Relative), `FlowProps`,
-  `AbsoluteProps`, `compute_layout`. 34 unit tests.
-- `registry.rs` — `ComponentRegistry` + field-factory primitives.
-- `html.rs` — `Html` buffer + escape helpers (relay/luau-derive
-  chrome composition; no parallel walker any more).
-- `slint_source.rs` — `SlintEmitter` wrapping `SourceBuilder`.
-- `ui_lower.rs` — shared `LowerCtx` + helpers
-  (`container_with`, `synthetic_container`, `bare_container`,
-  `text_node`, `spacer_node`, `image_node`, `with_semantic`,
-  `uniform_radius`, `parse_color`) every block's `lower_ui` impl
-  composes from.
-- `ui_runtime.rs` — `BuilderDocument` → `prism_ui_runtime::layout::Node`
-  translator + `lower_semantic_html_with_registry` (relay SSR entry).
-- `render.rs` — document-level Slint walker:
-  `render_document_slint_source[_mapped]`, plus
-  `compile_slint_source` / `instantiate_document` behind
-  `interpreter`.
+  `NavigationStyle`. `Page::ensure_source` is now a no-op (legacy
+  hook from the Slint era).
+- `asset.rs` — `AssetSource`, `collect_vfs_hashes`, `FileFieldConfig`.
+- `block.rs` — `Block` trait + blanket `impl<T: Block> Component`.
+  One declaration; the registry sees a `Component`.
+- `component.rs` — `Component` trait + `ComponentId` + `RenderError`
+  + `RenderContext` (ad-hoc host-side carrier).
+- `core_widget.rs` — `CoreWidgetBlock` wraps a `WidgetContribution`
+  from a core engine into a `Block`. `collect_all_contributions`
+  fans out across every domain/interaction module that exposes
+  `widget_contributions()`. `register_core_widgets` plugs them in.
+- `document.rs` — `BuilderDocument` + `Node` + `NodeId`.
+- `facet/` — `FacetDef`, `FacetKind`, `FacetDataSource`,
+  `FacetTemplate`, `FacetOutput`, `FacetBinding`, `FacetLayout`,
+  `AggregateOp`, `ScriptLanguage`, `FacetVariantRule`,
+  `FacetComponent`, `ResolvedFacetData`, `FacetSchema`,
+  `SchemaField`, `SchemaFieldKind`, `FacetRecord`,
+  `ValidationError`, `FACET_KIND_TAGS`, `AGGREGATE_OP_TAGS`.
+  `apply_scalar_bindings`, `evaluate_calculations`,
+  `promote_inline_to_component`, `parse_filter_expr`,
+  `resolve_template_expressions`, `apply_aggregate`. Full template
+  + binding resolution; the only `Component` impl in here is
+  `FacetComponent`, which lowers via `lower_ui` like every other
+  block.
+- `html.rs` — `Html` buffer + escape helpers (chrome composition).
+- `layout.rs` — Taffy layout (ADR-003). `PageLayout`, `LayoutMode`
+  variants, `compute_layout`.
 - `modifier.rs` — `ModifierKind` enum, `Modifier` struct,
-  `modifier_schema(kind)`. 6 unit tests.
-- `prefab.rs` — `PrefabDef`, `ExposedSlot`, `PrefabComponent`
-  (implements `Component`), `apply_prop_to_node`. 5 unit tests.
-- `facet.rs` — `FacetDef`, `FacetKind` (List/ObjectQuery/Script/
-  Aggregate/Lookup), `FacetDataSource` (Static/Resource/Query),
-  `FacetTemplate` (Inline/ComponentRef), `FacetOutput` (Repeated/Scalar),
-  `FacetBinding`, `FacetLayout`, `AggregateOp` (Count/Sum/Min/Max/
-  Avg/Join), `ScriptLanguage` (Luau/VisualGraph),
-  `FacetVariantRule` (field condition → axis value mapping),
-  `FacetComponent` (Slint emitter — SSR flows through the unified
-  `lower_ui` path), `ResolvedFacetData` (Items/Single).
-  Each kind resolves data differently: List uses FacetDataSource,
-  Aggregate reduces to a single value via `apply_aggregate`,
-  ObjectQuery/Script/Lookup use pre-resolved `resolved_data` from
-  the shell layer. Script kind supports both Luau source and
-  `VisualGraph` (stores a `ScriptGraph`, compiled to Luau at
-  resolution time via `LuauVisualLanguage`). `ObjectQuery` and
-  `FacetDataSource::Query` both carry a `prism_core::widget::DataQuery`
-  as the single structured data-resolution primitive — `DataQuery::apply()`
-  handles `QueryFilter` matching (8 operators), `QuerySort` ordering,
-  and limit truncation. `parse_filter_expr` bridges string expressions
-  to structured `QueryFilter`s for UI compatibility.
-  `FacetTemplate` replaces the former `prefab_id` field:
-  `Inline { root: Box<Node> }` owns the template subtree directly
-  with `{{field}}` expression bindings in node props; `ComponentRef`
-  points to a registered component.
-  `FacetOutput` separates repeated (template-per-item) from scalar
-  (bind single value to a target widget prop) output.
-  `apply_scalar_bindings(doc)` pre-render pass resolves scalar facets
-  and injects values into target nodes. `promote_inline_to_component`
-  extracts inline `{{field}}` expressions into `ExposedSlot`s.
-  See `docs/dev/data-template-system.md`.
-  `evaluate_calculations(&mut items, &schema)` evaluates
-  `SchemaFieldKind::Calculation { formula }` fields via
-  `prism_core::language::expression::evaluate_expression`, wired
-  into `resolve_items()` when a schema with calc fields is set.
-  `evaluate_variant_rules(root, rules, item)` conditionally sets
-  axis key props on cloned prefab roots per data item, triggering
-  the variant system's `apply_variant_defaults`.
-  `FacetSchema`, `SchemaField`, `SchemaFieldKind`, `FacetRecord`,
-  `ValidationError` — typed schema system with validation and
-  default record generation. `FACET_KIND_TAGS`, `AGGREGATE_OP_TAGS`
-  — string constants for UI dropdowns. 94 unit tests.
+  `modifier_schema(kind)`. Render walker applies modifiers as
+  wrapper layers via the `lower_ui` pipeline.
+- `prefab.rs` — `PrefabDef`, `ExposedSlot`, `PrefabComponent`.
 - `project.rs` — `ProjectFile`, `SavedApp`, `SavedPage`,
-  `FILE_EXTENSION`, `FORMAT_VERSION`. Portable `.prism` file format
-  with `from_apps`/`into_apps` conversion. `SavedPage` serializes
-  source + all sidecar data (page_layout, resources, connections,
-  prefabs, facets) that `Page.document` would lose via `skip_serializing`.
-  5 unit tests.
-- `resource.rs` — `ResourceDef`, `ResourceKind`, `resolve_resource_refs`.
-  7 unit tests.
-- `schemas.rs` — shared component field definitions (field specs for
-  common props like body, href, src, level).
-- `signal.rs` — `SignalDef`, `Connection`, `ActionKind`, `SignalEvent`,
-  `DispatchResult`, `dispatch_signal`, `common_signals` (12 universal),
-  `with_common_signals` (merge/dedup), `signal_symbols` (codegen),
-  `generate_signal_type_stubs` (full registry → `.d.luau`),
-  `signal_contexts` (builder→syntax bridge). 20 unit tests.
-- `style.rs` — `StyleProperties` (10-field all-`Option` struct),
-  `resolve_cascade(app, page, node)`. Three-level CSS-like cascade:
-  component > page > app; most-specific non-None field wins. 6 unit tests.
-- `variant.rs` — `VariantAxis`, `VariantOption`, `apply_variant_overrides`,
-  `apply_variant_defaults`. 6 unit tests.
-- `source_map.rs` — `SourceMap`, `SourceSpan`, `PropSpan`,
-  `MappedEmitter`. Bidirectional node↔source byte-range mapping
-  (ADR-006). Forward: `span_for_node(id)`, reverse:
-  `node_at_offset(byte)`. `MappedEmitter` is an alternative emitter
-  that tracks property-level spans. 6 unit tests.
-- `source_parse.rs` — `derive_document_from_source`, `parse_slint_value`,
-  `format_slint_value`. Reconstructs a `BuilderDocument` from
-  marker-annotated `.slint` source. Inverse of the render walker.
-  15 unit tests.
-- `live.rs` (behind `interpreter`) — `LiveDocument`, `LiveDiagnostic`,
-  `SourceSelection`, `SourceEditError`. **Source-first**: `.slint`
-  source is canonical; `BuilderDocument` is derived on demand.
-  Constructors: `from_source` (primary), `from_document` (import).
-  Source mutations: `edit_prop_in_source`, `insert_node_in_source`,
-  `remove_node_from_source`, `move_node_in_source`. Editor sync via
-  `apply_editor_changes`. Selection bridge: `select_node(id)` →
-  editor line/col range, `node_at_cursor()` → node ID. 19 unit tests.
-- `syntax_provider.rs` (behind `interpreter`) —
-  `BuilderSyntaxProvider`. Compiler-backed `SyntaxProvider` impl that
-  extends the lightweight `SlintSyntaxProvider` (prism-core) with real
-  `slint-interpreter::Compiler` diagnostics, `SourceMap`-aware
-  `ComponentRegistry` schema completions, and component `help_entry()`
-  hover. 9 unit tests.
-- `starter.rs` — 16 built-in Slint components + `register_builtins`.
-  Button, Form, Input, Link, Tabs, Accordion declare signals; Button
-  declares a variant axis.
+  `FILE_EXTENSION`, `FORMAT_VERSION`. `SavedPage::source` is a
+  pass-through string field; the auto-emit-from-document path was
+  retired with Slint.
+- `registry.rs` — `ComponentRegistry` + field-factory primitives.
+- `resource.rs` — `ResourceDef`, `ResourceKind`,
+  `resolve_resource_refs`.
+- `schemas.rs` — shared component field definitions.
+- `signal.rs` — `SignalDef`, `Connection`, `ActionKind`,
+  `SignalEvent`, `DispatchResult`, `dispatch_signal`,
+  `common_signals`, `with_common_signals`, `signal_symbols`,
+  `generate_signal_type_stubs`, `signal_contexts`.
+- `starter.rs` — 17 built-in blocks + `register_builtins`.
+- `style.rs` — `StyleProperties` + `resolve_cascade`.
+- `ui_lower.rs` — shared `LowerCtx` + helpers (`container_with`,
+  `synthetic_container`, `bare_container`, `text_node`,
+  `spacer_node`, `image_node`, `with_semantic`, `uniform_radius`,
+  `parse_color`, `prop_str`, `prop_bool`).
+- `ui_resolver.rs` — `<shell.*>` tag resolution helpers consumed by
+  the runtime's interpret pipeline.
+- `ui_runtime.rs` — `BuilderDocument` →
+  `prism_ui_runtime::layout::Node` translator +
+  `lower_semantic_html_with_registry` (relay SSR entry).
+- `variant.rs` — `VariantAxis`, `VariantOption`, override
+  application.
+- `luau_component.rs` (feature `luau`) — `LuauComponent`,
+  `ActiveRegistry`, `LuauRenderRegistry`, `VirtualNode`.
+- `script_loader.rs` (feature `luau`) — `load_widgets`,
+  `LoadReport`, `ScriptLoadError`.
 
-## Adding a new block type
+## Adding a new block
 
-Use the unified `Block` trait (`src/block.rs`) — one impl, two
-render methods (`render_slint` for the Studio DSL, `lower_ui` for
-the Taffy/SSR pipeline), one registration call. `Component` keeps
-working as the underlying trait via the blanket impl so existing
-custom impls (`PrefabComponent`, `FacetComponent`) compose
-unchanged. Core-engine widgets go through `CoreWidgetBlock`
-(`src/core_widget.rs`) — a single `Block` impl wrapping a
-`WidgetContribution`.
+Use the unified `Block` trait (`src/block.rs`) — one impl, one
+render method (`lower_ui`), one registration call.
 
-1. Add a struct implementing `Block` in `src/starter.rs`. Override
-   only the render methods that need bespoke behaviour — the
-   defaults already produce a sane container.
-2. Implement `schema` using `FieldSpec` builders.
-3. Optionally implement `signals()` / `variants()` if the block
-   emits events or has named style/size axes.
-4. Add a row to `register_builtins` (the `reg!("id", BlockType)`
-   macro table) — one line per builtin.
-5. Add unit tests covering both `render_slint` and `lower_ui`.
+1. Add a struct implementing `Block` in `src/starter.rs` (or a new
+   module). Override only the methods that need bespoke behaviour;
+   `lower_ui` defaults to a generic container, `signals` to the 12
+   common signals.
+2. Implement `schema()` using `FieldSpec` builders.
+3. Optionally implement `signals()` / `variants()` /
+   `toolbar_actions()` / `help_entry()`.
+4. Add a row to `register_builtins` (`reg!("id", BlockType)`) — one
+   line per builtin.
+5. Add unit tests covering `lower_ui`.
+
+Core-engine widgets go through `CoreWidgetBlock` — a single `Block`
+impl wrapping a `WidgetContribution`, registered en masse by
+`register_core_widgets`.
 
 ## Dependencies
 - `prism-core` — `design_tokens`, `language::codegen::SourceBuilder`,
-  `foundation::geometry`, `foundation::spatial`.
+  `foundation::geometry`, `foundation::spatial`, `widget`.
 - `glam` — SIMD-accelerated 2D math (Vec2, Affine2).
 - `taffy` — CSS Grid + Flexbox + Block layout engine.
-- `slint` / `slint-interpreter` / `spin_on` — optional, behind the
-  `interpreter` feature. The relay keeps it off.
-- No hard dep on `prism-shell` or `prism-relay`.
+- No `slint`, no `slint-interpreter`, no `spin_on`. No hard dep on
+  `prism-shell` or `prism-relay`.

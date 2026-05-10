@@ -86,6 +86,7 @@ pub fn parse_filter_expr(expr: &str) -> Option<QueryFilter> {
 }
 
 /// Apply all facet bindings to a cloned prefab root node.
+#[allow(dead_code)]
 pub(super) fn apply_bindings(
     root: &mut Node,
     prefab: &PrefabDef,
@@ -103,6 +104,7 @@ pub(super) fn apply_bindings(
 
 /// Apply variant rules to a cloned prefab root. For each matching rule,
 /// sets the axis key prop so the variant system picks it up during render.
+#[allow(dead_code)]
 pub(super) fn evaluate_variant_rules(root: &mut Node, rules: &[FacetVariantRule], item: &Value) {
     for rule in rules {
         let raw = get_json_field(item, &rule.field);

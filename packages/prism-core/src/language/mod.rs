@@ -25,6 +25,5 @@ pub mod luau;
 pub mod markdown;
 pub mod prism_ui;
 pub mod registry;
-pub mod slint_lang;
 pub mod syntax;
 pub mod visual;

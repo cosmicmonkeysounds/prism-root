@@ -125,17 +125,10 @@ impl SavedApp {
 impl SavedPage {
     fn from_page(
         page: &Page,
-        registry: &crate::registry::ComponentRegistry,
-        tokens: &prism_core::design_tokens::DesignTokens,
+        _registry: &crate::registry::ComponentRegistry,
+        _tokens: &prism_core::design_tokens::DesignTokens,
     ) -> Self {
-        let mut source = page.source.clone();
-        if source.is_empty() && page.document.root.is_some() {
-            if let Ok((src, _)) =
-                crate::render::render_document_slint_source_mapped(&page.document, registry, tokens)
-            {
-                source = src;
-            }
-        }
+        let source = page.source.clone();
         Self {
             id: page.id.clone(),
             title: page.title.clone(),
@@ -224,15 +217,6 @@ mod tests {
         assert_eq!(restored.apps[0].name, "Test");
         assert_eq!(restored.apps[0].pages.len(), 1);
         assert_eq!(restored.apps[0].pages[0].title, "Home");
-    }
-
-    #[test]
-    fn source_is_generated_when_empty() {
-        let mut reg = crate::registry::ComponentRegistry::new();
-        register_builtins(&mut reg).unwrap();
-        let apps = vec![test_app()];
-        let file = ProjectFile::from_apps(&apps, &reg, &DEFAULT_TOKENS);
-        assert!(!file.apps[0].pages[0].source.is_empty());
     }
 
     #[test]

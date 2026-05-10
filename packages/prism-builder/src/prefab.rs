@@ -11,11 +11,10 @@ use serde_json::Value;
 
 use prism_core::help::HelpEntry;
 
-use crate::component::{Component, ComponentId, RenderError, RenderSlintContext};
+use crate::component::{Component, ComponentId};
 use crate::document::{Node, NodeId};
 use crate::registry::FieldSpec;
 use crate::signal::{common_signals, SignalDef};
-use crate::slint_source::SlintEmitter;
 use crate::variant::VariantAxis;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,24 +81,9 @@ impl Component for PrefabComponent {
     fn variants(&self) -> Vec<VariantAxis> {
         self.def.variants.clone()
     }
-
-    fn render_slint(
-        &self,
-        ctx: &RenderSlintContext<'_>,
-        props: &Value,
-        _children: &[Node],
-        out: &mut SlintEmitter,
-    ) -> Result<(), RenderError> {
-        let mut root = self.def.root.clone();
-        for slot in &self.def.exposed {
-            if let Some(val) = props.get(&slot.key) {
-                apply_prop_to_node(&mut root, &slot.target_node, &slot.target_prop, val.clone());
-            }
-        }
-        ctx.render_child(&root, out)
-    }
 }
 
+#[allow(dead_code)]
 pub(crate) fn apply_prop_to_node(node: &mut Node, target_id: &str, prop_key: &str, value: Value) {
     if node.id == target_id {
         if let Value::Object(ref mut map) = node.props {

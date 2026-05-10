@@ -87,6 +87,7 @@ pub fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
         ),
     };
 
+    let _ = template_extract;
     Ok(quote! {
         impl ::prism_builder::Block for #ident {
             fn id(&self) -> &::prism_builder::ComponentId {
@@ -97,17 +98,6 @@ pub fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
 
             fn schema(&self) -> ::std::vec::Vec<::prism_builder::FieldSpec> {
                 #schema_body
-            }
-
-            fn render_slint(
-                &self,
-                ctx: &::prism_builder::RenderSlintContext<'_>,
-                props: &::serde_json::Value,
-                children: &[::prism_builder::Node],
-                out: &mut ::prism_builder::SlintEmitter,
-            ) -> ::std::result::Result<(), ::prism_builder::RenderError> {
-                #template_extract
-                ::prism_builder::render_template_node(ctx, &template, props, children, out)
             }
         }
     })

@@ -1,32 +1,27 @@
-//! Starter component catalog — the default block registry seeding both
-//! render targets in lockstep.
+//! Starter component catalog — the default block registry.
 //!
 //! Seventeen blocks land here: `text`, `image`, `container`, `form`,
 //! `input`, `button`, `card` (prefab), `code`, `divider`, `spacer`,
 //! `columns`, `list`, `table`, `tabs`, `accordion`, `facet`, and
-//! `graph-view`. The first 14 implement [`Block`] (one impl serves
-//! both Slint and HTML render paths via the blanket impls in
-//! [`crate::block`]); `card`, `facet`, and `graph-view` are special
-//! cases — `card` is a prefab with separate Slint/HTML wrappers,
-//! `facet` likewise, and `graph-view` is Slint-only.
+//! `graph-view`. The first 14 implement [`Block`]; `card` is a prefab,
+//! `facet` is a one-off `Component`, and `graph-view` is a `Block`
+//! whose `lower_ui` renders the graph nodes/edges directly.
 
 use std::sync::Arc;
 
 use prism_core::help::HelpEntry;
-use serde_json::Value;
 
 use serde_json::json;
 
 use crate::asset::AssetSource;
 use crate::block::{register_block, Block};
-use crate::component::{ComponentId, RenderError, RenderSlintContext};
+use crate::component::ComponentId;
 use crate::document::Node;
 use crate::facet::FacetComponent;
 use crate::prefab::{ExposedSlot, PrefabComponent, PrefabDef};
 use crate::registry::{ComponentRegistry, FieldSpec, RegistryError};
 use crate::schemas;
 use crate::signal::{with_common_signals, SignalDef};
-use crate::slint_source::{escape_slint_string, SlintEmitter};
 use crate::style::StyleProperties;
 use crate::variant::{presets as variant_presets, VariantAxis};
 
@@ -61,7 +56,6 @@ pub fn register_builtins(components: &mut ComponentRegistry) -> Result<(), Regis
     // `facet` is a one-off Component impl.
     components.register(Arc::new(FacetComponent::new()))?;
 
-    // `graph-view` is Slint-only.
     components.register(Arc::new(GraphViewBlock {
         id: "graph-view".into(),
     }))?;
@@ -81,22 +75,11 @@ fn level_font_size(level: &str) -> f64 {
     }
 }
 
+#[allow(dead_code)]
 fn level_font_weight(level: &str) -> u16 {
     match level {
         "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => 700,
         _ => 400,
-    }
-}
-
-fn emit_text_style(out: &mut SlintEmitter, style: &StyleProperties) {
-    if let Some(ref color) = style.color {
-        out.prop_color("color", color);
-    }
-    if let Some(ref family) = style.font_family {
-        out.prop_string("font-family", family);
-    }
-    if let Some(ls) = style.letter_spacing {
-        out.prop_px("letter-spacing", ls as f64);
     }
 }
 
@@ -126,36 +109,6 @@ impl Block for TextBlock {
             "Fires when a hyperlink in the text is clicked",
         )
         .with_payload(vec![FieldSpec::text("href", "Link URL")])])
-    }
-    fn render_slint(
-        &self,
-        ctx: &RenderSlintContext<'_>,
-        props: &Value,
-        _children: &[Node],
-        out: &mut SlintEmitter,
-    ) -> Result<(), RenderError> {
-        let p = schemas::TextProps::from_value(props);
-        let style = ctx.style();
-
-        let default_size = level_font_size(p.level.as_str());
-        let default_weight = level_font_weight(p.level.as_str());
-
-        out.block("Text", |out| {
-            out.prop_string("text", &p.body);
-            let font_size = style.font_size.map(|s| s as f64).unwrap_or(default_size);
-            out.prop_px("font-size", font_size);
-            let weight = style.font_weight.unwrap_or(default_weight);
-            if weight != 400 {
-                out.property("font-weight", weight.to_string());
-            }
-            if !p.href.is_empty() {
-                let color = style.color.as_deref().unwrap_or("#5aa0ff");
-                out.prop_color("color", color);
-            }
-            out.line("wrap: word-wrap;");
-            emit_text_style(out, &style);
-            Ok(())
-        })
     }
     fn lower_ui(
         &self,
@@ -251,66 +204,6 @@ impl Block for ImageBlock {
     fn variants(&self) -> Vec<VariantAxis> {
         variant_presets::image()
     }
-    fn render_slint(
-        &self,
-        ctx: &RenderSlintContext<'_>,
-        props: &Value,
-        _children: &[Node],
-        out: &mut SlintEmitter,
-    ) -> Result<(), RenderError> {
-        let p = schemas::ImageProps::from_value(props);
-        let border_radius = p.border_radius as f64;
-        let source = props.get("src").and_then(AssetSource::from_prop);
-
-        let slint_fit = match p.fit.as_str() {
-            "contain" => "contain",
-            "fill" => "fill",
-            "none" => "none",
-            _ => "cover",
-        };
-
-        let resolved_path: Option<String> = match &source {
-            Some(AssetSource::Vfs { hash, .. }) => ctx
-                .asset_paths
-                .get(hash)
-                .map(|p| p.to_string_lossy().into_owned()),
-            Some(AssetSource::Url { url }) => Some(url.clone()),
-            None => None,
-        };
-
-        if let Some(path) = resolved_path {
-            out.block("Rectangle", |out| {
-                out.line("clip: true;");
-                out.line("horizontal-stretch: 1;");
-                out.line("vertical-stretch: 1;");
-                if border_radius > 0.0 {
-                    out.prop_px("border-radius", border_radius);
-                }
-                if !p.href.is_empty() {
-                    out.line("border-width: 2px;");
-                    out.line("border-color: #5aa0ff;");
-                    if border_radius == 0.0 {
-                        out.line("border-radius: 4px;");
-                    }
-                }
-                out.block("Image", |out| {
-                    out.line(format!(
-                        "source: @image-url(\"{}\");",
-                        escape_slint_string(&path)
-                    ));
-                    out.line(format!("image-fit: {slint_fit};"));
-                    out.line("width: parent.width;");
-                    out.line("height: parent.height;");
-                    Ok(())
-                })
-            })
-        } else {
-            out.block("Rectangle", |out| {
-                out.line("horizontal-stretch: 1;");
-                Ok(())
-            })
-        }
-    }
     fn lower_ui(
         &self,
         _ctx: &crate::ui_lower::LowerCtx<'_>,
@@ -380,56 +273,6 @@ impl Block for ContainerBlock {
     fn variants(&self) -> Vec<VariantAxis> {
         variant_presets::container()
     }
-    fn render_slint(
-        &self,
-        ctx: &RenderSlintContext<'_>,
-        props: &Value,
-        children: &[Node],
-        out: &mut SlintEmitter,
-    ) -> Result<(), RenderError> {
-        let p = schemas::ContainerProps::from_value(props);
-        let style = ctx.style();
-        let spacing = style
-            .base_spacing
-            .map(|s| s as f64)
-            .unwrap_or(p.spacing as f64);
-        let padding = p.padding as f64;
-        let border_width = p.border_width as f64;
-
-        let has_visual =
-            style.background.is_some() || style.border_radius.is_some() || border_width > 0.0;
-
-        let render_inner = |out: &mut SlintEmitter| -> Result<(), RenderError> {
-            out.block("VerticalLayout", |out| {
-                out.prop_px("spacing", spacing);
-                if padding > 0.0 {
-                    out.prop_px("padding", padding);
-                }
-                out.line("alignment: start;");
-                out.line("horizontal-stretch: 1;");
-                out.line("vertical-stretch: 1;");
-                ctx.render_children(children, out)
-            })
-        };
-
-        if has_visual {
-            out.block("Rectangle", |out| {
-                if let Some(ref bg) = style.background {
-                    out.prop_color("background", bg);
-                }
-                if let Some(radius) = style.border_radius {
-                    out.prop_px("border-radius", radius as f64);
-                }
-                if border_width > 0.0 {
-                    out.prop_px("border-width", border_width);
-                    out.prop_color("border-color", &p.border_color);
-                }
-                render_inner(out)
-            })
-        } else {
-            render_inner(out)
-        }
-    }
     fn lower_ui(
         &self,
         ctx: &crate::ui_lower::LowerCtx<'_>,
@@ -492,20 +335,6 @@ impl Block for FormBlock {
             ]),
         ])
     }
-    fn render_slint(
-        &self,
-        ctx: &RenderSlintContext<'_>,
-        props: &Value,
-        children: &[Node],
-        out: &mut SlintEmitter,
-    ) -> Result<(), RenderError> {
-        let _ = props;
-        out.block("VerticalLayout", |out| {
-            out.prop_px("spacing", 8.0);
-            out.line("alignment: start;");
-            ctx.render_children(children, out)
-        })
-    }
     fn lower_ui(
         &self,
         ctx: &crate::ui_lower::LowerCtx<'_>,
@@ -564,42 +393,6 @@ impl Block for InputBlock {
     }
     fn variants(&self) -> Vec<VariantAxis> {
         variant_presets::input()
-    }
-    fn render_slint(
-        &self,
-        _ctx: &RenderSlintContext<'_>,
-        props: &Value,
-        _children: &[Node],
-        out: &mut SlintEmitter,
-    ) -> Result<(), RenderError> {
-        let p = schemas::InputProps::from_value(props);
-        out.block("VerticalLayout", |out| {
-            out.prop_px("spacing", 4.0);
-            if !p.label.is_empty() {
-                out.block("Text", |out| {
-                    out.prop_string("text", &p.label);
-                    out.prop_px("font-size", 12.0);
-                    Ok(())
-                })?;
-            }
-            out.block("Rectangle", |out| {
-                out.prop_px("height", 32.0);
-                out.line("background: #1e2533;");
-                out.line("border-radius: 4px;");
-                out.block("Text", |out| {
-                    let display = if p.placeholder.is_empty() {
-                        "..."
-                    } else {
-                        p.placeholder.as_str()
-                    };
-                    out.prop_string("text", display);
-                    out.prop_px("font-size", 14.0);
-                    out.line("color: #6b7280;");
-                    out.line("vertical-alignment: center;");
-                    Ok(())
-                })
-            })
-        })
     }
     fn lower_ui(
         &self,
@@ -797,43 +590,6 @@ impl Block for CodeBlock {
     fn variants(&self) -> Vec<VariantAxis> {
         variant_presets::code()
     }
-    fn render_slint(
-        &self,
-        ctx: &RenderSlintContext<'_>,
-        props: &Value,
-        _children: &[Node],
-        out: &mut SlintEmitter,
-    ) -> Result<(), RenderError> {
-        let p = schemas::CodeProps::from_value(props);
-        let style = ctx.style();
-        let bg = if p.bg.is_empty() {
-            style.background.as_deref().unwrap_or("#1a1e28")
-        } else {
-            &p.bg
-        };
-        let color = if p.color.is_empty() {
-            style.color.as_deref().unwrap_or("#a3be8c")
-        } else {
-            &p.color
-        };
-        let radius = style.border_radius.unwrap_or(6.0);
-        out.block("Rectangle", |out| {
-            out.prop_color("background", bg);
-            out.prop_px("border-radius", radius as f64);
-            out.block("VerticalLayout", |out| {
-                out.prop_px("padding", 12.0);
-                out.block("Text", |out| {
-                    out.prop_string("text", &p.code);
-                    let font_size = style.font_size.unwrap_or(13.0);
-                    out.prop_px("font-size", font_size as f64);
-                    out.prop_color("color", color);
-                    out.line("font-family: \"monospace\";");
-                    out.line("wrap: word-wrap;");
-                    Ok(())
-                })
-            })
-        })
-    }
     fn lower_ui(
         &self,
         ctx: &crate::ui_lower::LowerCtx<'_>,
@@ -921,19 +677,6 @@ impl Block for DividerBlock {
     fn signals(&self) -> Vec<SignalDef> {
         with_common_signals(vec![])
     }
-    fn render_slint(
-        &self,
-        _ctx: &RenderSlintContext<'_>,
-        _props: &Value,
-        _children: &[Node],
-        out: &mut SlintEmitter,
-    ) -> Result<(), RenderError> {
-        out.block("Rectangle", |out| {
-            out.prop_px("height", 1.0);
-            out.line("background: #3b4252;");
-            Ok(())
-        })
-    }
     fn lower_ui(
         &self,
         ctx: &crate::ui_lower::LowerCtx<'_>,
@@ -975,19 +718,6 @@ impl Block for SpacerBlock {
     }
     fn signals(&self) -> Vec<SignalDef> {
         with_common_signals(vec![])
-    }
-    fn render_slint(
-        &self,
-        _ctx: &RenderSlintContext<'_>,
-        props: &Value,
-        _children: &[Node],
-        out: &mut SlintEmitter,
-    ) -> Result<(), RenderError> {
-        let p = schemas::SpacerProps::from_value(props);
-        out.block("Rectangle", |out| {
-            out.prop_px("height", p.height as f64);
-            Ok(())
-        })
     }
     fn lower_ui(
         &self,
@@ -1033,19 +763,6 @@ impl Block for ColumnsBlock {
     }
     fn variants(&self) -> Vec<VariantAxis> {
         variant_presets::columns()
-    }
-    fn render_slint(
-        &self,
-        ctx: &RenderSlintContext<'_>,
-        props: &Value,
-        children: &[Node],
-        out: &mut SlintEmitter,
-    ) -> Result<(), RenderError> {
-        let p = schemas::ColumnsProps::from_value(props);
-        out.block("HorizontalLayout", |out| {
-            out.prop_px("spacing", p.gap as f64);
-            ctx.render_children(children, out)
-        })
     }
     fn lower_ui(
         &self,
@@ -1095,20 +812,6 @@ impl Block for ListBlock {
     }
     fn variants(&self) -> Vec<VariantAxis> {
         variant_presets::list()
-    }
-    fn render_slint(
-        &self,
-        ctx: &RenderSlintContext<'_>,
-        props: &Value,
-        children: &[Node],
-        out: &mut SlintEmitter,
-    ) -> Result<(), RenderError> {
-        let p = schemas::ListProps::from_value(props);
-        out.block("VerticalLayout", |out| {
-            out.prop_px("spacing", p.item_spacing as f64);
-            out.line("alignment: start;");
-            ctx.render_children(children, out)
-        })
     }
     fn lower_ui(
         &self,
@@ -1177,47 +880,6 @@ impl Block for TableBlock {
     }
     fn variants(&self) -> Vec<VariantAxis> {
         variant_presets::table()
-    }
-    fn render_slint(
-        &self,
-        _ctx: &RenderSlintContext<'_>,
-        props: &Value,
-        _children: &[Node],
-        out: &mut SlintEmitter,
-    ) -> Result<(), RenderError> {
-        let p = schemas::TableProps::from_value(props);
-        out.block("Rectangle", |out| {
-            out.line("border-width: 1px;");
-            out.line("border-color: #3b4252;");
-            out.line("border-radius: 4px;");
-            out.block("VerticalLayout", |out| {
-                out.prop_px("padding", 8.0);
-                out.prop_px("spacing", 4.0);
-                if !p.caption.is_empty() {
-                    out.block("Text", |out| {
-                        out.prop_string("text", &p.caption);
-                        out.prop_px("font-size", 12.0);
-                        out.line("color: #9ca4b4;");
-                        Ok(())
-                    })?;
-                }
-                out.block("HorizontalLayout", |out| {
-                    out.prop_px("spacing", 16.0);
-                    for col in p.headers.split(',') {
-                        let col = col.trim();
-                        if !col.is_empty() {
-                            out.block("Text", |out| {
-                                out.prop_string("text", col);
-                                out.prop_px("font-size", 13.0);
-                                out.line("font-weight: 600;");
-                                Ok(())
-                            })?;
-                        }
-                    }
-                    Ok(())
-                })
-            })
-        })
     }
     fn lower_ui(
         &self,
@@ -1327,48 +989,6 @@ impl Block for TabsBlock {
     fn variants(&self) -> Vec<VariantAxis> {
         variant_presets::tabs()
     }
-    fn render_slint(
-        &self,
-        ctx: &RenderSlintContext<'_>,
-        props: &Value,
-        children: &[Node],
-        out: &mut SlintEmitter,
-    ) -> Result<(), RenderError> {
-        let p = schemas::TabsProps::from_value(props);
-        out.block("VerticalLayout", |out| {
-            out.prop_px("spacing", 0.0);
-            out.block("HorizontalLayout", |out| {
-                out.prop_px("spacing", 0.0);
-                for (i, label) in p.labels.split(',').enumerate() {
-                    let label = label.trim();
-                    if !label.is_empty() {
-                        out.block("Rectangle", |out| {
-                            out.prop_px("height", 32.0);
-                            out.prop_px("min-width", 80.0);
-                            if i == 0 {
-                                out.line("background: #2e3440;");
-                            } else {
-                                out.line("background: #1a1e28;");
-                            }
-                            out.block("Text", |out| {
-                                out.prop_string("text", label);
-                                out.prop_px("font-size", 13.0);
-                                out.line("horizontal-alignment: center;");
-                                out.line("vertical-alignment: center;");
-                                Ok(())
-                            })
-                        })?;
-                    }
-                }
-                Ok(())
-            })?;
-            out.block("VerticalLayout", |out| {
-                out.prop_px("padding", 12.0);
-                out.prop_px("spacing", 8.0);
-                ctx.render_children(children, out)
-            })
-        })
-    }
     fn lower_ui(
         &self,
         ctx: &crate::ui_lower::LowerCtx<'_>,
@@ -1467,40 +1087,6 @@ impl Block for AccordionBlock {
     fn variants(&self) -> Vec<VariantAxis> {
         variant_presets::accordion()
     }
-    fn render_slint(
-        &self,
-        ctx: &RenderSlintContext<'_>,
-        props: &Value,
-        children: &[Node],
-        out: &mut SlintEmitter,
-    ) -> Result<(), RenderError> {
-        let p = schemas::AccordionProps::from_value(props);
-        out.block("VerticalLayout", |out| {
-            out.prop_px("spacing", p.section_gap as f64);
-            out.block("Rectangle", |out| {
-                out.prop_px("height", 32.0);
-                out.line("background: #2e3440;");
-                out.line("border-radius: 4px;");
-                if p.border_width > 0 {
-                    out.prop_px("border-width", p.border_width as f64);
-                    out.prop_color("border-color", &p.border_color);
-                }
-                out.block("Text", |out| {
-                    let display = format!("▸ {}", p.title);
-                    out.prop_string("text", &display);
-                    out.prop_px("font-size", 14.0);
-                    out.line("font-weight: 600;");
-                    out.line("vertical-alignment: center;");
-                    Ok(())
-                })
-            })?;
-            out.block("VerticalLayout", |out| {
-                out.prop_px("padding-left", 16.0);
-                out.prop_px("spacing", 8.0);
-                ctx.render_children(children, out)
-            })
-        })
-    }
     fn lower_ui(
         &self,
         ctx: &crate::ui_lower::LowerCtx<'_>,
@@ -1586,41 +1172,6 @@ impl Block for ButtonBlock {
     }
     fn variants(&self) -> Vec<VariantAxis> {
         variant_presets::button()
-    }
-    fn render_slint(
-        &self,
-        _ctx: &RenderSlintContext<'_>,
-        props: &Value,
-        _children: &[Node],
-        out: &mut SlintEmitter,
-    ) -> Result<(), RenderError> {
-        let p = schemas::ButtonProps::from_value(props);
-        out.block("Rectangle", |out| {
-            out.prop_px("height", 36.0);
-            out.prop_px("min-width", 80.0);
-            out.line("background: #3b82f6;");
-            out.line("border-radius: 6px;");
-            out.block("HorizontalLayout", |out| {
-                out.line("alignment: center;");
-                out.prop_px("spacing", 4.0);
-                if !p.href.is_empty() {
-                    out.block("Text", |out| {
-                        out.prop_string("text", "🔗");
-                        out.prop_px("font-size", 12.0);
-                        out.line("vertical-alignment: center;");
-                        Ok(())
-                    })?;
-                }
-                out.block("Text", |out| {
-                    out.prop_string("text", &p.text);
-                    out.prop_px("font-size", 14.0);
-                    out.line("color: #ffffff;");
-                    out.line("font-weight: 600;");
-                    out.line("vertical-alignment: center;");
-                    Ok(())
-                })
-            })
-        })
     }
     fn lower_ui(
         &self,
@@ -1715,116 +1266,16 @@ impl Block for GraphViewBlock {
             .with_payload(vec![FieldSpec::text("node_id", "Double-clicked node ID")]),
         ])
     }
-    fn render_slint(
-        &self,
-        ctx: &RenderSlintContext<'_>,
-        props: &Value,
-        _children: &[Node],
-        out: &mut SlintEmitter,
-    ) -> Result<(), RenderError> {
-        let p = schemas::GraphViewProps::from_value(props);
-        let node_size = p.node_size as f64;
-        let style = ctx.style();
-        let bg = style.background.as_deref().unwrap_or("#1e2533");
-
-        // Parse nodes from props — expected as a JSON array of objects
-        let nodes: Vec<&Value> = props
-            .get("nodes")
-            .and_then(|v| v.as_array())
-            .map(|a| a.iter().collect())
-            .unwrap_or_default();
-
-        let node_count = nodes.len();
-        // Grid columns for simple layout
-        let cols = (node_count as f64).sqrt().ceil().max(1.0) as usize;
-
-        out.block("VerticalLayout", |out| {
-            out.prop_px("spacing", 0.0);
-            out.line("horizontal-stretch: 1;");
-            out.line("vertical-stretch: 1;");
-
-            // Header
-            out.block("Rectangle", |out| {
-                out.prop_px("height", 32.0);
-                out.prop_color("background", "#2e3440");
-                out.block("Text", |out| {
-                    let header = format!("Graph View ({node_count} nodes)");
-                    out.prop_string("text", &header);
-                    out.prop_px("font-size", 13.0);
-                    out.line("font-weight: 600;");
-                    out.line("vertical-alignment: center;");
-                    out.prop_px("x", 8.0);
-                    Ok(())
-                })
-            })?;
-
-            // Canvas area
-            out.block("Rectangle", |out| {
-                out.prop_color("background", bg);
-                out.line("horizontal-stretch: 1;");
-                out.line("vertical-stretch: 1;");
-
-                // Render each node at a grid position
-                for (i, node_val) in nodes.iter().enumerate() {
-                    let label = node_val
-                        .get(p.node_label_field.as_str())
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("?");
-                    let color = node_val
-                        .get("color")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("#5e81ac");
-
-                    let col = i % cols;
-                    let row = i / cols;
-                    let x = 24.0 + (col as f64) * (node_size + 32.0);
-                    let y = 24.0 + (row as f64) * (node_size + 32.0);
-                    let radius = node_size / 2.0;
-
-                    out.block("Rectangle", |out| {
-                        out.prop_px("x", x);
-                        out.prop_px("y", y);
-                        out.prop_px("width", node_size);
-                        out.prop_px("height", node_size);
-                        out.prop_px("border-radius", radius);
-                        out.prop_color("background", color);
-
-                        out.block("Text", |out| {
-                            out.prop_string("text", label);
-                            out.prop_px("font-size", 11.0);
-                            out.line("color: #eceff4;");
-                            out.line("horizontal-alignment: center;");
-                            out.line("vertical-alignment: center;");
-                            Ok(())
-                        })
-                    })?;
-                }
-
-                Ok(())
-            })
-        })
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::render::render_document_slint_source;
-    use crate::BuilderDocument;
-    use prism_core::design_tokens::DesignTokens;
-    use serde_json::json;
 
-    fn setup() -> (ComponentRegistry, DesignTokens) {
+    fn setup() -> ComponentRegistry {
         let mut reg = ComponentRegistry::new();
         register_builtins(&mut reg).expect("register builtins");
-        (reg, DesignTokens::default())
-    }
-
-    fn doc(node: Node) -> BuilderDocument {
-        BuilderDocument {
-            root: Some(node),
-            ..Default::default()
-        }
+        reg
     }
 
     #[test]
@@ -1839,7 +1290,7 @@ mod tests {
 
     #[test]
     fn register_builtins_seeds_seventeen_components() {
-        let (reg, _) = setup();
+        let reg = setup();
         for id in [
             "text",
             "image",
@@ -1869,186 +1320,6 @@ mod tests {
             id: "divider".into(),
         };
         assert!(crate::block::Block::schema(&comp).is_empty());
-    }
-
-    #[test]
-    fn slint_walker_renders_card() {
-        let (reg, tokens) = setup();
-        let d = doc(Node {
-            id: "c".into(),
-            component: "card".into(),
-            props: json!({ "title": "My Card", "body": "details" }),
-            children: vec![],
-            ..Default::default()
-        });
-        let source = render_document_slint_source(&d, &reg, &tokens).unwrap();
-        assert!(source.contains(r#"text: "My Card";"#));
-        assert!(source.contains(r#"text: "details";"#));
-    }
-
-    #[test]
-    fn slint_walker_renders_code() {
-        let (reg, tokens) = setup();
-        let d = doc(Node {
-            id: "c".into(),
-            component: "code".into(),
-            props: json!({ "code": "fn main() {}" }),
-            children: vec![],
-            ..Default::default()
-        });
-        let source = render_document_slint_source(&d, &reg, &tokens).unwrap();
-        assert!(source.contains(r#"text: "fn main() {}";"#));
-        assert!(source.contains("monospace"));
-    }
-
-    #[test]
-    fn slint_walker_renders_divider() {
-        let (reg, tokens) = setup();
-        let d = doc(Node {
-            id: "d".into(),
-            component: "divider".into(),
-            props: json!({}),
-            children: vec![],
-            ..Default::default()
-        });
-        let source = render_document_slint_source(&d, &reg, &tokens).unwrap();
-        assert!(source.contains("height: 1px;"));
-    }
-
-    #[test]
-    fn slint_walker_renders_spacer() {
-        let (reg, tokens) = setup();
-        let d = doc(Node {
-            id: "s".into(),
-            component: "spacer".into(),
-            props: json!({ "height": 48 }),
-            children: vec![],
-            ..Default::default()
-        });
-        let source = render_document_slint_source(&d, &reg, &tokens).unwrap();
-        assert!(source.contains("height: 48px;"));
-    }
-
-    #[test]
-    fn slint_walker_renders_columns() {
-        let (reg, tokens) = setup();
-        let d = doc(Node {
-            id: "cols".into(),
-            component: "columns".into(),
-            props: json!({ "gap": 24 }),
-            children: vec![Node {
-                id: "c1".into(),
-                component: "text".into(),
-                props: json!({ "body": "left" }),
-                children: vec![],
-                ..Default::default()
-            }],
-            ..Default::default()
-        });
-        let source = render_document_slint_source(&d, &reg, &tokens).unwrap();
-        assert!(source.contains("HorizontalLayout {"));
-        assert!(source.contains("spacing: 24px;"));
-    }
-
-    #[test]
-    fn slint_walker_renders_table() {
-        let (reg, tokens) = setup();
-        let d = doc(Node {
-            id: "t".into(),
-            component: "table".into(),
-            props: json!({ "headers": "Name, Age", "caption": "Users" }),
-            children: vec![],
-            ..Default::default()
-        });
-        let source = render_document_slint_source(&d, &reg, &tokens).unwrap();
-        assert!(source.contains(r#"text: "Name";"#));
-        assert!(source.contains(r#"text: "Age";"#));
-        assert!(source.contains(r#"text: "Users";"#));
-    }
-
-    #[test]
-    fn slint_walker_renders_tabs() {
-        let (reg, tokens) = setup();
-        let d = doc(Node {
-            id: "t".into(),
-            component: "tabs".into(),
-            props: json!({ "labels": "Tab 1, Tab 2" }),
-            children: vec![],
-            ..Default::default()
-        });
-        let source = render_document_slint_source(&d, &reg, &tokens).unwrap();
-        assert!(source.contains(r#"text: "Tab 1";"#));
-        assert!(source.contains(r#"text: "Tab 2";"#));
-    }
-
-    #[test]
-    fn slint_walker_renders_accordion() {
-        let (reg, tokens) = setup();
-        let d = doc(Node {
-            id: "a".into(),
-            component: "accordion".into(),
-            props: json!({ "title": "FAQ", "open": true }),
-            children: vec![Node {
-                id: "a1".into(),
-                component: "text".into(),
-                props: json!({ "body": "answer" }),
-                children: vec![],
-                ..Default::default()
-            }],
-            ..Default::default()
-        });
-        let source = render_document_slint_source(&d, &reg, &tokens).unwrap();
-        assert!(source.contains("FAQ"));
-        assert!(source.contains(r#"text: "answer";"#));
-    }
-
-    #[test]
-    fn slint_walker_covers_full_catalog() {
-        let (reg, tokens) = setup();
-        let d = doc(Node {
-            id: "root".into(),
-            component: "container".into(),
-            props: json!({ "spacing": 16 }),
-            children: vec![
-                Node {
-                    id: "h".into(),
-                    component: "text".into(),
-                    props: json!({ "body": "Welcome", "level": "h2" }),
-                    children: vec![],
-                    ..Default::default()
-                },
-                Node {
-                    id: "p".into(),
-                    component: "text".into(),
-                    props: json!({ "body": "intro body" }),
-                    children: vec![],
-                    ..Default::default()
-                },
-                Node {
-                    id: "l".into(),
-                    component: "text".into(),
-                    props: json!({ "body": "Read", "href": "/x" }),
-                    children: vec![],
-                    ..Default::default()
-                },
-                Node {
-                    id: "i".into(),
-                    component: "image".into(),
-                    props: json!({ "src": "/a.png", "alt": "hero" }),
-                    children: vec![],
-                    ..Default::default()
-                },
-            ],
-            ..Default::default()
-        });
-        let source = render_document_slint_source(&d, &reg, &tokens).unwrap();
-        assert!(source.contains("VerticalLayout {"));
-        assert!(source.contains("spacing: 16"));
-        assert!(source.contains(r#"text: "Welcome";"#));
-        assert!(source.contains(r#"text: "intro body";"#));
-        assert!(source.contains(r#"text: "Read";"#));
-        assert!(source.contains(r#"@image-url("/a.png")"#));
-        assert!(source.contains("image-fit: cover;"));
     }
 
     #[test]
@@ -2098,37 +1369,5 @@ mod tests {
         // Should also include common signals
         assert!(names.contains(&"clicked"));
         assert!(names.contains(&"hovered"));
-    }
-
-    #[test]
-    fn graph_view_renders() {
-        let (reg, tokens) = setup();
-        let d = doc(Node {
-            id: "g".into(),
-            component: "graph-view".into(),
-            props: json!({
-                "node_label_field": "name",
-                "nodes": [
-                    { "name": "Alice", "color": "#88c0d0" },
-                    { "name": "Bob", "color": "#a3be8c" }
-                ],
-                "edges": [
-                    { "source": "Alice", "target": "Bob" }
-                ]
-            }),
-            children: vec![],
-            ..Default::default()
-        });
-        let source = render_document_slint_source(&d, &reg, &tokens).unwrap();
-        assert!(source.contains(r#"text: "Alice";"#), "missing Alice label");
-        assert!(source.contains(r#"text: "Bob";"#), "missing Bob label");
-        assert!(
-            source.contains("Graph View (2 nodes)"),
-            "missing header with node count"
-        );
-        assert!(
-            source.contains("border-radius:"),
-            "missing circular node shape"
-        );
     }
 }

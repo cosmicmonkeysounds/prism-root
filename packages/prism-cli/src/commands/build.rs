@@ -2,7 +2,8 @@
 //!
 //! Targets map 1:1 to the deployables the workspace cares about:
 //!
-//! - `desktop` — `cargo build -p prism-shell` (the native Slint dev bin).
+//! - `desktop` — `cargo build -p prism-shell` (the native dev bin —
+//!   prism-ui-runtime + femtovg).
 //! - `studio`  — `cargo build -p prism-studio` (the packaged
 //!   desktop shell; bundling/signing lives in Phase 5 via
 //!   `cargo-packager`).
