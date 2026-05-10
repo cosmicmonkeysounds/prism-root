@@ -11,14 +11,6 @@ path = "src/lib.rs"
 
 [features]
 default = []
-# `interpreter` pulls in `slint-interpreter` + a tiny blocking executor so
-# host crates that want the live Studio render path can call
-# `render::compile_slint_source` / `render::instantiate_document`. Pure
-# source emission (`render_document_slint_source`) is always available —
-# the feature only gates the runtime compilation half. `prism-relay`
-# leaves it off so its dep graph stays free of Slint entirely; `prism-shell`
-# flips it on so Studio's builder panel can materialise live components.
-interpreter = ["dep:slint", "dep:slint-interpreter", "dep:spin_on"]
 # Phase 1.1+ of `docs/dev/luau-integration-plan.md`. Off by default so
 # the relay's HTML-only render path doesn't drag mlua's vendored Luau
 # build in. `#[luau_expose]` annotations are always present (constants
@@ -44,11 +36,6 @@ prism-luau-derive = { workspace = true }
 # the post-cutover world; only the builder side knows both vocabularies.
 prism-ui-runtime = { path = "../prism-ui-runtime", default-features = false, features = ["html"] }
 
-# Optional — gated behind the `interpreter` feature so downstream crates
-# that only want the DSL text don't pay for the full Slint compiler.
-slint = { workspace = true, optional = true }
-slint-interpreter = { workspace = true, optional = true }
-spin_on = { workspace = true, optional = true }
 # Optional — only materialised when the `luau` feature is on (see above).
 mlua = { workspace = true, optional = true }
 

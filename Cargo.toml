@@ -61,25 +61,11 @@ tower-http = { version = "0.6", default-features = false, features = ["trace", "
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["std", "fmt", "env-filter"] }
 
-# UI toolkit — Slint owns both the declarative UI language
-# (`.slint` files) and the render + windowing stack. Same crate ships
-# the native backend (winit + femtovg/skia/software) and the web
-# backend (winit on wasm32-unknown-unknown + webgl via femtovg). The
-# 2026-04-15 Clay → Slint pivot (see `docs/dev/slint-migration-plan.md`)
-# retired the `clay-layout` + hand-vendored wgpu renderer path in one
-# stroke. `slint-build` drives the compile-time `.slint` → Rust codegen
-# from each crate's `build.rs`. `slint-interpreter` is a Phase 3
-# dependency of `prism-builder`, used to materialise a
-# `BuilderDocument` into a runtime-compiled Slint component tree.
-slint = { version = "1.16", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-femtovg"] }
-slint-build = "1.16"
-slint-interpreter = { version = "1.16", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-femtovg", "internal"] }
-# `slint-interpreter::Compiler::build_from_source` is `async` but only
-# genuinely so if a file loader is installed. `spin_on` is a zero-dep
-# blocking executor the upstream Slint examples use for exactly this
-# case; pin it at the workspace level so `prism-builder`'s `interpreter`
-# feature and any future consumer track the same version.
-spin_on = "0.1"
+# UI toolkit — `prism-ui-runtime` owns the declarative UI language
+# (`.prism-ui` files) and the render + windowing stack via winit +
+# femtovg native and wasm32-unknown-unknown + webgl on the web. Slint
+# is fully retired (Phase 5 cutover, 2026-05-10). See
+# `docs/dev/clay-migration-plan.md` for the migration history.
 
 # 2D math — SIMD-accelerated Vec2/Affine2/Mat3 for the builder's
 # transform system (ADR-003). Works on native + WASM.

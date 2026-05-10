@@ -91,21 +91,6 @@ pub use starter::{builtin_prefab, card_prefab_def, materialize_prefab, register_
 pub use style::{resolve_cascade, StyleProperties};
 pub use variant::{VariantAxis, VariantOption};
 
-#[cfg(feature = "interpreter")]
-pub mod live;
-#[cfg(feature = "interpreter")]
-pub mod syntax_provider;
-
-#[cfg(feature = "interpreter")]
-pub use live::{LiveDiagnostic, LiveDocument, SourceEditError, SourceSelection};
-#[cfg(feature = "interpreter")]
-pub use render::{
-    compile_slint_preview, compile_slint_source, instantiate_document, preview_component_factory,
-    InstantiateError,
-};
-#[cfg(feature = "interpreter")]
-pub use syntax_provider::BuilderSyntaxProvider;
-
 #[cfg(feature = "luau")]
 pub use luau_component::{ActiveRegistry, LuauComponent, LuauRenderRegistry, VirtualNode};
 #[cfg(feature = "luau")]
