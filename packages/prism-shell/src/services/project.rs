@@ -126,7 +126,7 @@ fn walk(
 mod tests {
     use super::*;
     use crate::services::vfs::test_support::InMemVfs;
-    use crate::services::{MutCtx, NoopLuauHost, ServiceRegistry, UndoStack};
+    use crate::services::{Clipboard, MutCtx, NoopLuauHost, ServiceRegistry, UndoStack};
     use crate::AppState;
     use prism_ui_runtime::layout::Viewport;
 
@@ -138,6 +138,7 @@ mod tests {
         let mut undo = UndoStack::default();
         let mut vfs = InMemVfs::default();
         let mut luau = NoopLuauHost::default();
+        let mut clipboard = Clipboard::default();
         let reg = ServiceRegistry::with_builtins();
         let mut ctx = MutCtx {
             state: &mut state,
@@ -148,6 +149,7 @@ mod tests {
             undo: &mut undo,
             vfs: &mut vfs,
             luau: &mut luau,
+            clipboard: &mut clipboard,
         };
         assert!(reg.commands().run("project.close-folder", &mut ctx));
         assert!(state.project.root.is_none());

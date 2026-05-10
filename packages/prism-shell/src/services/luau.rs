@@ -77,7 +77,7 @@ impl ShellService for LuauService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::{MutCtx, OsVfs, ServiceRegistry, UndoStack};
+    use crate::services::{Clipboard, MutCtx, OsVfs, ServiceRegistry, UndoStack};
     use crate::AppState;
     use prism_ui_runtime::layout::Viewport;
 
@@ -88,6 +88,7 @@ mod tests {
         let mut undo = UndoStack::default();
         let mut vfs = OsVfs;
         let mut luau = NoopLuauHost::default();
+        let mut clipboard = Clipboard::default();
         let reg = ServiceRegistry::with_builtins();
         let mut ctx = MutCtx {
             state: &mut state,
@@ -98,6 +99,7 @@ mod tests {
             undo: &mut undo,
             vfs: &mut vfs,
             luau: &mut luau,
+            clipboard: &mut clipboard,
         };
         assert!(reg.commands().run("luau.run-selection", &mut ctx));
         assert_eq!(state.overlay.toasts.len(), 1);

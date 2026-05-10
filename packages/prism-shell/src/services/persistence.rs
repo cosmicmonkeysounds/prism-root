@@ -139,7 +139,7 @@ fn load_from(ctx: &mut crate::services::MutCtx<'_>, path: PathBuf) {
 mod tests {
     use super::*;
     use crate::services::vfs::test_support::InMemVfs;
-    use crate::services::{MutCtx, NoopLuauHost, ServiceRegistry, UndoStack};
+    use crate::services::{Clipboard, MutCtx, NoopLuauHost, ServiceRegistry, UndoStack};
     use crate::AppState;
     use prism_ui_runtime::layout::Viewport;
 
@@ -151,6 +151,7 @@ mod tests {
         let mut undo = UndoStack::default();
         let mut vfs = InMemVfs::default();
         let mut luau = NoopLuauHost::default();
+        let mut clipboard = Clipboard::default();
         let reg = ServiceRegistry::with_builtins();
         {
             let mut ctx = MutCtx {
@@ -162,6 +163,7 @@ mod tests {
                 undo: &mut undo,
                 vfs: &mut vfs,
                 luau: &mut luau,
+                clipboard: &mut clipboard,
             };
             assert!(reg.commands().run("file.save", &mut ctx));
         }
@@ -179,6 +181,7 @@ mod tests {
             undo: &mut undo2,
             vfs: &mut vfs,
             luau: &mut luau,
+            clipboard: &mut clipboard,
         };
         assert!(reg.commands().run("file.open", &mut ctx));
         assert_eq!(state2.project.current_file, Some(path));

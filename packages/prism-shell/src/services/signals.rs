@@ -136,7 +136,7 @@ fn apply_action(
 mod tests {
     use super::*;
     use crate::services::vfs::test_support::InMemVfs;
-    use crate::services::{NoopLuauHost, ServiceRegistry, UndoStack};
+    use crate::services::{Clipboard, NoopLuauHost, ServiceRegistry, UndoStack};
     use crate::AppState;
     use prism_ui_runtime::layout::Viewport;
 
@@ -146,6 +146,7 @@ mod tests {
         let mut undo = UndoStack::default();
         let mut vfs = InMemVfs::default();
         let mut luau = NoopLuauHost::default();
+        let mut clipboard = Clipboard::default();
         let _reg = ServiceRegistry::with_builtins();
         let mut ctx = MutCtx {
             state: &mut state,
@@ -156,6 +157,7 @@ mod tests {
             undo: &mut undo,
             vfs: &mut vfs,
             luau: &mut luau,
+            clipboard: &mut clipboard,
         };
         assert_eq!(fire_signal(&mut ctx, "n", "clicked", &Value::Null, 0), 0);
     }

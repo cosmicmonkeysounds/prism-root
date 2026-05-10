@@ -46,6 +46,20 @@ pub struct AppState {
     pub search: SearchSlot,
 }
 
+impl AppState {
+    /// Cross-slot invariant: clearing the selection clears it on
+    /// every slot that owns one. The §25 doctrine — multi-slot
+    /// invariants live on the multi-slot type, not on each service
+    /// command body. Adding a new selection-bearing slot extends
+    /// this method, not every Esc handler.
+    pub fn clear_selection(&mut self) {
+        self.canvas.selection = None;
+        for node in &mut self.builder.inspector {
+            node.selected = false;
+        }
+    }
+}
+
 // ── project ───────────────────────────────────────────────────────
 
 /// IO-side state for `PersistenceService` + `ProjectService`. Holds
@@ -432,6 +446,36 @@ impl OverlaySlot {
                 })
                 .collect(),
         )
+    }
+
+    /// Fuzzy-filter a list of `(id, label)` command rows against the
+    /// palette's current query. Returns the indices of `rows` that
+    /// match, ordered best-score first. (§25 — single matcher, single
+    /// caller. No service rebuilds the command list; no service
+    /// reimplements the matcher.)
+    pub fn filter_commands(&self, rows: &[(&str, &str)]) -> Vec<usize> {
+        let q = self.command_palette.query.to_lowercase();
+        if q.is_empty() {
+            return (0..rows.len()).collect();
+        }
+        let mut scored: Vec<(usize, i32)> = rows
+            .iter()
+            .enumerate()
+            .filter_map(|(i, (id, label))| {
+                let id_lc = id.to_lowercase();
+                let lab_lc = label.to_lowercase();
+                let score = if lab_lc.contains(&q) {
+                    100 - lab_lc.find(&q).unwrap_or(0) as i32
+                } else if id_lc.contains(&q) {
+                    50 - id_lc.find(&q).unwrap_or(0) as i32
+                } else {
+                    return None;
+                };
+                Some((i, score))
+            })
+            .collect();
+        scored.sort_by(|a, b| b.1.cmp(&a.1));
+        scored.into_iter().map(|(i, _)| i).collect()
     }
 }
 
@@ -1492,6 +1536,168 @@ impl CanvasSlot {
     pub(crate) fn drag_active(&self) -> bool {
         self.drag.is_some()
     }
+
+    // ── §25: keyboard-driven mutators ─────────────────────────────
+
+    /// Translate the selected node's position by `(dx, dy)` (canvas
+    /// units). Used by `selection.move-{up,down,left,right}`. The
+    /// `(dx, dy)` table lives on `SelectionService`; this method is
+    /// the single mutator that interprets it.
+    pub fn nudge_selection(&mut self, dx: f32, dy: f32) {
+        let Some(id) = self.selection.clone() else {
+            return;
+        };
+        let Some(node) = self.document.root.as_mut().and_then(|r| r.find_mut(&id)) else {
+            return;
+        };
+        node.transform.position[0] += dx;
+        node.transform.position[1] += dy;
+    }
+
+    /// Shift+arrow extension — single-selection today is a synonym
+    /// for `nudge_selection`. When `SelectionModel::Multi` lands
+    /// (post-§25 wave), this dispatches to a "grow the marquee"
+    /// variant; the service interface stays one method per command.
+    pub fn extend_selection(&mut self, dx: f32, dy: f32) {
+        self.nudge_selection(dx, dy);
+    }
+
+    /// Serialise the selected sub-tree as a `serde_json::Value`. The
+    /// only wire format the clipboard speaks. Returns `None` when no
+    /// selection exists or the id has gone stale.
+    pub fn serialize_selection(&self) -> Option<Value> {
+        let id = self.selection.as_deref()?;
+        let node = self.document.root.as_ref()?.find(id)?;
+        serde_json::to_value(node).ok()
+    }
+
+    /// Insert a previously-serialised sub-tree at `offset` positions
+    /// past the current selection within its parent's children.
+    /// `offset = 0` means "append as last child of selection's
+    /// parent" (paste); `offset = 1` means "insert as next sibling"
+    /// (duplicate). Returns the new node id when successful.
+    ///
+    /// Always assigns a fresh id (and recursively rewrites child
+    /// ids) so paste/duplicate never collide with the source. Uses
+    /// the simplest unique-suffix scheme — sufficient until a
+    /// genuinely-clashing scenario forces a UUID/ULID move.
+    pub fn insert_at_offset(&mut self, value: Value, offset: usize) -> Option<NodeId> {
+        let mut node: prism_builder::Node = serde_json::from_value(value).ok()?;
+        rename_subtree(&mut node, &self.document, "paste");
+        let new_id = node.id.clone();
+        let target = self.selection.clone();
+        let root = self.document.root.as_mut()?;
+        // Inserting against the root with no selection: append as
+        // child of root.
+        let Some(target_id) = target else {
+            root.children.push(node);
+            return Some(new_id);
+        };
+        // Walk to find the parent of `target_id` and the index of the
+        // selected child within it.
+        if root.id == target_id {
+            // Selection is the root — insert as first/next child.
+            if offset == 0 {
+                root.children.push(node);
+            } else {
+                root.children.insert(0, node);
+            }
+            return Some(new_id);
+        }
+        let inserted = insert_under_parent(root, &target_id, node, offset);
+        inserted.then_some(new_id)
+    }
+
+    /// Remove the currently-selected node from the document. Used by
+    /// `clipboard.cut`. The selection cursor is cleared because the
+    /// node it pointed at no longer exists.
+    pub fn delete_selection(&mut self) {
+        let Some(id) = self.selection.take() else {
+            return;
+        };
+        let Some(root) = self.document.root.as_mut() else {
+            return;
+        };
+        if root.id == id {
+            // Deleting the root collapses the document.
+            self.document.root = None;
+            return;
+        }
+        delete_under(root, &id);
+    }
+}
+
+/// Recursively rewrite ids in `node` so they don't collide with any
+/// id already present in `doc`. Stable suffix scheme: `<old>-<tag>-<n>`.
+fn rename_subtree(node: &mut prism_builder::Node, doc: &BuilderDocument, tag: &str) {
+    let mut existing: std::collections::HashSet<String> = std::collections::HashSet::new();
+    if let Some(root) = doc.root.as_ref() {
+        collect_ids(root, &mut existing);
+    }
+    rewrite_ids(node, tag, &mut existing);
+}
+
+fn collect_ids(node: &prism_builder::Node, out: &mut std::collections::HashSet<String>) {
+    out.insert(node.id.clone());
+    for c in &node.children {
+        collect_ids(c, out);
+    }
+}
+
+fn rewrite_ids(
+    node: &mut prism_builder::Node,
+    tag: &str,
+    existing: &mut std::collections::HashSet<String>,
+) {
+    let mut candidate = format!("{}-{}", node.id, tag);
+    let mut n = 1u32;
+    while existing.contains(&candidate) {
+        n += 1;
+        candidate = format!("{}-{}-{}", node.id, tag, n);
+    }
+    existing.insert(candidate.clone());
+    node.id = candidate;
+    for c in &mut node.children {
+        rewrite_ids(c, tag, existing);
+    }
+}
+
+/// Insert `incoming` next to (or after) the child `target_id` under
+/// any descendant of `root`. Returns true when the insertion landed.
+fn insert_under_parent(
+    parent: &mut prism_builder::Node,
+    target_id: &str,
+    incoming: prism_builder::Node,
+    offset: usize,
+) -> bool {
+    if let Some(idx) = parent.children.iter().position(|c| c.id == target_id) {
+        let pos = (idx + offset).min(parent.children.len());
+        parent.children.insert(pos, incoming);
+        return true;
+    }
+    let mut moving = Some(incoming);
+    for child in &mut parent.children {
+        if let Some(node) = moving.take() {
+            if insert_under_parent(child, target_id, node.clone(), offset) {
+                return true;
+            }
+            moving = Some(node);
+        }
+    }
+    false
+}
+
+fn delete_under(parent: &mut prism_builder::Node, target_id: &str) -> bool {
+    if let Some(idx) = parent.children.iter().position(|c| c.id == target_id) {
+        parent.children.remove(idx);
+        return true;
+    }
+    for child in &mut parent.children {
+        if delete_under(child, target_id) {
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(test)]

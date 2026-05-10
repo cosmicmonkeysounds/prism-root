@@ -49,7 +49,7 @@ impl ShellService for ShellBaseService {
 #[cfg(test)]
 mod tests {
     use crate::services::{
-        vfs::test_support::InMemVfs, MutCtx, NoopLuauHost, ServiceRegistry, UndoStack,
+        vfs::test_support::InMemVfs, Clipboard, MutCtx, NoopLuauHost, ServiceRegistry, UndoStack,
     };
     use crate::AppState;
     use prism_ui_runtime::layout::Viewport;
@@ -60,6 +60,7 @@ mod tests {
         let mut undo = UndoStack::default();
         let mut vfs = InMemVfs::default();
         let mut luau = NoopLuauHost::default();
+        let mut clipboard = Clipboard::default();
         let reg = ServiceRegistry::with_builtins();
         {
             let mut ctx = MutCtx {
@@ -71,6 +72,7 @@ mod tests {
                 undo: &mut undo,
                 vfs: &mut vfs,
                 luau: &mut luau,
+                clipboard: &mut clipboard,
             };
             assert!(reg.commands().run("palette.toggle", &mut ctx));
         }
@@ -85,6 +87,7 @@ mod tests {
                 undo: &mut undo,
                 vfs: &mut vfs,
                 luau: &mut luau,
+                clipboard: &mut clipboard,
             };
             assert!(reg.commands().run("palette.toggle", &mut ctx));
         }

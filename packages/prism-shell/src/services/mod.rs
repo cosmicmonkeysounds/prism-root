@@ -32,25 +32,31 @@ use prism_ui_runtime::layout::Viewport;
 use crate::AppState;
 
 pub mod base;
+pub mod clipboard;
 pub mod help;
 pub mod input;
 pub mod luau;
 pub mod menu;
+pub mod palette;
 pub mod persistence;
 pub mod project;
 pub mod search;
+pub mod selection;
 pub mod signals;
 pub mod undo;
 pub mod vfs;
 
 pub use base::ShellBaseService;
+pub use clipboard::{Clipboard, ClipboardService};
 pub use help::HelpService;
 pub use input::{InputScheme, InputService};
 pub use luau::{LuauHost, LuauService, NoopLuauHost};
 pub use menu::MenuService;
+pub use palette::CommandPaletteService;
 pub use persistence::PersistenceService;
 pub use project::ProjectService;
 pub use search::SearchService;
+pub use selection::SelectionService;
 pub use signals::SignalsService;
 pub use undo::{UndoRedoService, UndoStack};
 pub use vfs::{OsVfs, Vfs, VfsError};
@@ -116,6 +122,10 @@ pub struct MutCtx<'a> {
     /// `ServiceRegistry::get("luau")` — shared resources go on
     /// [`MutCtx`], not behind cross-service trait calls.
     pub luau: &'a mut dyn LuauHost,
+    /// One-cell internal clipboard. `ClipboardService` (§25) is the
+    /// only consumer; system-clipboard plug-ins (`arboard`) attach
+    /// at the service body, not on this field.
+    pub clipboard: &'a mut Clipboard,
 }
 
 // ── command spec + table ──────────────────────────────────────────
@@ -170,6 +180,13 @@ impl CommandTable {
 
     pub fn ids(&self) -> impl Iterator<Item = &'static str> + '_ {
         self.map.keys().copied()
+    }
+
+    /// Iterate `(id, label)` pairs for every registered command. The
+    /// single aggregator the command palette's fuzzy filter consumes
+    /// (§25); no service rebuilds this list.
+    pub fn rows(&self) -> Vec<(&'static str, &'static str)> {
+        self.map.values().map(|s| (s.id, s.label)).collect()
     }
 
     pub fn len(&self) -> usize {
@@ -269,7 +286,16 @@ impl ServiceRegistry {
 pub fn register_shell_services(reg: &mut ServiceRegistry) {
     reg.add(ShellBaseService);
     reg.add(UndoRedoService);
+    // §25 — `CommandPaletteService` MUST register ahead of `InputService`
+    // so its modal-capture `on_event` (returns `Handled` while open)
+    // short-circuits Ctrl+S / Ctrl+F / etc. before InputService can
+    // resolve them. The palette's own escape/enter/up/down branches
+    // live on its `on_event` so opening the palette doesn't deactivate
+    // those keys.
+    reg.add(CommandPaletteService);
     reg.add(InputService::with_defaults());
+    reg.add(SelectionService);
+    reg.add(ClipboardService);
     // §26 — IO services (Persistence / Project / Search).
     reg.add(PersistenceService);
     reg.add(ProjectService);
@@ -386,6 +412,7 @@ mod tests {
         let mut undo = UndoStack::default();
         let mut vfs = OsVfs;
         let mut luau = NoopLuauHost::default();
+        let mut clipboard = Clipboard::default();
         let mut ctx = MutCtx {
             state: &mut state,
             viewport: Viewport {
@@ -395,6 +422,7 @@ mod tests {
             undo: &mut undo,
             vfs: &mut vfs,
             luau: &mut luau,
+            clipboard: &mut clipboard,
         };
         assert_eq!(
             reg.fan_out(&Event::Wheel { dx: 0.0, dy: 0.0 }, &mut ctx),

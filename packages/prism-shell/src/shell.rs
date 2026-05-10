@@ -23,7 +23,9 @@ use crate::components::{register_shell_builtins, ShellComponentRegistry};
 use crate::events::dispatch_event;
 use crate::props::{PropCtx, ShellPropBindings};
 use crate::render::{render_tree, Skeleton};
-use crate::services::{LuauHost, MutCtx, NoopLuauHost, OsVfs, ServiceRegistry, UndoStack, Vfs};
+use crate::services::{
+    Clipboard, LuauHost, MutCtx, NoopLuauHost, OsVfs, ServiceRegistry, UndoStack, Vfs,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ShellError {
@@ -54,6 +56,9 @@ pub struct ShellInner {
     /// lands. `SignalsService::Custom` and `LuauService::run-selection`
     /// reach Luau through this single resource.
     pub luau: Box<dyn LuauHost>,
+    /// In-memory clipboard cell — `ClipboardService` (§25) is the
+    /// only consumer.
+    pub clipboard: Clipboard,
 }
 
 impl ShellInner {
@@ -80,6 +85,7 @@ impl ShellInner {
             undo: &mut self.undo,
             vfs: self.vfs.as_mut(),
             luau: self.luau.as_mut(),
+            clipboard: &mut self.clipboard,
         }
     }
 }
@@ -110,6 +116,7 @@ impl Shell {
             undo: UndoStack::default(),
             vfs: Box::new(OsVfs),
             luau: Box::new(NoopLuauHost::default()),
+            clipboard: Clipboard::default(),
         }));
         Ok(Self { inner, skeleton })
     }

@@ -55,6 +55,7 @@ pub fn dispatch_event(inner: &Rc<RefCell<ShellInner>>, event: &Event) -> bool {
                 undo: &mut g.undo,
                 vfs: g.vfs.as_mut(),
                 luau: g.luau.as_mut(),
+                clipboard: &mut g.clipboard,
             };
             matches!(services.fan_out(event, &mut ctx), EventOutcome::Handled)
         }

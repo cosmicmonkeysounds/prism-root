@@ -85,7 +85,9 @@ impl ShellService for UndoRedoService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::{vfs::test_support::InMemVfs, MutCtx, NoopLuauHost, ServiceRegistry};
+    use crate::services::{
+        vfs::test_support::InMemVfs, Clipboard, MutCtx, NoopLuauHost, ServiceRegistry,
+    };
     use prism_ui_runtime::layout::Viewport;
 
     fn ctx<'a>(
@@ -93,6 +95,7 @@ mod tests {
         undo: &'a mut UndoStack,
         vfs: &'a mut InMemVfs,
         luau: &'a mut NoopLuauHost,
+        clipboard: &'a mut Clipboard,
     ) -> MutCtx<'a> {
         MutCtx {
             state,
@@ -103,6 +106,7 @@ mod tests {
             undo,
             vfs,
             luau,
+            clipboard,
         }
     }
 
@@ -136,10 +140,11 @@ mod tests {
         let reg = ServiceRegistry::with_builtins();
         let mut vfs = InMemVfs::default();
         let mut luau = NoopLuauHost::default();
-        let mut c = ctx(&mut state, &mut undo, &mut vfs, &mut luau);
+        let mut clipboard = Clipboard::default();
+        let mut c = ctx(&mut state, &mut undo, &mut vfs, &mut luau, &mut clipboard);
         assert!(reg.commands().run("edit.undo", &mut c));
         assert_eq!(state.chrome.status, "v0");
-        let mut c2 = ctx(&mut state, &mut undo, &mut vfs, &mut luau);
+        let mut c2 = ctx(&mut state, &mut undo, &mut vfs, &mut luau, &mut clipboard);
         assert!(reg.commands().run("edit.redo", &mut c2));
         assert_eq!(state.chrome.status, "v1");
     }

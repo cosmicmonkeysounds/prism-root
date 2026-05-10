@@ -150,7 +150,7 @@ fn score_node(node: &prism_builder::Node, q: &str) -> Option<SearchHit> {
 mod tests {
     use super::*;
     use crate::services::vfs::test_support::InMemVfs;
-    use crate::services::{NoopLuauHost, ServiceRegistry, UndoStack};
+    use crate::services::{Clipboard, NoopLuauHost, ServiceRegistry, UndoStack};
     use crate::AppState;
     use prism_ui_runtime::layout::Viewport;
 
@@ -161,6 +161,7 @@ mod tests {
         let mut undo = UndoStack::default();
         let mut vfs = InMemVfs::default();
         let mut luau = NoopLuauHost::default();
+        let mut clipboard = Clipboard::default();
         let reg = ServiceRegistry::with_builtins();
         let mut ctx = MutCtx {
             state: &mut state,
@@ -171,6 +172,7 @@ mod tests {
             undo: &mut undo,
             vfs: &mut vfs,
             luau: &mut luau,
+            clipboard: &mut clipboard,
         };
         assert!(reg.commands().run("search.open", &mut ctx));
         assert!(state.search.open);
@@ -183,6 +185,7 @@ mod tests {
             undo: &mut undo,
             vfs: &mut vfs,
             luau: &mut luau,
+            clipboard: &mut clipboard,
         };
         assert!(reg.commands().run("search.close", &mut ctx));
         assert!(!state.search.open);

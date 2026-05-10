@@ -145,7 +145,25 @@ impl InputService {
             .bind("ctrl+z", "edit.undo")
             .bind("ctrl+shift+z", "edit.redo")
             .bind("ctrl+shift+p", "palette.toggle")
-            .bind("escape", "palette.close");
+            .bind("escape", "palette.close")
+            // §25 — selection / clipboard. Esc routes to palette.close
+            // first; `selection.clear` is reachable through the palette
+            // and via host-pushed schemes (e.g. tablet mode).
+            .bind("up", "selection.move-up")
+            .bind("down", "selection.move-down")
+            .bind("left", "selection.move-left")
+            .bind("right", "selection.move-right")
+            .bind("ctrl+c", "clipboard.copy")
+            .bind("ctrl+x", "clipboard.cut")
+            .bind("ctrl+v", "clipboard.paste")
+            .bind("ctrl+d", "clipboard.duplicate")
+            // §26 — IO services (Persistence / Project / Search).
+            .bind("ctrl+n", "file.new")
+            .bind("ctrl+s", "file.save")
+            .bind("ctrl+shift+s", "file.save-as")
+            .bind("ctrl+o", "file.open")
+            .bind("ctrl+shift+o", "project.open-folder")
+            .bind("ctrl+f", "search.open");
         svc.schemes.lock().expect("schemes lock").push(base);
         svc
     }
@@ -203,7 +221,9 @@ impl ShellService for InputService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::{vfs::test_support::InMemVfs, NoopLuauHost, ServiceRegistry, UndoStack};
+    use crate::services::{
+        vfs::test_support::InMemVfs, Clipboard, NoopLuauHost, ServiceRegistry, UndoStack,
+    };
     use crate::AppState;
     use prism_ui_runtime::layout::Viewport;
 
@@ -240,6 +260,7 @@ mod tests {
         let reg = ServiceRegistry::with_builtins();
         let mut vfs = InMemVfs::default();
         let mut luau = NoopLuauHost::default();
+        let mut clipboard = Clipboard::default();
         let mut ctx = MutCtx {
             state: &mut state,
             viewport: Viewport {
@@ -249,6 +270,7 @@ mod tests {
             undo: &mut undo,
             vfs: &mut vfs,
             luau: &mut luau,
+            clipboard: &mut clipboard,
         };
         assert_eq!(
             reg.fan_out(&key("z", true, false), &mut ctx),
@@ -264,6 +286,7 @@ mod tests {
         let mut undo = UndoStack::default();
         let mut vfs = InMemVfs::default();
         let mut luau = NoopLuauHost::default();
+        let mut clipboard = Clipboard::default();
         let mut ctx = MutCtx {
             state: &mut state,
             viewport: Viewport {
@@ -273,6 +296,7 @@ mod tests {
             undo: &mut undo,
             vfs: &mut vfs,
             luau: &mut luau,
+            clipboard: &mut clipboard,
         };
         let release = Event::Key {
             code: "z".into(),
@@ -303,6 +327,7 @@ mod tests {
         let mut undo = UndoStack::default();
         let mut vfs = InMemVfs::default();
         let mut luau = NoopLuauHost::default();
+        let mut clipboard = Clipboard::default();
         let mut ctx = MutCtx {
             state: &mut state,
             viewport: Viewport {
@@ -312,11 +337,31 @@ mod tests {
             undo: &mut undo,
             vfs: &mut vfs,
             luau: &mut luau,
+            clipboard: &mut clipboard,
         };
         assert_eq!(
             reg.fan_out(&key("q", false, false), &mut ctx),
             EventOutcome::Pass
         );
+    }
+
+    #[test]
+    fn commands_cover_every_registered_shortcut() {
+        // §24.8 keystone parity. Every combo declared in the base
+        // input scheme must resolve to a command id that the
+        // aggregated `CommandTable` knows how to dispatch. Forgetting
+        // to wire a command is a test failure here, never a silent
+        // dead key in production.
+        let svc = InputService::with_defaults();
+        let reg = ServiceRegistry::with_builtins();
+        let stack = svc.schemes.lock().expect("schemes lock");
+        let base = stack.last().expect("base scheme");
+        for (combo, cmd_id) in base.iter() {
+            assert!(
+                reg.commands().get(cmd_id).is_some(),
+                "combo `{combo:?}` resolves to unknown command `{cmd_id}`"
+            );
+        }
     }
 
     #[test]
@@ -326,6 +371,7 @@ mod tests {
         let mut undo = UndoStack::default();
         let mut vfs = InMemVfs::default();
         let mut luau = NoopLuauHost::default();
+        let mut clipboard = Clipboard::default();
         {
             let mut ctx = MutCtx {
                 state: &mut state,
@@ -336,6 +382,7 @@ mod tests {
                 undo: &mut undo,
                 vfs: &mut vfs,
                 luau: &mut luau,
+                clipboard: &mut clipboard,
             };
             assert_eq!(
                 reg.fan_out(&key("p", true, true), &mut ctx),
