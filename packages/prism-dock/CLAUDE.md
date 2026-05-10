@@ -33,17 +33,25 @@ the dock tree; this crate only manages the layout state.
 - `Axis` — `Horizontal | Vertical`.
 - `SplitPosition` — `Before | After`.
 
-### Panel registry
-- `PanelId` — string alias.
-- `PanelKind` — enum of 14 known panel types (Builder, Inspector,
-  Properties, Explorer, CodeEditor, Identity, Timeline, NodeGraph,
-  AssetBrowser, ComponentPalette, Console, Signals, Navigation).
-- `PanelKind::ALL` — const slice of all variants.
-- `PanelKind::from_id(&str)` — reverse lookup from kebab-case string.
-- `PanelKind::id()` — kebab-case string from the enum variant.
-- `PanelKind::meta()` — returns `PanelMeta` for the kind.
-- `PanelMeta` — metadata per kind: label, icon hint, min size,
-  allow_multiple.
+### Panel registry (declarative, §34)
+- `PanelId` — `String` alias.
+- `PanelKind` — `Copy` data struct holding everything one panel needs:
+  `id`, `label`, `icon_hint`, `min_width`, `min_height`,
+  `allow_multiple`, and `tag` (`Option<&'static str>` — the
+  `shell.*` content tag the renderer embeds inside the dock leaf,
+  formerly the standalone `prism_shell::components::panel_routing`
+  table). Each panel is a `pub const PanelKind` (`PanelKind::BUILDER`,
+  `PanelKind::INSPECTOR`, …); `PanelKind::ALL` is the
+  `&'static [&'static PanelKind]` table that drives every consumer.
+  Adding a new panel = one `pub const` + one `&Self::FOO` row in
+  `ALL`. No enum, no `meta()` match, no parallel routing table.
+- `PanelKind::from_id(&str) -> Option<&'static PanelKind>` — reverse
+  lookup from kebab-case id.
+- `PanelKind::tag_for(&str) -> Option<&'static str>` — convenience
+  alias for `from_id(id).and_then(|p| p.tag)`. Subsumes the former
+  `panel_routing::tag_for_panel`.
+- `PanelKind::panel_id(&self) -> PanelId` — owned `String`, used at
+  `WorkflowPage` construction sites that need an owned tab id.
 
 ### Layout computation (`layout.rs`)
 Pure geometry — no UI dependency. Computes pixel rectangles from

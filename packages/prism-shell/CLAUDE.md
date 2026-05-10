@@ -32,7 +32,8 @@ registry.
   `prism_ui_runtime::interpret`. Per §28 the root is
   `<shell.app-window><shell.dock-workspace/></shell.app-window>` plus
   overlay siblings; the active dock tree drives panel routing
-  through `panel_routing::PANEL_ROUTES`.
+  through `prism_dock::PanelKind::tag` (§34 — the shell-side routing
+  table was folded into the dock catalog).
 
 ## Source tree
 Nine entries — the entire feature surface:
@@ -157,11 +158,12 @@ the next frame needs to redraw.
 ## Skeleton + dock routing
 Per §28 the active dock tree drives content selection at runtime.
 `shell.dock-workspace` walks `DockNode` (Split / TabGroup) recursively;
-`shell.dock-panel` resolves its body through `panel_routing::PANEL_ROUTES`
-when no AST children are authored. Adding a dockable panel is one
-row in `PANEL_ROUTES`; the dock-panel block, the workspace walker,
-and every parsed skeleton inherit the new mapping with zero
-additional edits. The skeleton itself is three lines of meaningful
+`shell.dock-panel` resolves its body through
+`prism_dock::PanelKind::tag_for(panel_id)` when no AST children are
+authored. Adding a dockable panel is one row in
+`prism_dock::PanelKind::ALL` (its `tag` field carries the shell
+content tag); the dock-panel block, the workspace walker, and every
+parsed skeleton inherit the new mapping with zero additional edits. The skeleton itself is three lines of meaningful
 content plus seven sibling overlay tags.
 
 ## Workflow

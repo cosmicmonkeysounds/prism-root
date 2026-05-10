@@ -1,17 +1,24 @@
 //! Prefabs — user-authored compound components.
 //!
-//! A `PrefabDef` captures a node subtree as a reusable template.
-//! `ExposedSlot`s pin inner node props as instance-editable fields.
-//! `PrefabComponent` wraps a def and implements `Component`, making
-//! prefab instances indistinguishable from built-in components in the
-//! registry and render walker.
+//! A [`PrefabDef`] captures a node subtree as a reusable template.
+//! Each [`ExposedSlot`] pins one inner-node prop as an instance-editable
+//! field; the slot key shows up in the property panel, the user types
+//! a value, and at render time that value is written into the template
+//! before the subtree is lowered through the unified `lower_ui` pipeline.
+//!
+//! [`PrefabComponent`] implements [`crate::block::Block`] (which gives
+//! it a `Component` impl via the blanket impl in `block.rs`) so prefab
+//! instances live in the [`crate::registry::ComponentRegistry`]
+//! alongside built-ins. There is no "prefab walker" — rendering goes
+//! through `Block::lower_ui` like every other registered block.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use prism_core::help::HelpEntry;
 
-use crate::component::{Component, ComponentId};
+use crate::block::Block;
+use crate::component::ComponentId;
 use crate::document::{Node, NodeId};
 use crate::registry::FieldSpec;
 use crate::signal::{common_signals, SignalDef};
@@ -50,7 +57,7 @@ impl PrefabComponent {
     }
 }
 
-impl Component for PrefabComponent {
+impl Block for PrefabComponent {
     fn id(&self) -> &ComponentId {
         &self.def.id
     }
@@ -81,9 +88,70 @@ impl Component for PrefabComponent {
     fn variants(&self) -> Vec<VariantAxis> {
         self.def.variants.clone()
     }
+
+    /// Materialise the prefab's `def.root` against the host node's
+    /// props (one write per [`ExposedSlot`]) and lower the result
+    /// through the unified `lower_ui` pipeline. Internal node ids are
+    /// prefixed with the host node's id so multiple prefab instances
+    /// on the same page don't collide.
+    fn lower_ui(
+        &self,
+        ctx: &crate::ui_lower::LowerCtx<'_>,
+        node: &Node,
+        _style: &crate::style::StyleProperties,
+    ) -> prism_ui_runtime::layout::Node {
+        // 1. Clone the template, namespacing every id under the host
+        //    node's id (so `card-title` becomes `nXX::card-title`).
+        let mut materialised = clone_with_id_prefix(&self.def.root, &node.id);
+
+        // 2. Apply each ExposedSlot: read `key` from the host props,
+        //    write into `target_node.props[target_prop]`. Skip slots
+        //    whose key isn't present — the inner template's authored
+        //    default stands.
+        for slot in &self.def.exposed {
+            let Some(value) = node.props.get(&slot.key) else {
+                continue;
+            };
+            let prefixed_target = format!("{}::{}", node.id, slot.target_node);
+            apply_prop_to_node(
+                &mut materialised,
+                &prefixed_target,
+                &slot.target_prop,
+                value.clone(),
+            );
+        }
+
+        // 3. Hand off to the runtime walker. This recurses into every
+        //    inner block via the host's existing `ComponentRegistry` —
+        //    no prefab-specific render path.
+        ctx.lower(&materialised)
+    }
 }
 
-#[allow(dead_code)]
+/// Deep-clone a node tree, prefixing every id with `{prefix}::`. The
+/// prefix isolates inner ids per host instance so two `<card/>`s on
+/// the same page produce two non-colliding subtrees.
+fn clone_with_id_prefix(node: &Node, prefix: &str) -> Node {
+    Node {
+        id: format!("{prefix}::{}", node.id),
+        component: node.component.clone(),
+        props: node.props.clone(),
+        children: node
+            .children
+            .iter()
+            .map(|c| clone_with_id_prefix(c, prefix))
+            .collect(),
+        style: node.style.clone(),
+        layout_mode: node.layout_mode.clone(),
+        transform: node.transform.clone(),
+        modifiers: node.modifiers.clone(),
+    }
+}
+
+/// Walk `node` and write `value` into `node.props[prop_key]` for the
+/// first node with a matching id. Used by [`PrefabComponent::lower_ui`]
+/// and by the document-level `materialize_prefab` flow that flattens
+/// a prefab into the document tree (see `starter::materialize_prefab`).
 pub(crate) fn apply_prop_to_node(node: &mut Node, target_id: &str, prop_key: &str, value: Value) {
     if node.id == target_id {
         if let Value::Object(ref mut map) = node.props {
@@ -103,6 +171,7 @@ pub(crate) fn apply_prop_to_node(node: &mut Node, target_id: &str, prop_key: &st
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::component::Component;
     use serde_json::json;
 
     fn hero_prefab() -> PrefabDef {
@@ -154,7 +223,7 @@ mod tests {
     #[test]
     fn prefab_component_schema_from_exposed_slots() {
         let comp = PrefabComponent::new(hero_prefab());
-        let schema = comp.schema();
+        let schema = Component::schema(&comp);
         assert_eq!(schema.len(), 2);
         assert_eq!(schema[0].key, "title");
         assert!(schema[0].required);
@@ -164,7 +233,7 @@ mod tests {
     #[test]
     fn prefab_component_id() {
         let comp = PrefabComponent::new(hero_prefab());
-        assert_eq!(comp.id(), "prefab:hero");
+        assert_eq!(Component::id(&comp), "prefab:hero");
     }
 
     #[test]
@@ -206,5 +275,25 @@ mod tests {
         let back: PrefabDef = serde_json::from_str(&json).unwrap();
         assert_eq!(back.id, "prefab:hero");
         assert_eq!(back.exposed.len(), 2);
+    }
+
+    #[test]
+    fn clone_with_prefix_namespaces_ids() {
+        let n = Node {
+            id: "outer".into(),
+            component: "container".into(),
+            props: json!({}),
+            children: vec![Node {
+                id: "inner".into(),
+                component: "text".into(),
+                props: json!({}),
+                children: vec![],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let cloned = clone_with_id_prefix(&n, "host");
+        assert_eq!(cloned.id, "host::outer");
+        assert_eq!(cloned.children[0].id, "host::inner");
     }
 }

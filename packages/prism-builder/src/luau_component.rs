@@ -480,9 +480,9 @@ fn parse_contribution(table: &Table) -> mlua::Result<WidgetContribution> {
         _ => WidgetCategory::Custom,
     };
 
-    let config_fields = parse_field_array(table, "schema").unwrap_or_default();
-    let signals = parse_signal_array(table, "signals").unwrap_or_default();
-    let variants = parse_variant_array(table, "variants").unwrap_or_default();
+    let config_fields = parse_spec_array::<FieldSpec>(table, "schema").unwrap_or_default();
+    let signals = parse_spec_array::<SignalSpec>(table, "signals").unwrap_or_default();
+    let variants = parse_spec_array::<VariantSpec>(table, "variants").unwrap_or_default();
 
     Ok(WidgetContribution {
         id,
@@ -508,10 +508,16 @@ fn parse_contribution(table: &Table) -> mlua::Result<WidgetContribution> {
     })
 }
 
-fn parse_field_array(table: &Table, key: &str) -> mlua::Result<Vec<FieldSpec>> {
+/// Read `table[key]` as a Lua array, convert each entry to JSON, and
+/// deserialize it as `T`. Entries that fail to deserialise are
+/// silently dropped (matches the legacy per-spec behaviour). Missing
+/// or non-table values yield `Vec::new()`.
+fn parse_spec_array<T: serde::de::DeserializeOwned>(
+    table: &Table,
+    key: &str,
+) -> mlua::Result<Vec<T>> {
     let val: LuaValue = table.get(key).unwrap_or(LuaValue::Nil);
     let arr = match val {
-        LuaValue::Nil => return Ok(Vec::new()),
         LuaValue::Table(t) => t,
         _ => return Ok(Vec::new()),
     };
@@ -520,45 +526,7 @@ fn parse_field_array(table: &Table, key: &str) -> mlua::Result<Vec<FieldSpec>> {
     for i in 1..=len {
         let v: LuaValue = arr.raw_get(i)?;
         let json = lua_value_to_json(&v)?;
-        if let Ok(spec) = serde_json::from_value::<FieldSpec>(json) {
-            out.push(spec);
-        }
-    }
-    Ok(out)
-}
-
-fn parse_signal_array(table: &Table, key: &str) -> mlua::Result<Vec<SignalSpec>> {
-    let val: LuaValue = table.get(key).unwrap_or(LuaValue::Nil);
-    let arr = match val {
-        LuaValue::Nil => return Ok(Vec::new()),
-        LuaValue::Table(t) => t,
-        _ => return Ok(Vec::new()),
-    };
-    let mut out = Vec::new();
-    let len = arr.raw_len();
-    for i in 1..=len {
-        let v: LuaValue = arr.raw_get(i)?;
-        let json = lua_value_to_json(&v)?;
-        if let Ok(spec) = serde_json::from_value::<SignalSpec>(json) {
-            out.push(spec);
-        }
-    }
-    Ok(out)
-}
-
-fn parse_variant_array(table: &Table, key: &str) -> mlua::Result<Vec<VariantSpec>> {
-    let val: LuaValue = table.get(key).unwrap_or(LuaValue::Nil);
-    let arr = match val {
-        LuaValue::Nil => return Ok(Vec::new()),
-        LuaValue::Table(t) => t,
-        _ => return Ok(Vec::new()),
-    };
-    let mut out = Vec::new();
-    let len = arr.raw_len();
-    for i in 1..=len {
-        let v: LuaValue = arr.raw_get(i)?;
-        let json = lua_value_to_json(&v)?;
-        if let Ok(spec) = serde_json::from_value::<VariantSpec>(json) {
+        if let Ok(spec) = serde_json::from_value::<T>(json) {
             out.push(spec);
         }
     }
@@ -648,15 +616,14 @@ impl Block for LuauComponent {
     }
 
     fn signals(&self) -> Vec<SignalDef> {
+        // Same `WidgetContribution` → `SignalDef` conversion the
+        // `CoreWidgetBlock` uses; shared in `core_widget` so the two
+        // call sites can't drift apart.
         let mapped: Vec<SignalDef> = self
             .contribution
             .signals
             .iter()
-            .map(|s| SignalDef {
-                name: s.name.clone(),
-                description: s.description.clone(),
-                payload: s.payload_fields.clone(),
-            })
+            .map(crate::core_widget::map_signal_spec)
             .collect();
         crate::signal::with_common_signals(mapped)
     }
@@ -665,19 +632,7 @@ impl Block for LuauComponent {
         self.contribution
             .variants
             .iter()
-            .map(|spec| VariantAxis {
-                key: spec.key.clone(),
-                label: spec.label.clone(),
-                options: spec
-                    .options
-                    .iter()
-                    .map(|o| crate::variant::VariantOption {
-                        value: o.value.clone(),
-                        label: o.label.clone(),
-                        overrides: o.overrides.clone(),
-                    })
-                    .collect(),
-            })
+            .map(crate::core_widget::map_variant_spec)
             .collect()
     }
 

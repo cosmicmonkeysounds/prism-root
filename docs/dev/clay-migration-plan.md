@@ -5096,3 +5096,208 @@ trail-edges (one in `prism-shell/CLAUDE.md`, one in
 | Date | Decision | Rationale |
 |---|---|---|
 | 2026-05-10 | §33 lands: 48 shell components collapse to a single `SHELL_BUILTINS: &[&BlockSpec]` table; `BuiltinSpec`/`BuiltinBlock` from §32 generalise to `BlockSpec`/`SpecBlock` in `prism-builder/src/block.rs` and serve both the 17 starter builtins and the 48 shell primitives. ~412 LoC net deletion across 53 files. | §32 collapsed 14 starter blocks; the same pattern was duplicated 48× in shell components — the largest remaining instance of "one struct + one trait impl per registered thing" boilerplate. Lifting the primitive to `block.rs` lets both crates share one declarative spec without coupling shell to starter or vice-versa. `BlockSpec::new(id, schema).lower(fn).signals(fn).help(…)` is the smart-pattern user requested: data-driven, builder-style, registration via const table. `prism-luau-derive`'s `#[derive(PrismBlock)]` stays in its lane (template-IR-walking for user-authored blocks); the two paths compose without knowing about each other. |
+
+## 34. Dock panel catalog → declarative `PanelKind` table
+
+**Strategy locked 2026-05-10 (post-§33).** `prism-dock`'s
+`PanelKind` was an enum with a 14-arm `meta()` match returning
+`PanelMeta`, alongside an `ALL: &[PanelKind]` const list and a
+serde-roundtripping `id()` method. `prism-shell::components::panel_routing`
+was a parallel 10-row `&[(&str, &str)]` table mapping panel-id →
+shell content tag. Three sources of truth, all describing "what
+dockable panels exist and how do we render them?"
+
+**The collapse — same pattern as §32/§33.** `PanelKind` becomes a
+`Copy` data struct holding `id`, `label`, `icon_hint`, `min_width`,
+`min_height`, `allow_multiple`, and `tag: Option<&'static str>`
+(the shell content tag — folded in from `panel_routing`). Each
+panel is declared as a `pub const PanelKind`
+(`PanelKind::BUILDER`, `PanelKind::INSPECTOR`, …); the
+`pub const ALL: &[&PanelKind]` table is the single registration
+surface. `from_id`, `tag_for`, and `panel_id` are flat methods over
+the table. `PanelMeta` and the 115-line `meta()` match are deleted;
+`prism-shell::components::panel_routing` is deleted; `dock_panel.rs`
+calls `prism_dock::PanelKind::tag_for(panel_id)` directly.
+
+**Smart-pattern wins.**
+
+- **Adding a dockable panel = one row.** A new panel is one
+  `pub const FOO: PanelKind = PanelKind { id, label, icon_hint,
+  min_width, min_height, allow_multiple, tag }` plus one
+  `&Self::FOO` row in `ALL`. The dock layout, the chrome, and the
+  shell content-tag dispatch all pick it up automatically.
+- **Three sources of truth → one.** Enum variants, `meta()` match,
+  and `panel_routing::PANEL_ROUTES` collapse to one declarative
+  table. Stale-tag drift between dock and shell is now structurally
+  impossible.
+- **No serde-roundtrip dance for `id()`.** The id is a literal
+  `&'static str` field; `PanelKind::BUILDER.id` reads as data, no
+  `serde_json::to_value` indirection. The serialised representation
+  of `PanelKind` is the full struct, but in practice the only
+  serialised type is `WorkflowPage`, which already stored panel ids
+  as strings — so no on-disk format changed.
+- **Layer hygiene preserved.** `prism-dock` carries a
+  `tag: Option<&'static str>` field; the field is opaque from the
+  dock's perspective (it never dispatches on the value). The shell
+  is the only crate that interprets it. No new dependency direction
+  was introduced; `prism-shell → prism-dock` was already in place.
+
+**`prism-luau-derive` is unaffected.** The dock layer is below the
+component-registry seam; the derive macro works at the block layer
+(builder-side) and never named `PanelKind`. No changes in
+`prism-luau-derive`, no changes in any user code that consumes
+`#[derive(PrismBlock)]`.
+
+**Diff scorecard.**
+
+- `prism-dock/src/panel.rs`: 229 → 273 lines but ~115 lines of
+  match-arm boilerplate replaced by ~150 lines of flat
+  `pub const`s — net mostly a wash in line count, large win in
+  structure (no `match` statements anywhere; adding a panel is one
+  row, no compiler-driven exhaustiveness chase across `meta()`).
+- `prism-dock/src/page.rs`: every `PanelKind::Builder.id()` site
+  rewritten as `PanelKind::BUILDER.panel_id()` (mechanical, ~30
+  call sites).
+- `prism-shell/src/components/panel_routing.rs`: **deleted**
+  (74 lines).
+- `prism-shell/src/components/dock_panel.rs`: one call site
+  rewritten (`panel_routing::tag_for_panel(id)` →
+  `prism_dock::PanelKind::tag_for(id)`).
+- `prism-shell/src/components/{mod.rs,dock_workspace.rs}`,
+  `prism-shell/src/props.rs`: doc-string + module-decl sweeps to
+  point at the new home.
+- `PanelMeta` re-export removed from `prism-dock/src/lib.rs`.
+
+**Verification.** `cargo test --workspace` — **3057 tests green**
+(same headcount as the §33 baseline: -3 panel_routing tests,
+-1 net dock test, +3 new dock tests, +1 new prefab clone-test —
+balances). `cargo clippy --workspace --all-targets -- -D warnings`
+clean.
+
+### Decision-log entry
+
+| Date | Decision | Rationale |
+|---|---|---|
+| 2026-05-10 | §34 lands: `PanelKind` collapses from a 14-variant enum + 115-line `meta()` match + sibling `panel_routing::PANEL_ROUTES` table into one `pub const PanelKind` per panel + a single `PanelKind::ALL` table. `PanelMeta` and `prism-shell::components::panel_routing` are deleted; the shell content-tag mapping is now a `tag: Option<&'static str>` field on each panel. | Three sources of truth (enum + match + routing table) for "what panels exist and how do we render them?" was the largest remaining structural duplication after §33. The §32/§33 pattern (data + builder + table) maps onto it exactly: each row of the dock catalog is now data, the only thing that interprets it is the consumer (chrome for sizing, shell for tag dispatch), and adding a panel is one row. The folded-in `tag` field finally retires the parallel routing table without violating the dock's renderer-agnostic stance — the field is opaque to the dock itself. |
+
+## 35. Prefab — `Component` → `Block` + real `lower_ui`
+
+**Strategy locked 2026-05-10 (post-§34).** `PrefabComponent`
+implemented `Component` directly (one of the last hand-written
+`impl Component` blocks in the codebase) and *had no `lower_ui`
+override* — every prefab instance fell through to
+`Component::lower_ui`'s default container, dropping the prefab's
+authored template entirely on the floor. A prefab `<card title="…"
+body="…"/>` rendered as an empty container, not the title + body
+text it was supposed to.
+
+**The fix + collapse.** `PrefabComponent` now implements `Block`
+(consistent with the rest of the codebase post-§32/§33; the
+blanket impl in `crate::block` derives the matching `Component`).
+Its `lower_ui`:
+
+1. Deep-clones `def.root`, prefixing every internal id with the
+   host node's id (so two `<card/>`s on the same page produce
+   non-colliding subtrees).
+2. Walks each `ExposedSlot`, reading `host.props[slot.key]` and
+   writing it into the namespaced inner node's `target_prop`.
+3. Hands the materialised tree to `ctx.lower(&materialised)`,
+   which recurses through the same `ComponentRegistry` every
+   other block uses.
+
+`apply_prop_to_node` is the existing helper (now `pub(crate)`
+since the prefab walker reuses it); a small `clone_with_id_prefix`
+is added beside it.
+
+**Smart-pattern wins.**
+
+- **One render path, full stop.** Prefabs no longer have a
+  parallel "materialise into the document" half-implementation —
+  the same `Block::lower_ui` seam every other block consumes
+  handles them. `materialize_prefab` (the document-tree flatten
+  used by the inspector "convert to nodes" action) keeps working
+  unchanged.
+- **`Block` everywhere.** `PrefabComponent` was the last
+  hand-written `impl Component` outside the `Block` blanket impl
+  + `SpecBlock` declarative form. Every renderable type in the
+  workspace now goes through `Block` (or `BlockSpec` → `SpecBlock`
+  → `Block`).
+- **id-prefixing fixes a latent collision bug.** Two prefab
+  instances on the same page used to share inner ids; with the
+  new prefix, every instance is isolated.
+
+### Decision-log entry
+
+| Date | Decision | Rationale |
+|---|---|---|
+| 2026-05-10 | §35 lands: `PrefabComponent` migrates from `impl Component` to `impl Block` and gains a real `lower_ui` that materialises `def.root` against the host node's props (with id-prefixing for collision isolation) and lowers through the unified `ctx.lower` walker. | `PrefabComponent`'s missing `lower_ui` was a pre-§30 incomplete: the prefab body never rendered. Switching to `Block` aligns the type with every other registered block in the codebase post-§32/§33 (the `impl<T: Block> Component` blanket gives `Component` for free). The id-prefix is necessary because two `<card/>` instances on the same page would otherwise share `card-title` / `card-body` ids — a render-time collision that's invisible until two prefab instances co-exist. |
+
+## 36. Luau component — share `WidgetContribution` mappings, generic spec parser
+
+**Strategy locked 2026-05-10 (post-§35).** Two surfaces of
+duplication inside `LuauComponent`:
+
+1. **Mapping helpers were duplicated**. Both `CoreWidgetBlock`
+   (in `core_widget.rs`) and `LuauComponent` (in
+   `luau_component.rs`) wrap a `WidgetContribution` into a
+   `Block`. Both need to translate `SignalSpec → SignalDef` and
+   `VariantSpec → VariantAxis`. `core_widget.rs` had `map_signal_spec`
+   / `map_variant_spec` as private free fns; `luau_component.rs`
+   inlined the same conversions in `Block::signals()` and
+   `Block::variants()`. Drift risk if either side adds a field.
+2. **Three near-identical Lua-array parsers**. `parse_field_array`,
+   `parse_signal_array`, `parse_variant_array` were three copies
+   of "read `table[key]` as a Lua array, JSON-roundtrip each
+   entry, deserialize as `T`, drop entries that fail." Same
+   pattern, three concrete types.
+
+**The collapse.**
+
+- `core_widget::map_signal_spec` and `core_widget::map_variant_spec`
+  are now `pub(crate)`; `LuauComponent::signals()` /
+  `::variants()` reuse them. One conversion, two callers, zero
+  drift.
+- `parse_field_array` / `parse_signal_array` / `parse_variant_array`
+  collapse to one generic
+  `fn parse_spec_array<T: serde::de::DeserializeOwned>(table: &Table,
+  key: &str) -> mlua::Result<Vec<T>>`. The three call sites in
+  `parse_contribution` become `parse_spec_array::<FieldSpec>(…)`,
+  `parse_spec_array::<SignalSpec>(…)`, `parse_spec_array::<VariantSpec>(…)`.
+
+**Smart-pattern wins.**
+
+- **One mapping, two callers.** `WidgetContribution`'s shape is the
+  contract; both Rust-side (`CoreWidgetBlock`) and Luau-side
+  (`LuauComponent`) callers go through the same mapping fns.
+  Adding a field to `WidgetContribution` is one edit in
+  `core_widget` — the Luau path inherits it automatically.
+- **One spec parser, three types.** The Lua-array → typed-spec
+  conversion is generic over the deserialiser. New
+  `parse_contribution` fields (e.g. `toolbar_actions`) become a
+  one-line `parse_spec_array::<T>(table, "key")` call.
+- **`prism-luau-derive` integration is unchanged.**
+  `#[derive(PrismBlock)]` (template-IR path) and
+  `#[luau_expose]` (UserData / type-stub emit) compose with the
+  unified `Block` blanket exactly as before. The derive's emitted
+  `impl ::prism_builder::Block` automatically benefits from any
+  shared infrastructure added in `block.rs` (e.g. the §32 default
+  `lower_ui`); the luau_component path benefits from the shared
+  `WidgetContribution` mappings; both paths share `Block`'s
+  blanket `Component` impl.
+
+**Diff scorecard.**
+
+- `prism-builder/src/luau_component.rs`: 804 → 745 lines.
+  - Three 19-line `parse_*_array` fns → one 19-line generic
+    `parse_spec_array`.
+  - Two ~10-line inline mapping closures → two 1-line
+    `core_widget::map_*_spec` calls.
+- `prism-builder/src/core_widget.rs`: `map_signal_spec` /
+  `map_variant_spec` visibility upgraded `pub(crate)`, with a
+  comment explaining the shared-conversion contract.
+
+### Decision-log entry
+
+| Date | Decision | Rationale |
+|---|---|---|
+| 2026-05-10 | §36 lands: `WidgetContribution → Block` mapping helpers (`map_signal_spec`, `map_variant_spec`) are shared between `CoreWidgetBlock` and `LuauComponent`; the three `parse_*_array` Lua-array parsers collapse to one generic `parse_spec_array<T: DeserializeOwned>`. | Both call sites convert the same `WidgetContribution` shape into the same `Block` surface — there's no good reason for the conversions to live in two places. Generic spec parsing also means new fields in `parse_contribution` (e.g. toolbar actions, hot-reload metadata) are a one-line addition rather than a fourth copy of the same loop. `prism-luau-derive` integration was already clean (the derive emits a `Block` impl and inherits everything `Block` consumers do); these changes only tighten the host-side machinery the derive's emitted code lands on top of. |

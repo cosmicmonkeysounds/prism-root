@@ -20,17 +20,17 @@ impl WorkflowPage {
         let dock = DockState::new(DockNode::hsplit(
             0.18,
             DockNode::tabs(vec![
-                PanelKind::ComponentPalette.id(),
-                PanelKind::Inspector.id(),
-                PanelKind::Explorer.id(),
+                PanelKind::COMPONENT_PALETTE.panel_id(),
+                PanelKind::INSPECTOR.panel_id(),
+                PanelKind::EXPLORER.panel_id(),
             ]),
             DockNode::hsplit(
                 0.72,
-                DockNode::tab(PanelKind::Builder.id()),
+                DockNode::tab(PanelKind::BUILDER.panel_id()),
                 DockNode::tabs(vec![
-                    PanelKind::Properties.id(),
-                    PanelKind::Signals.id(),
-                    PanelKind::CodeEditor.id(),
+                    PanelKind::PROPERTIES.panel_id(),
+                    PanelKind::SIGNALS.panel_id(),
+                    PanelKind::CODE_EDITOR.panel_id(),
                 ]),
             ),
         ));
@@ -50,14 +50,14 @@ impl WorkflowPage {
             0.7,
             DockNode::hsplit(
                 0.15,
-                DockNode::tab(PanelKind::ComponentPalette.id()),
+                DockNode::tab(PanelKind::COMPONENT_PALETTE.panel_id()),
                 DockNode::hsplit(
                     0.75,
-                    DockNode::tab(PanelKind::Builder.id()),
-                    DockNode::tab(PanelKind::Inspector.id()),
+                    DockNode::tab(PanelKind::BUILDER.panel_id()),
+                    DockNode::tab(PanelKind::INSPECTOR.panel_id()),
                 ),
             ),
-            DockNode::tab(PanelKind::Properties.id()),
+            DockNode::tab(PanelKind::PROPERTIES.panel_id()),
         ));
         Self {
             id: "design".into(),
@@ -71,11 +71,11 @@ impl WorkflowPage {
         // 2-column: Explorer | CodeEditor
         let dock = DockState::new(DockNode::hsplit(
             0.22,
-            DockNode::tab(PanelKind::Explorer.id()),
+            DockNode::tab(PanelKind::EXPLORER.panel_id()),
             DockNode::vsplit(
                 0.75,
-                DockNode::tab(PanelKind::CodeEditor.id()),
-                DockNode::tab(PanelKind::Console.id()),
+                DockNode::tab(PanelKind::CODE_EDITOR.panel_id()),
+                DockNode::tab(PanelKind::CONSOLE.panel_id()),
             ),
         ));
         Self {
@@ -97,16 +97,16 @@ impl WorkflowPage {
                 0.5,
                 DockNode::hsplit(
                     0.65,
-                    DockNode::tab(PanelKind::Builder.id()),
-                    DockNode::tab(PanelKind::Inspector.id()),
+                    DockNode::tab(PanelKind::BUILDER.panel_id()),
+                    DockNode::tab(PanelKind::INSPECTOR.panel_id()),
                 ),
                 DockNode::hsplit(
                     0.65,
-                    DockNode::tab(PanelKind::NodeGraph.id()),
-                    DockNode::tab(PanelKind::Properties.id()),
+                    DockNode::tab(PanelKind::NODE_GRAPH.panel_id()),
+                    DockNode::tab(PanelKind::PROPERTIES.panel_id()),
                 ),
             ),
-            DockNode::tab(PanelKind::Timeline.id()),
+            DockNode::tab(PanelKind::TIMELINE.panel_id()),
         ));
         Self {
             id: "fusion".into(),
@@ -117,7 +117,7 @@ impl WorkflowPage {
     }
 
     pub fn preview() -> Self {
-        let dock = DockState::new(DockNode::tab(PanelKind::Builder.id()));
+        let dock = DockState::new(DockNode::tab(PanelKind::BUILDER.panel_id()));
         Self {
             id: "preview".into(),
             label: "Preview".into(),
@@ -129,8 +129,8 @@ impl WorkflowPage {
     pub fn navigation() -> Self {
         let dock = DockState::new(DockNode::hsplit(
             0.4,
-            DockNode::tab(PanelKind::Navigation.id()),
-            DockNode::tab(PanelKind::Builder.id()),
+            DockNode::tab(PanelKind::NAVIGATION.panel_id()),
+            DockNode::tab(PanelKind::BUILDER.panel_id()),
         ));
         Self {
             id: "navigation".into(),
@@ -143,8 +143,8 @@ impl WorkflowPage {
     pub fn data() -> Self {
         let dock = DockState::new(DockNode::hsplit(
             0.65,
-            DockNode::tab(PanelKind::SchemaDesigner.id()),
-            DockNode::tab(PanelKind::Properties.id()),
+            DockNode::tab(PanelKind::SCHEMA_DESIGNER.panel_id()),
+            DockNode::tab(PanelKind::PROPERTIES.panel_id()),
         ));
         Self {
             id: "data".into(),

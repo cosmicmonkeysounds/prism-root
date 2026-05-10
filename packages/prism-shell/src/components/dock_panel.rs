@@ -65,16 +65,18 @@ fn dock_panel_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -
     // Body: the inner subtree from `<shell.dock-panel>…</shell.dock-panel>`,
     // or the builder-Node children when constructed by the host. When
     // neither is authored, fall through to the `panel-id` routing
-    // table — `shell.dock-panel panel-id="builder"` with no body
-    // dispatches to `shell.builder-canvas` automatically. Adding a
-    // new dockable panel is one row in `panel_routing::PANEL_ROUTES`
-    // (§16 panel-by-panel discipline extended to composition).
+    // table on `prism_dock::PanelKind` — `shell.dock-panel
+    // panel-id="builder"` with no body dispatches to
+    // `shell.builder-canvas` automatically. Adding a new dockable
+    // panel is one row in `PanelKind::ALL` (its `tag` field carries
+    // the shell content tag); §16 panel-by-panel discipline extended
+    // to composition.
     let body_children = if let Some(slice) = ctx.host_children() {
         slice.to_vec()
     } else if !node.children.is_empty() {
         ctx.lower_children(&node.children)
     } else if !panel_id.is_empty() {
-        crate::components::panel_routing::tag_for_panel(panel_id)
+        prism_dock::PanelKind::tag_for(panel_id)
             .and_then(|tag| {
                 ctx.lower_as(tag, format!("{}::content", node.id), serde_json::json!({}))
             })
@@ -169,10 +171,10 @@ mod tests {
     fn empty_body_dispatches_to_routed_content_tag() {
         // §16 panel-routing: a `<shell.dock-panel panel-id="builder"/>`
         // with no authored body and no `host_children` falls through
-        // to `panel_routing::tag_for_panel("builder")` and embeds the
-        // matching content tag (`shell.builder-canvas`). Adding a new
-        // panel is one row in the routing table — never a router-arm
-        // edit in this block.
+        // to `PanelKind::tag_for("builder")` and embeds the matching
+        // content tag (`shell.builder-canvas`). Adding a new panel
+        // is one row in `PanelKind::ALL` — never a router-arm edit
+        // in this block.
         let ui = lower(json!({ "panel-id": "builder" }), vec![]);
         let UiNode::Container { children, .. } = ui else {
             panic!()

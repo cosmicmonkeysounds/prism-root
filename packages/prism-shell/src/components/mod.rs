@@ -41,7 +41,6 @@ pub mod nav_button;
 pub mod nav_graph;
 pub mod nav_page_list;
 pub mod nav_page_row;
-pub mod panel_routing;
 pub mod properties_panel;
 pub mod registry;
 pub mod resize_handle;

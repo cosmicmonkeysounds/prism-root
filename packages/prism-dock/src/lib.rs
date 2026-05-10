@@ -32,6 +32,6 @@ pub use layout::{
 };
 pub use node::{Axis, DockNode, MoveTarget, NodeAddress, SplitPosition};
 pub use page::WorkflowPage;
-pub use panel::{PanelId, PanelKind, PanelMeta};
+pub use panel::{PanelId, PanelKind};
 pub use state::DockState;
 pub use workspace::DockWorkspace;

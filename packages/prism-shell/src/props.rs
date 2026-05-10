@@ -148,7 +148,7 @@ fn register_builtin_bindings(reg: &mut ShellPropBindings) {
         .workflow_page_bar_props());
     // Dock workspace — recursive renderer for the active dock tree.
     // One binding, one slot method, one block — adding a panel is
-    // one row in `panel_routing::PANEL_ROUTES`, never a binding edit.
+    // one row in `prism_dock::PanelKind::ALL`, never a binding edit.
     bind_slot!(reg, "shell.dock-workspace", |s: &AppState| s
         .workspace
         .dock_workspace_props());

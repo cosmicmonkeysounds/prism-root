@@ -7,11 +7,11 @@
 //!   ratio (`first` gets `ratio`, `second` gets `1 - ratio`).
 //! - `TabGroup { tabs, active }` → a `<shell.dock-panel>` with
 //!   `panel-id` set to the active tab id; the dock-panel routes
-//!   to the matching content tag via [`super::panel_routing`].
+//!   to the matching content tag via [`prism_dock::PanelKind::tag`].
 //!
 //! Smart pattern: pure recursion over a serialisable tree, no
 //! per-panel knowledge, no router-arm match. Adding a new dockable
-//! panel is one row in [`super::panel_routing::PANEL_ROUTES`];
+//! panel is one row in [`prism_dock::PanelKind::ALL`];
 //! adding a new tree shape (a third dock variant) is one match arm
 //! here. The "what visual lives in this leaf?" question is
 //! answered exactly once, in the routing table.

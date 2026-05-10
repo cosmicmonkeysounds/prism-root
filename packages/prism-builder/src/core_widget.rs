@@ -92,8 +92,13 @@ impl Block for CoreWidgetBlock {
 }
 
 // ── Mapping helpers ─────────────────────────────────────────────
+//
+// `pub(crate)` so `LuauComponent` can reuse them — both wrap a
+// `WidgetContribution` into a `Block`, both need the same field
+// shape mappings, and the conversion shouldn't drift across the two
+// callers.
 
-fn map_signal_spec(spec: &SignalSpec) -> SignalDef {
+pub(crate) fn map_signal_spec(spec: &SignalSpec) -> SignalDef {
     SignalDef {
         name: spec.name.clone(),
         description: spec.description.clone(),
@@ -101,7 +106,7 @@ fn map_signal_spec(spec: &SignalSpec) -> SignalDef {
     }
 }
 
-fn map_variant_spec(spec: &VariantSpec) -> VariantAxis {
+pub(crate) fn map_variant_spec(spec: &VariantSpec) -> VariantAxis {
     VariantAxis {
         key: spec.key.clone(),
         label: spec.label.clone(),
