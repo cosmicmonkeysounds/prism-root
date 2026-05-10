@@ -4939,3 +4939,67 @@ green. 255 prism-shell lib tests green. 26 prism-relay lib tests +
 | Date | Decision | Rationale |
 |---|---|---|
 | 2026-05-10 | §31 lands: `ui_runtime` collapses to four entry points (`document_to_ui_tree` / `render_commands` / `lower_html` / `lower_semantic_html`), each taking `Option<&ComponentRegistry>`. Eight functions retired; the `_with_registry` suffix is gone. Adjacent dead code (`RenderContext`, `merge_props`) deleted in the same wave. Relay SSR caller updated; doc references collapsed. | The migration plan called for a single render path post-cutover; `ui_runtime` carried the parallel-build duplication forward indefinitely. The collapse is mechanical (four function pairs → four functions, one `Option`) and the fan-out is small (one external caller). The dead-code removal closes the last `#[allow(dead_code)]` and orphaned-public-type from the Slint era — `RenderContext` had zero consumers (it was a tokens-carrier for ad-hoc host code that never materialised); `merge_props` belonged to the deleted Slint emit path. Together with §30, the builder's render surface is now: one trait method (`Component::lower_ui`), one walker per IR (`lower_template` for `TemplateNode`), one per-target entry point (`lower_*` for runtime / HTML / semantic-HTML). |
+
+## 32. Starter catalog — declarative `BuiltinSpec` table
+
+**Strategy locked 2026-05-10 (post-§31).** `prism-builder/src/starter.rs`
+held 14 hand-written `pub struct XxxBlock { id: ComponentId }` types,
+each with a `Block` impl that always followed the same shape:
+`id()` → `&self.id`, `schema()` → `schemas::xxx()`, `help_entry()`
+→ `Some(HelpEntry::new(key, title, desc))`, `signals()` →
+`with_common_signals(vec![...])`, optional `variants()` →
+`variant_presets::xxx()`, and a custom `lower_ui()`. ~700 LoC of
+boilerplate — every per-method override was the only line in the
+function — wrapping ~400 LoC of *actual* per-block lowering logic.
+
+**The collapse.** One `BuiltinBlock` type, one `&'static BuiltinSpec`,
+one `BUILTINS: &[&BuiltinSpec]` const table. Each spec carries
+`(id, schema_fn, help, signals_fn, variants_fn, lower_fn)` with
+const-fn builder methods (`.help()` / `.signals()` /
+`.variants()`) for the optional fields; `signals` defaults to the
+common-signals helper, `variants` to `vec![]`. The `lower` fn is a
+free function — the same body that used to live inside `impl Block
+for XxxBlock`. `register_builtins` is a one-line loop over
+`BUILTINS` plus the two non-builtin registrations (`card` prefab,
+`facet` component).
+
+**Smart-pattern wins.**
+
+- **Adding a builtin = one const + one row.** The hand-written
+  trait impl, the per-block struct, the `pub struct` declaration,
+  the `register_builtins` macro arm, the `id` field plumbing — all
+  collapse into one `const SPEC = BuiltinSpec::new(...).help(...).signals(...)`
+  literal and one `&SPEC` pushed onto the table.
+- **No type proliferation.** 14 `pub struct XxxBlock` types
+  vanish. Tests that constructed them by literal struct (`TextBlock
+  { id: "text".into() }`) now ask the registry for the dispatched
+  block, which is the only call shape that matters at runtime.
+- **`prism-luau-derive` stays orthogonal.** `#[derive(PrismBlock)]`
+  remains the path for *user-authored* blocks (template-based,
+  walks `lower_template`). `BuiltinSpec` is the path for *built-in*
+  blocks where bespoke `lower_ui` outperforms the IR walker. Both
+  paths produce `Block` impls and feed the same registry; neither
+  knows about the other.
+- **`level_font_weight` deletion.** The last
+  `#[allow(dead_code)]` helper in starter.rs (Slint-era artefact)
+  vanishes alongside the trait-impl boilerplate.
+
+**Adjacent doc cleanup (same wave).** Stale Slint references in
+the root `CLAUDE.md` ("mid-way through the Slint migration"), the
+`prism-builder` / `prism-shell` / `prism-studio` Cargo.toml
+descriptions, and the workspace `Cargo.toml` dep comments are
+rewritten to reflect the post-cutover `prism-ui-runtime` stack.
+The `slint-migration-plan.md` reference in `CLAUDE.md` is repointed
+at this plan.
+
+**Verification.** 338 prism-builder lib tests green (6 starter
+tests rewritten to query the registry instead of constructing
+per-block structs; 1 new `builtin_block_factory_returns_known_ids`
+test added). Full workspace test suite green. `cargo clippy
+--workspace --all-targets -- -D warnings` clean.
+
+### Decision-log entry
+
+| Date | Decision | Rationale |
+|---|---|---|
+| 2026-05-10 | §32 lands: starter catalog collapses to `BUILTINS: &[&BuiltinSpec]`. 14 `pub struct XxxBlock` + `impl Block` pairs deleted (~700 LoC of boilerplate gone); `BuiltinBlock` + `BuiltinSpec` + const builder API land in their place. Stale Slint references in root `CLAUDE.md` + Cargo.toml descriptions updated to match the post-cutover stack. | The 14 starter blocks were the largest remaining instance of "one struct + one trait impl per registered thing" boilerplate in the workspace. The new pattern matches the user's "DI/Builders/registration/Declarative" rubric exactly: each block is *data* (a `BuiltinSpec`), the type that interprets the data (`BuiltinBlock`) exists once, and registration is a const table. `prism-luau-derive`'s `#[derive(PrismBlock)]` stays in its lane (user-authored template-based blocks); the two paths compose without knowing about each other. The Slint doc-string carryover was the last surface-level lie about what the codebase actually is. |

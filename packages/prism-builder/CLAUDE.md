@@ -43,7 +43,13 @@ From `src/lib.rs`:
 - `starter::register_builtins(&mut ComponentRegistry)` — seeds the
   17-block default catalog (`text`, `image`, `container`, `form`,
   `input`, `button`, `card`, `code`, `divider`, `spacer`, `columns`,
-  `list`, `table`, `tabs`, `accordion`, `facet`, `graph-view`).
+  `list`, `table`, `tabs`, `accordion`, `facet`, `graph-view`). The
+  15 `Block` rows go through one `BuiltinBlock` type driven by a
+  `BUILTINS: &[&BuiltinSpec]` const table — no per-block trait impl;
+  add a builtin = one `const SPEC` + one row.
+- `starter::BuiltinSpec`, `starter::BuiltinBlock`,
+  `starter::builtin_block(id) -> Option<Arc<BuiltinBlock>>` — the
+  declarative spec primitive + factory for one-off registration.
 
 ### SSR
 The relay calls
@@ -230,23 +236,35 @@ Modules in `src/` (excluding `lib.rs`):
 
 ## Adding a new block
 
-Use the unified `Block` trait (`src/block.rs`) — one impl, one
-render method (`lower_ui`), one registration call.
+For a built-in block, the path is **declarative — one `BuiltinSpec`
++ one row in `BUILTINS`**. No trait impl, no struct.
 
-1. Add a struct implementing `Block` in `src/starter.rs` (or a new
-   module). Override only the methods that need bespoke behaviour;
-   `lower_ui` defaults to a generic container, `signals` to the 12
-   common signals.
-2. Implement `schema()` using `FieldSpec` builders.
-3. Optionally implement `signals()` / `variants()` /
-   `toolbar_actions()` / `help_entry()`.
-4. Add a row to `register_builtins` (`reg!("id", BlockType)`) — one
-   line per builtin.
+1. Write the `lower_ui` body as a free function
+   `fn my_lower(ctx: &LowerCtx, node: &Node, style: &StyleProperties)
+   -> ui::Node` in `src/starter.rs`. (Skip if the default container
+   suffices.)
+2. Optionally write `fn my_signals() -> Vec<SignalDef>` if the block
+   has signals beyond the 12 common ones.
+3. Declare the spec:
+   ```rust
+   const MY_BLOCK: BuiltinSpec = BuiltinSpec::new("my-block", schemas::my_block, my_lower)
+       .help("builder.components.my-block", "My Block", "…")
+       .signals(my_signals)
+       .variants(variant_presets::my_block);
+   ```
+4. Append `&MY_BLOCK` to the `BUILTINS` table.
 5. Add unit tests covering `lower_ui`.
+
+For a one-off `Component` (not a built-in catalog member), implement
+`Block` directly — the blanket impl in `src/block.rs` makes it a
+`Component`, `register_block` handles registration.
 
 Core-engine widgets go through `CoreWidgetBlock` — a single `Block`
 impl wrapping a `WidgetContribution`, registered en masse by
-`register_core_widgets`.
+`register_core_widgets`. Author-defined blocks via `prism-luau-derive`
+go through `#[derive(PrismBlock)]` in user code; the derive emits a
+`Block` impl that walks the user's `template()` through
+`lower_template`.
 
 ## Dependencies
 - `prism-core` — `design_tokens`, `language::codegen::SourceBuilder`,

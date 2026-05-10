@@ -3,7 +3,7 @@ name = "prism-studio"
 version = "0.1.0"
 edition = "2021"
 license.workspace = true
-description = "Prism Studio — the packaged desktop shell. Thin Slint host that owns the daemon sidecar; Slint owns windowing, layout, and rendering. Packaging goes through cargo-packager in Phase 5."
+description = "Prism Studio — the packaged desktop shell. Thin host that owns the daemon sidecar; prism-ui-runtime owns windowing, layout, and rendering via prism-shell's `Shell::run()`. Packaging goes through cargo-packager."
 
 [[bin]]
 name = "prism-studio"

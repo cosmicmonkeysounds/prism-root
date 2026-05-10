@@ -3,7 +3,7 @@ name = "prism-builder"
 version = "0.1.0"
 edition = "2021"
 license.workspace = true
-description = "Prism page builder — Slint-native replacement for Puck. Owns the component registry, drag/drop, selection, property panel, and serialization. Phase 3 target of the Slint migration plan."
+description = "Prism page builder — the post-Slint replacement for Puck. Owns the component registry, document tree, Taffy-backed layout engine, and the unified `lower_ui` render pipeline that drives both shell rendering (via prism-ui-runtime) and relay SSR (via lower_semantic_html)."
 
 [lib]
 name = "prism_builder"
@@ -29,11 +29,10 @@ glam = { workspace = true }
 taffy = { workspace = true }
 prism-core = { path = "../prism-core" }
 prism-luau-derive = { workspace = true }
-# Phase 1 of the Clay migration (see docs/dev/clay-migration-plan.md):
-# the builder owns the translation from its typed `BuilderDocument`
+# The builder owns the translation from its typed `BuilderDocument`
 # tree into `prism_ui_runtime::layout::Node`. Direction is GPL → MIT/
-# Apache — the runtime crate stays Slint-/builder-free as planned for
-# the post-cutover world; only the builder side knows both vocabularies.
+# Apache — the runtime crate stays builder-free; only the builder side
+# knows both vocabularies (see docs/dev/clay-migration-plan.md).
 prism-ui-runtime = { path = "../prism-ui-runtime", default-features = false, features = ["html"] }
 
 # Optional — only materialised when the `luau` feature is on (see above).

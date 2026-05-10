@@ -10,19 +10,17 @@ members = [
     "packages/prism-relay",
     "packages/prism-dock",
     "packages/prism-luau-derive",
-    # Slint→Taffy migration (ADR-008, with the 2026-05-04 Clay→Taffy
-    # pivot — see the top of `docs/dev/clay-migration-plan.md`). New
-    # crates ship under `MIT OR Apache-2.0` to mark the licence
-    # boundary; existing crates stay on GPL until Phase 5 cutover.
+    # Post-Slint render + DSL stack (see
+    # `docs/dev/clay-migration-plan.md`). Both crates ship under
+    # `MIT OR Apache-2.0`; existing crates stay on GPL.
     "packages/prism-ui-runtime",
     "packages/prism-ui-build",
 ]
 
 # Shared package metadata — every crate opts in to `license` via
-# `license.workspace = true`. The Prism codebase is GPL-3.0-or-later;
-# that choice is load-bearing for the Slint dependency, which ships
-# under GPLv3 + optional commercial. See the decision log in
-# `docs/dev/slint-migration-plan.md` (2026-04-15 Clay → Slint pivot).
+# `license.workspace = true`. The Prism codebase is GPL-3.0-or-later
+# (inherited from the Loro CRDT we build on). See
+# `docs/dev/clay-migration-plan.md` for the full migration history.
 [workspace.package]
 license = "GPL-3.0-or-later"
 
@@ -43,9 +41,8 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-ut
 
 # Filesystem watcher. `prism-daemon::watcher_module` and `prism-cli::watch`
 # both ride on this crate — the former exposes it as an IPC command, the
-# latter drives the Phase 1 notify-driven dev-server scaffold (§11 of
-# `docs/dev/slint-migration-plan.md`). Single workspace pin so daemon +
-# CLI can't drift.
+# latter drives the notify-driven dev-server scaffold. Single
+# workspace pin so daemon + CLI can't drift.
 notify = "7"
 
 # HTTP stack for `prism-relay` (Sovereign Portal SSR) and `prism-daemon`'s
@@ -63,24 +60,20 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["s
 
 # UI toolkit — `prism-ui-runtime` owns the declarative UI language
 # (`.prism-ui` files) and the render + windowing stack via winit +
-# femtovg native and wasm32-unknown-unknown + webgl on the web. Slint
-# is fully retired (Phase 5 cutover, 2026-05-10). See
-# `docs/dev/clay-migration-plan.md` for the migration history.
+# femtovg native and wasm32-unknown-unknown + webgl on the web.
+# (Slint was fully retired in the Phase 5 cutover, 2026-05-10. See
+# `docs/dev/clay-migration-plan.md` for the migration history.)
 
 # 2D math — SIMD-accelerated Vec2/Affine2/Mat3 for the builder's
 # transform system (ADR-003). Works on native + WASM.
 glam = { version = "0.29", features = ["serde"] }
 # CSS Grid + Flexbox + Block layout engine (ADR-003). Trait-based —
-# composes with our own document tree. Used by Slint, Bevy, Dioxus.
+# composes with our own document tree.
 taffy = "0.7"
 
 # Direct GPU/text dependencies for `prism-ui-runtime`'s native +
-# web backends (Phase 1 of the Slint→Taffy migration —
-# `docs/dev/clay-migration-plan.md` §5.3). These are pulled directly
-# now that the Slint-bundled versions are on the way out; matching
-# the versions Slint already had transitively keeps the toolchain
-# stable through the cutover. `cosmic-text` does shaping + glyph
-# rasterization (replaces the heuristic measure callback); `femtovg`
+# web backends (`docs/dev/clay-migration-plan.md` §5.3).
+# `cosmic-text` does shaping + glyph rasterization; `femtovg`
 # is the GL-backed 2D canvas; `glutin`/`glutin-winit` give us a GL
 # context for winit on desktop; `raw-window-handle` is the shared
 # windowing ABI both layers speak.
@@ -119,12 +112,12 @@ rust_decimal = { version = "1", features = ["serde-with-str"] }
 rusty-money = { version = "0.4", features = ["iso"] }
 financial = "1"
 
-# WASM glue — used by `prism-shell`'s web target (Slint on
-# wasm32-unknown-unknown). The crate compiles to a wasm-bindgen
+# WASM glue — used by `prism-shell`'s web target on
+# wasm32-unknown-unknown. The crate compiles to a wasm-bindgen
 # module that `web/index.html` loads directly; no emscripten is
 # involved on the shell side. The daemon still uses
 # wasm32-unknown-emscripten for its Luau C core — that target is
-# orthogonal and untouched by the Slint pivot.
+# orthogonal.
 wasm-bindgen = "0.2"
 web-sys = "0.3"
 js-sys = "0.3"
@@ -143,7 +136,7 @@ rfd = "0.15"
 
 # OS-level input simulation — injects real keyboard/mouse events
 # through the platform's accessibility layer so e2e tests exercise the
-# full input pipeline (winit → Slint → InputManager). Optional:
+# full input pipeline (winit → prism-ui-runtime → InputManager). Optional:
 # callback-level testing works without it.
 enigo = { version = "0.2", default-features = false }
 

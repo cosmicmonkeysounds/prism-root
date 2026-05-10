@@ -86,15 +86,10 @@ mod tests {
     use crate::block::register_block;
     use crate::document::Node;
     use crate::layout::{FlexDirection, FlowDisplay, FlowProps, LayoutMode};
-    use crate::starter::{
-        AccordionBlock, ButtonBlock, CodeBlock, ColumnsBlock, ContainerBlock, DividerBlock,
-        FormBlock, ImageBlock, InputBlock, ListBlock, SpacerBlock, TableBlock, TabsBlock,
-        TextBlock,
-    };
+    use crate::starter::{builtin_block, register_builtins};
     use prism_core::foundation::geometry::Edges;
     use prism_ui_runtime::layout::Direction;
     use serde_json::json;
-    use std::sync::Arc;
 
     fn flow(direction: FlexDirection, gap: f32) -> LayoutMode {
         LayoutMode::Flow(FlowProps {
@@ -105,48 +100,22 @@ mod tests {
         })
     }
 
-    fn registry_with(text_id: &str, spacer_id: &str) -> ComponentRegistry {
+    fn registry_with(_text_id: &str, _spacer_id: &str) -> ComponentRegistry {
+        // Historical signature kept for call-site readability; both ids
+        // are always the canonical builtin names ("text", "spacer").
         let mut comps = ComponentRegistry::new();
-        register_block(&mut comps, Arc::new(TextBlock { id: text_id.into() })).unwrap();
-        register_block(
-            &mut comps,
-            Arc::new(SpacerBlock {
-                id: spacer_id.into(),
-            }),
-        )
-        .unwrap();
+        register_block(&mut comps, builtin_block("text").expect("text builtin")).unwrap();
+        register_block(&mut comps, builtin_block("spacer").expect("spacer builtin")).unwrap();
         comps
     }
 
-    /// Full builtin-flavoured registry covering the blocks with
-    /// dedicated `lower_ui` impls. Phase 3 progress is gated on this
-    /// stack producing the expected runtime nodes. New blocks join
-    /// the table below — no per-block registration boilerplate.
+    /// Full builtin-flavoured registry covering every block with a
+    /// dedicated `lower_ui` impl. Drives the dispatch tests that gate
+    /// runtime correctness — same set as `register_builtins` minus the
+    /// `card` prefab and `facet` one-off (neither exercised here).
     fn full_registry() -> ComponentRegistry {
         let mut comps = ComponentRegistry::new();
-        // Macro keeps registration declarative — each row is just
-        // `(component-id, BlockType)`. Adding a block is one line.
-        macro_rules! register_all {
-            ($($id:literal => $ty:ident),* $(,)?) => {
-                $(register_block(&mut comps, Arc::new($ty { id: $id.into() })).unwrap();)*
-            };
-        }
-        register_all! {
-            "text" => TextBlock,
-            "spacer" => SpacerBlock,
-            "columns" => ColumnsBlock,
-            "list" => ListBlock,
-            "container" => ContainerBlock,
-            "divider" => DividerBlock,
-            "code" => CodeBlock,
-            "button" => ButtonBlock,
-            "form" => FormBlock,
-            "input" => InputBlock,
-            "table" => TableBlock,
-            "tabs" => TabsBlock,
-            "accordion" => AccordionBlock,
-            "image" => ImageBlock,
-        }
+        register_builtins(&mut comps).expect("register builtins");
         comps
     }
 
