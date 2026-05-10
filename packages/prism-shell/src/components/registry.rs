@@ -156,58 +156,45 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registers_icon_button() {
+    fn every_shell_builtin_resolves_after_registration() {
+        // Drive directly from the source-of-truth `SHELL_BUILTINS`
+        // table — adding a row there means this test covers it
+        // automatically. The previous shape (48 hand-rolled `get`
+        // calls) drifted the moment a primitive landed without its
+        // assertion; the table-driven shape can't drift.
         let mut reg = ShellComponentRegistry::new();
         register_shell_builtins(&mut reg).expect("register");
-        assert!(reg.get("shell.icon-button").is_some());
-        assert!(reg.get("shell.toolbar-separator").is_some());
-        assert!(reg.get("shell.section-header").is_some());
-        assert!(reg.get("shell.nav-button").is_some());
-        assert!(reg.get("shell.toast").is_some());
-        assert!(reg.get("shell.docs-content").is_some());
-        assert!(reg.get("shell.app-card").is_some());
-        assert!(reg.get("shell.drag-number-field").is_some());
-        assert!(reg.get("shell.inspector-row").is_some());
-        assert!(reg.get("shell.transform-editor").is_some());
-        assert!(reg.get("shell.menu-bar-row").is_some());
-        assert!(reg.get("shell.field-editor").is_some());
-        assert!(reg.get("shell.status-bar").is_some());
-        assert!(reg.get("shell.workflow-page-button").is_some());
-        assert!(reg.get("shell.workflow-page-bar").is_some());
-        assert!(reg.get("shell.app-window").is_some());
-        assert!(reg.get("shell.dock-divider").is_some());
-        assert!(reg.get("shell.dock-tab").is_some());
-        assert!(reg.get("shell.dock-tab-bar").is_some());
-        assert!(reg.get("shell.dock-panel").is_some());
-        assert!(reg.get("shell.dock-workspace").is_some());
-        assert!(reg.get("shell.toast-stack").is_some());
-        assert!(reg.get("shell.inspector-tree").is_some());
-        assert!(reg.get("shell.launchpad").is_some());
-        assert!(reg.get("shell.command-palette").is_some());
-        assert!(reg.get("shell.help-tooltip").is_some());
-        assert!(reg.get("shell.menu-item").is_some());
-        assert!(reg.get("shell.menu-dropdown").is_some());
-        assert!(reg.get("shell.context-menu").is_some());
-        assert!(reg.get("shell.docs-sidebar").is_some());
-        assert!(reg.get("shell.docs-view").is_some());
-        assert!(reg.get("shell.properties-panel").is_some());
-        assert!(reg.get("shell.component-palette").is_some());
-        assert!(reg.get("shell.explorer").is_some());
-        assert!(reg.get("shell.signal-connection-row").is_some());
-        assert!(reg.get("shell.signals-panel").is_some());
-        assert!(reg.get("shell.schema-row").is_some());
-        assert!(reg.get("shell.schema-designer").is_some());
-        assert!(reg.get("shell.nav-page-row").is_some());
-        assert!(reg.get("shell.nav-page-list").is_some());
-        assert!(reg.get("shell.nav-graph").is_some());
-        assert!(reg.get("shell.code-editor").is_some());
-        assert!(reg.get("shell.gizmo-move").is_some());
-        assert!(reg.get("shell.gizmo-rotate").is_some());
-        assert!(reg.get("shell.gizmo-scale").is_some());
-        assert!(reg.get("shell.resize-handle").is_some());
-        assert!(reg.get("shell.builder-canvas").is_some());
-        assert!(reg.get("shell.component-picker").is_some());
-        assert_eq!(reg.len(), 48);
+        for spec in SHELL_BUILTINS {
+            assert!(
+                reg.get(spec.id).is_some(),
+                "`{}` declared in SHELL_BUILTINS but not resolvable post-registration",
+                spec.id
+            );
+        }
+        assert_eq!(reg.len(), SHELL_BUILTINS.len());
+    }
+
+    #[test]
+    fn shell_builtin_ids_are_namespaced_and_unique() {
+        // Every row in the table belongs to the `shell.*` namespace
+        // (so the chrome registry never bleeds into document-side
+        // palettes), and ids are unique. The dedup check overlaps
+        // with `rejects_double_registration` but operates on the
+        // *table* — failures here point at the literal source, not
+        // the registration code.
+        let mut seen = std::collections::HashSet::new();
+        for spec in SHELL_BUILTINS {
+            assert!(
+                spec.id.starts_with("shell."),
+                "id `{}` must use the shell.* namespace",
+                spec.id
+            );
+            assert!(
+                seen.insert(spec.id),
+                "duplicate id `{}` in SHELL_BUILTINS",
+                spec.id
+            );
+        }
     }
 
     #[test]

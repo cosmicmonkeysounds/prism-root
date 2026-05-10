@@ -5610,3 +5610,64 @@ binding table and the consolidated signal helpers; clippy
 | Date | Decision | Rationale |
 |---|---|---|
 | 2026-05-10 | §41 lands: `SLOT_BINDINGS` / `STUB_BINDINGS` declarative const tables collapse `register_builtin_bindings`; `bind!` / `bind_slot!` macros deleted. 22 component `*_signals` functions converge on `with_common_signals(vec![...])`; 7 noop `*_signals` functions deleted along with their `.signals(...)` builder calls. | The two patterns shared a root cause: ceremony around defaults. The macros existed to hide a one-line `Box::new` wrap; the noop signal functions existed to restate `BlockSpec`'s default; the push pattern existed to re-implement an already-shipped helper. Collapsing each one to its minimum form (table row, missing builder call, helper call) cut ~155 LoC and tightened the "adding a feature is one row" invariant. The macros' deletion also drops two `#[macro_export]` symbols from `prism-shell`'s public surface, undoing leakage that existed only because the macros were the easiest hiding mechanism at landing time. |
+
+## 42. Derived stub bindings + table-driven registry tests
+
+**Strategy locked 2026-05-10 (post-§41).** §41 collapsed the two
+shell-block binding tables into declarative `SLOT_BINDINGS` /
+`STUB_BINDINGS` consts. The stub list, however, was still hand-maintained
+alongside `SHELL_BUILTINS` (the source of truth for what shell blocks
+exist) — adding a new per-row block (`shell.dock-tab`, `shell.menu-item`,
+`shell.signal-connection-row`, …) required edits in *two* tables. The
+`every_shell_builtin_resolves` test in `components/registry.rs` had the
+same shape mirror image: 48 hand-rolled `assert!(reg.get("shell.x")
+.is_some())` calls — drift the moment a primitive landed without its
+assertion, silent gaps when a primitive landed alongside its assertion
+but not the binding stub.
+
+**The collapse.**
+
+- **`STUB_BINDINGS` deleted.** `register_builtin_bindings` now walks
+  `SHELL_BUILTINS` once and registers a stub binding for every id
+  *not* claimed by `SLOT_BINDINGS`. Adding a new shell block is one
+  row in `SHELL_BUILTINS`; the stub binding follows for free.
+  Promoting a stub to live data is one row in `SLOT_BINDINGS` plus
+  one method on the owning slot — the auto-stub vanishes because the
+  id is now claimed.
+- **`every_shell_builtin_resolves_after_registration` is table-driven.**
+  The 48-assert block became a single `for spec in SHELL_BUILTINS`
+  loop; landing a new primitive needs no test edit. A sibling
+  `shell_builtin_ids_are_namespaced_and_unique` test pins the
+  namespace + dedup invariant on the literal table.
+- **Parity invariant tightened.**
+  `bindings_cover_every_registered_shell_block` was a count check
+  (`bindings.ids().count() == 48 && reg.len() == 48`); it now
+  asserts *set equality* between `SHELL_BUILTINS` ids and the
+  registered binding ids. Forgetting to wire a new block in either
+  direction is a structural test failure, not a silent count match.
+- **`slot_bindings_are_subset_of_shell_builtins` added.** Adding a
+  row to `SLOT_BINDINGS` for a non-existent block would silently
+  register a dead binding (and shadow the stub derivation). The
+  test catches that at literal-table parse time.
+
+**Smart-pattern wins.**
+
+- **Derived data, not duplicated lists.** The stub set is now a
+  *function* of `SHELL_BUILTINS \ SLOT_BINDINGS` rather than a third
+  table to maintain. Three tables to maintain → two. The third was
+  load-bearing only as a manual cross-check, which the derivation
+  itself now enforces.
+- **Tests follow the source of truth.** Both new tests iterate
+  `SHELL_BUILTINS` directly, so the literal table is the only
+  source of truth that needs updating when a primitive lands.
+- **Net deletion.** ~30 LoC of hand-maintained `STUB_BINDINGS`
+  list + ~50 LoC of 48 hand-rolled test asserts → 1 derivation
+  loop + 2 table-driven tests (~30 LoC total). All 254 lib tests
+  still pass; `cargo clippy -p prism-shell --all-targets -D warnings`
+  clean.
+
+### Decision-log entry
+
+| Date | Decision | Rationale |
+|---|---|---|
+| 2026-05-10 | §42 lands: `STUB_BINDINGS` collapsed into a `SHELL_BUILTINS \ SLOT_BINDINGS` derivation inside `register_builtin_bindings`; `bindings_cover_every_registered_shell_block` upgraded to set-equality; the 48-assert `registers_icon_button` test replaced with a `for spec in SHELL_BUILTINS` loop + a namespace-and-dedup pin. | §41 left three tables describing the same set ("what shell blocks exist"): `SHELL_BUILTINS` (source of truth), `SLOT_BINDINGS` (which ones derive from slot accessors), and `STUB_BINDINGS` (the rest). The third was redundant by construction — `STUB_BINDINGS == SHELL_BUILTINS \ SLOT_BINDINGS`. Deriving it eliminates the second edit when adding a per-row block; promotes "missing stub" from a runtime-blank-panel bug to a test failure (because the structural invariant is asserted, not merely upheld). The table-driven test refactor falls out for free: with the derivation in place, the test simply iterates the source-of-truth table. |

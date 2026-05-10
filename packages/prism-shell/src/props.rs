@@ -190,39 +190,10 @@ const SLOT_BINDINGS: &[(&str, SlotAccessor)] = &[
     }),
 ];
 
-/// Block ids whose props are intentionally empty.
-///
-/// Per-row blocks (`shell.dock-tab`, `shell.menu-item`,
-/// `shell.signal-connection-row`, `shell.schema-row`,
-/// `shell.nav-page-row`, `shell.app-card`, `shell.inspector-row`,
-/// `shell.field-editor`, …) are *intentional* leaves: their data flows
-/// down inside parent JSON arrays, so adding a binding here would be a
-/// second serialisation site for the shape their parent slot already
-/// owns. They stay stubs by design (§22 terminal state).
-const STUB_BINDINGS: &[&str] = &[
-    "shell.icon-button",
-    "shell.toolbar-separator",
-    "shell.section-header",
-    "shell.nav-button",
-    "shell.toast",
-    "shell.docs-content",
-    "shell.app-card",
-    "shell.drag-number-field",
-    "shell.inspector-row",
-    "shell.transform-editor",
-    "shell.field-editor",
-    "shell.workflow-page-button",
-    "shell.dock-divider",
-    "shell.dock-tab",
-    "shell.dock-tab-bar",
-    "shell.dock-panel",
-    "shell.menu-item",
-    "shell.signal-connection-row",
-    "shell.schema-row",
-    "shell.nav-page-row",
-];
-
 fn register_builtin_bindings(reg: &mut ShellPropBindings) {
+    use crate::components::SHELL_BUILTINS;
+
+    // Live bindings from the declarative `SLOT_BINDINGS` table.
     for (id, accessor) in SLOT_BINDINGS {
         let accessor = *accessor;
         reg.register(
@@ -230,9 +201,23 @@ fn register_builtin_bindings(reg: &mut ShellPropBindings) {
             Box::new(move |ctx| PropEmission::from_props(accessor(ctx.state))),
         );
     }
-    for id in STUB_BINDINGS {
+
+    // Stub bindings — derived, not maintained. Every id in
+    // `SHELL_BUILTINS` that doesn't appear in `SLOT_BINDINGS` is a
+    // *per-row* block (`shell.dock-tab`, `shell.menu-item`,
+    // `shell.signal-connection-row`, …) whose data flows down inside
+    // a parent JSON array. Authoring such a block needs no second
+    // edit here: registering it in `SHELL_BUILTINS` automatically
+    // gives it an empty stub binding, and the row's parent slot owns
+    // the actual JSON shape. Promoting a stub to live data is one
+    // row added to `SLOT_BINDINGS` plus one method on the owning
+    // slot; the auto-stub vanishes because the id is now claimed.
+    for spec in SHELL_BUILTINS {
+        if SLOT_BINDINGS.iter().any(|(id, _)| *id == spec.id) {
+            continue;
+        }
         reg.register(
-            id,
+            spec.id,
             Box::new(|_| PropEmission::from_props(Value::Object(Default::default()))),
         );
     }
@@ -241,7 +226,6 @@ fn register_builtin_bindings(reg: &mut ShellPropBindings) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::components::register_shell_builtins;
 
     /// Keystone parity check — every id in `register_shell_builtins`
     /// has a matching entry in `ShellPropBindings::with_builtins`.
@@ -345,13 +329,36 @@ mod tests {
 
     #[test]
     fn bindings_cover_every_registered_shell_block() {
-        let mut reg = crate::components::ShellComponentRegistry::new();
-        register_shell_builtins(&mut reg).expect("register");
+        // Load-bearing invariant: every id in `SHELL_BUILTINS` has a
+        // matching binding (live or derived stub). Since
+        // `register_builtin_bindings` walks `SHELL_BUILTINS` for its
+        // stub pass, this is now a structural truth — but the assertion
+        // pins it so that any future refactor that breaks the link is a
+        // test failure, not a silent blank panel at runtime.
+        use crate::components::SHELL_BUILTINS;
         let bindings = ShellPropBindings::with_builtins();
-        // ShellComponentRegistry doesn't expose ids() — once it does,
-        // assert set equality. For now, assert count parity via the
-        // hard-coded 47 below; updates require touching both tables.
-        assert_eq!(bindings.ids().count(), 48);
-        assert_eq!(reg.len(), 48);
+        let binding_ids: std::collections::HashSet<&str> = bindings.ids().collect();
+        let builtin_ids: std::collections::HashSet<&str> =
+            SHELL_BUILTINS.iter().map(|s| s.id).collect();
+        assert_eq!(
+            binding_ids, builtin_ids,
+            "every SHELL_BUILTINS id must have a binding (and vice versa)"
+        );
+    }
+
+    #[test]
+    fn slot_bindings_are_subset_of_shell_builtins() {
+        // Adding a row to SLOT_BINDINGS for a non-existent shell block
+        // would silently register a dead binding (and shadow the stub
+        // derivation). Catch that at test time.
+        use crate::components::SHELL_BUILTINS;
+        let builtin_ids: std::collections::HashSet<&str> =
+            SHELL_BUILTINS.iter().map(|s| s.id).collect();
+        for (id, _) in SLOT_BINDINGS {
+            assert!(
+                builtin_ids.contains(id),
+                "SLOT_BINDINGS row `{id}` has no matching block in SHELL_BUILTINS"
+            );
+        }
     }
 }
