@@ -16,38 +16,23 @@ required-features = ["native"]
 
 [features]
 default = ["native"]
-native = ["dep:prism-daemon", "dep:rfd", "dep:mlua", "prism-core/crdt", "prism-ui-runtime/femtovg"]
+native = ["prism-core/crdt", "prism-ui-runtime/femtovg"]
 web = ["dep:wasm-bindgen", "dep:console_error_panic_hook", "dep:getrandom", "uuid/js", "prism-ui-runtime/web"]
-e2e = ["dep:image", "dep:enigo"]
 
 [dependencies]
 prism-core = { path = "../prism-core" }
-prism-builder = { path = "../prism-builder", features = ["interpreter"] }
+prism-builder = { path = "../prism-builder" }
 prism-dock = { path = "../prism-dock" }
 prism-ui-runtime = { path = "../prism-ui-runtime", default-features = false, features = ["html"] }
-prism-luau-derive = { workspace = true }
-
-prism-daemon = { path = "../prism-daemon", optional = true, default-features = false, features = ["crdt", "luau", "vfs", "crypto"] }
-
-mlua = { workspace = true, optional = true }
 
 wasm-bindgen = { workspace = true, optional = true }
 console_error_panic_hook = { workspace = true, optional = true }
 getrandom = { workspace = true, optional = true, features = ["js"] }
 
-clap = { version = "4", features = ["derive"] }
-
-image = { workspace = true, optional = true }
-rfd = { workspace = true, optional = true }
-enigo = { workspace = true, optional = true }
-
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
-sha2 = { workspace = true }
-hex = { workspace = true }
-chrono = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }

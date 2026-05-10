@@ -10,21 +10,17 @@
 //! - [`events`] — single `dispatch_event` router from
 //!   `prism_ui_runtime::event::Event` into `ShellInner` mutations.
 //!
-//! See `docs/dev/clay-migration-plan.md` §17 for the full
-//! architectural contract.
-//!
-//! ## Migration status
-//!
-//! The 2026-05-09 Slint tear-out (§17) deleted `ui/app.slint`,
-//! `app/sync/`, `app/callbacks/`, every Slint dep, and the
-//! `bind_model!` block in one stroke. The legacy feature surface
-//! (`app::commands`, `app::mutations`, `panels::*`, `panel_props`,
-//! `signals`, `input`, `command`, `keyboard`, `keybindings`, `menu`,
-//! `search`, `selection`, `persistence`, `project`, `explorer`,
-//! `help`, `telemetry`, `testing`, `e2e`, `luau`) is *on disk but
-//! not in the build* until each module is ported to the new
-//! `Shell` / `Surface` / `ShellInner` shape. Re-add them to the
-//! `pub mod` list below as each port lands.
+//! See `docs/dev/clay-migration-plan.md` §17 (Slint tear-out),
+//! §19-22 (slot-typed `AppState` port wave), and §24-27 (service
+//! registry + write-side port wave) for the full architectural
+//! contract. The legacy `app/`, `panels/`, `luau/`, `signals.rs`,
+//! `persistence.rs`, `project.rs`, `search.rs`, `help.rs`, `menu.rs`,
+//! `command.rs`, `input.rs`, `keyboard.rs`, `keybindings.rs`,
+//! `selection.rs`, `panel_props.rs`, `explorer.rs`, `telemetry.rs`,
+//! `testing.rs`, and `e2e.rs` modules — all Slint-era — were
+//! deleted in the 2026-05-10 Phase 5 cutover; their behaviour
+//! lives entirely in the `services/` registry plus the slot-typed
+//! `AppState`.
 
 pub mod components;
 pub mod events;
