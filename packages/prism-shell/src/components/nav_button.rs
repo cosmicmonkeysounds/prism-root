@@ -12,7 +12,6 @@
 //! `hovered_id` matches.
 
 use prism_builder::{
-    common_signals,
     document::Node,
     registry::{FieldSpec, NumericBounds},
     signal::SignalDef,
@@ -20,6 +19,7 @@ use prism_builder::{
     ui_lower::{
         bare_container, hover_bg, image_node, parse_color, prop_bool, prop_string, LowerCtx,
     },
+    with_common_signals,
 };
 use prism_ui_runtime::layout::{Node as UiNode, Padding, Semantic, Sizing};
 use serde_json::Value;
@@ -43,8 +43,7 @@ fn nav_button_schema() -> Vec<FieldSpec> {
 }
 
 fn nav_button_signals() -> Vec<prism_builder::signal::SignalDef> {
-    let mut signals = common_signals();
-    signals.push(
+    with_common_signals(vec![
         SignalDef::new(
             "hover-start",
             "Pointer entered the button — positional payload for tooltip placement.",
@@ -54,9 +53,8 @@ fn nav_button_signals() -> Vec<prism_builder::signal::SignalDef> {
             FieldSpec::number("x", "X (px)", NumericBounds::default()),
             FieldSpec::number("y", "Y (px)", NumericBounds::default()),
         ]),
-    );
-    signals.push(SignalDef::new("hover-end", "Pointer left the button."));
-    signals
+        SignalDef::new("hover-end", "Pointer left the button."),
+    ])
 }
 
 fn nav_button_lower(ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> UiNode {
@@ -119,30 +117,17 @@ pub const NAV_BUTTON_SPEC: prism_builder::BlockSpec =
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::components::testing::{lower_with, test_node};
     use prism_builder::document::Node as BuilderNode;
-    use prism_builder::layout::LayoutMode;
-    use prism_builder::style::StyleProperties as Cascade;
     use prism_builder::Block;
-    use prism_core::foundation::spatial::Transform2D;
     use serde_json::json;
 
     fn lower_one(node: &BuilderNode) -> UiNode {
-        let cascade = Cascade::default();
-        let ctx = LowerCtx::new(None, &cascade);
-        nav_button_lower(&ctx, node, &cascade)
+        lower_with(node, nav_button_lower)
     }
 
     fn nav(props: Value) -> BuilderNode {
-        BuilderNode {
-            id: "n".into(),
-            component: "shell.nav-button".into(),
-            props,
-            children: vec![],
-            layout_mode: LayoutMode::default(),
-            transform: Transform2D::default(),
-            modifiers: vec![],
-            style: Cascade::default(),
-        }
+        test_node("n", "shell.nav-button", props)
     }
 
     #[test]

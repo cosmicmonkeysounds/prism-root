@@ -9,7 +9,6 @@
 //! is purely visual structure with a `data-divider-id` SSR hook.
 
 use prism_builder::{
-    common_signals,
     document::Node,
     registry::FieldSpec,
     style::StyleProperties,
@@ -25,10 +24,6 @@ fn dock_divider_schema() -> Vec<FieldSpec> {
         FieldSpec::text("orientation", "Orientation (vertical|horizontal)"),
         FieldSpec::text("length", "Cross-axis length"),
     ]
-}
-
-fn dock_divider_signals() -> Vec<prism_builder::signal::SignalDef> {
-    common_signals()
 }
 
 fn dock_divider_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
@@ -76,32 +71,18 @@ fn dock_divider_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties
 
 pub const DOCK_DIVIDER_SPEC: prism_builder::BlockSpec =
     prism_builder::BlockSpec::new("shell.dock-divider", dock_divider_schema)
-        .lower(dock_divider_lower)
-        .signals(dock_divider_signals);
+        .lower(dock_divider_lower);
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use prism_builder::document::Node as BuilderNode;
-    use prism_builder::layout::LayoutMode;
-    use prism_core::foundation::spatial::Transform2D;
+    use crate::components::testing::{lower_with, test_node};
     use serde_json::json;
 
     fn lower(props: serde_json::Value) -> UiNode {
-        let n = BuilderNode {
-            id: "d".into(),
-            component: "shell.dock-divider".into(),
-            props,
-            children: vec![],
-            layout_mode: LayoutMode::default(),
-            transform: Transform2D::default(),
-            modifiers: vec![],
-            style: StyleProperties::default(),
-        };
-        let cascade = StyleProperties::default();
-        let ctx = LowerCtx::new(None, &cascade);
-        dock_divider_lower(&ctx, &n, &cascade)
+        let n = test_node("d", "shell.dock-divider", props);
+        lower_with(&n, dock_divider_lower)
     }
 
     #[test]

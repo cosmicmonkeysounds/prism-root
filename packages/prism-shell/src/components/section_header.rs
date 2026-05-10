@@ -12,7 +12,6 @@
 //! at lower-time, no runtime state machinery needed.
 
 use prism_builder::{
-    common_signals,
     document::Node,
     registry::FieldSpec,
     signal::SignalDef,
@@ -21,6 +20,7 @@ use prism_builder::{
         bare_container, colored_text_node, image_node, parse_color, prop_bool, prop_string,
         LowerCtx,
     },
+    with_common_signals,
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Sizing};
 use serde_json::Value;
@@ -43,15 +43,11 @@ fn section_header_schema() -> Vec<FieldSpec> {
 }
 
 fn section_header_signals() -> Vec<prism_builder::signal::SignalDef> {
-    let mut signals = common_signals();
-    signals.push(
-        SignalDef::new(
-            "section-toggled",
-            "Fires when the header is clicked — payload carries the section id.",
-        )
-        .with_payload(vec![FieldSpec::text("section_id", "Section ID")]),
-    );
-    signals
+    with_common_signals(vec![SignalDef::new(
+        "section-toggled",
+        "Fires when the header is clicked — payload carries the section id.",
+    )
+    .with_payload(vec![FieldSpec::text("section_id", "Section ID")])])
 }
 
 fn section_header_lower(ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> UiNode {
@@ -140,30 +136,17 @@ pub const SECTION_HEADER_SPEC: prism_builder::BlockSpec =
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::components::testing::{lower_with, test_node};
     use prism_builder::document::Node as BuilderNode;
-    use prism_builder::layout::LayoutMode;
-    use prism_builder::style::StyleProperties as Cascade;
     use prism_builder::Block;
-    use prism_core::foundation::spatial::Transform2D;
     use serde_json::json;
 
     fn lower_one(node: &BuilderNode) -> UiNode {
-        let cascade = Cascade::default();
-        let ctx = LowerCtx::new(None, &cascade);
-        section_header_lower(&ctx, node, &cascade)
+        lower_with(node, section_header_lower)
     }
 
     fn header(props: Value) -> BuilderNode {
-        BuilderNode {
-            id: "h".into(),
-            component: "shell.section-header".into(),
-            props,
-            children: vec![],
-            layout_mode: LayoutMode::default(),
-            transform: Transform2D::default(),
-            modifiers: vec![],
-            style: Cascade::default(),
-        }
+        test_node("h", "shell.section-header", props)
     }
 
     fn first_child_image_source(ui: &UiNode) -> &str {

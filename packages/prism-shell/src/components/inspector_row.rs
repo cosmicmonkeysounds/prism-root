@@ -17,7 +17,6 @@
 //! 28×28 / 16×16 / 6px-radius / hover-bg shape automatically.
 
 use prism_builder::{
-    common_signals,
     document::Node,
     registry::FieldSpec,
     signal::SignalDef,
@@ -26,6 +25,7 @@ use prism_builder::{
         bare_container, colored_text_node, hover_bg, parse_color, prop_bool, prop_str, prop_string,
         uniform_radius, LowerCtx,
     },
+    with_common_signals,
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
 use serde_json::Value;
@@ -146,28 +146,28 @@ fn inspector_row_schema() -> Vec<FieldSpec> {
 }
 
 fn inspector_row_signals() -> Vec<prism_builder::signal::SignalDef> {
-    let mut signals = common_signals();
-    signals.push(SignalDef::new(
-        "row-clicked",
-        "Row was clicked — host selects the bound node-id.",
-    ));
-    signals.push(SignalDef::new(
-        "row-right-clicked",
-        "Row was right-clicked — host opens a context menu at the (x, y).",
-    ));
-    signals.push(SignalDef::new(
-        "move-up",
-        "Move-up chevron clicked (selected node rows only).",
-    ));
-    signals.push(SignalDef::new(
-        "move-down",
-        "Move-down chevron clicked (selected node rows only).",
-    ));
-    signals.push(SignalDef::new(
-        "delete-track",
-        "Trash clicked (row-kind rows with `show-delete=true`).",
-    ));
-    signals
+    with_common_signals(vec![
+        SignalDef::new(
+            "row-clicked",
+            "Row was clicked — host selects the bound node-id.",
+        ),
+        SignalDef::new(
+            "row-right-clicked",
+            "Row was right-clicked — host opens a context menu at the (x, y).",
+        ),
+        SignalDef::new(
+            "move-up",
+            "Move-up chevron clicked (selected node rows only).",
+        ),
+        SignalDef::new(
+            "move-down",
+            "Move-down chevron clicked (selected node rows only).",
+        ),
+        SignalDef::new(
+            "delete-track",
+            "Trash clicked (row-kind rows with `show-delete=true`).",
+        ),
+    ])
 }
 
 fn inspector_row_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
@@ -330,29 +330,17 @@ fn build_right_cluster(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::components::testing::{lower_with, test_node};
     use prism_builder::document::Node as BuilderNode;
-    use prism_builder::layout::LayoutMode;
     use prism_builder::Block;
-    use prism_core::foundation::spatial::Transform2D;
     use serde_json::json;
 
     fn lower(node: &BuilderNode) -> UiNode {
-        let cascade = StyleProperties::default();
-        let ctx = LowerCtx::new(None, &cascade);
-        inspector_row_lower(&ctx, node, &cascade)
+        lower_with(node, inspector_row_lower)
     }
 
     fn row(props: Value) -> BuilderNode {
-        BuilderNode {
-            id: "ir".into(),
-            component: "shell.inspector-row".into(),
-            props,
-            children: vec![],
-            layout_mode: LayoutMode::default(),
-            transform: Transform2D::default(),
-            modifiers: vec![],
-            style: StyleProperties::default(),
-        }
+        test_node("ir", "shell.inspector-row", props)
     }
 
     fn assert_container(n: &UiNode) -> (&prism_ui_runtime::layout::ContainerProps, &Vec<UiNode>) {

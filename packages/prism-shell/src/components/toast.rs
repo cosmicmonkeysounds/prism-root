@@ -20,7 +20,6 @@
 //! cloning the recipe four times.
 
 use prism_builder::{
-    common_signals,
     document::Node,
     registry::FieldSpec,
     signal::SignalDef,
@@ -29,6 +28,7 @@ use prism_builder::{
         bare_container, colored_text_node, parse_color, prop_str, prop_string, uniform_radius,
         LowerCtx,
     },
+    with_common_signals,
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
 use serde_json::Value;
@@ -64,12 +64,10 @@ fn toast_schema() -> Vec<FieldSpec> {
 }
 
 fn toast_signals() -> Vec<prism_builder::signal::SignalDef> {
-    let mut signals = common_signals();
-    signals.push(SignalDef::new(
+    with_common_signals(vec![SignalDef::new(
         "dismissed",
         "User dismissed the toast (close click, swipe, or auto-timeout).",
-    ));
-    signals
+    )])
 }
 
 fn toast_lower(_ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> UiNode {
@@ -150,30 +148,17 @@ pub const TOAST_SPEC: prism_builder::BlockSpec =
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::components::testing::{lower_with, test_node};
     use prism_builder::document::Node as BuilderNode;
-    use prism_builder::layout::LayoutMode;
-    use prism_builder::style::StyleProperties as Cascade;
     use prism_builder::Block;
-    use prism_core::foundation::spatial::Transform2D;
     use serde_json::json;
 
     fn lower_one(node: &BuilderNode) -> UiNode {
-        let cascade = Cascade::default();
-        let ctx = LowerCtx::new(None, &cascade);
-        toast_lower(&ctx, node, &cascade)
+        lower_with(node, toast_lower)
     }
 
     fn toast_node(props: Value) -> BuilderNode {
-        BuilderNode {
-            id: "tst".into(),
-            component: "shell.toast".into(),
-            props,
-            children: vec![],
-            layout_mode: LayoutMode::default(),
-            transform: Transform2D::default(),
-            modifiers: vec![],
-            style: Cascade::default(),
-        }
+        test_node("tst", "shell.toast", props)
     }
 
     #[test]

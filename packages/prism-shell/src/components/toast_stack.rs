@@ -58,28 +58,15 @@ pub const TOAST_STACK_SPEC: prism_builder::BlockSpec =
 mod tests {
     use super::*;
 
-    use prism_builder::document::Node as BuilderNode;
-    use prism_builder::layout::LayoutMode;
-    use prism_core::foundation::spatial::Transform2D;
+    use crate::components::testing::{lower_with, test_node};
     use serde_json::json;
 
     #[test]
     fn empty_stack() {
-        let n = BuilderNode {
-            id: "ts".into(),
-            component: "shell.toast-stack".into(),
-            props: json!({}),
-            children: vec![],
-            layout_mode: LayoutMode::default(),
-            transform: Transform2D::default(),
-            modifiers: vec![],
-            style: StyleProperties::default(),
-        };
-        let cascade = StyleProperties::default();
-        let ctx = LowerCtx::new(None, &cascade);
+        let n = test_node("ts", "shell.toast-stack", json!({}));
         let UiNode::Container {
             children, props, ..
-        } = toast_stack_lower(&ctx, &n, &cascade)
+        } = lower_with(&n, toast_stack_lower)
         else {
             panic!()
         };

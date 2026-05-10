@@ -16,7 +16,6 @@
 //! 12×12 glyph is one helper call).
 
 use prism_builder::{
-    common_signals,
     document::Node,
     registry::FieldSpec,
     signal::SignalDef,
@@ -25,6 +24,7 @@ use prism_builder::{
         bare_container, colored_text_node, hover_bg, parse_color, prop_str, uniform_radius,
         LowerCtx,
     },
+    with_common_signals,
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
 use serde_json::Value;
@@ -60,20 +60,14 @@ fn menu_bar_row_schema() -> Vec<FieldSpec> {
 }
 
 fn menu_bar_row_signals() -> Vec<prism_builder::signal::SignalDef> {
-    let mut signals = common_signals();
-    signals.push(SignalDef::new(
-        "item-clicked",
-        "Menu pill clicked — payload is the menu id.",
-    ));
-    signals.push(SignalDef::new(
-        "tab-activated",
-        "Tab clicked — payload is the tab index.",
-    ));
-    signals.push(SignalDef::new(
-        "add-page",
-        "The trailing + button was clicked.",
-    ));
-    signals
+    with_common_signals(vec![
+        SignalDef::new(
+            "item-clicked",
+            "Menu pill clicked — payload is the menu id.",
+        ),
+        SignalDef::new("tab-activated", "Tab clicked — payload is the tab index."),
+        SignalDef::new("add-page", "The trailing + button was clicked."),
+    ])
 }
 
 fn menu_bar_row_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
@@ -277,25 +271,12 @@ fn separator_node(id: impl Into<String>) -> UiNode {
 mod tests {
     use super::*;
 
-    use prism_builder::document::Node as BuilderNode;
-    use prism_builder::layout::LayoutMode;
-    use prism_core::foundation::spatial::Transform2D;
+    use crate::components::testing::{lower_with, test_node};
     use serde_json::json;
 
     fn lower(props: Value) -> UiNode {
-        let n = BuilderNode {
-            id: "mb".into(),
-            component: "shell.menu-bar-row".into(),
-            props,
-            children: vec![],
-            layout_mode: LayoutMode::default(),
-            transform: Transform2D::default(),
-            modifiers: vec![],
-            style: StyleProperties::default(),
-        };
-        let cascade = StyleProperties::default();
-        let ctx = LowerCtx::new(None, &cascade);
-        menu_bar_row_lower(&ctx, &n, &cascade)
+        let n = test_node("mb", "shell.menu-bar-row", props);
+        lower_with(&n, menu_bar_row_lower)
     }
 
     #[test]

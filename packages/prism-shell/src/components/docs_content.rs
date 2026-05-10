@@ -13,7 +13,6 @@
 //! `UiNode::Container { … }` literals.
 
 use prism_builder::{
-    common_signals,
     document::Node,
     registry::FieldSpec,
     style::StyleProperties,
@@ -61,10 +60,6 @@ fn docs_content_schema() -> Vec<FieldSpec> {
         FieldSpec::textarea("doc-body", "Body"),
         FieldSpec::boolean("compact", "Compact").with_default(Value::Bool(false)),
     ]
-}
-
-fn docs_content_signals() -> Vec<prism_builder::signal::SignalDef> {
-    common_signals()
 }
 
 fn docs_content_lower(ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> UiNode {
@@ -119,8 +114,7 @@ fn docs_content_lower(ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) 
 
 pub const DOCS_CONTENT_SPEC: prism_builder::BlockSpec =
     prism_builder::BlockSpec::new("shell.docs-content", docs_content_schema)
-        .lower(docs_content_lower)
-        .signals(docs_content_signals);
+        .lower(docs_content_lower);
 
 fn spacer_h(id: String, h: f32) -> UiNode {
     bare_container(id, vec![], |p| {
@@ -138,30 +132,17 @@ fn hairline(id: String) -> UiNode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::components::testing::{lower_with, test_node};
     use prism_builder::document::Node as BuilderNode;
-    use prism_builder::layout::LayoutMode;
-    use prism_builder::style::StyleProperties as Cascade;
     use prism_builder::Block;
-    use prism_core::foundation::spatial::Transform2D;
     use serde_json::json;
 
     fn lower_one(node: &BuilderNode) -> UiNode {
-        let cascade = Cascade::default();
-        let ctx = LowerCtx::new(None, &cascade);
-        docs_content_lower(&ctx, node, &cascade)
+        lower_with(node, docs_content_lower)
     }
 
     fn doc_node(props: Value) -> BuilderNode {
-        BuilderNode {
-            id: "d".into(),
-            component: "shell.docs-content".into(),
-            props,
-            children: vec![],
-            layout_mode: LayoutMode::default(),
-            transform: Transform2D::default(),
-            modifiers: vec![],
-            style: Cascade::default(),
-        }
+        test_node("d", "shell.docs-content", props)
     }
 
     #[test]

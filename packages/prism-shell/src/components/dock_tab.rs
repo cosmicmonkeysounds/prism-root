@@ -5,26 +5,32 @@
 //! Slint origin: the inline `Rectangle` inside the dock-tab-bar repeater
 //! in `ui/app.slint` (around line 1952).
 
+use super::chrome::{active_underline_tab, TabStyle};
 use prism_builder::{
-    common_signals,
     document::Node,
     registry::FieldSpec,
     style::StyleProperties,
-    ui_lower::{
-        bare_container, colored_text_node, hover_bg, parse_color, prop_bool, prop_string, LowerCtx,
-    },
+    ui_lower::{prop_bool, prop_string, LowerCtx},
 };
-use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
+use prism_ui_runtime::layout::{Node as UiNode, Padding};
 use serde_json::Value;
 
-const TAB_HEIGHT: f32 = 26.0;
-const UNDERLINE_HEIGHT: f32 = 2.0;
-const LABEL_FONT_SIZE: f32 = 12.0;
-const LABEL_ACTIVE: &str = "#000000";
-const LABEL_RESTING: &str = "#99000000";
-const ACTIVE_BG: &str = "#19000000";
-const HOVER_BG: &str = "#0f000000";
-const ACCENT: &str = "#0060c0";
+const TAB_STYLE: TabStyle = TabStyle {
+    height: 26.0,
+    padding: Padding {
+        left: 12.0,
+        right: 12.0,
+        top: 6.0,
+        bottom: 0.0,
+    },
+    label_size: 12.0,
+    label_active: "#000000",
+    label_resting: "#99000000",
+    active_bg: "#19000000",
+    hover_bg: "#0f000000",
+    underline_height: 2.0,
+    underline_active: "#0060c0",
+};
 
 fn dock_tab_schema() -> Vec<FieldSpec> {
     vec![
@@ -34,81 +40,28 @@ fn dock_tab_schema() -> Vec<FieldSpec> {
     ]
 }
 
-fn dock_tab_signals() -> Vec<prism_builder::signal::SignalDef> {
-    common_signals()
-}
-
 fn dock_tab_lower(ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> UiNode {
-    let label = prop_string(node, "label");
-    let active = prop_bool(node, "active", false);
-    let color = if active { LABEL_ACTIVE } else { LABEL_RESTING };
-
-    let label_node = colored_text_node(
-        format!("{}::label", node.id),
-        label,
+    active_underline_tab(
+        ctx,
+        node,
         style,
-        LABEL_FONT_SIZE,
-        color,
-    );
-
-    let underline = bare_container(format!("{}::underline", node.id), vec![], |p| {
-        p.width = Sizing::Grow;
-        p.height = Sizing::Fixed(UNDERLINE_HEIGHT);
-        if active {
-            p.background = parse_color(ACCENT);
-        }
-    });
-
-    ctx.synthetic_container(node, style, vec![label_node, underline], |p| {
-        p.direction = Direction::Column;
-        p.height = Sizing::Fixed(TAB_HEIGHT);
-        p.padding = Padding {
-            left: 12.0,
-            right: 12.0,
-            top: 6.0,
-            bottom: 0.0,
-        };
-        if active {
-            p.background = parse_color(ACTIVE_BG);
-        } else {
-            p.hover = hover_bg(HOVER_BG);
-        }
-        p.semantic = Semantic::button().with_attr("role", "tab").with_attr_if(
-            active,
-            "aria-selected",
-            "true",
-        );
-    })
+        prop_string(node, "label"),
+        prop_bool(node, "active", false),
+        &TAB_STYLE,
+    )
 }
 
 pub const DOCK_TAB_SPEC: prism_builder::BlockSpec =
-    prism_builder::BlockSpec::new("shell.dock-tab", dock_tab_schema)
-        .lower(dock_tab_lower)
-        .signals(dock_tab_signals);
+    prism_builder::BlockSpec::new("shell.dock-tab", dock_tab_schema).lower(dock_tab_lower);
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use prism_builder::document::Node as BuilderNode;
-    use prism_builder::layout::LayoutMode;
-    use prism_core::foundation::spatial::Transform2D;
+    use crate::components::testing::{lower_with, test_node};
     use serde_json::json;
 
     fn lower(props: Value) -> UiNode {
-        let n = BuilderNode {
-            id: "t".into(),
-            component: "shell.dock-tab".into(),
-            props,
-            children: vec![],
-            layout_mode: LayoutMode::default(),
-            transform: Transform2D::default(),
-            modifiers: vec![],
-            style: StyleProperties::default(),
-        };
-        let cascade = StyleProperties::default();
-        let ctx = LowerCtx::new(None, &cascade);
-        dock_tab_lower(&ctx, &n, &cascade)
+        lower_with(&test_node("t", "shell.dock-tab", props), dock_tab_lower)
     }
 
     #[test]

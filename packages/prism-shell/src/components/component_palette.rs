@@ -3,7 +3,6 @@
 //! icon? }`).
 
 use prism_builder::{
-    common_signals,
     document::Node,
     registry::FieldSpec,
     signal::SignalDef,
@@ -12,6 +11,7 @@ use prism_builder::{
         bare_container, colored_text_node, hover_bg, image_node, parse_color, prop_string,
         uniform_radius, LowerCtx,
     },
+    with_common_signals,
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
 use serde_json::Value;
@@ -31,9 +31,10 @@ fn component_palette_schema() -> Vec<FieldSpec> {
 }
 
 fn component_palette_signals() -> Vec<prism_builder::signal::SignalDef> {
-    let mut s = common_signals();
-    s.push(SignalDef::new("item-activated", "Palette item picked."));
-    s
+    with_common_signals(vec![SignalDef::new(
+        "item-activated",
+        "Palette item picked.",
+    )])
 }
 
 fn component_palette_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
@@ -130,25 +131,12 @@ fn build_row(
 mod tests {
     use super::*;
 
-    use prism_builder::document::Node as BuilderNode;
-    use prism_builder::layout::LayoutMode;
-    use prism_core::foundation::spatial::Transform2D;
+    use crate::components::testing::{lower_with, test_node};
     use serde_json::json;
 
     fn lower(props: Value) -> UiNode {
-        let n = BuilderNode {
-            id: "cp".into(),
-            component: "shell.component-palette".into(),
-            props,
-            children: vec![],
-            layout_mode: LayoutMode::default(),
-            transform: Transform2D::default(),
-            modifiers: vec![],
-            style: StyleProperties::default(),
-        };
-        let cascade = StyleProperties::default();
-        let ctx = LowerCtx::new(None, &cascade);
-        component_palette_lower(&ctx, &n, &cascade)
+        let n = test_node("cp", "shell.component-palette", props);
+        lower_with(&n, component_palette_lower)
     }
 
     #[test]

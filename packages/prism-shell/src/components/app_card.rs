@@ -15,7 +15,6 @@
 //! `Image` source string concrete.
 
 use prism_builder::{
-    common_signals,
     document::Node,
     registry::{FieldSpec, NumericBounds},
     style::StyleProperties,
@@ -76,10 +75,6 @@ fn app_card_schema() -> Vec<FieldSpec> {
     ]
 }
 
-fn app_card_signals() -> Vec<prism_builder::signal::SignalDef> {
-    common_signals()
-}
-
 fn app_card_lower(_ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> UiNode {
     let app_id = prop_string(node, "app-id");
     let name = prop_string(node, "name");
@@ -135,9 +130,7 @@ fn app_card_lower(_ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> 
 }
 
 pub const APP_CARD_SPEC: prism_builder::BlockSpec =
-    prism_builder::BlockSpec::new("shell.app-card", app_card_schema)
-        .lower(app_card_lower)
-        .signals(app_card_signals);
+    prism_builder::BlockSpec::new("shell.app-card", app_card_schema).lower(app_card_lower);
 
 fn create_body(node: &Node, style: &StyleProperties) -> UiNode {
     let plus = image_node(
@@ -261,30 +254,17 @@ fn app_body(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::components::testing::{lower_with, test_node};
     use prism_builder::document::Node as BuilderNode;
-    use prism_builder::layout::LayoutMode;
-    use prism_builder::style::StyleProperties as Cascade;
     use prism_builder::Block;
-    use prism_core::foundation::spatial::Transform2D;
     use serde_json::json;
 
     fn lower_one(node: &BuilderNode) -> UiNode {
-        let cascade = Cascade::default();
-        let ctx = LowerCtx::new(None, &cascade);
-        app_card_lower(&ctx, node, &cascade)
+        lower_with(node, app_card_lower)
     }
 
     fn card(props: Value) -> BuilderNode {
-        BuilderNode {
-            id: "c".into(),
-            component: "shell.app-card".into(),
-            props,
-            children: vec![],
-            layout_mode: LayoutMode::default(),
-            transform: Transform2D::default(),
-            modifiers: vec![],
-            style: Cascade::default(),
-        }
+        test_node("c", "shell.app-card", props)
     }
 
     #[test]

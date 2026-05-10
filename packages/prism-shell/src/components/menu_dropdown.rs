@@ -64,28 +64,21 @@ mod tests {
     use super::*;
 
     use crate::components::registry::{register_shell_builtins, ShellComponentRegistry};
-    use prism_builder::document::Node as BuilderNode;
-    use prism_builder::layout::LayoutMode;
-    use prism_core::foundation::spatial::Transform2D;
+    use crate::components::testing::test_node;
     use serde_json::json;
 
     #[test]
     fn dispatches_items_through_registry() {
-        let n = BuilderNode {
-            id: "md".into(),
-            component: "shell.menu-dropdown".into(),
-            props: json!({
+        let n = test_node(
+            "md",
+            "shell.menu-dropdown",
+            json!({
                 "items": [
                     { "item-id": "save", "label": "Save", "shortcut": "Ctrl+S" },
                     { "item-id": "open", "label": "Open" },
                 ]
             }),
-            children: vec![],
-            layout_mode: LayoutMode::default(),
-            transform: Transform2D::default(),
-            modifiers: vec![],
-            style: StyleProperties::default(),
-        };
+        );
         let mut reg = ShellComponentRegistry::new();
         register_shell_builtins(&mut reg).expect("register");
         let owned = reg;

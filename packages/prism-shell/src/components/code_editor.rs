@@ -10,7 +10,6 @@
 //! routing around line 1981).
 
 use prism_builder::{
-    common_signals,
     document::Node,
     registry::FieldSpec,
     signal::SignalDef,
@@ -18,6 +17,7 @@ use prism_builder::{
     ui_lower::{
         bare_container, colored_text_node, parse_color, prop_string, uniform_radius, LowerCtx,
     },
+    with_common_signals,
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
 use serde_json::Value;
@@ -49,10 +49,10 @@ fn code_editor_schema() -> Vec<FieldSpec> {
 }
 
 fn code_editor_signals() -> Vec<prism_builder::signal::SignalDef> {
-    let mut s = common_signals();
-    s.push(SignalDef::new("line-clicked", "Line clicked."));
-    s.push(SignalDef::new("fold-toggled", "Fold caret pressed."));
-    s
+    with_common_signals(vec![
+        SignalDef::new("line-clicked", "Line clicked."),
+        SignalDef::new("fold-toggled", "Fold caret pressed."),
+    ])
 }
 
 fn code_editor_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
@@ -231,25 +231,12 @@ pub const CODE_EDITOR_SPEC: prism_builder::BlockSpec =
 mod tests {
     use super::*;
 
-    use prism_builder::document::Node as BuilderNode;
-    use prism_builder::layout::LayoutMode;
-    use prism_core::foundation::spatial::Transform2D;
+    use crate::components::testing::{lower_with, test_node};
     use serde_json::json;
 
     fn lower(props: Value) -> UiNode {
-        let n = BuilderNode {
-            id: "ce".into(),
-            component: "shell.code-editor".into(),
-            props,
-            children: vec![],
-            layout_mode: LayoutMode::default(),
-            transform: Transform2D::default(),
-            modifiers: vec![],
-            style: StyleProperties::default(),
-        };
-        let cascade = StyleProperties::default();
-        let ctx = LowerCtx::new(None, &cascade);
-        code_editor_lower(&ctx, &n, &cascade)
+        let n = test_node("ce", "shell.code-editor", props);
+        lower_with(&n, code_editor_lower)
     }
 
     #[test]

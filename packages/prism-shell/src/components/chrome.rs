@@ -13,10 +13,11 @@
 //! layer, no new builder type — just composition over the
 //! already-shared `ui_lower` namespace.
 
+use prism_builder::document::Node as BuilderNode;
 use prism_builder::style::StyleProperties;
 use prism_builder::ui_lower::{
     bare_container, colored_text_node, hover_bg, image_node, parse_color, tinted_image_node,
-    uniform_radius,
+    uniform_radius, LowerCtx,
 };
 use prism_ui_runtime::command::Color;
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
@@ -194,6 +195,146 @@ pub fn format_drag_value(v: f64) -> String {
     } else {
         trimmed.to_string()
     }
+}
+
+/// Static visual recipe for an "active-underline tab": a column with a
+/// label on top and a 2px underline at the bottom; active state paints
+/// a tinted background, resting state swaps to a hover-bg. Shared
+/// between `shell.dock-tab` and `shell.workflow-page-button` (and any
+/// future tab-shaped chrome). The variation between consumers is
+/// purely metric/colour — captured here as a `&'static TabStyle`.
+pub struct TabStyle {
+    pub height: f32,
+    pub padding: Padding,
+    pub label_size: f32,
+    pub label_active: &'static str,
+    pub label_resting: &'static str,
+    pub active_bg: &'static str,
+    pub hover_bg: &'static str,
+    pub underline_height: f32,
+    pub underline_active: &'static str,
+}
+
+pub fn active_underline_tab(
+    ctx: &LowerCtx<'_>,
+    node: &BuilderNode,
+    style: &StyleProperties,
+    label_text: String,
+    active: bool,
+    spec: &TabStyle,
+) -> UiNode {
+    let label = colored_text_node(
+        format!("{}::label", node.id),
+        label_text,
+        style,
+        spec.label_size,
+        if active {
+            spec.label_active
+        } else {
+            spec.label_resting
+        },
+    );
+    let underline = bare_container(format!("{}::underline", node.id), vec![], |p| {
+        p.width = Sizing::Grow;
+        p.height = Sizing::Fixed(spec.underline_height);
+        if active {
+            p.background = parse_color(spec.underline_active);
+        }
+    });
+    ctx.synthetic_container(node, style, vec![label, underline], |p| {
+        p.direction = Direction::Column;
+        p.height = Sizing::Fixed(spec.height);
+        p.padding = spec.padding;
+        if active {
+            p.background = parse_color(spec.active_bg);
+        } else {
+            p.hover = hover_bg(spec.hover_bg);
+        }
+        p.semantic = Semantic::button().with_attr("role", "tab").with_attr_if(
+            active,
+            "aria-selected",
+            "true",
+        );
+    })
+}
+
+/// Single coloured rectangle representing one axis arm of a gizmo
+/// (move / scale). Renders as a `<span role="presentation">` with
+/// `data-role="gizmo-axis"` and a `data-axis` attr the painter / hit
+/// tester picks up. `rounded` controls the half-thickness pill radius
+/// (move-gizmo arms are rounded, scale-gizmo arms are square).
+pub fn gizmo_axis_arm(
+    id: String,
+    axis: char,
+    length: f32,
+    thick: f32,
+    color: &str,
+    rounded: bool,
+) -> UiNode {
+    let (w, h) = if axis == 'x' {
+        (length, thick)
+    } else {
+        (thick, length)
+    };
+    let axis_str = if axis == 'x' { "x" } else { "y" };
+    bare_container(id, vec![], |p| {
+        p.width = Sizing::Fixed(w);
+        p.height = Sizing::Fixed(h);
+        p.background = parse_color(color);
+        if rounded {
+            p.radius = uniform_radius(thick / 2.0);
+        }
+        p.semantic = Semantic::tag("span")
+            .with_attr("role", "presentation")
+            .with_attr("data-role", "gizmo-axis")
+            .with_attr("data-axis", axis_str);
+    })
+}
+
+/// Coloured square / circle handle inside a gizmo (hub, cap, rotate
+/// handle). `data_role` differentiates `gizmo-hub` / `gizmo-cap` /
+/// `gizmo-handle`. `axis` opt-adds `data-axis` for cap-style handles.
+/// `radius` controls the corner round (0 = square, size/2 = circle).
+pub fn gizmo_handle(
+    id: String,
+    size: f32,
+    radius: f32,
+    color: &str,
+    aria: &str,
+    data_role: &str,
+    axis: Option<char>,
+) -> UiNode {
+    bare_container(id, vec![], |p| {
+        p.width = Sizing::Fixed(size);
+        p.height = Sizing::Fixed(size);
+        p.background = parse_color(color);
+        if radius > 0.0 {
+            p.radius = uniform_radius(radius);
+        }
+        let mut s = Semantic::tag("span")
+            .with_attr("role", "button")
+            .with_attr("aria-label", aria)
+            .with_attr("data-role", data_role);
+        if let Some(a) = axis {
+            s = s.with_attr("data-axis", if a == 'x' { "x" } else { "y" });
+        }
+        p.semantic = s;
+    })
+}
+
+/// Outer `<div role="group">` wrapper shared by every gizmo-tool block.
+/// `tool` populates the `data-tool` attr the hit tester routes through.
+pub fn gizmo_root(id: String, children: Vec<UiNode>, aria: &str, tool: &str, row: bool) -> UiNode {
+    bare_container(id, children, |p| {
+        if row {
+            p.direction = Direction::Row;
+        }
+        p.semantic = Semantic::tag("div")
+            .with_attr("role", "group")
+            .with_attr("aria-label", aria)
+            .with_attr("data-role", "gizmo")
+            .with_attr("data-tool", tool);
+    })
 }
 
 /// Resolve a hex string to a [`Color`], falling back to fully

@@ -8,7 +8,6 @@
 //! around line 3650 (signals panel content).
 
 use prism_builder::{
-    common_signals,
     document::Node,
     registry::FieldSpec,
     signal::SignalDef,
@@ -17,6 +16,7 @@ use prism_builder::{
         bare_container, colored_text_node, hover_bg, parse_color, prop_bool, prop_string,
         uniform_radius, LowerCtx,
     },
+    with_common_signals,
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
 use serde_json::Value;
@@ -44,13 +44,13 @@ fn signal_connection_row_schema() -> Vec<FieldSpec> {
 }
 
 fn signal_connection_row_signals() -> Vec<prism_builder::signal::SignalDef> {
-    let mut s = common_signals();
-    s.push(SignalDef::new(
-        "row-clicked",
-        "Row activated; host selects the bound connection.",
-    ));
-    s.push(SignalDef::new("delete-clicked", "Trash button pressed."));
-    s
+    with_common_signals(vec![
+        SignalDef::new(
+            "row-clicked",
+            "Row activated; host selects the bound connection.",
+        ),
+        SignalDef::new("delete-clicked", "Trash button pressed."),
+    ])
 }
 
 fn signal_connection_row_lower(
@@ -162,25 +162,12 @@ pub const SIGNAL_CONNECTION_ROW_SPEC: prism_builder::BlockSpec =
 mod tests {
     use super::*;
 
-    use prism_builder::document::Node as BuilderNode;
-    use prism_builder::layout::LayoutMode;
-    use prism_core::foundation::spatial::Transform2D;
+    use crate::components::testing::{lower_with, test_node};
     use serde_json::json;
 
     fn lower(props: Value) -> UiNode {
-        let n = BuilderNode {
-            id: "scr".into(),
-            component: "shell.signal-connection-row".into(),
-            props,
-            children: vec![],
-            layout_mode: LayoutMode::default(),
-            transform: Transform2D::default(),
-            modifiers: vec![],
-            style: StyleProperties::default(),
-        };
-        let cascade = StyleProperties::default();
-        let ctx = LowerCtx::new(None, &cascade);
-        signal_connection_row_lower(&ctx, &n, &cascade)
+        let n = test_node("scr", "shell.signal-connection-row", props);
+        lower_with(&n, signal_connection_row_lower)
     }
 
     #[test]

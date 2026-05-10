@@ -7,37 +7,38 @@
 //! `for wp[i] in root.workflow-pages` loop in `ui/app.slint`
 //! (lines 3991-4007).
 //!
-//! Smart pattern: leaf primitive — no embedded chrome, no
-//! `host_children`. The parent `shell.workflow-page-bar` block
-//! synthesises one of these per entry in its `pages` JSON prop via
-//! `ctx.lower_as`. The id (used for the `workflow-page-clicked`
-//! signal payload) is carried as the `page-id` prop.
+//! Smart pattern: this is the second consumer of
+//! [`super::chrome::active_underline_tab`] — same column/label/underline
+//! recipe as `shell.dock-tab`, just with a different metric/colour
+//! [`TabStyle`]. Adding a third tab-shaped chrome primitive is one
+//! more `TabStyle` literal.
 
+use super::chrome::{active_underline_tab, TabStyle};
 use prism_builder::{
-    common_signals,
     document::Node,
     registry::FieldSpec,
     style::StyleProperties,
-    ui_lower::{
-        bare_container, colored_text_node, hover_bg, parse_color, prop_bool, prop_string, LowerCtx,
-    },
+    ui_lower::{prop_bool, prop_string, LowerCtx},
 };
-use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
+use prism_ui_runtime::layout::{Node as UiNode, Padding};
 use serde_json::Value;
 
-const TAB_HEIGHT: f32 = 32.0;
-const UNDERLINE_HEIGHT: f32 = 2.0;
-const LABEL_FONT_SIZE: f32 = 12.0;
-/// `Palette.foreground` — full opacity for the active tab label.
-const LABEL_ACTIVE_COLOR: &str = "#000000";
-/// `Palette.foreground.transparentize(40%)` — resting label colour.
-const LABEL_RESTING_COLOR: &str = "#99000000";
-/// `Palette.accent-background.transparentize(90%)` — selected bg.
-const SELECTED_BG: &str = "#190060c0";
-/// Translucent foreground tint for the resting hover state.
-const HOVER_BG: &str = "#1f000000";
-/// Accent underline colour when active.
-const UNDERLINE_ACCENT: &str = "#0060c0";
+const TAB_STYLE: TabStyle = TabStyle {
+    height: 32.0,
+    padding: Padding {
+        left: 16.0,
+        right: 16.0,
+        top: 8.0,
+        bottom: 0.0,
+    },
+    label_size: 12.0,
+    label_active: "#000000",
+    label_resting: "#99000000",
+    active_bg: "#190060c0",
+    hover_bg: "#1f000000",
+    underline_height: 2.0,
+    underline_active: "#0060c0",
+};
 
 fn workflow_page_button_schema() -> Vec<FieldSpec> {
     vec![
@@ -47,86 +48,33 @@ fn workflow_page_button_schema() -> Vec<FieldSpec> {
     ]
 }
 
-fn workflow_page_button_signals() -> Vec<prism_builder::signal::SignalDef> {
-    common_signals()
-}
-
 fn workflow_page_button_lower(ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> UiNode {
-    let label_text = prop_string(node, "label");
-    let active = prop_bool(node, "active", false);
-    let color = if active {
-        LABEL_ACTIVE_COLOR
-    } else {
-        LABEL_RESTING_COLOR
-    };
-
-    let label = colored_text_node(
-        format!("{}::label", node.id),
-        label_text,
+    active_underline_tab(
+        ctx,
+        node,
         style,
-        LABEL_FONT_SIZE,
-        color,
-    );
-
-    // Bottom underline — always emitted; only painted when active.
-    let underline = bare_container(format!("{}::underline", node.id), vec![], |p| {
-        p.width = Sizing::Grow;
-        p.height = Sizing::Fixed(UNDERLINE_HEIGHT);
-        if active {
-            p.background = parse_color(UNDERLINE_ACCENT);
-        }
-    });
-
-    ctx.synthetic_container(node, style, vec![label, underline], |props| {
-        props.direction = Direction::Column;
-        props.height = Sizing::Fixed(TAB_HEIGHT);
-        props.padding = Padding {
-            left: 16.0,
-            right: 16.0,
-            top: 8.0,
-            bottom: 0.0,
-        };
-        if active {
-            props.background = parse_color(SELECTED_BG);
-        } else {
-            props.hover = hover_bg(HOVER_BG);
-        }
-        props.semantic = Semantic::button().with_attr("role", "tab").with_attr_if(
-            active,
-            "aria-selected",
-            "true",
-        );
-    })
+        prop_string(node, "label"),
+        prop_bool(node, "active", false),
+        &TAB_STYLE,
+    )
 }
 
 pub const WORKFLOW_PAGE_BUTTON_SPEC: prism_builder::BlockSpec =
     prism_builder::BlockSpec::new("shell.workflow-page-button", workflow_page_button_schema)
-        .lower(workflow_page_button_lower)
-        .signals(workflow_page_button_signals);
+        .lower(workflow_page_button_lower);
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prism_builder::document::Node as BuilderNode;
-    use prism_builder::layout::LayoutMode;
+    use crate::components::testing::{lower_with, test_node};
     use prism_builder::Block;
-    use prism_core::foundation::spatial::Transform2D;
     use serde_json::json;
 
     fn lower(props: Value) -> UiNode {
-        let n = BuilderNode {
-            id: "wp".into(),
-            component: "shell.workflow-page-button".into(),
-            props,
-            children: vec![],
-            layout_mode: LayoutMode::default(),
-            transform: Transform2D::default(),
-            modifiers: vec![],
-            style: StyleProperties::default(),
-        };
-        let cascade = StyleProperties::default();
-        let ctx = LowerCtx::new(None, &cascade);
-        workflow_page_button_lower(&ctx, &n, &cascade)
+        lower_with(
+            &test_node("wp", "shell.workflow-page-button", props),
+            workflow_page_button_lower,
+        )
     }
 
     #[test]

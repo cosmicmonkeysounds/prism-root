@@ -15,13 +15,13 @@
 //! universal common signals from `prism_builder::common_signals`.
 
 use prism_builder::{
-    common_signals,
     document::Node,
     registry::{FieldSpec, NumericBounds},
     schemas, // unused — reserved for shared field factories as we grow
     signal::SignalDef,
     style::StyleProperties,
     ui_lower::{parse_color, prop_bool, prop_str, LowerCtx},
+    with_common_signals,
 };
 use prism_ui_runtime::layout::Node as UiNode;
 use serde_json::Value;
@@ -44,12 +44,11 @@ fn icon_button_schema() -> Vec<FieldSpec> {
 }
 
 fn icon_button_signals() -> Vec<prism_builder::signal::SignalDef> {
-    // `with_common_signals` would dedup component-specific names
-    // against the 12 universals, but `hover-start`/`hover-end` are
-    // additive vocabulary the IconButton emits with positional
-    // payload (the Slint version takes `(string, length, length)`).
-    let mut signals = common_signals();
-    signals.push(
+    // `hover-start` / `hover-end` are additive vocabulary the
+    // IconButton emits with positional payload (the Slint version
+    // takes `(string, length, length)`); neither name collides with
+    // the 12 universals so `with_common_signals` simply appends.
+    with_common_signals(vec![
         SignalDef::new(
             "hover-start",
             "Pointer entered the button — positional payload for tooltip placement.",
@@ -59,9 +58,8 @@ fn icon_button_signals() -> Vec<prism_builder::signal::SignalDef> {
             FieldSpec::number("x", "X (px)", NumericBounds::default()),
             FieldSpec::number("y", "Y (px)", NumericBounds::default()),
         ]),
-    );
-    signals.push(SignalDef::new("hover-end", "Pointer left the button."));
-    signals
+        SignalDef::new("hover-end", "Pointer left the button."),
+    ])
 }
 
 fn icon_button_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
@@ -98,32 +96,18 @@ fn _schemas_anchor() -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::components::testing::{lower_with, test_node};
     use prism_builder::document::Node as BuilderNode;
-    use prism_builder::layout::LayoutMode;
-    use prism_builder::style::StyleProperties as Cascade;
-    use prism_builder::ui_lower::LowerCtx;
     use prism_builder::Block;
-    use prism_core::foundation::spatial::Transform2D;
     use prism_ui_runtime::layout::Sizing;
     use serde_json::json;
 
     fn lower_one(node: &BuilderNode) -> UiNode {
-        let cascade = Cascade::default();
-        let ctx = LowerCtx::new(None, &cascade);
-        icon_button_lower(&ctx, node, &cascade)
+        lower_with(node, icon_button_lower)
     }
 
     fn icon_node(props: Value) -> BuilderNode {
-        BuilderNode {
-            id: "ib".into(),
-            component: "shell.icon-button".into(),
-            props,
-            children: vec![],
-            layout_mode: LayoutMode::default(),
-            transform: Transform2D::default(),
-            modifiers: vec![],
-            style: Cascade::default(),
-        }
+        test_node("ib", "shell.icon-button", props)
     }
 
     #[test]

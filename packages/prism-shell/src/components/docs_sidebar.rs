@@ -71,22 +71,11 @@ mod tests {
     use super::*;
 
     use crate::components::registry::{register_shell_builtins, ShellComponentRegistry};
-    use prism_builder::document::Node as BuilderNode;
-    use prism_builder::layout::LayoutMode;
-    use prism_core::foundation::spatial::Transform2D;
+    use crate::components::testing::test_node;
 
     #[test]
     fn renders_aside_with_docs_content_inside() {
-        let n = BuilderNode {
-            id: "ds".into(),
-            component: "shell.docs-sidebar".into(),
-            props: json!({ "title": "Hi" }),
-            children: vec![],
-            layout_mode: LayoutMode::default(),
-            transform: Transform2D::default(),
-            modifiers: vec![],
-            style: StyleProperties::default(),
-        };
+        let n = test_node("ds", "shell.docs-sidebar", json!({ "title": "Hi" }));
         let mut reg = ShellComponentRegistry::new();
         register_shell_builtins(&mut reg).expect("register");
         let owned = reg;

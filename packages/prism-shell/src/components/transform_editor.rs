@@ -15,7 +15,6 @@
 //! recipe lives exactly once.
 
 use prism_builder::{
-    common_signals,
     document::Node,
     registry::FieldSpec,
     signal::SignalDef,
@@ -24,6 +23,7 @@ use prism_builder::{
         bare_container, colored_text_node, hover_bg, parse_color, prop_str, uniform_radius,
         LowerCtx,
     },
+    with_common_signals,
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
 use serde_json::Value;
@@ -114,16 +114,16 @@ fn transform_editor_schema() -> Vec<FieldSpec> {
 }
 
 fn transform_editor_signals() -> Vec<prism_builder::signal::SignalDef> {
-    let mut signals = common_signals();
-    signals.push(SignalDef::new(
-        "field-edited",
-        "Anchor / committed-text edits — payload mirrors the Slint (key, text) callback.",
-    ));
-    signals.push(SignalDef::new(
-        "field-edited-number",
-        "Numeric drag tick — payload mirrors the Slint (key, value) callback.",
-    ));
-    signals
+    with_common_signals(vec![
+        SignalDef::new(
+            "field-edited",
+            "Anchor / committed-text edits — payload mirrors the Slint (key, text) callback.",
+        ),
+        SignalDef::new(
+            "field-edited-number",
+            "Numeric drag tick — payload mirrors the Slint (key, value) callback.",
+        ),
+    ])
 }
 
 fn transform_editor_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
@@ -250,29 +250,17 @@ fn build_anchor_row(node: &Node) -> UiNode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::components::testing::{lower_with, test_node};
     use prism_builder::document::Node as BuilderNode;
-    use prism_builder::layout::LayoutMode;
     use prism_builder::Block;
-    use prism_core::foundation::spatial::Transform2D;
     use serde_json::json;
 
     fn node(props: Value) -> BuilderNode {
-        BuilderNode {
-            id: "te".into(),
-            component: "shell.transform-editor".into(),
-            props,
-            children: vec![],
-            layout_mode: LayoutMode::default(),
-            transform: Transform2D::default(),
-            modifiers: vec![],
-            style: StyleProperties::default(),
-        }
+        test_node("te", "shell.transform-editor", props)
     }
 
     fn lower(n: &BuilderNode) -> UiNode {
-        let cascade = StyleProperties::default();
-        let ctx = LowerCtx::new(None, &cascade);
-        transform_editor_lower(&ctx, n, &cascade)
+        lower_with(n, transform_editor_lower)
     }
 
     #[test]

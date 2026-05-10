@@ -16,12 +16,12 @@
 //! — exactly the split established by IconButton + NavButton.
 
 use prism_builder::{
-    common_signals,
     document::Node,
     registry::{FieldSpec, NumericBounds},
     signal::SignalDef,
     style::StyleProperties,
     ui_lower::{prop_str, prop_string, LowerCtx},
+    with_common_signals,
 };
 use prism_ui_runtime::layout::Node as UiNode;
 use serde_json::Value;
@@ -43,8 +43,7 @@ fn drag_number_field_schema() -> Vec<FieldSpec> {
 }
 
 fn drag_number_field_signals() -> Vec<prism_builder::signal::SignalDef> {
-    let mut signals = common_signals();
-    signals.push(
+    with_common_signals(vec![
         SignalDef::new(
             "changed",
             "Drag updated the value — payload mirrors the (key, value) pair the original \
@@ -54,8 +53,6 @@ fn drag_number_field_signals() -> Vec<prism_builder::signal::SignalDef> {
             FieldSpec::text("key", "Key"),
             FieldSpec::number("value", "Value", NumericBounds::default()),
         ]),
-    );
-    signals.push(
         SignalDef::new(
             "committed",
             "Inline edit accepted (Enter) — payload is the (key, raw text) the user typed.",
@@ -64,8 +61,7 @@ fn drag_number_field_signals() -> Vec<prism_builder::signal::SignalDef> {
             FieldSpec::text("key", "Key"),
             FieldSpec::text("text", "Raw text"),
         ]),
-    );
-    signals
+    ])
 }
 
 fn drag_number_field_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
@@ -93,31 +89,18 @@ pub const DRAG_NUMBER_FIELD_SPEC: prism_builder::BlockSpec =
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::components::testing::{lower_with, test_node};
     use prism_builder::document::Node as BuilderNode;
-    use prism_builder::layout::LayoutMode;
-    use prism_builder::style::StyleProperties as Cascade;
     use prism_builder::Block;
-    use prism_core::foundation::spatial::Transform2D;
     use prism_ui_runtime::layout::Sizing;
     use serde_json::json;
 
     fn lower(node: &BuilderNode) -> UiNode {
-        let cascade = Cascade::default();
-        let ctx = LowerCtx::new(None, &cascade);
-        drag_number_field_lower(&ctx, node, &cascade)
+        lower_with(node, drag_number_field_lower)
     }
 
     fn field(props: Value) -> BuilderNode {
-        BuilderNode {
-            id: "f".into(),
-            component: "shell.drag-number-field".into(),
-            props,
-            children: vec![],
-            layout_mode: LayoutMode::default(),
-            transform: Transform2D::default(),
-            modifiers: vec![],
-            style: Cascade::default(),
-        }
+        test_node("f", "shell.drag-number-field", props)
     }
 
     #[test]

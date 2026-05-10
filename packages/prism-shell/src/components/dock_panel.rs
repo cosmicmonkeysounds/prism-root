@@ -13,7 +13,6 @@
 //! body is whatever the caller authored.
 
 use prism_builder::{
-    common_signals,
     document::Node,
     registry::FieldSpec,
     style::StyleProperties,
@@ -31,10 +30,6 @@ fn dock_panel_schema() -> Vec<FieldSpec> {
         // JSON array — same shape as `shell.dock-tab-bar` consumes.
         FieldSpec::text("tabs", "Tabs (JSON array)"),
     ]
-}
-
-fn dock_panel_signals() -> Vec<prism_builder::signal::SignalDef> {
-    common_signals()
 }
 
 fn dock_panel_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
@@ -107,31 +102,19 @@ fn dock_panel_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -
 }
 
 pub const DOCK_PANEL_SPEC: prism_builder::BlockSpec =
-    prism_builder::BlockSpec::new("shell.dock-panel", dock_panel_schema)
-        .lower(dock_panel_lower)
-        .signals(dock_panel_signals);
+    prism_builder::BlockSpec::new("shell.dock-panel", dock_panel_schema).lower(dock_panel_lower);
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use crate::components::registry::{register_shell_builtins, ShellComponentRegistry};
+    use crate::components::testing::test_node_with_children;
     use prism_builder::document::Node as BuilderNode;
-    use prism_builder::layout::LayoutMode;
-    use prism_core::foundation::spatial::Transform2D;
     use serde_json::json;
 
     fn node(props: Value, kids: Vec<BuilderNode>) -> BuilderNode {
-        BuilderNode {
-            id: "dp".into(),
-            component: "shell.dock-panel".into(),
-            props,
-            children: kids,
-            layout_mode: LayoutMode::default(),
-            transform: Transform2D::default(),
-            modifiers: vec![],
-            style: StyleProperties::default(),
-        }
+        test_node_with_children("dp", "shell.dock-panel", props, kids)
     }
 
     fn lower(props: Value, kids: Vec<BuilderNode>) -> UiNode {

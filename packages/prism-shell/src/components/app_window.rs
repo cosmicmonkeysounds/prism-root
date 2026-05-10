@@ -21,12 +21,12 @@
 //! the Phase-4 chrome scoreboard.
 
 use prism_builder::{
-    common_signals,
     document::Node,
     registry::FieldSpec,
     signal::SignalDef,
     style::StyleProperties,
     ui_lower::{bare_container, parse_color, LowerCtx},
+    with_common_signals,
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Semantic, Sizing};
 use serde_json::{json, Value};
@@ -47,12 +47,10 @@ fn app_window_schema() -> Vec<FieldSpec> {
 }
 
 fn app_window_signals() -> Vec<prism_builder::signal::SignalDef> {
-    let mut signals = common_signals();
-    signals.push(SignalDef::new(
+    with_common_signals(vec![SignalDef::new(
         "nav-clicked",
         "Activity-bar button clicked — payload is the nav id.",
-    ));
-    signals
+    )])
 }
 
 fn app_window_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
@@ -196,13 +194,12 @@ fn json_object_with_keys(node: &Node, keys: &[&str]) -> Value {
 mod tests {
     use super::*;
 
+    use crate::components::testing::test_node_with_children;
     use prism_builder::document::Node as BuilderNode;
-    use prism_builder::layout::LayoutMode;
-    use prism_core::foundation::spatial::Transform2D;
     use serde_json::json;
 
     fn lower(props: Value, children: Vec<BuilderNode>) -> UiNode {
-        lower_with(props, children, None)
+        lower_in(props, children, None)
     }
 
     /// Lower with the full shell registry attached so embedded chrome
@@ -213,29 +210,17 @@ mod tests {
         use crate::components::registry::{register_shell_builtins, ShellComponentRegistry};
         let mut reg = ShellComponentRegistry::new();
         register_shell_builtins(&mut reg).expect("register");
-        // Borrow the inner ComponentRegistry through `as_component_registry`.
-        // We have to keep the registry alive for the LowerCtx lifetime;
-        // build it locally and pass a borrow.
         let owned = reg;
         let cr = owned.as_component_registry();
-        lower_with(props, children, Some(cr))
+        lower_in(props, children, Some(cr))
     }
 
-    fn lower_with(
+    fn lower_in(
         props: Value,
         children: Vec<BuilderNode>,
         registry: Option<&prism_builder::ComponentRegistry>,
     ) -> UiNode {
-        let n = BuilderNode {
-            id: "aw".into(),
-            component: "shell.app-window".into(),
-            props,
-            children,
-            layout_mode: LayoutMode::default(),
-            transform: Transform2D::default(),
-            modifiers: vec![],
-            style: StyleProperties::default(),
-        };
+        let n = test_node_with_children("aw", "shell.app-window", props, children);
         let cascade = StyleProperties::default();
         let ctx = LowerCtx::new(registry, &cascade);
         app_window_lower(&ctx, &n, &cascade)
@@ -325,16 +310,7 @@ mod tests {
         // Synthesise a child node — it will fall through to default
         // container since we have no registry, but it should still
         // appear in the content area's children.
-        let child = BuilderNode {
-            id: "child".into(),
-            component: "container".into(),
-            props: json!({}),
-            children: vec![],
-            layout_mode: LayoutMode::default(),
-            transform: Transform2D::default(),
-            modifiers: vec![],
-            style: StyleProperties::default(),
-        };
+        let child = crate::components::testing::test_node("child", "container", json!({}));
         let ui = lower(json!({}), vec![child]);
         let UiNode::Container { children, .. } = ui else {
             panic!()

@@ -75,28 +75,16 @@ mod tests {
     use super::*;
 
     use crate::components::registry::{register_shell_builtins, ShellComponentRegistry};
+    use crate::components::testing::{lower_with, test_node};
     use prism_builder::document::Node as BuilderNode;
-    use prism_builder::layout::LayoutMode;
-    use prism_core::foundation::spatial::Transform2D;
     use serde_json::json;
 
     fn node(props: serde_json::Value) -> BuilderNode {
-        BuilderNode {
-            id: "wpb".into(),
-            component: "shell.workflow-page-bar".into(),
-            props,
-            children: vec![],
-            layout_mode: LayoutMode::default(),
-            transform: Transform2D::default(),
-            modifiers: vec![],
-            style: StyleProperties::default(),
-        }
+        test_node("wpb", "shell.workflow-page-bar", props)
     }
 
     fn lower_no_registry(props: serde_json::Value) -> UiNode {
-        let cascade = StyleProperties::default();
-        let ctx = LowerCtx::new(None, &cascade);
-        workflow_page_bar_lower(&ctx, &node(props), &cascade)
+        lower_with(&node(props), workflow_page_bar_lower)
     }
 
     fn lower_with_registry(props: serde_json::Value) -> UiNode {

@@ -5301,3 +5301,312 @@ duplication inside `LuauComponent`:
 | Date | Decision | Rationale |
 |---|---|---|
 | 2026-05-10 | §36 lands: `WidgetContribution → Block` mapping helpers (`map_signal_spec`, `map_variant_spec`) are shared between `CoreWidgetBlock` and `LuauComponent`; the three `parse_*_array` Lua-array parsers collapse to one generic `parse_spec_array<T: DeserializeOwned>`. | Both call sites convert the same `WidgetContribution` shape into the same `Block` surface — there's no good reason for the conversions to live in two places. Generic spec parsing also means new fields in `parse_contribution` (e.g. toolbar actions, hot-reload metadata) are a one-line addition rather than a fourth copy of the same loop. `prism-luau-derive` integration was already clean (the derive emits a `Block` impl and inherits everything `Block` consumers do); these changes only tighten the host-side machinery the derive's emitted code lands on top of. |
+
+## 37. Active-underline tab — `chrome::active_underline_tab` + `TabStyle`
+
+**Strategy locked 2026-05-10 (post-§36).** `shell.dock-tab` and
+`shell.workflow-page-button` are the same visual recipe — a column
+with a label on top and a 2px underline at the bottom, where the
+active state paints a tinted background and the resting state swaps
+to a hover-bg. Two files, ~50 lines each, the only difference being
+metric/colour constants (height, padding, label/bg/underline hex).
+
+**The collapse.** One helper in `prism-shell/src/components/chrome.rs`:
+
+```rust
+pub struct TabStyle {
+    pub height: f32,
+    pub padding: Padding,
+    pub label_size: f32,
+    pub label_active: &'static str,
+    pub label_resting: &'static str,
+    pub active_bg: &'static str,
+    pub hover_bg: &'static str,
+    pub underline_height: f32,
+    pub underline_active: &'static str,
+}
+
+pub fn active_underline_tab(
+    ctx: &LowerCtx<'_>,
+    node: &BuilderNode,
+    style: &StyleProperties,
+    label_text: String,
+    active: bool,
+    spec: &TabStyle,
+) -> UiNode { ... }
+```
+
+`dock_tab.rs` and `workflow_page_button.rs` each declare a
+`const TAB_STYLE: TabStyle = TabStyle { ... }` and forward to the
+helper. The lowering body shrinks from ~40 lines of manual
+`bare_container` / `colored_text_node` / `synthetic_container`
+plumbing to a single 7-line call.
+
+**Smart-pattern wins.**
+
+- **Static spec, dynamic state.** Variation across consumers is pure
+  styling data (`&'static TabStyle`); variation per call is `(label,
+  active)`. No runtime branching on tab kind, no per-consumer helper.
+- **Adding a third tab is one literal.** Future tab-shaped chrome
+  (search-result tabs, breadcrumb segments) declares a new
+  `TabStyle` const and reuses the same helper.
+- **Promote-then-reuse, locked at the second consumer.** This is the
+  rule-of-two threshold the chrome module documents — when the
+  pattern lands twice, the recipe graduates to `chrome.rs`.
+
+**Note on nav-button.** `shell.nav-button` was *not* folded into
+this helper. Its shape is row-based (rail + body) with an icon
+glyph instead of a label, so unifying would force conditionals that
+defeat the point of the helper. Active-state semantics live on
+`Semantic::with_attr_if` directly. The "implement only when the
+recipe is genuinely shared" discipline holds.
+
+### Decision-log entry
+
+| Date | Decision | Rationale |
+|---|---|---|
+| 2026-05-10 | §37 lands: `chrome::active_underline_tab` + `TabStyle` extracted; `dock_tab` and `workflow_page_button` lowering bodies forward to it. | Two files were running the same column-with-underline recipe for ~40 LoC each, differing only in metric/colour constants. The helper takes a `&'static TabStyle` literal so per-consumer variation stays declarative; the lowering body is one call. Adding a third tab-shaped chrome primitive is a `TabStyle` literal and a one-line `lower_ui` body. `nav-button` deliberately stays separate — its row+rail+icon shape is structurally different and forcing it through this helper would re-introduce branches the helper exists to avoid. |
+
+## 38. Gizmo arms / handles / root — three composable helpers
+
+**Strategy locked 2026-05-10 (post-§37).** `shell.gizmo-move`,
+`shell.gizmo-rotate`, and `shell.gizmo-scale` each emit a small set
+of coloured rectangles plus an outer `<div role="group">` wrapper,
+all built through hand-rolled `bare_container` calls with the same
+semantic-attr boilerplate. Three files, ~5 helpers' worth of
+duplication.
+
+**The collapse.** Three free functions in `chrome.rs`:
+
+- `gizmo_axis_arm(id, axis, length, thick, color, rounded)` — one
+  red/green axis stroke. `axis` ∈ {`'x'`, `'y'`} drives both the
+  width/height swap and the `data-axis` attr. `rounded` toggles
+  the half-thickness pill radius (move-gizmo arms are pills,
+  scale-gizmo arms are square).
+- `gizmo_handle(id, size, radius, color, aria, data_role, axis)` —
+  one square/circle handle. Used for the white center hub
+  (`data-role="gizmo-hub"`), the rotate handle dot
+  (`data-role="gizmo-handle"`), and the scale-arm caps
+  (`data-role="gizmo-cap"`, with `axis = Some('x'|'y')`).
+- `gizmo_root(id, children, aria, tool, row)` — outer
+  `<div role="group">` carrying `data-role="gizmo"` and
+  `data-tool="{move|rotate|scale}"`.
+
+The three gizmo modules become almost pure structure: which children,
+which colours, which axes. The 40-line ARM/CAP/HUB literal pyramids
+collapse to ~6-line calls each.
+
+**Smart-pattern wins.**
+
+- **Three orthogonal helpers, no shared state.** Each helper produces
+  one `UiNode`; consumers compose them with `vec![...]`. No builder,
+  no DI — just functions over already-shared `ui_lower` constructors.
+- **The rotate gizmo's stroked ring stays inline.** It's a
+  one-of-a-kind shape (filled circle with `data-stroke`); forcing it
+  through `gizmo_handle` would introduce a `fill_color: Option<&str>`
+  parameter that exists for one caller. The two-bucket discipline
+  holds — only collapse what's genuinely shared.
+- **Scale-cap symmetry is now structural.** `cap_x` and `cap_y` differ
+  only in `axis` and `color`; under the helper they're two `gizmo_handle`
+  calls with `Some('x')` / `Some('y')` and the matching axis colour.
+  Adding a Z-axis later is one more line.
+
+### Decision-log entry
+
+| Date | Decision | Rationale |
+|---|---|---|
+| 2026-05-10 | §38 lands: `gizmo_axis_arm`, `gizmo_handle`, `gizmo_root` extracted into `components::chrome`; all three gizmo blocks (move / rotate / scale) lower through them. | Each gizmo was emitting near-identical `bare_container { width / height / background / radius / Semantic::tag("span").with_attr(...) }` boilerplate three to five times per file. The three-helper split (axis / handle / root) is exactly orthogonal to the three concerns the gizmos express (axis arms, interactive handles, group wrapper). The rotate-ring shape stays inline — it's stroked, not filled, so unifying would force a one-caller parameter. New gizmos (skew, shear, Z-axis) are now a `vec![]` of arm/handle calls plus one `gizmo_root` wrapper. |
+
+## 39. Test-fixture helper — `components::testing`
+
+**Strategy locked 2026-05-10 (post-§38).** Every shell-component
+test module repeats the same boilerplate to build a single-block
+`BuilderNode` and run it through a default `LowerCtx`:
+
+```rust
+fn lower_one(node: &BuilderNode) -> UiNode {
+    let cascade = StyleProperties::default();
+    let ctx = LowerCtx::new(None, &cascade);
+    foo_lower(&ctx, node, &cascade)
+}
+
+fn foo_node(props: Value) -> BuilderNode {
+    BuilderNode {
+        id: "x".into(),
+        component: "shell.foo".into(),
+        props,
+        children: vec![],
+        layout_mode: LayoutMode::default(),
+        transform: Transform2D::default(),
+        modifiers: vec![],
+        style: StyleProperties::default(),
+    }
+}
+```
+
+Repeated ~50 times across `components/*.rs`, with imports of
+`LayoutMode`, `Transform2D`, `StyleProperties as Cascade`, `LowerCtx`
+in every test module.
+
+**The collapse.** One `#[cfg(test)] pub(crate) mod testing` in
+`components/mod.rs`:
+
+```rust
+pub fn test_node(id: &str, component: &str, props: Value) -> BuilderNode { ... }
+pub fn lower_with<F>(node: &BuilderNode, f: F) -> UiNode
+where F: FnOnce(&LowerCtx<'_>, &BuilderNode, &StyleProperties) -> UiNode { ... }
+```
+
+Test-side imports collapse to `use crate::components::testing::{lower_with, test_node};`
+plus whatever the assertion needs. The fixture builder shrinks from
+10 lines to one; the `lower_one` adapter shrinks from 4 to 1.
+
+**Migrated as part of §39.** `dock_tab`, `workflow_page_button`,
+`gizmo_move`, `gizmo_rotate`, `gizmo_scale`, `icon_button`, `toast`,
+`section_header`, `app_card`, `status_bar`. The remaining ~40
+component tests can migrate incrementally; the helper is in place
+and every new component should use it from the start.
+
+**Smart-pattern wins.**
+
+- **Test imports stop drifting.** Adding a field to `BuilderNode`
+  (e.g. the `style` cascade in §28, the `transform` field for §22)
+  used to require touching every test fixture. Now: one edit in
+  `test_node`, every test inherits.
+- **The `lower_with` HOF generalises across blocks.** Because the
+  shell has standardised on `fn foo_lower(ctx, node, style) -> UiNode`
+  free functions (no struct, no `impl Block` per block), one HOF
+  signature covers every block.
+- **No production-side cost.** The module is `#[cfg(test)]`-gated, so
+  zero LoC ship to consumers, and the `pub(crate)` visibility keeps
+  it internal to `prism-shell`.
+
+### Decision-log entry
+
+| Date | Decision | Rationale |
+|---|---|---|
+| 2026-05-10 | §39 lands: `components::testing::{test_node, lower_with}` consolidates the BuilderNode-fixture + default-cascade-lower boilerplate every shell-component test module was duplicating. Ten initial migrations land alongside the helper; the rest (~40) are an incremental cleanup. | The pattern was repeated ~50 times across `components/*.rs` — 10+ lines of struct-literal-with-defaults plus a 4-line `lower_one` adapter, both purely mechanical. Touching `BuilderNode`'s shape (which §28's `style` cascade and §22's `transform` did within the last sprint) used to require updating every test fixture; the helper centralises that. The function-rather-than-macro approach also means rust-analyzer / rustdoc see normal types, no proc-macro magic. The `pub(crate)` `#[cfg(test)]` gating keeps the helper internal to `prism-shell` with zero LoC shipped to consumers. |
+
+## 40. `components::testing` migration sweep + `test_node_with_children`
+
+**Strategy locked 2026-05-10 (post-§39).** §39 landed the helper plus
+ten initial migrations; the remaining ~30 component test modules
+were still hand-rolling the `BuilderNode { id, component, props,
+children: vec![], layout_mode: …, transform: …, modifiers: vec![],
+style: … }` literal and the `let cascade = …; let ctx = LowerCtx::new(None, &cascade); foo_lower(&ctx, &n, &cascade)` ceremony.
+Every literal also carried four imports (`document::Node`,
+`layout::LayoutMode`, `spatial::Transform2D`, `style::StyleProperties`)
+that the helper module already owns.
+
+**The collapse.** Every shell-component test module now imports
+`crate::components::testing::{lower_with, test_node}` (or
+`test_node_with_children` where the test feeds AST kids into the
+resolver) and reduces the fixture to 1-2 lines. Files migrated in
+this sweep:
+
+- Plain dispatch: `dock_divider`, `toolbar_separator`, `help_tooltip`,
+  `resize_handle`, `menu_item`, `nav_button`, `nav_page_row`,
+  `nav_graph`, `schema_row`, `signal_connection_row`,
+  `drag_number_field`, `menu_bar_row`, `command_palette`,
+  `docs_content`, `field_editor`, `inspector_row`, `inspector_tree`,
+  `launchpad`, `transform_editor`, `code_editor`,
+  `component_palette`, `component_picker`, `toast_stack`.
+- Registry-aware: `dock_tab_bar`, `schema_designer`, `signals_panel`,
+  `properties_panel`, `docs_view`, `docs_sidebar`, `explorer`,
+  `nav_page_list`, `context_menu`, `menu_dropdown`, `dock_workspace`,
+  `workflow_page_bar`, `builder_canvas`. The helper still applies
+  here; only the `LowerCtx::new(Some(reg.as_component_registry()), &cascade)` line stays inline.
+- Children-bearing: `dock_panel`, `app_window`. Both now lean on
+  the new `test_node_with_children(id, component, props, children)`
+  variant — an additive 4-line addition next to `test_node` that
+  shares the same struct-literal default block via internal
+  delegation.
+
+**Smart-pattern wins.**
+
+- **One-stop import.** Every test module now opens with
+  `use crate::components::testing::{lower_with, test_node};` instead
+  of four `prism_*` paths. Adding a field to `BuilderNode` becomes a
+  single edit in `components::testing` regardless of registry shape.
+- **`test_node_with_children` is the dispatch handle, not a new
+  abstraction.** `test_node` is now a one-liner that delegates to
+  `test_node_with_children` with `vec![]`. The two consumers that
+  need real kids (`dock_panel`'s `node(props, kids)` helper,
+  `app_window`'s child-bearing fixture) compose through the same
+  fields. No second source of truth.
+- **Net deletion.** The sweep replaces ~330 lines of mechanical
+  fixture boilerplate with ~110 lines of helper-mediated calls; the
+  `prism_builder::layout::LayoutMode`,
+  `prism_builder::style::StyleProperties as Cascade`,
+  `prism_core::foundation::spatial::Transform2D` imports vanish from
+  every migrated test module.
+- **All 252 lib tests still pass** under the new fixture path —
+  including the registry-aware ones and the child-bearing
+  `dock_panel` / `app_window` cases that drive nested AST through
+  the resolver.
+
+### Decision-log entry
+
+| Date | Decision | Rationale |
+|---|---|---|
+| 2026-05-10 | §40 lands: ~30 additional shell-component test modules migrate to `components::testing::{test_node, lower_with}`; `test_node_with_children` lands as a four-line additive variant for `dock_panel` / `app_window`. The "rest (~40)" punch list from §39's note is now fully retired apart from registry-bearing wrapper code that is structurally distinct. | §39 set up the helper but only migrated 10 of ~50 sites; carrying the boilerplate elsewhere muddies the rule that "every new component should use it from the start." The sweep eliminates the ambiguity and centralises the BuilderNode fixture shape in one place. `test_node_with_children` is additive (no breaking change to `test_node`'s signature) and only exists because two real test sites need to drive AST kids through the resolver — promote-then-reuse held: only collapse the children-bearing case once a second consumer materialised (`app_window` joining `dock_panel`). |
+
+## 41. `props.rs` collapse + `with_common_signals` sweep
+
+**Strategy locked 2026-05-10 (post-§40).** Two parallel chrome-side
+duplications were still on the floor:
+
+- **`props.rs` was 27 hand-written `bind_slot!(reg, "shell.X", |s: &AppState| s.SLOT.X_props())` invocations** plus a 20-row stub list, gated behind a pair of `#[macro_export]` macros (`bind!` / `bind_slot!`) used nowhere outside the file. Each row was a trivial forwarder; the macros existed only to hide a `Box::new(|ctx| PropEmission::from_props(...))` wrapping that the table itself can express directly.
+- **22 component `*_signals` functions used the imperative push pattern**: `let mut s = common_signals(); s.push(SignalDef::new(...)); s` — re-implementing what `prism_builder::with_common_signals(vec![...])` already does. A further 7 components had a `*_signals` function whose entire body was `common_signals()` — pure restatement of `BlockSpec`'s default, registered via a redundant `.signals(foo_signals)`.
+
+**The collapse.** Two new `'static` const tables in `props.rs`
+([`SLOT_BINDINGS: &[(&str, fn(&AppState) -> Value)]`][slot] and
+[`STUB_BINDINGS: &[&str]`][stub]) replace the macro-driven invocations:
+non-capturing closure literals coerce to function pointers, the table
+is heap-free, and `register_builtin_bindings` is now a pair of `for`
+loops over the two tables. The `bind!` / `bind_slot!` macros are
+deleted along with `#[macro_export]`. The 22 push-style signal
+functions become one-liners around `with_common_signals(vec![...])`.
+The 7 noop signal functions are deleted entirely; the `BlockSpec`
+rows lose their `.signals(foo_signals)` builder call and fall back
+to `default_signals` (which is `with_common_signals(vec![])` ==
+`common_signals()` by definition).
+
+**Smart-pattern wins.**
+
+- **One declarative table per binding kind.** Adding a slot binding
+  is one row in `SLOT_BINDINGS`; adding a stub is one entry in
+  `STUB_BINDINGS`. The 27 macro-mediated rows used to read as
+  imperative `register` calls — the table form makes "what's the
+  full set of shell-block bindings" answerable in one glance.
+- **No production-side macro surface.** `#[macro_export]` widens a
+  crate's public API even when only used internally; deleting both
+  `bind!` and `bind_slot!` shrinks `prism-shell`'s exported macro
+  surface to zero. Future consumers can't pick up an undocumented
+  binding helper that wasn't designed for them.
+- **Default-bias on signals.** `BlockSpec::new` already defaults
+  `signals` to `default_signals` (== `common_signals()`); the noop
+  `*_signals` functions were ceremonial. Dropping them moves the
+  rule "common signals come for free" from "every component must
+  remember to call `common_signals()`" to "every `BlockSpec::new`
+  inherits the default unless it adds something" — the shape that
+  matched the rest of the spec from day one.
+- **Conformance to `with_common_signals`.** The 22 push-pattern
+  callers now route through one helper that already deduplicates by
+  name. Future signal additions can't accidentally shadow a common
+  one through field-order luck — the helper enforces the dedup
+  contract.
+
+**Net deletion.** ~155 LoC across `props.rs` and 29 component files;
+zero new infrastructure. All 252 lib tests still pass under the new
+binding table and the consolidated signal helpers; clippy
+`-D warnings` clean.
+
+[slot]: ../../packages/prism-shell/src/props.rs
+[stub]: ../../packages/prism-shell/src/props.rs
+
+### Decision-log entry
+
+| Date | Decision | Rationale |
+|---|---|---|
+| 2026-05-10 | §41 lands: `SLOT_BINDINGS` / `STUB_BINDINGS` declarative const tables collapse `register_builtin_bindings`; `bind!` / `bind_slot!` macros deleted. 22 component `*_signals` functions converge on `with_common_signals(vec![...])`; 7 noop `*_signals` functions deleted along with their `.signals(...)` builder calls. | The two patterns shared a root cause: ceremony around defaults. The macros existed to hide a one-line `Box::new` wrap; the noop signal functions existed to restate `BlockSpec`'s default; the push pattern existed to re-implement an already-shipped helper. Collapsing each one to its minimum form (table row, missing builder call, helper call) cut ~155 LoC and tightened the "adding a feature is one row" invariant. The macros' deletion also drops two `#[macro_export]` symbols from `prism-shell`'s public surface, undoing leakage that existed only because the macros were the easiest hiding mechanism at landing time. |

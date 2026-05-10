@@ -47,26 +47,13 @@ pub const INSPECTOR_TREE_SPEC: prism_builder::BlockSpec =
 mod tests {
     use super::*;
 
-    use prism_builder::document::Node as BuilderNode;
-    use prism_builder::layout::LayoutMode;
-    use prism_core::foundation::spatial::Transform2D;
+    use crate::components::testing::{lower_with, test_node};
     use serde_json::json;
 
     #[test]
     fn renders_as_role_tree_ul() {
-        let n = BuilderNode {
-            id: "it".into(),
-            component: "shell.inspector-tree".into(),
-            props: json!({}),
-            children: vec![],
-            layout_mode: LayoutMode::default(),
-            transform: Transform2D::default(),
-            modifiers: vec![],
-            style: StyleProperties::default(),
-        };
-        let cascade = StyleProperties::default();
-        let ctx = LowerCtx::new(None, &cascade);
-        let UiNode::Container { props, .. } = inspector_tree_lower(&ctx, &n, &cascade) else {
+        let n = test_node("it", "shell.inspector-tree", json!({}));
+        let UiNode::Container { props, .. } = lower_with(&n, inspector_tree_lower) else {
             panic!()
         };
         assert_eq!(props.semantic.tag.as_deref(), Some("ul"));

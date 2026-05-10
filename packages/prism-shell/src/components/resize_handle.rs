@@ -8,12 +8,12 @@
 //! Slint origin: resize handles around `ui/app.slint:2676`.
 
 use prism_builder::{
-    common_signals,
     document::Node,
     registry::FieldSpec,
     signal::SignalDef,
     style::StyleProperties,
     ui_lower::{bare_container, parse_color, prop_string, uniform_radius, LowerCtx},
+    with_common_signals,
 };
 use prism_ui_runtime::layout::{Node as UiNode, Semantic, Sizing};
 
@@ -26,10 +26,10 @@ fn resize_handle_schema() -> Vec<FieldSpec> {
 }
 
 fn resize_handle_signals() -> Vec<prism_builder::signal::SignalDef> {
-    let mut s = common_signals();
-    s.push(SignalDef::new("handle-pressed", "Handle pressed."));
-    s.push(SignalDef::new("handle-dragged", "Handle dragged."));
-    s
+    with_common_signals(vec![
+        SignalDef::new("handle-pressed", "Handle pressed."),
+        SignalDef::new("handle-dragged", "Handle dragged."),
+    ])
 }
 
 fn resize_handle_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
@@ -84,25 +84,16 @@ fn aria_for(dir: &str) -> &'static str {
 mod tests {
     use super::*;
 
-    use prism_builder::document::Node as BuilderNode;
-    use prism_builder::layout::LayoutMode;
-    use prism_core::foundation::spatial::Transform2D;
+    use crate::components::testing::{lower_with, test_node};
     use serde_json::json;
 
     fn lower(direction: &str) -> UiNode {
-        let n = BuilderNode {
-            id: "rh".into(),
-            component: "shell.resize-handle".into(),
-            props: json!({ "direction": direction }),
-            children: vec![],
-            layout_mode: LayoutMode::default(),
-            transform: Transform2D::default(),
-            modifiers: vec![],
-            style: StyleProperties::default(),
-        };
-        let cascade = StyleProperties::default();
-        let ctx = LowerCtx::new(None, &cascade);
-        resize_handle_lower(&ctx, &n, &cascade)
+        let n = test_node(
+            "rh",
+            "shell.resize-handle",
+            json!({ "direction": direction }),
+        );
+        lower_with(&n, resize_handle_lower)
     }
 
     #[test]

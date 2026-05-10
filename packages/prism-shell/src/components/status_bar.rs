@@ -61,26 +61,14 @@ pub const STATUS_BAR_SPEC: prism_builder::BlockSpec =
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use prism_builder::document::Node as BuilderNode;
-    use prism_builder::layout::LayoutMode;
-    use prism_core::foundation::spatial::Transform2D;
+    use crate::components::testing::{lower_with, test_node};
     use serde_json::json;
 
     fn lower(props: serde_json::Value) -> UiNode {
-        let node = BuilderNode {
-            id: "sb".into(),
-            component: "shell.status-bar".into(),
-            props,
-            children: vec![],
-            layout_mode: LayoutMode::default(),
-            transform: Transform2D::default(),
-            modifiers: vec![],
-            style: StyleProperties::default(),
-        };
-        let cascade = StyleProperties::default();
-        let ctx = LowerCtx::new(None, &cascade);
-        status_bar_lower(&ctx, &node, &cascade)
+        lower_with(
+            &test_node("sb", "shell.status-bar", props),
+            status_bar_lower,
+        )
     }
 
     #[test]

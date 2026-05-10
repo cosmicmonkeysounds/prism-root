@@ -15,7 +15,6 @@
 //! per-kind hand-rolled `UiNode::Container { … }` literals.
 
 use prism_builder::{
-    common_signals,
     document::Node,
     registry::{FieldSpec, NumericBounds, SelectOption},
     signal::SignalDef,
@@ -24,6 +23,7 @@ use prism_builder::{
         bare_container, colored_text_node, hover_bg, parse_color, prop_bool, prop_str,
         text_input_node, text_node, uniform_radius, LowerCtx,
     },
+    with_common_signals,
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
 use serde_json::Value;
@@ -136,20 +136,20 @@ fn field_editor_schema() -> Vec<FieldSpec> {
 }
 
 fn field_editor_signals() -> Vec<prism_builder::signal::SignalDef> {
-    let mut signals = common_signals();
-    signals.push(SignalDef::new(
-        "field-edited",
-        "Edit committed (text/select/color/file/boolean) — payload (key, text).",
-    ));
-    signals.push(SignalDef::new(
-        "field-edited-number",
-        "Numeric drag tick — payload (key, value).",
-    ));
-    signals.push(SignalDef::new(
-        "file-browse-requested",
-        "User clicked the browse button on a `file`-kind row.",
-    ));
-    signals
+    with_common_signals(vec![
+        SignalDef::new(
+            "field-edited",
+            "Edit committed (text/select/color/file/boolean) — payload (key, text).",
+        ),
+        SignalDef::new(
+            "field-edited-number",
+            "Numeric drag tick — payload (key, value).",
+        ),
+        SignalDef::new(
+            "file-browse-requested",
+            "User clicked the browse button on a `file`-kind row.",
+        ),
+    ])
 }
 
 fn field_editor_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
@@ -381,26 +381,13 @@ fn pill_with_chevron(id: impl Into<String>, value: &str, open: bool) -> UiNode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prism_builder::document::Node as BuilderNode;
-    use prism_builder::layout::LayoutMode;
+    use crate::components::testing::{lower_with, test_node};
     use prism_builder::Block;
-    use prism_core::foundation::spatial::Transform2D;
     use serde_json::json;
 
     fn lower(props: Value) -> UiNode {
-        let n = BuilderNode {
-            id: "fe".into(),
-            component: "shell.field-editor".into(),
-            props,
-            children: vec![],
-            layout_mode: LayoutMode::default(),
-            transform: Transform2D::default(),
-            modifiers: vec![],
-            style: StyleProperties::default(),
-        };
-        let cascade = StyleProperties::default();
-        let ctx = LowerCtx::new(None, &cascade);
-        field_editor_lower(&ctx, &n, &cascade)
+        let n = test_node("fe", "shell.field-editor", props);
+        lower_with(&n, field_editor_lower)
     }
 
     #[test]

@@ -51,29 +51,16 @@ pub const TOOLBAR_SEPARATOR_SPEC: prism_builder::BlockSpec =
 mod tests {
     use super::*;
 
+    use crate::components::testing::{lower_with, test_node};
     use prism_builder::document::Node as BuilderNode;
-    use prism_builder::layout::LayoutMode;
-    use prism_builder::style::StyleProperties as Cascade;
-    use prism_core::foundation::spatial::Transform2D;
     use serde_json::json;
 
     fn lower_one(node: &BuilderNode) -> UiNode {
-        let cascade = Cascade::default();
-        let ctx = LowerCtx::new(None, &cascade);
-        toolbar_separator_lower(&ctx, node, &cascade)
+        lower_with(node, toolbar_separator_lower)
     }
 
     fn separator() -> BuilderNode {
-        BuilderNode {
-            id: "sep".into(),
-            component: "shell.toolbar-separator".into(),
-            props: json!({}),
-            children: vec![],
-            layout_mode: LayoutMode::default(),
-            transform: Transform2D::default(),
-            modifiers: vec![],
-            style: Cascade::default(),
-        }
+        test_node("sep", "shell.toolbar-separator", json!({}))
     }
 
     #[test]

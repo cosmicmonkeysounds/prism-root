@@ -95,22 +95,11 @@ mod tests {
     use super::*;
 
     use crate::components::registry::{register_shell_builtins, ShellComponentRegistry};
-    use prism_builder::document::Node as BuilderNode;
-    use prism_builder::layout::LayoutMode;
-    use prism_core::foundation::spatial::Transform2D;
+    use crate::components::testing::test_node;
     use serde_json::json;
 
     fn lower(props: serde_json::Value) -> UiNode {
-        let n = BuilderNode {
-            id: "sd".into(),
-            component: "shell.schema-designer".into(),
-            props,
-            children: vec![],
-            layout_mode: LayoutMode::default(),
-            transform: Transform2D::default(),
-            modifiers: vec![],
-            style: StyleProperties::default(),
-        };
+        let n = test_node("sd", "shell.schema-designer", props);
         let mut reg = ShellComponentRegistry::new();
         register_shell_builtins(&mut reg).expect("register");
         let cascade = StyleProperties::default();

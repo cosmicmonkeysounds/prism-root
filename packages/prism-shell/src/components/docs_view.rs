@@ -59,22 +59,11 @@ mod tests {
     use super::*;
 
     use crate::components::registry::{register_shell_builtins, ShellComponentRegistry};
-    use prism_builder::document::Node as BuilderNode;
-    use prism_builder::layout::LayoutMode;
-    use prism_core::foundation::spatial::Transform2D;
+    use crate::components::testing::test_node;
 
     #[test]
     fn article_with_full_mode() {
-        let n = BuilderNode {
-            id: "dv".into(),
-            component: "shell.docs-view".into(),
-            props: json!({ "title": "Hi" }),
-            children: vec![],
-            layout_mode: LayoutMode::default(),
-            transform: Transform2D::default(),
-            modifiers: vec![],
-            style: StyleProperties::default(),
-        };
+        let n = test_node("dv", "shell.docs-view", json!({ "title": "Hi" }));
         let mut reg = ShellComponentRegistry::new();
         register_shell_builtins(&mut reg).expect("register");
         let owned = reg;

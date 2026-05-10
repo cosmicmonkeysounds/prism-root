@@ -10,12 +10,12 @@
 //! Slint origin: `BuilderCanvas` body around `ui/app.slint:1981`.
 
 use prism_builder::{
-    common_signals,
     document::Node,
     registry::FieldSpec,
     signal::SignalDef,
     style::StyleProperties,
     ui_lower::{bare_container, parse_color, prop_bool, prop_string, uniform_radius, LowerCtx},
+    with_common_signals,
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
 use serde_json::{json, Value};
@@ -60,14 +60,11 @@ fn builder_canvas_schema() -> Vec<FieldSpec> {
 }
 
 fn builder_canvas_signals() -> Vec<prism_builder::signal::SignalDef> {
-    let mut s = common_signals();
-    s.push(SignalDef::new(
-        "canvas-clicked",
-        "Canvas background clicked.",
-    ));
-    s.push(SignalDef::new("cell-clicked", "Grid cell clicked."));
-    s.push(SignalDef::new("selection-dragged", "Selection drag delta."));
-    s
+    with_common_signals(vec![
+        SignalDef::new("canvas-clicked", "Canvas background clicked."),
+        SignalDef::new("cell-clicked", "Grid cell clicked."),
+        SignalDef::new("selection-dragged", "Selection drag delta."),
+    ])
 }
 
 fn builder_canvas_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
@@ -284,21 +281,10 @@ mod tests {
     use super::*;
 
     use crate::components::registry::{register_shell_builtins, ShellComponentRegistry};
-    use prism_builder::document::Node as BuilderNode;
-    use prism_builder::layout::LayoutMode;
-    use prism_core::foundation::spatial::Transform2D;
+    use crate::components::testing::test_node;
 
     fn lower(props: Value) -> UiNode {
-        let n = BuilderNode {
-            id: "bc".into(),
-            component: "shell.builder-canvas".into(),
-            props,
-            children: vec![],
-            layout_mode: LayoutMode::default(),
-            transform: Transform2D::default(),
-            modifiers: vec![],
-            style: StyleProperties::default(),
-        };
+        let n = test_node("bc", "shell.builder-canvas", props);
         let mut reg = ShellComponentRegistry::new();
         register_shell_builtins(&mut reg).expect("register");
         let cascade = StyleProperties::default();

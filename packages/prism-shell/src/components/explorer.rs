@@ -57,28 +57,21 @@ mod tests {
     use super::*;
 
     use crate::components::registry::{register_shell_builtins, ShellComponentRegistry};
-    use prism_builder::document::Node as BuilderNode;
-    use prism_builder::layout::LayoutMode;
-    use prism_core::foundation::spatial::Transform2D;
+    use crate::components::testing::test_node;
     use serde_json::json;
 
     #[test]
     fn rows_dispatch_through_inspector_row() {
-        let n = BuilderNode {
-            id: "ex".into(),
-            component: "shell.explorer".into(),
-            props: json!({
+        let n = test_node(
+            "ex",
+            "shell.explorer",
+            json!({
                 "nodes": [
                     { "label": "src", "kind": "node", "depth": 0 },
                     { "label": "lib.rs", "kind": "row", "depth": 1 },
                 ]
             }),
-            children: vec![],
-            layout_mode: LayoutMode::default(),
-            transform: Transform2D::default(),
-            modifiers: vec![],
-            style: StyleProperties::default(),
-        };
+        );
         let mut reg = ShellComponentRegistry::new();
         register_shell_builtins(&mut reg).expect("register");
         let owned = reg;

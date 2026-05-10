@@ -58,22 +58,11 @@ mod tests {
     use super::*;
 
     use crate::components::registry::{register_shell_builtins, ShellComponentRegistry};
-    use prism_builder::document::Node as BuilderNode;
-    use prism_builder::layout::LayoutMode;
-    use prism_core::foundation::spatial::Transform2D;
+    use crate::components::testing::test_node;
     use serde_json::json;
 
     fn lower(props: serde_json::Value, with_reg: bool) -> UiNode {
-        let n = BuilderNode {
-            id: "tb".into(),
-            component: "shell.dock-tab-bar".into(),
-            props,
-            children: vec![],
-            layout_mode: LayoutMode::default(),
-            transform: Transform2D::default(),
-            modifiers: vec![],
-            style: StyleProperties::default(),
-        };
+        let n = test_node("tb", "shell.dock-tab-bar", props);
         let cascade = StyleProperties::default();
         let owned;
         let ctx = if with_reg {
