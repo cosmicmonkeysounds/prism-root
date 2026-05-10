@@ -9,8 +9,6 @@
 
 use std::sync::Arc;
 
-use serde_json::Value;
-
 use prism_core::widget::{SignalSpec, ToolbarAction, VariantSpec, WidgetContribution};
 
 use crate::block::Block;
@@ -69,6 +67,28 @@ impl Block for CoreWidgetBlock {
     fn toolbar_actions(&self) -> Vec<ToolbarAction> {
         self.contribution.toolbar_actions.clone()
     }
+
+    /// Lower the contribution's `template.root` through the unified
+    /// `TemplateNode` walker. The host node's props feed
+    /// `DataBinding` / `Repeater` / `Conditional` / `Image` / `Link`
+    /// field lookups, and its authored children surface through the
+    /// `Children` template variant. Single seam — every core-engine
+    /// widget shares the same lowering path as derive-emitted blocks.
+    fn lower_ui(
+        &self,
+        ctx: &crate::ui_lower::LowerCtx<'_>,
+        node: &crate::document::Node,
+        style: &crate::style::StyleProperties,
+    ) -> prism_ui_runtime::layout::Node {
+        crate::template_lower::lower_template(
+            ctx,
+            &self.contribution.template.root,
+            &node.props,
+            &node.children,
+            style,
+            &node.id,
+        )
+    }
 }
 
 // ── Mapping helpers ─────────────────────────────────────────────
@@ -94,23 +114,6 @@ fn map_variant_spec(spec: &VariantSpec) -> VariantAxis {
                 overrides: o.overrides.clone(),
             })
             .collect(),
-    }
-}
-
-// ── Template rendering ──────────────────────────────────────────
-
-/// Merge instance and template props. Instance props take precedence.
-#[allow(dead_code)]
-fn merge_props(instance: &Value, template: &Value) -> Value {
-    match (instance, template) {
-        (Value::Object(inst), Value::Object(tmpl)) => {
-            let mut merged = tmpl.clone();
-            for (k, v) in inst {
-                merged.insert(k.clone(), v.clone());
-            }
-            Value::Object(merged)
-        }
-        _ => instance.clone(),
     }
 }
 
@@ -293,15 +296,31 @@ mod tests {
     }
 
     #[test]
-    fn merge_props_template_plus_instance() {
-        let instance = json!({"title": "Custom", "extra": 42});
-        let template = json!({"title": "Default", "color": "blue"});
-        let merged = merge_props(&instance, &template);
-        // Instance wins on collision
-        assert_eq!(merged["title"], "Custom");
-        // Template key preserved
-        assert_eq!(merged["color"], "blue");
-        // Instance extra key preserved
-        assert_eq!(merged["extra"], 42);
+    fn lower_ui_walks_template_through_template_lower() {
+        use crate::registry::ComponentRegistry;
+        use crate::style::StyleProperties;
+        use crate::ui_lower::LowerCtx;
+        use prism_ui_runtime::layout::Node as UiNode;
+
+        let block = CoreWidgetBlock::new(test_contribution());
+        let registry = ComponentRegistry::new();
+        let style = StyleProperties::default();
+        let ctx = LowerCtx::new(Some(&registry), &style);
+        let host = crate::document::Node {
+            id: "host".into(),
+            component: "test-widget".into(),
+            ..Default::default()
+        };
+        // Contribution template is a Vertical { gap=8, padding=12 }
+        // container — `lower_ui` should walk that, not fall through
+        // to `default_container`.
+        let lowered = Block::lower_ui(&block, &ctx, &host, &style);
+        match lowered {
+            UiNode::Container { props, .. } => {
+                assert_eq!(props.gap, 8.0);
+                assert_eq!(props.padding.left, 12.0);
+            }
+            _ => panic!("expected container"),
+        }
     }
 }

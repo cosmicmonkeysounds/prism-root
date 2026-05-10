@@ -329,3 +329,33 @@ fn prism_block_typed_props_derives_schema_from_props_struct() {
     let keys: Vec<&str> = schema.iter().map(|s| s.key.as_str()).collect();
     assert_eq!(keys, vec!["title", "subtitle"]);
 }
+
+#[test]
+fn prism_block_derive_emits_lower_ui_that_walks_template() {
+    use prism_builder::{Block, ComponentRegistry, Node, StyleProperties};
+    use prism_ui_runtime::layout::Node as UiNode;
+    use serde_json::json;
+
+    let block = DemoCardBlock;
+    let registry = ComponentRegistry::new();
+    let style = StyleProperties::default();
+    let ctx = prism_builder::ui_lower::LowerCtx::new(Some(&registry), &style);
+    let host = Node {
+        id: "host".into(),
+        component: "demo-card".into(),
+        props: json!({ "title": "Hello" }),
+        children: vec![],
+        ..Default::default()
+    };
+    // The template starts with a Container { Vertical, gap=8, padding=12 }.
+    // Verify the derive's generated `lower_ui` actually returns that
+    // shape via `lower_template`.
+    let lowered = block.lower_ui(&ctx, &host, &style);
+    match lowered {
+        UiNode::Container { props, .. } => {
+            assert_eq!(props.gap, 8.0);
+            assert_eq!(props.padding.left, 12.0);
+        }
+        _ => panic!("expected container"),
+    }
+}

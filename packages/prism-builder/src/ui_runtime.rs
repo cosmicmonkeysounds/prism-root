@@ -16,13 +16,13 @@
 //! builder. The translator and registry indirection live here, in the
 //! GPL-3 builder, until Phase 5 collapses the two render paths.
 //!
-//! Both registry-aware and registry-less APIs are kept during the
-//! parallel-build period. Registry-less callers (`document_to_ui_tree`,
-//! `render_commands`, `lower_html`) get the generic container fallback
-//! for every node — useful for raw-fixture tests that don't want to
-//! seed a registry. Registry-aware variants
-//! (`*_with_registry`) dispatch each node through its block's
-//! `lower_ui`, which is the path Phase 5 promotes to the only path.
+//! Single canonical entry-point shape: every translator takes
+//! `Option<&ComponentRegistry>`. `None` falls through to the generic
+//! container lowering for every node — useful for raw-fixture tests
+//! that don't want to seed a registry. `Some(&reg)` dispatches each
+//! node through its block's `Component::lower_ui` impl, which is the
+//! production path. The previously-duplicated `*_with_registry` suffix
+//! retired at the §31 cutover.
 
 use prism_ui_runtime::command::RenderCommand;
 use prism_ui_runtime::layout::{compute, Node as UiNode, Viewport};
@@ -32,91 +32,50 @@ use crate::registry::ComponentRegistry;
 use crate::style::StyleProperties;
 use crate::ui_lower::LowerCtx;
 
-/// Translate a whole document with no registry — every node falls
-/// through to the generic container lowering. Returns `None` if the
-/// document has no root.
-pub fn document_to_ui_tree(doc: &BuilderDocument) -> Option<UiNode> {
-    let root = doc.root.as_ref()?;
-    let parent = StyleProperties::default();
-    let ctx = LowerCtx::new(None, &parent);
-    Some(ctx.lower(root))
-}
-
-/// Registry-aware translation — each node is dispatched to its
-/// `Component::lower_ui` impl. Unknown component ids fall through to
-/// the same generic container the registry-less path produces.
-pub fn document_to_ui_tree_with_registry(
+/// Translate a `BuilderDocument` to a runtime tree. With a registry
+/// each node is dispatched to its `Component::lower_ui` impl; without
+/// one (or for unknown ids) the node falls through to the generic
+/// container lowering. Returns `None` if the document has no root.
+pub fn document_to_ui_tree(
     doc: &BuilderDocument,
-    registry: &ComponentRegistry,
+    registry: Option<&ComponentRegistry>,
 ) -> Option<UiNode> {
     let root = doc.root.as_ref()?;
     let parent = StyleProperties::default();
-    let ctx = LowerCtx::new(Some(registry), &parent);
+    let ctx = LowerCtx::new(registry, &parent);
     Some(ctx.lower(root))
 }
 
-/// End-to-end registry-less pipeline: document → tree → Taffy layout
-/// → render-command stream. Empty docs return an empty stream so
-/// callers can lower unconditionally.
-pub fn render_commands(doc: &BuilderDocument, viewport: Viewport) -> Vec<RenderCommand> {
-    let Some(tree) = document_to_ui_tree(doc) else {
-        return Vec::new();
-    };
-    compute(&tree, viewport)
-}
-
-/// Registry-aware variant of [`render_commands`] — Phase 5 promotes
-/// this to the canonical entry point.
-pub fn render_commands_with_registry(
+/// End-to-end pipeline: document → tree → Taffy layout → render-command
+/// stream. Empty docs return an empty stream so callers can lower
+/// unconditionally.
+pub fn render_commands(
     doc: &BuilderDocument,
-    registry: &ComponentRegistry,
+    registry: Option<&ComponentRegistry>,
     viewport: Viewport,
 ) -> Vec<RenderCommand> {
-    let Some(tree) = document_to_ui_tree_with_registry(doc, registry) else {
+    let Some(tree) = document_to_ui_tree(doc, registry) else {
         return Vec::new();
     };
     compute(&tree, viewport)
 }
 
-/// `BuilderDocument` → HTML/CSS via the unified pipeline. The relay
-/// switches to this once the Phase 5 cutover retires
-/// `Component::render_html` + `HtmlRegistry`. Registry-less variant.
-pub fn lower_html(doc: &BuilderDocument, viewport: Viewport) -> String {
-    let cmds = render_commands(doc, viewport);
-    prism_ui_runtime::backends::html::lower(&cmds)
-}
-
-/// Registry-aware HTML lowering — what the relay calls post-cutover.
-pub fn lower_html_with_registry(
+/// `BuilderDocument` → HTML/CSS via the unified pipeline.
+pub fn lower_html(
     doc: &BuilderDocument,
-    registry: &ComponentRegistry,
+    registry: Option<&ComponentRegistry>,
     viewport: Viewport,
 ) -> String {
-    let cmds = render_commands_with_registry(doc, registry, viewport);
+    let cmds = render_commands(doc, registry, viewport);
     prism_ui_runtime::backends::html::lower(&cmds)
 }
 
 /// `BuilderDocument` → **semantic** HTML via the unified pipeline.
 /// Walks the typed `Node` tree directly (no layout pass, no render
 /// commands) and emits SEO/accessibility-friendly markup driven by
-/// each block's `Semantic` hint declarations. This is the entry
-/// point that obsoletes `Component::render_html` + `HtmlRegistry`
-/// for SSR — every block's `lower_ui` impl is the single source of
-/// truth for both layout vocabulary and HTML flavour.
-pub fn lower_semantic_html(doc: &BuilderDocument) -> String {
-    document_to_ui_tree(doc)
-        .map(|tree| prism_ui_runtime::backends::semantic_html::lower(&tree))
-        .unwrap_or_default()
-}
-
-/// Registry-aware semantic HTML lowering — what the relay calls
-/// post-cutover. Picks up every block's `lower_ui` impl, including
-/// its `Semantic` declarations.
-pub fn lower_semantic_html_with_registry(
-    doc: &BuilderDocument,
-    registry: &ComponentRegistry,
-) -> String {
-    document_to_ui_tree_with_registry(doc, registry)
+/// each block's `Semantic` hint declarations.
+pub fn lower_semantic_html(doc: &BuilderDocument, registry: Option<&ComponentRegistry>) -> String {
+    document_to_ui_tree(doc, registry)
         .map(|tree| prism_ui_runtime::backends::semantic_html::lower(&tree))
         .unwrap_or_default()
 }
@@ -194,7 +153,7 @@ mod tests {
     #[test]
     fn empty_doc_translates_to_none() {
         let doc = BuilderDocument::default();
-        assert!(document_to_ui_tree(&doc).is_none());
+        assert!(document_to_ui_tree(&doc, None).is_none());
     }
 
     #[test]
@@ -210,7 +169,7 @@ mod tests {
             root: Some(node),
             ..Default::default()
         };
-        let tree = document_to_ui_tree_with_registry(&doc, &reg).expect("root present");
+        let tree = document_to_ui_tree(&doc, Some(&reg)).expect("root present");
         match tree {
             UiNode::Text { content, props, .. } => {
                 assert_eq!(content, "Hello");
@@ -234,7 +193,7 @@ mod tests {
             root: Some(node),
             ..Default::default()
         };
-        let tree = document_to_ui_tree_with_registry(&doc, &reg).expect("root present");
+        let tree = document_to_ui_tree(&doc, Some(&reg)).expect("root present");
         let UiNode::Text { content, .. } = tree else {
             panic!("expected Text");
         };
@@ -254,7 +213,7 @@ mod tests {
             root: Some(node),
             ..Default::default()
         };
-        let tree = document_to_ui_tree_with_registry(&doc, &reg).expect("root present");
+        let tree = document_to_ui_tree(&doc, Some(&reg)).expect("root present");
         let UiNode::Spacer { height, .. } = tree else {
             panic!("expected Spacer");
         };
@@ -273,7 +232,7 @@ mod tests {
             root: Some(node),
             ..Default::default()
         };
-        let tree = document_to_ui_tree_with_registry(&doc, &reg).expect("root present");
+        let tree = document_to_ui_tree(&doc, Some(&reg)).expect("root present");
         assert!(matches!(tree, UiNode::Container { .. }));
     }
 
@@ -292,7 +251,7 @@ mod tests {
             root: Some(node),
             ..Default::default()
         };
-        let tree = document_to_ui_tree(&doc).expect("root present");
+        let tree = document_to_ui_tree(&doc, None).expect("root present");
         assert!(matches!(tree, UiNode::Container { .. }));
     }
 
@@ -308,7 +267,7 @@ mod tests {
             root: Some(node),
             ..Default::default()
         };
-        let tree = document_to_ui_tree(&doc).expect("root present");
+        let tree = document_to_ui_tree(&doc, None).expect("root present");
         match tree {
             UiNode::Container { props, .. } => {
                 assert_eq!(props.direction, Direction::Row);
@@ -340,7 +299,7 @@ mod tests {
             root: Some(parent),
             ..Default::default()
         };
-        let tree = document_to_ui_tree_with_registry(&doc, &reg).expect("root present");
+        let tree = document_to_ui_tree(&doc, Some(&reg)).expect("root present");
         let UiNode::Container { children, .. } = tree else {
             panic!("expected container root");
         };
@@ -370,7 +329,7 @@ mod tests {
             root: Some(node),
             ..Default::default()
         };
-        let tree = document_to_ui_tree(&doc).expect("root present");
+        let tree = document_to_ui_tree(&doc, None).expect("root present");
         match tree {
             UiNode::Container { props, .. } => {
                 assert_eq!(props.padding.top, 4.0);
@@ -397,6 +356,7 @@ mod tests {
         };
         let cmds = render_commands(
             &doc,
+            None,
             Viewport {
                 width: 320.0,
                 height: 240.0,
@@ -439,7 +399,7 @@ mod tests {
             }),
             ..Default::default()
         };
-        let html = lower_semantic_html_with_registry(&doc, &reg);
+        let html = lower_semantic_html(&doc, Some(&reg));
         assert!(html.contains("<form "));
         assert!(html.contains("method=\"get\""));
         assert!(html.contains("<h2"));
@@ -508,7 +468,7 @@ mod tests {
             )),
             ..Default::default()
         };
-        let html = lower_semantic_html_with_registry(&doc, &reg);
+        let html = lower_semantic_html(&doc, Some(&reg));
 
         // Button (paired) and anchor variant.
         assert!(html.contains("<button"));
@@ -553,7 +513,7 @@ mod tests {
 
     #[test]
     fn lower_semantic_html_returns_empty_for_empty_doc() {
-        assert_eq!(lower_semantic_html(&BuilderDocument::default()), "");
+        assert_eq!(lower_semantic_html(&BuilderDocument::default(), None), "");
     }
 
     #[test]
@@ -573,6 +533,7 @@ mod tests {
         };
         let html = lower_html(
             &doc,
+            None,
             Viewport {
                 width: 100.0,
                 height: 50.0,
@@ -586,6 +547,7 @@ mod tests {
     fn empty_doc_lowers_to_empty_root() {
         let html = lower_html(
             &BuilderDocument::default(),
+            None,
             Viewport {
                 width: 100.0,
                 height: 50.0,
@@ -608,7 +570,7 @@ mod tests {
             root: Some(node),
             ..Default::default()
         };
-        let tree = document_to_ui_tree_with_registry(&doc, &reg).unwrap();
+        let tree = document_to_ui_tree(&doc, Some(&reg)).unwrap();
         let UiNode::Container { props, .. } = tree else {
             panic!("expected container");
         };
@@ -629,7 +591,7 @@ mod tests {
             root: Some(node),
             ..Default::default()
         };
-        let tree = document_to_ui_tree_with_registry(&doc, &reg).unwrap();
+        let tree = document_to_ui_tree(&doc, Some(&reg)).unwrap();
         let UiNode::Container { props, .. } = tree else {
             panic!("expected container");
         };
@@ -650,7 +612,7 @@ mod tests {
             root: Some(node),
             ..Default::default()
         };
-        let tree = document_to_ui_tree_with_registry(&doc, &reg).unwrap();
+        let tree = document_to_ui_tree(&doc, Some(&reg)).unwrap();
         let UiNode::Container { props, .. } = tree else {
             panic!("expected container");
         };
@@ -671,7 +633,7 @@ mod tests {
             root: Some(node),
             ..Default::default()
         };
-        let tree = document_to_ui_tree_with_registry(&doc, &reg).unwrap();
+        let tree = document_to_ui_tree(&doc, Some(&reg)).unwrap();
         let UiNode::Container {
             props, children, ..
         } = tree
@@ -699,7 +661,7 @@ mod tests {
             root: Some(node),
             ..Default::default()
         };
-        let tree = document_to_ui_tree_with_registry(&doc, &reg).unwrap();
+        let tree = document_to_ui_tree(&doc, Some(&reg)).unwrap();
         let UiNode::Container {
             props, children, ..
         } = tree
@@ -728,7 +690,7 @@ mod tests {
             root: Some(node),
             ..Default::default()
         };
-        let tree = document_to_ui_tree_with_registry(&doc, &reg).unwrap();
+        let tree = document_to_ui_tree(&doc, Some(&reg)).unwrap();
         let UiNode::Container {
             props, children, ..
         } = tree
@@ -767,7 +729,7 @@ mod tests {
             }),
             ..Default::default()
         };
-        document_to_ui_tree_with_registry(&doc, &reg).unwrap()
+        document_to_ui_tree(&doc, Some(&reg)).unwrap()
     }
 
     fn expect_container(node: UiNode) -> (prism_ui_runtime::layout::ContainerProps, Vec<UiNode>) {
@@ -925,8 +887,7 @@ mod tests {
             }),
             ..Default::default()
         };
-        let UiNode::Image { radius, .. } = document_to_ui_tree_with_registry(&doc, &reg).unwrap()
-        else {
+        let UiNode::Image { radius, .. } = document_to_ui_tree(&doc, Some(&reg)).unwrap() else {
             panic!("expected image");
         };
         assert_eq!(radius.tl, 8.0);
@@ -985,7 +946,7 @@ mod tests {
             }),
             ..Default::default()
         };
-        let tree = document_to_ui_tree_with_registry(&doc, &reg).expect("root present");
+        let tree = document_to_ui_tree(&doc, Some(&reg)).expect("root present");
         let UiNode::Container {
             props, children, ..
         } = tree

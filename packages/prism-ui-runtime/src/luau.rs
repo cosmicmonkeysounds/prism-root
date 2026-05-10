@@ -90,8 +90,7 @@ impl UserData for LuaNode {
         methods.add_method("kind", |_, this, ()| Ok(this.0.borrow().kind()));
 
         methods.add_method("to_json", |lua, this, ()| {
-            let value =
-                serde_json::to_value(&*this.0.borrow()).map_err(|e| mlua::Error::external(e))?;
+            let value = serde_json::to_value(&*this.0.borrow()).map_err(mlua::Error::external)?;
             lua.to_value(&value)
         });
 
@@ -286,6 +285,8 @@ pub fn install(lua: &Lua) -> LuaResult<()> {
             width: s.width,
             height: s.height,
             radius: s.radius,
+            tint: None,
+            semantic: Default::default(),
         }))
     })?;
     ui.set("image", image)?;

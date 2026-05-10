@@ -4,7 +4,7 @@
 //! [`component::Component::lower_ui`] emits `prism_ui_runtime::layout::Node`
 //! trees consumed by the shell renderer *and* by the relay's
 //! semantic-HTML SSR walker
-//! ([`ui_runtime::lower_semantic_html_with_registry`]).
+//! ([`ui_runtime::lower_semantic_html`]).
 //!
 //! The Slint DSL emission path (`render_slint` / `SlintEmitter` / source
 //! map / source parse / `render_document_slint_*`) was deleted in the
@@ -36,6 +36,7 @@ pub mod script_loader;
 pub mod signal;
 pub mod starter;
 pub mod style;
+pub mod template_lower;
 pub mod ui_lower;
 pub mod ui_resolver;
 pub mod ui_runtime;
@@ -44,7 +45,7 @@ pub mod variant;
 pub use app::{AppIcon, AppId, NavigationConfig, NavigationStyle, Page, PrismApp};
 pub use asset::{collect_vfs_hashes, AssetSource};
 pub use block::{register_block, Block};
-pub use component::{Component, ComponentId, RenderContext, RenderError};
+pub use component::{Component, ComponentId, RenderError};
 pub use core_widget::{collect_all_contributions, register_core_widgets, CoreWidgetBlock};
 pub use document::{BuilderDocument, Node, NodeId};
 pub use facet::{
@@ -76,6 +77,7 @@ pub use signal::{
 };
 pub use starter::{builtin_prefab, card_prefab_def, materialize_prefab, register_builtins};
 pub use style::{resolve_cascade, StyleProperties};
+pub use template_lower::lower_template;
 pub use variant::{VariantAxis, VariantOption};
 
 #[cfg(feature = "luau")]

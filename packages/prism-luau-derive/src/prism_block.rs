@@ -71,21 +71,20 @@ pub fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
     // When `props = "MyProps"` is set the schema is derived from
     // `MyProps::field_specs()` and `template()` receives `&MyProps`.
     // Otherwise the host struct hand-writes `schema()` + `template(&Value, …)`.
-    let (schema_body, template_extract) = match &props_ty {
+    let (schema_body, template_call) = match &props_ty {
         Some(ty) => (
             quote! { <#ty>::field_specs() },
-            quote! {
-                let __typed_props = <#ty>::from_value(props);
-                let template = <#ident>::template(&__typed_props, children);
-            },
+            quote! {{
+                let __typed_props = <#ty>::from_value(&node.props);
+                <#ident>::template(&__typed_props, &node.children)
+            }},
         ),
         None => (
             quote! { <#ident>::schema() },
-            quote! { let template = <#ident>::template(props, children); },
+            quote! { <#ident>::template(&node.props, &node.children) },
         ),
     };
 
-    let _ = template_extract;
     Ok(quote! {
         impl ::prism_builder::Block for #ident {
             fn id(&self) -> &::prism_builder::ComponentId {
@@ -96,6 +95,23 @@ pub fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
 
             fn schema(&self) -> ::std::vec::Vec<::prism_builder::FieldSpec> {
                 #schema_body
+            }
+
+            fn lower_ui(
+                &self,
+                ctx: &::prism_builder::ui_lower::LowerCtx<'_>,
+                node: &::prism_builder::Node,
+                style: &::prism_builder::StyleProperties,
+            ) -> ::prism_ui_runtime::layout::Node {
+                let __template = #template_call;
+                ::prism_builder::lower_template(
+                    ctx,
+                    &__template,
+                    &node.props,
+                    &node.children,
+                    style,
+                    &node.id,
+                )
             }
         }
     })

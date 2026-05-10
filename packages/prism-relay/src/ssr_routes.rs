@@ -16,8 +16,8 @@
 //! follow-on phase. The spine here is the same one every
 //! follow-on plugs into: an `Arc<AppState>` passed by
 //! `Router::with_state`, handlers that walk the portal store and
-//! call [`prism_builder::ui_runtime::lower_semantic_html_with_registry`]
-//! for the body.
+//! call [`prism_builder::ui_runtime::lower_semantic_html`]
+//! (with the registry passed as `Some`) for the body.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -29,7 +29,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use prism_builder::{ui_runtime::lower_semantic_html_with_registry, Html};
+use prism_builder::{ui_runtime::lower_semantic_html, Html};
 
 use crate::portal::{Portal, PortalLevel};
 use crate::state::AppState;
@@ -78,7 +78,7 @@ async fn portal_detail(State(state): State<Arc<AppState>>, Path(id): Path<String
 
     // Unified pipeline: walk the typed `Node` tree through every
     // block's `lower_ui` impl and emit semantic HTML in one pass.
-    let body = lower_semantic_html_with_registry(&portal.document, &state.registry);
+    let body = lower_semantic_html(&portal.document, Some(&state.registry));
     let page = wrap_portal_page(&portal, &body);
     html_response(page)
 }

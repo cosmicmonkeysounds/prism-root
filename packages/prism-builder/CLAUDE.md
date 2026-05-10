@@ -8,7 +8,7 @@ rendering and relay SSR), and the property-panel field factories.
 
 > **Migration note:** Both the Slint stack and the parallel
 > `HtmlBlock` / `HtmlRegistry` SSR walker have been deleted. SSR now
-> flows through `ui_runtime::lower_semantic_html_with_registry`,
+> flows through `ui_runtime::lower_semantic_html`,
 > which dispatches per-block `Component::lower_ui` impls — the same
 > path the unified Taffy renderer consumes. The Slint source emitter
 > (`render_slint`, `SlintEmitter`, `render_document_slint_source*`,
@@ -47,13 +47,30 @@ From `src/lib.rs`:
 
 ### SSR
 The relay calls
-`ui_runtime::lower_semantic_html_with_registry(doc, registry)`,
+`ui_runtime::lower_semantic_html(doc, registry)`,
 which walks every block's `Component::lower_ui` impl and emits
 semantic HTML via `prism_ui_runtime::backends::semantic_html::lower`.
 One declaration per block, two consumers (shell renderer + relay
 SSR). `html.rs` (`Html` buffer + `escape_text` / `escape_attr`)
 remains as a tiny chrome-composition helper for `prism-relay` page
 wrappers and the `prism-luau-derive` macro.
+
+### `TemplateNode` → runtime walker (§30)
+- `template_lower::lower_template(ctx, template, props,
+  outer_children, style, id_prefix)` — single declarative bridge
+  from the `prism_core::widget::TemplateNode` IR to the runtime
+  `layout::Node`. One match over the 8 variants
+  (`Container` / `Component` / `DataBinding` / `Repeater` /
+  `Conditional` / `Image` / `Link` / `Children`), recursive via a
+  `Cell<u32>` counter for stable `{prefix}.t{n}` synthetic ids.
+- `CoreWidgetBlock::lower_ui` overrides the default container
+  fallback to walk the wrapped `WidgetContribution.template.root`
+  through `lower_template`. All 45 core-engine widgets inherit a
+  working render path through one trait-method override.
+- `#[derive(PrismBlock)]` now emits a `lower_ui` impl in addition
+  to `id()` / `schema()`. The body evaluates the user-authored
+  `template()` and pipes through `lower_template`. Authors write a
+  pure data-returning function; rendering wiring is invisible.
 
 ### `.prism-ui` source emitter (§29)
 - `prism_ui_emit::emit_document(&BuilderDocument) -> String`,
@@ -203,7 +220,7 @@ Modules in `src/` (excluding `lib.rs`):
   the runtime's interpret pipeline.
 - `ui_runtime.rs` — `BuilderDocument` →
   `prism_ui_runtime::layout::Node` translator +
-  `lower_semantic_html_with_registry` (relay SSR entry).
+  `lower_semantic_html` (relay SSR entry).
 - `variant.rs` — `VariantAxis`, `VariantOption`, override
   application.
 - `luau_component.rs` (feature `luau`) — `LuauComponent`,

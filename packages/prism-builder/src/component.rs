@@ -39,13 +39,6 @@ pub enum RenderError {
     Failed(String),
 }
 
-/// Render context for ad-hoc host-side callers that need typed access
-/// to the shared design tokens without going through the document
-/// walker. Currently a thin token carrier; expanded as needs arise.
-pub struct RenderContext<'a> {
-    pub tokens: &'a prism_core::design_tokens::DesignTokens,
-}
-
 /// The core component contract. Trait-objects of this type live in the
 /// registry; each node in the builder document is dispatched through
 /// whichever impl the registry hands back for its `ComponentId`.

@@ -66,7 +66,7 @@ impl ShellComponentRegistry {
     /// Borrow the underlying `ComponentRegistry`. The relay / SSR walker
     /// and the Taffy lowering both expect a `&ComponentRegistry` — this
     /// is the seam that lets shell components plug in without a parallel
-    /// walker. `prism_builder::ui_runtime::lower_*_with_registry` accepts
+    /// walker. `prism_builder::ui_runtime::lower_*` accepts
     /// the borrow returned here.
     pub fn as_component_registry(&self) -> &ComponentRegistry {
         &self.inner

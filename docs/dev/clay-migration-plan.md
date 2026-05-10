@@ -4779,3 +4779,163 @@ new tests in `app::tests` (`ensure_source` idempotency,
 | Date | Decision | Rationale |
 |---|---|---|
 | 2026-05-10 | §29 lands: `prism_builder::prism_ui_emit` module + `Page::ensure_source` (emit-when-empty) + `Page::regenerate_source` (force-rewrite). One declarative walker (`emit_document` / `emit_node`), one attribute-shape table, alphabetised attrs for byte-stability. 330 builder lib tests, 17 new emitter tests, all workspace tests + clippy clean. | The Slint exorcism left `Page::source` orphaned — the field still serialised to disk but lost its auto-population path. §29 restores the round-trip without reviving any of the deleted Slint infrastructure: the emitter is the inverse of the canonical `.prism-ui` parser, depends only on `serde_json::Value` shape, and stays orthogonal to the registry / resolver / block layers added in §12-§28. The grammar's existing `{expr}` interpolation absorbs object/array attributes; scalar attributes round-trip as plain quoted text; determinism through alphabetical attr ordering keeps golden tests stable. The wiring discipline (`ensure_source` lazy-fills, `regenerate_source` force-overwrites) mirrors the lazy-fill seams already used elsewhere in the host so no new pattern lands. |
+
+## 30. `TemplateNode` → runtime walker (`lower_template`)
+
+**Strategy locked 2026-05-10 (post-§29).** Every authoring surface
+above the registry — `WidgetContribution.template` for the 45
+core-engine widgets, `#[derive(PrismBlock)]` for derive-authored
+blocks, the Luau-authored `template()` in `LuauComponent` — already
+produced a `prism_core::widget::TemplateNode` IR. The Slint era
+emitted that IR through a Slint source walker; the cutover deleted
+the walker and never replaced it, so the IR was *defined but
+unrendered*: every block carrying a template fell through to
+`LowerCtx::default_container` and lost its declared shape.
+`#[derive(PrismBlock)]` reflected the gap explicitly — the macro
+emitted `id()` / `schema()` only, with the user-authored `template()`
+function entirely unused (`let _ = template_extract;` in the macro
+body).
+
+**The walker.** `prism_builder::template_lower::lower_template(ctx,
+template, props, outer_children, style, id_prefix) -> UiNode` is the
+single declarative seam. One match over the eight `TemplateNode`
+variants, no per-block awareness, no registry dependency beyond
+`LowerCtx` (which carries the registry already for the embedded
+`Component { component_id, .. }` and `DataBinding` arms). Recursion
+threads a `Cell<u32>` counter so synthetic ids are stable across
+re-renders (`{prefix}.t0` / `{prefix}.t1` / …) — the runtime layout
+cache stays warm without UUID churn.
+
+**The integration.** Two consumers, two-line each:
+
+- `CoreWidgetBlock::lower_ui` (`core_widget.rs`) overrides the
+  default container fallback to call `lower_template(ctx,
+  &self.contribution.template.root, &node.props, &node.children,
+  style, &node.id)`. All 45 wrapped widget contributions inherit a
+  working render path with one trait-method override.
+- `#[derive(PrismBlock)]` (`prism-luau-derive::prism_block`) now
+  emits a `lower_ui` impl alongside `id()` / `schema()`. The body
+  evaluates `<Self>::template(...)` (typed-prop variant invokes
+  `<Props>::from_value(&node.props)` first) and pipes the resulting
+  `TemplateNode` through `lower_template`. The macro user authors a
+  pure data-returning function; the rendering wiring is invisible.
+
+**Slint binding derive deletion.** `prism-luau-derive::slint_binding`
+(`#[derive(SlintBinding)]`) targeted Slint's generated `set_<field>`
+/ `get_<field>` getters on a `slint::ComponentHandle`. With Slint
+fully exorcised, the derive had no working consumer left. Deleted
+outright (168 LoC + the `derive_slint_binding` proc-macro entry
+point + the `mod slint_binding` declaration) — no rename, no shim,
+no compatibility hack. The "never deprecate, rip it out" workspace
+rule applies.
+
+**Smart-pattern wins.**
+
+- **One walker, one match.** `lower_template` is the entire bridge
+  between every template-authored surface and the runtime; the
+  match arms map 1:1 with `TemplateNode` variants. Adding a new IR
+  variant is one arm in the walker, zero edits at every call site.
+- **No registry coupling beyond `LowerCtx`.** `Component` /
+  `DataBinding` arms call `ctx.lower_as`, which already honours the
+  live registry / cascade. Hosts overriding a registered tag
+  (themed `text`, alternate `image`) transparently override the
+  template renderings that bind to it.
+- **Deterministic ids.** A single `Cell<u32>` counter scoped to the
+  walker call produces stable `{node.id}.t{N}` ids — golden / diff
+  tests over the lowered tree stay byte-stable.
+- **Declarative attribute mapping.** The walker reads
+  `props[field]` for `DataBinding` / `Repeater` / `Conditional` /
+  `Image` / `Link` lookups using a single `is_truthy` predicate and
+  a single string-extract helper; no per-block parsing, no inline
+  JSON munging in the call sites.
+- **Two-call integration.** `CoreWidgetBlock::lower_ui` is one
+  trait-method override; the `#[derive(PrismBlock)]` emission is
+  one block-quote in the proc-macro. No new trait, no new context
+  type, no per-block opt-in.
+
+**Verification.** 347 prism-builder lib tests green with
+`--all-features` (was 330 before §29 + 17 emitter = 347 baseline,
+plus 7 new `template_lower::tests` exercising every variant + 1 new
+integration test in `tests/derive_macros.rs` proving the derive's
+generated `lower_ui` walks through `lower_template`). 12 derive
+integration tests green (was 11). All non-luau crates pass
+`cargo clippy --all-targets -- -D warnings` clean. Pre-existing
+luau-feature warnings in `luau_component.rs` (Send/Sync `Arc`,
+trait-recursion lint) are out of scope.
+
+### Decision-log entry
+
+| Date | Decision | Rationale |
+|---|---|---|
+| 2026-05-10 | §30 lands: `prism_builder::template_lower::lower_template` walker + `CoreWidgetBlock::lower_ui` override + `#[derive(PrismBlock)]` emits a `lower_ui` impl that walks the template through the new function. `prism-luau-derive::slint_binding` (the dead Slint global-state binding derive) deleted outright. 347 builder lib tests, 12 derive tests, clippy clean (non-luau). | `TemplateNode` was a defined IR with no consumer post-Slint — every derive-authored or core-engine-contributed widget rendered as the default container. §30 closes that gap with one declarative walker and two two-line integrations: `CoreWidgetBlock` overrides `lower_ui`; `#[derive(PrismBlock)]` extends its emitted block-quote with `lower_ui`. Synthetic-id stability via a single `Cell<u32>` counter keeps the runtime layout cache warm; declarative `Value` lookups for the data-binding family stay orthogonal to per-block schemas. The Slint binding derive was the last user-facing carry-over from the Slint era in `prism-luau-derive`; deleting it leaves the derive crate Slint-free end-to-end. |
+
+## 31. `ui_runtime` collapse — registry-aware is the only path
+
+**Strategy locked 2026-05-10 (post-§30).** The `ui_runtime` translator
+shipped both registry-less and registry-aware function pairs through
+the entire migration: `document_to_ui_tree` / `*_with_registry`,
+`render_commands` / `*_with_registry`, `lower_html` /
+`*_with_registry`, `lower_semantic_html` / `*_with_registry`. The
+parallel-build doc on the module said the cutover would retire the
+duplicates; the cutover landed but the duplicates didn't. Every
+public `_with_registry` consumer (the relay's SSR entry, the shell's
+help text) actually wanted the registry-aware path; the registry-less
+twins were used only by their own tests.
+
+**The collapse.** Eight functions become four. Each takes
+`Option<&ComponentRegistry>` — `None` falls through to the generic
+container lowering for every node (the old registry-less behaviour);
+`Some(&reg)` dispatches each node through its block's
+`Component::lower_ui`. No new abstraction, no new option type — the
+existing `LowerCtx::new(registry, parent_style)` already accepted
+`Option<&ComponentRegistry>` end-to-end, so the four entry points
+just thread it through.
+
+**External callers.** One real consumer (`prism-relay::ssr_routes`,
+`lower_semantic_html_with_registry(&doc, &reg)` →
+`lower_semantic_html(&doc, Some(&reg))`); two doc-comment references
+in `prism-shell` / `prism-builder` `lib.rs`. No semver dance — the
+workspace rule is "rename, move, break, fix; never deprecate".
+
+**Adjacent dead-code removal (same wave).**
+
+- `prism_builder::component::RenderContext` — the legacy
+  "ad-hoc host-side caller carries `&DesignTokens`" struct. Zero
+  consumers anywhere in the workspace; deleted along with its
+  re-export in `lib.rs`.
+- `prism_builder::core_widget::merge_props` — `#[allow(dead_code)]`
+  helper from the Slint-era render path that merged template +
+  instance props before pushing into the Slint emitter. The new
+  `lower_template` walker reads `props` straight from the host
+  node, so the merge step has no place left to live. Deleted along
+  with its `merge_props_template_plus_instance` test, replaced by
+  a `lower_ui_walks_template_through_template_lower` integration
+  test that exercises `CoreWidgetBlock::lower_ui` end-to-end (the
+  §30 wiring).
+
+**Smart-pattern wins.**
+
+- **One signature shape.** Every translator entry point now
+  matches the same `(doc, Option<&registry>, …)` shape. Adding a
+  new translator (e.g., a future `lower_pdf`) is one function, not
+  a registry-less / registry-aware pair.
+- **No abstraction growth.** `Option<&ComponentRegistry>` is the
+  type `LowerCtx::new` already takes — the entry points just
+  forward it. Zero new types, zero new traits, zero new docs to
+  describe a "host registry" wrapper.
+- **Doc references no longer drift.** With one canonical name per
+  translator, every CLAUDE.md / module header that points at the
+  SSR entry is the same string; future renames are single-edit.
+
+**Verification.** 347 prism-builder lib tests green (1 test
+removed — `merge_props_template_plus_instance`; 1 test added —
+`lower_ui_walks_template_through_template_lower`). 12 derive tests
+green. 255 prism-shell lib tests green. 26 prism-relay lib tests +
+8 integration tests green. `cargo clippy --all-targets --
+-D warnings` clean across the touched crates.
+
+### Decision-log entry
+
+| Date | Decision | Rationale |
+|---|---|---|
+| 2026-05-10 | §31 lands: `ui_runtime` collapses to four entry points (`document_to_ui_tree` / `render_commands` / `lower_html` / `lower_semantic_html`), each taking `Option<&ComponentRegistry>`. Eight functions retired; the `_with_registry` suffix is gone. Adjacent dead code (`RenderContext`, `merge_props`) deleted in the same wave. Relay SSR caller updated; doc references collapsed. | The migration plan called for a single render path post-cutover; `ui_runtime` carried the parallel-build duplication forward indefinitely. The collapse is mechanical (four function pairs → four functions, one `Option`) and the fan-out is small (one external caller). The dead-code removal closes the last `#[allow(dead_code)]` and orphaned-public-type from the Slint era — `RenderContext` had zero consumers (it was a tokens-carrier for ad-hoc host code that never materialised); `merge_props` belonged to the deleted Slint emit path. Together with §30, the builder's render surface is now: one trait method (`Component::lower_ui`), one walker per IR (`lower_template` for `TemplateNode`), one per-target entry point (`lower_*` for runtime / HTML / semantic-HTML). |

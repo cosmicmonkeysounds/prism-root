@@ -51,7 +51,6 @@ mod daemon_module;
 mod editable;
 mod prism_block;
 mod prism_field;
-mod slint_binding;
 mod visual_node;
 
 /// Derive a `prism_builder::Block` impl from a struct exposing
@@ -130,18 +129,6 @@ pub fn daemon_module(attr: TokenStream, item: TokenStream) -> TokenStream {
 pub fn derive_editable(item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as DeriveInput);
     match editable::expand(&input) {
-        Ok(ts) => ts.into(),
-        Err(e) => e.to_compile_error().into(),
-    }
-}
-
-/// Derive `bind_to(&AppGlobal)` and `pull_from(&AppGlobal)` from a Rust
-/// state struct. Field names must match Slint global properties; type
-/// mapping is handled by Slint's generated `Set`/`Get` traits.
-#[proc_macro_derive(SlintBinding, attributes(slint))]
-pub fn derive_slint_binding(item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item as DeriveInput);
-    match slint_binding::expand(&input) {
         Ok(ts) => ts.into(),
         Err(e) => e.to_compile_error().into(),
     }
