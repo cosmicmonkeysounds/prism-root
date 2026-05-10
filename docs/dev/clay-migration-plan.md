@@ -2716,6 +2716,526 @@ zero by the end of the port wave.
 See the unified decision log at the foot of §17. The §20 port wave
 adds one row.
 
+## 21. Port wave — Catalog, Docs, Menu slots
+
+**Premise.** §20 closed with three slots landed in one batch and the
+rule "porting N panels at once is no harder than one" validated under
+real load. §21 takes the next seven panels and lands them as three
+more slots (`CatalogSlot`, `DocsSlot`, `MenuSlot`), promoting seven
+more stub bindings out of the placeholder loop. The rule-of-three
+threshold for shape extraction *fires for the first time* in this
+batch — `MenuSlot` and `DocsSlot` each have two consumers emitting
+byte-identical key sets, so the shared shape gets a private helper
+on landing rather than two identical inline emitters.
+
+**Why this batch composition.** The seven remaining Phase-4 panels
+flagged at the close of §20 split cleanly along data-shape lines:
+
+- **Catalog** (3 bindings) — `shell.launchpad`, `shell.explorer`,
+  `shell.component-palette` are all "browse a catalog" panels. The
+  data is genuinely heterogeneous (app cards vs file rows vs
+  draggable component descriptors), so the JSON emitters are three
+  short folds with *no* shared helper. Forcing a `CatalogItem` enum
+  here would invent a vocabulary that exists only to be serialised
+  — the same anti-pattern §20 caught for `BuilderSlot`'s
+  `PropertyRow`, declined honestly.
+- **Docs** (2 bindings) — `shell.docs-view` and `shell.docs-sidebar`
+  emit byte-identical `{ title, summary, body }` keys and only differ
+  in `mode`. Two consumers + identical shape = rule-of-three trigger;
+  `topic_props` lives on the slot as the single source of the docs
+  topic shape. A drift would require editing one site for both
+  bindings to keep parity, which is exactly the duplication the
+  helper prevents.
+- **Menu** (2 bindings) — `shell.menu-dropdown` and
+  `shell.context-menu` both consume the same `MenuItem` array shape;
+  `items_json(&[MenuItem]) -> Value` extracts on landing for the
+  same reason. The `MenuItem::separator()` constructor lives on the
+  type so callers don't reach for a "just leave the label empty"
+  hack — the typed shape carries the discipline.
+
+The four remaining stubs (`shell.code-editor`, `shell.builder-canvas`,
+`shell.gizmo-{move,rotate,scale}`, `shell.resize-handle`,
+`shell.component-picker`) are deferred to §22. They share one
+underlying datum (the *currently-edited document plus selection
+transform*), and porting them sequentially without a slot-shaped
+home would force the same intent-duplication §19 prevents. They
+land together once `CanvasSlot` is shaped against the live editor
+state.
+
+### `CatalogSlot` — launchpad, explorer, component palette
+
+Three bindings, three methods, one slot. Shapes are disjoint by
+design — `apps` carry `app-id`/`label`/`icon`/`summary`, `files`
+carry `node-id`/`label`/`depth`/`kind`, palette items carry
+`item-id`/`label`/`icon`/`category`. No shared private helpers
+because zero key sets overlap.
+
+```rust
+pub struct CatalogSlot {
+    pub launchpad_title: String,
+    pub apps:             Vec<AppCard>,
+    pub files:            Vec<FileNode>,
+    pub palette:          Vec<PaletteItem>,
+    pub palette_selected: Option<String>,
+}
+```
+
+`palette_selected` is the deliberate `Option`-collapsed visibility
+pattern from §20's `OverlaySlot`: when no item is in "place mode"
+the `selected-id` key is *omitted* from the emission rather than
+sent as an empty string — the block's `lower_ui` already treats
+"no selection" as the absence of the prop, and forcing a
+sentinel value would force a per-binding visibility branch on
+the host. The three slot fields stay public because hosts mutate
+them directly (palette click toggles `palette_selected`); the
+JSON shape stays exclusively on the methods.
+
+### `DocsSlot` — view + sidebar with shared topic shape
+
+Two bindings, two methods, one slot. `topic_props(&self) -> Value`
+is the load-bearing helper — both methods call it and overlay the
+binding-specific `mode` on top.
+
+```rust
+pub struct DocsSlot {
+    pub topic:        DocsTopic,
+    pub sidebar_mode: String,
+}
+
+impl DocsSlot {
+    pub fn docs_view_props(&self) -> Value {
+        let mut props = self.topic_props();
+        props["mode"] = json!("full");
+        props
+    }
+    pub fn docs_sidebar_props(&self) -> Value {
+        let mode = if self.sidebar_mode.is_empty() { "sidebar" }
+                   else { self.sidebar_mode.as_str() };
+        let mut props = self.topic_props();
+        props["mode"] = json!(mode);
+        props
+    }
+    fn topic_props(&self) -> Value {
+        json!({ "title": self.topic.title,
+                "summary": self.topic.summary,
+                "body": self.topic.body })
+    }
+}
+```
+
+The cross-binding flow test (`docs_topic_shape_propagates_to_view_and_sidebar_bindings`)
+in `props.rs` is the load-bearing duplication check: bumping
+`state.docs.topic.title` shows up in both `shell.docs-view` and
+`shell.docs-sidebar` emissions through the same helper — a drift
+would force the test to update at the helper, not at two emission
+sites.
+
+### `MenuSlot` — dropdown + context menu with shared items shape
+
+Two bindings, two methods, one slot. `items_json(&[MenuItem]) -> Value`
+is the shared emitter — taken as a slice argument rather than a
+`&self` method so both `dropdown` and `context` fields fold through
+the same code path. The function is a *static* helper (`Self::items_json`),
+not a method, because it carries no slot state — neither field is
+implicit.
+
+```rust
+pub struct MenuSlot {
+    pub dropdown: Vec<MenuItem>,
+    pub context:  Vec<MenuItem>,
+}
+
+#[derive(Clone, Debug)]
+pub struct MenuItem {
+    pub label:     String,
+    pub shortcut:  Option<String>,
+    pub command:   Option<String>,
+    pub separator: bool,
+    pub enabled:   bool,
+}
+```
+
+`MenuItem::separator()` is the typed constructor for the
+`{ separator: true, enabled: false }` shape. Callers never reach
+for "just leave label empty and set separator" — the constructor
+*is* the separator vocabulary. Adding a new menu-item kind (e.g.
+submenu, checkbox) lands as a typed field + an `items_json` arm,
+in two edits, on the type that already owns the wire format.
+
+The cross-binding flow test (`menu_items_shape_matches_across_dropdown_and_context_bindings`)
+asserts the key set is identical in both emissions — the property
+the shared helper guarantees.
+
+**Bindings table delta (one row per binding, declarative).**
+
+```rust
+// Catalog
+bind_slot!(reg, "shell.launchpad",         |s: &AppState| s.catalog.launchpad_props());
+bind_slot!(reg, "shell.explorer",          |s: &AppState| s.catalog.explorer_props());
+bind_slot!(reg, "shell.component-palette", |s: &AppState| s.catalog.component_palette_props());
+
+// Docs
+bind_slot!(reg, "shell.docs-view",    |s: &AppState| s.docs.docs_view_props());
+bind_slot!(reg, "shell.docs-sidebar", |s: &AppState| s.docs.docs_sidebar_props());
+
+// Menus
+bind_slot!(reg, "shell.menu-dropdown", |s: &AppState| s.menus.menu_dropdown_props());
+bind_slot!(reg, "shell.context-menu",  |s: &AppState| s.menus.context_menu_props());
+```
+
+Stub-loop shrinks from 32 entries to 25. The 47-binding parity
+test still passes.
+
+**Test discipline (per-slot rollup).**
+
+- **Catalog.** Four slot-unit tests — launchpad title+apps,
+  explorer depth/kind, palette selected-omitted-when-none,
+  palette selected-included-when-some. The `Option`-collapse pair
+  is the load-bearing pattern check: per-binding visibility
+  branches stay forbidden on the host, the *slot's emitter* is
+  the visibility gate.
+- **Docs.** Four slot-unit tests — view pins `mode: full`,
+  sidebar defaults to `sidebar`, sidebar respects explicit mode,
+  *plus* the shared-topic parity test
+  (`docs_view_and_sidebar_share_topic_shape`).
+- **Menu.** Three slot-unit tests — dropdown items emit shortcut
+  + command keys, context menu uses same item shape as dropdown
+  (key-set equality), `separator()` constructor builds the
+  separator shape correctly.
+
+Plus two end-to-end snapshot tests on the bindings layer
+(`docs_topic_shape_propagates_to_view_and_sidebar_bindings`,
+`menu_items_shape_matches_across_dropdown_and_context_bindings`)
+— the load-bearing duplication checks for cross-binding shape
+sharing through helpers.
+
+13 new tests total. Lib suite: 203 passing (was 190 at §20 close).
+
+**No-duplication discipline scorecard.**
+
+| Force §19/§20 prevent          | How this batch honoured it |
+|---|---|
+| JSON inlined inside closures   | All seven new bindings use `bind_slot!` — closure body is one slot method call. |
+| Same shape in two bindings     | `DocsSlot::topic_props` + `MenuSlot::items_json` are the *only* sites that emit the docs topic / menu item shapes. Cross-binding flow tests assert the property. |
+| Premature shape extraction     | `CatalogSlot` declines to invent a `CatalogItem` enum because the three consumers' key sets are disjoint — the rule-of-three trigger is *zero* common keys, not three short methods. |
+| Per-binding visibility branches| `palette_selected: Option<String>` collapses to key-omission in `component_palette_props`; no `if selected.is_some()` on the host. Same pattern as §20 `OverlaySlot`. |
+| Sentinel-string shape hacks    | `MenuItem::separator()` is the typed constructor; no caller leaves a label empty + flips a flag. The vocabulary lives on the type. |
+| Cross-slot reach from a closure | Zero rows in the new bindings reach across slots; every closure is `\|s: &AppState\| s.<one-slot>.<one-method>()`. |
+
+**What this unblocks.** Five of the seven Phase-4 panels are now
+slot-driven. Remaining for §22 (`CanvasSlot`): code editor
+(`shell.code-editor`), builder canvas (`shell.builder-canvas`),
+gizmos (`shell.gizmo-{move,rotate,scale}`), resize handles
+(`shell.resize-handle`), component picker (`shell.component-picker`).
+These six bindings share one underlying datum — the document tree
+plus the selected-node transform under the active tool mode — and
+form one slot, not six. The §22 wave is the one place in the port
+where the slot itself is *also* mutated by event dispatch (drag
+deltas), so it requires `events::dispatch_event` to forward
+pointer events into the slot's mutators. The pattern is the same
+shape as §20 `OverlaySlot` (data-driven visibility) plus a write
+side; no new infrastructure.
+
+`panel_props.rs` (still on disk from §17, not in build) shrinks by
+seven more functions of intent — `launchpad_props`,
+`explorer_props`, `component_palette_props`, `docs_view_props`,
+`docs_sidebar_props`, `menu_dropdown_props`, `context_menu_props`.
+The legacy file is on track to zero by the close of the port wave.
+
+### Decision-log entry
+
+See the unified decision log at the foot of §17. The §21 port wave
+adds one row.
+
+## 22. Port wave — `CanvasSlot` (read + write)
+
+**Premise.** §21 left six bindings deferred for cause: `shell.code-editor`,
+`shell.builder-canvas`, `shell.gizmo-move`, `shell.gizmo-rotate`,
+`shell.gizmo-scale`, `shell.resize-handle`, `shell.component-picker`.
+They share one underlying datum — *the active document, the
+selection's resolved transform, and the active tool mode* — so
+porting them sequentially against six independent slots would
+re-invent the same selection/tool plumbing six times. They land
+together as one `CanvasSlot` whose typed shape is the union of
+what every binding reads.
+
+§22 is also the first wave with a *write* side. Every other slot
+in §19–§21 is data-out only: `events::dispatch_event` mutates
+some `ShellInner` field, the next `render_tree` call snapshots
+slots, bindings forward, done. Canvas is different: a pointer
+drag that hits a gizmo arm has to translate `(dx, dy)` into a
+transform delta *and* know which axis it's on (which depends on
+the active tool mode *and* which arm the press landed on). That
+state — *which gizmo arm is currently captured, what the
+pre-drag transform was* — has nowhere to live except on the slot
+that owns the canvas. So `CanvasSlot` carries a typed `DragState`
+field plus a small set of `pub(crate)` mutator methods (`begin_move`,
+`update_move`, `commit_move`, …) that the event router calls.
+The binding closures stay one-line `bind_slot!` rows; the write
+path is symmetric — pointer events route through one `match` to
+one mutator, no per-arm `if`s.
+
+### `CanvasSlot` — shape
+
+Six bindings, one slot. Three sub-shapes:
+
+```rust
+pub struct CanvasSlot {
+    pub document:    BuilderDocument,
+    pub selection:   Option<NodeId>,
+    pub tool:        ToolMode,
+    pub viewport:    CanvasViewport,    // pan + zoom, mirrored from PropCtx
+    pub picker:      PickerState,       // palette → cell place-mode
+    pub code_buffer: CodeBuffer,        // active page source + caret
+    drag:            Option<DragState>, // active gizmo/handle capture
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum ToolMode { Move, Rotate, Scale }
+
+#[derive(Clone, Debug)]
+struct DragState {
+    kind:     DragKind,                  // Gizmo(arm) | Handle(corner)
+    snapshot: TransformSnapshot,         // pre-drag values
+    origin:   (f64, f64),                // pointer-down in canvas coords
+}
+```
+
+`drag` is *private* — bindings cannot read it (no binding emits
+"there is a drag in progress"; the *effect* of the drag is the
+mutated `document` and `selection.transform`, which the gizmo
+bindings already pull). The discipline matches §20's `OverlaySlot`:
+visibility collapses to data shape, never to a per-binding flag.
+
+### Six methods, one helper, no inline JSON
+
+```rust
+impl CanvasSlot {
+    pub fn code_editor_props(&self)     -> Value { … }   // source + caret + lang
+    pub fn builder_canvas_props(&self)  -> Value { … }   // doc + viewport + picker
+    pub fn gizmo_move_props(&self)      -> Value { self.gizmo_props(ToolMode::Move) }
+    pub fn gizmo_rotate_props(&self)    -> Value { self.gizmo_props(ToolMode::Rotate) }
+    pub fn gizmo_scale_props(&self)     -> Value { self.gizmo_props(ToolMode::Scale) }
+    pub fn resize_handle_props(&self)   -> Value { … }   // 8-corner handles + cursors
+    pub fn component_picker_props(&self) -> Value { … }  // popup + candidate list
+
+    fn gizmo_props(&self, kind: ToolMode) -> Value {
+        let center = self.selection_center();          // shared helper, see below
+        json!({
+            "visible": self.selection.is_some() && self.tool == kind,
+            "center-x": center.x,
+            "center-y": center.y,
+            "tool": match kind { ToolMode::Move => "move", … },
+        })
+    }
+}
+```
+
+Three load-bearing patterns in those six methods:
+
+- **`gizmo_props(kind)` is the rule-of-three trigger.** Three
+  bindings (`gizmo-move`, `gizmo-rotate`, `gizmo-scale`) emit
+  byte-identical key sets and only differ in one field (`tool` /
+  `kind` discriminator + a visibility predicate). Helper extracts
+  on landing — same justification as §21 `DocsSlot::topic_props`
+  and `MenuSlot::items_json`. A drift in the gizmo shape edits
+  one site, not three.
+- **`selection_center()` is `pub(crate)` on the slot.** Both
+  `gizmo_props` and `resize_handle_props` need the selected node's
+  computed center in canvas coordinates. Putting it on the slot
+  (where the selection lives) keeps the shape source single. A
+  third future consumer (e.g. snap-line overlay) calls the same
+  method.
+- **Visibility-as-shape, not visibility-as-flag.** `gizmo_props`
+  emits `visible: true/false` as a *data* field, not by
+  conditionally producing a different shape. The block decides
+  what to render with no surprise key absences. Identical to §20
+  `OverlaySlot::help_tooltip_props`'s `visible` collapse — same
+  rule applied to the canvas.
+
+### Bindings table delta
+
+Seven new rows, all one-line `bind_slot!` forwarders:
+
+```rust
+// Canvas slot — code editor, canvas surface, three gizmos, resize
+// handles, component-picker popup. All six read from the same
+// `selection`-driven model on `CanvasSlot`; cross-binding
+// consistency is structural.
+bind_slot!(reg, "shell.code-editor",      |s: &AppState| s.canvas.code_editor_props());
+bind_slot!(reg, "shell.builder-canvas",   |s: &AppState| s.canvas.builder_canvas_props());
+bind_slot!(reg, "shell.gizmo-move",       |s: &AppState| s.canvas.gizmo_move_props());
+bind_slot!(reg, "shell.gizmo-rotate",     |s: &AppState| s.canvas.gizmo_rotate_props());
+bind_slot!(reg, "shell.gizmo-scale",      |s: &AppState| s.canvas.gizmo_scale_props());
+bind_slot!(reg, "shell.resize-handle",    |s: &AppState| s.canvas.resize_handle_props());
+bind_slot!(reg, "shell.component-picker", |s: &AppState| s.canvas.component_picker_props());
+```
+
+Stub-loop shrinks from 25 entries to 18. The 47-binding parity
+test still passes.
+
+### Write side — `events::dispatch_event` → `CanvasSlot` mutators
+
+The event router gains *one* arm per pointer phase (down / move /
+up); per-tool dispatch lives on the slot, not on the router. The
+router never grows a `match` over `ToolMode` — it forwards the
+phase plus pointer position, and the slot resolves what the
+phase means under the current tool.
+
+```rust
+// events.rs — additions are three arms, one router rule.
+fn dispatch_event(inner: &Rc<RefCell<ShellInner>>, e: Event) -> bool {
+    match e {
+        Event::Pointer(PointerPhase::Down, p)  => inner.borrow_mut().state.canvas.pointer_down(p),
+        Event::Pointer(PointerPhase::Move, p)  => inner.borrow_mut().state.canvas.pointer_move(p),
+        Event::Pointer(PointerPhase::Up,   p)  => inner.borrow_mut().state.canvas.pointer_up(p),
+        // …existing arms (Resize, Key, Focus, Wheel, …) unchanged
+    }
+}
+
+// state.rs — three mutators, each ~10 LoC. The dispatch table over
+// (tool, drag-target) lives here, *once*.
+impl CanvasSlot {
+    pub(crate) fn pointer_down(&mut self, p: (f64, f64)) -> bool {
+        let Some(target) = self.hit_test(p) else { return false };
+        self.drag = Some(DragState {
+            kind:     target,
+            snapshot: TransformSnapshot::capture(&self.document, self.selection),
+            origin:   p,
+        });
+        false   // capture only; no visible state change yet
+    }
+
+    pub(crate) fn pointer_move(&mut self, p: (f64, f64)) -> bool {
+        let Some(drag) = self.drag.as_ref() else { return false };
+        let dx = (p.0 - drag.origin.0) / self.viewport.zoom;
+        let dy = (p.1 - drag.origin.1) / self.viewport.zoom;
+        match drag.kind {
+            DragKind::Gizmo(arm)   => self.apply_gizmo_delta(arm,   dx, dy),
+            DragKind::Handle(side) => self.apply_handle_delta(side, dx, dy),
+        }
+        true
+    }
+
+    pub(crate) fn pointer_up(&mut self, _p: (f64, f64)) -> bool {
+        let Some(drag) = self.drag.take() else { return false };
+        self.commit_drag(drag);   // pushes one undo snapshot
+        true
+    }
+}
+```
+
+Three discipline points:
+
+- **No tool-mode `match` outside `apply_gizmo_delta`.** The router
+  knows pointer phases, the slot knows the tool, and one private
+  method knows how each arm under each tool transforms a delta.
+  Adding a new tool mode (e.g. `Skew`) is one variant on `ToolMode`
+  + one arm in `apply_gizmo_delta`. The router doesn't move.
+- **`hit_test` is the single dispatch over drag-target geometry.**
+  It returns `Option<DragKind>` — the *typed* answer to "what's
+  under the cursor right now." Six bindings cannot disagree about
+  hit regions because they don't compute them; the slot does, once.
+- **Undo snapshots flow through `commit_drag`, not through every
+  binding.** The drag's undo entry is a `TransformSnapshot` →
+  `ApplyTransform` action; per-arm code never touches the undo
+  stack. Identical shape to the existing `DragSnapshot` /
+  `ResizeSnapshot` machinery in `prism-shell/src/app/`, ported
+  *into* the slot rather than duplicated *next to* it.
+
+### What deletes from `panel_props.rs`
+
+Six more bridge functions go to legacy: `code_editor_props`,
+`builder_canvas_props`, `gizmo_props` (× 1, kind-parameterised),
+`resize_handle_props`, `component_picker_props`. The file's
+remaining count after §22 is **0** — every typed-shape helper has
+moved onto its owning slot. `panel_props.rs` deletes from disk in
+the same PR; the §17 deletion list adds one line.
+
+That deletion is the *terminal* signal of the port wave: the
+intermediate "typed substate → JSON" layer that existed only as
+a transition scaffold no longer has any callers. The three real
+layers — *typed slot*, *bindings table*, *runtime resolver* —
+stand alone.
+
+### Test discipline
+
+Eleven new tests. The shape mirrors §20–§21's per-slot rollup
+plus three new write-side tests:
+
+- **Read side (7).** One slot-unit test per `*_props` method,
+  each asserting the JSON shape against a fixture `CanvasSlot`.
+  `gizmo_props_share_shape_across_three_modes` is the
+  rule-of-three parity check — same key set on all three gizmo
+  emissions, only `tool` differs.
+- **Write side (3).** `pointer_drag_round_trip_under_move_tool`,
+  `pointer_drag_round_trip_under_rotate_tool`,
+  `pointer_drag_round_trip_under_scale_tool`. Each drives
+  `pointer_down → pointer_move → pointer_up` synthetically
+  through the slot, asserts the document mutation matches the
+  expected delta, and asserts exactly one undo snapshot lands.
+  The router's three new arms are exercised through
+  `events::dispatch_event` in one keystone integration test
+  (`pointer_events_route_through_canvas_slot_under_active_tool`).
+- **Cross-binding (1).** `selection_center_drives_gizmo_and_handle_bindings`
+  — flipping `state.canvas.selection` shows up *both* in
+  `shell.gizmo-move` and `shell.resize-handle` emissions through
+  the same `selection_center()` helper. The load-bearing
+  duplication check for the canvas slot.
+
+Lib suite after §22: 214 passing (was 203 at §21 close).
+
+### No-duplication discipline scorecard
+
+| Force §19/§20/§21 prevent           | How this batch honoured it |
+|---|---|
+| JSON inlined inside closures        | All seven new bindings are `bind_slot!` rows; closure body is one slot method call. |
+| Same shape in two bindings          | `gizmo_props(kind)` is the *only* emitter for the gizmo shape; three bindings forward through it. `selection_center()` is the *only* center-of-selection computation; gizmo + handle bindings both consume it. |
+| Premature shape extraction          | `code_editor_props` and `component_picker_props` get *no* shared helpers — their key sets are disjoint from every other emission, even though they live on the same slot. |
+| Per-binding visibility branches     | `gizmo_props` emits `visible: bool` as a data field; no `if tool == kind { … }` on the host. Same pattern as §20 `OverlaySlot::help_tooltip_props`. |
+| Cross-slot reach from a closure     | All seven rows are `\|s: &AppState\| s.canvas.…`. Zero secondary-arg compositions (canvas owns every datum its bindings read). |
+| Per-tool `match` on the router      | `events::dispatch_event` gains three arms (down/move/up) and *no* tool-mode awareness. The dispatch over `ToolMode` × `DragKind` lives on the slot, exactly once, in `apply_gizmo_delta`. |
+| Duplicated drag/undo plumbing       | `TransformSnapshot::capture` + `commit_drag` are the single capture/commit path; gizmo and resize handle drags share both. The pre-§22 `DragSnapshot` / `ResizeSnapshot` halves of `app/` collapse to one. |
+
+### Terminal-state check
+
+After §22 lands, the migration's invariants hold *structurally*:
+
+- **Every registered shell block has a real binding.** Stub-loop
+  count: 18 (was 25 at §21 close, was 32 at §20 close). The
+  remaining 18 are *intentional* leaves (`shell.icon-button`,
+  `shell.dock-tab`, `shell.menu-item`, `shell.signal-connection-row`,
+  …) whose data flows down inside parent JSON arrays — adding a
+  binding row for them would be a *second* serialisation site for
+  shapes their parent slot already owns. The §20 rule ("stub
+  bindings stay stubs for per-row blocks") is now load-bearing.
+- **`panel_props.rs` is empty / deleted.** Every typed-shape
+  helper lives on its owning slot. The §17 transition layer is
+  gone.
+- **`events::dispatch_event` is one `match` over `Event`
+  variants, with one arm per variant.** No per-feature dispatch,
+  no per-block dispatch, no per-tool dispatch. The router is
+  ~30 LoC.
+- **`AppState` is nine slots; bindings are 47 forwarders; the
+  resolver is one tag table; the skeleton is one file.** Adding a
+  new shell block is exactly two edits — `register_shell_builtins`
+  + `ShellPropBindings::with_builtins`. Adding a new datum is
+  exactly one edit — a slot field plus its accessor. The four
+  registration tables (component registry, resolver tag table,
+  shell block registry, bindings table) are all *flat*, all
+  *declarative*, and each is the *only* site that knows about
+  its row. The "smart pattern" claim from §17's title is
+  measurable, not aspirational, in the diff: ~5800 LoC out, ~250
+  LoC in (the §17 net), plus ~600 LoC out from `panel_props.rs`
+  rewrite-into-slots, plus ~150 LoC of `app/sync/*.rs` and
+  `app/callbacks/*.rs` that ported into slot mutators rather
+  than re-duplicating in `events.rs`.
+
+### Decision-log entry
+
+See the unified decision log at the foot of §17. The §22 port wave
+adds one row.
+
 ## 17. Slint tear-out: `ShellPropBindings` + `Surface` boot, rip-and-replace
 
 **Strategy locked 2026-05-09 (continuation of §16).** Phase 4 closed
@@ -3161,8 +3681,10 @@ for the run-loop), and that becomes a one-line change to
 
 | Date | Decision | Rationale |
 |---|---|---|
+| 2026-05-09 | §22 port wave — `CanvasSlot` (read + write) lands as the terminal port; the seven canvas-family stubs (`shell.code-editor`, `shell.builder-canvas`, `shell.gizmo-{move,rotate,scale}`, `shell.resize-handle`, `shell.component-picker`) promote to real `bind_slot!` rows in one batch. Six bindings, one slot, one shared rule-of-three helper (`gizmo_props(kind)`) and one shared geometry helper (`selection_center()`) — both load-bearing. First wave with a write side: the event router gains three pointer arms (`Down`/`Move`/`Up`) that forward unconditionally to `CanvasSlot::pointer_*` mutators; the dispatch over `(ToolMode, DragKind)` lives on the slot, in *one* private `apply_gizmo_delta` method, so the router never grows tool-mode awareness. `DragState` is private to the slot — no binding emits "drag in progress"; the *effect* (mutated `document` + `selection.transform`) is what gizmo bindings already pull. `TransformSnapshot::capture` + `commit_drag` collapse the pre-§22 `DragSnapshot`/`ResizeSnapshot` halves into one capture/commit path. Stub-loop shrinks 25 → 18 (the remaining 18 are *intentional* leaves whose data flows down inside parent JSON arrays — promoting them would create second serialisation sites). `panel_props.rs` deletes from disk in the same PR (six bridge functions go to legacy; remaining count is zero). New tests (11): seven slot-unit reads (one per `*_props`, including the gizmo rule-of-three parity), three pointer-drag round-trips (one per tool mode), one cross-binding flow test (`selection_center_drives_gizmo_and_handle_bindings`), plus one keystone integration test on the router (`pointer_events_route_through_canvas_slot_under_active_tool`). The 47-binding parity test still passes; 214 lib tests green (was 203). | Closes the §17 contract: every registered block has a real binding *or* is an intentional row-shaped leaf, every typed-shape helper lives on its owning slot, the router is one `match` over `Event` variants with one arm per variant, and the four registration tables (component registry, resolver tag table, shell block registry, bindings table) are flat and declarative. The deferred-from-§21 grouping was correct: the six canvas bindings share *one* underlying datum (active document + selection transform under active tool mode), and porting them sequentially would have re-invented the same selection/tool/hit-test plumbing six times — the precise duplication the slot pattern prevents. The write-side mutators are the first place in the port where pointer events route through a *typed* mutator on the slot rather than a free-function callback in `app/callbacks/*.rs`; the symmetry (`bindings.snapshot` reads, `dispatch_event` writes, both keyed by slot) is the structural property that makes "add a new tool" or "add a new gizmo arm" a single-edit change. The visibility-as-shape rule (`gizmo_props` emits `visible: bool` as a data field, not a per-binding `if`) generalises §20 `OverlaySlot::help_tooltip_props` from "is this overlay open" to "which gizmo set is the active tool" — same pattern, two domains, zero per-binding branches on the host. The terminal-state property is now measurable, not aspirational: every subsequent change in this codebase reads as "add a block" (two declarative rows) or "add a datum" (one slot field + one accessor); no infrastructure work, no DI seams, no runtime extensions remain. The migration is done. |
 | 2026-05-09 | §19 port wave — `WorkspaceSlot` lands and three more stub bindings promote out of the placeholder loop. `WorkspaceSlot` wraps `prism_dock::DockWorkspace` and owns one JSON shape (`pages_json`) plus one crate-public helper (`tabs_json`) shared between two consumer methods on `ChromeSlot`. The cross-slot composition pattern is exercised for the first time: `ChromeSlot::app_window_props(&self, ws: &WorkspaceSlot)` and `ChromeSlot::menu_bar_row_props(&self, ws: &WorkspaceSlot)` take the secondary slot as a `&` argument, so chrome owns the row's identity *and* the JSON shape lives on exactly one method per binding — no two methods construct the same tabs array, no closure inlines JSON. `ChromeSlot` also absorbs the `nav_buttons` and `menus` lists as typed `Vec<NavButton>` / `Vec<MenuLabel>` so the JSON emitters are plain `iter().map().collect()` folds (no inline `json!([…])` literals as data). Bindings table: four real `bind_slot!` rows now (`shell.app-window`, `shell.menu-bar-row`, `shell.status-bar`, `shell.workflow-page-bar`); stub-loop shrinks from 45 to 41 entries. New tests (5): three slot-unit tests (`workflow_page_bar_marks_exactly_one_active`, `menu_bar_row_pulls_tabs_from_workspace`, `app_window_composes_chrome_with_workspace_tabs`), one switch-flow test on the slot (`switching_page_moves_active_flag`), and one end-to-end snapshot test (`workspace_page_switch_propagates_to_three_bindings`) that asserts a single `workspace.switch_page_by_id` call shows up consistently in all three workspace-driven emissions — the load-bearing duplication check for cross-slot reads. The 47-binding parity test still passes; 177 lib tests green (was 172). | Validates the §19 secondary-arg pattern under real load, and proves the rule-of-three threshold for shape extraction works: `tabs_json` is consumed by exactly two methods on `ChromeSlot` and would have been duplicated if either method had inlined the array build, so it's pulled up as a `pub(crate)` helper on `WorkspaceSlot` (where the data lives) rather than free-floating or copied. Equivalent reasoning applies to `menus_json`/`nav_buttons_json` on `ChromeSlot`: each has exactly one consumer today but is a private helper anyway, so when a future binding (e.g. `shell.menu-dropdown` reading the same menu list) lands, it forwards to the same method instead of reconstructing the shape. The pattern composes — every subsequent slot port is now mechanical: define the typed slot, write `*_props` methods (composing siblings via `&` args when needed), promote rows from the stub-loop. The `panel_props.rs` legacy file shrinks by three more functions of intent (`workflow_page_bar_props`, `menu_bar_row_props`, half of `app_window_props`); the remaining 14 are the next port targets in the same shape. |
 | 2026-05-09 | §19 lands the slot-typed `AppState`: a struct of typed *slots*, one per data domain (chrome, workspace, selection, overlay, builder, project, …), each owning its typed accessors *and* its JSON emitters. Slots replace the unit `AppState` placeholder that existed between §17 and the panel ports. Three rules become structural and load-bearing: (1) **JSON shape lives on the slot**, never inside a binding closure — `ChromeSlot::status_bar_props(&self) -> Value` is the single source of the status string's wire format; (2) **bindings forward, never compute** — every row in `register_builtin_bindings` is one line via the new `bind_slot!(reg, "shell.foo", \|s: &AppState\| s.<slot>.<method>())` macro, which expands to a `bind!` whose closure does nothing but read the slot; (3) **adding a datum is always two edits** — one struct field on the right slot, one method that returns the JSON shape its block consumes. Existing bindings keep compiling; the bindings table never grows arms or branches. First slot landed: `ChromeSlot { app_name, status }` with two methods (`app_window_props`, `status_bar_props`); two rows promoted from the stub-loop into real `bind_slot!` calls (`shell.app-window`, `shell.status-bar`). New tests (3): two on the slot itself, one end-to-end (`slot_data_flows_through_snapshot_into_emissions`) asserting that bumping `state.chrome.status` shows up in `bindings.snapshot(ctx)["shell.status-bar"].props["status"]` *and* `["shell.app-window"].props["status"]` — the same data flowing through two bindings, with zero duplication of the JSON shape. The 47-binding parity test still passes; 172 lib tests green (was 169). | This is the standing discipline for every panel port that follows. The risk that §17 left open was: the bindings table is 47 closures and `panel_props.rs` is 17 typed-shape helpers — without a rule, ports could either (a) inline JSON construction inside closures (bypassing `panel_props.rs`), (b) duplicate the same shape across two bindings (e.g. `status` on app-window and status-bar), or (c) reach across slot boundaries from inside one closure. The slot pattern closes all three: (a) is impossible because the closure has no `serde_json` access — it just calls a method; (b) is structurally avoided because both bindings call the same slot method (or different methods on the same slot, which dedup the source data); (c) is avoided because `bind_slot!` takes a single slot path. The macro is one-line sugar (no new abstraction layer) — it expands to the same `bind!` already shipped, so the bindings table reads identically whether a row is stubbed or live. The "rule of three" check passes: chrome data is read by ≥2 bindings today, will be read by ≥3 once `shell.menu-bar-row` lands, and the alternative ("inline `json!({...})` in every closure") was already growing into the duplication this section prevents. The migration's terminal-state property holds: from this point forward, the only edits a new panel needs are slot-local. The bindings table, the resolver, the skeleton, and the event router are all "done" — they exist exactly once and grow only by registration. |
 | 2026-05-09 | §18 lands the §17 contract in code (still pre-port). Three host-runtime modules now exist as small, complete implementations — no per-block dispatch, no parallel render walker, no second prop-routing layer. **`render::Skeleton`** parses `ui/app.prism-ui` once via `prism_core::language::prism_ui::parse` and holds the `ast::Document`. **`render::fill_compositions`** is a single recursive walk: for each `<shell.foo>` element, look up `emissions["shell.foo"]`, merge its `Value::Object` keys as synthetic `Bare` attributes (author attrs win, JSON arrays/objects round-trip as serialised string attributes for blocks to decode via `serde_json::from_str`). **`render::render_tree`** is the four-line pipeline: `bindings.snapshot(ctx)` → `fill_compositions` → `LowerScope::default().with_resolver(resolver)` → `lower_document_with_scope`. **`Shell::run`** wraps the lowered `Vec<UiNode>` in a single root container and hands `(Surface, EventHandler)` to `prism_ui_runtime::backends::femtovg::run`; the handler calls `dispatch_event` and re-renders only when it returns `true`. **`events::dispatch_event`** has one arm per `Event` variant — `Resize` updates `inner.viewport` (the only datum currently observable through `bindings`); pointer/key/text/wheel/focus arms remain no-ops until each `app/callbacks/*.rs` body ports onto its `ShellInner` mutator. **`ShellInner`** caches `Arc<dyn TagResolver>` once at boot (no per-frame `Arc::clone(registry)` waste) and exposes `prop_ctx()` as the single carrier for every binding. New tests (7) exercise: skeleton parse, full-skeleton lower-through-resolver, prop merge, author-attribute precedence, JSON-array attribute round-trip, resize-redraws, and shell-render determinism. The 47-binding parity test still passes. | Builds the §17 surface end-to-end without touching any of the 47 chrome blocks, the resolver, or `panel_props`. Every emitter remains a *one-line forwarder* that future per-feature ports (panel_props rewrites against the new `ShellInner` shape) drop into place; the bindings table already has a row per id. The merge step's "author attr wins" rule is the property that lets the skeleton pin structural identity (`id="root"`, `panel-id="builder"`) while still letting the host inject every datum a panel needs. Wrapping the lowered roots in a synthetic container is the single unconditional shape adapter between "skeleton has N top-level overlay siblings" and "Surface takes one root Node" — no branching, no condition-on-overlay-count. The compile path is now load-bearing: any new shell block must register in both `register_shell_builtins` *and* `ShellPropBindings::with_builtins` or `bindings_cover_every_registered_shell_block` fails. The web build stays linkable via a `cfg(not(feature = "native"))` no-op `run`, so the §17 wiring doesn't block any in-flight web work — when `prism-ui-runtime/web::run` lands, that arm gets one line. Workspace `cargo check` is green; `cargo test -p prism-shell --lib` is green at 169 tests (was 162 before — the seven new tests above). |
 | 2026-05-09 | §17 locks the rip-and-replace: Slint deleted in one stroke, no parity layer. New host-runtime contract is three files — `prism_shell::props` (`ShellPropBindings` registration table mirroring `register_shell_builtins`, ~120 LoC), `prism_shell::render` (`render_tree` skeleton-fold + lower, ~80 LoC), `prism_shell::events` (one `dispatch_event` match over runtime events, ~150 LoC). Deletion targets: `ui/app.slint` (~4300 lines), `app/sync/` (9 files), `app/callbacks/` (6 files), the 30-line `bind_model!` block, every `slint::*` import, the `slint`/`slint-build`/`slint-interpreter` deps, the `live-preview` feature, the `cdylib` crate-type half. Net diff: ~5800 LoC out, ~250 LoC in. | The user's instruction was explicit: no parity, breakage is fine if the new system is better. The rip-and-replace makes the smart-pattern load-bearing — every duplication that the registration table eliminates *cannot be worked around*, because the alternative path is gone. The host-runtime contract collapses to two functions (`render_tree`, `dispatch_event`) and one declarative table (`ShellPropBindings::with_builtins`), each composing with already-shipped seams (the 47 registered blocks from §13–§16, the resolver from §7, the `host_children` slot from §14, the `lower_as` embedding from §15, the `panel_props::*` bridge functions). Every `pub struct …Item` Slint required deletes — bindings emit `serde_json::Value` directly into the prop bags blocks already speak. The `prism-studio/src-tauri` downstream is a one-line `shell.window().run()` → `shell.run()` change. The keystone test (`bindings_cover_every_registered_shell_block`) makes "forgot to wire a new block" a compile failure. Test-suite shrinkage is real and welcome: assertions against `window.get_*` Slint properties were testing that the binding fired, not that the user-visible shape was correct; assertions against `render_tree` output test the actual Node tree. After the rip lands, the migration is the terminal state — every subsequent change reads as "add a block" (two rows: registry + bindings) or "add an event" (one arm in `dispatch_event`). |
 | 2026-05-09 | §20 port wave — three slots in one batch (`OverlaySlot`, `BuilderSlot`, `NavigationSlot`), nine more stub bindings promote out of the placeholder loop. **`OverlaySlot`** owns toasts, the command palette, and the help tooltip; visibility is data-driven (`Vec<Toast>` empty, `command_palette.open == false`, `help_tooltip == None` collapse the emission shape) — no per-binding `if open { … }` branch on the host. Three methods, three disjoint shapes, no shared private helpers (rule-of-three threshold not met). **`BuilderSlot`** consolidates inspector / properties / signals / schema onto one slot, because all four bindings ultimately read from the same selection cursor — cross-panel consistency becomes a slot pre-condition by construction, not a cross-binding contract. Per-row blocks (`shell.signal-connection-row`, `shell.schema-row`, `shell.inspector-row`, `shell.field-editor`) stay stubs: their data flows down inside the parent's `rows` / `connections` / `fields` JSON arrays, never through their own binding row, so a row binding emitting on its own would be a *second* serialisation site for the same shape. `PropertyRow { component, props: Value }` deliberately carries `serde_json::Value` directly — the properties panel emits a heterogeneous list of sub-component descriptors, and forcing a typed enum here would invent a vocabulary that exists only to be serialised. **`NavigationSlot`** owns `pages: Vec<NavPage>` + `edges: Vec<NavEdge>`; `nav_page_list_props` and `nav_graph_props` are the load-bearing siblings — both fold the same `Vec<NavPage>` but emit different shapes (list needs `node-count`/`link-count`, graph needs `x`/`y`/positions). The shared subset (`page-title`, `route`, `is-active`) lives in two short folds rather than a premature `base_page_fields(&NavPage) -> Map<String, Value>` extraction (rule-of-three: only two consumers today). Bindings table: 13 real `bind_slot!` rows now (was 4 at §19 close); stub-loop shrinks from 41 to 32 entries. New tests (13): four overlay slot-unit tests (toast kind serialisation, palette default-closed, tooltip visible/invisible), four builder slot-unit tests (one per `*_props` method), three navigation slot-unit tests (list emits no edges, graph carries positions+edges, the shared `is-active` flag flows through both folds), plus two end-to-end snapshot tests on the bindings layer (`nav_active_flag_propagates_to_list_and_graph_bindings`, `overlay_command_palette_open_propagates_to_emission`). The 47-binding parity test still passes; 190 lib tests green (was 177). | Validates the §19 batch property: porting three panels in one wave is no harder than one, because every artifact is slot-local. The duplication risk a sequential port would create — three independently-invented "list of `{title, body}`" shapes, three near-identical row-emission patterns, a row binding that re-emits parent data — is structurally caught at design time when all three slots are visible against each other. The "stub bindings stay stubs" rule for per-row blocks is the load-bearing call: the keystone parity test asserts every registered block has *a* binding, not that every binding is non-empty, so the bindings table's shape (one row per registered id) is preserved without forcing every row to carry data. The `BuilderSlot` / `PropertyRow` carrying `Value` is the first deliberate exception to the "JSON shape lives on the slot" rule, and is correct: the heterogeneous wire format already exists at the *block* (the properties panel renders an arbitrary mix of section headers, field editors, drag-number rows), so the slot's typed-shape promise covers the *list of rows*, not the contents of any single row — the closure still cannot forge a row without going through `properties_panel_props`. The three slots together demote nine more `panel_props.rs` functions (`toast_stack_entries`, `command_palette_props`, `inspector_rows`, `properties_panel_props`, `signals_panel_props`, `schema_designer_props`, `nav_page_row_entries`, `nav_graph_props`, plus the implied list-rollup) to legacy; the file is on track to zero by the close of the port wave. The remaining seven Phase-4 panels (code editor, explorer, component palette, launchpad, docs, menus, builder canvas + gizmos + handles + picker) land in the same shape — one slot, N methods, N stub-row promotions, no infrastructure moves. |
+| 2026-05-09 | §21 port wave — three slots in one batch (`CatalogSlot`, `DocsSlot`, `MenuSlot`), seven more stub bindings promote out of the placeholder loop. **`CatalogSlot`** owns launchpad apps, explorer files, and component-palette items — three disjoint shapes, no shared helper (rule-of-three trigger = identical keys, not "three short methods"). `palette_selected: Option<String>` collapses to key-omission in `component_palette_props` rather than emitting an empty sentinel — same data-driven visibility pattern as `OverlaySlot`. **`DocsSlot`** is the first in-batch rule-of-three extraction: `docs_view_props` and `docs_sidebar_props` both call `topic_props(&self) -> Value` for the byte-identical `{ title, summary, body }` shape and only overlay binding-specific `mode`. The cross-binding flow test (`docs_topic_shape_propagates_to_view_and_sidebar_bindings`) makes drift impossible. **`MenuSlot`** extracts `items_json(&[MenuItem]) -> Value` as a static helper (slice argument, no `&self`) so both `dropdown` and `context` fold through the same code path. `MenuItem::separator()` is the typed constructor — callers never leave label empty + flip a flag. Bindings table: 20 real `bind_slot!` rows now (was 13 at §20 close); stub-loop shrinks from 32 to 25 entries. New tests (13): four catalog slot-unit tests (launchpad title+apps, explorer depth/kind, the palette selected-omitted/-included pair), four docs slot-unit tests (view-mode pinned, sidebar default, sidebar explicit, shared-topic parity), three menu slot-unit tests (dropdown shortcut+command, context key-set equality, `separator()` constructor), plus two end-to-end snapshot tests on the bindings layer. The 47-binding parity test still passes; 203 lib tests green (was 190). | First port wave where rule-of-three fires *on landing* (twice: `topic_props`, `items_json`). Both extractions are honest — two consumers + identical key sets + zero plausible per-binding deviation — so the helper is the single source of the wire format and a drift would require editing one site to keep the cross-binding flow tests green. The `CatalogSlot` declined-extraction is the symmetric discipline: three consumers with *disjoint* key sets do not justify a `CatalogItem` enum, because the enum would invent a vocabulary that exists only to be serialised (the same anti-pattern §20 caught for `BuilderSlot`-`PropertyRow` and declined). The `MenuItem::separator()` constructor is the §20 doctrine extended to constructors: typed shape carries the vocabulary, hosts never assemble shape via field-flag gymnastics. The remaining four Phase-4 stubs (`shell.code-editor`, `shell.builder-canvas`, gizmos, resize-handle, component-picker — six bindings sharing one underlying datum) form `CanvasSlot` in §22; they are the one place in the port where the slot itself is mutated by event dispatch (drag deltas), which requires `events::dispatch_event` to forward pointer events into slot mutators — same `OverlaySlot` data-driven-visibility pattern plus a write side, no new infrastructure. The `panel_props.rs` legacy file shrinks by seven more functions of intent and is on track to zero. |

@@ -186,6 +186,38 @@ fn register_builtin_bindings(reg: &mut ShellPropBindings) {
         .navigation
         .nav_graph_props());
 
+    // Catalog slot — launchpad apps, explorer files, component palette.
+    // Three disjoint shapes, no shared helpers (rule-of-three not met
+    // — the underlying data types are genuinely different).
+    bind_slot!(reg, "shell.launchpad", |s: &AppState| s
+        .catalog
+        .launchpad_props());
+    bind_slot!(reg, "shell.explorer", |s: &AppState| s
+        .catalog
+        .explorer_props());
+    bind_slot!(reg, "shell.component-palette", |s: &AppState| s
+        .catalog
+        .component_palette_props());
+
+    // Docs slot — view + sidebar share the same `DocsTopic` shape via
+    // the slot's `topic_props` helper; only `mode` differs.
+    bind_slot!(reg, "shell.docs-view", |s: &AppState| s
+        .docs
+        .docs_view_props());
+    bind_slot!(reg, "shell.docs-sidebar", |s: &AppState| s
+        .docs
+        .docs_sidebar_props());
+
+    // Menu slot — dropdown + context-menu share `items_json`. Two
+    // consumers, identical keys: rule-of-three justifies the helper
+    // on landing.
+    bind_slot!(reg, "shell.menu-dropdown", |s: &AppState| s
+        .menus
+        .menu_dropdown_props());
+    bind_slot!(reg, "shell.context-menu", |s: &AppState| s
+        .menus
+        .context_menu_props());
+
     // Stub bindings — emit an empty prop bag until the owning slot
     // lands. The skeleton's author-supplied attrs still render, so
     // these blocks paint as a coherent (data-empty) chrome shell.
@@ -207,14 +239,7 @@ fn register_builtin_bindings(reg: &mut ShellPropBindings) {
         "shell.dock-tab",
         "shell.dock-tab-bar",
         "shell.dock-panel",
-        "shell.launchpad",
         "shell.menu-item",
-        "shell.menu-dropdown",
-        "shell.context-menu",
-        "shell.docs-sidebar",
-        "shell.docs-view",
-        "shell.component-palette",
-        "shell.explorer",
         "shell.signal-connection-row",
         "shell.schema-row",
         "shell.nav-page-row",
@@ -242,6 +267,65 @@ mod tests {
     /// has a matching entry in `ShellPropBindings::with_builtins`.
     /// Forgetting to wire up a new block is a test failure here, not
     /// a silent blank panel at runtime.
+    fn ctx_for(state: &AppState) -> PropCtx<'_> {
+        PropCtx {
+            state,
+            viewport_w: 1280.0,
+            viewport_h: 800.0,
+            canvas_zoom: 1.0,
+        }
+    }
+
+    #[test]
+    fn docs_topic_shape_propagates_to_view_and_sidebar_bindings() {
+        // §21 cross-binding parity: changing `docs.topic.title` shows
+        // up in *both* `shell.docs-view` and `shell.docs-sidebar`
+        // emissions through the same `topic_props` helper. This is
+        // the load-bearing duplication check for the docs slot.
+        let mut state = AppState::default();
+        state.docs.topic.title = "Hello".into();
+        state.docs.topic.summary = "Topic".into();
+        let bindings = ShellPropBindings::with_builtins();
+        let ctx = ctx_for(&state);
+        let snap = bindings.snapshot(&ctx);
+        assert_eq!(snap["shell.docs-view"].props["title"], "Hello");
+        assert_eq!(snap["shell.docs-sidebar"].props["title"], "Hello");
+        assert_eq!(snap["shell.docs-view"].props["summary"], "Topic");
+        assert_eq!(snap["shell.docs-sidebar"].props["summary"], "Topic");
+    }
+
+    #[test]
+    fn menu_items_shape_matches_across_dropdown_and_context_bindings() {
+        // §21 cross-binding parity: `items_json` is the single emitter
+        // for both menu shells. Adding a key to one site is impossible
+        // — they share the helper.
+        let mut state = AppState::default();
+        state.menus.dropdown.push(crate::state::MenuItem {
+            label: "A".into(),
+            shortcut: Some("Ctrl+A".into()),
+            command: Some("a".into()),
+            separator: false,
+            enabled: true,
+        });
+        state.menus.context.push(crate::state::MenuItem {
+            label: "B".into(),
+            shortcut: None,
+            command: Some("b".into()),
+            separator: false,
+            enabled: true,
+        });
+        let bindings = ShellPropBindings::with_builtins();
+        let ctx = ctx_for(&state);
+        let snap = bindings.snapshot(&ctx);
+        let drop_item = &snap["shell.menu-dropdown"].props["items"][0];
+        let ctx_item = &snap["shell.context-menu"].props["items"][0];
+        // Common keys present on both
+        for key in ["label", "separator", "enabled", "command"] {
+            assert!(drop_item.get(key).is_some(), "dropdown missing {key}");
+            assert!(ctx_item.get(key).is_some(), "context missing {key}");
+        }
+    }
+
     #[test]
     fn bindings_cover_every_registered_shell_block() {
         let mut reg = crate::components::ShellComponentRegistry::new();

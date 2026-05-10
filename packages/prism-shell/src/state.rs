@@ -36,6 +36,9 @@ pub struct AppState {
     pub overlay: OverlaySlot,
     pub builder: BuilderSlot,
     pub navigation: NavigationSlot,
+    pub catalog: CatalogSlot,
+    pub docs: DocsSlot,
+    pub menus: MenuSlot,
 }
 
 // ── chrome ────────────────────────────────────────────────────────
@@ -605,6 +608,281 @@ impl NavigationSlot {
     }
 }
 
+// ── catalog ───────────────────────────────────────────────────────
+
+/// Browse-style panels — launchpad apps, explorer files, component
+/// palette items. Three bindings, three disjoint shapes; no shared
+/// item type because the underlying data is genuinely different
+/// (app cards vs file rows vs draggable component descriptors). Each
+/// emitter is a plain `iter().map()` fold (rule-of-three: zero
+/// consumers in common, no helper).
+///
+/// Three bindings consume this slot:
+/// `shell.launchpad`, `shell.explorer`, `shell.component-palette`.
+/// The per-row block `shell.app-card` stays a stub — its data flows
+/// down inside the launchpad's `apps` array.
+#[derive(Clone, Debug, Default)]
+pub struct CatalogSlot {
+    pub launchpad_title: String,
+    pub apps: Vec<AppCard>,
+    pub files: Vec<FileNode>,
+    pub palette: Vec<PaletteItem>,
+    pub palette_selected: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct AppCard {
+    pub id: String,
+    pub label: String,
+    pub icon: String,
+    pub summary: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct FileNode {
+    pub id: String,
+    pub label: String,
+    pub depth: u32,
+    pub kind: FileKind,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum FileKind {
+    Directory,
+    File,
+}
+
+impl FileKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Directory => "directory",
+            Self::File => "file",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct PaletteItem {
+    pub id: String,
+    pub label: String,
+    pub icon: String,
+    pub category: String,
+}
+
+impl CatalogSlot {
+    /// JSON for `shell.launchpad`. The block reads `title` and an
+    /// `apps` array of `AppCard`-shaped objects.
+    pub fn launchpad_props(&self) -> Value {
+        json!({
+            "title": self.launchpad_title,
+            "apps": self.apps_json(),
+        })
+    }
+
+    /// JSON for `shell.explorer`. The block reads a `nodes` array of
+    /// row props (label / depth / kind) — flat list, the tree shape
+    /// is encoded in `depth`.
+    pub fn explorer_props(&self) -> Value {
+        json!({ "nodes": self.files_json() })
+    }
+
+    /// JSON for `shell.component-palette`. The block reads `items` and
+    /// the optional `selected-id`. Selection flows here from the
+    /// builder canvas's "place mode" (set when the user picks an item
+    /// to place into a grid cell).
+    pub fn component_palette_props(&self) -> Value {
+        let mut props = json!({ "items": self.palette_json() });
+        if let Some(id) = &self.palette_selected {
+            props["selected-id"] = json!(id);
+        }
+        props
+    }
+
+    fn apps_json(&self) -> Value {
+        Value::Array(
+            self.apps
+                .iter()
+                .map(|a| {
+                    json!({
+                        "app-id": a.id,
+                        "label": a.label,
+                        "icon": a.icon,
+                        "summary": a.summary,
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    fn files_json(&self) -> Value {
+        Value::Array(
+            self.files
+                .iter()
+                .map(|f| {
+                    json!({
+                        "node-id": f.id,
+                        "label": f.label,
+                        "depth": f.depth,
+                        "kind": f.kind.as_str(),
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    fn palette_json(&self) -> Value {
+        Value::Array(
+            self.palette
+                .iter()
+                .map(|p| {
+                    json!({
+                        "item-id": p.id,
+                        "label": p.label,
+                        "icon": p.icon,
+                        "category": p.category,
+                    })
+                })
+                .collect(),
+        )
+    }
+}
+
+// ── docs ──────────────────────────────────────────────────────────
+
+/// Documentation view + sidebar — both bindings render the *same*
+/// `DocsTopic` (title / summary / body) and only differ in `mode`
+/// (the sidebar embeds extra chrome). The shared shape is extracted
+/// into `topic_props` honestly: rule-of-three threshold met at two
+/// consumers with byte-identical JSON keys.
+///
+/// Two bindings consume this slot:
+/// `shell.docs-view`, `shell.docs-sidebar`. The per-row block
+/// `shell.docs-content` stays a stub — its props are routed through
+/// the parent's container by the existing `lower_ui` (each docs
+/// component already builds its own content child).
+#[derive(Clone, Debug, Default)]
+pub struct DocsSlot {
+    pub topic: DocsTopic,
+    pub sidebar_mode: String,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct DocsTopic {
+    pub title: String,
+    pub summary: String,
+    pub body: String,
+}
+
+impl DocsSlot {
+    /// JSON for `shell.docs-view`. Full-page topic render — `mode`
+    /// is fixed `"full"` because the view block hard-codes that
+    /// dispatch in its `lower_ui`.
+    pub fn docs_view_props(&self) -> Value {
+        let mut props = self.topic_props();
+        props["mode"] = json!("full");
+        props
+    }
+
+    /// JSON for `shell.docs-sidebar`. Same topic shape with the
+    /// sidebar-specific `mode` (e.g. `"summary"` / `"outline"`).
+    /// Defaults to `"sidebar"` when empty.
+    pub fn docs_sidebar_props(&self) -> Value {
+        let mode = if self.sidebar_mode.is_empty() {
+            "sidebar"
+        } else {
+            self.sidebar_mode.as_str()
+        };
+        let mut props = self.topic_props();
+        props["mode"] = json!(mode);
+        props
+    }
+
+    /// Shared shape — title / summary / body. Lives on the slot so
+    /// neither binding closure invents its own keys (the §19
+    /// no-duplication rule applied to a private helper).
+    fn topic_props(&self) -> Value {
+        json!({
+            "title": self.topic.title,
+            "summary": self.topic.summary,
+            "body": self.topic.body,
+        })
+    }
+}
+
+// ── menus ─────────────────────────────────────────────────────────
+
+/// Menu items for the open dropdown and the active context menu.
+/// Both bindings consume the same `MenuItem` array shape, so the
+/// JSON emitter is a single private helper (`items_json`) — exactly
+/// the shared-shape extraction the rule-of-three justifies (two
+/// consumers, identical keys, no plausible per-binding deviation).
+///
+/// Two bindings consume this slot:
+/// `shell.menu-dropdown`, `shell.context-menu`. The per-row block
+/// `shell.menu-item` stays a stub — items render inside the parent
+/// menu's `items` array.
+#[derive(Clone, Debug, Default)]
+pub struct MenuSlot {
+    pub dropdown: Vec<MenuItem>,
+    pub context: Vec<MenuItem>,
+}
+
+#[derive(Clone, Debug)]
+pub struct MenuItem {
+    pub label: String,
+    pub shortcut: Option<String>,
+    pub command: Option<String>,
+    pub separator: bool,
+    pub enabled: bool,
+}
+
+impl MenuItem {
+    pub fn separator() -> Self {
+        Self {
+            label: String::new(),
+            shortcut: None,
+            command: None,
+            separator: true,
+            enabled: false,
+        }
+    }
+}
+
+impl MenuSlot {
+    pub fn menu_dropdown_props(&self) -> Value {
+        json!({ "items": Self::items_json(&self.dropdown) })
+    }
+
+    pub fn context_menu_props(&self) -> Value {
+        json!({ "items": Self::items_json(&self.context) })
+    }
+
+    /// Shared menu-item shape. Extracted on landing because both
+    /// callers emit identical keys today *and* will continue to —
+    /// the `MenuItem` struct is the sole vocabulary.
+    fn items_json(items: &[MenuItem]) -> Value {
+        Value::Array(
+            items
+                .iter()
+                .map(|m| {
+                    let mut o = json!({
+                        "label": m.label,
+                        "separator": m.separator,
+                        "enabled": m.enabled,
+                    });
+                    if let Some(sc) = &m.shortcut {
+                        o["shortcut"] = json!(sc);
+                    }
+                    if let Some(cmd) = &m.command {
+                        o["command"] = json!(cmd);
+                    }
+                    o
+                })
+                .collect(),
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -847,6 +1125,200 @@ mod tests {
         let edges = props["edges"].as_array().unwrap();
         assert_eq!(edges[0]["kind"], "href");
         assert_eq!(edges[0]["from"], 0);
+    }
+
+    // ── catalog ───────────────────────────────────────────────────
+
+    fn sample_catalog() -> CatalogSlot {
+        CatalogSlot {
+            launchpad_title: "Welcome".into(),
+            apps: vec![AppCard {
+                id: "lattice".into(),
+                label: "Lattice".into(),
+                icon: "icons/lattice.svg".into(),
+                summary: "Visual web builder".into(),
+            }],
+            files: vec![
+                FileNode {
+                    id: "src".into(),
+                    label: "src".into(),
+                    depth: 0,
+                    kind: FileKind::Directory,
+                },
+                FileNode {
+                    id: "src/lib.rs".into(),
+                    label: "lib.rs".into(),
+                    depth: 1,
+                    kind: FileKind::File,
+                },
+            ],
+            palette: vec![PaletteItem {
+                id: "heading".into(),
+                label: "Heading".into(),
+                icon: "icons/heading.svg".into(),
+                category: "Text".into(),
+            }],
+            palette_selected: Some("heading".into()),
+        }
+    }
+
+    #[test]
+    fn launchpad_props_carry_title_and_apps() {
+        let cat = sample_catalog();
+        let props = cat.launchpad_props();
+        assert_eq!(props["title"], "Welcome");
+        let apps = props["apps"].as_array().unwrap();
+        assert_eq!(apps[0]["app-id"], "lattice");
+        assert_eq!(apps[0]["summary"], "Visual web builder");
+    }
+
+    #[test]
+    fn explorer_props_emit_depth_and_kind() {
+        let cat = sample_catalog();
+        let props = cat.explorer_props();
+        let nodes = props["nodes"].as_array().unwrap();
+        assert_eq!(nodes[0]["kind"], "directory");
+        assert_eq!(nodes[1]["kind"], "file");
+        assert_eq!(nodes[1]["depth"], 1);
+    }
+
+    #[test]
+    fn component_palette_props_omit_selected_when_none() {
+        let mut cat = sample_catalog();
+        cat.palette_selected = None;
+        let props = cat.component_palette_props();
+        assert!(props.get("selected-id").is_none());
+    }
+
+    #[test]
+    fn component_palette_props_include_selected_when_some() {
+        let cat = sample_catalog();
+        let props = cat.component_palette_props();
+        assert_eq!(props["selected-id"], "heading");
+        assert_eq!(props["items"][0]["item-id"], "heading");
+    }
+
+    // ── docs ──────────────────────────────────────────────────────
+
+    fn sample_docs() -> DocsSlot {
+        DocsSlot {
+            topic: DocsTopic {
+                title: "Builder".into(),
+                summary: "Edit visually.".into(),
+                body: "Long form…".into(),
+            },
+            sidebar_mode: String::new(),
+        }
+    }
+
+    #[test]
+    fn docs_view_pins_mode_full() {
+        let props = sample_docs().docs_view_props();
+        assert_eq!(props["mode"], "full");
+        assert_eq!(props["title"], "Builder");
+    }
+
+    #[test]
+    fn docs_sidebar_defaults_to_sidebar_mode() {
+        let props = sample_docs().docs_sidebar_props();
+        assert_eq!(props["mode"], "sidebar");
+    }
+
+    #[test]
+    fn docs_sidebar_respects_explicit_mode() {
+        let mut docs = sample_docs();
+        docs.sidebar_mode = "outline".into();
+        let props = docs.docs_sidebar_props();
+        assert_eq!(props["mode"], "outline");
+    }
+
+    #[test]
+    fn docs_view_and_sidebar_share_topic_shape() {
+        // Rule-of-three confirmation: both bindings emit byte-identical
+        // title/summary/body keys, so the private helper is the sole
+        // source of the shared shape. Drift would show up here first.
+        let docs = sample_docs();
+        let view = docs.docs_view_props();
+        let sidebar = docs.docs_sidebar_props();
+        assert_eq!(view["title"], sidebar["title"]);
+        assert_eq!(view["summary"], sidebar["summary"]);
+        assert_eq!(view["body"], sidebar["body"]);
+    }
+
+    // ── menus ─────────────────────────────────────────────────────
+
+    fn sample_menus() -> MenuSlot {
+        MenuSlot {
+            dropdown: vec![
+                MenuItem {
+                    label: "Save".into(),
+                    shortcut: Some("Ctrl+S".into()),
+                    command: Some("file.save".into()),
+                    separator: false,
+                    enabled: true,
+                },
+                MenuItem::separator(),
+                MenuItem {
+                    label: "Quit".into(),
+                    shortcut: None,
+                    command: Some("app.quit".into()),
+                    separator: false,
+                    enabled: true,
+                },
+            ],
+            context: vec![MenuItem {
+                label: "Delete".into(),
+                shortcut: Some("Del".into()),
+                command: Some("edit.delete".into()),
+                separator: false,
+                enabled: true,
+            }],
+        }
+    }
+
+    #[test]
+    fn menu_dropdown_emits_items_with_shortcut_and_command() {
+        let props = sample_menus().menu_dropdown_props();
+        let items = props["items"].as_array().unwrap();
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0]["label"], "Save");
+        assert_eq!(items[0]["shortcut"], "Ctrl+S");
+        assert_eq!(items[0]["command"], "file.save");
+        assert_eq!(items[1]["separator"], true);
+        // shortcut/command are omitted when None
+        assert!(items[2].get("shortcut").is_none());
+    }
+
+    #[test]
+    fn context_menu_uses_same_item_shape_as_dropdown() {
+        // Rule-of-three confirmation: identical key set across both
+        // emitters via the shared `items_json` helper. A drift would
+        // require editing one site for both to keep parity, which is
+        // exactly the duplication the helper prevents.
+        let menus = sample_menus();
+        let drop = menus.menu_dropdown_props();
+        let ctx = menus.context_menu_props();
+        let drop_keys: Vec<_> = drop["items"][0]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        let ctx_keys: Vec<_> = ctx["items"][0]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        assert_eq!(drop_keys, ctx_keys);
+    }
+
+    #[test]
+    fn menu_separator_helper_marks_separator_true_and_disabled() {
+        let sep = MenuItem::separator();
+        assert!(sep.separator);
+        assert!(!sep.enabled);
+        assert!(sep.command.is_none());
     }
 
     #[test]
