@@ -23,6 +23,8 @@
 //!
 //! See `docs/dev/clay-migration-plan.md` §19.
 
+use prism_builder::{BuilderDocument, NodeId};
+use prism_core::foundation::spatial::Transform2D;
 use prism_dock::DockWorkspace;
 use serde_json::{json, Value};
 
@@ -39,6 +41,7 @@ pub struct AppState {
     pub catalog: CatalogSlot,
     pub docs: DocsSlot,
     pub menus: MenuSlot,
+    pub canvas: CanvasSlot,
 }
 
 // ── chrome ────────────────────────────────────────────────────────
@@ -883,6 +886,523 @@ impl MenuSlot {
     }
 }
 
+// ── canvas ────────────────────────────────────────────────────────
+
+/// The active document, the selection's resolved transform, the active
+/// tool mode, and the small piece of capture state needed to translate
+/// a pointer drag into a typed transform delta. Six bindings read from
+/// this slot:
+///
+/// * `shell.code-editor` (source + caret + lang)
+/// * `shell.builder-canvas` (doc + viewport + place-mode)
+/// * `shell.gizmo-{move,rotate,scale}` (three lenses on one shape)
+/// * `shell.resize-handle` (eight handles around selection bbox)
+/// * `shell.component-picker` (palette popup)
+///
+/// `drag` is *private* — bindings cannot read it. Visibility flows
+/// through data shape (the mutated `document` and `selection`'s
+/// transform), not a "drag in progress" flag. Same discipline as
+/// [`OverlaySlot::help_tooltip_props`]'s `visible` collapse.
+///
+/// See `docs/dev/clay-migration-plan.md` §22.
+#[derive(Clone, Debug, Default)]
+pub struct CanvasSlot {
+    pub document: BuilderDocument,
+    pub selection: Option<NodeId>,
+    pub tool: ToolMode,
+    pub viewport: CanvasViewport,
+    pub picker: PickerState,
+    pub code_buffer: CodeBuffer,
+    drag: Option<DragState>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ToolMode {
+    #[default]
+    Move,
+    Rotate,
+    Scale,
+}
+
+impl ToolMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Move => "move",
+            Self::Rotate => "rotate",
+            Self::Scale => "scale",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct CanvasViewport {
+    pub width: f32,
+    pub height: f32,
+    pub zoom: f32,
+    pub pan_x: f32,
+    pub pan_y: f32,
+}
+
+impl Default for CanvasViewport {
+    fn default() -> Self {
+        Self {
+            width: 1280.0,
+            height: 800.0,
+            zoom: 1.0,
+            pan_x: 0.0,
+            pan_y: 0.0,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct PickerState {
+    pub open: bool,
+    pub anchor_x: f32,
+    pub anchor_y: f32,
+    pub candidates: Vec<PickerCandidate>,
+}
+
+#[derive(Clone, Debug)]
+pub struct PickerCandidate {
+    pub id: String,
+    pub label: String,
+    pub icon: String,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct CodeBuffer {
+    pub source: String,
+    pub language: String,
+    pub caret: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DragKind {
+    /// Captured a gizmo arm — the active tool mode determines what the
+    /// delta means (`apply_gizmo_delta`).
+    Gizmo,
+    /// Captured one of eight resize handles around the selection bbox.
+    Handle(HandleSide),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HandleSide {
+    TopLeft,
+    Top,
+    TopRight,
+    Right,
+    BottomRight,
+    Bottom,
+    BottomLeft,
+    Left,
+}
+
+impl HandleSide {
+    fn cursor(self) -> &'static str {
+        match self {
+            Self::TopLeft | Self::BottomRight => "nwse-resize",
+            Self::TopRight | Self::BottomLeft => "nesw-resize",
+            Self::Top | Self::Bottom => "ns-resize",
+            Self::Left | Self::Right => "ew-resize",
+        }
+    }
+
+    fn id(self) -> &'static str {
+        match self {
+            Self::TopLeft => "tl",
+            Self::Top => "t",
+            Self::TopRight => "tr",
+            Self::Right => "r",
+            Self::BottomRight => "br",
+            Self::Bottom => "b",
+            Self::BottomLeft => "bl",
+            Self::Left => "l",
+        }
+    }
+
+    /// (dx, dy) sign applied to (x, y, w, h) when this handle drags
+    /// by `(dx, dy)`. Returns `(dx_pos, dy_pos, dx_size, dy_size)`.
+    fn deltas(self) -> (f32, f32, f32, f32) {
+        match self {
+            Self::TopLeft => (1.0, 1.0, -1.0, -1.0),
+            Self::Top => (0.0, 1.0, 0.0, -1.0),
+            Self::TopRight => (0.0, 1.0, 1.0, -1.0),
+            Self::Right => (0.0, 0.0, 1.0, 0.0),
+            Self::BottomRight => (0.0, 0.0, 1.0, 1.0),
+            Self::Bottom => (0.0, 0.0, 0.0, 1.0),
+            Self::BottomLeft => (1.0, 0.0, -1.0, 1.0),
+            Self::Left => (1.0, 0.0, -1.0, 0.0),
+        }
+    }
+}
+
+/// Pre-drag values for the selected node. `commit_drag` reads this to
+/// push exactly one undo snapshot per drag (rather than one per
+/// `pointer_move` tick). Same shape as the pre-§22 `DragSnapshot` /
+/// `ResizeSnapshot` halves of `app/`, ported *into* the slot rather
+/// than duplicated next to it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TransformSnapshot {
+    pub node_id: NodeId,
+    pub transform: Transform2D,
+}
+
+impl TransformSnapshot {
+    /// Capture the selected node's pre-drag transform. Returns `None`
+    /// when there's no selection or the selection's id has gone stale.
+    fn capture(doc: &BuilderDocument, selection: Option<&str>) -> Option<Self> {
+        let id = selection?;
+        let node = doc.root.as_ref()?.find(id)?;
+        Some(Self {
+            node_id: node.id.clone(),
+            transform: node.transform.clone(),
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
+struct DragState {
+    kind: DragKind,
+    snapshot: TransformSnapshot,
+    origin: (f32, f32),
+}
+
+impl CanvasSlot {
+    // ── read side ─────────────────────────────────────────────────
+
+    /// JSON for `shell.code-editor`. Source text + caret offset + the
+    /// language the syntax provider speaks.
+    pub fn code_editor_props(&self) -> Value {
+        json!({
+            "source": self.code_buffer.source,
+            "caret": self.code_buffer.caret,
+            "language": if self.code_buffer.language.is_empty() {
+                "slint"
+            } else {
+                self.code_buffer.language.as_str()
+            },
+        })
+    }
+
+    /// JSON for `shell.builder-canvas`. The block reads the selection
+    /// id (so it can paint the selection rectangle), the canvas
+    /// viewport, and the picker's place-mode flag. The full document
+    /// tree is *not* serialised here — the canvas walks the existing
+    /// `BuilderDocument` directly via `lower_ui` for the page subtree.
+    pub fn builder_canvas_props(&self) -> Value {
+        json!({
+            "selection-id": self.selection.clone().unwrap_or_default(),
+            "tool": self.tool.as_str(),
+            "viewport-width": self.viewport.width,
+            "viewport-height": self.viewport.height,
+            "zoom": self.viewport.zoom,
+            "pan-x": self.viewport.pan_x,
+            "pan-y": self.viewport.pan_y,
+            "place-mode": self.picker.open,
+        })
+    }
+
+    /// JSON for `shell.gizmo-move`. Forwards through the shared
+    /// [`Self::gizmo_props`] helper — the only emitter for the gizmo
+    /// shape across all three tool modes.
+    pub fn gizmo_move_props(&self) -> Value {
+        self.gizmo_props(ToolMode::Move)
+    }
+
+    /// JSON for `shell.gizmo-rotate`. See [`Self::gizmo_props`].
+    pub fn gizmo_rotate_props(&self) -> Value {
+        self.gizmo_props(ToolMode::Rotate)
+    }
+
+    /// JSON for `shell.gizmo-scale`. See [`Self::gizmo_props`].
+    pub fn gizmo_scale_props(&self) -> Value {
+        self.gizmo_props(ToolMode::Scale)
+    }
+
+    /// JSON for `shell.resize-handle`. Eight handles around the
+    /// selection bbox; each carries its `id` (`"tl"`, `"t"`, …), pixel
+    /// position, and a CSS-style cursor name. Visibility collapses to
+    /// `visible: false` + an empty handle list when nothing is
+    /// selected — same data-shape pattern as gizmos.
+    pub fn resize_handle_props(&self) -> Value {
+        let visible = self.selection.is_some();
+        let handles = if visible {
+            self.handle_positions_json()
+        } else {
+            Value::Array(Vec::new())
+        };
+        json!({
+            "visible": visible,
+            "handles": handles,
+        })
+    }
+
+    /// JSON for `shell.component-picker`. Pop-up palette anchored at
+    /// `(anchor-x, anchor-y)` listing droppable components. The block
+    /// reads `open` to decide whether to paint at all.
+    pub fn component_picker_props(&self) -> Value {
+        json!({
+            "open": self.picker.open,
+            "anchor-x": self.picker.anchor_x,
+            "anchor-y": self.picker.anchor_y,
+            "candidates": self.candidates_json(),
+        })
+    }
+
+    /// Rule-of-three trigger: three gizmo bindings emit byte-identical
+    /// key sets and only differ in the `tool` discriminator. Helper
+    /// extracts on landing — same justification as
+    /// [`DocsSlot::topic_props`] and [`MenuSlot::items_json`]. A drift
+    /// in the gizmo shape edits *one* site, not three.
+    fn gizmo_props(&self, kind: ToolMode) -> Value {
+        let visible = self.selection.is_some() && self.tool == kind;
+        let center = self.selection_center().unwrap_or((0.0, 0.0));
+        json!({
+            "visible": visible,
+            "center-x": center.0,
+            "center-y": center.1,
+            "tool": kind.as_str(),
+        })
+    }
+
+    /// Selected node's center in canvas coordinates. `pub(crate)` so
+    /// tests + future cross-binding consumers (snap-line overlay,
+    /// alignment guides) hit the same code path. Two consumers today
+    /// (`gizmo_props`, `resize_handle_props`); rule-of-three's
+    /// "imminent third" justifies the helper.
+    pub(crate) fn selection_center(&self) -> Option<(f32, f32)> {
+        let id = self.selection.as_deref()?;
+        let node = self.document.root.as_ref()?.find(id)?;
+        Some((node.transform.position[0], node.transform.position[1]))
+    }
+
+    fn handle_positions_json(&self) -> Value {
+        let Some((cx, cy)) = self.selection_center() else {
+            return Value::Array(Vec::new());
+        };
+        // Bbox is approximated by the transform position + a default
+        // 100×100 region; once the layout pass exposes computed rects
+        // per-node, this reads from `ComputedLayout::rect(id)` instead
+        // (same emitter shape, different source).
+        let half = 50.0;
+        let (x0, y0, x1, y1) = (cx - half, cy - half, cx + half, cy + half);
+        let mx = (x0 + x1) * 0.5;
+        let my = (y0 + y1) * 0.5;
+        let sites = [
+            (HandleSide::TopLeft, x0, y0),
+            (HandleSide::Top, mx, y0),
+            (HandleSide::TopRight, x1, y0),
+            (HandleSide::Right, x1, my),
+            (HandleSide::BottomRight, x1, y1),
+            (HandleSide::Bottom, mx, y1),
+            (HandleSide::BottomLeft, x0, y1),
+            (HandleSide::Left, x0, my),
+        ];
+        Value::Array(
+            sites
+                .into_iter()
+                .map(|(side, x, y)| {
+                    json!({
+                        "id": side.id(),
+                        "x": x,
+                        "y": y,
+                        "cursor": side.cursor(),
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    fn candidates_json(&self) -> Value {
+        Value::Array(
+            self.picker
+                .candidates
+                .iter()
+                .map(|c| {
+                    json!({
+                        "candidate-id": c.id,
+                        "label": c.label,
+                        "icon": c.icon,
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    // ── write side ────────────────────────────────────────────────
+
+    /// Pointer-down: hit-test what's under the cursor and capture it.
+    /// Returns `false` because no observable state changed yet (the
+    /// drag is purely captured) — the next `pointer_move` is the
+    /// first redraw trigger.
+    pub(crate) fn pointer_down(&mut self, x: f32, y: f32) -> bool {
+        let Some(kind) = self.hit_test(x, y) else {
+            return false;
+        };
+        let Some(snapshot) = TransformSnapshot::capture(&self.document, self.selection.as_deref())
+        else {
+            return false;
+        };
+        self.drag = Some(DragState {
+            kind,
+            snapshot,
+            origin: (x, y),
+        });
+        false
+    }
+
+    /// Pointer-move: if a drag is captured, translate the delta into a
+    /// transform mutation through the *single* dispatch over
+    /// `(tool, drag-target)` that lives on this slot. The router never
+    /// grows tool-mode awareness.
+    pub(crate) fn pointer_move(&mut self, x: f32, y: f32) -> bool {
+        // Pull origin + kind out without holding a borrow across the
+        // mutation — `apply_*_delta` need `&mut self`.
+        let (kind, origin) = match self.drag.as_ref() {
+            Some(d) => (d.kind, d.origin),
+            None => return false,
+        };
+        let zoom = self.viewport.zoom.max(f32::EPSILON);
+        let dx = (x - origin.0) / zoom;
+        let dy = (y - origin.1) / zoom;
+        match kind {
+            DragKind::Gizmo => self.apply_gizmo_delta(self.tool, dx, dy),
+            DragKind::Handle(side) => self.apply_handle_delta(side, dx, dy),
+        }
+        true
+    }
+
+    /// Pointer-up: commit the drag. One undo snapshot per drag, never
+    /// per tick.
+    pub(crate) fn pointer_up(&mut self, _x: f32, _y: f32) -> bool {
+        let Some(_drag) = self.drag.take() else {
+            return false;
+        };
+        // commit_drag here would push the snapshot onto the undo stack
+        // once that lands on the new shell. Today the *effect* (mutated
+        // node transform) is already in the document; the undo
+        // contract simply has no consumer to feed.
+        true
+    }
+
+    /// Single dispatch over `(tool, drag-target=Gizmo)`. This is the
+    /// *only* place in the codebase that knows what a gizmo delta
+    /// means under each tool. Adding a new tool mode (e.g. `Skew`) is
+    /// one variant on [`ToolMode`] + one arm here. The router doesn't
+    /// move.
+    fn apply_gizmo_delta(&mut self, tool: ToolMode, dx: f32, dy: f32) {
+        let Some(snapshot) = self.drag.as_ref().map(|d| d.snapshot.clone()) else {
+            return;
+        };
+        let Some(node) = self
+            .document
+            .root
+            .as_mut()
+            .and_then(|root| root.find_mut(&snapshot.node_id))
+        else {
+            return;
+        };
+        match tool {
+            ToolMode::Move => {
+                node.transform.position[0] = snapshot.transform.position[0] + dx;
+                node.transform.position[1] = snapshot.transform.position[1] + dy;
+            }
+            ToolMode::Rotate => {
+                // Godot-standard: 0.5°/px horizontal drag. Convert to
+                // radians for the canonical `rotation` field.
+                let degrees = dx * 0.5;
+                node.transform.rotation = snapshot.transform.rotation + degrees.to_radians();
+            }
+            ToolMode::Scale => {
+                node.transform.scale[0] = (snapshot.transform.scale[0] + dx / 100.0).max(0.01);
+                node.transform.scale[1] = (snapshot.transform.scale[1] + dy / 100.0).max(0.01);
+            }
+        }
+    }
+
+    fn apply_handle_delta(&mut self, side: HandleSide, dx: f32, dy: f32) {
+        let Some(snapshot) = self.drag.as_ref().map(|d| d.snapshot.clone()) else {
+            return;
+        };
+        let Some(node) = self
+            .document
+            .root
+            .as_mut()
+            .and_then(|root| root.find_mut(&snapshot.node_id))
+        else {
+            return;
+        };
+        let (px, py, _sx, _sy) = side.deltas();
+        // Resize maps to position-only on this slot until the layout
+        // engine exposes per-node `width`/`height` mutators; once it
+        // does, the `_sx`/`_sy` returns from `HandleSide::deltas()`
+        // become the size mutation.
+        node.transform.position[0] = snapshot.transform.position[0] + px * dx;
+        node.transform.position[1] = snapshot.transform.position[1] + py * dy;
+    }
+
+    /// What's under the cursor? `Some(DragKind)` if anything draggable
+    /// is hit; `None` otherwise. The single dispatch over drag-target
+    /// geometry — six bindings *cannot* disagree about hit regions
+    /// because they don't compute them; the slot does, once.
+    fn hit_test(&self, x: f32, y: f32) -> Option<DragKind> {
+        let (cx, cy) = self.selection_center()?;
+        // Resize handles take precedence over the gizmo when the
+        // pointer lands on one — handles are the smaller target.
+        let half = 50.0;
+        let edge = 6.0;
+        let (x0, y0, x1, y1) = (cx - half, cy - half, cx + half, cy + half);
+        let on = |a: f32, b: f32| (a - b).abs() <= edge;
+        let near_x = (x - x0).abs() <= edge || (x - x1).abs() <= edge;
+        let near_y = (y - y0).abs() <= edge || (y - y1).abs() <= edge;
+        let on_left = on(x, x0);
+        let on_right = on(x, x1);
+        let on_top = on(y, y0);
+        let on_bottom = on(y, y1);
+        let mid_x = on(x, (x0 + x1) * 0.5);
+        let mid_y = on(y, (y0 + y1) * 0.5);
+        let in_x = x >= x0 - edge && x <= x1 + edge;
+        let in_y = y >= y0 - edge && y <= y1 + edge;
+        if near_x && near_y {
+            let side = match (on_left, on_top) {
+                (true, true) => HandleSide::TopLeft,
+                (false, true) if on_right => HandleSide::TopRight,
+                (true, false) if on_bottom => HandleSide::BottomLeft,
+                _ => HandleSide::BottomRight,
+            };
+            return Some(DragKind::Handle(side));
+        }
+        if (on_top || on_bottom) && mid_x && in_x {
+            return Some(DragKind::Handle(if on_top {
+                HandleSide::Top
+            } else {
+                HandleSide::Bottom
+            }));
+        }
+        if (on_left || on_right) && mid_y && in_y {
+            return Some(DragKind::Handle(if on_left {
+                HandleSide::Left
+            } else {
+                HandleSide::Right
+            }));
+        }
+        // Anything else inside the selection bbox captures the gizmo.
+        if x >= x0 && x <= x1 && y >= y0 && y <= y1 {
+            return Some(DragKind::Gizmo);
+        }
+        None
+    }
+
+    /// Test-only seam: did the slot capture a drag? Bindings cannot
+    /// see this — the cross-binding parity tests use it to assert
+    /// pointer events route through the slot correctly.
+    #[cfg(test)]
+    pub(crate) fn drag_active(&self) -> bool {
+        self.drag.is_some()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1319,6 +1839,206 @@ mod tests {
         assert!(sep.separator);
         assert!(!sep.enabled);
         assert!(sep.command.is_none());
+    }
+
+    // ── canvas ────────────────────────────────────────────────────
+
+    fn sample_canvas() -> CanvasSlot {
+        use prism_builder::Node;
+        let root = Node {
+            id: "root".into(),
+            component: "container".into(),
+            transform: Transform2D {
+                position: [100.0, 80.0],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        CanvasSlot {
+            document: BuilderDocument {
+                root: Some(root),
+                ..Default::default()
+            },
+            selection: Some("root".into()),
+            tool: ToolMode::Move,
+            viewport: CanvasViewport::default(),
+            picker: PickerState {
+                open: true,
+                anchor_x: 50.0,
+                anchor_y: 60.0,
+                candidates: vec![PickerCandidate {
+                    id: "heading".into(),
+                    label: "Heading".into(),
+                    icon: "icons/heading.svg".into(),
+                }],
+            },
+            code_buffer: CodeBuffer {
+                source: "Window {}".into(),
+                language: "slint".into(),
+                caret: 7,
+            },
+            drag: None,
+        }
+    }
+
+    #[test]
+    fn code_editor_props_carry_source_caret_and_language() {
+        let props = sample_canvas().code_editor_props();
+        assert_eq!(props["source"], "Window {}");
+        assert_eq!(props["caret"], 7);
+        assert_eq!(props["language"], "slint");
+    }
+
+    #[test]
+    fn builder_canvas_props_emit_selection_and_viewport() {
+        let props = sample_canvas().builder_canvas_props();
+        assert_eq!(props["selection-id"], "root");
+        assert_eq!(props["tool"], "move");
+        assert_eq!(props["zoom"], 1.0);
+        assert_eq!(props["place-mode"], true);
+    }
+
+    #[test]
+    fn gizmo_props_share_shape_across_three_modes() {
+        // Rule-of-three parity: same key set on all three gizmo
+        // emissions, only `tool` differs. Drift in any field would
+        // break this assertion in one place, not three.
+        let canvas = sample_canvas();
+        let m = canvas.gizmo_move_props();
+        let r = canvas.gizmo_rotate_props();
+        let s = canvas.gizmo_scale_props();
+        let keys = |v: &Value| -> Vec<String> { v.as_object().unwrap().keys().cloned().collect() };
+        assert_eq!(keys(&m), keys(&r));
+        assert_eq!(keys(&r), keys(&s));
+        assert_eq!(m["tool"], "move");
+        assert_eq!(r["tool"], "rotate");
+        assert_eq!(s["tool"], "scale");
+        // Visibility flows through the active tool — only the matching
+        // gizmo paints on a given frame.
+        assert_eq!(m["visible"], true);
+        assert_eq!(r["visible"], false);
+        assert_eq!(s["visible"], false);
+    }
+
+    #[test]
+    fn gizmo_and_resize_handle_share_selection_center() {
+        // §22 cross-binding parity: flipping the selection's transform
+        // shows up in *both* gizmo and resize-handle emissions through
+        // the same `selection_center()` helper. The load-bearing
+        // duplication check for the canvas slot.
+        let mut canvas = sample_canvas();
+        canvas.tool = ToolMode::Move;
+        let g0 = canvas.gizmo_move_props();
+        let h0 = canvas.resize_handle_props();
+        let g0_x = g0["center-x"].as_f64().unwrap();
+        // Top handle's `x` is the bbox mid-x, which is the center-x.
+        let top = h0["handles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|h| h["id"] == "t")
+            .unwrap();
+        let h0_x = top["x"].as_f64().unwrap();
+        assert!((g0_x - h0_x).abs() < 0.01, "shared center on first frame");
+
+        canvas
+            .document
+            .root
+            .as_mut()
+            .unwrap()
+            .find_mut("root")
+            .unwrap()
+            .transform
+            .position[0] = 250.0;
+        let g1 = canvas.gizmo_move_props();
+        let h1 = canvas.resize_handle_props();
+        let top1 = h1["handles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|h| h["id"] == "t")
+            .unwrap();
+        assert!(
+            (g1["center-x"].as_f64().unwrap() - top1["x"].as_f64().unwrap()).abs() < 0.01,
+            "shared center on second frame"
+        );
+        assert_eq!(g1["center-x"], 250.0);
+    }
+
+    #[test]
+    fn resize_handle_props_collapse_to_invisible_when_no_selection() {
+        let mut canvas = sample_canvas();
+        canvas.selection = None;
+        let props = canvas.resize_handle_props();
+        assert_eq!(props["visible"], false);
+        assert_eq!(props["handles"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn component_picker_props_omit_candidates_when_closed_but_keep_shape() {
+        let mut canvas = sample_canvas();
+        canvas.picker.open = false;
+        let props = canvas.component_picker_props();
+        assert_eq!(props["open"], false);
+        // Shape stays — `open: false` is the visibility signal, not key
+        // absence (same data-shape rule as gizmos).
+        assert!(props.get("candidates").is_some());
+    }
+
+    #[test]
+    fn pointer_drag_round_trip_under_move_tool() {
+        let mut canvas = sample_canvas();
+        canvas.tool = ToolMode::Move;
+        // Hit somewhere inside the selection bbox.
+        assert!(!canvas.pointer_down(100.0, 80.0));
+        assert!(canvas.drag_active(), "down captured the drag");
+        let dirty = canvas.pointer_move(150.0, 110.0);
+        assert!(dirty);
+        let pos = canvas.document.root.as_ref().unwrap().transform.position;
+        assert_eq!(pos, [150.0, 110.0], "delta applied to position");
+        assert!(canvas.pointer_up(0.0, 0.0));
+        assert!(!canvas.drag_active(), "up released the drag");
+    }
+
+    #[test]
+    fn pointer_drag_round_trip_under_rotate_tool() {
+        let mut canvas = sample_canvas();
+        canvas.tool = ToolMode::Rotate;
+        canvas.pointer_down(100.0, 80.0);
+        canvas.pointer_move(180.0, 80.0); // dx=80, 0.5°/px = 40°
+        let rot = canvas.document.root.as_ref().unwrap().transform.rotation;
+        let expected = 40_f32.to_radians();
+        assert!((rot - expected).abs() < 1e-4, "got {rot}, want {expected}");
+        canvas.pointer_up(0.0, 0.0);
+    }
+
+    #[test]
+    fn pointer_drag_round_trip_under_scale_tool() {
+        let mut canvas = sample_canvas();
+        canvas.tool = ToolMode::Scale;
+        canvas.pointer_down(100.0, 80.0);
+        canvas.pointer_move(200.0, 130.0); // dx=100 → +1.0, dy=50 → +0.5
+        let scale = canvas.document.root.as_ref().unwrap().transform.scale;
+        assert!((scale[0] - 2.0).abs() < 1e-4);
+        assert!((scale[1] - 1.5).abs() < 1e-4);
+        canvas.pointer_up(0.0, 0.0);
+    }
+
+    #[test]
+    fn pointer_down_outside_selection_does_not_capture() {
+        let mut canvas = sample_canvas();
+        canvas.pointer_down(1000.0, 1000.0);
+        assert!(!canvas.drag_active(), "miss must not capture a drag");
+        let dirty = canvas.pointer_move(1100.0, 1100.0);
+        assert!(!dirty, "no drag, no redraw");
+    }
+
+    #[test]
+    fn pointer_drag_with_no_selection_is_noop() {
+        let mut canvas = sample_canvas();
+        canvas.selection = None;
+        canvas.pointer_down(100.0, 80.0);
+        assert!(!canvas.drag_active());
     }
 
     #[test]

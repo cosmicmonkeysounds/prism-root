@@ -218,10 +218,46 @@ fn register_builtin_bindings(reg: &mut ShellPropBindings) {
         .menus
         .context_menu_props());
 
+    // Canvas slot — code editor, canvas surface, three gizmos, resize
+    // handles, component-picker popup. All seven read from the same
+    // selection-driven model on `CanvasSlot`; cross-binding consistency
+    // is structural (the slot owns `selection_center` once). The three
+    // gizmo emissions share `gizmo_props(kind)` — a drift in the gizmo
+    // shape edits one site, not three.
+    bind_slot!(reg, "shell.code-editor", |s: &AppState| s
+        .canvas
+        .code_editor_props());
+    bind_slot!(reg, "shell.builder-canvas", |s: &AppState| s
+        .canvas
+        .builder_canvas_props());
+    bind_slot!(reg, "shell.gizmo-move", |s: &AppState| s
+        .canvas
+        .gizmo_move_props());
+    bind_slot!(reg, "shell.gizmo-rotate", |s: &AppState| s
+        .canvas
+        .gizmo_rotate_props());
+    bind_slot!(reg, "shell.gizmo-scale", |s: &AppState| s
+        .canvas
+        .gizmo_scale_props());
+    bind_slot!(reg, "shell.resize-handle", |s: &AppState| s
+        .canvas
+        .resize_handle_props());
+    bind_slot!(reg, "shell.component-picker", |s: &AppState| s
+        .canvas
+        .component_picker_props());
+
     // Stub bindings — emit an empty prop bag until the owning slot
     // lands. The skeleton's author-supplied attrs still render, so
     // these blocks paint as a coherent (data-empty) chrome shell.
     // Promote a row out of this list when its slot ports in.
+    //
+    // Per-row blocks (`shell.dock-tab`, `shell.menu-item`,
+    // `shell.signal-connection-row`, `shell.schema-row`,
+    // `shell.nav-page-row`, `shell.app-card`, `shell.inspector-row`,
+    // `shell.field-editor`) are *intentional* leaves: their data flows
+    // down inside parent JSON arrays, so adding a binding row would be
+    // a second serialisation site for the shape their parent slot
+    // already owns. They stay stubs by design (§22 terminal state).
     for id in [
         "shell.icon-button",
         "shell.toolbar-separator",
@@ -243,13 +279,6 @@ fn register_builtin_bindings(reg: &mut ShellPropBindings) {
         "shell.signal-connection-row",
         "shell.schema-row",
         "shell.nav-page-row",
-        "shell.code-editor",
-        "shell.gizmo-move",
-        "shell.gizmo-rotate",
-        "shell.gizmo-scale",
-        "shell.resize-handle",
-        "shell.builder-canvas",
-        "shell.component-picker",
     ] {
         reg.register(
             id,
@@ -324,6 +353,43 @@ mod tests {
             assert!(drop_item.get(key).is_some(), "dropdown missing {key}");
             assert!(ctx_item.get(key).is_some(), "context missing {key}");
         }
+    }
+
+    #[test]
+    fn selection_center_drives_gizmo_and_handle_bindings() {
+        // §22 cross-binding parity: changing the selected node's
+        // transform shows up in *both* `shell.gizmo-move` and
+        // `shell.resize-handle` emissions through the same
+        // `selection_center()` helper. The load-bearing duplication
+        // check for the canvas slot.
+        use prism_builder::{BuilderDocument, Node};
+        use prism_core::foundation::spatial::Transform2D;
+        let mut state = AppState::default();
+        state.canvas.document = BuilderDocument {
+            root: Some(Node {
+                id: "root".into(),
+                component: "container".into(),
+                transform: Transform2D {
+                    position: [320.0, 240.0],
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        state.canvas.selection = Some("root".into());
+        state.canvas.tool = crate::state::ToolMode::Move;
+        let bindings = ShellPropBindings::with_builtins();
+        let snap = bindings.snapshot(&ctx_for(&state));
+        let g = &snap["shell.gizmo-move"].props;
+        let handles = snap["shell.resize-handle"].props["handles"]
+            .as_array()
+            .unwrap();
+        let top = handles.iter().find(|h| h["id"] == "t").unwrap();
+        assert_eq!(g["center-x"], 320.0);
+        assert_eq!(g["center-y"], 240.0);
+        assert_eq!(top["x"], 320.0, "handle mid-x is gizmo center-x");
+        assert_eq!(g["visible"], true);
     }
 
     #[test]

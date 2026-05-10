@@ -29,19 +29,20 @@ pub fn dispatch_event(inner: &Rc<RefCell<ShellInner>>, event: &Event) -> bool {
             guard.viewport.height = *height as f32;
             true
         }
-        // Pointer / Key / Text / Wheel / Focus arms land as the legacy
+        // Canvas pointer arms (§22). Three forwarders, no per-tool
+        // awareness: the slot resolves what `(phase, position)` means
+        // under the active tool / drag-target. Adding a new tool mode
+        // (e.g. `Skew`) doesn't touch this router.
+        Event::PointerDown { x, y, .. } => inner.borrow_mut().state.canvas.pointer_down(*x, *y),
+        Event::PointerMove { x, y } => inner.borrow_mut().state.canvas.pointer_move(*x, *y),
+        Event::PointerUp { x, y, .. } => inner.borrow_mut().state.canvas.pointer_up(*x, *y),
+        // Wheel / Key / Text / Focus arms land as the legacy
         // `app/callbacks/{builder,chrome,editor,navigation,overlay,
         // properties}.rs` bodies are ported. Each becomes one arm here
         // forwarding to a `ShellInner::*` mutator. Until the mutators
         // re-introduce themselves on the new shell, every other event
         // is a no-op (no redraw needed — nothing observable changed).
-        Event::PointerMove { .. }
-        | Event::PointerDown { .. }
-        | Event::PointerUp { .. }
-        | Event::Wheel { .. }
-        | Event::Key { .. }
-        | Event::Text { .. }
-        | Event::Focus { .. } => false,
+        Event::Wheel { .. } | Event::Key { .. } | Event::Text { .. } | Event::Focus { .. } => false,
     }
 }
 
@@ -69,7 +70,63 @@ mod tests {
     #[test]
     fn unhandled_events_are_no_redraw() {
         let shell = Shell::new().expect("boot");
-        let dirty = dispatch_event(&shell.inner, &Event::PointerMove { x: 10.0, y: 10.0 });
+        let dirty = dispatch_event(&shell.inner, &Event::Wheel { dx: 0.0, dy: 1.0 });
         assert!(!dirty);
+    }
+
+    #[test]
+    fn pointer_events_route_through_canvas_slot_under_active_tool() {
+        // §22 keystone: the router knows pointer phases, the slot
+        // knows the tool. A down/move/up trio against a populated
+        // canvas mutates the document via `apply_gizmo_delta` without
+        // the router ever growing tool-mode awareness.
+        use prism_builder::{BuilderDocument, Node};
+        use prism_core::foundation::spatial::Transform2D;
+        use prism_ui_runtime::event::PointerButton;
+
+        let shell = Shell::new().expect("boot");
+        {
+            let mut guard = shell.inner.borrow_mut();
+            guard.state.canvas.document = BuilderDocument {
+                root: Some(Node {
+                    id: "root".into(),
+                    component: "container".into(),
+                    transform: Transform2D {
+                        position: [100.0, 100.0],
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            guard.state.canvas.selection = Some("root".into());
+            guard.state.canvas.tool = crate::state::ToolMode::Move;
+        }
+        let down = Event::PointerDown {
+            x: 100.0,
+            y: 100.0,
+            button: PointerButton::Primary,
+        };
+        let mv = Event::PointerMove { x: 160.0, y: 140.0 };
+        let up = Event::PointerUp {
+            x: 160.0,
+            y: 140.0,
+            button: PointerButton::Primary,
+        };
+        assert!(!dispatch_event(&shell.inner, &down), "capture is silent");
+        assert!(dispatch_event(&shell.inner, &mv), "move triggers redraw");
+        assert!(dispatch_event(&shell.inner, &up), "up triggers redraw");
+        let pos = shell
+            .inner
+            .borrow()
+            .state
+            .canvas
+            .document
+            .root
+            .as_ref()
+            .unwrap()
+            .transform
+            .position;
+        assert_eq!(pos, [160.0, 140.0]);
     }
 }
