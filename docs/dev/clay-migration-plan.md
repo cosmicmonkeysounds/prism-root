@@ -3677,10 +3677,355 @@ shell's `main.rs` (which already only uses `slint::ComponentHandle`
 for the run-loop), and that becomes a one-line change to
 `prism_ui_runtime::Surface::run`. The migration is then done.
 
+## 24. Service registry — keys, commands, mutations come back online
+
+**Strategy (continuation of §17/§22).** The §17 rip landed and the §19–§22
+read-side port wave finished: nine slots, 27 real bindings, 20 intentional
+row-leaf stubs, one router with one arm per `Event` variant. The bindings
+table covers every registered shell block; the keystone parity test passes.
+That contract is *terminal for the read side*. What it leaves open is the
+**write side beyond pointer**: `dispatch_event`'s `Wheel`/`Key`/`Text`/`Focus`
+arms are no-ops, and roughly two thousand lines of feature code
+(`command.rs`, `keybindings.rs`, `keyboard.rs`, `input.rs`, `signals.rs`,
+`persistence.rs`, `project.rs`, `search.rs`, `selection.rs`, `help.rs`,
+`menu.rs`, `panels/*`, `panel_props.rs`, `testing.rs`, `e2e.rs`, `luau/*`)
+still sit on disk *outside* the build, waiting to re-mount onto
+`ShellInner`. Until they do, no key the user presses reaches the store —
+the shell paints, but nothing happens.
+
+The naive port path is what every prior section warned against: pull
+each module back into `lib.rs`'s `pub mod` list, give `ShellInner` a new
+field per module (`commands: CommandRegistry`, `input: InputManager`,
+`undo: UndoStack`, `signals: SignalRuntime`, `persistence: ProjectPersistence`,
+`project: Option<ProjectManager>`, `search: SearchIndex`, `help: HelpRegistry`,
+…), and let `dispatch_event`'s `Key` arm grow a per-feature `match` over
+who-handles-what. That replays the exact duplication §13 killed for blocks
+and §17 killed for prop wiring, just relocated to the host's *event*
+layer. The fix is the same fix at the same seam: one registration table,
+one declarative trait, one router arm.
+
+**Solution (~280 LoC, one new trait, one new registry, one new ctx
+borrow-pack).** A `ShellService` trait with three pure methods
+(`id`, `on_event`, `commands`) and a `ServiceRegistry` mirroring
+`ShellPropBindings`'s shape. Each existing module ports as one
+`impl ShellService for FooService`; each command it owns ports as one
+`CommandSpec` returned from `commands()`. The router stays one match arm
+per `Event` variant — every arm forwards the event to *the registry*,
+which fans it out to services in declared order, short-circuiting on the
+first `EventOutcome::Handled`. No per-module branching in `events.rs`,
+no `if let Some(cmd) = …` chains, no per-feature `ShellInner` field
+that the router has to know about by name.
+
+The same registry holds the **command table**: services contribute
+commands at registration time via `commands()` (a `Vec<CommandSpec>`),
+and a single `CommandRunner::run(id, &mut Ctx)` dispatches by id. The
+existing `CommandRegistry::with_builtins` becomes one service among
+many — `ShellBaseService` — that contributes the shell-global commands
+(`undo`, `redo`, `palette.open`, `panel.*`, `viewport.*`). Every new
+feature ships its own service + commands; nothing else in the host needs
+to learn the feature exists.
+
+### 24.1 The four contracts (each exists exactly once)
+
+```rust
+// 1. The service trait — every feature implements this.
+pub trait ShellService: Send + Sync {
+    fn id(&self) -> &'static str;
+    fn on_event(&self, _ev: &Event, _ctx: &mut MutCtx<'_>) -> EventOutcome {
+        EventOutcome::Pass
+    }
+    fn commands(&self) -> Vec<CommandSpec> { Vec::new() }
+}
+
+// 2. The mutation borrow-pack — sister to PropCtx, but `&mut`. The single
+//    carrier into every event handler and every command body. Adding a
+//    new datum = one field here; existing services ignore it.
+pub struct MutCtx<'a> {
+    pub state: &'a mut AppState,
+    pub viewport: Viewport,
+    pub now: Instant,
+    pub clipboard: &'a mut Clipboard,
+    pub undo: &'a mut UndoStack,
+    pub vfs: &'a mut Vfs,
+    pub signals: &'a mut SignalBus,
+}
+
+// 3. The outcome enum — three states, no overloads.
+pub enum EventOutcome {
+    Pass,                // service ignored this event; try the next one
+    Handled,             // service consumed it; stop fan-out, redraw
+    HandledQuiet,        // consumed, no redraw needed (e.g. focus tick)
+}
+
+// 4. The registry — one row per service, fan-out in declared order.
+pub struct ServiceRegistry {
+    services: Vec<Arc<dyn ShellService>>,
+    commands: HashMap<&'static str, CommandSpec>,
+}
+```
+
+The four together are the *entire* event-and-command surface. `events.rs`
+imports `ServiceRegistry` and nothing else; `command.rs`'s
+`CommandRegistry` becomes a thin wrapper around the `commands` map on
+the registry.
+
+### 24.2 Registration table — `register_shell_services`
+
+Sister to `register_shell_builtins` (blocks) and `with_builtins`
+(bindings). Reads as a flat list of one-line rows; adding a new feature
+is exactly two edits — `impl ShellService for FooService` plus one row
+here.
+
+```rust
+pub fn register_shell_services(reg: &mut ServiceRegistry) {
+    reg.add(ShellBaseService::default());        // global commands + key dispatch
+    reg.add(InputService::with_defaults());      // layered scheme stack
+    reg.add(UndoRedoService::default());         // ctrl+z / ctrl+y
+    reg.add(SelectionService::default());        // arrow-keys, esc, click-empty
+    reg.add(CommandPaletteService::default());   // ctrl+shift+p, fuzzy filter
+    reg.add(PersistenceService::default());      // ctrl+s/o/n, rfd dialogs
+    reg.add(ProjectService::default());          // open-folder, vault sync
+    reg.add(SearchService::default());           // ctrl+f, TF-IDF index
+    reg.add(SignalsService::default());          // builder signal dispatch
+    reg.add(HelpService::default());             // hover tooltip lifecycle
+    reg.add(MenuService::default());             // dropdown + context menu
+    reg.add(ClipboardService::default());        // copy/cut/paste/duplicate
+    reg.add(LuauService::default());             // custom-handler exec
+}
+```
+
+Twelve services replace thirteen orphaned modules and the would-be
+13-arm `if`/`match` in `dispatch_event::Key`. The list is *the* index
+of "what features the shell has"; nothing else has to know.
+
+### 24.3 Router delta — three lines per arm, zero per-feature awareness
+
+`dispatch_event` keeps its one-arm-per-`Event`-variant shape. Each arm
+calls `services.fan_out(event, ctx)` and translates the `EventOutcome`
+into a redraw bool. Adding a new feature *does not touch* `events.rs`.
+
+```rust
+pub fn dispatch_event(inner: &Rc<RefCell<ShellInner>>, event: &Event) -> bool {
+    let mut guard = inner.borrow_mut();
+    let mut ctx = guard.mut_ctx();
+    match event {
+        Event::Resize { width, height } => { ctx.state.viewport = …; true }
+        // Pointer arms keep their direct `state.canvas` forwarders (§22)
+        // — they're already one-line and don't fan out.
+        Event::PointerDown { x, y, .. } => ctx.state.canvas.pointer_down(*x, *y),
+        Event::PointerMove { x, y }     => ctx.state.canvas.pointer_move(*x, *y),
+        Event::PointerUp { x, y, .. }   => ctx.state.canvas.pointer_up(*x, *y),
+        // Every other variant fans out through the service registry.
+        // Services short-circuit on first `Handled`; if all `Pass`, no redraw.
+        Event::Key { .. } | Event::Text { .. }
+            | Event::Wheel { .. } | Event::Focus { .. } => {
+            matches!(guard.services.fan_out(event, &mut ctx),
+                     EventOutcome::Handled)
+        }
+    }
+}
+```
+
+Five lines added, zero subtracted, the §22 pointer arms preserved.
+The new fan-out is *a single function call* — every feature's wiring
+lives behind that one symbol.
+
+### 24.4 Smart-pattern wins (each maps to one §17 invariant)
+
+- **One registration table, not 13 wiring sites** —
+  `register_shell_services` is the single index. Mirrors §13 (`reg!` for
+  blocks) and §19 (`bind_slot!` for bindings). Forgetting to register a
+  service is one missing row, not a silent feature.
+- **DI through the existing carrier** — `ServiceRegistry` lives on
+  `ShellInner` next to `ShellPropBindings` and `ShellComponentRegistry`.
+  Tests, alternate hosts (Studio, the headless renderer, per-product
+  shells) override services exactly the way they override bindings.
+  Same shape, third instance.
+- **Builder-style `MutCtx`, not a 7-argument tuple** — sister to §17's
+  `PropCtx`. Every service borrows the fields it needs and ignores the
+  rest. Adding a field is additive; existing services don't recompile
+  their signatures. The read/write symmetry (`PropCtx` for snapshot,
+  `MutCtx` for handlers) makes the data plane uniform: bindings read
+  through one ctx, services write through its mirror.
+- **One trait, three methods, no inheritance** — `ShellService` has no
+  default-trait-method pyramid, no associated types, no `dyn`-unsafe
+  generics. Every implementer is a `struct` with a `Default` and three
+  short methods. The trait is *the* surface; nothing else in `prism-shell`
+  is a "way to add behaviour." (Existing `Component`/`Block`/`Panel`
+  traits stay where they are — they're the *visual* contract; this is
+  the *behavioural* contract. Two traits, two domains, no overlap.)
+- **Commands declared with their service, not in a separate file** —
+  `commands()` returns the `CommandSpec`s the service knows how to
+  execute. The registry indexes them on `add()`; `CommandRunner::run`
+  finds the spec, calls its handler against `MutCtx`. The 117-line
+  `command.rs` builtin list collapses to ~12 `commands()` impls of
+  ~6 lines each — same total LoC, but each command lives next to the
+  state it touches. Drift between "command listed in palette" and
+  "command actually does something" is structurally impossible: both
+  come from the same `CommandSpec`.
+- **Layered input is one service, not a global mutable** — `InputService`
+  owns the `InputManager` (the existing `InputScheme` builder pattern
+  stays exactly as is, ADR-005). Other services *push* schemes by
+  returning them from a new `schemes()` trait method (default empty);
+  `InputService::on_event(Key)` walks the stack, resolves to a command
+  id, and calls `ctx.runner.run(id)`. The four lines of "key →
+  combo → scheme stack → command id" live in *one* service — not in
+  every consumer of keys.
+- **No second event vocabulary** — `Event` stays `prism_ui_runtime::event::Event`.
+  Services consume the same enum the router dispatches; there is no
+  per-feature "what does this event mean to me" wrapper. (`InputEvent`
+  and the legacy `Action<AppState>` reducer-shape go to legacy unless
+  some service genuinely needs replay/serialisation, in which case
+  *that one service* owns the wrapper.)
+
+### 24.5 Surface added (~280 LoC across 4 files)
+
+- **`prism_shell::services::mod`** (~80 LoC) — `ShellService` trait,
+  `EventOutcome`, `MutCtx`, `ServiceRegistry`. The whole contract.
+  No re-exports of feature types — every service is opaque behind its
+  trait.
+- **`prism_shell::services::base`** (~60 LoC) — `ShellBaseService`
+  ports the shell-global slice of the legacy `command::with_builtins`
+  list (undo/redo/palette/panel-switch/viewport/zoom). The five
+  feature-owned slices (persistence, project, search, help, menu)
+  move to their own services in §24.6.
+- **`prism_shell::services::input`** (~80 LoC) — `InputService` wraps
+  the existing `InputManager`, exposes `push_scheme`/`pop_scheme` for
+  apps, and owns the `Key` → combo → scheme → command-id resolution.
+  This is the *only* place that converts a runtime `Event::Key` into a
+  command id. Other services receive only commands, never raw keys
+  (with one exception: `CommandPaletteService` owns the
+  query-edit text path while open, returning `EventOutcome::Handled`
+  for `Text`/`Key` so the rest of the stack short-circuits).
+- **`prism_shell::services::commands`** (~60 LoC) — `CommandSpec`
+  (id, label, category, shortcut, handler), `CommandRunner` (the
+  `run(id, &mut MutCtx)` entry point), and the `cmd!` macro for the
+  one-line declarative form: `cmd!("undo", "Undo", undo_handler)`.
+
+`lib.rs` adds `pub mod services;` and `pub use services::{ShellService,
+ServiceRegistry, MutCtx, EventOutcome, CommandSpec};`. `ShellInner`
+gains one field (`services: ServiceRegistry`) and one method
+(`mut_ctx(&mut self) -> MutCtx<'_>`) — the §17 read-side `prop_ctx`'s
+exact mirror.
+
+### 24.6 Port wave — twelve services, one per former module
+
+Each row is *one* `impl ShellService` in a new
+`prism_shell::services::<name>` module, plus one row in
+`register_shell_services`. The legacy module on disk goes to legacy in
+the same PR (no parallel codepath, §17 discipline).
+
+| # | Service | Replaces | Owns |
+|---|---|---|---|
+| 1 | `ShellBaseService`     | `command.rs`/with_builtins (shell slice) | global cmds: undo/redo/palette/panel-switch/zoom |
+| 2 | `InputService`         | `input.rs`, `keybindings.rs`, `keyboard.rs` | `InputManager`, scheme stack, key→combo→cmd-id |
+| 3 | `UndoRedoService`      | undo/redo halves of `command.rs` + snapshot stack on `ShellInner` | `UndoStack` field on `MutCtx`; ctrl+z/y handlers |
+| 4 | `SelectionService`     | `selection.rs` + arrow-key paths in `panels/*` | `SelectionModel` lives on `BuilderSlot` already; this owns the *mutators* (arrow keys, esc, multi-select extend) |
+| 5 | `CommandPaletteService`| `command.rs` palette half + the query-edit path in `app/callbacks/overlay.rs` | open/close, query edit, fuzzy filter, exec selection |
+| 6 | `PersistenceService`   | `persistence.rs` | ctrl+n/o/s/shift+s, rfd dialogs, ProjectFile serde |
+| 7 | `ProjectService`       | `project.rs` | open-folder, vault sync, file-graph ingest, close |
+| 8 | `SearchService`        | `search.rs` | TF-IDF index build/refresh, ctrl+f open, query |
+| 9 | `SignalsService`       | `signals.rs` | dispatch builder signals, NavigateTo, SetProperty, EmitSignal cascade (max-depth 8) |
+| 10 | `HelpService`         | `help.rs` | hover-show 380ms, idle-hide 8s, ESC dismiss |
+| 11 | `MenuService`         | `menu.rs` | dropdown open/close, context-menu open at point |
+| 12 | `ClipboardService`    | clipboard halves of `command.rs` | copy/cut/paste/duplicate; owns `Clipboard` field on `MutCtx` |
+
+`LuauService` (custom-handler exec) is added by §24's tail row and is
+load-bearing for `SignalsService`'s `Custom` action arm — it's the only
+service the registry registers *after* `SignalsService` and the only
+one another service calls into directly (via `services.get("luau")`).
+That single cross-service reach is the reason the registry is also a
+*lookup* table, not just a fan-out broadcast.
+
+### 24.7 What deletes from disk
+
+After §24 lands, *every* file in this list either deletes outright
+or is rewritten as a `services::<name>` module with the same public
+behaviour and a fraction of the LoC:
+
+- `app/` directory (commands.rs / mutations.rs / inner.rs / shell.rs /
+  mod.rs / samples.rs) — already orphaned, §17 listed for deletion;
+  drops in this PR. Net: ~3500 LoC out.
+- `panel_props.rs` — already not in the build (§22 close moved every
+  helper onto its slot); drops in this PR. Net: ~774 LoC out.
+- `command.rs`, `keyboard.rs`, `keybindings.rs`, `input.rs`,
+  `selection.rs`, `signals.rs`, `persistence.rs`, `project.rs`,
+  `search.rs`, `help.rs`, `menu.rs` — each reborn as a `services::<name>`
+  module. Net per module: ~150–400 LoC in (most of which is the
+  service-trait wrapper around an unchanged inner struct), ~200–800
+  LoC out (the host-coupling halves that referenced `AppWindow` /
+  Slint callbacks delete with the rip). Total net: ~1800 LoC out,
+  ~1500 LoC in.
+- `panels/*` — each panel ported in §19–§22 as a slot's `*_props`
+  method. The remaining panel files (`panels/identity.rs`,
+  `panels/code_editor.rs`, …) finish porting in this wave or are
+  already legacy.
+- `testing.rs`, `e2e.rs` — re-port against `Surface` + `dispatch_event`
+  directly (the existing `TestHarness` / `E2eDriver` shape stays;
+  only the input-injection seam swaps from Slint callbacks to
+  synthetic `Event`s). Net: ~50 LoC delta — the public API doesn't
+  change, the back-end does.
+
+Total: roughly ~5500 LoC out, ~1800 LoC in. The diff is dominated
+by deletions, not additions, exactly because the registration table
+collapses N call sites into one.
+
+### 24.8 Test discipline
+
+- **One unit test per service** asserting `commands()` returns the
+  expected ids and `on_event` returns the expected `EventOutcome` for
+  a representative event fixture. ~12 small tests, each <30 lines.
+- **One keystone parity test** (`commands_cover_every_registered_shortcut`)
+  that walks `register_shell_services`'s aggregated commands and
+  asserts every key combo declared in any `InputScheme` resolves to a
+  command id present in the table. Forgetting to wire a command is
+  a compile-or-test failure, not a silent dead key.
+- **One end-to-end router test**
+  (`key_event_routes_through_input_service_to_command_runner_and_mutates`)
+  that fires an `Event::Key { combo: "ctrl+z" }` against a populated
+  `AppState` with one prior undoable mutation and asserts the
+  mutation reverses. The full chain (router → fan-out → InputService
+  → CommandRunner → UndoRedoService → MutCtx → AppState) is
+  exercised in one test.
+- **One service-isolation test**
+  (`palette_short_circuits_other_services_while_open`) that opens the
+  command palette, fires an `Event::Key { combo: "ctrl+s" }`, and
+  asserts the save-handler does *not* run — the palette's
+  `EventOutcome::Handled` short-circuits the fan-out. This is the
+  load-bearing isolation property: when an overlay is modal, the
+  fan-out's first-`Handled`-wins rule is the *only* mechanism
+  enforcing focus capture; no service has to know another service
+  exists.
+
+### 24.9 What this unblocks
+
+After §24 lands, every still-orphaned feature has a documented place
+to live (one service module), every key the user presses has a
+documented path to mutation (router → fan-out → InputService →
+CommandRunner → service handler → `MutCtx`), and every command the
+palette displays has a documented owner (the service whose
+`commands()` declared it). The §17 contract grows by exactly one
+trait, one registry, one ctx — the same growth pattern as every
+prior smart-pattern landing in this plan (component registry → block
+registry → bindings table → service registry, each at a different
+seam, each one row per item, each declared once).
+
+The terminal-state property generalises: the migration's promise was
+"every change reads as one of a small set of declarative edits."
+Pre-§24 that was true for blocks and slots; post-§24 it is true for
+features and commands too. Adding a feature is one new
+`impl ShellService` and one row in `register_shell_services`. Adding
+a command is one row in some service's `commands()` Vec. Adding an
+event handler is one branch on `Event` inside one service's
+`on_event`. No further infrastructure work is anticipated; pressure
+to add one is, again, a defect of the plan rather than a new
+requirement.
+
 ### Decision-log entry
 
 | Date | Decision | Rationale |
 |---|---|---|
+| 2026-05-10 | §24 lands the service-registry foundation in code (~520 LoC across 4 files; `services/{mod,base,undo,input}.rs`). The four contracts ship in `services/mod.rs`: **`ShellService`** (three-method trait, default `Pass`), **`MutCtx<'a>`** (`state` + `viewport` + `undo` — additive, services ignore fields they don't read), **`EventOutcome`** (`Pass`/`Handled`/`HandledQuiet`), **`ServiceRegistry`** (declared-order fan-out + lookup-by-id + a single `CommandTable` filled at registration via `service.commands()`). The `cmd!` macro is the one-line declarative form; duplicate command id and duplicate service id are registration-time panics, not runtime branches. **Three services land in this wave**: `ShellBaseService` (palette toggle/close, toasts.clear), `UndoRedoService` (`UndoStack` + `edit.undo` / `edit.redo` commands, 100-entry circular history with `snapshot()`/`undo()`/`redo()` over `AppState` clones), `InputService` (in-tree `KeyCombo` + scheme-stack — `with_defaults` seeds the four shipped shortcuts, `push_scheme`/`pop_scheme` for app-local overlays, `on_event(Key{pressed:true})` resolves to a command id and dispatches through `CommandTable::run` in the same call). **Router delta**: `events.rs::dispatch_event` keeps its arm-per-`Event`-variant shape — the §22 pointer arms stay one-line forwarders, and the four other variants (`Wheel`/`Key`/`Text`/`Focus`) collapse into one fan-out call (split-borrow on `ShellInner` produces `&services` + `&mut MutCtx{state, viewport, undo}` simultaneously). **`ShellInner` gains two fields** (`services: ServiceRegistry`, `undo: UndoStack`) and one method (`mut_ctx() -> MutCtx<'_>`) — the §17 `prop_ctx`'s exact mirror. Tests (13 new): four registry-foundation tests (uniqueness, lookup, fan-out short-circuit, dispatchability), three undo tests (snapshot/undo/redo round-trip, empty-noop, command-table dispatch), one base-service test (palette toggle), five input tests (combo parse, keystone end-to-end Ctrl+Z → mutation, key-release pass-through, pushed-scheme override, palette open via Ctrl+Shift+P). 229 lib tests green (was 216 at §23 close); `cargo clippy -p prism-shell --all-targets -- -D warnings` is clean. | The terminal-state property generalises from "every read is a registration row" to "every write is a registration row." The three landed services validate the trait surface across three distinct shapes — pure-command service (`ShellBaseService`), state-mutating service with its own resource (`UndoRedoService`), event-consuming dispatcher service (`InputService`) — and the trait carries all three with no inheritance, no associated types, no per-feature glue. The `cmd!` macro keeps every command body ≤6 lines and forces handlers to take `&mut MutCtx`, so palette/menu/keyboard all reach the same handler through the same single-arg surface; drift between "command listed in palette" and "command actually does something" is structurally impossible because both come from the same `CommandSpec`. The split-borrow in `events.rs` is *the* design call: the registry holds `Arc<dyn ShellService>` (no inner borrow on `ServiceRegistry`), so `&self.services.fan_out(event, &mut ctx)` and `&mut g.state` co-exist without a `RefCell` inside `ShellInner` — the borrow shape stays the §17 read shape, just `&mut` instead of `&`. The unique-on-add panic is the structural duplication check: shipping a second `palette.toggle` is a programmer error, not a silent priority-resolution rule. The remaining nine services (Selection, CommandPalette, Persistence, Project, Search, Signals, Help, Menu, Clipboard, Luau) port onto this surface as one `impl ShellService` each — the trait + registry are the entire infrastructure, and the §17/§22 read-side discipline (slot-local data, single registration table, no per-feature router awareness) is now mirrored on the write side without duplication. |
 | 2026-05-09 | §23 — `CanvasSlot` lands in code, closing §22's terminal-state contract. Seven `bind_slot!` rows go live (`shell.code-editor`, `shell.builder-canvas`, `shell.gizmo-{move,rotate,scale}`, `shell.resize-handle`, `shell.component-picker`); seven entries leave the stub-loop (now 20 rows, all *intentional* row-shaped leaves whose data flows through their parent's JSON arrays). `state.rs` gains `CanvasSlot` (with `BuilderDocument` + `Option<NodeId>` selection + `ToolMode` + `CanvasViewport` + `PickerState` + `CodeBuffer` + private `Option<DragState>`), the `gizmo_props(kind)` rule-of-three helper, and the `pub(crate) selection_center()` cross-binding helper. The router (`events.rs`) gains exactly three pointer arms (`PointerDown`/`Move`/`Up`) — each a one-liner that forwards `(x, y)` into a slot mutator. The slot owns all dispatch over `(ToolMode, DragKind)` in a single private `apply_gizmo_delta` (Move/Rotate/Scale arms) plus `apply_handle_delta` (one signed-delta table per handle side). `TransformSnapshot::capture` runs once at `pointer_down`; `commit_drag`'s undo seam is documented but no-op until the undo stack lands on the new shell. Tests (12 new): six slot-unit reads (gizmo rule-of-three parity, code/canvas/picker/handle shapes, selection collapse), three pointer-drag round-trips (one per tool mode), one negative test (pointer-down outside selection does not capture), one no-selection no-op, one cross-binding parity (`gizmo_and_resize_handle_share_selection_center`); plus one keystone integration test on the router (`pointer_events_route_through_canvas_slot_under_active_tool`) and one cross-binding emission test in `props.rs` (`selection_center_drives_gizmo_and_handle_bindings`). The 47-binding parity test still passes; 216 lib tests green (was 204 at §22 design close). `cargo clippy -p prism-shell --all-targets -- -D warnings` is clean. | The §22 plan stands realised in source: **(1) JSON shape lives on the slot** — every canvas binding closure is one `s.canvas.<method>()` call, no `serde_json` access in the closure body; **(2) bindings forward, never compute** — the seven new rows are single-line `bind_slot!` macro invocations; **(3) cross-slot reach is zero** — no canvas binding takes a secondary slot arg, because the canvas owns every datum its bindings read; **(4) per-binding visibility branches are zero** — `gizmo_props` emits `visible: bool` as data, three bindings agree on the same predicate (`selection.is_some() && tool == kind`); **(5) per-tool router awareness is zero** — `dispatch_event`'s three new arms forward `(x, y)` and nothing else, the `match` over `ToolMode` lives once on the slot. The rule-of-three test (`gizmo_props_share_shape_across_three_modes`) makes drift in the gizmo shape break in *one* place if anyone ever inlines a gizmo emission. The cross-binding test (`gizmo_and_resize_handle_share_selection_center`) proves the helper is the single source of truth for selection center — moving the selection's transform updates both bindings through the same code path. The `_drag_active` test seam exists only in `#[cfg(test)]`, so the runtime contract that "no binding sees mid-drag state" is preserved at the API boundary. The migration's terminal property is now *measurable in the diff*, not just claimed in prose: the bindings table is 27 real rows + 20 row-shaped-leaf stubs = 47, every typed-shape helper lives on its owning slot, the router is one `match` over `Event` variants, and adding a new tool/datum is the documented two-or-one-edit operation. The remaining 20 stubs are catalogued with the *reason* each stays a stub (parent slot already serialises the shape inside an array), so the keystone parity test continues to pass without forcing per-row binding arms. |
 | 2026-05-09 | §22 port wave — `CanvasSlot` (read + write) lands as the terminal port; the seven canvas-family stubs (`shell.code-editor`, `shell.builder-canvas`, `shell.gizmo-{move,rotate,scale}`, `shell.resize-handle`, `shell.component-picker`) promote to real `bind_slot!` rows in one batch. Six bindings, one slot, one shared rule-of-three helper (`gizmo_props(kind)`) and one shared geometry helper (`selection_center()`) — both load-bearing. First wave with a write side: the event router gains three pointer arms (`Down`/`Move`/`Up`) that forward unconditionally to `CanvasSlot::pointer_*` mutators; the dispatch over `(ToolMode, DragKind)` lives on the slot, in *one* private `apply_gizmo_delta` method, so the router never grows tool-mode awareness. `DragState` is private to the slot — no binding emits "drag in progress"; the *effect* (mutated `document` + `selection.transform`) is what gizmo bindings already pull. `TransformSnapshot::capture` + `commit_drag` collapse the pre-§22 `DragSnapshot`/`ResizeSnapshot` halves into one capture/commit path. Stub-loop shrinks 25 → 18 (the remaining 18 are *intentional* leaves whose data flows down inside parent JSON arrays — promoting them would create second serialisation sites). `panel_props.rs` deletes from disk in the same PR (six bridge functions go to legacy; remaining count is zero). New tests (11): seven slot-unit reads (one per `*_props`, including the gizmo rule-of-three parity), three pointer-drag round-trips (one per tool mode), one cross-binding flow test (`selection_center_drives_gizmo_and_handle_bindings`), plus one keystone integration test on the router (`pointer_events_route_through_canvas_slot_under_active_tool`). The 47-binding parity test still passes; 214 lib tests green (was 203). | Closes the §17 contract: every registered block has a real binding *or* is an intentional row-shaped leaf, every typed-shape helper lives on its owning slot, the router is one `match` over `Event` variants with one arm per variant, and the four registration tables (component registry, resolver tag table, shell block registry, bindings table) are flat and declarative. The deferred-from-§21 grouping was correct: the six canvas bindings share *one* underlying datum (active document + selection transform under active tool mode), and porting them sequentially would have re-invented the same selection/tool/hit-test plumbing six times — the precise duplication the slot pattern prevents. The write-side mutators are the first place in the port where pointer events route through a *typed* mutator on the slot rather than a free-function callback in `app/callbacks/*.rs`; the symmetry (`bindings.snapshot` reads, `dispatch_event` writes, both keyed by slot) is the structural property that makes "add a new tool" or "add a new gizmo arm" a single-edit change. The visibility-as-shape rule (`gizmo_props` emits `visible: bool` as a data field, not a per-binding `if`) generalises §20 `OverlaySlot::help_tooltip_props` from "is this overlay open" to "which gizmo set is the active tool" — same pattern, two domains, zero per-binding branches on the host. The terminal-state property is now measurable, not aspirational: every subsequent change in this codebase reads as "add a block" (two declarative rows) or "add a datum" (one slot field + one accessor); no infrastructure work, no DI seams, no runtime extensions remain. The migration is done. |
 | 2026-05-09 | §19 port wave — `WorkspaceSlot` lands and three more stub bindings promote out of the placeholder loop. `WorkspaceSlot` wraps `prism_dock::DockWorkspace` and owns one JSON shape (`pages_json`) plus one crate-public helper (`tabs_json`) shared between two consumer methods on `ChromeSlot`. The cross-slot composition pattern is exercised for the first time: `ChromeSlot::app_window_props(&self, ws: &WorkspaceSlot)` and `ChromeSlot::menu_bar_row_props(&self, ws: &WorkspaceSlot)` take the secondary slot as a `&` argument, so chrome owns the row's identity *and* the JSON shape lives on exactly one method per binding — no two methods construct the same tabs array, no closure inlines JSON. `ChromeSlot` also absorbs the `nav_buttons` and `menus` lists as typed `Vec<NavButton>` / `Vec<MenuLabel>` so the JSON emitters are plain `iter().map().collect()` folds (no inline `json!([…])` literals as data). Bindings table: four real `bind_slot!` rows now (`shell.app-window`, `shell.menu-bar-row`, `shell.status-bar`, `shell.workflow-page-bar`); stub-loop shrinks from 45 to 41 entries. New tests (5): three slot-unit tests (`workflow_page_bar_marks_exactly_one_active`, `menu_bar_row_pulls_tabs_from_workspace`, `app_window_composes_chrome_with_workspace_tabs`), one switch-flow test on the slot (`switching_page_moves_active_flag`), and one end-to-end snapshot test (`workspace_page_switch_propagates_to_three_bindings`) that asserts a single `workspace.switch_page_by_id` call shows up consistently in all three workspace-driven emissions — the load-bearing duplication check for cross-slot reads. The 47-binding parity test still passes; 177 lib tests green (was 172). | Validates the §19 secondary-arg pattern under real load, and proves the rule-of-three threshold for shape extraction works: `tabs_json` is consumed by exactly two methods on `ChromeSlot` and would have been duplicated if either method had inlined the array build, so it's pulled up as a `pub(crate)` helper on `WorkspaceSlot` (where the data lives) rather than free-floating or copied. Equivalent reasoning applies to `menus_json`/`nav_buttons_json` on `ChromeSlot`: each has exactly one consumer today but is a private helper anyway, so when a future binding (e.g. `shell.menu-dropdown` reading the same menu list) lands, it forwards to the same method instead of reconstructing the shape. The pattern composes — every subsequent slot port is now mechanical: define the typed slot, write `*_props` methods (composing siblings via `&` args when needed), promote rows from the stub-loop. The `panel_props.rs` legacy file shrinks by three more functions of intent (`workflow_page_bar_props`, `menu_bar_row_props`, half of `app_window_props`); the remaining 14 are the next port targets in the same shape. |

@@ -23,6 +23,7 @@ use crate::components::{register_shell_builtins, ShellComponentRegistry};
 use crate::events::dispatch_event;
 use crate::props::{PropCtx, ShellPropBindings};
 use crate::render::{render_tree, Skeleton};
+use crate::services::{MutCtx, ServiceRegistry, UndoStack};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ShellError {
@@ -41,8 +42,10 @@ pub struct ShellInner {
     pub registry: ShellComponentRegistry,
     pub resolver: Arc<dyn TagResolver>,
     pub bindings: ShellPropBindings,
+    pub services: ServiceRegistry,
     pub state: crate::AppState,
     pub viewport: Viewport,
+    pub undo: UndoStack,
 }
 
 impl ShellInner {
@@ -55,6 +58,18 @@ impl ShellInner {
             viewport_w: self.viewport.width,
             viewport_h: self.viewport.height,
             canvas_zoom: 1.0,
+        }
+    }
+
+    /// Sister to [`Self::prop_ctx`] for the §24 write side. Every
+    /// service handler and every command body takes one of these.
+    /// Adding a new datum = one field on `MutCtx` and one assignment
+    /// here.
+    pub fn mut_ctx(&mut self) -> MutCtx<'_> {
+        MutCtx {
+            state: &mut self.state,
+            viewport: self.viewport,
+            undo: &mut self.undo,
         }
     }
 }
@@ -70,16 +85,19 @@ impl Shell {
         register_shell_builtins(&mut registry).map_err(|e| ShellError::Registry(e.to_string()))?;
         let resolver = registry.tag_resolver();
         let bindings = ShellPropBindings::with_builtins();
+        let services = ServiceRegistry::with_builtins();
         let skeleton = Skeleton::load().map_err(ShellError::Skeleton)?;
         let inner = Rc::new(RefCell::new(ShellInner {
             registry,
             resolver,
             bindings,
+            services,
             state: crate::AppState::default(),
             viewport: Viewport {
                 width: 1280.0,
                 height: 800.0,
             },
+            undo: UndoStack::default(),
         }));
         Ok(Self { inner, skeleton })
     }

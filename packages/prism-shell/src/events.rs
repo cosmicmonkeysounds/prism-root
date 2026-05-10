@@ -19,6 +19,7 @@ use std::rc::Rc;
 
 use prism_ui_runtime::event::Event;
 
+use crate::services::EventOutcome;
 use crate::shell::ShellInner;
 
 pub fn dispatch_event(inner: &Rc<RefCell<ShellInner>>, event: &Event) -> bool {
@@ -36,13 +37,25 @@ pub fn dispatch_event(inner: &Rc<RefCell<ShellInner>>, event: &Event) -> bool {
         Event::PointerDown { x, y, .. } => inner.borrow_mut().state.canvas.pointer_down(*x, *y),
         Event::PointerMove { x, y } => inner.borrow_mut().state.canvas.pointer_move(*x, *y),
         Event::PointerUp { x, y, .. } => inner.borrow_mut().state.canvas.pointer_up(*x, *y),
-        // Wheel / Key / Text / Focus arms land as the legacy
-        // `app/callbacks/{builder,chrome,editor,navigation,overlay,
-        // properties}.rs` bodies are ported. Each becomes one arm here
-        // forwarding to a `ShellInner::*` mutator. Until the mutators
-        // re-introduce themselves on the new shell, every other event
-        // is a no-op (no redraw needed — nothing observable changed).
-        Event::Wheel { .. } | Event::Key { .. } | Event::Text { .. } | Event::Focus { .. } => false,
+        // §24: every other event variant fans out through the service
+        // registry. Services declare their interest via `on_event`;
+        // the first to return `Handled` short-circuits. Adding a new
+        // feature *does not touch this match*.
+        Event::Wheel { .. } | Event::Key { .. } | Event::Text { .. } | Event::Focus { .. } => {
+            let mut guard = inner.borrow_mut();
+            // Split-borrow: we need `&services` and `&mut MutCtx{state, undo, viewport}`
+            // simultaneously. Re-borrow the fields explicitly so the
+            // borrow checker sees the disjoint slices.
+            let g = &mut *guard;
+            let viewport = g.viewport;
+            let services = &g.services;
+            let mut ctx = crate::services::MutCtx {
+                state: &mut g.state,
+                viewport,
+                undo: &mut g.undo,
+            };
+            matches!(services.fan_out(event, &mut ctx), EventOutcome::Handled)
+        }
     }
 }
 

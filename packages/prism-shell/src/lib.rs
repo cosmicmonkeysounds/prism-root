@@ -30,6 +30,7 @@ pub mod components;
 pub mod events;
 pub mod props;
 pub mod render;
+pub mod services;
 pub mod state;
 
 mod shell;
