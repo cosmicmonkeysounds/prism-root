@@ -53,6 +53,8 @@ pub fn dispatch_event(inner: &Rc<RefCell<ShellInner>>, event: &Event) -> bool {
                 state: &mut g.state,
                 viewport,
                 undo: &mut g.undo,
+                vfs: g.vfs.as_mut(),
+                luau: g.luau.as_mut(),
             };
             matches!(services.fan_out(event, &mut ctx), EventOutcome::Handled)
         }

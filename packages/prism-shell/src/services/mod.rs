@@ -32,12 +32,28 @@ use prism_ui_runtime::layout::Viewport;
 use crate::AppState;
 
 pub mod base;
+pub mod help;
 pub mod input;
+pub mod luau;
+pub mod menu;
+pub mod persistence;
+pub mod project;
+pub mod search;
+pub mod signals;
 pub mod undo;
+pub mod vfs;
 
 pub use base::ShellBaseService;
+pub use help::HelpService;
 pub use input::{InputScheme, InputService};
+pub use luau::{LuauHost, LuauService, NoopLuauHost};
+pub use menu::MenuService;
+pub use persistence::PersistenceService;
+pub use project::ProjectService;
+pub use search::SearchService;
+pub use signals::SignalsService;
 pub use undo::{UndoRedoService, UndoStack};
+pub use vfs::{OsVfs, Vfs, VfsError};
 
 // ── trait + outcome ────────────────────────────────────────────────
 
@@ -90,6 +106,16 @@ pub struct MutCtx<'a> {
     pub state: &'a mut AppState,
     pub viewport: Viewport,
     pub undo: &'a mut UndoStack,
+    /// Filesystem seam — `OsVfs` in production, in-memory mock in
+    /// tests. `PersistenceService` / `ProjectService` are the only
+    /// services that read this; everyone else ignores the field.
+    pub vfs: &'a mut dyn Vfs,
+    /// Luau runtime seam — `NoopLuauHost` when the `mlua` feature is
+    /// off, the real mlua-backed host when it's on. `SignalsService`
+    /// reaches Luau through this field, *not* through
+    /// `ServiceRegistry::get("luau")` — shared resources go on
+    /// [`MutCtx`], not behind cross-service trait calls.
+    pub luau: &'a mut dyn LuauHost,
 }
 
 // ── command spec + table ──────────────────────────────────────────
@@ -244,6 +270,18 @@ pub fn register_shell_services(reg: &mut ServiceRegistry) {
     reg.add(ShellBaseService);
     reg.add(UndoRedoService);
     reg.add(InputService::with_defaults());
+    // §26 — IO services (Persistence / Project / Search).
+    reg.add(PersistenceService);
+    reg.add(ProjectService);
+    reg.add(SearchService);
+    // §27 — cross-service services (Help / Menu / Signals / Luau).
+    // `LuauService` registers last so its commands are appended after
+    // every other service has had its say; cross-service reach is
+    // resource-on-`MutCtx`, not registry traversal.
+    reg.add(HelpService::default());
+    reg.add(MenuService);
+    reg.add(SignalsService);
+    reg.add(LuauService);
 }
 
 // ── declarative `cmd!` macro ──────────────────────────────────────
@@ -346,6 +384,8 @@ mod tests {
         reg.add(ShouldNotRun);
         let mut state = AppState::default();
         let mut undo = UndoStack::default();
+        let mut vfs = OsVfs;
+        let mut luau = NoopLuauHost::default();
         let mut ctx = MutCtx {
             state: &mut state,
             viewport: Viewport {
@@ -353,6 +393,8 @@ mod tests {
                 height: 1.0,
             },
             undo: &mut undo,
+            vfs: &mut vfs,
+            luau: &mut luau,
         };
         assert_eq!(
             reg.fan_out(&Event::Wheel { dx: 0.0, dy: 0.0 }, &mut ctx),

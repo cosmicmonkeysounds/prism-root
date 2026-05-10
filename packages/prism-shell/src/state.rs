@@ -42,6 +42,97 @@ pub struct AppState {
     pub docs: DocsSlot,
     pub menus: MenuSlot,
     pub canvas: CanvasSlot,
+    pub project: ProjectSlot,
+    pub search: SearchSlot,
+}
+
+// ── project ───────────────────────────────────────────────────────
+
+/// IO-side state for `PersistenceService` + `ProjectService`. Holds
+/// the active document file (Save / Save As target) and the active
+/// project folder (Open Folder / Close Folder). `dirty` is the one
+/// shared flag both services flip — the title bar reads it through
+/// chrome via [`Self::title_suffix`], the only cross-slot reader.
+///
+/// See `docs/dev/clay-migration-plan.md` §26.
+#[derive(Clone, Debug, Default)]
+pub struct ProjectSlot {
+    pub current_file: Option<std::path::PathBuf>,
+    pub root: Option<std::path::PathBuf>,
+    pub dirty: bool,
+    /// Recently opened files — populated by `PersistenceService` on
+    /// every successful open/save, capped at 8 entries.
+    pub recent: Vec<std::path::PathBuf>,
+}
+
+impl ProjectSlot {
+    pub const RECENT_LIMIT: usize = 8;
+
+    pub fn touch(&mut self, path: std::path::PathBuf) {
+        self.recent.retain(|p| p != &path);
+        self.recent.insert(0, path);
+        self.recent.truncate(Self::RECENT_LIMIT);
+    }
+
+    /// `" — Untitled"` / `" — foo.prism *"` etc. The title-bar shape
+    /// lives here, not in chrome, so chrome stays a static slot.
+    pub fn title_suffix(&self) -> String {
+        let label = match (&self.current_file, &self.root) {
+            (Some(p), _) => p
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("Untitled")
+                .to_string(),
+            (None, Some(r)) => r
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("Project")
+                .to_string(),
+            _ => "Untitled".to_string(),
+        };
+        let mark = if self.dirty { " *" } else { "" };
+        format!(" — {label}{mark}")
+    }
+}
+
+// ── search ────────────────────────────────────────────────────────
+
+/// Search overlay state — query buffer, ranked hits, modal-open flag.
+/// `SearchService` owns every mutator; bindings only read.
+///
+/// See `docs/dev/clay-migration-plan.md` §26.
+#[derive(Clone, Debug, Default)]
+pub struct SearchSlot {
+    pub open: bool,
+    pub query: String,
+    pub results: Vec<SearchHit>,
+    pub selected_index: usize,
+}
+
+#[derive(Clone, Debug)]
+pub struct SearchHit {
+    pub node_id: String,
+    pub label: String,
+    pub snippet: String,
+    pub score: f32,
+}
+
+impl SearchSlot {
+    pub fn search_overlay_props(&self) -> Value {
+        json!({
+            "open": self.open,
+            "query": self.query,
+            "selected-index": self.selected_index,
+            "results": Value::Array(
+                self.results.iter().map(|h| json!({
+                    "node-id": h.node_id,
+                    "label": h.label,
+                    "snippet": h.snippet,
+                    "score": h.score,
+                })).collect()
+            ),
+        })
+    }
 }
 
 // ── chrome ────────────────────────────────────────────────────────

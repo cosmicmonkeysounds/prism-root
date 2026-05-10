@@ -203,7 +203,7 @@ impl ShellService for InputService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::{ServiceRegistry, UndoStack};
+    use crate::services::{vfs::test_support::InMemVfs, NoopLuauHost, ServiceRegistry, UndoStack};
     use crate::AppState;
     use prism_ui_runtime::layout::Viewport;
 
@@ -238,6 +238,8 @@ mod tests {
         undo.snapshot(&state);
         state.chrome.status = "v1".into();
         let reg = ServiceRegistry::with_builtins();
+        let mut vfs = InMemVfs::default();
+        let mut luau = NoopLuauHost::default();
         let mut ctx = MutCtx {
             state: &mut state,
             viewport: Viewport {
@@ -245,6 +247,8 @@ mod tests {
                 height: 0.0,
             },
             undo: &mut undo,
+            vfs: &mut vfs,
+            luau: &mut luau,
         };
         assert_eq!(
             reg.fan_out(&key("z", true, false), &mut ctx),
@@ -258,6 +262,8 @@ mod tests {
         let svc = InputService::with_defaults();
         let mut state = AppState::default();
         let mut undo = UndoStack::default();
+        let mut vfs = InMemVfs::default();
+        let mut luau = NoopLuauHost::default();
         let mut ctx = MutCtx {
             state: &mut state,
             viewport: Viewport {
@@ -265,6 +271,8 @@ mod tests {
                 height: 0.0,
             },
             undo: &mut undo,
+            vfs: &mut vfs,
+            luau: &mut luau,
         };
         let release = Event::Key {
             code: "z".into(),
@@ -293,6 +301,8 @@ mod tests {
         let reg = ServiceRegistry::with_builtins();
         let mut state = AppState::default();
         let mut undo = UndoStack::default();
+        let mut vfs = InMemVfs::default();
+        let mut luau = NoopLuauHost::default();
         let mut ctx = MutCtx {
             state: &mut state,
             viewport: Viewport {
@@ -300,6 +310,8 @@ mod tests {
                 height: 0.0,
             },
             undo: &mut undo,
+            vfs: &mut vfs,
+            luau: &mut luau,
         };
         assert_eq!(
             reg.fan_out(&key("q", false, false), &mut ctx),
@@ -312,6 +324,8 @@ mod tests {
         let reg = ServiceRegistry::with_builtins();
         let mut state = AppState::default();
         let mut undo = UndoStack::default();
+        let mut vfs = InMemVfs::default();
+        let mut luau = NoopLuauHost::default();
         {
             let mut ctx = MutCtx {
                 state: &mut state,
@@ -320,6 +334,8 @@ mod tests {
                     height: 0.0,
                 },
                 undo: &mut undo,
+                vfs: &mut vfs,
+                luau: &mut luau,
             };
             assert_eq!(
                 reg.fan_out(&key("p", true, true), &mut ctx),

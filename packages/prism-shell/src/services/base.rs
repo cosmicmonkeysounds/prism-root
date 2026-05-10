@@ -48,7 +48,9 @@ impl ShellService for ShellBaseService {
 
 #[cfg(test)]
 mod tests {
-    use crate::services::{MutCtx, ServiceRegistry, UndoStack};
+    use crate::services::{
+        vfs::test_support::InMemVfs, MutCtx, NoopLuauHost, ServiceRegistry, UndoStack,
+    };
     use crate::AppState;
     use prism_ui_runtime::layout::Viewport;
 
@@ -56,6 +58,8 @@ mod tests {
     fn palette_toggle_flips_open_flag() {
         let mut state = AppState::default();
         let mut undo = UndoStack::default();
+        let mut vfs = InMemVfs::default();
+        let mut luau = NoopLuauHost::default();
         let reg = ServiceRegistry::with_builtins();
         {
             let mut ctx = MutCtx {
@@ -65,6 +69,8 @@ mod tests {
                     height: 0.0,
                 },
                 undo: &mut undo,
+                vfs: &mut vfs,
+                luau: &mut luau,
             };
             assert!(reg.commands().run("palette.toggle", &mut ctx));
         }
@@ -77,6 +83,8 @@ mod tests {
                     height: 0.0,
                 },
                 undo: &mut undo,
+                vfs: &mut vfs,
+                luau: &mut luau,
             };
             assert!(reg.commands().run("palette.toggle", &mut ctx));
         }

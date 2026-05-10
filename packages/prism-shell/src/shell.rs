@@ -23,7 +23,7 @@ use crate::components::{register_shell_builtins, ShellComponentRegistry};
 use crate::events::dispatch_event;
 use crate::props::{PropCtx, ShellPropBindings};
 use crate::render::{render_tree, Skeleton};
-use crate::services::{MutCtx, ServiceRegistry, UndoStack};
+use crate::services::{LuauHost, MutCtx, NoopLuauHost, OsVfs, ServiceRegistry, UndoStack, Vfs};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ShellError {
@@ -46,6 +46,14 @@ pub struct ShellInner {
     pub state: crate::AppState,
     pub viewport: Viewport,
     pub undo: UndoStack,
+    /// IO seam — `OsVfs` in production, mock in tests. Borrowed
+    /// `&mut` into every `MutCtx` so `PersistenceService` /
+    /// `ProjectService` can read/write without owning a fs handle.
+    pub vfs: Box<dyn Vfs>,
+    /// Luau seam — `NoopLuauHost` until the `mlua`-backed runtime
+    /// lands. `SignalsService::Custom` and `LuauService::run-selection`
+    /// reach Luau through this single resource.
+    pub luau: Box<dyn LuauHost>,
 }
 
 impl ShellInner {
@@ -70,6 +78,8 @@ impl ShellInner {
             state: &mut self.state,
             viewport: self.viewport,
             undo: &mut self.undo,
+            vfs: self.vfs.as_mut(),
+            luau: self.luau.as_mut(),
         }
     }
 }
@@ -98,6 +108,8 @@ impl Shell {
                 height: 800.0,
             },
             undo: UndoStack::default(),
+            vfs: Box::new(OsVfs),
+            luau: Box::new(NoopLuauHost::default()),
         }));
         Ok(Self { inner, skeleton })
     }

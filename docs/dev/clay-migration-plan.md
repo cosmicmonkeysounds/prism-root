@@ -4025,6 +4025,265 @@ requirement.
 
 | Date | Decision | Rationale |
 |---|---|---|
+
+## 25. Service port wave — Selection / Clipboard / CommandPalette
+
+**Strategy.** §24 landed the foundation and three infrastructure
+services (Base, Undo, Input). The next batch is three *modal* services
+that all read and mutate the selection cursor that already lives on
+`BuilderSlot`/`CanvasSlot`/`OverlaySlot`. Grouping them is the same call
+§22 made for the canvas family: they share one underlying datum
+(active selection), their key paths overlap (Esc, arrow keys, Ctrl+C/X/V,
+Ctrl+Shift+P, palette-modal capture), and porting them sequentially
+would re-invent the same selection-aware key handling three times.
+Batched, they expose exactly one new pattern — **modal capture via
+`EventOutcome::Handled`** — and reuse it.
+
+The ripout discipline holds: the three legacy modules
+(`selection.rs`, the palette half of `command.rs`, the clipboard half
+of `command.rs`) leave the tree in the same PR. We are not porting
+the legacy `Action<AppState>` reducer enum, the legacy
+`SelectionEvent` wrapper, or the legacy `ClipboardEntry` round-trip
+serde — none of those vocabularies exist in the new system. The
+runtime's `Event` is the only event vocabulary; `MutCtx` is the only
+write surface; `serde_json::Value` is the only clipboard wire format
+(matches the §22 `BuilderDocument` shape, no second encoding).
+
+### 25.1 SelectionService — mutators on slots that already own selection
+
+`BuilderSlot` (inspector/properties/signals/schema, §20) and
+`CanvasSlot` (gizmos/handles/picker, §22) already own the selection
+cursor in their own typed fields. `SelectionService` is the *mutator
+side* — the read paths shipped with the slots. Three command bodies,
+two key handlers, no new state on `MutCtx`:
+
+- `selection.clear` (Esc) — clears `state.canvas.selection`
+  *and* `state.builder.selection` in one call to a new
+  `state.clear_selection()` method on `AppState`. The cross-slot
+  consistency invariant lives on `AppState`, not on the service —
+  same shape as §19's "JSON shape lives on the slot": the multi-slot
+  invariant lives on the multi-slot type.
+- `selection.move-{up,down,left,right}` (arrow keys) — forwards to
+  `CanvasSlot::nudge_selection(dx, dy)`. The `(dx, dy)` table is one
+  `match` over the command id inside the service, not four near-identical
+  handlers; the `cmd!` macro variant `cmd_with!("selection.move-up",
+  …, |ctx| ctx.state.canvas.nudge_selection(0, -1))` keeps each row
+  one line.
+- `selection.extend-{up,down,left,right}` (Shift+arrow) — same
+  forwarder, calls `CanvasSlot::extend_selection(dx, dy)`. The
+  *single-vs-multi* dispatch lives on the slot in one place
+  (`SelectionModel::Single` vs `Multi`) — the service never sees the
+  variant.
+
+The service's `on_event` is empty. All five behaviours route through
+`InputService`'s scheme stack, which resolves the key combo to a
+command id and invokes the handler. The service contributes only
+`commands()` — it is the cleanest possible shape under the §24
+contract, and the canonical example for the remaining nine ports.
+
+### 25.2 ClipboardService — `serde_json::Value` is the wire format
+
+The legacy `ClipboardEntry { kind: …, data: Vec<u8> }` enum is gone.
+Selection content round-trips as the same `serde_json::Value` shape
+that `BuilderDocument` already uses (§22) — copy serialises the
+selected sub-tree to `Value`, paste deserialises directly back into
+the document. One vocabulary, one serialiser, no `kind` discriminator.
+
+`ClipboardService` adds one field to `MutCtx` (`clipboard: &'a mut
+Clipboard`, where `Clipboard` is a one-field newtype `Option<Value>` —
+cleared on cut, set on copy, read-and-keep on paste). The four
+commands (`clipboard.copy`, `cut`, `paste`, `duplicate`) are five-line
+handlers each. `duplicate` is `copy` followed by `paste-at-offset` —
+not a separate code path, but two calls to the same two methods on
+`CanvasSlot`. The rule-of-three threshold is met (`copy`, `cut`, `duplicate`
+all serialise the selection), so `CanvasSlot::serialize_selection() ->
+Option<Value>` is the helper; `paste`/`duplicate` both call
+`CanvasSlot::insert_at_offset(value, offset)`. Two methods on the
+slot, four commands on the service, zero duplication of the wire
+format.
+
+System clipboard integration (`arboard`) is a §24.6-row, not a §25
+concern — the in-memory clipboard is the contract; arboard plugs in
+at the service level later (one feature flag, one extra
+`copy`/`paste` line) and the rest of the host is unaffected.
+
+### 25.3 CommandPaletteService — modal capture is the one new pattern
+
+The palette is the first service whose `on_event` returns
+`EventOutcome::Handled` *unconditionally while open*, short-circuiting
+the fan-out. This is the load-bearing isolation property §24.8
+specified in test form (`palette_short_circuits_other_services_while_open`)
+and the load-bearing reason `EventOutcome` has three states: open
+palette + Ctrl+S must *not* save.
+
+The palette's data already lives on `OverlaySlot::command_palette`
+(§20). The service owns:
+
+- `commands()` — `palette.toggle`, `palette.open`, `palette.close`,
+  `palette.exec-selected`, `palette.move-up`, `palette.move-down`.
+  These are the same six commands a hand-rolled palette would have
+  needed; they live next to the service whose `on_event` enforces
+  modal capture.
+- `on_event` — three branches under "is the palette open?":
+  `Event::Text { text }` appends to `OverlaySlot::command_palette.query`
+  and returns `Handled`; `Event::Key { combo: "esc" }` runs
+  `palette.close` and returns `Handled`; everything else returns
+  `Handled` *if open* to capture modality, `Pass` otherwise. The
+  three-line "is open?" branch is the *only* state-aware line in the
+  service — every other handler is a pure command.
+- **Fuzzy filter** is one method on `OverlaySlot` — `filter_commands(query:
+  &str, all_ids: &[&'static str]) -> Vec<usize>`. It's not on the
+  service because the *result* (the visible row indices) flows out
+  through the existing palette binding (§20), not through the
+  service's surface. The filter takes the already-aggregated command
+  list from `ServiceRegistry::commands_iter()` — one new method on
+  the registry, no per-service awareness.
+
+The palette **does not** own a "selected index" cursor as a separate
+field on the service — that lives on `OverlaySlot::command_palette.cursor`
+where its binding already reads it. Selection-cursor-on-slot is the
+§19 doctrine; nothing about the service surface changes it.
+
+### 25.4 Smart-pattern wins (each maps to a §24.4 invariant)
+
+- **One selection invariant, owned by `AppState`** — the cross-slot
+  "Esc clears both canvas and builder" rule lives in
+  `AppState::clear_selection()`, *not* in the service's command
+  handler. Service is one line; multi-slot invariant is one method;
+  drift between "what selection means in the canvas" and "what
+  selection means in the inspector" is impossible because both slots
+  are cleared by the same call. (Mirrors §19 `tabs_json` extraction
+  rationale: shared shape lives where the data does.)
+- **`cmd_with!` covers four arrow-key commands without four near-identical
+  rows** — the macro variant takes a closure literal so each row is
+  one line. The `(dx, dy)` table lives in one place. (Rule-of-three
+  fires: four consumers, identical body modulo two integers.)
+- **One clipboard wire format, not two** — the `serde_json::Value`
+  shape `BuilderDocument` already uses serves copy/cut/paste/duplicate
+  with zero new serde definitions. Anti-pattern (legacy
+  `ClipboardEntry { kind, data }`) declined: the kind discriminator
+  exists only because the legacy clipboard tried to round-trip
+  multiple incompatible shapes; the new system has one shape.
+- **Modal capture via `EventOutcome`, not via a `palette.is_open` field
+  on every other service** — the only way another service can know
+  the palette is modal is through the fan-out short-circuiting at the
+  registry level. No service queries `OverlaySlot::command_palette.open`
+  directly — that field exists only for the binding (read) and the
+  palette service itself (write).
+- **Fuzzy filter is one slot method, fed by one registry method** —
+  `ServiceRegistry::commands_iter()` is the single aggregator;
+  `OverlaySlot::filter_commands` is the single matcher. No service
+  rebuilds the command list; no service reimplements the matcher.
+- **Three legacy modules delete in one PR** — `selection.rs` (~280
+  LoC), the palette half of `command.rs` (~120 LoC), the clipboard
+  half of `command.rs` (~90 LoC). The replacement services total
+  ~210 LoC across three files. Net: ~280 LoC out.
+
+### 25.5 Surface added
+
+| File | LoC | Owns |
+|---|---|---|
+| `services/selection.rs` | ~70 | `SelectionService` + `cmd_with!` macro extension |
+| `services/clipboard.rs` | ~80 | `ClipboardService` + `Clipboard(Option<Value>)` newtype |
+| `services/palette.rs` | ~60 | `CommandPaletteService` (modal `on_event`) |
+
+Plus three small additions outside `services/`:
+
+- `state.rs::AppState::clear_selection()` — one method (~6 lines).
+- `state.rs::CanvasSlot::{nudge_selection, extend_selection,
+  serialize_selection, insert_at_offset}` — four methods (~40 lines
+  total; `serialize_selection`/`insert_at_offset` reuse the existing
+  `BuilderDocument` round-trip).
+- `state.rs::OverlaySlot::filter_commands(query, ids)` — one method
+  (~12 lines, single fold over `ids`).
+- `services/mod.rs::ServiceRegistry::commands_iter()` — one accessor
+  over the existing `CommandTable` (~3 lines).
+
+`MutCtx` gains one field (`clipboard: &'a mut Clipboard`), additive,
+existing services unaffected. `ShellInner` gains one field
+(`clipboard: Clipboard`), constructed once at boot.
+
+`register_shell_services` grows by three rows; the table is now
+6/12. Adding a row that duplicates a command id panics at
+registration (the `add()` invariant from §24).
+
+### 25.6 What deletes from disk
+
+- `selection.rs` (~280 LoC) — replaced wholesale by
+  `services/selection.rs` + the four `CanvasSlot` methods. The legacy
+  `SelectionEvent` enum, the `SelectionMode` discriminator, the
+  free-function `apply_selection_action` reducer all go to legacy.
+- Palette half of `command.rs` (~120 LoC) — the
+  `CommandPalette { open, query, cursor, results }` struct lives on
+  `OverlaySlot` (§20); the legacy palette had its own copy on
+  `ShellInner` because the binding side wasn't ready. Now it's not
+  needed.
+- Clipboard half of `command.rs` (~90 LoC) — `ClipboardEntry` and
+  the `clipboard_action` reducer go to legacy.
+- `app/callbacks/overlay.rs` palette-edit path (~60 LoC, already
+  orphaned at §17) — drops in this PR.
+
+Total: ~550 LoC out, ~210 LoC in. The diff is dominated by deletions
+(again), and the deletions are *load-bearing*: the legacy modules
+are gone, so a future change cannot accidentally route a key event
+through them.
+
+### 25.7 Test discipline
+
+- **Three service-unit tests** (one per service) asserting `commands()`
+  returns the expected ids and `on_event` returns the expected
+  `EventOutcome` for representative fixtures.
+- **One palette-modal isolation test**
+  (`palette_open_swallows_save_shortcut`) — the §24.8 keystone, now
+  realised. Open palette, fire `Event::Key { combo: "ctrl+s" }`,
+  assert no save handler ran.
+- **One clipboard round-trip test**
+  (`copy_paste_round_trips_selection_through_value_only`) — copy a
+  selection, mutate the document, paste, assert the original
+  sub-tree reappears. Asserts the wire format is `Value` and only
+  `Value` (no second serialisation site).
+- **One selection cross-slot test**
+  (`esc_clears_canvas_and_builder_selection_in_one_call`) — fires
+  Esc with both slots populated, asserts both are empty after a
+  single dispatch.
+- **One arrow-key parity test**
+  (`arrow_keys_dispatch_through_one_dxdy_table`) — fires the four
+  arrow keys, asserts each call hits `CanvasSlot::nudge_selection`
+  with the right `(dx, dy)`. The single-table property is testable
+  because every command body is a `cmd_with!` row, and the closures
+  are introspectable in `#[cfg(test)]` via a per-service test seam
+  (one accessor returning the closure list).
+- **Bindings parity test still passes** (47-binding); **commands
+  parity test from §24.8** (`commands_cover_every_registered_shortcut`)
+  picks up six new entries automatically.
+
+### 25.8 What this unblocks
+
+After §25, every modal-overlay-and-selection feature has its place.
+The remaining six services (Persistence, Project, Search, Signals,
+Help, Menu, Luau — minus the §24 three already landed) split into
+two further waves:
+
+- **§26 — IO services**: Persistence, Project, Search. They share
+  the `Vfs` field on `MutCtx` (or it's added there), and their
+  command sets all hit the filesystem through one trait. Same
+  three-service batch shape; same delete-the-legacy-module
+  discipline.
+- **§27 — Cross-service services**: Signals, Help, Menu, Luau.
+  These are the "leaf" features that compose with what the prior
+  waves shipped (Signals reaches into Luau via
+  `services.get("luau")`, the only sanctioned cross-service call;
+  Menu and Help own their own slot data already from §20/§21).
+
+The terminal-state property holds for the write side now, the way
+§22 said it held for the read side: the migration is the registration
+table and the slot data, every feature is one row, and nothing in the
+host has to know which row corresponds to which feature.
+
+### Decision-log entry
+
+| Date | Decision | Rationale |
+|---|---|---|
 | 2026-05-10 | §24 lands the service-registry foundation in code (~520 LoC across 4 files; `services/{mod,base,undo,input}.rs`). The four contracts ship in `services/mod.rs`: **`ShellService`** (three-method trait, default `Pass`), **`MutCtx<'a>`** (`state` + `viewport` + `undo` — additive, services ignore fields they don't read), **`EventOutcome`** (`Pass`/`Handled`/`HandledQuiet`), **`ServiceRegistry`** (declared-order fan-out + lookup-by-id + a single `CommandTable` filled at registration via `service.commands()`). The `cmd!` macro is the one-line declarative form; duplicate command id and duplicate service id are registration-time panics, not runtime branches. **Three services land in this wave**: `ShellBaseService` (palette toggle/close, toasts.clear), `UndoRedoService` (`UndoStack` + `edit.undo` / `edit.redo` commands, 100-entry circular history with `snapshot()`/`undo()`/`redo()` over `AppState` clones), `InputService` (in-tree `KeyCombo` + scheme-stack — `with_defaults` seeds the four shipped shortcuts, `push_scheme`/`pop_scheme` for app-local overlays, `on_event(Key{pressed:true})` resolves to a command id and dispatches through `CommandTable::run` in the same call). **Router delta**: `events.rs::dispatch_event` keeps its arm-per-`Event`-variant shape — the §22 pointer arms stay one-line forwarders, and the four other variants (`Wheel`/`Key`/`Text`/`Focus`) collapse into one fan-out call (split-borrow on `ShellInner` produces `&services` + `&mut MutCtx{state, viewport, undo}` simultaneously). **`ShellInner` gains two fields** (`services: ServiceRegistry`, `undo: UndoStack`) and one method (`mut_ctx() -> MutCtx<'_>`) — the §17 `prop_ctx`'s exact mirror. Tests (13 new): four registry-foundation tests (uniqueness, lookup, fan-out short-circuit, dispatchability), three undo tests (snapshot/undo/redo round-trip, empty-noop, command-table dispatch), one base-service test (palette toggle), five input tests (combo parse, keystone end-to-end Ctrl+Z → mutation, key-release pass-through, pushed-scheme override, palette open via Ctrl+Shift+P). 229 lib tests green (was 216 at §23 close); `cargo clippy -p prism-shell --all-targets -- -D warnings` is clean. | The terminal-state property generalises from "every read is a registration row" to "every write is a registration row." The three landed services validate the trait surface across three distinct shapes — pure-command service (`ShellBaseService`), state-mutating service with its own resource (`UndoRedoService`), event-consuming dispatcher service (`InputService`) — and the trait carries all three with no inheritance, no associated types, no per-feature glue. The `cmd!` macro keeps every command body ≤6 lines and forces handlers to take `&mut MutCtx`, so palette/menu/keyboard all reach the same handler through the same single-arg surface; drift between "command listed in palette" and "command actually does something" is structurally impossible because both come from the same `CommandSpec`. The split-borrow in `events.rs` is *the* design call: the registry holds `Arc<dyn ShellService>` (no inner borrow on `ServiceRegistry`), so `&self.services.fan_out(event, &mut ctx)` and `&mut g.state` co-exist without a `RefCell` inside `ShellInner` — the borrow shape stays the §17 read shape, just `&mut` instead of `&`. The unique-on-add panic is the structural duplication check: shipping a second `palette.toggle` is a programmer error, not a silent priority-resolution rule. The remaining nine services (Selection, CommandPalette, Persistence, Project, Search, Signals, Help, Menu, Clipboard, Luau) port onto this surface as one `impl ShellService` each — the trait + registry are the entire infrastructure, and the §17/§22 read-side discipline (slot-local data, single registration table, no per-feature router awareness) is now mirrored on the write side without duplication. |
 | 2026-05-09 | §23 — `CanvasSlot` lands in code, closing §22's terminal-state contract. Seven `bind_slot!` rows go live (`shell.code-editor`, `shell.builder-canvas`, `shell.gizmo-{move,rotate,scale}`, `shell.resize-handle`, `shell.component-picker`); seven entries leave the stub-loop (now 20 rows, all *intentional* row-shaped leaves whose data flows through their parent's JSON arrays). `state.rs` gains `CanvasSlot` (with `BuilderDocument` + `Option<NodeId>` selection + `ToolMode` + `CanvasViewport` + `PickerState` + `CodeBuffer` + private `Option<DragState>`), the `gizmo_props(kind)` rule-of-three helper, and the `pub(crate) selection_center()` cross-binding helper. The router (`events.rs`) gains exactly three pointer arms (`PointerDown`/`Move`/`Up`) — each a one-liner that forwards `(x, y)` into a slot mutator. The slot owns all dispatch over `(ToolMode, DragKind)` in a single private `apply_gizmo_delta` (Move/Rotate/Scale arms) plus `apply_handle_delta` (one signed-delta table per handle side). `TransformSnapshot::capture` runs once at `pointer_down`; `commit_drag`'s undo seam is documented but no-op until the undo stack lands on the new shell. Tests (12 new): six slot-unit reads (gizmo rule-of-three parity, code/canvas/picker/handle shapes, selection collapse), three pointer-drag round-trips (one per tool mode), one negative test (pointer-down outside selection does not capture), one no-selection no-op, one cross-binding parity (`gizmo_and_resize_handle_share_selection_center`); plus one keystone integration test on the router (`pointer_events_route_through_canvas_slot_under_active_tool`) and one cross-binding emission test in `props.rs` (`selection_center_drives_gizmo_and_handle_bindings`). The 47-binding parity test still passes; 216 lib tests green (was 204 at §22 design close). `cargo clippy -p prism-shell --all-targets -- -D warnings` is clean. | The §22 plan stands realised in source: **(1) JSON shape lives on the slot** — every canvas binding closure is one `s.canvas.<method>()` call, no `serde_json` access in the closure body; **(2) bindings forward, never compute** — the seven new rows are single-line `bind_slot!` macro invocations; **(3) cross-slot reach is zero** — no canvas binding takes a secondary slot arg, because the canvas owns every datum its bindings read; **(4) per-binding visibility branches are zero** — `gizmo_props` emits `visible: bool` as data, three bindings agree on the same predicate (`selection.is_some() && tool == kind`); **(5) per-tool router awareness is zero** — `dispatch_event`'s three new arms forward `(x, y)` and nothing else, the `match` over `ToolMode` lives once on the slot. The rule-of-three test (`gizmo_props_share_shape_across_three_modes`) makes drift in the gizmo shape break in *one* place if anyone ever inlines a gizmo emission. The cross-binding test (`gizmo_and_resize_handle_share_selection_center`) proves the helper is the single source of truth for selection center — moving the selection's transform updates both bindings through the same code path. The `_drag_active` test seam exists only in `#[cfg(test)]`, so the runtime contract that "no binding sees mid-drag state" is preserved at the API boundary. The migration's terminal property is now *measurable in the diff*, not just claimed in prose: the bindings table is 27 real rows + 20 row-shaped-leaf stubs = 47, every typed-shape helper lives on its owning slot, the router is one `match` over `Event` variants, and adding a new tool/datum is the documented two-or-one-edit operation. The remaining 20 stubs are catalogued with the *reason* each stays a stub (parent slot already serialises the shape inside an array), so the keystone parity test continues to pass without forcing per-row binding arms. |
 | 2026-05-09 | §22 port wave — `CanvasSlot` (read + write) lands as the terminal port; the seven canvas-family stubs (`shell.code-editor`, `shell.builder-canvas`, `shell.gizmo-{move,rotate,scale}`, `shell.resize-handle`, `shell.component-picker`) promote to real `bind_slot!` rows in one batch. Six bindings, one slot, one shared rule-of-three helper (`gizmo_props(kind)`) and one shared geometry helper (`selection_center()`) — both load-bearing. First wave with a write side: the event router gains three pointer arms (`Down`/`Move`/`Up`) that forward unconditionally to `CanvasSlot::pointer_*` mutators; the dispatch over `(ToolMode, DragKind)` lives on the slot, in *one* private `apply_gizmo_delta` method, so the router never grows tool-mode awareness. `DragState` is private to the slot — no binding emits "drag in progress"; the *effect* (mutated `document` + `selection.transform`) is what gizmo bindings already pull. `TransformSnapshot::capture` + `commit_drag` collapse the pre-§22 `DragSnapshot`/`ResizeSnapshot` halves into one capture/commit path. Stub-loop shrinks 25 → 18 (the remaining 18 are *intentional* leaves whose data flows down inside parent JSON arrays — promoting them would create second serialisation sites). `panel_props.rs` deletes from disk in the same PR (six bridge functions go to legacy; remaining count is zero). New tests (11): seven slot-unit reads (one per `*_props`, including the gizmo rule-of-three parity), three pointer-drag round-trips (one per tool mode), one cross-binding flow test (`selection_center_drives_gizmo_and_handle_bindings`), plus one keystone integration test on the router (`pointer_events_route_through_canvas_slot_under_active_tool`). The 47-binding parity test still passes; 214 lib tests green (was 203). | Closes the §17 contract: every registered block has a real binding *or* is an intentional row-shaped leaf, every typed-shape helper lives on its owning slot, the router is one `match` over `Event` variants with one arm per variant, and the four registration tables (component registry, resolver tag table, shell block registry, bindings table) are flat and declarative. The deferred-from-§21 grouping was correct: the six canvas bindings share *one* underlying datum (active document + selection transform under active tool mode), and porting them sequentially would have re-invented the same selection/tool/hit-test plumbing six times — the precise duplication the slot pattern prevents. The write-side mutators are the first place in the port where pointer events route through a *typed* mutator on the slot rather than a free-function callback in `app/callbacks/*.rs`; the symmetry (`bindings.snapshot` reads, `dispatch_event` writes, both keyed by slot) is the structural property that makes "add a new tool" or "add a new gizmo arm" a single-edit change. The visibility-as-shape rule (`gizmo_props` emits `visible: bool` as a data field, not a per-binding `if`) generalises §20 `OverlaySlot::help_tooltip_props` from "is this overlay open" to "which gizmo set is the active tool" — same pattern, two domains, zero per-binding branches on the host. The terminal-state property is now measurable, not aspirational: every subsequent change in this codebase reads as "add a block" (two declarative rows) or "add a datum" (one slot field + one accessor); no infrastructure work, no DI seams, no runtime extensions remain. The migration is done. |
@@ -4034,3 +4293,290 @@ requirement.
 | 2026-05-09 | §17 locks the rip-and-replace: Slint deleted in one stroke, no parity layer. New host-runtime contract is three files — `prism_shell::props` (`ShellPropBindings` registration table mirroring `register_shell_builtins`, ~120 LoC), `prism_shell::render` (`render_tree` skeleton-fold + lower, ~80 LoC), `prism_shell::events` (one `dispatch_event` match over runtime events, ~150 LoC). Deletion targets: `ui/app.slint` (~4300 lines), `app/sync/` (9 files), `app/callbacks/` (6 files), the 30-line `bind_model!` block, every `slint::*` import, the `slint`/`slint-build`/`slint-interpreter` deps, the `live-preview` feature, the `cdylib` crate-type half. Net diff: ~5800 LoC out, ~250 LoC in. | The user's instruction was explicit: no parity, breakage is fine if the new system is better. The rip-and-replace makes the smart-pattern load-bearing — every duplication that the registration table eliminates *cannot be worked around*, because the alternative path is gone. The host-runtime contract collapses to two functions (`render_tree`, `dispatch_event`) and one declarative table (`ShellPropBindings::with_builtins`), each composing with already-shipped seams (the 47 registered blocks from §13–§16, the resolver from §7, the `host_children` slot from §14, the `lower_as` embedding from §15, the `panel_props::*` bridge functions). Every `pub struct …Item` Slint required deletes — bindings emit `serde_json::Value` directly into the prop bags blocks already speak. The `prism-studio/src-tauri` downstream is a one-line `shell.window().run()` → `shell.run()` change. The keystone test (`bindings_cover_every_registered_shell_block`) makes "forgot to wire a new block" a compile failure. Test-suite shrinkage is real and welcome: assertions against `window.get_*` Slint properties were testing that the binding fired, not that the user-visible shape was correct; assertions against `render_tree` output test the actual Node tree. After the rip lands, the migration is the terminal state — every subsequent change reads as "add a block" (two rows: registry + bindings) or "add an event" (one arm in `dispatch_event`). |
 | 2026-05-09 | §20 port wave — three slots in one batch (`OverlaySlot`, `BuilderSlot`, `NavigationSlot`), nine more stub bindings promote out of the placeholder loop. **`OverlaySlot`** owns toasts, the command palette, and the help tooltip; visibility is data-driven (`Vec<Toast>` empty, `command_palette.open == false`, `help_tooltip == None` collapse the emission shape) — no per-binding `if open { … }` branch on the host. Three methods, three disjoint shapes, no shared private helpers (rule-of-three threshold not met). **`BuilderSlot`** consolidates inspector / properties / signals / schema onto one slot, because all four bindings ultimately read from the same selection cursor — cross-panel consistency becomes a slot pre-condition by construction, not a cross-binding contract. Per-row blocks (`shell.signal-connection-row`, `shell.schema-row`, `shell.inspector-row`, `shell.field-editor`) stay stubs: their data flows down inside the parent's `rows` / `connections` / `fields` JSON arrays, never through their own binding row, so a row binding emitting on its own would be a *second* serialisation site for the same shape. `PropertyRow { component, props: Value }` deliberately carries `serde_json::Value` directly — the properties panel emits a heterogeneous list of sub-component descriptors, and forcing a typed enum here would invent a vocabulary that exists only to be serialised. **`NavigationSlot`** owns `pages: Vec<NavPage>` + `edges: Vec<NavEdge>`; `nav_page_list_props` and `nav_graph_props` are the load-bearing siblings — both fold the same `Vec<NavPage>` but emit different shapes (list needs `node-count`/`link-count`, graph needs `x`/`y`/positions). The shared subset (`page-title`, `route`, `is-active`) lives in two short folds rather than a premature `base_page_fields(&NavPage) -> Map<String, Value>` extraction (rule-of-three: only two consumers today). Bindings table: 13 real `bind_slot!` rows now (was 4 at §19 close); stub-loop shrinks from 41 to 32 entries. New tests (13): four overlay slot-unit tests (toast kind serialisation, palette default-closed, tooltip visible/invisible), four builder slot-unit tests (one per `*_props` method), three navigation slot-unit tests (list emits no edges, graph carries positions+edges, the shared `is-active` flag flows through both folds), plus two end-to-end snapshot tests on the bindings layer (`nav_active_flag_propagates_to_list_and_graph_bindings`, `overlay_command_palette_open_propagates_to_emission`). The 47-binding parity test still passes; 190 lib tests green (was 177). | Validates the §19 batch property: porting three panels in one wave is no harder than one, because every artifact is slot-local. The duplication risk a sequential port would create — three independently-invented "list of `{title, body}`" shapes, three near-identical row-emission patterns, a row binding that re-emits parent data — is structurally caught at design time when all three slots are visible against each other. The "stub bindings stay stubs" rule for per-row blocks is the load-bearing call: the keystone parity test asserts every registered block has *a* binding, not that every binding is non-empty, so the bindings table's shape (one row per registered id) is preserved without forcing every row to carry data. The `BuilderSlot` / `PropertyRow` carrying `Value` is the first deliberate exception to the "JSON shape lives on the slot" rule, and is correct: the heterogeneous wire format already exists at the *block* (the properties panel renders an arbitrary mix of section headers, field editors, drag-number rows), so the slot's typed-shape promise covers the *list of rows*, not the contents of any single row — the closure still cannot forge a row without going through `properties_panel_props`. The three slots together demote nine more `panel_props.rs` functions (`toast_stack_entries`, `command_palette_props`, `inspector_rows`, `properties_panel_props`, `signals_panel_props`, `schema_designer_props`, `nav_page_row_entries`, `nav_graph_props`, plus the implied list-rollup) to legacy; the file is on track to zero by the close of the port wave. The remaining seven Phase-4 panels (code editor, explorer, component palette, launchpad, docs, menus, builder canvas + gizmos + handles + picker) land in the same shape — one slot, N methods, N stub-row promotions, no infrastructure moves. |
 | 2026-05-09 | §21 port wave — three slots in one batch (`CatalogSlot`, `DocsSlot`, `MenuSlot`), seven more stub bindings promote out of the placeholder loop. **`CatalogSlot`** owns launchpad apps, explorer files, and component-palette items — three disjoint shapes, no shared helper (rule-of-three trigger = identical keys, not "three short methods"). `palette_selected: Option<String>` collapses to key-omission in `component_palette_props` rather than emitting an empty sentinel — same data-driven visibility pattern as `OverlaySlot`. **`DocsSlot`** is the first in-batch rule-of-three extraction: `docs_view_props` and `docs_sidebar_props` both call `topic_props(&self) -> Value` for the byte-identical `{ title, summary, body }` shape and only overlay binding-specific `mode`. The cross-binding flow test (`docs_topic_shape_propagates_to_view_and_sidebar_bindings`) makes drift impossible. **`MenuSlot`** extracts `items_json(&[MenuItem]) -> Value` as a static helper (slice argument, no `&self`) so both `dropdown` and `context` fold through the same code path. `MenuItem::separator()` is the typed constructor — callers never leave label empty + flip a flag. Bindings table: 20 real `bind_slot!` rows now (was 13 at §20 close); stub-loop shrinks from 32 to 25 entries. New tests (13): four catalog slot-unit tests (launchpad title+apps, explorer depth/kind, the palette selected-omitted/-included pair), four docs slot-unit tests (view-mode pinned, sidebar default, sidebar explicit, shared-topic parity), three menu slot-unit tests (dropdown shortcut+command, context key-set equality, `separator()` constructor), plus two end-to-end snapshot tests on the bindings layer. The 47-binding parity test still passes; 203 lib tests green (was 190). | First port wave where rule-of-three fires *on landing* (twice: `topic_props`, `items_json`). Both extractions are honest — two consumers + identical key sets + zero plausible per-binding deviation — so the helper is the single source of the wire format and a drift would require editing one site to keep the cross-binding flow tests green. The `CatalogSlot` declined-extraction is the symmetric discipline: three consumers with *disjoint* key sets do not justify a `CatalogItem` enum, because the enum would invent a vocabulary that exists only to be serialised (the same anti-pattern §20 caught for `BuilderSlot`-`PropertyRow` and declined). The `MenuItem::separator()` constructor is the §20 doctrine extended to constructors: typed shape carries the vocabulary, hosts never assemble shape via field-flag gymnastics. The remaining four Phase-4 stubs (`shell.code-editor`, `shell.builder-canvas`, gizmos, resize-handle, component-picker — six bindings sharing one underlying datum) form `CanvasSlot` in §22; they are the one place in the port where the slot itself is mutated by event dispatch (drag deltas), which requires `events::dispatch_event` to forward pointer events into slot mutators — same `OverlaySlot` data-driven-visibility pattern plus a write side, no new infrastructure. The `panel_props.rs` legacy file shrinks by seven more functions of intent and is on track to zero. |
+
+## 26. Service port wave — Persistence / Project / Search (IO services)
+
+**Strategy.** §24 landed the registry, trait, and three foundation
+services. The next batch is the three *IO-bearing* services. They
+share one new piece of infrastructure (a `Vfs` trait on `MutCtx`)
+and one new slot pair on `AppState` (`ProjectSlot`, `SearchSlot`);
+batched, they pay the infrastructure cost once. Every legacy
+behaviour the user noticed (Save/Open round-trips, Open Folder,
+Ctrl+F overlay) routes through commands declared next to the slot
+data — no service knows another exists, no command body has
+hard-coded paths, no read of `state.canvas.document` happens
+outside its owning slot.
+
+### 26.1 The `Vfs` seam
+
+One trait, four methods (`read`, `write`, `list_dir`, `exists`),
+two implementations (`OsVfs` for production, `InMemVfs` for tests).
+Lives on `MutCtx` as `vfs: &'a mut dyn Vfs` — additive, no service
+that doesn't read this field recompiles. `ShellInner::vfs:
+Box<dyn Vfs>` is the one-and-only owner; the dispatch loop in
+`events.rs` lends `vfs.as_mut()` into every fan-out. **No service
+constructs an `OsVfs` directly** — the host wires *where* IO lands,
+the service declares *what* the user asked for. This is the §17
+rule for blocks generalised to IO: registration declares, the host
+composes.
+
+### 26.2 The `ProjectSlot` / `SearchSlot` pair
+
+`ProjectSlot { current_file, root, dirty, recent }` is the one
+place that knows "what file is open" and "what folder is open."
+Three rules from §19 carry over verbatim:
+
+1. **Title-bar shape lives on the slot** — `title_suffix()` is the
+   single source of `" — foo.prism *"`; the chrome slot stays a
+   pure-static slot, doesn't grow a `read_project()` accessor, and
+   the binding closure that reads it stays one line.
+2. **Recents are owned, not duplicated** — `touch(path)` is the
+   one mutator; `current_file` setters never bypass it.
+3. **`dirty` is a single bool** — both Persistence and Project
+   flip the same field; nothing else reads "is the document dirty"
+   via comparing trees.
+
+`SearchSlot` mirrors `OverlaySlot::command_palette` exactly: an
+`open` flag, a `query`, a `results: Vec<SearchHit>`, a
+`selected_index`. Modal capture follows the same §25 pattern as
+the palette — while open, `Text` events feed the query and
+non-shortcut keys terminate at the service.
+
+### 26.3 PersistenceService — four commands, one IO seam
+
+```
+file.new       Ctrl+N    — clears doc, snapshots undo, drops current_file
+file.save      Ctrl+S    — vfs.write(current_file, doc); touch recents
+file.save-as   Ctrl+Shift+S — host sets current_file then re-dispatches save
+file.open      Ctrl+O    — vfs.read(current_file); deserialise into doc
+```
+
+Two structural rules:
+
+- **The picker is *outside* the registry.** A service body cannot
+  call `rfd::FileDialog::new()` — that would couple every service
+  test to platform IO. Instead, the host's UI layer presents the
+  picker, writes `state.project.current_file` directly, and
+  dispatches the appropriate command. Services declare command
+  surface; the host composes with platform UI. (Smart pattern: DI
+  through state mutation, not through service-side platform calls.)
+- **One wire format.** `serde_json::to_vec_pretty(&doc)` /
+  `serde_json::from_slice(&bytes)` against `BuilderDocument`. No
+  `ProjectFile` envelope, no version field, no sidecar map — the
+  document owns its own serde, the service is one line of
+  serialisation. The legacy `ProjectFile { version, apps, sidecar }`
+  was the *only* reason `prism-builder` had a `project.rs` module;
+  ripping it out collapses two indirections into the document's
+  own derived `Serialize`.
+
+### 26.4 ProjectService — open-folder / close-folder, one walker
+
+```
+project.open-folder   Ctrl+Shift+O   — vfs.list_dir → state.catalog.files
+project.close-folder                 — clear root + current_file + files
+```
+
+The folder walker (`ingest_folder`) is one recursive function over
+`Vfs::list_dir` with a single skip-set predicate (`.*`, `target`,
+`node_modules`, `data`). The legacy walker had three near-identical
+paths (filesystem direct, vault adapter, mock); against `Vfs` they
+collapse to one. **No `GraphObject` ingestion here** — that is a
+separate ingest pass that mounts on the same `Vfs` once the
+collection store re-lands; the service only owns the explorer-tree
+shape.
+
+### 26.5 SearchService — TF-IDF as data, modal capture as outcome
+
+```
+search.open    Ctrl+F   — toggles overlay, clears index/cursor
+search.close            — closes overlay and clears query
+search.next             — cursor++ mod len
+search.prev             — cursor-- mod len (saturating)
+```
+
+Plus an `on_event` that — *while `state.search.open` is true* —
+captures `Text` (append + rebuild), `Key { code: "backspace" }`
+(pop + rebuild), and every other `Key` event (return `Handled` for
+modal capture). The matcher is a substring-position scorer (token
+position + label vs. value precedence, top-50 cutoff) — the
+*interface* (`build`, `query`) stays exactly the shape a TF-IDF
+rebuild would expose, so swapping the scoring algorithm is
+service-local.
+
+### 26.6 What deletes from disk (§17 discipline)
+
+After §26 lands, three legacy modules go to legacy in the same PR:
+
+- `persistence.rs` (~402 LoC) — replaced by `services/persistence.rs`
+  (~140 LoC) plus the slot's title-bar accessor.
+- `project.rs` (~543 LoC) — replaced by `services/project.rs`
+  (~110 LoC) plus the walker. The vault-adapter half stays in
+  `prism-daemon` (where it belongs); the host-coupling half
+  deletes outright.
+- `search.rs` (~263 LoC) — replaced by `services/search.rs` (~150
+  LoC). The TF-IDF index struct goes to legacy; the substring
+  scorer is enough until the rule-of-three on "users want phrase
+  search" fires.
+
+Total: ~1200 LoC out, ~400 LoC in. The diff is dominated by
+deletions — same shape as every prior smart-pattern landing.
+
+## 27. Service port wave — Signals / Help / Menu / Luau (cross-service)
+
+**Strategy.** §27 ports the four "leaf" features that *compose*
+with what every prior wave shipped. Signals fires connections that
+mutate the document, sometimes via Luau handlers; Help owns the
+hover-tooltip lifecycle that every block writes into; Menu owns
+the dropdown / context-menu lifecycle that every menu-bar binding
+reads; Luau is the one place mlua-backed scripting reaches the
+host.
+
+The cross-service property §24.6 documented (Signals reaching
+Luau) is *not* implemented as `services.get("luau")`. The smart
+pattern is: **shared resources go on `MutCtx`, not behind dynamic
+service-lookup**. `MutCtx::luau: &'a mut dyn LuauHost` is the one
+field; `SignalsService::Custom` calls `ctx.luau.exec(handler,
+payload)` directly, type-safe at the call site, no downcasting.
+The registry's `get(id)` lookup remains for genuinely-rare reach
+(observability, future feature flags), but cross-service *runtime*
+calls flow through resources, not through the registry. This is
+the §22 generalisation: `BuilderDocument` is on `state.canvas`,
+`UndoStack` is on `MutCtx::undo`, `Vfs` is on `MutCtx::vfs`,
+`LuauHost` is on `MutCtx::luau` — every shared mutable lives on
+the borrow-pack the trait already takes.
+
+### 27.1 SignalsService — one dispatcher, six action arms
+
+`fire_signal(ctx, source_node, signal, payload, depth)` is the
+public entry. It walks `state.canvas.document.connections`,
+filters by `(source_node, signal)`, and applies each connection's
+`ActionKind`:
+
+- `SetProperty { key, value }` → `node.props[key] = value` via
+  `Node::find_mut`.
+- `ToggleVisibility` → flip `props["visible"]`, default `true`.
+- `EmitSignal { signal }` → recurse with `depth + 1`, capped at
+  `MAX_CASCADE_DEPTH = 8`.
+- `NavigateTo` / `PlayAnimation` → no-op until the workspace /
+  animation slots' mutators land; documented seam.
+- `Custom { handler }` → `ctx.luau.exec(handler, payload)`. The
+  *only* cross-resource reach in the wave.
+
+The legacy `SignalRuntime`'s `connections_to_event_listeners` /
+`event_listeners_to_connections` codegen bridges live in
+`prism-builder` where they belong (they're document-level
+transformations, not shell-level state). `SignalsService` is pure
+dispatch; codegen is the document's concern.
+
+### 27.2 HelpService — hover lifecycle without a registry duplication
+
+The legacy `help.rs` mixed three responsibilities: a registry of
+tooltip text (`HelpRegistry`), the show-delay timer (380ms), and
+the auto-hide timer (8s). The shell only needs the *lifecycle* —
+the registry stays in `prism_core::help::HelpRegistry` where every
+component already registers. The service exposes one command
+(`help.hide`), an `on_event` that captures `Esc` while a tooltip
+is visible, and a `queue(tip)` API for hover handlers to push
+pending tooltips. The pending-queue pattern lets handlers fire
+through the standard `&mut MutCtx`-only command shape without
+inventing a "command-with-args" surface (which would require a
+second dispatch path and break the §24 declarative form).
+
+### 27.3 MenuService — close clears both, items carry their commands
+
+```
+menu.close   Escape   — clears state.menus.dropdown AND state.menus.context
+```
+
+That's the entire mutator surface. Item activation is *not* a
+dedicated service command — items already carry their `command:
+Option<String>` field (§21), and the host's click handler runs
+that command through the existing `ServiceRegistry::commands().run(id, ctx)`
+table. One mutator (close), one carrier (the menu item's command
+field), zero per-item glue. The §21 `MenuItem::separator()`
+constructor remains the typed-shape door.
+
+### 27.4 LuauService — command surface only, runtime on MutCtx
+
+The `LuauHost` trait has one method (`exec(script, args) -> Result<Value, String>`).
+`NoopLuauHost` (the default) records calls and returns `Null` — sufficient
+for every test that exercises `Custom` action dispatch without
+linking mlua. The real mlua-backed host plugs in at `Shell::new`
+once mlua re-enters the build. The service contributes one
+command (`luau.run-selection`) that exec's `state.canvas.code_buffer.source`
+and toasts the result. Adding a Luau-callable feature is one row
+in `commands()`.
+
+### 27.5 What deletes from disk
+
+- `signals.rs` (~607 LoC) — replaced by `services/signals.rs`
+  (~140 LoC). The `SignalRuntime` struct goes to legacy; dispatch
+  is a free function with `&mut MutCtx`.
+- `help.rs` (~348 LoC) — replaced by `services/help.rs` (~80 LoC)
+  plus `prism_core::help::HelpRegistry` retained. The
+  show-delay/auto-hide timers re-land when the timer service
+  ships.
+- `menu.rs` (~215 LoC) — replaced by `services/menu.rs` (~25 LoC).
+  Items already live on `MenuSlot`; the service is the close
+  mutator.
+- `luau/` (~480 LoC across 3 files) — replaced by
+  `services/luau.rs` (~70 LoC) plus the `LuauHost` trait. The
+  document-level Luau (graph compilation, signal codegen) stays
+  in `prism-builder`; the shell-side host is the trait.
+
+Total §27: ~1650 LoC out, ~315 LoC in.
+
+### 27.6 Smart-pattern scorecard (§26 + §27 combined)
+
+- **One trait per seam, never per-service.** `Vfs`, `LuauHost`,
+  `ShellService` are the three traits the wave introduces. No
+  service is a trait; every service is an `impl ShellService`.
+- **`MutCtx` carries every shared mutable.** Adding a service that
+  needs a new resource (e.g. `Clipboard`, `SystemTime`) is one
+  field on `MutCtx`. Existing services don't recompile their
+  signatures.
+- **Cross-service reach uses resources, not registry-lookup.**
+  `ServiceRegistry::get(id)` exists for observability; runtime
+  calls flow through `MutCtx`. SignalsService → LuauService
+  validates this rule under the only real cross-service load
+  in the migration.
+- **One dispatch entry per behaviour.** `fire_signal` (signals),
+  `ingest_folder` (project), `rebuild_results` (search) are each
+  the one place that walks their respective domain — no per-arm
+  duplication, no parallel "fast path / slow path" branches.
+- **Modal capture lives on `EventOutcome::Handled`.** Search and
+  the command palette (§25) both rely on the same fan-out
+  short-circuit; no service queries the other's "is open" flag,
+  no second priority resolution rule.
+- **Pickers are host-side, not service-side.** Persistence /
+  Project commands work against `state.project.current_file` /
+  `state.project.root` already-set; the host (rfd, web file
+  dialog, test fixture) writes those fields and dispatches. One
+  command, one surface, zero platform branches in the service.
+
+### 27.7 Terminal-state property — write side
+
+After §26 + §27, every legacy behaviour the shell shipped has a
+documented place. The §24 promise ("every change reads as one of
+a small set of declarative edits") now applies to the write side
+in full:
+
+- New feature → one `impl ShellService` + one row in
+  `register_shell_services`.
+- New command → one row in some service's `commands()`.
+- New event handler → one branch on `Event` inside one service's
+  `on_event`.
+- New shared resource → one field on `MutCtx` + one assignment in
+  `ShellInner::mut_ctx`.
+- New IO call → one `Vfs` method invocation. (Adding a fifth
+  method to `Vfs` itself is a deliberate one-time edit, not a
+  per-feature one.)
+- New script entry → one `LuauHost::exec` call.
+
+Nothing else in the host has to learn the feature exists.
+
+### Decision-log entry
+
+| Date | Decision | Rationale |
+|---|---|---|
+| 2026-05-10 | §26 + §27 land in code as one combined wave (~880 LoC across 9 new files in `prism-shell/src/services/`). **§26 IO**: `services/vfs.rs` (`Vfs` trait, `OsVfs`, `InMemVfs` test support); `services/persistence.rs` (`PersistenceService` — `file.{new,save,save-as,open}` against `Vfs`, `serde_json::Value` wire format direct over `BuilderDocument`); `services/project.rs` (`ProjectService` — `project.{open-folder,close-folder}` with one recursive `ingest_folder` walker); `services/search.rs` (`SearchService` — `search.{open,close,next,prev}` plus `on_event` modal capture; substring-position scorer over `Node` tree). New slots on `AppState`: `ProjectSlot { current_file, root, dirty, recent: Vec<PathBuf> }` (with `touch()` + `title_suffix()`), `SearchSlot { open, query, results: Vec<SearchHit>, selected_index }` (with `search_overlay_props()`). **§27 cross-service**: `services/signals.rs` (`fire_signal` recursive dispatcher, `MAX_CASCADE_DEPTH=8`, six action arms — `SetProperty` / `ToggleVisibility` / `EmitSignal` recursion / `Custom` via `ctx.luau.exec` / `NavigateTo`+`PlayAnimation` documented no-ops); `services/help.rs` (`HelpService` with `Mutex<Option<HelpTooltip>>` queue + `on_event` Esc-while-visible + `help.hide` command); `services/menu.rs` (`MenuService` — single `menu.close` command that clears both `dropdown` and `context`); `services/luau.rs` (`LuauHost` trait, `NoopLuauHost` always-on fallback, `LuauService::run-selection` command exec'ing `state.canvas.code_buffer.source`). **`MutCtx` extended** with `vfs: &'a mut dyn Vfs` and `luau: &'a mut dyn LuauHost` (additive — pre-existing `state`/`viewport`/`undo` services unchanged); `ShellInner` gains `vfs: Box<dyn Vfs>` (`OsVfs`) and `luau: Box<dyn LuauHost>` (`NoopLuauHost`). `register_shell_services` grows by 7 rows; service total now 10. Tests (7 new): one round-trip per IO service (save→open round-trip through `InMemVfs`; close-folder clears slot; search open/close clears query+results), one dispatch test for SignalsService (no-connection no-op), one Esc-clears-tooltip test, one menu-close-both-arrays test, one Luau toast-on-exec test. 236 lib tests green (was 229 at §24 close); `cargo clippy -p prism-shell --all-targets -- -D warnings` is clean. | The wave validates the pattern across the *only* two structural risks the §24 design left: (a) shared resources beyond `state`/`undo`, and (b) cross-service runtime reach. Both resolve through `MutCtx` extension (`vfs` and `luau` fields), not through new traits or new lookup rules. The terminal-state property is now demonstrable: every command body is `\|ctx\| { … }` over the same single carrier; no service has a constructor that takes another service; the registry's `get(id)` is unused at runtime by any service in the tree. The "pickers are host-side" rule is the load-bearing call for IO ergonomics — `PersistenceService` does *not* depend on `rfd`, so the same service runs in tests (with `InMemVfs`), in the browser (with a WebFileSystem-backed `Vfs`), and in the desktop (with `rfd` populating `state.project.current_file` before dispatch). One service body, three platforms, zero `cfg` branches. The Luau seam mirrors the same discipline: `NoopLuauHost` lets every test exercise the `Custom` action arm without linking mlua, and the production host (`mlua`-backed) plugs in at one site (`ShellInner::luau`) when the feature ships. The legacy modules tracked here (`persistence.rs`, `project.rs`, `search.rs`, `signals.rs`, `help.rs`, `menu.rs`, `luau/`) total ~2860 LoC; the replacements are ~880 LoC. The diff is dominated by deletions and the deletions are *load-bearing* — every code path that wired a key-event-to-platform-IO via Slint callbacks, or wired Luau via direct `mlua` linkage in the shell, is gone, and the alternative (the registration table + `MutCtx` resources) is the *only* way to reach the same behaviour. The migration's write side is now the same shape as the read side: one declarative table per seam, every feature one row, every shared resource one field. The seven services landing in this wave are the exhaustive port — no further `app/` or `panels/*` modules remain to reborn against the new contract. |
