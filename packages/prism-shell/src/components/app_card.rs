@@ -18,13 +18,11 @@ use prism_builder::{
     common_signals,
     document::Node,
     registry::{FieldSpec, NumericBounds},
-    signal::SignalDef,
     style::StyleProperties,
     ui_lower::{
         bare_container, colored_text_node, hover_bg, image_node, parse_color, prop_bool, prop_str,
         prop_string, uniform_radius, LowerCtx,
     },
-    Block, ComponentId,
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
 use serde_json::Value;
@@ -61,90 +59,85 @@ fn icon_path(name: &str) -> &'static str {
     }
 }
 
-pub struct AppCard {
-    pub id: ComponentId,
+fn app_card_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("app-id", "App ID").required(),
+        FieldSpec::text("name", "Name"),
+        FieldSpec::text("description", "Description"),
+        FieldSpec::text("icon", "Icon"),
+        FieldSpec::text("accent-color", "Accent color")
+            .with_default(Value::String("#0060c0".into())),
+        FieldSpec::integer(
+            "page-count",
+            "Page count",
+            NumericBounds::min_max(0.0, 999.0),
+        ),
+        FieldSpec::boolean("is-create", "Is create card").with_default(Value::Bool(false)),
+    ]
 }
 
-impl Block for AppCard {
-    fn id(&self) -> &ComponentId {
-        &self.id
-    }
-
-    fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::text("app-id", "App ID").required(),
-            FieldSpec::text("name", "Name"),
-            FieldSpec::text("description", "Description"),
-            FieldSpec::text("icon", "Icon"),
-            FieldSpec::text("accent-color", "Accent color")
-                .with_default(Value::String("#0060c0".into())),
-            FieldSpec::integer(
-                "page-count",
-                "Page count",
-                NumericBounds::min_max(0.0, 999.0),
-            ),
-            FieldSpec::boolean("is-create", "Is create card").with_default(Value::Bool(false)),
-        ]
-    }
-
-    fn signals(&self) -> Vec<SignalDef> {
-        common_signals()
-    }
-
-    fn lower_ui(&self, _ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> UiNode {
-        let app_id = prop_string(node, "app-id");
-        let name = prop_string(node, "name");
-        let description = prop_string(node, "description");
-        let icon_name = prop_str(node, "icon");
-        let accent = prop_str(node, "accent-color");
-        let accent = if accent.is_empty() { "#0060c0" } else { accent };
-        let page_count = node
-            .props
-            .get("page-count")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(1);
-        let is_create = prop_bool(node, "is-create", false);
-
-        let rail = bare_container(format!("{}::rail", node.id), vec![], |p| {
-            p.height = Sizing::Fixed(RAIL_HEIGHT);
-            p.background = parse_color(accent);
-        });
-
-        let body = if is_create {
-            create_body(node, style)
-        } else {
-            app_body(
-                node,
-                style,
-                &name,
-                &description,
-                icon_name,
-                accent,
-                page_count,
-            )
-        };
-
-        // Outer card. Background + border get hover-swapped through the
-        // standard hover-overrides path. SSR semantic is <article> with
-        // the app-id surfaced as `data-app` so launchpad screen-readers
-        // / nav scripts have something to target.
-        bare_container(node.id.clone(), vec![rail, body], |props| {
-            props.direction = Direction::Column;
-            props.height = Sizing::Fixed(CARD_HEIGHT);
-            props.background = parse_color(CARD_BG);
-            props.radius = uniform_radius(CARD_RADIUS);
-            props.hover = hover_bg(CARD_HOVER_BG);
-            let mut semantic = Semantic::tag("article");
-            if !app_id.is_empty() {
-                semantic = semantic.with_attr("data-app", &app_id);
-            }
-            if is_create {
-                semantic = semantic.with_attr("data-create", "true");
-            }
-            props.semantic = semantic;
-        })
-    }
+fn app_card_signals() -> Vec<prism_builder::signal::SignalDef> {
+    common_signals()
 }
+
+fn app_card_lower(_ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> UiNode {
+    let app_id = prop_string(node, "app-id");
+    let name = prop_string(node, "name");
+    let description = prop_string(node, "description");
+    let icon_name = prop_str(node, "icon");
+    let accent = prop_str(node, "accent-color");
+    let accent = if accent.is_empty() { "#0060c0" } else { accent };
+    let page_count = node
+        .props
+        .get("page-count")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(1);
+    let is_create = prop_bool(node, "is-create", false);
+
+    let rail = bare_container(format!("{}::rail", node.id), vec![], |p| {
+        p.height = Sizing::Fixed(RAIL_HEIGHT);
+        p.background = parse_color(accent);
+    });
+
+    let body = if is_create {
+        create_body(node, style)
+    } else {
+        app_body(
+            node,
+            style,
+            &name,
+            &description,
+            icon_name,
+            accent,
+            page_count,
+        )
+    };
+
+    // Outer card. Background + border get hover-swapped through the
+    // standard hover-overrides path. SSR semantic is <article> with
+    // the app-id surfaced as `data-app` so launchpad screen-readers
+    // / nav scripts have something to target.
+    bare_container(node.id.clone(), vec![rail, body], |props| {
+        props.direction = Direction::Column;
+        props.height = Sizing::Fixed(CARD_HEIGHT);
+        props.background = parse_color(CARD_BG);
+        props.radius = uniform_radius(CARD_RADIUS);
+        props.hover = hover_bg(CARD_HOVER_BG);
+        let mut semantic = Semantic::tag("article");
+        if !app_id.is_empty() {
+            semantic = semantic.with_attr("data-app", &app_id);
+        }
+        if is_create {
+            semantic = semantic.with_attr("data-create", "true");
+        }
+        props.semantic = semantic;
+    })
+}
+
+pub const APP_CARD_SPEC: prism_builder::BlockSpec =
+    prism_builder::BlockSpec::new("shell.app-card", app_card_schema)
+        .lower(app_card_lower)
+        .signals(app_card_signals);
 
 fn create_body(node: &Node, style: &StyleProperties) -> UiNode {
     let plus = image_node(
@@ -271,16 +264,14 @@ mod tests {
     use prism_builder::document::Node as BuilderNode;
     use prism_builder::layout::LayoutMode;
     use prism_builder::style::StyleProperties as Cascade;
+    use prism_builder::Block;
     use prism_core::foundation::spatial::Transform2D;
     use serde_json::json;
 
     fn lower_one(node: &BuilderNode) -> UiNode {
-        let block = AppCard {
-            id: "shell.app-card".into(),
-        };
         let cascade = Cascade::default();
         let ctx = LowerCtx::new(None, &cascade);
-        block.lower_ui(&ctx, node, &cascade)
+        app_card_lower(&ctx, node, &cascade)
     }
 
     fn card(props: Value) -> BuilderNode {
@@ -388,9 +379,7 @@ mod tests {
 
     #[test]
     fn schema_declares_seven_fields() {
-        let block = AppCard {
-            id: "shell.app-card".into(),
-        };
+        let block = prism_builder::SpecBlock::new(&super::APP_CARD_SPEC);
         let keys: Vec<String> = block.schema().into_iter().map(|f| f.key).collect();
         assert_eq!(
             keys,

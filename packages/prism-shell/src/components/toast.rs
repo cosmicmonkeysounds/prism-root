@@ -29,7 +29,6 @@ use prism_builder::{
         bare_container, colored_text_node, parse_color, prop_str, prop_string, uniform_radius,
         LowerCtx,
     },
-    Block, ComponentId,
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
 use serde_json::Value;
@@ -56,102 +55,97 @@ fn kind_chrome(kind: &str) -> (&'static str, &'static str) {
     }
 }
 
-pub struct Toast {
-    pub id: ComponentId,
+fn toast_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("title", "Title").required(),
+        FieldSpec::text("body", "Body"),
+        FieldSpec::text("kind", "Kind").with_default(Value::String("info".into())),
+    ]
 }
 
-impl Block for Toast {
-    fn id(&self) -> &ComponentId {
-        &self.id
-    }
+fn toast_signals() -> Vec<prism_builder::signal::SignalDef> {
+    let mut signals = common_signals();
+    signals.push(SignalDef::new(
+        "dismissed",
+        "User dismissed the toast (close click, swipe, or auto-timeout).",
+    ));
+    signals
+}
 
-    fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::text("title", "Title").required(),
-            FieldSpec::text("body", "Body"),
-            FieldSpec::text("kind", "Kind").with_default(Value::String("info".into())),
-        ]
-    }
+fn toast_lower(_ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> UiNode {
+    let title = prop_string(node, "title");
+    let body = prop_string(node, "body");
+    let kind = match prop_str(node, "kind") {
+        "" => "info",
+        other => other,
+    };
+    let (rail_color, role) = kind_chrome(kind);
 
-    fn signals(&self) -> Vec<SignalDef> {
-        let mut signals = common_signals();
-        signals.push(SignalDef::new(
-            "dismissed",
-            "User dismissed the toast (close click, swipe, or auto-timeout).",
-        ));
-        signals
-    }
+    // Left accent rail — kind-tinted vertical stroke. `bare_container`
+    // owns the construction; we only specify the few fields that
+    // make this a rail rather than a generic box.
+    let rail = bare_container(format!("{}::rail", node.id), vec![], |props| {
+        props.width = Sizing::Fixed(RAIL_WIDTH);
+        props.height = Sizing::Grow;
+        props.background = parse_color(rail_color);
+    });
 
-    fn lower_ui(&self, _ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> UiNode {
-        let title = prop_string(node, "title");
-        let body = prop_string(node, "body");
-        let kind = match prop_str(node, "kind") {
-            "" => "info",
-            other => other,
-        };
-        let (rail_color, role) = kind_chrome(kind);
-
-        // Left accent rail — kind-tinted vertical stroke. `bare_container`
-        // owns the construction; we only specify the few fields that
-        // make this a rail rather than a generic box.
-        let rail = bare_container(format!("{}::rail", node.id), vec![], |props| {
-            props.width = Sizing::Fixed(RAIL_WIDTH);
-            props.height = Sizing::Grow;
-            props.background = parse_color(rail_color);
-        });
-
-        // Title + body column. `colored_text_node` is the shared
-        // "cascade-resolved text with a per-block override colour"
-        // builder — toast colours are intentional overrides, so this
-        // is the one-line shape. Reordering is one Vec edit, not two.
-        let title_text = colored_text_node(
-            format!("{}::title", node.id),
-            title,
+    // Title + body column. `colored_text_node` is the shared
+    // "cascade-resolved text with a per-block override colour"
+    // builder — toast colours are intentional overrides, so this
+    // is the one-line shape. Reordering is one Vec edit, not two.
+    let title_text = colored_text_node(
+        format!("{}::title", node.id),
+        title,
+        style,
+        TITLE_FONT,
+        TITLE_COLOR,
+    );
+    let body_text = if body.is_empty() {
+        None
+    } else {
+        Some(colored_text_node(
+            format!("{}::body", node.id),
+            body,
             style,
-            TITLE_FONT,
-            TITLE_COLOR,
-        );
-        let body_text = if body.is_empty() {
-            None
-        } else {
-            Some(colored_text_node(
-                format!("{}::body", node.id),
-                body,
-                style,
-                BODY_FONT,
-                BODY_COLOR,
-            ))
+            BODY_FONT,
+            BODY_COLOR,
+        ))
+    };
+    let mut column_children = vec![title_text];
+    column_children.extend(body_text);
+    let column = bare_container(format!("{}::col", node.id), column_children, |props| {
+        props.direction = Direction::Column;
+        props.gap = 4.0;
+        props.width = Sizing::Grow;
+        props.padding = Padding {
+            left: 12.0,
+            right: 12.0,
+            top: 10.0,
+            bottom: 10.0,
         };
-        let mut column_children = vec![title_text];
-        column_children.extend(body_text);
-        let column = bare_container(format!("{}::col", node.id), column_children, |props| {
-            props.direction = Direction::Column;
-            props.gap = 4.0;
-            props.width = Sizing::Grow;
-            props.padding = Padding {
-                left: 12.0,
-                right: 12.0,
-                top: 10.0,
-                bottom: 10.0,
-            };
-        });
+    });
 
-        // Outer card: rail + column in a row, fixed-width, soft shadow
-        // shape (the actual shadow is a backend concern; SSR users pick
-        // it up via the role + data attributes). Semantic role is kind-
-        // driven so screen readers announce errors as alerts.
-        bare_container(node.id.clone(), vec![rail, column], |props| {
-            props.direction = Direction::Row;
-            props.width = Sizing::Fixed(TOAST_WIDTH);
-            props.height = Sizing::Fit;
-            props.background = parse_color(CARD_BG);
-            props.radius = uniform_radius(TOAST_RADIUS);
-            props.semantic = Semantic::tag("aside")
-                .with_role(role)
-                .with_attr("data-kind", kind);
-        })
-    }
+    // Outer card: rail + column in a row, fixed-width, soft shadow
+    // shape (the actual shadow is a backend concern; SSR users pick
+    // it up via the role + data attributes). Semantic role is kind-
+    // driven so screen readers announce errors as alerts.
+    bare_container(node.id.clone(), vec![rail, column], |props| {
+        props.direction = Direction::Row;
+        props.width = Sizing::Fixed(TOAST_WIDTH);
+        props.height = Sizing::Fit;
+        props.background = parse_color(CARD_BG);
+        props.radius = uniform_radius(TOAST_RADIUS);
+        props.semantic = Semantic::tag("aside")
+            .with_role(role)
+            .with_attr("data-kind", kind);
+    })
 }
+
+pub const TOAST_SPEC: prism_builder::BlockSpec =
+    prism_builder::BlockSpec::new("shell.toast", toast_schema)
+        .lower(toast_lower)
+        .signals(toast_signals);
 
 #[cfg(test)]
 mod tests {
@@ -159,16 +153,14 @@ mod tests {
     use prism_builder::document::Node as BuilderNode;
     use prism_builder::layout::LayoutMode;
     use prism_builder::style::StyleProperties as Cascade;
+    use prism_builder::Block;
     use prism_core::foundation::spatial::Transform2D;
     use serde_json::json;
 
     fn lower_one(node: &BuilderNode) -> UiNode {
-        let block = Toast {
-            id: "shell.toast".into(),
-        };
         let cascade = Cascade::default();
         let ctx = LowerCtx::new(None, &cascade);
-        block.lower_ui(&ctx, node, &cascade)
+        toast_lower(&ctx, node, &cascade)
     }
 
     fn toast_node(props: Value) -> BuilderNode {
@@ -248,18 +240,14 @@ mod tests {
 
     #[test]
     fn schema_declares_three_fields() {
-        let block = Toast {
-            id: "shell.toast".into(),
-        };
+        let block = prism_builder::SpecBlock::new(&super::TOAST_SPEC);
         let keys: Vec<String> = block.schema().into_iter().map(|f| f.key).collect();
         assert_eq!(keys, vec!["title", "body", "kind"]);
     }
 
     #[test]
     fn signals_include_dismissed_alongside_universals() {
-        let block = Toast {
-            id: "shell.toast".into(),
-        };
+        let block = prism_builder::SpecBlock::new(&super::TOAST_SPEC);
         let names: Vec<String> = block.signals().into_iter().map(|s| s.name).collect();
         assert!(names.contains(&"dismissed".into()));
         assert!(names.contains(&"clicked".into()), "common signals merged");

@@ -12,7 +12,6 @@ use prism_builder::{
         bare_container, colored_text_node, hover_bg, image_node, parse_color, prop_string,
         uniform_radius, LowerCtx,
     },
-    Block, ComponentId,
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
 use serde_json::Value;
@@ -24,61 +23,56 @@ const ROW_RADIUS: f32 = 4.0;
 const LABEL_COLOR: &str = "#000000";
 const ICON_SIZE: f32 = 16.0;
 
-pub struct ComponentPalette {
-    pub id: ComponentId,
+fn component_palette_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("items", "Items (JSON array)"),
+        FieldSpec::text("selected-id", "Selected item id"),
+    ]
 }
 
-impl Block for ComponentPalette {
-    fn id(&self) -> &ComponentId {
-        &self.id
-    }
+fn component_palette_signals() -> Vec<prism_builder::signal::SignalDef> {
+    let mut s = common_signals();
+    s.push(SignalDef::new("item-activated", "Palette item picked."));
+    s
+}
 
-    fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::text("items", "Items (JSON array)"),
-            FieldSpec::text("selected-id", "Selected item id"),
-        ]
-    }
+fn component_palette_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let selected = prop_string(node, "selected-id");
+    let style = StyleProperties::default();
 
-    fn signals(&self) -> Vec<SignalDef> {
-        let mut s = common_signals();
-        s.push(SignalDef::new("item-activated", "Palette item picked."));
-        s
-    }
-
-    fn lower_ui(&self, _ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
-        let selected = prop_string(node, "selected-id");
-        let style = StyleProperties::default();
-
-        let rows: Vec<UiNode> = node
-            .props
-            .get("items")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .enumerate()
-                    .map(|(idx, item)| build_row(node, idx, item, &style, &selected))
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        bare_container(node.id.clone(), rows, |p| {
-            p.direction = Direction::Column;
-            p.gap = 2.0;
-            p.padding = Padding {
-                left: 6.0,
-                right: 6.0,
-                top: 6.0,
-                bottom: 6.0,
-            };
-            p.width = Sizing::Grow;
-            p.height = Sizing::Grow;
-            p.semantic = Semantic::tag("aside")
-                .with_attr("aria-label", "Component palette")
-                .with_attr("data-role", "component-palette");
+    let rows: Vec<UiNode> = node
+        .props
+        .get("items")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .enumerate()
+                .map(|(idx, item)| build_row(node, idx, item, &style, &selected))
+                .collect()
         })
-    }
+        .unwrap_or_default();
+
+    bare_container(node.id.clone(), rows, |p| {
+        p.direction = Direction::Column;
+        p.gap = 2.0;
+        p.padding = Padding {
+            left: 6.0,
+            right: 6.0,
+            top: 6.0,
+            bottom: 6.0,
+        };
+        p.width = Sizing::Grow;
+        p.height = Sizing::Grow;
+        p.semantic = Semantic::tag("aside")
+            .with_attr("aria-label", "Component palette")
+            .with_attr("data-role", "component-palette");
+    })
 }
+
+pub const COMPONENT_PALETTE_SPEC: prism_builder::BlockSpec =
+    prism_builder::BlockSpec::new("shell.component-palette", component_palette_schema)
+        .lower(component_palette_lower)
+        .signals(component_palette_signals);
 
 fn build_row(
     node: &Node,
@@ -135,15 +129,13 @@ fn build_row(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use prism_builder::document::Node as BuilderNode;
     use prism_builder::layout::LayoutMode;
     use prism_core::foundation::spatial::Transform2D;
     use serde_json::json;
 
     fn lower(props: Value) -> UiNode {
-        let block = ComponentPalette {
-            id: "shell.component-palette".into(),
-        };
         let n = BuilderNode {
             id: "cp".into(),
             component: "shell.component-palette".into(),
@@ -156,7 +148,7 @@ mod tests {
         };
         let cascade = StyleProperties::default();
         let ctx = LowerCtx::new(None, &cascade);
-        block.lower_ui(&ctx, &n, &cascade)
+        component_palette_lower(&ctx, &n, &cascade)
     }
 
     #[test]

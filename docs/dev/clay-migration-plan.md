@@ -5003,3 +5003,96 @@ test added). Full workspace test suite green. `cargo clippy
 | Date | Decision | Rationale |
 |---|---|---|
 | 2026-05-10 | §32 lands: starter catalog collapses to `BUILTINS: &[&BuiltinSpec]`. 14 `pub struct XxxBlock` + `impl Block` pairs deleted (~700 LoC of boilerplate gone); `BuiltinBlock` + `BuiltinSpec` + const builder API land in their place. Stale Slint references in root `CLAUDE.md` + Cargo.toml descriptions updated to match the post-cutover stack. | The 14 starter blocks were the largest remaining instance of "one struct + one trait impl per registered thing" boilerplate in the workspace. The new pattern matches the user's "DI/Builders/registration/Declarative" rubric exactly: each block is *data* (a `BuiltinSpec`), the type that interprets the data (`BuiltinBlock`) exists once, and registration is a const table. `prism-luau-derive`'s `#[derive(PrismBlock)]` stays in its lane (user-authored template-based blocks); the two paths compose without knowing about each other. The Slint doc-string carryover was the last surface-level lie about what the codebase actually is. |
+
+## 33. Shell components → declarative `BlockSpec` table
+
+**Strategy locked 2026-05-10 (post-§32).** §32 collapsed the 14
+starter blocks via `BuiltinSpec`. The same pattern — one `struct
+Foo { id: ComponentId }` + one `impl Block for Foo` per registered
+thing — was duplicated **48 times** in
+`packages/prism-shell/src/components/`, the largest remaining
+instance of registration boilerplate in the workspace. Every shell
+primitive followed the identical shape: `id()` returned `&self.id`,
+`schema()` returned a hard-coded `Vec<FieldSpec>`, optionally
+`signals()` returned a custom signal list, and `lower_ui()` did the
+actual rendering work. The struct's only field, `id: ComponentId`,
+existed solely so the trait method could borrow it back out.
+
+**The collapse — §32 generalised.** `BuiltinSpec` lifts to
+`prism-builder/src/block.rs` as `BlockSpec`, with the wrapping
+`BuiltinBlock` renamed to `SpecBlock`. The const-fn builder API
+gains `.lower(...)` (so `lower` is no longer required at construction
+— it defaults to the same generic-container fallback as
+`Block::lower_ui`'s default), plus a `BlockSpec::leaf(id)` shortcut
+for blocks with no schema fields. Helper free functions
+`default_lower`, `default_signals`, `no_variants`, `no_schema`
+ship from the same module so any spec can compose against them.
+A new `register_specs(&mut ComponentRegistry, &[&BlockSpec])`
+helper is the one-line fan-out for any spec table.
+
+The shell registry shrinks from a 50-line `reg!(…)` macro table to
+a `pub static SHELL_BUILTINS: &[&BlockSpec] = &[…]` const table,
+each row pointing at a `pub const FOO_SPEC: BlockSpec` declared in
+the matching `components/foo.rs` file. `register_shell_builtins`
+becomes a one-liner: `register_specs(&mut reg.inner, SHELL_BUILTINS)`.
+
+**Smart-pattern wins.**
+
+- **Adding a shell primitive = one const + one row.** The hand-written
+  `pub struct Foo { pub id: ComponentId }`, the four-method `impl
+  Block for Foo` boilerplate, the `pub use foo::Foo` re-export in
+  `mod.rs`, and the `reg!("shell.foo", Foo)` macro arm all collapse
+  to a `pub const FOO_SPEC: BlockSpec = BlockSpec::new("shell.foo",
+  foo_schema).lower(foo_lower).signals(foo_signals)` literal and one
+  `&super::foo::FOO_SPEC` row in the table.
+- **One declarative primitive across two crates.** `BlockSpec` /
+  `SpecBlock` / `register_specs` live once in `prism-builder` and are
+  consumed by both `prism-builder::starter` (17 builtins) and
+  `prism-shell::components::registry` (48 primitives). The
+  `ShellComponentRegistry` newtype (which keeps shell primitives out
+  of the user-facing component palette) is unchanged — it still wraps
+  `ComponentRegistry`; only the registration call shape moved.
+- **`prism-luau-derive` stays orthogonal.** `#[derive(PrismBlock)]`
+  remains the path for *user-authored* blocks (template-based,
+  walks `lower_template`). `BlockSpec` is the path for *built-in*
+  blocks (Rust-authored, bespoke `lower` fn). Both paths produce
+  `Block` impls and feed the same `ComponentRegistry`; neither knows
+  about the other. The derive macro's emitted `impl ::prism_builder::Block
+  for #ident` is unchanged — it still routes through the trait, not
+  the spec — because user-authored blocks legitimately benefit from
+  the named-struct ergonomics (they often want associated functions,
+  Default impls, etc.).
+- **Tests stay readable.** The `let block = Foo { id: "shell.foo".into() }`
+  ctor in each component's `#[cfg(test)] mod tests` becomes
+  `let block = SpecBlock::new(&FOO_SPEC)`, and every `block.schema()`
+  / `block.signals()` / `block.lower_ui()` call keeps working
+  unchanged via the `Block` trait impl on `SpecBlock`. No test had
+  to change its assertions.
+- **Re-export hygiene.** `prism-shell/src/components/mod.rs` drops
+  the 48 `pub use foo::Foo;` re-exports — nothing outside the
+  registry consumed them, the per-component types existed only to
+  satisfy the macro registration shape. `mod.rs` is now 49 `pub
+  mod foo;` lines + one `pub use registry::{…, SHELL_BUILTINS};`.
+
+**Diff scorecard.**
+
+- 53 files changed, ~3.4k insertions / ~3.8k deletions = ~412 LoC
+  net deletion across `prism-shell` + `prism-builder`.
+- 48 `pub struct Foo { pub id: ComponentId }` declarations deleted.
+- 48 `impl Block for Foo { fn id() … fn schema() … fn lower_ui() …
+  }` blocks deleted.
+- 48 `pub use foo::Foo;` re-exports deleted from `mod.rs`.
+- 50-line `reg!()` macro table replaced by a const `&[&BlockSpec]`
+  array (same length, no macro).
+
+**Verification.** 255 prism-shell lib tests green, 338 prism-builder
+lib tests green, **3057 workspace tests total green**. `cargo clippy
+--workspace --all-targets -- -D warnings` clean. The two doc-comment
+trail-edges (one in `prism-shell/CLAUDE.md`, one in
+`prism-builder/CLAUDE.md`) are updated to point at §33.
+
+### Decision-log entry
+
+| Date | Decision | Rationale |
+|---|---|---|
+| 2026-05-10 | §33 lands: 48 shell components collapse to a single `SHELL_BUILTINS: &[&BlockSpec]` table; `BuiltinSpec`/`BuiltinBlock` from §32 generalise to `BlockSpec`/`SpecBlock` in `prism-builder/src/block.rs` and serve both the 17 starter builtins and the 48 shell primitives. ~412 LoC net deletion across 53 files. | §32 collapsed 14 starter blocks; the same pattern was duplicated 48× in shell components — the largest remaining instance of "one struct + one trait impl per registered thing" boilerplate. Lifting the primitive to `block.rs` lets both crates share one declarative spec without coupling shell to starter or vice-versa. `BlockSpec::new(id, schema).lower(fn).signals(fn).help(…)` is the smart-pattern user requested: data-driven, builder-style, registration via const table. `prism-luau-derive`'s `#[derive(PrismBlock)]` stays in its lane (template-IR-walking for user-authored blocks); the two paths compose without knowing about each other. |

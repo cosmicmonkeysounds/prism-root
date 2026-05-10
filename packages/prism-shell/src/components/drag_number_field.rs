@@ -22,80 +22,73 @@ use prism_builder::{
     signal::SignalDef,
     style::StyleProperties,
     ui_lower::{prop_str, prop_string, LowerCtx},
-    Block, ComponentId,
 };
 use prism_ui_runtime::layout::Node as UiNode;
 use serde_json::Value;
 
 use super::chrome::{drag_number_field_node, format_drag_value, DRAG_NUMBER_LABEL_COLOR};
 
-pub struct DragNumberField {
-    pub id: ComponentId,
+fn drag_number_field_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("key", "Key"),
+        FieldSpec::text("label", "Label"),
+        FieldSpec::number("value", "Value", NumericBounds::default())
+            .with_default(Value::from(0.0)),
+        FieldSpec::number("step", "Step", NumericBounds::min(0.0)).with_default(Value::from(1.0)),
+        FieldSpec::number("min", "Minimum", NumericBounds::default())
+            .with_default(Value::from(-99_999.0)),
+        FieldSpec::number("max", "Maximum", NumericBounds::default())
+            .with_default(Value::from(99_999.0)),
+    ]
 }
 
-impl Block for DragNumberField {
-    fn id(&self) -> &ComponentId {
-        &self.id
-    }
-
-    fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::text("key", "Key"),
-            FieldSpec::text("label", "Label"),
-            FieldSpec::number("value", "Value", NumericBounds::default())
-                .with_default(Value::from(0.0)),
-            FieldSpec::number("step", "Step", NumericBounds::min(0.0))
-                .with_default(Value::from(1.0)),
-            FieldSpec::number("min", "Minimum", NumericBounds::default())
-                .with_default(Value::from(-99_999.0)),
-            FieldSpec::number("max", "Maximum", NumericBounds::default())
-                .with_default(Value::from(99_999.0)),
-        ]
-    }
-
-    fn signals(&self) -> Vec<SignalDef> {
-        let mut signals = common_signals();
-        signals.push(
-            SignalDef::new(
-                "changed",
-                "Drag updated the value — payload mirrors the (key, value) pair the original \
+fn drag_number_field_signals() -> Vec<prism_builder::signal::SignalDef> {
+    let mut signals = common_signals();
+    signals.push(
+        SignalDef::new(
+            "changed",
+            "Drag updated the value — payload mirrors the (key, value) pair the original \
                  Slint callback emits on every drag tick.",
-            )
-            .with_payload(vec![
-                FieldSpec::text("key", "Key"),
-                FieldSpec::number("value", "Value", NumericBounds::default()),
-            ]),
-        );
-        signals.push(
-            SignalDef::new(
-                "committed",
-                "Inline edit accepted (Enter) — payload is the (key, raw text) the user typed.",
-            )
-            .with_payload(vec![
-                FieldSpec::text("key", "Key"),
-                FieldSpec::text("text", "Raw text"),
-            ]),
-        );
-        signals
-    }
-
-    fn lower_ui(&self, _ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
-        let label = prop_str(node, "label");
-        let value = node
-            .props
-            .get("value")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0);
-        let key = prop_string(node, "key");
-        drag_number_field_node(
-            node.id.clone(),
-            label,
-            DRAG_NUMBER_LABEL_COLOR,
-            format_drag_value(value),
-            &key,
         )
-    }
+        .with_payload(vec![
+            FieldSpec::text("key", "Key"),
+            FieldSpec::number("value", "Value", NumericBounds::default()),
+        ]),
+    );
+    signals.push(
+        SignalDef::new(
+            "committed",
+            "Inline edit accepted (Enter) — payload is the (key, raw text) the user typed.",
+        )
+        .with_payload(vec![
+            FieldSpec::text("key", "Key"),
+            FieldSpec::text("text", "Raw text"),
+        ]),
+    );
+    signals
 }
+
+fn drag_number_field_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let label = prop_str(node, "label");
+    let value = node
+        .props
+        .get("value")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    let key = prop_string(node, "key");
+    drag_number_field_node(
+        node.id.clone(),
+        label,
+        DRAG_NUMBER_LABEL_COLOR,
+        format_drag_value(value),
+        &key,
+    )
+}
+
+pub const DRAG_NUMBER_FIELD_SPEC: prism_builder::BlockSpec =
+    prism_builder::BlockSpec::new("shell.drag-number-field", drag_number_field_schema)
+        .lower(drag_number_field_lower)
+        .signals(drag_number_field_signals);
 
 #[cfg(test)]
 mod tests {
@@ -103,17 +96,15 @@ mod tests {
     use prism_builder::document::Node as BuilderNode;
     use prism_builder::layout::LayoutMode;
     use prism_builder::style::StyleProperties as Cascade;
+    use prism_builder::Block;
     use prism_core::foundation::spatial::Transform2D;
     use prism_ui_runtime::layout::Sizing;
     use serde_json::json;
 
     fn lower(node: &BuilderNode) -> UiNode {
-        let block = DragNumberField {
-            id: "shell.drag-number-field".into(),
-        };
         let cascade = Cascade::default();
         let ctx = LowerCtx::new(None, &cascade);
-        block.lower_ui(&ctx, node, &cascade)
+        drag_number_field_lower(&ctx, node, &cascade)
     }
 
     fn field(props: Value) -> BuilderNode {
@@ -205,18 +196,14 @@ mod tests {
 
     #[test]
     fn schema_declares_six_fields() {
-        let block = DragNumberField {
-            id: "shell.drag-number-field".into(),
-        };
+        let block = prism_builder::SpecBlock::new(&super::DRAG_NUMBER_FIELD_SPEC);
         let keys: Vec<String> = block.schema().into_iter().map(|f| f.key).collect();
         assert_eq!(keys, vec!["key", "label", "value", "step", "min", "max"]);
     }
 
     #[test]
     fn signals_include_changed_and_committed() {
-        let block = DragNumberField {
-            id: "shell.drag-number-field".into(),
-        };
+        let block = prism_builder::SpecBlock::new(&super::DRAG_NUMBER_FIELD_SPEC);
         let names: Vec<String> = block.signals().into_iter().map(|s| s.name).collect();
         assert!(names.contains(&"changed".into()));
         assert!(names.contains(&"committed".into()));

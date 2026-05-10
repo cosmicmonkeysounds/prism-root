@@ -16,7 +16,6 @@ use prism_builder::{
     signal::SignalDef,
     style::StyleProperties,
     ui_lower::{bare_container, parse_color, prop_bool, prop_string, uniform_radius, LowerCtx},
-    Block, ComponentId,
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
 use serde_json::{json, Value};
@@ -27,131 +26,126 @@ const GRID_LINE: &str = "#22000000";
 const SELECTION_BORDER: &str = "#0060c0";
 const HANDLE_DIRECTIONS: [&str; 8] = ["tl", "t", "tr", "r", "br", "b", "bl", "l"];
 
-pub struct BuilderCanvas {
-    pub id: ComponentId,
+fn builder_canvas_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::number(
+            "page-width",
+            "Page width (px)",
+            prism_builder::registry::NumericBounds::min(1.0),
+        )
+        .with_default(Value::from(1280.0)),
+        FieldSpec::number(
+            "page-height",
+            "Page height (px)",
+            prism_builder::registry::NumericBounds::min(1.0),
+        )
+        .with_default(Value::from(800.0)),
+        FieldSpec::number(
+            "zoom",
+            "Canvas zoom",
+            prism_builder::registry::NumericBounds::min_max(0.1, 8.0),
+        )
+        .with_default(Value::from(1.0)),
+        FieldSpec::text("tool", "Active tool (move|rotate|scale|none)"),
+        FieldSpec::boolean("show-gizmo", "Show gizmo overlay").with_default(Value::Bool(false)),
+        FieldSpec::text(
+            "selection-rect",
+            "Selection rect JSON {x, y, width, height} for handles",
+        ),
+        FieldSpec::text(
+            "grid-cells",
+            "Grid cells JSON array of {x, y, width, height, occupied}",
+        ),
+    ]
 }
 
-impl Block for BuilderCanvas {
-    fn id(&self) -> &ComponentId {
-        &self.id
-    }
+fn builder_canvas_signals() -> Vec<prism_builder::signal::SignalDef> {
+    let mut s = common_signals();
+    s.push(SignalDef::new(
+        "canvas-clicked",
+        "Canvas background clicked.",
+    ));
+    s.push(SignalDef::new("cell-clicked", "Grid cell clicked."));
+    s.push(SignalDef::new("selection-dragged", "Selection drag delta."));
+    s
+}
 
-    fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::number(
-                "page-width",
-                "Page width (px)",
-                prism_builder::registry::NumericBounds::min(1.0),
-            )
-            .with_default(Value::from(1280.0)),
-            FieldSpec::number(
-                "page-height",
-                "Page height (px)",
-                prism_builder::registry::NumericBounds::min(1.0),
-            )
-            .with_default(Value::from(800.0)),
-            FieldSpec::number(
-                "zoom",
-                "Canvas zoom",
-                prism_builder::registry::NumericBounds::min_max(0.1, 8.0),
-            )
-            .with_default(Value::from(1.0)),
-            FieldSpec::text("tool", "Active tool (move|rotate|scale|none)"),
-            FieldSpec::boolean("show-gizmo", "Show gizmo overlay").with_default(Value::Bool(false)),
-            FieldSpec::text(
-                "selection-rect",
-                "Selection rect JSON {x, y, width, height} for handles",
-            ),
-            FieldSpec::text(
-                "grid-cells",
-                "Grid cells JSON array of {x, y, width, height, occupied}",
-            ),
-        ]
-    }
+fn builder_canvas_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let zoom = node
+        .props
+        .get("zoom")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(1.0)
+        .max(0.01) as f32;
+    let page_w = node
+        .props
+        .get("page-width")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(1280.0) as f32
+        * zoom;
+    let page_h = node
+        .props
+        .get("page-height")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(800.0) as f32
+        * zoom;
 
-    fn signals(&self) -> Vec<SignalDef> {
-        let mut s = common_signals();
-        s.push(SignalDef::new(
-            "canvas-clicked",
-            "Canvas background clicked.",
-        ));
-        s.push(SignalDef::new("cell-clicked", "Grid cell clicked."));
-        s.push(SignalDef::new("selection-dragged", "Selection drag delta."));
-        s
-    }
+    // Author-driven preview tree (the lowered nodes of the active
+    // BuilderDocument's component tree). We accept either explicit
+    // `host_children` (when `.prism-ui` author embeds them) or the
+    // recursed children path.
+    let preview = ctx
+        .host_children()
+        .map(|s| s.to_vec())
+        .unwrap_or_else(|| ctx.lower_children(&node.children));
 
-    fn lower_ui(&self, ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
-        let zoom = node
-            .props
-            .get("zoom")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(1.0)
-            .max(0.01) as f32;
-        let page_w = node
-            .props
-            .get("page-width")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(1280.0) as f32
-            * zoom;
-        let page_h = node
-            .props
-            .get("page-height")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(800.0) as f32
-            * zoom;
+    let preview_layer = bare_container(format!("{}::preview", node.id), preview, |p| {
+        p.width = Sizing::Grow;
+        p.height = Sizing::Grow;
+        p.semantic = Semantic::tag("div")
+            .with_attr("role", "presentation")
+            .with_attr("data-role", "canvas-preview");
+    });
 
-        // Author-driven preview tree (the lowered nodes of the active
-        // BuilderDocument's component tree). We accept either explicit
-        // `host_children` (when `.prism-ui` author embeds them) or the
-        // recursed children path.
-        let preview = ctx
-            .host_children()
-            .map(|s| s.to_vec())
-            .unwrap_or_else(|| ctx.lower_children(&node.children));
+    let grid_layer = build_grid_layer(node);
+    let selection_layer = build_selection_layer(ctx, node);
 
-        let preview_layer = bare_container(format!("{}::preview", node.id), preview, |p| {
-            p.width = Sizing::Grow;
-            p.height = Sizing::Grow;
+    let page = bare_container(
+        format!("{}::page", node.id),
+        vec![preview_layer, grid_layer, selection_layer],
+        |p| {
+            p.width = Sizing::Fixed(page_w);
+            p.height = Sizing::Fixed(page_h);
+            p.background = parse_color(PAGE_BG);
+            p.radius = uniform_radius(2.0);
             p.semantic = Semantic::tag("div")
-                .with_attr("role", "presentation")
-                .with_attr("data-role", "canvas-preview");
-        });
+                .with_attr("role", "img")
+                .with_attr("aria-label", "Page surface")
+                .with_attr("data-role", "canvas-page");
+        },
+    );
 
-        let grid_layer = build_grid_layer(node);
-        let selection_layer = build_selection_layer(ctx, node);
-
-        let page = bare_container(
-            format!("{}::page", node.id),
-            vec![preview_layer, grid_layer, selection_layer],
-            |p| {
-                p.width = Sizing::Fixed(page_w);
-                p.height = Sizing::Fixed(page_h);
-                p.background = parse_color(PAGE_BG);
-                p.radius = uniform_radius(2.0);
-                p.semantic = Semantic::tag("div")
-                    .with_attr("role", "img")
-                    .with_attr("aria-label", "Page surface")
-                    .with_attr("data-role", "canvas-page");
-            },
-        );
-
-        bare_container(node.id.clone(), vec![page], |p| {
-            p.direction = Direction::Column;
-            p.padding = Padding {
-                left: 24.0,
-                right: 24.0,
-                top: 24.0,
-                bottom: 24.0,
-            };
-            p.width = Sizing::Grow;
-            p.height = Sizing::Grow;
-            p.background = parse_color(CANVAS_BG);
-            p.semantic = Semantic::tag("section")
-                .with_attr("aria-label", "Builder canvas")
-                .with_attr("data-role", "builder-canvas");
-        })
-    }
+    bare_container(node.id.clone(), vec![page], |p| {
+        p.direction = Direction::Column;
+        p.padding = Padding {
+            left: 24.0,
+            right: 24.0,
+            top: 24.0,
+            bottom: 24.0,
+        };
+        p.width = Sizing::Grow;
+        p.height = Sizing::Grow;
+        p.background = parse_color(CANVAS_BG);
+        p.semantic = Semantic::tag("section")
+            .with_attr("aria-label", "Builder canvas")
+            .with_attr("data-role", "builder-canvas");
+    })
 }
+
+pub const BUILDER_CANVAS_SPEC: prism_builder::BlockSpec =
+    prism_builder::BlockSpec::new("shell.builder-canvas", builder_canvas_schema)
+        .lower(builder_canvas_lower)
+        .signals(builder_canvas_signals);
 
 fn build_grid_layer(node: &Node) -> UiNode {
     let cells: Vec<UiNode> = node
@@ -288,15 +282,13 @@ fn format_coord(v: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::components::registry::{register_shell_builtins, ShellComponentRegistry};
     use prism_builder::document::Node as BuilderNode;
     use prism_builder::layout::LayoutMode;
     use prism_core::foundation::spatial::Transform2D;
 
     fn lower(props: Value) -> UiNode {
-        let block = BuilderCanvas {
-            id: "shell.builder-canvas".into(),
-        };
         let n = BuilderNode {
             id: "bc".into(),
             component: "shell.builder-canvas".into(),
@@ -311,7 +303,7 @@ mod tests {
         register_shell_builtins(&mut reg).expect("register");
         let cascade = StyleProperties::default();
         let ctx = LowerCtx::new(Some(reg.as_component_registry()), &cascade);
-        block.lower_ui(&ctx, &n, &cascade)
+        builder_canvas_lower(&ctx, &n, &cascade)
     }
 
     #[test]

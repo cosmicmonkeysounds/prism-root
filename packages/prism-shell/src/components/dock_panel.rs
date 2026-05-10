@@ -18,105 +18,101 @@ use prism_builder::{
     registry::FieldSpec,
     style::StyleProperties,
     ui_lower::{bare_container, parse_color, prop_str, LowerCtx},
-    Block, ComponentId,
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Semantic, Sizing};
 use serde_json::Value;
 
 const PANEL_BG: &str = "#fafafa";
 
-pub struct DockPanel {
-    pub id: ComponentId,
+fn dock_panel_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("panel-id", "Panel id"),
+        FieldSpec::text("title", "Panel title"),
+        // JSON array — same shape as `shell.dock-tab-bar` consumes.
+        FieldSpec::text("tabs", "Tabs (JSON array)"),
+    ]
 }
 
-impl Block for DockPanel {
-    fn id(&self) -> &ComponentId {
-        &self.id
-    }
+fn dock_panel_signals() -> Vec<prism_builder::signal::SignalDef> {
+    common_signals()
+}
 
-    fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::text("panel-id", "Panel id"),
-            FieldSpec::text("title", "Panel title"),
-            // JSON array — same shape as `shell.dock-tab-bar` consumes.
-            FieldSpec::text("tabs", "Tabs (JSON array)"),
-        ]
-    }
+fn dock_panel_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let panel_id = prop_str(node, "panel-id");
+    let mut sections: Vec<UiNode> = Vec::with_capacity(2);
 
-    fn signals(&self) -> Vec<prism_builder::signal::SignalDef> {
-        common_signals()
-    }
-
-    fn lower_ui(&self, ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
-        let panel_id = prop_str(node, "panel-id");
-        let mut sections: Vec<UiNode> = Vec::with_capacity(2);
-
-        // Optional tab bar: present when the host gave us a `tabs`
-        // array. Dispatched by id so a host-supplied alternative tab
-        // bar transparently takes over.
-        if node
-            .props
-            .get("tabs")
-            .and_then(|v| v.as_array())
-            .map(|a| !a.is_empty())
-            .unwrap_or(false)
-        {
-            let tabs_props = serde_json::json!({ "tabs": node.props.get("tabs").cloned().unwrap_or(Value::Null) });
-            if let Some(bar) = ctx.lower_as(
-                "shell.dock-tab-bar",
-                format!("{}::tabs", node.id),
-                tabs_props,
-            ) {
-                sections.push(bar);
-            }
+    // Optional tab bar: present when the host gave us a `tabs`
+    // array. Dispatched by id so a host-supplied alternative tab
+    // bar transparently takes over.
+    if node
+        .props
+        .get("tabs")
+        .and_then(|v| v.as_array())
+        .map(|a| !a.is_empty())
+        .unwrap_or(false)
+    {
+        let tabs_props =
+            serde_json::json!({ "tabs": node.props.get("tabs").cloned().unwrap_or(Value::Null) });
+        if let Some(bar) = ctx.lower_as(
+            "shell.dock-tab-bar",
+            format!("{}::tabs", node.id),
+            tabs_props,
+        ) {
+            sections.push(bar);
         }
-
-        // Body: the inner subtree from `<shell.dock-panel>…</shell.dock-panel>`,
-        // or the builder-Node children when constructed by the host. When
-        // neither is authored, fall through to the `panel-id` routing
-        // table — `shell.dock-panel panel-id="builder"` with no body
-        // dispatches to `shell.builder-canvas` automatically. Adding a
-        // new dockable panel is one row in `panel_routing::PANEL_ROUTES`
-        // (§16 panel-by-panel discipline extended to composition).
-        let body_children = if let Some(slice) = ctx.host_children() {
-            slice.to_vec()
-        } else if !node.children.is_empty() {
-            ctx.lower_children(&node.children)
-        } else if !panel_id.is_empty() {
-            crate::components::panel_routing::tag_for_panel(panel_id)
-                .and_then(|tag| {
-                    ctx.lower_as(tag, format!("{}::content", node.id), serde_json::json!({}))
-                })
-                .map(|child| vec![child])
-                .unwrap_or_default()
-        } else {
-            Vec::new()
-        };
-        let body = bare_container(format!("{}::body", node.id), body_children, |p| {
-            p.width = Sizing::Grow;
-            p.height = Sizing::Grow;
-            p.semantic = Semantic::tag("div").with_attr("data-role", "dock-body");
-        });
-        sections.push(body);
-
-        bare_container(node.id.clone(), sections, |p| {
-            p.direction = Direction::Column;
-            p.width = Sizing::Grow;
-            p.height = Sizing::Grow;
-            p.background = parse_color(PANEL_BG);
-            let semantic = Semantic::tag("section").with_attr("data-role", "dock-panel");
-            p.semantic = if !panel_id.is_empty() {
-                semantic.with_attr("data-panel", panel_id)
-            } else {
-                semantic
-            };
-        })
     }
+
+    // Body: the inner subtree from `<shell.dock-panel>…</shell.dock-panel>`,
+    // or the builder-Node children when constructed by the host. When
+    // neither is authored, fall through to the `panel-id` routing
+    // table — `shell.dock-panel panel-id="builder"` with no body
+    // dispatches to `shell.builder-canvas` automatically. Adding a
+    // new dockable panel is one row in `panel_routing::PANEL_ROUTES`
+    // (§16 panel-by-panel discipline extended to composition).
+    let body_children = if let Some(slice) = ctx.host_children() {
+        slice.to_vec()
+    } else if !node.children.is_empty() {
+        ctx.lower_children(&node.children)
+    } else if !panel_id.is_empty() {
+        crate::components::panel_routing::tag_for_panel(panel_id)
+            .and_then(|tag| {
+                ctx.lower_as(tag, format!("{}::content", node.id), serde_json::json!({}))
+            })
+            .map(|child| vec![child])
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let body = bare_container(format!("{}::body", node.id), body_children, |p| {
+        p.width = Sizing::Grow;
+        p.height = Sizing::Grow;
+        p.semantic = Semantic::tag("div").with_attr("data-role", "dock-body");
+    });
+    sections.push(body);
+
+    bare_container(node.id.clone(), sections, |p| {
+        p.direction = Direction::Column;
+        p.width = Sizing::Grow;
+        p.height = Sizing::Grow;
+        p.background = parse_color(PANEL_BG);
+        let semantic = Semantic::tag("section").with_attr("data-role", "dock-panel");
+        p.semantic = if !panel_id.is_empty() {
+            semantic.with_attr("data-panel", panel_id)
+        } else {
+            semantic
+        };
+    })
 }
+
+pub const DOCK_PANEL_SPEC: prism_builder::BlockSpec =
+    prism_builder::BlockSpec::new("shell.dock-panel", dock_panel_schema)
+        .lower(dock_panel_lower)
+        .signals(dock_panel_signals);
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::components::registry::{register_shell_builtins, ShellComponentRegistry};
     use prism_builder::document::Node as BuilderNode;
     use prism_builder::layout::LayoutMode;
@@ -137,15 +133,12 @@ mod tests {
     }
 
     fn lower(props: Value, kids: Vec<BuilderNode>) -> UiNode {
-        let block = DockPanel {
-            id: "shell.dock-panel".into(),
-        };
         let cascade = StyleProperties::default();
         let mut r = ShellComponentRegistry::new();
         register_shell_builtins(&mut r).expect("register");
         let owned = r;
         let ctx = LowerCtx::new(Some(owned.as_component_registry()), &cascade);
-        block.lower_ui(&ctx, &node(props, kids), &cascade)
+        dock_panel_lower(&ctx, &node(props, kids), &cascade)
     }
 
     #[test]

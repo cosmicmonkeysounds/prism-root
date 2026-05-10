@@ -14,7 +14,6 @@ use prism_builder::{
     signal::SignalDef,
     style::StyleProperties,
     ui_lower::{bare_container, parse_color, prop_string, uniform_radius, LowerCtx},
-    Block, ComponentId,
 };
 use prism_ui_runtime::layout::{Node as UiNode, Semantic, Sizing};
 
@@ -22,45 +21,40 @@ const HANDLE_SIZE: f32 = 8.0;
 const HANDLE_BG: &str = "#ffffffff";
 const HANDLE_BORDER: &str = "#0060c0";
 
-pub struct ResizeHandle {
-    pub id: ComponentId,
+fn resize_handle_schema() -> Vec<FieldSpec> {
+    vec![FieldSpec::text("direction", "Handle direction").required()]
 }
 
-impl Block for ResizeHandle {
-    fn id(&self) -> &ComponentId {
-        &self.id
-    }
-
-    fn schema(&self) -> Vec<FieldSpec> {
-        vec![FieldSpec::text("direction", "Handle direction").required()]
-    }
-
-    fn signals(&self) -> Vec<SignalDef> {
-        let mut s = common_signals();
-        s.push(SignalDef::new("handle-pressed", "Handle pressed."));
-        s.push(SignalDef::new("handle-dragged", "Handle dragged."));
-        s
-    }
-
-    fn lower_ui(&self, _ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
-        let dir = prop_string(node, "direction");
-        let cursor = cursor_for(&dir);
-
-        bare_container(node.id.clone(), vec![], |p| {
-            p.width = Sizing::Fixed(HANDLE_SIZE);
-            p.height = Sizing::Fixed(HANDLE_SIZE);
-            p.background = parse_color(HANDLE_BG);
-            p.radius = uniform_radius(1.0);
-            p.semantic = Semantic::tag("span")
-                .with_attr("role", "button")
-                .with_attr("aria-label", aria_for(&dir))
-                .with_attr("data-role", "resize-handle")
-                .with_attr("data-direction", dir.clone())
-                .with_attr("data-cursor", cursor)
-                .with_attr("data-stroke", HANDLE_BORDER);
-        })
-    }
+fn resize_handle_signals() -> Vec<prism_builder::signal::SignalDef> {
+    let mut s = common_signals();
+    s.push(SignalDef::new("handle-pressed", "Handle pressed."));
+    s.push(SignalDef::new("handle-dragged", "Handle dragged."));
+    s
 }
+
+fn resize_handle_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let dir = prop_string(node, "direction");
+    let cursor = cursor_for(&dir);
+
+    bare_container(node.id.clone(), vec![], |p| {
+        p.width = Sizing::Fixed(HANDLE_SIZE);
+        p.height = Sizing::Fixed(HANDLE_SIZE);
+        p.background = parse_color(HANDLE_BG);
+        p.radius = uniform_radius(1.0);
+        p.semantic = Semantic::tag("span")
+            .with_attr("role", "button")
+            .with_attr("aria-label", aria_for(&dir))
+            .with_attr("data-role", "resize-handle")
+            .with_attr("data-direction", dir.clone())
+            .with_attr("data-cursor", cursor)
+            .with_attr("data-stroke", HANDLE_BORDER);
+    })
+}
+
+pub const RESIZE_HANDLE_SPEC: prism_builder::BlockSpec =
+    prism_builder::BlockSpec::new("shell.resize-handle", resize_handle_schema)
+        .lower(resize_handle_lower)
+        .signals(resize_handle_signals);
 
 fn cursor_for(dir: &str) -> &'static str {
     match dir {
@@ -89,15 +83,13 @@ fn aria_for(dir: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use prism_builder::document::Node as BuilderNode;
     use prism_builder::layout::LayoutMode;
     use prism_core::foundation::spatial::Transform2D;
     use serde_json::json;
 
     fn lower(direction: &str) -> UiNode {
-        let block = ResizeHandle {
-            id: "shell.resize-handle".into(),
-        };
         let n = BuilderNode {
             id: "rh".into(),
             component: "shell.resize-handle".into(),
@@ -110,7 +102,7 @@ mod tests {
         };
         let cascade = StyleProperties::default();
         let ctx = LowerCtx::new(None, &cascade);
-        block.lower_ui(&ctx, &n, &cascade)
+        resize_handle_lower(&ctx, &n, &cascade)
     }
 
     #[test]

@@ -1,31 +1,34 @@
 //! [`ShellComponentRegistry`] — sibling of [`prism_builder::ComponentRegistry`]
-//! for chrome / shell primitives (IconButton, ToolbarSeparator, MenuBarRow,
-//! …) that must NOT appear in the user-visible document component palette.
+//! for chrome / shell primitives (icon-button, toolbar-separator,
+//! menu-bar-row, …) that must NOT appear in the user-visible document
+//! component palette.
 //!
 //! The registry is a thin newtype around `ComponentRegistry` so we reuse:
 //!
 //! * the [`prism_builder::Block`] trait surface (one render method,
 //!   `lower_ui`, feeding the unified Taffy + SSR pipeline),
+//! * the [`prism_builder::BlockSpec`] declarative form (one `const SPEC`
+//!   per primitive, no per-component struct or trait impl),
 //! * the [`prism_builder::ui_lower::LowerCtx`] cascade machinery,
-//! * the existing `register_block` flow,
 //!
 //! …and gain the *type distinction* that keeps shell primitives out of
 //! `ComponentRegistry::iter()` consumers like the Studio component
 //! palette and the document help index.
 //!
-//! Adding a new shell primitive is the same three-step recipe as adding
-//! a builder block (see `prism-builder/CLAUDE.md`):
+//! Adding a new shell primitive is **two lines of changes**:
 //!
-//! 1. `impl Block for MyShellComponent { … }` — schema + `lower_ui`.
-//! 2. Add a row to [`register_shell_builtins`]'s `reg!(…)` table.
-//! 3. Author it inside `.prism-ui` source as `<my-shell-component …/>`.
+//! 1. In `components/foo.rs`, write a `foo_lower(ctx, node, style) ->
+//!    UiNode` free function and a
+//!    `pub const FOO_SPEC: BlockSpec = BlockSpec::new("shell.foo", foo_schema).lower(foo_lower)`.
+//! 2. Add `&super::foo::FOO_SPEC` to the [`SHELL_BUILTINS`] table.
 //!
-//! See `docs/dev/clay-migration-plan.md` §12 for the broader strategy.
+//! See `docs/dev/clay-migration-plan.md` §12 + §33 for the broader strategy.
 
 use std::sync::Arc;
 
 use prism_builder::{
-    ui_resolver::RegistryTagResolver, Block, Component, ComponentRegistry, RegistryError,
+    register_specs, ui_resolver::RegistryTagResolver, Block, BlockSpec, Component,
+    ComponentRegistry, RegistryError,
 };
 use prism_ui_runtime::interpret::TagResolver;
 
@@ -88,66 +91,64 @@ impl ShellComponentRegistry {
     }
 }
 
-/// Register every built-in shell component. Mirrors
-/// `prism_builder::starter::register_builtins` — adding a new shell
-/// primitive is one line in the `reg!` macro table.
+/// Single source of truth for the shell primitive catalog. Each row is
+/// a `&'static BlockSpec` declared in the matching `components/foo.rs`
+/// file. Adding a primitive = one new const + one row here.
+pub static SHELL_BUILTINS: &[&BlockSpec] = &[
+    &super::icon_button::ICON_BUTTON_SPEC,
+    &super::toolbar_separator::TOOLBAR_SEPARATOR_SPEC,
+    &super::section_header::SECTION_HEADER_SPEC,
+    &super::nav_button::NAV_BUTTON_SPEC,
+    &super::toast::TOAST_SPEC,
+    &super::docs_content::DOCS_CONTENT_SPEC,
+    &super::app_card::APP_CARD_SPEC,
+    &super::drag_number_field::DRAG_NUMBER_FIELD_SPEC,
+    &super::inspector_row::INSPECTOR_ROW_SPEC,
+    &super::transform_editor::TRANSFORM_EDITOR_SPEC,
+    &super::menu_bar_row::MENU_BAR_ROW_SPEC,
+    &super::field_editor::FIELD_EDITOR_SPEC,
+    &super::status_bar::STATUS_BAR_SPEC,
+    &super::workflow_page_button::WORKFLOW_PAGE_BUTTON_SPEC,
+    &super::workflow_page_bar::WORKFLOW_PAGE_BAR_SPEC,
+    &super::app_window::APP_WINDOW_SPEC,
+    &super::dock_divider::DOCK_DIVIDER_SPEC,
+    &super::dock_tab::DOCK_TAB_SPEC,
+    &super::dock_tab_bar::DOCK_TAB_BAR_SPEC,
+    &super::dock_panel::DOCK_PANEL_SPEC,
+    &super::dock_workspace::DOCK_WORKSPACE_SPEC,
+    &super::toast_stack::TOAST_STACK_SPEC,
+    &super::inspector_tree::INSPECTOR_TREE_SPEC,
+    &super::launchpad::LAUNCHPAD_SPEC,
+    &super::command_palette::COMMAND_PALETTE_SPEC,
+    &super::help_tooltip::HELP_TOOLTIP_SPEC,
+    &super::menu_item::MENU_ITEM_SPEC,
+    &super::menu_dropdown::MENU_DROPDOWN_SPEC,
+    &super::context_menu::CONTEXT_MENU_SPEC,
+    &super::docs_sidebar::DOCS_SIDEBAR_SPEC,
+    &super::docs_view::DOCS_VIEW_SPEC,
+    &super::properties_panel::PROPERTIES_PANEL_SPEC,
+    &super::component_palette::COMPONENT_PALETTE_SPEC,
+    &super::explorer::EXPLORER_SPEC,
+    &super::signal_connection_row::SIGNAL_CONNECTION_ROW_SPEC,
+    &super::signals_panel::SIGNALS_PANEL_SPEC,
+    &super::schema_row::SCHEMA_ROW_SPEC,
+    &super::schema_designer::SCHEMA_DESIGNER_SPEC,
+    &super::nav_page_row::NAV_PAGE_ROW_SPEC,
+    &super::nav_page_list::NAV_PAGE_LIST_SPEC,
+    &super::nav_graph::NAV_GRAPH_SPEC,
+    &super::code_editor::CODE_EDITOR_SPEC,
+    &super::gizmo_move::GIZMO_MOVE_SPEC,
+    &super::gizmo_rotate::GIZMO_ROTATE_SPEC,
+    &super::gizmo_scale::GIZMO_SCALE_SPEC,
+    &super::resize_handle::RESIZE_HANDLE_SPEC,
+    &super::builder_canvas::BUILDER_CANVAS_SPEC,
+    &super::component_picker::COMPONENT_PICKER_SPEC,
+];
+
+/// Register every spec in [`SHELL_BUILTINS`]. One-line fan-out via
+/// [`register_specs`].
 pub fn register_shell_builtins(reg: &mut ShellComponentRegistry) -> Result<(), RegistryError> {
-    macro_rules! reg {
-        ($id:literal, $ty:ident) => {
-            reg.register(Arc::new(super::$ty { id: $id.into() }))?;
-        };
-    }
-
-    reg!("shell.icon-button", IconButton);
-    reg!("shell.toolbar-separator", ToolbarSeparator);
-    reg!("shell.section-header", SectionHeader);
-    reg!("shell.nav-button", NavButton);
-    reg!("shell.toast", Toast);
-    reg!("shell.docs-content", DocsContent);
-    reg!("shell.app-card", AppCard);
-    reg!("shell.drag-number-field", DragNumberField);
-    reg!("shell.inspector-row", InspectorRow);
-    reg!("shell.transform-editor", TransformEditor);
-    reg!("shell.menu-bar-row", MenuBarRow);
-    reg!("shell.field-editor", FieldEditor);
-    reg!("shell.status-bar", StatusBar);
-    reg!("shell.workflow-page-button", WorkflowPageButton);
-    reg!("shell.workflow-page-bar", WorkflowPageBar);
-    reg!("shell.app-window", AppWindow);
-    reg!("shell.dock-divider", DockDivider);
-    reg!("shell.dock-tab", DockTab);
-    reg!("shell.dock-tab-bar", DockTabBar);
-    reg!("shell.dock-panel", DockPanel);
-    reg!("shell.dock-workspace", DockWorkspace);
-    reg!("shell.toast-stack", ToastStack);
-    reg!("shell.inspector-tree", InspectorTree);
-    reg!("shell.launchpad", Launchpad);
-    reg!("shell.command-palette", CommandPalette);
-    reg!("shell.help-tooltip", HelpTooltip);
-    reg!("shell.menu-item", MenuItem);
-    reg!("shell.menu-dropdown", MenuDropdown);
-    reg!("shell.context-menu", ContextMenu);
-    reg!("shell.docs-sidebar", DocsSidebar);
-    reg!("shell.docs-view", DocsView);
-    reg!("shell.properties-panel", PropertiesPanel);
-    reg!("shell.component-palette", ComponentPalette);
-    reg!("shell.explorer", Explorer);
-    reg!("shell.signal-connection-row", SignalConnectionRow);
-    reg!("shell.signals-panel", SignalsPanel);
-    reg!("shell.schema-row", SchemaRow);
-    reg!("shell.schema-designer", SchemaDesigner);
-    reg!("shell.nav-page-row", NavPageRow);
-    reg!("shell.nav-page-list", NavPageList);
-    reg!("shell.nav-graph", NavGraph);
-    reg!("shell.code-editor", CodeEditor);
-    reg!("shell.gizmo-move", GizmoMove);
-    reg!("shell.gizmo-rotate", GizmoRotate);
-    reg!("shell.gizmo-scale", GizmoScale);
-    reg!("shell.resize-handle", ResizeHandle);
-    reg!("shell.builder-canvas", BuilderCanvas);
-    reg!("shell.component-picker", ComponentPicker);
-
-    Ok(())
+    register_specs(&mut reg.inner, SHELL_BUILTINS)
 }
 
 #[cfg(test)]

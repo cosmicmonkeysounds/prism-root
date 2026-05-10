@@ -16,10 +16,8 @@ use prism_builder::{
     common_signals,
     document::Node,
     registry::FieldSpec,
-    signal::SignalDef,
     style::StyleProperties,
     ui_lower::{bare_container, colored_text_node, parse_color, prop_bool, prop_string, LowerCtx},
-    Block, ComponentId,
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Semantic, Sizing};
 use serde_json::Value;
@@ -56,78 +54,73 @@ const COMPACT: Metrics = Metrics {
     summary_to_body_gap: 10.0,
 };
 
-pub struct DocsContent {
-    pub id: ComponentId,
+fn docs_content_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("doc-title", "Title").required(),
+        FieldSpec::text("doc-summary", "Summary"),
+        FieldSpec::textarea("doc-body", "Body"),
+        FieldSpec::boolean("compact", "Compact").with_default(Value::Bool(false)),
+    ]
 }
 
-impl Block for DocsContent {
-    fn id(&self) -> &ComponentId {
-        &self.id
-    }
-
-    fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::text("doc-title", "Title").required(),
-            FieldSpec::text("doc-summary", "Summary"),
-            FieldSpec::textarea("doc-body", "Body"),
-            FieldSpec::boolean("compact", "Compact").with_default(Value::Bool(false)),
-        ]
-    }
-
-    fn signals(&self) -> Vec<SignalDef> {
-        common_signals()
-    }
-
-    fn lower_ui(&self, ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> UiNode {
-        let title = prop_string(node, "doc-title");
-        let summary = prop_string(node, "doc-summary");
-        let body = prop_string(node, "doc-body");
-        let compact = prop_bool(node, "compact", false);
-        let m = if compact { &COMPACT } else { &FULL };
-
-        let mut children = vec![
-            colored_text_node(
-                format!("{}::title", node.id),
-                title,
-                style,
-                m.title_size,
-                TITLE_COLOR,
-            ),
-            spacer_h(format!("{}::g1", node.id), m.title_to_summary_gap),
-            colored_text_node(
-                format!("{}::summary", node.id),
-                summary,
-                style,
-                m.summary_size,
-                SUMMARY_COLOR,
-            ),
-        ];
-        if !body.is_empty() {
-            children.push(spacer_h(format!("{}::g2", node.id), m.summary_to_body_gap));
-            children.push(hairline(format!("{}::rule", node.id)));
-            children.push(spacer_h(format!("{}::g3", node.id), m.summary_to_body_gap));
-            children.push(colored_text_node(
-                format!("{}::body", node.id),
-                body,
-                style,
-                m.body_size,
-                BODY_COLOR,
-            ));
-        }
-
-        // Use the registry-aware default `synthetic_container` so cascade
-        // sizing and grow/fit semantics from the parent flow through
-        // unchanged. Compact / full only varies font + gap, so all
-        // structural sizing stays cascade-driven.
-        ctx.synthetic_container(node, style, children, |props| {
-            props.direction = Direction::Column;
-            // Wrap in <article> for SSR — semantically a self-contained
-            // composition (title + body) that screen readers should
-            // announce as a unit.
-            props.semantic = Semantic::tag("article");
-        })
-    }
+fn docs_content_signals() -> Vec<prism_builder::signal::SignalDef> {
+    common_signals()
 }
+
+fn docs_content_lower(ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> UiNode {
+    let title = prop_string(node, "doc-title");
+    let summary = prop_string(node, "doc-summary");
+    let body = prop_string(node, "doc-body");
+    let compact = prop_bool(node, "compact", false);
+    let m = if compact { &COMPACT } else { &FULL };
+
+    let mut children = vec![
+        colored_text_node(
+            format!("{}::title", node.id),
+            title,
+            style,
+            m.title_size,
+            TITLE_COLOR,
+        ),
+        spacer_h(format!("{}::g1", node.id), m.title_to_summary_gap),
+        colored_text_node(
+            format!("{}::summary", node.id),
+            summary,
+            style,
+            m.summary_size,
+            SUMMARY_COLOR,
+        ),
+    ];
+    if !body.is_empty() {
+        children.push(spacer_h(format!("{}::g2", node.id), m.summary_to_body_gap));
+        children.push(hairline(format!("{}::rule", node.id)));
+        children.push(spacer_h(format!("{}::g3", node.id), m.summary_to_body_gap));
+        children.push(colored_text_node(
+            format!("{}::body", node.id),
+            body,
+            style,
+            m.body_size,
+            BODY_COLOR,
+        ));
+    }
+
+    // Use the registry-aware default `synthetic_container` so cascade
+    // sizing and grow/fit semantics from the parent flow through
+    // unchanged. Compact / full only varies font + gap, so all
+    // structural sizing stays cascade-driven.
+    ctx.synthetic_container(node, style, children, |props| {
+        props.direction = Direction::Column;
+        // Wrap in <article> for SSR — semantically a self-contained
+        // composition (title + body) that screen readers should
+        // announce as a unit.
+        props.semantic = Semantic::tag("article");
+    })
+}
+
+pub const DOCS_CONTENT_SPEC: prism_builder::BlockSpec =
+    prism_builder::BlockSpec::new("shell.docs-content", docs_content_schema)
+        .lower(docs_content_lower)
+        .signals(docs_content_signals);
 
 fn spacer_h(id: String, h: f32) -> UiNode {
     bare_container(id, vec![], |p| {
@@ -148,16 +141,14 @@ mod tests {
     use prism_builder::document::Node as BuilderNode;
     use prism_builder::layout::LayoutMode;
     use prism_builder::style::StyleProperties as Cascade;
+    use prism_builder::Block;
     use prism_core::foundation::spatial::Transform2D;
     use serde_json::json;
 
     fn lower_one(node: &BuilderNode) -> UiNode {
-        let block = DocsContent {
-            id: "shell.docs-content".into(),
-        };
         let cascade = Cascade::default();
         let ctx = LowerCtx::new(None, &cascade);
-        block.lower_ui(&ctx, node, &cascade)
+        docs_content_lower(&ctx, node, &cascade)
     }
 
     fn doc_node(props: Value) -> BuilderNode {
@@ -221,9 +212,7 @@ mod tests {
 
     #[test]
     fn schema_declares_four_fields() {
-        let block = DocsContent {
-            id: "shell.docs-content".into(),
-        };
+        let block = prism_builder::SpecBlock::new(&super::DOCS_CONTENT_SPEC);
         let keys: Vec<String> = block.schema().into_iter().map(|f| f.key).collect();
         assert_eq!(
             keys,

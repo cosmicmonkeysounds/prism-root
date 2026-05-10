@@ -18,7 +18,6 @@ use prism_builder::{
         bare_container, colored_text_node, hover_bg, parse_color, prop_string, uniform_radius,
         LowerCtx,
     },
-    Block, ComponentId,
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
 use serde_json::Value;
@@ -33,76 +32,69 @@ const TITLE_COLOR: &str = "#000000";
 const ROUTE_COLOR: &str = "#80000000";
 const EDGE_LAYER_BG: &str = "#06000000";
 
-pub struct NavGraph {
-    pub id: ComponentId,
+fn nav_graph_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("title", "Section title"),
+        FieldSpec::text(
+            "pages",
+            "Pages (JSON array of {x, y, label, route, is-active})",
+        ),
+        FieldSpec::text("edges", "Edges (JSON array of {x1, y1, x2, y2, kind})"),
+    ]
 }
 
-impl Block for NavGraph {
-    fn id(&self) -> &ComponentId {
-        &self.id
+fn nav_graph_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let style = StyleProperties::default();
+    let title = prop_string(node, "title");
+
+    let edges_node = build_edge_layer(node);
+    let cards = build_cards(node, &style);
+
+    let mut canvas_kids = vec![edges_node];
+    canvas_kids.extend(cards);
+
+    let canvas = bare_container(format!("{}::canvas", node.id), canvas_kids, |p| {
+        p.width = Sizing::Grow;
+        p.height = Sizing::Grow;
+        p.background = parse_color(EDGE_LAYER_BG);
+        p.radius = uniform_radius(6.0);
+        p.semantic = Semantic::tag("div")
+            .with_attr("role", "img")
+            .with_attr("aria-label", "Page navigation graph")
+            .with_attr("data-role", "nav-graph-canvas");
+    });
+
+    let mut kids: Vec<UiNode> = Vec::new();
+    if !title.is_empty() {
+        kids.push(colored_text_node(
+            format!("{}::title", node.id),
+            title,
+            &style,
+            12.0,
+            ROUTE_COLOR,
+        ));
     }
+    kids.push(canvas);
 
-    fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::text("title", "Section title"),
-            FieldSpec::text(
-                "pages",
-                "Pages (JSON array of {x, y, label, route, is-active})",
-            ),
-            FieldSpec::text("edges", "Edges (JSON array of {x1, y1, x2, y2, kind})"),
-        ]
-    }
-
-    fn lower_ui(&self, _ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
-        let style = StyleProperties::default();
-        let title = prop_string(node, "title");
-
-        let edges_node = build_edge_layer(node);
-        let cards = build_cards(node, &style);
-
-        let mut canvas_kids = vec![edges_node];
-        canvas_kids.extend(cards);
-
-        let canvas = bare_container(format!("{}::canvas", node.id), canvas_kids, |p| {
-            p.width = Sizing::Grow;
-            p.height = Sizing::Grow;
-            p.background = parse_color(EDGE_LAYER_BG);
-            p.radius = uniform_radius(6.0);
-            p.semantic = Semantic::tag("div")
-                .with_attr("role", "img")
-                .with_attr("aria-label", "Page navigation graph")
-                .with_attr("data-role", "nav-graph-canvas");
-        });
-
-        let mut kids: Vec<UiNode> = Vec::new();
-        if !title.is_empty() {
-            kids.push(colored_text_node(
-                format!("{}::title", node.id),
-                title,
-                &style,
-                12.0,
-                ROUTE_COLOR,
-            ));
-        }
-        kids.push(canvas);
-
-        bare_container(node.id.clone(), kids, |p| {
-            p.direction = Direction::Column;
-            p.gap = 8.0;
-            p.padding = Padding {
-                left: 12.0,
-                right: 12.0,
-                top: 12.0,
-                bottom: 12.0,
-            };
-            p.width = Sizing::Grow;
-            p.height = Sizing::Grow;
-            p.semantic = Semantic::tag("section")
-                .with_attr("aria-label", "Navigation graph")
-                .with_attr("data-role", "nav-graph");
-        })
-    }
+    bare_container(node.id.clone(), kids, |p| {
+        p.direction = Direction::Column;
+        p.gap = 8.0;
+        p.padding = Padding {
+            left: 12.0,
+            right: 12.0,
+            top: 12.0,
+            bottom: 12.0,
+        };
+        p.width = Sizing::Grow;
+        p.height = Sizing::Grow;
+        p.semantic = Semantic::tag("section")
+            .with_attr("aria-label", "Navigation graph")
+            .with_attr("data-role", "nav-graph");
+    })
 }
+
+pub const NAV_GRAPH_SPEC: prism_builder::BlockSpec =
+    prism_builder::BlockSpec::new("shell.nav-graph", nav_graph_schema).lower(nav_graph_lower);
 
 fn build_edge_layer(node: &Node) -> UiNode {
     let edges: Vec<UiNode> = node
@@ -221,15 +213,13 @@ fn format_coord(v: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use prism_builder::document::Node as BuilderNode;
     use prism_builder::layout::LayoutMode;
     use prism_core::foundation::spatial::Transform2D;
     use serde_json::json;
 
     fn lower(props: Value) -> UiNode {
-        let block = NavGraph {
-            id: "shell.nav-graph".into(),
-        };
         let n = BuilderNode {
             id: "ng".into(),
             component: "shell.nav-graph".into(),
@@ -242,7 +232,7 @@ mod tests {
         };
         let cascade = StyleProperties::default();
         let ctx = LowerCtx::new(None, &cascade);
-        block.lower_ui(&ctx, &n, &cascade)
+        nav_graph_lower(&ctx, &n, &cascade)
     }
 
     #[test]

@@ -28,46 +28,39 @@ use prism_builder::{
     registry::FieldSpec,
     style::StyleProperties,
     ui_lower::{bare_container, LowerCtx},
-    Block, ComponentId,
 };
 use prism_dock::{Axis, DockNode};
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Semantic, Sizing};
 use serde_json::{json, Value};
 
-pub struct DockWorkspace {
-    pub id: ComponentId,
+fn dock_workspace_schema() -> Vec<FieldSpec> {
+    vec![FieldSpec::text("dock", "Active DockNode (JSON)")]
 }
 
-impl Block for DockWorkspace {
-    fn id(&self) -> &ComponentId {
-        &self.id
-    }
+fn dock_workspace_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let dock = node.props.get("dock").and_then(decode_dock_node);
 
-    fn schema(&self) -> Vec<FieldSpec> {
-        vec![FieldSpec::text("dock", "Active DockNode (JSON)")]
-    }
-
-    fn lower_ui(&self, ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
-        let dock = node.props.get("dock").and_then(decode_dock_node);
-
-        let body = match dock {
-            Some(tree) => render_dock(ctx, &tree, &node.id),
-            // Empty workspace — render a coherent (data-empty) frame
-            // so the chrome never collapses to a zero-rect during a
-            // partial migration / loading state.
-            None => bare_container(format!("{}::empty", node.id), Vec::new(), |p| {
-                p.width = Sizing::Grow;
-                p.height = Sizing::Grow;
-            }),
-        };
-
-        bare_container(node.id.clone(), vec![body], |p| {
+    let body = match dock {
+        Some(tree) => render_dock(ctx, &tree, &node.id),
+        // Empty workspace — render a coherent (data-empty) frame
+        // so the chrome never collapses to a zero-rect during a
+        // partial migration / loading state.
+        None => bare_container(format!("{}::empty", node.id), Vec::new(), |p| {
             p.width = Sizing::Grow;
             p.height = Sizing::Grow;
-            p.semantic = Semantic::tag("div").with_attr("data-role", "dock-workspace");
-        })
-    }
+        }),
+    };
+
+    bare_container(node.id.clone(), vec![body], |p| {
+        p.width = Sizing::Grow;
+        p.height = Sizing::Grow;
+        p.semantic = Semantic::tag("div").with_attr("data-role", "dock-workspace");
+    })
 }
+
+pub const DOCK_WORKSPACE_SPEC: prism_builder::BlockSpec =
+    prism_builder::BlockSpec::new("shell.dock-workspace", dock_workspace_schema)
+        .lower(dock_workspace_lower);
 
 /// Accept either a real `Object`-shaped JSON `Value` (the binding
 /// path, post-`value_for` JSON-parse) or a `String` that still
@@ -162,6 +155,7 @@ fn apply_axis_sizing(node: &mut UiNode, axis: Axis, sz: Sizing) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::components::registry::{register_shell_builtins, ShellComponentRegistry};
     use prism_builder::document::Node as BuilderNode;
     use prism_builder::layout::LayoutMode;
@@ -170,9 +164,6 @@ mod tests {
     use serde_json::json;
 
     fn lower(props: Value, with_reg: bool) -> UiNode {
-        let block = DockWorkspace {
-            id: "shell.dock-workspace".into(),
-        };
         let n = BuilderNode {
             id: "ws".into(),
             component: "shell.dock-workspace".into(),
@@ -193,7 +184,7 @@ mod tests {
         } else {
             LowerCtx::new(None, &cascade)
         };
-        block.lower_ui(&ctx, &n, &cascade)
+        dock_workspace_lower(&ctx, &n, &cascade)
     }
 
     #[test]

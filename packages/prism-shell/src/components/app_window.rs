@@ -27,7 +27,6 @@ use prism_builder::{
     signal::SignalDef,
     style::StyleProperties,
     ui_lower::{bare_container, parse_color, LowerCtx},
-    Block, ComponentId,
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Semantic, Sizing};
 use serde_json::{json, Value};
@@ -36,78 +35,73 @@ const ACTIVITY_BAR_WIDTH: f32 = 40.0;
 const ACTIVITY_BAR_BG: &str = "#0d000000";
 const CONTENT_BG: &str = "#ffffff";
 
-pub struct AppWindow {
-    pub id: ComponentId,
+fn app_window_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("title", "Window title"),
+        FieldSpec::text("status", "Status bar text"),
+        FieldSpec::text("app-name", "Active app name"),
+        // `menus`, `tabs`, `nav-buttons` are JSON arrays, untyped
+        // at the schema layer — the host populates them from
+        // workspace state.
+    ]
 }
 
-impl Block for AppWindow {
-    fn id(&self) -> &ComponentId {
-        &self.id
-    }
+fn app_window_signals() -> Vec<prism_builder::signal::SignalDef> {
+    let mut signals = common_signals();
+    signals.push(SignalDef::new(
+        "nav-clicked",
+        "Activity-bar button clicked — payload is the nav id.",
+    ));
+    signals
+}
 
-    fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::text("title", "Window title"),
-            FieldSpec::text("status", "Status bar text"),
-            FieldSpec::text("app-name", "Active app name"),
-            // `menus`, `tabs`, `nav-buttons` are JSON arrays, untyped
-            // at the schema layer — the host populates them from
-            // workspace state.
-        ]
-    }
+fn app_window_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let menu_bar = synth_menu_bar(ctx, node);
+    let activity_bar = synth_activity_bar(ctx, node);
+    let status_bar = synth_status_bar(ctx, node);
 
-    fn signals(&self) -> Vec<SignalDef> {
-        let mut signals = common_signals();
-        signals.push(SignalDef::new(
-            "nav-clicked",
-            "Activity-bar button clicked — payload is the nav id.",
-        ));
-        signals
-    }
+    // Content area — the document's own children flow through
+    // here. AppWindow does not pre-stylise them; they get the same
+    // cascade resolution every other Block does. When the resolver
+    // (`RegistryTagResolver`) has already pre-lowered AST children
+    // for us — i.e. the block was reached via `<shell.app-window>
+    // …</shell.app-window>` from `.prism-ui` source — we adopt that
+    // slice directly and skip the builder-Node walk. The fallback
+    // chain keeps the host-driven path (`Shell` constructs builder
+    // Nodes by hand) working unchanged.
+    let content_children = ctx
+        .host_children()
+        .map(|s| s.to_vec())
+        .unwrap_or_else(|| ctx.lower_children(&node.children));
+    let content = bare_container(format!("{}::content", node.id), content_children, |p| {
+        p.width = Sizing::Grow;
+        p.height = Sizing::Grow;
+        p.background = parse_color(CONTENT_BG);
+        p.semantic = Semantic::tag("main").with_attr("role", "main");
+    });
 
-    fn lower_ui(&self, ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
-        let menu_bar = synth_menu_bar(ctx, node);
-        let activity_bar = synth_activity_bar(ctx, node);
-        let status_bar = synth_status_bar(ctx, node);
-
-        // Content area — the document's own children flow through
-        // here. AppWindow does not pre-stylise them; they get the same
-        // cascade resolution every other Block does. When the resolver
-        // (`RegistryTagResolver`) has already pre-lowered AST children
-        // for us — i.e. the block was reached via `<shell.app-window>
-        // …</shell.app-window>` from `.prism-ui` source — we adopt that
-        // slice directly and skip the builder-Node walk. The fallback
-        // chain keeps the host-driven path (`Shell` constructs builder
-        // Nodes by hand) working unchanged.
-        let content_children = ctx
-            .host_children()
-            .map(|s| s.to_vec())
-            .unwrap_or_else(|| ctx.lower_children(&node.children));
-        let content = bare_container(format!("{}::content", node.id), content_children, |p| {
+    let body = bare_container(
+        format!("{}::body", node.id),
+        vec![activity_bar, content],
+        |p| {
+            p.direction = Direction::Row;
             p.width = Sizing::Grow;
             p.height = Sizing::Grow;
-            p.background = parse_color(CONTENT_BG);
-            p.semantic = Semantic::tag("main").with_attr("role", "main");
-        });
+        },
+    );
 
-        let body = bare_container(
-            format!("{}::body", node.id),
-            vec![activity_bar, content],
-            |p| {
-                p.direction = Direction::Row;
-                p.width = Sizing::Grow;
-                p.height = Sizing::Grow;
-            },
-        );
-
-        bare_container(node.id.clone(), vec![menu_bar, body, status_bar], |props| {
-            props.direction = Direction::Column;
-            props.width = Sizing::Grow;
-            props.height = Sizing::Grow;
-            props.semantic = Semantic::tag("div").with_attr("data-role", "app-window");
-        })
-    }
+    bare_container(node.id.clone(), vec![menu_bar, body, status_bar], |props| {
+        props.direction = Direction::Column;
+        props.width = Sizing::Grow;
+        props.height = Sizing::Grow;
+        props.semantic = Semantic::tag("div").with_attr("data-role", "app-window");
+    })
 }
+
+pub const APP_WINDOW_SPEC: prism_builder::BlockSpec =
+    prism_builder::BlockSpec::new("shell.app-window", app_window_schema)
+        .lower(app_window_lower)
+        .signals(app_window_signals);
 
 /// Synthesise the menu-bar row by resolving `shell.menu-bar-row`
 /// through the registry on `ctx`. Single source of truth: AppWindow
@@ -201,6 +195,7 @@ fn json_object_with_keys(node: &Node, keys: &[&str]) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use prism_builder::document::Node as BuilderNode;
     use prism_builder::layout::LayoutMode;
     use prism_core::foundation::spatial::Transform2D;
@@ -231,9 +226,6 @@ mod tests {
         children: Vec<BuilderNode>,
         registry: Option<&prism_builder::ComponentRegistry>,
     ) -> UiNode {
-        let block = AppWindow {
-            id: "shell.app-window".into(),
-        };
         let n = BuilderNode {
             id: "aw".into(),
             component: "shell.app-window".into(),
@@ -246,7 +238,7 @@ mod tests {
         };
         let cascade = StyleProperties::default();
         let ctx = LowerCtx::new(registry, &cascade);
-        block.lower_ui(&ctx, &n, &cascade)
+        app_window_lower(&ctx, &n, &cascade)
     }
 
     #[test]

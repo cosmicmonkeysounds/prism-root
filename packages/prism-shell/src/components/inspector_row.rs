@@ -26,7 +26,6 @@ use prism_builder::{
         bare_container, colored_text_node, hover_bg, parse_color, prop_bool, prop_str, prop_string,
         uniform_radius, LowerCtx,
     },
-    Block, ComponentId,
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
 use serde_json::Value;
@@ -129,166 +128,161 @@ fn metrics_for_kind(kind: &str) -> &'static KindMetrics {
     }
 }
 
-pub struct InspectorRow {
-    pub id: ComponentId,
+fn inspector_row_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("node-id", "Node ID"),
+        FieldSpec::text("component-id", "Component ID"),
+        FieldSpec::text("kind", "Kind").with_default(Value::from("node")),
+        FieldSpec::number(
+            "depth",
+            "Depth",
+            prism_builder::registry::NumericBounds::min(0.0),
+        )
+        .with_default(Value::from(0.0)),
+        FieldSpec::boolean("selected", "Selected").with_default(Value::Bool(false)),
+        FieldSpec::boolean("show-delete", "Show delete (host-driven hover)")
+            .with_default(Value::Bool(false)),
+    ]
 }
 
-impl Block for InspectorRow {
-    fn id(&self) -> &ComponentId {
-        &self.id
-    }
+fn inspector_row_signals() -> Vec<prism_builder::signal::SignalDef> {
+    let mut signals = common_signals();
+    signals.push(SignalDef::new(
+        "row-clicked",
+        "Row was clicked — host selects the bound node-id.",
+    ));
+    signals.push(SignalDef::new(
+        "row-right-clicked",
+        "Row was right-clicked — host opens a context menu at the (x, y).",
+    ));
+    signals.push(SignalDef::new(
+        "move-up",
+        "Move-up chevron clicked (selected node rows only).",
+    ));
+    signals.push(SignalDef::new(
+        "move-down",
+        "Move-down chevron clicked (selected node rows only).",
+    ));
+    signals.push(SignalDef::new(
+        "delete-track",
+        "Trash clicked (row-kind rows with `show-delete=true`).",
+    ));
+    signals
+}
 
-    fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::text("node-id", "Node ID"),
-            FieldSpec::text("component-id", "Component ID"),
-            FieldSpec::text("kind", "Kind").with_default(Value::from("node")),
-            FieldSpec::number(
-                "depth",
-                "Depth",
-                prism_builder::registry::NumericBounds::min(0.0),
-            )
-            .with_default(Value::from(0.0)),
-            FieldSpec::boolean("selected", "Selected").with_default(Value::Bool(false)),
-            FieldSpec::boolean("show-delete", "Show delete (host-driven hover)")
-                .with_default(Value::Bool(false)),
-        ]
-    }
+fn inspector_row_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let kind = prop_str(node, "kind");
+    let m = metrics_for_kind(kind);
+    let selected = prop_bool(node, "selected", false);
+    let show_delete = prop_bool(node, "show-delete", false);
+    let depth = node
+        .props
+        .get("depth")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0)
+        .max(0.0) as f32;
+    let component_label = prop_str(node, "component-id");
+    let node_id_text = prop_string(node, "node-id");
 
-    fn signals(&self) -> Vec<SignalDef> {
-        let mut signals = common_signals();
-        signals.push(SignalDef::new(
-            "row-clicked",
-            "Row was clicked — host selects the bound node-id.",
-        ));
-        signals.push(SignalDef::new(
-            "row-right-clicked",
-            "Row was right-clicked — host opens a context menu at the (x, y).",
-        ));
-        signals.push(SignalDef::new(
-            "move-up",
-            "Move-up chevron clicked (selected node rows only).",
-        ));
-        signals.push(SignalDef::new(
-            "move-down",
-            "Move-down chevron clicked (selected node rows only).",
-        ));
-        signals.push(SignalDef::new(
-            "delete-track",
-            "Trash clicked (row-kind rows with `show-delete=true`).",
-        ));
-        signals
-    }
+    // Style scaffold for child text — the kind table picks color
+    // and size, `colored_text_node` clones a fresh StyleProperties
+    // with the override colour applied, no shared mutable state.
+    let style = StyleProperties::default();
 
-    fn lower_ui(&self, _ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
-        let kind = prop_str(node, "kind");
-        let m = metrics_for_kind(kind);
-        let selected = prop_bool(node, "selected", false);
-        let show_delete = prop_bool(node, "show-delete", false);
-        let depth = node
-            .props
-            .get("depth")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0)
-            .max(0.0) as f32;
-        let component_label = prop_str(node, "component-id");
-        let node_id_text = prop_string(node, "node-id");
+    // Left cluster: indent dot + label (+ optional id text).
+    let dot_color = if selected {
+        m.dot_color_selected
+    } else {
+        m.dot_color
+    };
+    let label_color = if selected {
+        m.label_color_selected
+    } else {
+        m.label_color
+    };
 
-        // Style scaffold for child text — the kind table picks color
-        // and size, `colored_text_node` clones a fresh StyleProperties
-        // with the override colour applied, no shared mutable state.
-        let style = StyleProperties::default();
-
-        // Left cluster: indent dot + label (+ optional id text).
-        let dot_color = if selected {
-            m.dot_color_selected
-        } else {
-            m.dot_color
-        };
-        let label_color = if selected {
-            m.label_color_selected
-        } else {
-            m.label_color
-        };
-
-        let mut left_children: Vec<UiNode> = Vec::with_capacity(if m.show_id_text { 3 } else { 2 });
-        left_children.push(indent_dot(
-            format!("{}::dot", node.id),
-            dot_color,
-            m.dot_radius_px,
-        ));
+    let mut left_children: Vec<UiNode> = Vec::with_capacity(if m.show_id_text { 3 } else { 2 });
+    left_children.push(indent_dot(
+        format!("{}::dot", node.id),
+        dot_color,
+        m.dot_radius_px,
+    ));
+    left_children.push(colored_text_node(
+        format!("{}::label", node.id),
+        component_label.into(),
+        &style,
+        m.label_size,
+        label_color,
+    ));
+    if m.show_id_text && !node_id_text.is_empty() {
         left_children.push(colored_text_node(
-            format!("{}::label", node.id),
-            component_label.into(),
+            format!("{}::id", node.id),
+            node_id_text.clone(),
             &style,
-            m.label_size,
-            label_color,
+            10.0,
+            "#80000000",
         ));
-        if m.show_id_text && !node_id_text.is_empty() {
-            left_children.push(colored_text_node(
-                format!("{}::id", node.id),
-                node_id_text.clone(),
-                &style,
-                10.0,
-                "#80000000",
-            ));
-        }
-
-        let left = bare_container(format!("{}::left", node.id), left_children, |p| {
-            p.direction = Direction::Row;
-            p.gap = ROW_GAP;
-            p.height = Sizing::Grow;
-        });
-
-        // Right cluster: chevrons (selected node) or trash (row +
-        // show-delete). Built via the shared `icon_button_node` recipe
-        // — same 28×28 / 16×16 / 6px-radius shape as IconButton itself.
-        let right = build_right_cluster(node, m, selected, show_delete);
-
-        let mut row_children: Vec<UiNode> = Vec::with_capacity(2);
-        row_children.push(left);
-        if let Some(right_cluster) = right {
-            row_children.push(right_cluster);
-        }
-
-        // Outer 30px row with kind- and selection-driven background.
-        let resting_bg = if selected {
-            m.selected_bg.or(m.bg)
-        } else {
-            m.bg
-        };
-
-        bare_container(node.id.clone(), row_children, |props| {
-            props.height = Sizing::Fixed(ROW_HEIGHT);
-            props.radius = uniform_radius(ROW_RADIUS);
-            props.background = resting_bg.and_then(parse_color);
-            // Hover swap is the cheapest visual feedback; rows declare
-            // it unconditionally (disabled rows are not a thing here).
-            props.hover = hover_bg(HOVER_BG);
-            props.padding = Padding {
-                left: PAD_LEFT_BASE + depth * INDENT_PX,
-                right: PAD_RIGHT,
-                top: 0.0,
-                bottom: 0.0,
-            };
-            props.direction = Direction::Row;
-            props.gap = 0.0;
-
-            // SSR semantic — outline-tree row is a `<div role="…">`
-            // with `aria-selected` driven by the prop. Flat structure
-            // is fine for a flat tree; deep tree rendering would carry
-            // `aria-level={depth + 1}` but we skip that until needed.
-            let mut s = Semantic::tag("div").with_attr("role", m.aria_role);
-            if selected && m.aria_role == "treeitem" {
-                s = s.with_attr("aria-selected", "true");
-            }
-            if depth > 0.0 {
-                s = s.with_attr("aria-level", ((depth as i64) + 1).to_string());
-            }
-            props.semantic = s;
-        })
     }
+
+    let left = bare_container(format!("{}::left", node.id), left_children, |p| {
+        p.direction = Direction::Row;
+        p.gap = ROW_GAP;
+        p.height = Sizing::Grow;
+    });
+
+    // Right cluster: chevrons (selected node) or trash (row +
+    // show-delete). Built via the shared `icon_button_node` recipe
+    // — same 28×28 / 16×16 / 6px-radius shape as IconButton itself.
+    let right = build_right_cluster(node, m, selected, show_delete);
+
+    let mut row_children: Vec<UiNode> = Vec::with_capacity(2);
+    row_children.push(left);
+    if let Some(right_cluster) = right {
+        row_children.push(right_cluster);
+    }
+
+    // Outer 30px row with kind- and selection-driven background.
+    let resting_bg = if selected {
+        m.selected_bg.or(m.bg)
+    } else {
+        m.bg
+    };
+
+    bare_container(node.id.clone(), row_children, |props| {
+        props.height = Sizing::Fixed(ROW_HEIGHT);
+        props.radius = uniform_radius(ROW_RADIUS);
+        props.background = resting_bg.and_then(parse_color);
+        // Hover swap is the cheapest visual feedback; rows declare
+        // it unconditionally (disabled rows are not a thing here).
+        props.hover = hover_bg(HOVER_BG);
+        props.padding = Padding {
+            left: PAD_LEFT_BASE + depth * INDENT_PX,
+            right: PAD_RIGHT,
+            top: 0.0,
+            bottom: 0.0,
+        };
+        props.direction = Direction::Row;
+        props.gap = 0.0;
+
+        // SSR semantic — outline-tree row is a `<div role="…">`
+        // with `aria-selected` driven by the prop. Flat structure
+        // is fine for a flat tree; deep tree rendering would carry
+        // `aria-level={depth + 1}` but we skip that until needed.
+        let mut s = Semantic::tag("div").with_attr("role", m.aria_role);
+        if selected && m.aria_role == "treeitem" {
+            s = s.with_attr("aria-selected", "true");
+        }
+        if depth > 0.0 {
+            s = s.with_attr("aria-level", ((depth as i64) + 1).to_string());
+        }
+        props.semantic = s;
+    })
 }
+
+pub const INSPECTOR_ROW_SPEC: prism_builder::BlockSpec =
+    prism_builder::BlockSpec::new("shell.inspector-row", inspector_row_schema)
+        .lower(inspector_row_lower)
+        .signals(inspector_row_signals);
 
 fn build_right_cluster(
     node: &Node,
@@ -338,16 +332,14 @@ mod tests {
     use super::*;
     use prism_builder::document::Node as BuilderNode;
     use prism_builder::layout::LayoutMode;
+    use prism_builder::Block;
     use prism_core::foundation::spatial::Transform2D;
     use serde_json::json;
 
     fn lower(node: &BuilderNode) -> UiNode {
-        let block = InspectorRow {
-            id: "shell.inspector-row".into(),
-        };
         let cascade = StyleProperties::default();
         let ctx = LowerCtx::new(None, &cascade);
-        block.lower_ui(&ctx, node, &cascade)
+        inspector_row_lower(&ctx, node, &cascade)
     }
 
     fn row(props: Value) -> BuilderNode {
@@ -482,9 +474,7 @@ mod tests {
 
     #[test]
     fn schema_declares_six_fields_and_signals_cover_row_actions() {
-        let block = InspectorRow {
-            id: "shell.inspector-row".into(),
-        };
+        let block = prism_builder::SpecBlock::new(&super::INSPECTOR_ROW_SPEC);
         let keys: Vec<String> = block.schema().into_iter().map(|f| f.key).collect();
         assert_eq!(
             keys,

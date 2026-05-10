@@ -9,60 +9,54 @@ use prism_builder::{
     registry::FieldSpec,
     style::StyleProperties,
     ui_lower::{bare_container, parse_color, LowerCtx},
-    Block, ComponentId,
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Semantic, Sizing};
 
 const BAR_HEIGHT: f32 = 28.0;
 const BAR_BG: &str = "#08000000";
 
-pub struct DockTabBar {
-    pub id: ComponentId,
+fn dock_tab_bar_schema() -> Vec<FieldSpec> {
+    vec![FieldSpec::text("tabs", "Tabs (JSON array)")]
 }
 
-impl Block for DockTabBar {
-    fn id(&self) -> &ComponentId {
-        &self.id
-    }
-
-    fn schema(&self) -> Vec<FieldSpec> {
-        vec![FieldSpec::text("tabs", "Tabs (JSON array)")]
-    }
-
-    fn lower_ui(&self, ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
-        let tabs: Vec<UiNode> = node
-            .props
-            .get("tabs")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .enumerate()
-                    .filter_map(|(idx, item)| {
-                        ctx.lower_as(
-                            "shell.dock-tab",
-                            format!("{}::tab::{}", node.id, idx),
-                            item.clone(),
-                        )
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        bare_container(node.id.clone(), tabs, |p| {
-            p.direction = Direction::Row;
-            p.width = Sizing::Grow;
-            p.height = Sizing::Fixed(BAR_HEIGHT);
-            p.background = parse_color(BAR_BG);
-            p.semantic = Semantic::tag("div")
-                .with_attr("role", "tablist")
-                .with_attr("data-role", "dock-tab-bar");
+fn dock_tab_bar_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let tabs: Vec<UiNode> = node
+        .props
+        .get("tabs")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .enumerate()
+                .filter_map(|(idx, item)| {
+                    ctx.lower_as(
+                        "shell.dock-tab",
+                        format!("{}::tab::{}", node.id, idx),
+                        item.clone(),
+                    )
+                })
+                .collect()
         })
-    }
+        .unwrap_or_default();
+
+    bare_container(node.id.clone(), tabs, |p| {
+        p.direction = Direction::Row;
+        p.width = Sizing::Grow;
+        p.height = Sizing::Fixed(BAR_HEIGHT);
+        p.background = parse_color(BAR_BG);
+        p.semantic = Semantic::tag("div")
+            .with_attr("role", "tablist")
+            .with_attr("data-role", "dock-tab-bar");
+    })
 }
+
+pub const DOCK_TAB_BAR_SPEC: prism_builder::BlockSpec =
+    prism_builder::BlockSpec::new("shell.dock-tab-bar", dock_tab_bar_schema)
+        .lower(dock_tab_bar_lower);
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::components::registry::{register_shell_builtins, ShellComponentRegistry};
     use prism_builder::document::Node as BuilderNode;
     use prism_builder::layout::LayoutMode;
@@ -70,9 +64,6 @@ mod tests {
     use serde_json::json;
 
     fn lower(props: serde_json::Value, with_reg: bool) -> UiNode {
-        let block = DockTabBar {
-            id: "shell.dock-tab-bar".into(),
-        };
         let n = BuilderNode {
             id: "tb".into(),
             component: "shell.dock-tab-bar".into(),
@@ -93,7 +84,7 @@ mod tests {
         } else {
             LowerCtx::new(None, &cascade)
         };
-        block.lower_ui(&ctx, &n, &cascade)
+        dock_tab_bar_lower(&ctx, &n, &cascade)
     }
 
     #[test]

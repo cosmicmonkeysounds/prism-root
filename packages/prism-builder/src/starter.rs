@@ -1,24 +1,22 @@
 //! Starter component catalog — the default block registry.
 //!
 //! Seventeen blocks land here, declared as a single `BUILTINS` table of
-//! `BuiltinSpec` rows. Each row carries `(id, schema, help, signals,
-//! variants, lower)`; one [`BuiltinBlock`] type implements `Block` by
+//! `BlockSpec` rows. Each row carries `(id, schema, help, signals,
+//! variants, lower)`; one [`SpecBlock`] type implements `Block` by
 //! delegating to its spec. There are no per-block trait impls — adding
 //! a new block is one `const SPEC` and one entry in the table.
 //!
 //! `card` is a prefab, `facet` is a one-off `Component`, and the
 //! remaining 15 blocks (text, image, container, form, input, button,
 //! code, divider, spacer, columns, list, table, tabs, accordion,
-//! graph-view) flow through `BuiltinBlock` + `BuiltinSpec`.
+//! graph-view) flow through `SpecBlock` + `BlockSpec`.
 
 use std::sync::Arc;
 
-use prism_core::help::HelpEntry;
 use serde_json::json;
 
 use crate::asset::AssetSource;
-use crate::block::{register_block, Block};
-use crate::component::ComponentId;
+use crate::block::{register_specs, BlockSpec, SpecBlock};
 use crate::document::Node;
 use crate::facet::FacetComponent;
 use crate::prefab::{ExposedSlot, PrefabComponent, PrefabDef};
@@ -29,135 +27,26 @@ use crate::style::StyleProperties;
 use crate::ui_lower::{
     bare_container, parse_color, spacer_node, text_node, uniform_radius, with_semantic, LowerCtx,
 };
-use crate::variant::{presets as variant_presets, VariantAxis};
+use crate::variant::presets as variant_presets;
 
 use prism_ui_runtime::layout::{self as ui, Direction, Padding, Semantic, Sizing};
 
-// ── Declarative builtin spec ────────────────────────────────────────
-
-/// One row per built-in block. `id` / `schema` / `lower` are always
-/// present; `help` / `signals` / `variants` default to `None` /
-/// "common signals only" / "no variant axes".
-///
-/// Adding a builtin = one `const SPEC` + one row in [`BUILTINS`].
-pub struct BuiltinSpec {
-    pub id: &'static str,
-    pub schema: fn() -> Vec<FieldSpec>,
-    pub help: Option<HelpDef>,
-    pub signals: fn() -> Vec<SignalDef>,
-    pub variants: fn() -> Vec<VariantAxis>,
-    pub lower: LowerFn,
-}
-
-pub struct HelpDef {
-    pub key: &'static str,
-    pub title: &'static str,
-    pub description: &'static str,
-}
-
-pub type LowerFn = fn(&LowerCtx<'_>, &Node, &StyleProperties) -> ui::Node;
-
-fn default_signals() -> Vec<SignalDef> {
-    with_common_signals(vec![])
-}
-fn no_variants() -> Vec<VariantAxis> {
-    vec![]
-}
-fn default_lower(ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> ui::Node {
-    ctx.default_container(node, style)
-}
-
-impl BuiltinSpec {
-    pub const fn new(id: &'static str, schema: fn() -> Vec<FieldSpec>, lower: LowerFn) -> Self {
-        Self {
-            id,
-            schema,
-            help: None,
-            signals: default_signals,
-            variants: no_variants,
-            lower,
-        }
-    }
-    pub const fn help(
-        mut self,
-        key: &'static str,
-        title: &'static str,
-        description: &'static str,
-    ) -> Self {
-        self.help = Some(HelpDef {
-            key,
-            title,
-            description,
-        });
-        self
-    }
-    pub const fn signals(mut self, f: fn() -> Vec<SignalDef>) -> Self {
-        self.signals = f;
-        self
-    }
-    pub const fn variants(mut self, f: fn() -> Vec<VariantAxis>) -> Self {
-        self.variants = f;
-        self
-    }
-}
-
-/// `Block` impl that delegates everything to a `&'static BuiltinSpec`.
-pub struct BuiltinBlock {
-    spec: &'static BuiltinSpec,
-    id: ComponentId,
-}
-
-impl BuiltinBlock {
-    pub fn new(spec: &'static BuiltinSpec) -> Self {
-        Self {
-            spec,
-            id: spec.id.into(),
-        }
-    }
-}
-
-impl Block for BuiltinBlock {
-    fn id(&self) -> &ComponentId {
-        &self.id
-    }
-    fn schema(&self) -> Vec<FieldSpec> {
-        (self.spec.schema)()
-    }
-    fn help_entry(&self) -> Option<HelpEntry> {
-        self.spec
-            .help
-            .as_ref()
-            .map(|h| HelpEntry::new(h.key, h.title, h.description))
-    }
-    fn signals(&self) -> Vec<SignalDef> {
-        (self.spec.signals)()
-    }
-    fn variants(&self) -> Vec<VariantAxis> {
-        (self.spec.variants)()
-    }
-    fn lower_ui(&self, ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> ui::Node {
-        (self.spec.lower)(ctx, node, style)
-    }
-}
-
-/// Construct a fresh `Arc<BuiltinBlock>` for a builtin id, or `None` if
+/// Construct a fresh `Arc<SpecBlock>` for a builtin id, or `None` if
 /// the id isn't in [`BUILTINS`]. The blanket `impl<T: Block> Component`
 /// makes the result usable directly with `register_block` and
 /// `ComponentRegistry::register`.
-pub fn builtin_block(id: &str) -> Option<Arc<BuiltinBlock>> {
+pub fn builtin_block(id: &str) -> Option<Arc<SpecBlock>> {
     BUILTINS
         .iter()
         .find(|s| s.id == id)
-        .map(|spec| Arc::new(BuiltinBlock::new(spec)))
+        .map(|spec| SpecBlock::arc(spec))
 }
 
 /// Register every entry in [`BUILTINS`] plus the `card` prefab and the
 /// one-off `facet` component. The Slint DSL emit path is gone; the
 /// unified Taffy/SSR pipeline is the single render path.
 pub fn register_builtins(components: &mut ComponentRegistry) -> Result<(), RegistryError> {
-    for spec in BUILTINS {
-        register_block(components, Arc::new(BuiltinBlock::new(spec)))?;
-    }
+    register_specs(components, BUILTINS)?;
     components.register(Arc::new(PrefabComponent::new(card_prefab_def())))?;
     components.register(Arc::new(FacetComponent::new()))?;
     Ok(())
@@ -229,7 +118,7 @@ fn text_signals() -> Vec<SignalDef> {
     .with_payload(vec![FieldSpec::text("href", "Link URL")])])
 }
 
-const TEXT: BuiltinSpec = BuiltinSpec::new("text", schemas::text, text_lower)
+const TEXT: BlockSpec = BlockSpec::new("text", schemas::text).lower(text_lower)
     .help(
         "builder.components.text",
         "Text",
@@ -263,7 +152,7 @@ fn image_signals() -> Vec<SignalDef> {
     )])
 }
 
-const IMAGE: BuiltinSpec = BuiltinSpec::new("image", schemas::image, image_lower)
+const IMAGE: BlockSpec = BlockSpec::new("image", schemas::image).lower(image_lower)
     .help(
         "builder.components.image",
         "Image",
@@ -300,7 +189,8 @@ fn container_signals() -> Vec<SignalDef> {
     .with_payload(vec![FieldSpec::text("child_id", "Added child node ID")])])
 }
 
-const CONTAINER: BuiltinSpec = BuiltinSpec::new("container", schemas::container, container_lower)
+const CONTAINER: BlockSpec = BlockSpec::new("container", schemas::container)
+    .lower(container_lower)
     .help(
         "builder.components.container",
         "Container",
@@ -334,7 +224,8 @@ fn form_signals() -> Vec<SignalDef> {
     ])
 }
 
-const FORM: BuiltinSpec = BuiltinSpec::new("form", schemas::form, form_lower)
+const FORM: BlockSpec = BlockSpec::new("form", schemas::form)
+    .lower(form_lower)
     .help(
         "builder.components.form",
         "Form",
@@ -421,7 +312,8 @@ fn input_signals() -> Vec<SignalDef> {
     ])
 }
 
-const INPUT: BuiltinSpec = BuiltinSpec::new("input", schemas::input, input_lower)
+const INPUT: BlockSpec = BlockSpec::new("input", schemas::input)
+    .lower(input_lower)
     .help(
         "builder.components.input",
         "Input",
@@ -476,7 +368,8 @@ fn button_lower(ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> ui:
     })
 }
 
-const BUTTON: BuiltinSpec = BuiltinSpec::new("button", schemas::button, button_lower)
+const BUTTON: BlockSpec = BlockSpec::new("button", schemas::button)
+    .lower(button_lower)
     .help(
         "builder.components.button",
         "Button",
@@ -535,7 +428,8 @@ fn code_lower(ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> ui::N
     })
 }
 
-const CODE: BuiltinSpec = BuiltinSpec::new("code", schemas::code, code_lower)
+const CODE: BlockSpec = BlockSpec::new("code", schemas::code)
+    .lower(code_lower)
     .help(
         "builder.components.code",
         "Code",
@@ -555,11 +449,13 @@ fn divider_lower(ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> ui
     })
 }
 
-const DIVIDER: BuiltinSpec = BuiltinSpec::new("divider", schemas::divider, divider_lower).help(
-    "builder.components.divider",
-    "Divider",
-    "Horizontal separator line between content sections.",
-);
+const DIVIDER: BlockSpec = BlockSpec::new("divider", schemas::divider)
+    .lower(divider_lower)
+    .help(
+        "builder.components.divider",
+        "Divider",
+        "Horizontal separator line between content sections.",
+    );
 
 // ── spacer ──────────────────────────────────────────────────────────
 
@@ -574,11 +470,13 @@ fn spacer_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> u
     spacer_node(node.id.clone(), width, p.height as f32)
 }
 
-const SPACER: BuiltinSpec = BuiltinSpec::new("spacer", schemas::spacer, spacer_lower).help(
-    "builder.components.spacer",
-    "Spacer",
-    "Vertical spacing element with configurable height in pixels.",
-);
+const SPACER: BlockSpec = BlockSpec::new("spacer", schemas::spacer)
+    .lower(spacer_lower)
+    .help(
+        "builder.components.spacer",
+        "Spacer",
+        "Vertical spacing element with configurable height in pixels.",
+    );
 
 // ── columns ─────────────────────────────────────────────────────────
 
@@ -592,7 +490,8 @@ fn columns_lower(ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> ui
     })
 }
 
-const COLUMNS: BuiltinSpec = BuiltinSpec::new("columns", schemas::columns, columns_lower)
+const COLUMNS: BlockSpec = BlockSpec::new("columns", schemas::columns)
+    .lower(columns_lower)
     .help(
         "builder.components.columns",
         "Columns",
@@ -625,7 +524,7 @@ fn list_signals() -> Vec<SignalDef> {
     )])])
 }
 
-const LIST: BuiltinSpec = BuiltinSpec::new("list", schemas::list, list_lower)
+const LIST: BlockSpec = BlockSpec::new("list", schemas::list).lower(list_lower)
     .help(
         "builder.components.list",
         "List",
@@ -718,7 +617,8 @@ fn table_signals() -> Vec<SignalDef> {
     ])
 }
 
-const TABLE: BuiltinSpec = BuiltinSpec::new("table", schemas::table, table_lower)
+const TABLE: BlockSpec = BlockSpec::new("table", schemas::table)
+    .lower(table_lower)
     .help(
         "builder.components.table",
         "Table",
@@ -793,7 +693,8 @@ fn tabs_signals() -> Vec<SignalDef> {
     ])])
 }
 
-const TABS: BuiltinSpec = BuiltinSpec::new("tabs", schemas::tabs, tabs_lower)
+const TABS: BlockSpec = BlockSpec::new("tabs", schemas::tabs)
+    .lower(tabs_lower)
     .help(
         "builder.components.tabs",
         "Tabs",
@@ -865,7 +766,8 @@ fn accordion_signals() -> Vec<SignalDef> {
     )])])
 }
 
-const ACCORDION: BuiltinSpec = BuiltinSpec::new("accordion", schemas::accordion, accordion_lower)
+const ACCORDION: BlockSpec = BlockSpec::new("accordion", schemas::accordion)
+    .lower(accordion_lower)
     .help(
         "builder.components.accordion",
         "Accordion",
@@ -892,7 +794,7 @@ fn graph_view_signals() -> Vec<SignalDef> {
     ])
 }
 
-const GRAPH_VIEW: BuiltinSpec = BuiltinSpec::new("graph-view", schemas::graph_view, default_lower)
+const GRAPH_VIEW: BlockSpec = BlockSpec::new("graph-view", schemas::graph_view)
     .help(
         "builder.components.graph-view",
         "Graph View",
@@ -904,7 +806,7 @@ const GRAPH_VIEW: BuiltinSpec = BuiltinSpec::new("graph-view", schemas::graph_vi
 
 /// Single source of truth for the default catalog. Adding a builtin is
 /// one new `const SPEC` above and one row here.
-pub const BUILTINS: &[&BuiltinSpec] = &[
+pub const BUILTINS: &[&BlockSpec] = &[
     &TEXT,
     &IMAGE,
     &CONTAINER,

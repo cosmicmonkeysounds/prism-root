@@ -20,7 +20,6 @@ use prism_builder::{
     ui_lower::{
         bare_container, hover_bg, image_node, parse_color, prop_bool, prop_string, LowerCtx,
     },
-    Block, ComponentId,
 };
 use prism_ui_runtime::layout::{Node as UiNode, Padding, Semantic, Sizing};
 use serde_json::Value;
@@ -35,92 +34,87 @@ const HOVER_BG: &str = "#1f000000";
 /// Accent rail colour when selected.
 const RAIL_ACCENT: &str = "#0060c0";
 
-pub struct NavButton {
-    pub id: ComponentId,
+fn nav_button_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("icon", "Icon").required(),
+        FieldSpec::boolean("selected", "Selected").with_default(Value::Bool(false)),
+        FieldSpec::text("help-id", "Help ID"),
+    ]
 }
 
-impl Block for NavButton {
-    fn id(&self) -> &ComponentId {
-        &self.id
-    }
-
-    fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::text("icon", "Icon").required(),
-            FieldSpec::boolean("selected", "Selected").with_default(Value::Bool(false)),
-            FieldSpec::text("help-id", "Help ID"),
-        ]
-    }
-
-    fn signals(&self) -> Vec<SignalDef> {
-        let mut signals = common_signals();
-        signals.push(
-            SignalDef::new(
-                "hover-start",
-                "Pointer entered the button — positional payload for tooltip placement.",
-            )
-            .with_payload(vec![
-                FieldSpec::text("help_id", "Help ID"),
-                FieldSpec::number("x", "X (px)", NumericBounds::default()),
-                FieldSpec::number("y", "Y (px)", NumericBounds::default()),
-            ]),
-        );
-        signals.push(SignalDef::new("hover-end", "Pointer left the button."));
-        signals
-    }
-
-    fn lower_ui(&self, ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> UiNode {
-        let icon = prop_string(node, "icon");
-        let selected = prop_bool(node, "selected", false);
-
-        // Left accent rail — 3px-wide vertical stroke that's only painted
-        // when selected. We always emit the container to keep the layout
-        // deterministic; transparent fills compose to no draw call.
-        let rail = bare_container(format!("{}::rail", node.id), vec![], |props| {
-            props.width = Sizing::Fixed(RAIL_WIDTH);
-            props.height = Sizing::Grow;
-            if selected {
-                props.background = parse_color(RAIL_ACCENT);
-            }
-        });
-
-        let glyph = image_node(
-            format!("{}::glyph", node.id),
-            icon,
-            style,
-            Sizing::Fixed(ICON_SIZE),
-            Sizing::Fixed(ICON_SIZE),
-        );
-
-        // Right side hosts the centred glyph in its own grow container so
-        // the rail floats at x=0 and the icon sits in the remaining 45px.
-        let body = bare_container(format!("{}::body", node.id), vec![glyph], |props| {
-            props.width = Sizing::Grow;
-            props.height = Sizing::Grow;
-            props.padding = Padding {
-                left: (NAV_SIZE - RAIL_WIDTH - ICON_SIZE) / 2.0,
-                right: (NAV_SIZE - RAIL_WIDTH - ICON_SIZE) / 2.0,
-                top: (NAV_SIZE - ICON_SIZE) / 2.0,
-                bottom: (NAV_SIZE - ICON_SIZE) / 2.0,
-            };
-        });
-
-        ctx.synthetic_container(node, style, vec![rail, body], |props| {
-            props.direction = prism_ui_runtime::layout::Direction::Row;
-            props.width = Sizing::Fixed(NAV_SIZE);
-            props.height = Sizing::Fixed(NAV_SIZE);
-            if selected {
-                props.background = parse_color(SELECTED_BG);
-            }
-            // Selected buttons keep their accent bg under hover (no
-            // double-state); resting buttons gain the foreground tint.
-            if !selected {
-                props.hover = hover_bg(HOVER_BG);
-            }
-            props.semantic = Semantic::button().with_attr_if(selected, "aria-pressed", "true");
-        })
-    }
+fn nav_button_signals() -> Vec<prism_builder::signal::SignalDef> {
+    let mut signals = common_signals();
+    signals.push(
+        SignalDef::new(
+            "hover-start",
+            "Pointer entered the button — positional payload for tooltip placement.",
+        )
+        .with_payload(vec![
+            FieldSpec::text("help_id", "Help ID"),
+            FieldSpec::number("x", "X (px)", NumericBounds::default()),
+            FieldSpec::number("y", "Y (px)", NumericBounds::default()),
+        ]),
+    );
+    signals.push(SignalDef::new("hover-end", "Pointer left the button."));
+    signals
 }
+
+fn nav_button_lower(ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> UiNode {
+    let icon = prop_string(node, "icon");
+    let selected = prop_bool(node, "selected", false);
+
+    // Left accent rail — 3px-wide vertical stroke that's only painted
+    // when selected. We always emit the container to keep the layout
+    // deterministic; transparent fills compose to no draw call.
+    let rail = bare_container(format!("{}::rail", node.id), vec![], |props| {
+        props.width = Sizing::Fixed(RAIL_WIDTH);
+        props.height = Sizing::Grow;
+        if selected {
+            props.background = parse_color(RAIL_ACCENT);
+        }
+    });
+
+    let glyph = image_node(
+        format!("{}::glyph", node.id),
+        icon,
+        style,
+        Sizing::Fixed(ICON_SIZE),
+        Sizing::Fixed(ICON_SIZE),
+    );
+
+    // Right side hosts the centred glyph in its own grow container so
+    // the rail floats at x=0 and the icon sits in the remaining 45px.
+    let body = bare_container(format!("{}::body", node.id), vec![glyph], |props| {
+        props.width = Sizing::Grow;
+        props.height = Sizing::Grow;
+        props.padding = Padding {
+            left: (NAV_SIZE - RAIL_WIDTH - ICON_SIZE) / 2.0,
+            right: (NAV_SIZE - RAIL_WIDTH - ICON_SIZE) / 2.0,
+            top: (NAV_SIZE - ICON_SIZE) / 2.0,
+            bottom: (NAV_SIZE - ICON_SIZE) / 2.0,
+        };
+    });
+
+    ctx.synthetic_container(node, style, vec![rail, body], |props| {
+        props.direction = prism_ui_runtime::layout::Direction::Row;
+        props.width = Sizing::Fixed(NAV_SIZE);
+        props.height = Sizing::Fixed(NAV_SIZE);
+        if selected {
+            props.background = parse_color(SELECTED_BG);
+        }
+        // Selected buttons keep their accent bg under hover (no
+        // double-state); resting buttons gain the foreground tint.
+        if !selected {
+            props.hover = hover_bg(HOVER_BG);
+        }
+        props.semantic = Semantic::button().with_attr_if(selected, "aria-pressed", "true");
+    })
+}
+
+pub const NAV_BUTTON_SPEC: prism_builder::BlockSpec =
+    prism_builder::BlockSpec::new("shell.nav-button", nav_button_schema)
+        .lower(nav_button_lower)
+        .signals(nav_button_signals);
 
 #[cfg(test)]
 mod tests {
@@ -128,16 +122,14 @@ mod tests {
     use prism_builder::document::Node as BuilderNode;
     use prism_builder::layout::LayoutMode;
     use prism_builder::style::StyleProperties as Cascade;
+    use prism_builder::Block;
     use prism_core::foundation::spatial::Transform2D;
     use serde_json::json;
 
     fn lower_one(node: &BuilderNode) -> UiNode {
-        let block = NavButton {
-            id: "shell.nav-button".into(),
-        };
         let cascade = Cascade::default();
         let ctx = LowerCtx::new(None, &cascade);
-        block.lower_ui(&ctx, node, &cascade)
+        nav_button_lower(&ctx, node, &cascade)
     }
 
     fn nav(props: Value) -> BuilderNode {
@@ -203,9 +195,7 @@ mod tests {
 
     #[test]
     fn schema_declares_three_fields() {
-        let block = NavButton {
-            id: "shell.nav-button".into(),
-        };
+        let block = prism_builder::SpecBlock::new(&super::NAV_BUTTON_SPEC);
         let keys: Vec<String> = block.schema().into_iter().map(|f| f.key).collect();
         assert_eq!(keys, vec!["icon", "selected", "help-id"]);
     }

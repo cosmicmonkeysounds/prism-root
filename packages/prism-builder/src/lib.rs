@@ -44,7 +44,10 @@ pub mod variant;
 
 pub use app::{AppIcon, AppId, NavigationConfig, NavigationStyle, Page, PrismApp};
 pub use asset::{collect_vfs_hashes, AssetSource};
-pub use block::{register_block, Block};
+pub use block::{
+    default_lower, default_signals, no_schema, no_variants, register_block, register_specs, Block,
+    BlockSpec, HelpDef, LowerFn, SpecBlock,
+};
 pub use component::{Component, ComponentId, RenderError};
 pub use core_widget::{collect_all_contributions, register_core_widgets, CoreWidgetBlock};
 pub use document::{BuilderDocument, Node, NodeId};

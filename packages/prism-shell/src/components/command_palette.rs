@@ -19,7 +19,6 @@ use prism_builder::{
         bare_container, colored_text_node, hover_bg, parse_color, text_input_node, uniform_radius,
         LowerCtx,
     },
-    Block, ComponentId,
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
 use serde_json::Value;
@@ -33,103 +32,98 @@ const ROW_SELECTED: &str = "#190060c0";
 const LABEL_COLOR: &str = "#000000";
 const SHORTCUT_COLOR: &str = "#88000000";
 
-pub struct CommandPalette {
-    pub id: ComponentId,
+fn command_palette_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("query", "Search query"),
+        FieldSpec::text("placeholder", "Placeholder")
+            .with_default(Value::String("Search commands…".into())),
+        FieldSpec::text("results", "Results (JSON array)"),
+        FieldSpec::integer(
+            "selected-index",
+            "Selected result",
+            prism_core::widget::field::NumericBounds::min(0.0),
+        ),
+    ]
 }
 
-impl Block for CommandPalette {
-    fn id(&self) -> &ComponentId {
-        &self.id
-    }
-
-    fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::text("query", "Search query"),
-            FieldSpec::text("placeholder", "Placeholder")
-                .with_default(Value::String("Search commands…".into())),
-            FieldSpec::text("results", "Results (JSON array)"),
-            FieldSpec::integer(
-                "selected-index",
-                "Selected result",
-                prism_core::widget::field::NumericBounds::min(0.0),
-            ),
-        ]
-    }
-
-    fn signals(&self) -> Vec<SignalDef> {
-        let mut s = common_signals();
-        s.push(SignalDef::new("query-changed", "User typed in the input."));
-        s.push(SignalDef::new("result-activated", "User picked a result."));
-        s
-    }
-
-    fn lower_ui(&self, _ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
-        let query = node
-            .props
-            .get("query")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let placeholder = node
-            .props
-            .get("placeholder")
-            .and_then(|v| v.as_str())
-            .unwrap_or("Search commands…")
-            .to_string();
-        let selected = node
-            .props
-            .get("selected-index")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(0) as usize;
-
-        let style = StyleProperties::default();
-
-        let input = text_input_node(
-            format!("{}::input", node.id),
-            query,
-            placeholder,
-            &style,
-            Sizing::Grow,
-            Sizing::Fixed(36.0),
-            13.0,
-        );
-
-        let results_arr = node
-            .props
-            .get("results")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
-        let result_rows: Vec<UiNode> = results_arr
-            .iter()
-            .enumerate()
-            .map(|(idx, item)| build_row(node, idx, item, idx == selected))
-            .collect();
-
-        let results_list = bare_container(format!("{}::results", node.id), result_rows, |p| {
-            p.direction = Direction::Column;
-            p.width = Sizing::Grow;
-        });
-
-        bare_container(node.id.clone(), vec![input, results_list], |p| {
-            p.direction = Direction::Column;
-            p.gap = 8.0;
-            p.padding = Padding {
-                left: 12.0,
-                right: 12.0,
-                top: 12.0,
-                bottom: 12.0,
-            };
-            p.width = Sizing::Fixed(PALETTE_WIDTH);
-            p.radius = uniform_radius(PALETTE_RADIUS);
-            p.background = parse_color(PALETTE_BG);
-            p.semantic = Semantic::tag("div")
-                .with_attr("role", "dialog")
-                .with_attr("aria-label", "Command palette")
-                .with_attr("data-role", "command-palette");
-        })
-    }
+fn command_palette_signals() -> Vec<prism_builder::signal::SignalDef> {
+    let mut s = common_signals();
+    s.push(SignalDef::new("query-changed", "User typed in the input."));
+    s.push(SignalDef::new("result-activated", "User picked a result."));
+    s
 }
+
+fn command_palette_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let query = node
+        .props
+        .get("query")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let placeholder = node
+        .props
+        .get("placeholder")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Search commands…")
+        .to_string();
+    let selected = node
+        .props
+        .get("selected-index")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0) as usize;
+
+    let style = StyleProperties::default();
+
+    let input = text_input_node(
+        format!("{}::input", node.id),
+        query,
+        placeholder,
+        &style,
+        Sizing::Grow,
+        Sizing::Fixed(36.0),
+        13.0,
+    );
+
+    let results_arr = node
+        .props
+        .get("results")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let result_rows: Vec<UiNode> = results_arr
+        .iter()
+        .enumerate()
+        .map(|(idx, item)| build_row(node, idx, item, idx == selected))
+        .collect();
+
+    let results_list = bare_container(format!("{}::results", node.id), result_rows, |p| {
+        p.direction = Direction::Column;
+        p.width = Sizing::Grow;
+    });
+
+    bare_container(node.id.clone(), vec![input, results_list], |p| {
+        p.direction = Direction::Column;
+        p.gap = 8.0;
+        p.padding = Padding {
+            left: 12.0,
+            right: 12.0,
+            top: 12.0,
+            bottom: 12.0,
+        };
+        p.width = Sizing::Fixed(PALETTE_WIDTH);
+        p.radius = uniform_radius(PALETTE_RADIUS);
+        p.background = parse_color(PALETTE_BG);
+        p.semantic = Semantic::tag("div")
+            .with_attr("role", "dialog")
+            .with_attr("aria-label", "Command palette")
+            .with_attr("data-role", "command-palette");
+    })
+}
+
+pub const COMMAND_PALETTE_SPEC: prism_builder::BlockSpec =
+    prism_builder::BlockSpec::new("shell.command-palette", command_palette_schema)
+        .lower(command_palette_lower)
+        .signals(command_palette_signals);
 
 fn build_row(node: &Node, idx: usize, item: &Value, selected: bool) -> UiNode {
     let label = item.get("label").and_then(|v| v.as_str()).unwrap_or("");
@@ -178,15 +172,13 @@ fn build_row(node: &Node, idx: usize, item: &Value, selected: bool) -> UiNode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use prism_builder::document::Node as BuilderNode;
     use prism_builder::layout::LayoutMode;
     use prism_core::foundation::spatial::Transform2D;
     use serde_json::json;
 
     fn lower(props: Value) -> UiNode {
-        let block = CommandPalette {
-            id: "shell.command-palette".into(),
-        };
         let n = BuilderNode {
             id: "cp".into(),
             component: "shell.command-palette".into(),
@@ -199,7 +191,7 @@ mod tests {
         };
         let cascade = StyleProperties::default();
         let ctx = LowerCtx::new(None, &cascade);
-        block.lower_ui(&ctx, &n, &cascade)
+        command_palette_lower(&ctx, &n, &cascade)
     }
 
     #[test]

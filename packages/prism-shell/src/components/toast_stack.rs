@@ -21,50 +21,43 @@ use prism_builder::{
     registry::FieldSpec,
     style::StyleProperties,
     ui_lower::{bare_container, LowerCtx},
-    Block, ComponentId,
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic};
 
 const STACK_GAP: f32 = 8.0;
 
-pub struct ToastStack {
-    pub id: ComponentId,
+fn toast_stack_schema() -> Vec<FieldSpec> {
+    vec![]
 }
 
-impl Block for ToastStack {
-    fn id(&self) -> &ComponentId {
-        &self.id
-    }
-
-    fn schema(&self) -> Vec<FieldSpec> {
-        vec![]
-    }
-
-    fn lower_ui(&self, ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
-        let kids = ctx
-            .host_children()
-            .map(|s| s.to_vec())
-            .unwrap_or_else(|| ctx.lower_children(&node.children));
-        bare_container(node.id.clone(), kids, |p| {
-            p.direction = Direction::Column;
-            p.gap = STACK_GAP;
-            p.padding = Padding {
-                left: 12.0,
-                right: 12.0,
-                top: 12.0,
-                bottom: 12.0,
-            };
-            p.semantic = Semantic::tag("div")
-                .with_attr("role", "region")
-                .with_attr("aria-label", "Notifications")
-                .with_attr("data-role", "toast-stack");
-        })
-    }
+fn toast_stack_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let kids = ctx
+        .host_children()
+        .map(|s| s.to_vec())
+        .unwrap_or_else(|| ctx.lower_children(&node.children));
+    bare_container(node.id.clone(), kids, |p| {
+        p.direction = Direction::Column;
+        p.gap = STACK_GAP;
+        p.padding = Padding {
+            left: 12.0,
+            right: 12.0,
+            top: 12.0,
+            bottom: 12.0,
+        };
+        p.semantic = Semantic::tag("div")
+            .with_attr("role", "region")
+            .with_attr("aria-label", "Notifications")
+            .with_attr("data-role", "toast-stack");
+    })
 }
+
+pub const TOAST_STACK_SPEC: prism_builder::BlockSpec =
+    prism_builder::BlockSpec::new("shell.toast-stack", toast_stack_schema).lower(toast_stack_lower);
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use prism_builder::document::Node as BuilderNode;
     use prism_builder::layout::LayoutMode;
     use prism_core::foundation::spatial::Transform2D;
@@ -72,9 +65,6 @@ mod tests {
 
     #[test]
     fn empty_stack() {
-        let block = ToastStack {
-            id: "shell.toast-stack".into(),
-        };
         let n = BuilderNode {
             id: "ts".into(),
             component: "shell.toast-stack".into(),
@@ -89,7 +79,7 @@ mod tests {
         let ctx = LowerCtx::new(None, &cascade);
         let UiNode::Container {
             children, props, ..
-        } = block.lower_ui(&ctx, &n, &cascade)
+        } = toast_stack_lower(&ctx, &n, &cascade)
         else {
             panic!()
         };

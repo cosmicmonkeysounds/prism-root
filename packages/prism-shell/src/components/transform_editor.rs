@@ -24,7 +24,6 @@ use prism_builder::{
         bare_container, colored_text_node, hover_bg, parse_color, prop_str, uniform_radius,
         LowerCtx,
     },
-    Block, ComponentId,
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
 use serde_json::Value;
@@ -103,59 +102,54 @@ const ANCHOR_RADIUS: f32 = 3.0;
 const ANCHOR_BG: &str = "#08000000";
 const ANCHOR_HOVER_BG: &str = "#14000000";
 
-pub struct TransformEditor {
-    pub id: ComponentId,
+fn transform_editor_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::number("pos-x", "Position X", Default::default()).with_default(0.0.into()),
+        FieldSpec::number("pos-y", "Position Y", Default::default()).with_default(0.0.into()),
+        FieldSpec::number("rotation", "Rotation", Default::default()).with_default(0.0.into()),
+        FieldSpec::number("scale-x", "Scale X", Default::default()).with_default(1.0.into()),
+        FieldSpec::number("scale-y", "Scale Y", Default::default()).with_default(1.0.into()),
+        FieldSpec::text("anchor", "Anchor").with_default(Value::from("top-left")),
+    ]
 }
 
-impl Block for TransformEditor {
-    fn id(&self) -> &ComponentId {
-        &self.id
-    }
-
-    fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::number("pos-x", "Position X", Default::default()).with_default(0.0.into()),
-            FieldSpec::number("pos-y", "Position Y", Default::default()).with_default(0.0.into()),
-            FieldSpec::number("rotation", "Rotation", Default::default()).with_default(0.0.into()),
-            FieldSpec::number("scale-x", "Scale X", Default::default()).with_default(1.0.into()),
-            FieldSpec::number("scale-y", "Scale Y", Default::default()).with_default(1.0.into()),
-            FieldSpec::text("anchor", "Anchor").with_default(Value::from("top-left")),
-        ]
-    }
-
-    fn signals(&self) -> Vec<SignalDef> {
-        let mut signals = common_signals();
-        signals.push(SignalDef::new(
-            "field-edited",
-            "Anchor / committed-text edits — payload mirrors the Slint (key, text) callback.",
-        ));
-        signals.push(SignalDef::new(
-            "field-edited-number",
-            "Numeric drag tick — payload mirrors the Slint (key, value) callback.",
-        ));
-        signals
-    }
-
-    fn lower_ui(&self, _ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
-        let mut rows: Vec<UiNode> = Vec::with_capacity(ROW_SPECS.len() + 1);
-        for row_spec in ROW_SPECS {
-            rows.push(build_row(node, row_spec));
-        }
-        rows.push(build_anchor_row(node));
-
-        bare_container(node.id.clone(), rows, |props| {
-            props.direction = Direction::Column;
-            props.gap = STACK_GAP;
-            props.padding = Padding {
-                left: 4.0,
-                right: 4.0,
-                top: 4.0,
-                bottom: 4.0,
-            };
-            props.semantic = Semantic::tag("section").with_attr("data-role", "transform-editor");
-        })
-    }
+fn transform_editor_signals() -> Vec<prism_builder::signal::SignalDef> {
+    let mut signals = common_signals();
+    signals.push(SignalDef::new(
+        "field-edited",
+        "Anchor / committed-text edits — payload mirrors the Slint (key, text) callback.",
+    ));
+    signals.push(SignalDef::new(
+        "field-edited-number",
+        "Numeric drag tick — payload mirrors the Slint (key, value) callback.",
+    ));
+    signals
 }
+
+fn transform_editor_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let mut rows: Vec<UiNode> = Vec::with_capacity(ROW_SPECS.len() + 1);
+    for row_spec in ROW_SPECS {
+        rows.push(build_row(node, row_spec));
+    }
+    rows.push(build_anchor_row(node));
+
+    bare_container(node.id.clone(), rows, |props| {
+        props.direction = Direction::Column;
+        props.gap = STACK_GAP;
+        props.padding = Padding {
+            left: 4.0,
+            right: 4.0,
+            top: 4.0,
+            bottom: 4.0,
+        };
+        props.semantic = Semantic::tag("section").with_attr("data-role", "transform-editor");
+    })
+}
+
+pub const TRANSFORM_EDITOR_SPEC: prism_builder::BlockSpec =
+    prism_builder::BlockSpec::new("shell.transform-editor", transform_editor_schema)
+        .lower(transform_editor_lower)
+        .signals(transform_editor_signals);
 
 fn build_row(node: &Node, row: &RowSpec) -> UiNode {
     let style = StyleProperties::default();
@@ -258,6 +252,7 @@ mod tests {
     use super::*;
     use prism_builder::document::Node as BuilderNode;
     use prism_builder::layout::LayoutMode;
+    use prism_builder::Block;
     use prism_core::foundation::spatial::Transform2D;
     use serde_json::json;
 
@@ -275,12 +270,9 @@ mod tests {
     }
 
     fn lower(n: &BuilderNode) -> UiNode {
-        let block = TransformEditor {
-            id: "shell.transform-editor".into(),
-        };
         let cascade = StyleProperties::default();
         let ctx = LowerCtx::new(None, &cascade);
-        block.lower_ui(&ctx, n, &cascade)
+        transform_editor_lower(&ctx, n, &cascade)
     }
 
     #[test]
@@ -365,9 +357,7 @@ mod tests {
 
     #[test]
     fn schema_declares_six_fields() {
-        let block = TransformEditor {
-            id: "shell.transform-editor".into(),
-        };
+        let block = prism_builder::SpecBlock::new(&super::TRANSFORM_EDITOR_SPEC);
         let keys: Vec<String> = block.schema().into_iter().map(|f| f.key).collect();
         assert_eq!(
             keys,

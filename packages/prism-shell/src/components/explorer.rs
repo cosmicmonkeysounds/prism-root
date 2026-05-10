@@ -7,62 +7,55 @@ use prism_builder::{
     registry::FieldSpec,
     style::StyleProperties,
     ui_lower::{bare_container, LowerCtx},
-    Block, ComponentId,
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
 
-pub struct Explorer {
-    pub id: ComponentId,
+fn explorer_schema() -> Vec<FieldSpec> {
+    vec![FieldSpec::text("nodes", "Nodes (JSON array of row props)")]
 }
 
-impl Block for Explorer {
-    fn id(&self) -> &ComponentId {
-        &self.id
-    }
-
-    fn schema(&self) -> Vec<FieldSpec> {
-        vec![FieldSpec::text("nodes", "Nodes (JSON array of row props)")]
-    }
-
-    fn lower_ui(&self, ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
-        let rows: Vec<UiNode> = node
-            .props
-            .get("nodes")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .enumerate()
-                    .filter_map(|(idx, item)| {
-                        ctx.lower_as(
-                            "shell.inspector-row",
-                            format!("{}::row::{}", node.id, idx),
-                            item.clone(),
-                        )
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        bare_container(node.id.clone(), rows, |p| {
-            p.direction = Direction::Column;
-            p.padding = Padding {
-                left: 4.0,
-                right: 4.0,
-                top: 4.0,
-                bottom: 4.0,
-            };
-            p.width = Sizing::Grow;
-            p.height = Sizing::Grow;
-            p.semantic = Semantic::tag("aside")
-                .with_attr("aria-label", "Explorer")
-                .with_attr("data-role", "explorer");
+fn explorer_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let rows: Vec<UiNode> = node
+        .props
+        .get("nodes")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .enumerate()
+                .filter_map(|(idx, item)| {
+                    ctx.lower_as(
+                        "shell.inspector-row",
+                        format!("{}::row::{}", node.id, idx),
+                        item.clone(),
+                    )
+                })
+                .collect()
         })
-    }
+        .unwrap_or_default();
+
+    bare_container(node.id.clone(), rows, |p| {
+        p.direction = Direction::Column;
+        p.padding = Padding {
+            left: 4.0,
+            right: 4.0,
+            top: 4.0,
+            bottom: 4.0,
+        };
+        p.width = Sizing::Grow;
+        p.height = Sizing::Grow;
+        p.semantic = Semantic::tag("aside")
+            .with_attr("aria-label", "Explorer")
+            .with_attr("data-role", "explorer");
+    })
 }
+
+pub const EXPLORER_SPEC: prism_builder::BlockSpec =
+    prism_builder::BlockSpec::new("shell.explorer", explorer_schema).lower(explorer_lower);
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::components::registry::{register_shell_builtins, ShellComponentRegistry};
     use prism_builder::document::Node as BuilderNode;
     use prism_builder::layout::LayoutMode;
@@ -71,9 +64,6 @@ mod tests {
 
     #[test]
     fn rows_dispatch_through_inspector_row() {
-        let block = Explorer {
-            id: "shell.explorer".into(),
-        };
         let n = BuilderNode {
             id: "ex".into(),
             component: "shell.explorer".into(),
@@ -94,7 +84,7 @@ mod tests {
         let owned = reg;
         let cascade = StyleProperties::default();
         let ctx = LowerCtx::new(Some(owned.as_component_registry()), &cascade);
-        let UiNode::Container { children, .. } = block.lower_ui(&ctx, &n, &cascade) else {
+        let UiNode::Container { children, .. } = explorer_lower(&ctx, &n, &cascade) else {
             panic!()
         };
         assert_eq!(children.len(), 2);

@@ -97,13 +97,20 @@ lower`. The §22 / §28 discipline: every binding is one row,
 returning `slot.foo_props()` — no inline JSON anywhere.
 
 ### Components — `components/`
-48 shell blocks registered via `register_shell_builtins`. Each is
-one `impl Block`; chrome blocks lower through promote-then-reuse
+48 shell blocks declared as `pub const FOO_SPEC: BlockSpec` rows
+and registered via the `SHELL_BUILTINS: &[&BlockSpec]` table in
+`components/registry.rs` (one-line fan-out through
+`prism_builder::register_specs`). No per-component struct, no
+per-component `impl Block` — each file just exposes a `foo_lower`
+free function (and optional `foo_schema` / `foo_signals`) plus the
+const spec; the same `prism_builder::SpecBlock` interprets every
+spec at runtime. Chrome blocks lower through promote-then-reuse
 helpers (`chrome::drag_number_field_node`, `format_drag_value`, …)
 so adding a new transform-row variant or field-editor kind is one
 literal in the relevant declarative table. The `ShellComponentRegistry`
 exposes a `TagResolver` so `<shell.*>` tags in `app.prism-ui` route
-to the matching block.
+to the matching block. See §33 of the migration plan for the
+collapse rationale.
 
 ### Write side — `services/` registry
 Sister to the read side: one declarative table

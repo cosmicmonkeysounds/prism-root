@@ -21,7 +21,6 @@ use prism_builder::{
         bare_container, colored_text_node, image_node, parse_color, prop_bool, prop_string,
         LowerCtx,
     },
-    Block, ComponentId,
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Sizing};
 use serde_json::Value;
@@ -35,113 +34,108 @@ const LABEL_COLOR_EXPANDED: &str = "#cc000000";
 const LABEL_COLOR_COLLAPSED: &str = "#7f000000";
 const BADGE_COLOR: &str = "#4c000000";
 
-pub struct SectionHeader {
-    pub id: ComponentId,
+fn section_header_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("label", "Label").required(),
+        FieldSpec::boolean("collapsed", "Collapsed").with_default(Value::Bool(false)),
+        FieldSpec::text("section-id", "Section ID"),
+    ]
 }
 
-impl Block for SectionHeader {
-    fn id(&self) -> &ComponentId {
-        &self.id
-    }
+fn section_header_signals() -> Vec<prism_builder::signal::SignalDef> {
+    let mut signals = common_signals();
+    signals.push(
+        SignalDef::new(
+            "section-toggled",
+            "Fires when the header is clicked — payload carries the section id.",
+        )
+        .with_payload(vec![FieldSpec::text("section_id", "Section ID")]),
+    );
+    signals
+}
 
-    fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::text("label", "Label").required(),
-            FieldSpec::boolean("collapsed", "Collapsed").with_default(Value::Bool(false)),
-            FieldSpec::text("section-id", "Section ID"),
-        ]
-    }
+fn section_header_lower(ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> UiNode {
+    let label = prop_string(node, "label");
+    let collapsed = prop_bool(node, "collapsed", false);
+    let section_id = prop_string(node, "section-id");
 
-    fn signals(&self) -> Vec<SignalDef> {
-        let mut signals = common_signals();
-        signals.push(
-            SignalDef::new(
-                "section-toggled",
-                "Fires when the header is clicked — payload carries the section id.",
-            )
-            .with_payload(vec![FieldSpec::text("section_id", "Section ID")]),
-        );
-        signals
-    }
+    let chevron_src = if collapsed {
+        "icons/chevron-left.svg"
+    } else {
+        "icons/chevron-down.svg"
+    };
+    let chevron = image_node(
+        format!("{}::chevron", node.id),
+        chevron_src.into(),
+        style,
+        Sizing::Fixed(CHEVRON_SIZE),
+        Sizing::Fixed(CHEVRON_SIZE),
+    );
 
-    fn lower_ui(&self, ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> UiNode {
-        let label = prop_string(node, "label");
-        let collapsed = prop_bool(node, "collapsed", false);
-        let section_id = prop_string(node, "section-id");
+    let label_color = if collapsed {
+        LABEL_COLOR_COLLAPSED
+    } else {
+        LABEL_COLOR_EXPANDED
+    };
+    let label_text = colored_text_node(
+        format!("{}::label", node.id),
+        label,
+        style,
+        LABEL_FONT_SIZE,
+        label_color,
+    );
 
-        let chevron_src = if collapsed {
-            "icons/chevron-left.svg"
-        } else {
-            "icons/chevron-down.svg"
-        };
-        let chevron = image_node(
-            format!("{}::chevron", node.id),
-            chevron_src.into(),
+    let mut row_children = vec![chevron, label_text];
+    if collapsed {
+        row_children.push(colored_text_node(
+            format!("{}::badge", node.id),
+            "(default)".into(),
             style,
-            Sizing::Fixed(CHEVRON_SIZE),
-            Sizing::Fixed(CHEVRON_SIZE),
-        );
+            BADGE_FONT_SIZE,
+            BADGE_COLOR,
+        ));
+    }
 
-        let label_color = if collapsed {
-            LABEL_COLOR_COLLAPSED
-        } else {
-            LABEL_COLOR_EXPANDED
+    let row = bare_container(format!("{}::row", node.id), row_children, |props| {
+        props.direction = Direction::Row;
+        props.gap = 6.0;
+        props.padding = Padding {
+            left: 4.0,
+            right: 4.0,
+            top: 0.0,
+            bottom: 0.0,
         };
-        let label_text = colored_text_node(
-            format!("{}::label", node.id),
-            label,
-            style,
-            LABEL_FONT_SIZE,
-            label_color,
-        );
+        props.height = Sizing::Fixed(ROW_HEIGHT - 1.0);
+    });
 
-        let mut row_children = vec![chevron, label_text];
-        if collapsed {
-            row_children.push(colored_text_node(
-                format!("{}::badge", node.id),
-                "(default)".into(),
-                style,
-                BADGE_FONT_SIZE,
-                BADGE_COLOR,
-            ));
+    let hairline = bare_container(format!("{}::hairline", node.id), vec![], |props| {
+        props.height = Sizing::Fixed(1.0);
+        props.background = parse_color(HAIRLINE_COLOR);
+    });
+
+    // The outer container stacks (column) the row + hairline, and
+    // declares `<header>` as the SSR semantic. Emitting the
+    // section-id as a `data-section` attr keeps it discoverable for
+    // CSS / scripted hosts without committing to a vocabulary the
+    // walker has to know about.
+    ctx.synthetic_container(node, style, vec![row, hairline], |props| {
+        props.direction = Direction::Column;
+        props.height = Sizing::Fixed(ROW_HEIGHT);
+        let mut semantic = prism_ui_runtime::layout::Semantic::tag("header");
+        if !section_id.is_empty() {
+            semantic = semantic.with_attr("data-section", &section_id);
         }
-
-        let row = bare_container(format!("{}::row", node.id), row_children, |props| {
-            props.direction = Direction::Row;
-            props.gap = 6.0;
-            props.padding = Padding {
-                left: 4.0,
-                right: 4.0,
-                top: 0.0,
-                bottom: 0.0,
-            };
-            props.height = Sizing::Fixed(ROW_HEIGHT - 1.0);
-        });
-
-        let hairline = bare_container(format!("{}::hairline", node.id), vec![], |props| {
-            props.height = Sizing::Fixed(1.0);
-            props.background = parse_color(HAIRLINE_COLOR);
-        });
-
-        // The outer container stacks (column) the row + hairline, and
-        // declares `<header>` as the SSR semantic. Emitting the
-        // section-id as a `data-section` attr keeps it discoverable for
-        // CSS / scripted hosts without committing to a vocabulary the
-        // walker has to know about.
-        ctx.synthetic_container(node, style, vec![row, hairline], |props| {
-            props.direction = Direction::Column;
-            props.height = Sizing::Fixed(ROW_HEIGHT);
-            let mut semantic = prism_ui_runtime::layout::Semantic::tag("header");
-            if !section_id.is_empty() {
-                semantic = semantic.with_attr("data-section", &section_id);
-            }
-            if collapsed {
-                semantic = semantic.with_attr("data-collapsed", "true");
-            }
-            props.semantic = semantic;
-        })
-    }
+        if collapsed {
+            semantic = semantic.with_attr("data-collapsed", "true");
+        }
+        props.semantic = semantic;
+    })
 }
+
+pub const SECTION_HEADER_SPEC: prism_builder::BlockSpec =
+    prism_builder::BlockSpec::new("shell.section-header", section_header_schema)
+        .lower(section_header_lower)
+        .signals(section_header_signals);
 
 #[cfg(test)]
 mod tests {
@@ -149,16 +143,14 @@ mod tests {
     use prism_builder::document::Node as BuilderNode;
     use prism_builder::layout::LayoutMode;
     use prism_builder::style::StyleProperties as Cascade;
+    use prism_builder::Block;
     use prism_core::foundation::spatial::Transform2D;
     use serde_json::json;
 
     fn lower_one(node: &BuilderNode) -> UiNode {
-        let block = SectionHeader {
-            id: "shell.section-header".into(),
-        };
         let cascade = Cascade::default();
         let ctx = LowerCtx::new(None, &cascade);
-        block.lower_ui(&ctx, node, &cascade)
+        section_header_lower(&ctx, node, &cascade)
     }
 
     fn header(props: Value) -> BuilderNode {
@@ -256,18 +248,14 @@ mod tests {
 
     #[test]
     fn schema_declares_three_fields() {
-        let block = SectionHeader {
-            id: "shell.section-header".into(),
-        };
+        let block = prism_builder::SpecBlock::new(&super::SECTION_HEADER_SPEC);
         let keys: Vec<String> = block.schema().into_iter().map(|f| f.key).collect();
         assert_eq!(keys, vec!["label", "collapsed", "section-id"]);
     }
 
     #[test]
     fn signals_include_section_toggled() {
-        let block = SectionHeader {
-            id: "shell.section-header".into(),
-        };
+        let block = prism_builder::SpecBlock::new(&super::SECTION_HEADER_SPEC);
         let names: Vec<String> = block.signals().into_iter().map(|s| s.name).collect();
         assert!(names.contains(&"section-toggled".into()));
     }

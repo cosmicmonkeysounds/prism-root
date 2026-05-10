@@ -1,9 +1,10 @@
 //! Shell-only components — toolbar / chrome / overlay primitives that
 //! must NOT show up in the user-visible document component palette.
 //!
-//! Every primitive is a [`prism_builder::Block`] impl, registered into a
-//! sibling [`ShellComponentRegistry`]. The strategy and rationale are
-//! documented in `docs/dev/clay-migration-plan.md` §12.
+//! Every primitive is declared as a [`prism_builder::BlockSpec`] const
+//! and registered into a sibling [`ShellComponentRegistry`] via the
+//! `SHELL_BUILTINS` table in `registry.rs`. The strategy and rationale
+//! are documented in `docs/dev/clay-migration-plan.md` §12 + §33.
 
 pub mod app_card;
 pub mod app_window;
@@ -57,52 +58,4 @@ pub mod transform_editor;
 pub mod workflow_page_bar;
 pub mod workflow_page_button;
 
-pub use app_card::AppCard;
-pub use app_window::AppWindow;
-pub use builder_canvas::BuilderCanvas;
-pub use code_editor::CodeEditor;
-pub use command_palette::CommandPalette;
-pub use component_palette::ComponentPalette;
-pub use component_picker::ComponentPicker;
-pub use context_menu::ContextMenu;
-pub use dock_divider::DockDivider;
-pub use dock_panel::DockPanel;
-pub use dock_tab::DockTab;
-pub use dock_tab_bar::DockTabBar;
-pub use dock_workspace::DockWorkspace;
-pub use docs_content::DocsContent;
-pub use docs_sidebar::DocsSidebar;
-pub use docs_view::DocsView;
-pub use drag_number_field::DragNumberField;
-pub use explorer::Explorer;
-pub use field_editor::FieldEditor;
-pub use gizmo_move::GizmoMove;
-pub use gizmo_rotate::GizmoRotate;
-pub use gizmo_scale::GizmoScale;
-pub use help_tooltip::HelpTooltip;
-pub use icon_button::IconButton;
-pub use inspector_row::InspectorRow;
-pub use inspector_tree::InspectorTree;
-pub use launchpad::Launchpad;
-pub use menu_bar_row::MenuBarRow;
-pub use menu_dropdown::MenuDropdown;
-pub use menu_item::MenuItem;
-pub use nav_button::NavButton;
-pub use nav_graph::NavGraph;
-pub use nav_page_list::NavPageList;
-pub use nav_page_row::NavPageRow;
-pub use properties_panel::PropertiesPanel;
-pub use registry::{register_shell_builtins, ShellComponentRegistry};
-pub use resize_handle::ResizeHandle;
-pub use schema_designer::SchemaDesigner;
-pub use schema_row::SchemaRow;
-pub use section_header::SectionHeader;
-pub use signal_connection_row::SignalConnectionRow;
-pub use signals_panel::SignalsPanel;
-pub use status_bar::StatusBar;
-pub use toast::Toast;
-pub use toast_stack::ToastStack;
-pub use toolbar_separator::ToolbarSeparator;
-pub use transform_editor::TransformEditor;
-pub use workflow_page_bar::WorkflowPageBar;
-pub use workflow_page_button::WorkflowPageButton;
+pub use registry::{register_shell_builtins, ShellComponentRegistry, SHELL_BUILTINS};

@@ -17,7 +17,6 @@ use prism_builder::{
         bare_container, colored_text_node, hover_bg, image_node, parse_color, prop_string,
         uniform_radius, LowerCtx,
     },
-    Block, ComponentId,
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
 use serde_json::Value;
@@ -32,88 +31,83 @@ const SECTION_COLOR: &str = "#80000000";
 const LABEL_COLOR: &str = "#000000";
 const ICON_SIZE: f32 = 16.0;
 
-pub struct ComponentPicker {
-    pub id: ComponentId,
+fn component_picker_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("query", "Query string"),
+        FieldSpec::text(
+            "categories",
+            "Categories (JSON array of {label, items: [{id, label, icon?}]})",
+        ),
+    ]
 }
 
-impl Block for ComponentPicker {
-    fn id(&self) -> &ComponentId {
-        &self.id
+fn component_picker_signals() -> Vec<prism_builder::signal::SignalDef> {
+    let mut s = common_signals();
+    s.push(SignalDef::new("item-picked", "Item activated."));
+    s.push(SignalDef::new("query-changed", "Query string changed."));
+    s.push(SignalDef::new("dismissed", "Popup dismissed."));
+    s
+}
+
+fn component_picker_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let style = StyleProperties::default();
+    let query = prop_string(node, "query");
+
+    let mut kids: Vec<UiNode> = Vec::new();
+    if !query.is_empty() {
+        kids.push(colored_text_node(
+            format!("{}::query", node.id),
+            format!("filter · {query}"),
+            &style,
+            10.0,
+            SECTION_COLOR,
+        ));
     }
 
-    fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::text("query", "Query string"),
-            FieldSpec::text(
-                "categories",
-                "Categories (JSON array of {label, items: [{id, label, icon?}]})",
-            ),
-        ]
-    }
-
-    fn signals(&self) -> Vec<SignalDef> {
-        let mut s = common_signals();
-        s.push(SignalDef::new("item-picked", "Item activated."));
-        s.push(SignalDef::new("query-changed", "Query string changed."));
-        s.push(SignalDef::new("dismissed", "Popup dismissed."));
-        s
-    }
-
-    fn lower_ui(&self, _ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
-        let style = StyleProperties::default();
-        let query = prop_string(node, "query");
-
-        let mut kids: Vec<UiNode> = Vec::new();
-        if !query.is_empty() {
-            kids.push(colored_text_node(
-                format!("{}::query", node.id),
-                format!("filter · {query}"),
-                &style,
-                10.0,
-                SECTION_COLOR,
-            ));
-        }
-
-        if let Some(arr) = node.props.get("categories").and_then(|v| v.as_array()) {
-            for (cidx, cat) in arr.iter().enumerate() {
-                let label = cat.get("label").and_then(|v| v.as_str()).unwrap_or("");
-                if !label.is_empty() {
-                    kids.push(colored_text_node(
-                        format!("{}::cat::{}::label", node.id, cidx),
-                        label.into(),
-                        &style,
-                        11.0,
-                        SECTION_COLOR,
-                    ));
-                }
-                if let Some(items) = cat.get("items").and_then(|v| v.as_array()) {
-                    for (iidx, item) in items.iter().enumerate() {
-                        kids.push(build_item_row(node, &style, cidx, iidx, item));
-                    }
+    if let Some(arr) = node.props.get("categories").and_then(|v| v.as_array()) {
+        for (cidx, cat) in arr.iter().enumerate() {
+            let label = cat.get("label").and_then(|v| v.as_str()).unwrap_or("");
+            if !label.is_empty() {
+                kids.push(colored_text_node(
+                    format!("{}::cat::{}::label", node.id, cidx),
+                    label.into(),
+                    &style,
+                    11.0,
+                    SECTION_COLOR,
+                ));
+            }
+            if let Some(items) = cat.get("items").and_then(|v| v.as_array()) {
+                for (iidx, item) in items.iter().enumerate() {
+                    kids.push(build_item_row(node, &style, cidx, iidx, item));
                 }
             }
         }
-
-        bare_container(node.id.clone(), kids, |p| {
-            p.direction = Direction::Column;
-            p.gap = 4.0;
-            p.padding = Padding {
-                left: 8.0,
-                right: 8.0,
-                top: 8.0,
-                bottom: 8.0,
-            };
-            p.width = Sizing::Fixed(POPUP_WIDTH);
-            p.background = parse_color(POPUP_BG);
-            p.radius = uniform_radius(POPUP_RADIUS);
-            p.semantic = Semantic::tag("div")
-                .with_attr("role", "dialog")
-                .with_attr("aria-modal", "true")
-                .with_attr("aria-label", "Component picker")
-                .with_attr("data-role", "component-picker");
-        })
     }
+
+    bare_container(node.id.clone(), kids, |p| {
+        p.direction = Direction::Column;
+        p.gap = 4.0;
+        p.padding = Padding {
+            left: 8.0,
+            right: 8.0,
+            top: 8.0,
+            bottom: 8.0,
+        };
+        p.width = Sizing::Fixed(POPUP_WIDTH);
+        p.background = parse_color(POPUP_BG);
+        p.radius = uniform_radius(POPUP_RADIUS);
+        p.semantic = Semantic::tag("div")
+            .with_attr("role", "dialog")
+            .with_attr("aria-modal", "true")
+            .with_attr("aria-label", "Component picker")
+            .with_attr("data-role", "component-picker");
+    })
 }
+
+pub const COMPONENT_PICKER_SPEC: prism_builder::BlockSpec =
+    prism_builder::BlockSpec::new("shell.component-picker", component_picker_schema)
+        .lower(component_picker_lower)
+        .signals(component_picker_signals);
 
 fn build_item_row(
     node: &Node,
@@ -170,15 +164,13 @@ fn build_item_row(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use prism_builder::document::Node as BuilderNode;
     use prism_builder::layout::LayoutMode;
     use prism_core::foundation::spatial::Transform2D;
     use serde_json::json;
 
     fn lower(props: Value) -> UiNode {
-        let block = ComponentPicker {
-            id: "shell.component-picker".into(),
-        };
         let n = BuilderNode {
             id: "cp".into(),
             component: "shell.component-picker".into(),
@@ -191,7 +183,7 @@ mod tests {
         };
         let cascade = StyleProperties::default();
         let ctx = LowerCtx::new(None, &cascade);
-        block.lower_ui(&ctx, &n, &cascade)
+        component_picker_lower(&ctx, &n, &cascade)
     }
 
     #[test]

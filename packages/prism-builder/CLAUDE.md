@@ -44,12 +44,18 @@ From `src/lib.rs`:
   17-block default catalog (`text`, `image`, `container`, `form`,
   `input`, `button`, `card`, `code`, `divider`, `spacer`, `columns`,
   `list`, `table`, `tabs`, `accordion`, `facet`, `graph-view`). The
-  15 `Block` rows go through one `BuiltinBlock` type driven by a
-  `BUILTINS: &[&BuiltinSpec]` const table — no per-block trait impl;
+  15 `Block` rows go through one `SpecBlock` type driven by a
+  `BUILTINS: &[&BlockSpec]` const table — no per-block trait impl;
   add a builtin = one `const SPEC` + one row.
-- `starter::BuiltinSpec`, `starter::BuiltinBlock`,
-  `starter::builtin_block(id) -> Option<Arc<BuiltinBlock>>` — the
-  declarative spec primitive + factory for one-off registration.
+- `block::BlockSpec`, `block::SpecBlock`, `block::register_specs`,
+  `block::{HelpDef, LowerFn, default_lower, default_signals,
+  no_schema, no_variants}` — the declarative spec primitive +
+  one-line registration helper. Same primitive drives the 17 starter
+  builtins (`prism-builder/src/starter.rs`) and the 48 shell
+  primitives (`prism-shell/src/components/registry.rs`); see §32 +
+  §33 of the migration plan.
+- `starter::builtin_block(id) -> Option<Arc<SpecBlock>>` — factory
+  for one-off registration of a known builtin id.
 
 ### SSR
 The relay calls
@@ -236,18 +242,23 @@ Modules in `src/` (excluding `lib.rs`):
 
 ## Adding a new block
 
-For a built-in block, the path is **declarative — one `BuiltinSpec`
-+ one row in `BUILTINS`**. No trait impl, no struct.
+For a built-in block, the path is **declarative — one `BlockSpec`
++ one row in `BUILTINS`**. No trait impl, no struct. The same
+`BlockSpec` primitive (lifted to `src/block.rs` so the shell can
+share it) drives both the 17 starter builtins and the 48 shell
+primitives — see §32 + §33 of the migration plan.
 
 1. Write the `lower_ui` body as a free function
    `fn my_lower(ctx: &LowerCtx, node: &Node, style: &StyleProperties)
    -> ui::Node` in `src/starter.rs`. (Skip if the default container
-   suffices.)
+   suffices — `BlockSpec::new(...)` defaults `lower` to the generic
+   container.)
 2. Optionally write `fn my_signals() -> Vec<SignalDef>` if the block
    has signals beyond the 12 common ones.
 3. Declare the spec:
    ```rust
-   const MY_BLOCK: BuiltinSpec = BuiltinSpec::new("my-block", schemas::my_block, my_lower)
+   const MY_BLOCK: BlockSpec = BlockSpec::new("my-block", schemas::my_block)
+       .lower(my_lower)
        .help("builder.components.my-block", "My Block", "…")
        .signals(my_signals)
        .variants(variant_presets::my_block);

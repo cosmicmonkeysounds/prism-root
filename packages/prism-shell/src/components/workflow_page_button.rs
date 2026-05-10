@@ -21,7 +21,6 @@ use prism_builder::{
     ui_lower::{
         bare_container, colored_text_node, hover_bg, parse_color, prop_bool, prop_string, LowerCtx,
     },
-    Block, ComponentId,
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
 use serde_json::Value;
@@ -40,88 +39,81 @@ const HOVER_BG: &str = "#1f000000";
 /// Accent underline colour when active.
 const UNDERLINE_ACCENT: &str = "#0060c0";
 
-pub struct WorkflowPageButton {
-    pub id: ComponentId,
+fn workflow_page_button_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("page-id", "Page ID").required(),
+        FieldSpec::text("label", "Label").required(),
+        FieldSpec::boolean("active", "Active").with_default(Value::Bool(false)),
+    ]
 }
 
-impl Block for WorkflowPageButton {
-    fn id(&self) -> &ComponentId {
-        &self.id
-    }
+fn workflow_page_button_signals() -> Vec<prism_builder::signal::SignalDef> {
+    common_signals()
+}
 
-    fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::text("page-id", "Page ID").required(),
-            FieldSpec::text("label", "Label").required(),
-            FieldSpec::boolean("active", "Active").with_default(Value::Bool(false)),
-        ]
-    }
+fn workflow_page_button_lower(ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> UiNode {
+    let label_text = prop_string(node, "label");
+    let active = prop_bool(node, "active", false);
+    let color = if active {
+        LABEL_ACTIVE_COLOR
+    } else {
+        LABEL_RESTING_COLOR
+    };
 
-    fn signals(&self) -> Vec<prism_builder::signal::SignalDef> {
-        common_signals()
-    }
+    let label = colored_text_node(
+        format!("{}::label", node.id),
+        label_text,
+        style,
+        LABEL_FONT_SIZE,
+        color,
+    );
 
-    fn lower_ui(&self, ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> UiNode {
-        let label_text = prop_string(node, "label");
-        let active = prop_bool(node, "active", false);
-        let color = if active {
-            LABEL_ACTIVE_COLOR
-        } else {
-            LABEL_RESTING_COLOR
+    // Bottom underline — always emitted; only painted when active.
+    let underline = bare_container(format!("{}::underline", node.id), vec![], |p| {
+        p.width = Sizing::Grow;
+        p.height = Sizing::Fixed(UNDERLINE_HEIGHT);
+        if active {
+            p.background = parse_color(UNDERLINE_ACCENT);
+        }
+    });
+
+    ctx.synthetic_container(node, style, vec![label, underline], |props| {
+        props.direction = Direction::Column;
+        props.height = Sizing::Fixed(TAB_HEIGHT);
+        props.padding = Padding {
+            left: 16.0,
+            right: 16.0,
+            top: 8.0,
+            bottom: 0.0,
         };
-
-        let label = colored_text_node(
-            format!("{}::label", node.id),
-            label_text,
-            style,
-            LABEL_FONT_SIZE,
-            color,
+        if active {
+            props.background = parse_color(SELECTED_BG);
+        } else {
+            props.hover = hover_bg(HOVER_BG);
+        }
+        props.semantic = Semantic::button().with_attr("role", "tab").with_attr_if(
+            active,
+            "aria-selected",
+            "true",
         );
-
-        // Bottom underline — always emitted; only painted when active.
-        let underline = bare_container(format!("{}::underline", node.id), vec![], |p| {
-            p.width = Sizing::Grow;
-            p.height = Sizing::Fixed(UNDERLINE_HEIGHT);
-            if active {
-                p.background = parse_color(UNDERLINE_ACCENT);
-            }
-        });
-
-        ctx.synthetic_container(node, style, vec![label, underline], |props| {
-            props.direction = Direction::Column;
-            props.height = Sizing::Fixed(TAB_HEIGHT);
-            props.padding = Padding {
-                left: 16.0,
-                right: 16.0,
-                top: 8.0,
-                bottom: 0.0,
-            };
-            if active {
-                props.background = parse_color(SELECTED_BG);
-            } else {
-                props.hover = hover_bg(HOVER_BG);
-            }
-            props.semantic = Semantic::button().with_attr("role", "tab").with_attr_if(
-                active,
-                "aria-selected",
-                "true",
-            );
-        })
-    }
+    })
 }
+
+pub const WORKFLOW_PAGE_BUTTON_SPEC: prism_builder::BlockSpec =
+    prism_builder::BlockSpec::new("shell.workflow-page-button", workflow_page_button_schema)
+        .lower(workflow_page_button_lower)
+        .signals(workflow_page_button_signals);
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use prism_builder::document::Node as BuilderNode;
     use prism_builder::layout::LayoutMode;
+    use prism_builder::Block;
     use prism_core::foundation::spatial::Transform2D;
     use serde_json::json;
 
     fn lower(props: Value) -> UiNode {
-        let block = WorkflowPageButton {
-            id: "shell.workflow-page-button".into(),
-        };
         let n = BuilderNode {
             id: "wp".into(),
             component: "shell.workflow-page-button".into(),
@@ -134,7 +126,7 @@ mod tests {
         };
         let cascade = StyleProperties::default();
         let ctx = LowerCtx::new(None, &cascade);
-        block.lower_ui(&ctx, &n, &cascade)
+        workflow_page_button_lower(&ctx, &n, &cascade)
     }
 
     #[test]
@@ -178,9 +170,7 @@ mod tests {
 
     #[test]
     fn schema_declares_three_fields() {
-        let block = WorkflowPageButton {
-            id: "shell.workflow-page-button".into(),
-        };
+        let block = prism_builder::SpecBlock::new(&super::WORKFLOW_PAGE_BUTTON_SPEC);
         let keys: Vec<String> = block.schema().into_iter().map(|f| f.key).collect();
         assert_eq!(keys, vec!["page-id", "label", "active"]);
     }

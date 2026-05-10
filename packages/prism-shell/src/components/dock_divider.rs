@@ -14,89 +14,81 @@ use prism_builder::{
     registry::FieldSpec,
     style::StyleProperties,
     ui_lower::{bare_container, parse_color, prop_str, LowerCtx},
-    Block, ComponentId,
 };
 use prism_ui_runtime::layout::{Node as UiNode, Semantic, Sizing};
 
 const THICKNESS: f32 = 6.0;
 const BG: &str = "#10000000";
 
-pub struct DockDivider {
-    pub id: ComponentId,
+fn dock_divider_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("orientation", "Orientation (vertical|horizontal)"),
+        FieldSpec::text("length", "Cross-axis length"),
+    ]
 }
 
-impl Block for DockDivider {
-    fn id(&self) -> &ComponentId {
-        &self.id
-    }
+fn dock_divider_signals() -> Vec<prism_builder::signal::SignalDef> {
+    common_signals()
+}
 
-    fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::text("orientation", "Orientation (vertical|horizontal)"),
-            FieldSpec::text("length", "Cross-axis length"),
-        ]
-    }
+fn dock_divider_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let orientation = prop_str(node, "orientation");
+    let length = node
+        .props
+        .get("length")
+        .and_then(|v| v.as_f64())
+        .map(|n| n as f32)
+        .unwrap_or(1.0);
 
-    fn signals(&self) -> Vec<prism_builder::signal::SignalDef> {
-        common_signals()
-    }
-
-    fn lower_ui(&self, _ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
-        let orientation = prop_str(node, "orientation");
-        let length = node
-            .props
-            .get("length")
-            .and_then(|v| v.as_f64())
-            .map(|n| n as f32)
-            .unwrap_or(1.0);
-
-        bare_container(node.id.clone(), vec![], |p| {
-            // "horizontal" divider sits between vertically stacked
-            // panels — it spans the row width, with a fixed THICKNESS
-            // height. "vertical" is the dual.
-            if orientation == "horizontal" {
-                p.width = if length > 1.0 {
-                    Sizing::Fixed(length)
-                } else {
-                    Sizing::Grow
-                };
-                p.height = Sizing::Fixed(THICKNESS);
+    bare_container(node.id.clone(), vec![], |p| {
+        // "horizontal" divider sits between vertically stacked
+        // panels — it spans the row width, with a fixed THICKNESS
+        // height. "vertical" is the dual.
+        if orientation == "horizontal" {
+            p.width = if length > 1.0 {
+                Sizing::Fixed(length)
             } else {
-                p.width = Sizing::Fixed(THICKNESS);
-                p.height = if length > 1.0 {
-                    Sizing::Fixed(length)
+                Sizing::Grow
+            };
+            p.height = Sizing::Fixed(THICKNESS);
+        } else {
+            p.width = Sizing::Fixed(THICKNESS);
+            p.height = if length > 1.0 {
+                Sizing::Fixed(length)
+            } else {
+                Sizing::Grow
+            };
+        }
+        p.background = parse_color(BG);
+        p.semantic = Semantic::tag("div")
+            .with_attr("role", "separator")
+            .with_attr(
+                "aria-orientation",
+                if orientation == "horizontal" {
+                    "horizontal"
                 } else {
-                    Sizing::Grow
-                };
-            }
-            p.background = parse_color(BG);
-            p.semantic = Semantic::tag("div")
-                .with_attr("role", "separator")
-                .with_attr(
-                    "aria-orientation",
-                    if orientation == "horizontal" {
-                        "horizontal"
-                    } else {
-                        "vertical"
-                    },
-                )
-                .with_attr("data-divider", &node.id);
-        })
-    }
+                    "vertical"
+                },
+            )
+            .with_attr("data-divider", &node.id);
+    })
 }
+
+pub const DOCK_DIVIDER_SPEC: prism_builder::BlockSpec =
+    prism_builder::BlockSpec::new("shell.dock-divider", dock_divider_schema)
+        .lower(dock_divider_lower)
+        .signals(dock_divider_signals);
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use prism_builder::document::Node as BuilderNode;
     use prism_builder::layout::LayoutMode;
     use prism_core::foundation::spatial::Transform2D;
     use serde_json::json;
 
     fn lower(props: serde_json::Value) -> UiNode {
-        let block = DockDivider {
-            id: "shell.dock-divider".into(),
-        };
         let n = BuilderNode {
             id: "d".into(),
             component: "shell.dock-divider".into(),
@@ -109,7 +101,7 @@ mod tests {
         };
         let cascade = StyleProperties::default();
         let ctx = LowerCtx::new(None, &cascade);
-        block.lower_ui(&ctx, &n, &cascade)
+        dock_divider_lower(&ctx, &n, &cascade)
     }
 
     #[test]

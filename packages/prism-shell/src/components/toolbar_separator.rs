@@ -10,7 +10,6 @@ use prism_builder::{
     registry::FieldSpec,
     style::StyleProperties,
     ui_lower::{parse_color, LowerCtx},
-    Block, ComponentId,
 };
 use prism_ui_runtime::layout::{Node as UiNode, Sizing};
 
@@ -22,41 +21,36 @@ const SEPARATOR_HEIGHT: f32 = 20.0;
 /// the resolved value.
 const SEPARATOR_DEFAULT_COLOR: &str = "#33000000";
 
-pub struct ToolbarSeparator {
-    pub id: ComponentId,
+fn toolbar_separator_schema() -> Vec<FieldSpec> {
+    vec![]
 }
 
-impl Block for ToolbarSeparator {
-    fn id(&self) -> &ComponentId {
-        &self.id
-    }
-
-    fn schema(&self) -> Vec<FieldSpec> {
-        vec![]
-    }
-
-    fn lower_ui(&self, ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> UiNode {
-        ctx.synthetic_container(node, style, vec![], |props| {
-            props.width = Sizing::Fixed(SEPARATOR_WIDTH);
-            props.height = Sizing::Fixed(SEPARATOR_HEIGHT);
-            if props.background.is_none() {
-                props.background = parse_color(SEPARATOR_DEFAULT_COLOR);
-            }
-            // SSR: a presentation-only stroke. `role="separator"` +
-            // `aria-orientation="vertical"` is the WAI-ARIA pattern for
-            // toolbar dividers; the walker keeps the default `<div>`
-            // tag since there's no native HTML element for "vertical
-            // 1-pixel divider".
-            props.semantic = prism_ui_runtime::layout::Semantic::default()
-                .with_role("separator")
-                .with_attr("aria-orientation", "vertical");
-        })
-    }
+fn toolbar_separator_lower(ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> UiNode {
+    ctx.synthetic_container(node, style, vec![], |props| {
+        props.width = Sizing::Fixed(SEPARATOR_WIDTH);
+        props.height = Sizing::Fixed(SEPARATOR_HEIGHT);
+        if props.background.is_none() {
+            props.background = parse_color(SEPARATOR_DEFAULT_COLOR);
+        }
+        // SSR: a presentation-only stroke. `role="separator"` +
+        // `aria-orientation="vertical"` is the WAI-ARIA pattern for
+        // toolbar dividers; the walker keeps the default `<div>`
+        // tag since there's no native HTML element for "vertical
+        // 1-pixel divider".
+        props.semantic = prism_ui_runtime::layout::Semantic::default()
+            .with_role("separator")
+            .with_attr("aria-orientation", "vertical");
+    })
 }
+
+pub const TOOLBAR_SEPARATOR_SPEC: prism_builder::BlockSpec =
+    prism_builder::BlockSpec::new("shell.toolbar-separator", toolbar_separator_schema)
+        .lower(toolbar_separator_lower);
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use prism_builder::document::Node as BuilderNode;
     use prism_builder::layout::LayoutMode;
     use prism_builder::style::StyleProperties as Cascade;
@@ -64,12 +58,9 @@ mod tests {
     use serde_json::json;
 
     fn lower_one(node: &BuilderNode) -> UiNode {
-        let block = ToolbarSeparator {
-            id: "shell.toolbar-separator".into(),
-        };
         let cascade = Cascade::default();
         let ctx = LowerCtx::new(None, &cascade);
-        block.lower_ui(&ctx, node, &cascade)
+        toolbar_separator_lower(&ctx, node, &cascade)
     }
 
     fn separator() -> BuilderNode {

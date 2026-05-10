@@ -22,8 +22,6 @@ use prism_builder::{
     signal::SignalDef,
     style::StyleProperties,
     ui_lower::{parse_color, prop_bool, prop_str, LowerCtx},
-    Block,
-    ComponentId,
 };
 use prism_ui_runtime::layout::Node as UiNode;
 use serde_json::Value;
@@ -32,66 +30,61 @@ use super::chrome::icon_button_node_tinted;
 
 /// `shell.icon-button` block. Schema mirrors the four `in property`
 /// declarations on the original Slint component.
-pub struct IconButton {
-    pub id: ComponentId,
+fn icon_button_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("icon", "Icon").required(),
+        FieldSpec::boolean("enabled", "Enabled").with_default(Value::Bool(true)),
+        FieldSpec::text("tooltip-text", "Tooltip text"),
+        FieldSpec::text("help-id", "Help ID"),
+        // Optional glyph tint — lowers to `Node::Image::tint`.
+        // Mirrors the original Slint `colorize` property on the
+        // icon's `Image` element.
+        FieldSpec::text("tint", "Glyph tint"),
+    ]
 }
 
-impl Block for IconButton {
-    fn id(&self) -> &ComponentId {
-        &self.id
-    }
-
-    fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::text("icon", "Icon").required(),
-            FieldSpec::boolean("enabled", "Enabled").with_default(Value::Bool(true)),
-            FieldSpec::text("tooltip-text", "Tooltip text"),
-            FieldSpec::text("help-id", "Help ID"),
-            // Optional glyph tint — lowers to `Node::Image::tint`.
-            // Mirrors the original Slint `colorize` property on the
-            // icon's `Image` element.
-            FieldSpec::text("tint", "Glyph tint"),
-        ]
-    }
-
-    fn signals(&self) -> Vec<SignalDef> {
-        // `with_common_signals` would dedup component-specific names
-        // against the 12 universals, but `hover-start`/`hover-end` are
-        // additive vocabulary the IconButton emits with positional
-        // payload (the Slint version takes `(string, length, length)`).
-        let mut signals = common_signals();
-        signals.push(
-            SignalDef::new(
-                "hover-start",
-                "Pointer entered the button — positional payload for tooltip placement.",
-            )
-            .with_payload(vec![
-                FieldSpec::text("help_id", "Help ID"),
-                FieldSpec::number("x", "X (px)", NumericBounds::default()),
-                FieldSpec::number("y", "Y (px)", NumericBounds::default()),
-            ]),
-        );
-        signals.push(SignalDef::new("hover-end", "Pointer left the button."));
-        signals
-    }
-
-    fn lower_ui(&self, _ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
-        // Visual recipe lives in `chrome::icon_button_node` so it's
-        // reusable from any chrome primitive that embeds a chevron /
-        // trash / move button (InspectorRow, Tab pills, MenuBar items).
-        // The Block layer's job is just prop → helper-arg translation.
-        let enabled = prop_bool(node, "enabled", true);
-        let tooltip = Some(prop_str(node, "tooltip-text")).filter(|s| !s.is_empty());
-        let tint = parse_color(prop_str(node, "tint"));
-        icon_button_node_tinted(
-            node.id.clone(),
-            prop_str(node, "icon").to_string(),
-            enabled,
-            tooltip,
-            tint,
+fn icon_button_signals() -> Vec<prism_builder::signal::SignalDef> {
+    // `with_common_signals` would dedup component-specific names
+    // against the 12 universals, but `hover-start`/`hover-end` are
+    // additive vocabulary the IconButton emits with positional
+    // payload (the Slint version takes `(string, length, length)`).
+    let mut signals = common_signals();
+    signals.push(
+        SignalDef::new(
+            "hover-start",
+            "Pointer entered the button — positional payload for tooltip placement.",
         )
-    }
+        .with_payload(vec![
+            FieldSpec::text("help_id", "Help ID"),
+            FieldSpec::number("x", "X (px)", NumericBounds::default()),
+            FieldSpec::number("y", "Y (px)", NumericBounds::default()),
+        ]),
+    );
+    signals.push(SignalDef::new("hover-end", "Pointer left the button."));
+    signals
 }
+
+fn icon_button_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    // Visual recipe lives in `chrome::icon_button_node` so it's
+    // reusable from any chrome primitive that embeds a chevron /
+    // trash / move button (InspectorRow, Tab pills, MenuBar items).
+    // The Block layer's job is just prop → helper-arg translation.
+    let enabled = prop_bool(node, "enabled", true);
+    let tooltip = Some(prop_str(node, "tooltip-text")).filter(|s| !s.is_empty());
+    let tint = parse_color(prop_str(node, "tint"));
+    icon_button_node_tinted(
+        node.id.clone(),
+        prop_str(node, "icon").to_string(),
+        enabled,
+        tooltip,
+        tint,
+    )
+}
+
+pub const ICON_BUTTON_SPEC: prism_builder::BlockSpec =
+    prism_builder::BlockSpec::new("shell.icon-button", icon_button_schema)
+        .lower(icon_button_lower)
+        .signals(icon_button_signals);
 
 // `schemas` is imported up top but the IconButton schema is hand-rolled
 // (four shell-only fields, no overlap with `prism_builder::schemas`).
@@ -109,17 +102,15 @@ mod tests {
     use prism_builder::layout::LayoutMode;
     use prism_builder::style::StyleProperties as Cascade;
     use prism_builder::ui_lower::LowerCtx;
+    use prism_builder::Block;
     use prism_core::foundation::spatial::Transform2D;
     use prism_ui_runtime::layout::Sizing;
     use serde_json::json;
 
     fn lower_one(node: &BuilderNode) -> UiNode {
-        let block = IconButton {
-            id: "shell.icon-button".into(),
-        };
         let cascade = Cascade::default();
         let ctx = LowerCtx::new(None, &cascade);
-        block.lower_ui(&ctx, node, &cascade)
+        icon_button_lower(&ctx, node, &cascade)
     }
 
     fn icon_node(props: Value) -> BuilderNode {
@@ -194,9 +185,7 @@ mod tests {
 
     #[test]
     fn schema_declares_five_fields() {
-        let block = IconButton {
-            id: "shell.icon-button".into(),
-        };
+        let block = prism_builder::SpecBlock::new(&super::ICON_BUTTON_SPEC);
         let schema = block.schema();
         let keys: Vec<&str> = schema.iter().map(|f| f.key.as_str()).collect();
         assert_eq!(
@@ -256,9 +245,7 @@ mod tests {
 
     #[test]
     fn signals_include_clicked_and_hover_pair() {
-        let block = IconButton {
-            id: "shell.icon-button".into(),
-        };
+        let block = prism_builder::SpecBlock::new(&super::ICON_BUTTON_SPEC);
         let names: Vec<String> = block.signals().into_iter().map(|s| s.name).collect();
         assert!(names.contains(&"clicked".into()));
         assert!(names.contains(&"hover-start".into()));

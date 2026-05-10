@@ -24,7 +24,6 @@ use prism_builder::{
         bare_container, colored_text_node, hover_bg, parse_color, prop_bool, prop_str,
         text_input_node, text_node, uniform_radius, LowerCtx,
     },
-    Block, ComponentId,
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
 use serde_json::Value;
@@ -111,92 +110,87 @@ fn lookup_kind(kind: &str) -> &'static KindEntry {
         .unwrap_or(&KIND_TABLE[KIND_TABLE.len() - 1]) // fall through to text
 }
 
-pub struct FieldEditor {
-    pub id: ComponentId,
+fn field_editor_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("key", "Key"),
+        FieldSpec::text("label", "Label"),
+        FieldSpec::select(
+            "kind",
+            "Kind",
+            vec![
+                SelectOption::new("text", "Text"),
+                SelectOption::new("number", "Number"),
+                SelectOption::new("integer", "Integer"),
+                SelectOption::new("boolean", "Boolean"),
+                SelectOption::new("select", "Select"),
+                SelectOption::new("color", "Color"),
+                SelectOption::new("file", "File"),
+            ],
+        )
+        .with_default(Value::from("text")),
+        FieldSpec::text("value", "Value"),
+        FieldSpec::boolean("required", "Required").with_default(Value::Bool(false)),
+        FieldSpec::number("min", "Minimum", NumericBounds::default()),
+        FieldSpec::number("max", "Maximum", NumericBounds::default()),
+    ]
 }
 
-impl Block for FieldEditor {
-    fn id(&self) -> &ComponentId {
-        &self.id
-    }
+fn field_editor_signals() -> Vec<prism_builder::signal::SignalDef> {
+    let mut signals = common_signals();
+    signals.push(SignalDef::new(
+        "field-edited",
+        "Edit committed (text/select/color/file/boolean) — payload (key, text).",
+    ));
+    signals.push(SignalDef::new(
+        "field-edited-number",
+        "Numeric drag tick — payload (key, value).",
+    ));
+    signals.push(SignalDef::new(
+        "file-browse-requested",
+        "User clicked the browse button on a `file`-kind row.",
+    ));
+    signals
+}
 
-    fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::text("key", "Key"),
-            FieldSpec::text("label", "Label"),
-            FieldSpec::select(
-                "kind",
-                "Kind",
-                vec![
-                    SelectOption::new("text", "Text"),
-                    SelectOption::new("number", "Number"),
-                    SelectOption::new("integer", "Integer"),
-                    SelectOption::new("boolean", "Boolean"),
-                    SelectOption::new("select", "Select"),
-                    SelectOption::new("color", "Color"),
-                    SelectOption::new("file", "File"),
-                ],
-            )
-            .with_default(Value::from("text")),
-            FieldSpec::text("value", "Value"),
-            FieldSpec::boolean("required", "Required").with_default(Value::Bool(false)),
-            FieldSpec::number("min", "Minimum", NumericBounds::default()),
-            FieldSpec::number("max", "Maximum", NumericBounds::default()),
-        ]
-    }
+fn field_editor_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let kind = prop_str(node, "kind");
+    let entry = lookup_kind(kind);
+    let label_text = label_with_required(node);
 
-    fn signals(&self) -> Vec<SignalDef> {
-        let mut signals = common_signals();
-        signals.push(SignalDef::new(
-            "field-edited",
-            "Edit committed (text/select/color/file/boolean) — payload (key, text).",
+    let mut stack: Vec<UiNode> = Vec::with_capacity(2);
+    if !label_text.is_empty() {
+        stack.push(text_node(
+            format!("{}::label", node.id),
+            label_text.clone(),
+            &StyleProperties::default(),
+            LABEL_FONT_SIZE,
         ));
-        signals.push(SignalDef::new(
-            "field-edited-number",
-            "Numeric drag tick — payload (key, value).",
-        ));
-        signals.push(SignalDef::new(
-            "file-browse-requested",
-            "User clicked the browse button on a `file`-kind row.",
-        ));
-        signals
     }
+    stack.extend((entry.body)(node));
 
-    fn lower_ui(&self, _ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
-        let kind = prop_str(node, "kind");
-        let entry = lookup_kind(kind);
-        let label_text = label_with_required(node);
-
-        let mut stack: Vec<UiNode> = Vec::with_capacity(2);
-        if !label_text.is_empty() {
-            stack.push(text_node(
-                format!("{}::label", node.id),
-                label_text.clone(),
-                &StyleProperties::default(),
-                LABEL_FONT_SIZE,
-            ));
+    bare_container(node.id.clone(), stack, |props| {
+        props.direction = Direction::Column;
+        props.gap = VSTACK_GAP;
+        props.padding = Padding {
+            left: FIELD_PAD,
+            right: FIELD_PAD,
+            top: 6.0,
+            bottom: 6.0,
+        };
+        let mut s = Semantic::tag("div").with_attr("role", entry.aria_role);
+        let key = prop_str(node, "key");
+        if !key.is_empty() {
+            s = s.with_attr("data-key", key);
         }
-        stack.extend((entry.body)(node));
-
-        bare_container(node.id.clone(), stack, |props| {
-            props.direction = Direction::Column;
-            props.gap = VSTACK_GAP;
-            props.padding = Padding {
-                left: FIELD_PAD,
-                right: FIELD_PAD,
-                top: 6.0,
-                bottom: 6.0,
-            };
-            let mut s = Semantic::tag("div").with_attr("role", entry.aria_role);
-            let key = prop_str(node, "key");
-            if !key.is_empty() {
-                s = s.with_attr("data-key", key);
-            }
-            s = s.with_attr("data-kind", entry.kind);
-            props.semantic = s;
-        })
-    }
+        s = s.with_attr("data-kind", entry.kind);
+        props.semantic = s;
+    })
 }
+
+pub const FIELD_EDITOR_SPEC: prism_builder::BlockSpec =
+    prism_builder::BlockSpec::new("shell.field-editor", field_editor_schema)
+        .lower(field_editor_lower)
+        .signals(field_editor_signals);
 
 fn label_with_required(node: &Node) -> String {
     let label = prop_str(node, "label");
@@ -389,13 +383,11 @@ mod tests {
     use super::*;
     use prism_builder::document::Node as BuilderNode;
     use prism_builder::layout::LayoutMode;
+    use prism_builder::Block;
     use prism_core::foundation::spatial::Transform2D;
     use serde_json::json;
 
     fn lower(props: Value) -> UiNode {
-        let block = FieldEditor {
-            id: "shell.field-editor".into(),
-        };
         let n = BuilderNode {
             id: "fe".into(),
             component: "shell.field-editor".into(),
@@ -408,7 +400,7 @@ mod tests {
         };
         let cascade = StyleProperties::default();
         let ctx = LowerCtx::new(None, &cascade);
-        block.lower_ui(&ctx, &n, &cascade)
+        field_editor_lower(&ctx, &n, &cascade)
     }
 
     #[test]
@@ -511,9 +503,7 @@ mod tests {
 
     #[test]
     fn schema_declares_seven_fields() {
-        let block = FieldEditor {
-            id: "shell.field-editor".into(),
-        };
+        let block = prism_builder::SpecBlock::new(&super::FIELD_EDITOR_SPEC);
         let keys: Vec<String> = block.schema().into_iter().map(|f| f.key).collect();
         assert_eq!(
             keys,
@@ -523,9 +513,7 @@ mod tests {
 
     #[test]
     fn signals_include_three_field_callbacks() {
-        let block = FieldEditor {
-            id: "shell.field-editor".into(),
-        };
+        let block = prism_builder::SpecBlock::new(&super::FIELD_EDITOR_SPEC);
         let names: Vec<String> = block.signals().into_iter().map(|s| s.name).collect();
         assert!(names.contains(&"field-edited".into()));
         assert!(names.contains(&"field-edited-number".into()));

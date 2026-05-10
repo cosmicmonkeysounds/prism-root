@@ -9,12 +9,10 @@ use prism_builder::{
     common_signals,
     document::Node,
     registry::FieldSpec,
-    signal::SignalDef,
     style::StyleProperties,
     ui_lower::{
         bare_container, colored_text_node, hover_bg, parse_color, prop_bool, prop_string, LowerCtx,
     },
-    Block, ComponentId,
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
 use serde_json::Value;
@@ -28,83 +26,76 @@ const ACTIVE_BG: &str = "#19000000";
 const HOVER_BG: &str = "#0f000000";
 const ACCENT: &str = "#0060c0";
 
-pub struct DockTab {
-    pub id: ComponentId,
+fn dock_tab_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("tab-id", "Tab id").required(),
+        FieldSpec::text("label", "Label").required(),
+        FieldSpec::boolean("active", "Active").with_default(Value::Bool(false)),
+    ]
 }
 
-impl Block for DockTab {
-    fn id(&self) -> &ComponentId {
-        &self.id
-    }
+fn dock_tab_signals() -> Vec<prism_builder::signal::SignalDef> {
+    common_signals()
+}
 
-    fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::text("tab-id", "Tab id").required(),
-            FieldSpec::text("label", "Label").required(),
-            FieldSpec::boolean("active", "Active").with_default(Value::Bool(false)),
-        ]
-    }
+fn dock_tab_lower(ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> UiNode {
+    let label = prop_string(node, "label");
+    let active = prop_bool(node, "active", false);
+    let color = if active { LABEL_ACTIVE } else { LABEL_RESTING };
 
-    fn signals(&self) -> Vec<SignalDef> {
-        common_signals()
-    }
+    let label_node = colored_text_node(
+        format!("{}::label", node.id),
+        label,
+        style,
+        LABEL_FONT_SIZE,
+        color,
+    );
 
-    fn lower_ui(&self, ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> UiNode {
-        let label = prop_string(node, "label");
-        let active = prop_bool(node, "active", false);
-        let color = if active { LABEL_ACTIVE } else { LABEL_RESTING };
+    let underline = bare_container(format!("{}::underline", node.id), vec![], |p| {
+        p.width = Sizing::Grow;
+        p.height = Sizing::Fixed(UNDERLINE_HEIGHT);
+        if active {
+            p.background = parse_color(ACCENT);
+        }
+    });
 
-        let label_node = colored_text_node(
-            format!("{}::label", node.id),
-            label,
-            style,
-            LABEL_FONT_SIZE,
-            color,
+    ctx.synthetic_container(node, style, vec![label_node, underline], |p| {
+        p.direction = Direction::Column;
+        p.height = Sizing::Fixed(TAB_HEIGHT);
+        p.padding = Padding {
+            left: 12.0,
+            right: 12.0,
+            top: 6.0,
+            bottom: 0.0,
+        };
+        if active {
+            p.background = parse_color(ACTIVE_BG);
+        } else {
+            p.hover = hover_bg(HOVER_BG);
+        }
+        p.semantic = Semantic::button().with_attr("role", "tab").with_attr_if(
+            active,
+            "aria-selected",
+            "true",
         );
-
-        let underline = bare_container(format!("{}::underline", node.id), vec![], |p| {
-            p.width = Sizing::Grow;
-            p.height = Sizing::Fixed(UNDERLINE_HEIGHT);
-            if active {
-                p.background = parse_color(ACCENT);
-            }
-        });
-
-        ctx.synthetic_container(node, style, vec![label_node, underline], |p| {
-            p.direction = Direction::Column;
-            p.height = Sizing::Fixed(TAB_HEIGHT);
-            p.padding = Padding {
-                left: 12.0,
-                right: 12.0,
-                top: 6.0,
-                bottom: 0.0,
-            };
-            if active {
-                p.background = parse_color(ACTIVE_BG);
-            } else {
-                p.hover = hover_bg(HOVER_BG);
-            }
-            p.semantic = Semantic::button().with_attr("role", "tab").with_attr_if(
-                active,
-                "aria-selected",
-                "true",
-            );
-        })
-    }
+    })
 }
+
+pub const DOCK_TAB_SPEC: prism_builder::BlockSpec =
+    prism_builder::BlockSpec::new("shell.dock-tab", dock_tab_schema)
+        .lower(dock_tab_lower)
+        .signals(dock_tab_signals);
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use prism_builder::document::Node as BuilderNode;
     use prism_builder::layout::LayoutMode;
     use prism_core::foundation::spatial::Transform2D;
     use serde_json::json;
 
     fn lower(props: Value) -> UiNode {
-        let block = DockTab {
-            id: "shell.dock-tab".into(),
-        };
         let n = BuilderNode {
             id: "t".into(),
             component: "shell.dock-tab".into(),
@@ -117,7 +108,7 @@ mod tests {
         };
         let cascade = StyleProperties::default();
         let ctx = LowerCtx::new(None, &cascade);
-        block.lower_ui(&ctx, &n, &cascade)
+        dock_tab_lower(&ctx, &n, &cascade)
     }
 
     #[test]
