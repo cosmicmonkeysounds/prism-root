@@ -208,10 +208,9 @@ fn write_class_aria_role_attrs(out: &mut String, hint: &Semantic) {
 }
 
 /// Default tag selection for text nodes when the block doesn't
-/// override. Buckets by font size into heading levels — matches
-/// `render_slint`'s level→size mapping in reverse, so legacy blocks
-/// that just call `text_node` with a default size land on a sensible
-/// tag without each block opting in.
+/// override. Buckets by font size into heading levels so blocks that
+/// just call `text_node` with a default size land on a sensible tag
+/// without each block opting in.
 fn default_text_tag(font_size: f32) -> &'static str {
     match font_size {
         s if s >= 32.0 => "h1",

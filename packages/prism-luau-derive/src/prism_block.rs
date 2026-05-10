@@ -2,10 +2,8 @@
 //! exposes `template(props, children)` (and optionally `schema()`).
 //!
 //! The derive collapses the boilerplate of authoring a builder block
-//! into a single template-returning function. `render_slint` is routed
-//! through `render_template_node` in `prism-builder`. Override by hand
-//! if a block needs Slint-specific chrome the `TemplateNode` IR cannot
-//! express yet.
+//! into a single template-returning function. The generated `lower_ui`
+//! routes through `render_template_node` in `prism-builder`.
 //!
 //! Two attribute forms:
 //!

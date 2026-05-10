@@ -548,9 +548,7 @@ pub fn text_input_node(
 }
 
 /// Construct a `UiNode::Image`. Width/height default to `Grow` so an
-/// image inside a sized container fills its slot — the same shape
-/// `render_slint`'s `Image { width: parent.width; height: parent.height }`
-/// produces.
+/// image inside a sized container fills its slot.
 pub fn image_node(
     node_id: String,
     source: String,

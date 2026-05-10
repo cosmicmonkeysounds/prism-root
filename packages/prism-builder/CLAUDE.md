@@ -55,6 +55,20 @@ SSR). `html.rs` (`Html` buffer + `escape_text` / `escape_attr`)
 remains as a tiny chrome-composition helper for `prism-relay` page
 wrappers and the `prism-luau-derive` macro.
 
+### `.prism-ui` source emitter (§29)
+- `prism_ui_emit::emit_document(&BuilderDocument) -> String`,
+  `prism_ui_emit::emit_node(&Node) -> String` — declarative
+  walker, inverse of `prism_core::language::prism_ui::parse`.
+  Six-arm `Value` match for attributes, alphabetical attr order
+  for byte-deterministic output, two-space indent per nesting
+  level, self-closing leaves. Object/array attrs serialise as
+  `key={<json>}` (`{expr}` interpolation) so the grammar stays
+  happy.
+- `Page::ensure_source(&registry, &tokens)` lazy-fills
+  `self.source` from `self.document` when empty;
+  `Page::regenerate_source()` force-rewrites unconditionally.
+  Hand-edited source survives `ensure_source`.
+
 ### Layout engine (ADR-003)
 - `PageLayout`, `PageSize`, `Orientation`, `TrackSize` — structural
   page properties (size, margins, bleed, CSS Grid template).

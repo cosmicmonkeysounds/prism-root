@@ -4,8 +4,8 @@
 //! `.luau` file. The table carries the same fields as a Rust
 //! [`WidgetContribution`] plus a `render` function. The render function
 //! returns a [`VirtualNode`] tree the host walks through the existing
-//! [`ComponentRegistry`] — Slint DSL is never produced directly from
-//! Luau (per the plan's "node-tree intermediary" decision).
+//! [`ComponentRegistry`] (per the plan's "node-tree intermediary"
+//! decision).
 //!
 //! ## Architecture
 //!
@@ -16,7 +16,7 @@
 //!   shell's [`ComponentRegistry`]. It carries only the contribution
 //!   metadata + the component id needed to look up the render function;
 //!   the `mlua::Lua` state is `!Send`, so it stays in the registry.
-//! - During render, [`LuauComponent::render_slint`] reaches for the
+//! - During render, [`LuauComponent::lower_ui`] reaches for the
 //!   registry through a thread-local because the [`Component`] trait
 //!   is `Send + Sync` and can't carry an `Rc`.
 //! - The walker produces a [`VirtualNode`] tree, then recurses through
@@ -46,11 +46,10 @@ use prism_core::widget::{
 use serde_json::Value;
 
 use crate::block::Block;
-use crate::component::{ComponentId, RenderError, RenderSlintContext};
+use crate::component::{ComponentId, RenderError};
 use crate::document::Node;
 use crate::registry::FieldSpec as BuilderFieldSpec;
 use crate::signal::SignalDef;
-use crate::slint_source::SlintEmitter;
 use crate::variant::VariantAxis;
 
 // ── VirtualNode (Phase 6b) ──────────────────────────────────────────
@@ -682,19 +681,25 @@ impl Block for LuauComponent {
             .collect()
     }
 
-    fn render_slint(
+    /// Lower the Luau-authored virtual tree through the unified
+    /// `lower_ui` pipeline. The Luau `render` function returns a
+    /// `VirtualNode`; we materialise it to a `Node` (with synthetic
+    /// ids) and recurse through the same `LowerCtx` the host uses for
+    /// every other block.
+    fn lower_ui(
         &self,
-        ctx: &RenderSlintContext<'_>,
-        props: &Value,
-        children: &[Node],
-        out: &mut SlintEmitter,
-    ) -> Result<(), RenderError> {
+        ctx: &crate::ui_lower::LowerCtx<'_>,
+        node: &Node,
+        style: &crate::style::StyleProperties,
+    ) -> prism_ui_runtime::layout::Node {
         let data = Value::Array(Vec::new());
-        let virt = self.render_virtual(props, &data)?;
+        let virt = match self.render_virtual(&node.props, &data) {
+            Ok(v) => v,
+            Err(_) => return ctx.default_container(node, style),
+        };
         let mut next_id: u64 = 0;
-        let node = virt.into_node(&mut next_id);
-        let _ = children;
-        ctx.render_child(&node, out)
+        let lowered = virt.into_node(&mut next_id);
+        ctx.lower(&lowered)
     }
 }
 

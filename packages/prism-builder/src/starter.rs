@@ -220,8 +220,6 @@ impl Block for ImageBlock {
             .and_then(AssetSource::from_prop)
             .map(|s| s.to_html_src())
             .unwrap_or_default();
-        // Images grow into their slot (matches `render_slint`'s
-        // `width: parent.width; height: parent.height`).
         let img = crate::ui_lower::image_node(
             node.id.clone(),
             source,
@@ -341,8 +339,8 @@ impl Block for FormBlock {
         node: &Node,
         style: &StyleProperties,
     ) -> prism_ui_runtime::layout::Node {
-        // Vertical container, gap 8 — matches `render_slint`. Children
-        // (inputs / buttons / etc.) are walked by `container_with`.
+        // Vertical container, gap 8. Children (inputs / buttons / etc.)
+        // are walked by `container_with`.
         let p = schemas::FormProps::from_value(&node.props);
         let container = ctx.container_with(node, style, |props| {
             if props.gap == 0.0 {
@@ -417,8 +415,7 @@ impl Block for InputBlock {
         } else {
             p.placeholder.clone()
         };
-        // Placeholder is dim grey regardless of cascade — same "muted"
-        // colour render_slint hard-codes.
+        // Placeholder is dim grey regardless of cascade.
         let mut placeholder_style = style.clone();
         placeholder_style.color = Some("#6b7280".into());
         let placeholder = text_node(
@@ -597,9 +594,7 @@ impl Block for CodeBlock {
         style: &StyleProperties,
     ) -> prism_ui_runtime::layout::Node {
         let p = schemas::CodeProps::from_value(&node.props);
-        // Resolution order matches `render_slint`: explicit prop →
-        // cascade → built-in default. Single source of truth for those
-        // defaults lives here so the runtime and Slint stay in sync.
+        // Resolution order: explicit prop → cascade → built-in default.
         let bg = if !p.bg.is_empty() {
             crate::ui_lower::parse_color(&p.bg)
         } else if let Some(s) = style.background.as_deref() {
@@ -1180,8 +1175,8 @@ impl Block for ButtonBlock {
         style: &StyleProperties,
     ) -> prism_ui_runtime::layout::Node {
         let p = schemas::ButtonProps::from_value(&node.props);
-        // Mirrors render_slint: blue rect, white label, fixed height.
-        // Cascade still wins so theme overrides drop straight in.
+        // Blue rect, white label, fixed height. Cascade still wins so
+        // theme overrides drop straight in.
         let mut label_style = style.clone();
         if label_style.color.is_none() {
             label_style.color = Some("#ffffff".into());

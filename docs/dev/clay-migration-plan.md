@@ -4683,3 +4683,99 @@ Registry now at 48 shell primitives.
 | Date | Decision | Rationale |
 |---|---|---|
 | 2026-05-10 | §28 lands: `shell.dock-workspace` block + `panel_routing::PANEL_ROUTES` table + `Sizing::Percent` runtime variant + `value_for` JSON auto-parse for `[`/`{`-prefixed attribute strings + `dock-panel` panel-id auto-dispatch. Skeleton (`ui/app.prism-ui`) collapses to `<shell.app-window><shell.dock-workspace/></shell.app-window>` plus overlay siblings. 255 lib tests, 48 shell primitives, registry/bindings parity restored. | The §16 closing claim ("every panel is one row in a table") was previously a *static* property of the panel registry; §28 makes it a *runtime* property of the skeleton. The active dock tree drives content selection without any new dispatch pattern — the existing `lower_as` seam (§15), the existing slot-method binding shape (§19), and the existing `Block` registration table (§12) all compose without growth. The runtime gained one variant (`Sizing::Percent`) and one defensive parse rule (`value_for` JSON auto-parse) — both additive, both load-bearing across consumers beyond the dock walker (every binding that emits an array prop now round-trips correctly through the resolver). The smart-pattern budget for the wave is two new files (`panel_routing.rs`, `dock_workspace.rs`) totalling ~250 LoC; legacy `push_dock_layout`-style rectangle-flattening stays deleted. |
+
+## 29. `BuilderDocument` → `.prism-ui` source emitter
+
+**Strategy locked 2026-05-10 (post-§28).** The Slint exorcism (§17 +
+slint-source rip) deleted `render_document_slint_*`, `SlintEmitter`,
+and the `render_slint` trait method. With them went the only path
+that auto-populated `Page::source` — `ensure_source` shrank to a
+no-op while `Page::document` continued to carry the authoritative
+tree. §29 closes that gap with a single declarative emitter inverse
+to `prism_core::language::prism_ui::parse`, restoring round-trip
+fidelity without re-introducing any of the deleted infrastructure.
+
+**The emitter.** `prism_builder::prism_ui_emit::emit_document(doc)`
+(plus the per-node `emit_node`) walks a `BuilderDocument`/`Node`
+tree depth-first and produces well-formed `.prism-ui` text. One
+function, no two-step IR, no registry dependency — the `Node`
+already carries its own `component` tag.
+
+**Attribute table.** Single declarative match over `serde_json::Value`:
+
+| `Value` shape | Emitted as |
+|---|---|
+| `Null` | omitted |
+| `Bool(false)` | omitted (boolean-attribute semantics: absent = false) |
+| `Bool(true)` | bare attribute name (`disabled`) |
+| `Number(n)` | `key="<n>"` |
+| `String(s)` | `key="<escaped>"` |
+| `Array(_)` / `Object(_)` | `key={<compact JSON>}` (parser sees an `{expr}` interpolation) |
+
+Object/array values use `{...}` interpolation rather than a quoted
+string because `parse_quoted_value` treats `{` as the start of an
+interpolation regardless of the surrounding quote — `key="{...}"`
+would mis-parse. Wrapping the JSON in `{...}` lets the parser take
+it as an `AttributeValue::Expression` whose body is the JSON
+literal, which is the only round-trip-safe shape supported by the
+grammar today.
+
+**Determinism.** Attributes are emitted in alphabetical order by
+key, indentation is exactly two spaces per nesting level, leaves
+self-close (`<text/>`). Two equivalent trees produce byte-identical
+sources — golden / diff tests stay stable across serde key
+permutations.
+
+**Wiring.** `Page::ensure_source` was a Slint-era hook left as a
+no-op after the runtime cutover. It now emits-when-empty and stays
+idempotent:
+
+- `Page::ensure_source(&registry, &tokens)` — fills `self.source`
+  from `self.document` only if `source` is empty. Hand-edited
+  source survives the call.
+- `Page::regenerate_source()` — force-rewrites `self.source` from
+  `self.document` regardless. The reset path for "I changed the
+  tree, give me back the canonical text."
+
+**Smart-pattern wins.**
+
+- **One walker, one match.** The attribute table is a single
+  `match` over `serde_json::Value` — six arms, no per-block
+  awareness. Adding a new value shape is one arm.
+- **No registry coupling.** The `Node` already carries its own
+  component tag; the emitter never reaches for `ComponentRegistry`.
+  This stays orthogonal to §12 (block registration) and §13
+  (tag resolver), so neither has to grow.
+- **Forward-compatible with `value_for` auto-parse.** The §28
+  `value_for` rule that auto-parses `[`/`{`-prefixed attribute
+  strings still applies to consumers that bypass the parser; the
+  emitter prefers the grammar-native `{expr}` shape for
+  non-scalars, so both paths converge on structured `Value`s
+  without duplication.
+- **No source-of-truth conflict.** `Page::document` remains
+  authoritative on serialisation; `source` is a derived view. The
+  emit-when-empty discipline mirrors the `ensure_*` shape used
+  elsewhere in the host (e.g., bindings populating empty slots) —
+  a familiar lazy-fill seam, not a new pattern.
+
+**What stays deleted.** No `render_slint`, no `SlintEmitter`, no
+`render_document_slint_*`, no `LiveDocument`, no
+`BuilderSyntaxProvider`. The emitter is a fresh ~150-LoC walker, not
+a port of the Slint pipeline.
+
+**Verification.** 330 prism-builder lib tests green (was 313 before
+§29); 15 new tests in `prism_ui_emit::tests` (empty doc, leaf
+self-close, parent open/close, boolean true/false handling, null
+omission, numeric formatting, alphabetical determinism, escape
+discipline for quotes/backslashes/newlines, array/object
+interpolation shape, two-space indent fidelity, document-level emit,
+end-to-end parse-without-errors, parsed-tree shape preservation), 2
+new tests in `app::tests` (`ensure_source` idempotency,
+`regenerate_source` overwrite). `cargo clippy --workspace
+--all-targets -- -D warnings` clean.
+
+### Decision-log entry
+
+| Date | Decision | Rationale |
+|---|---|---|
+| 2026-05-10 | §29 lands: `prism_builder::prism_ui_emit` module + `Page::ensure_source` (emit-when-empty) + `Page::regenerate_source` (force-rewrite). One declarative walker (`emit_document` / `emit_node`), one attribute-shape table, alphabetised attrs for byte-stability. 330 builder lib tests, 17 new emitter tests, all workspace tests + clippy clean. | The Slint exorcism left `Page::source` orphaned — the field still serialised to disk but lost its auto-population path. §29 restores the round-trip without reviving any of the deleted Slint infrastructure: the emitter is the inverse of the canonical `.prism-ui` parser, depends only on `serde_json::Value` shape, and stays orthogonal to the registry / resolver / block layers added in §12-§28. The grammar's existing `{expr}` interpolation absorbs object/array attributes; scalar attributes round-trip as plain quoted text; determinism through alphabetical attr ordering keeps golden tests stable. The wiring discipline (`ensure_source` lazy-fills, `regenerate_source` force-overwrites) mirrors the lazy-fill seams already used elsewhere in the host so no new pattern lands. |

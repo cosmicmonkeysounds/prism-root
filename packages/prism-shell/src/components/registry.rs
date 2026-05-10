@@ -4,9 +4,8 @@
 //!
 //! The registry is a thin newtype around `ComponentRegistry` so we reuse:
 //!
-//! * the [`prism_builder::Block`] trait surface (one render method per
-//!   target — `lower_ui` for the unified Taffy/SSR pipeline, `render_slint`
-//!   during the parallel-build period),
+//! * the [`prism_builder::Block`] trait surface (one render method,
+//!   `lower_ui`, feeding the unified Taffy + SSR pipeline),
 //! * the [`prism_builder::ui_lower::LowerCtx`] cascade machinery,
 //! * the existing `register_block` flow,
 //!
