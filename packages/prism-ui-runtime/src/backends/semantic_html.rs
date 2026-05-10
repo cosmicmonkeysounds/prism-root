@@ -302,6 +302,10 @@ fn push_sizing(s: &mut String, prop: &str, sz: Sizing) {
         Sizing::Fixed(v) => {
             let _ = write!(s, "{prop}:{v}px;");
         }
+        Sizing::Percent(p) => {
+            let pct = (p.clamp(0.0, 1.0)) * 100.0;
+            let _ = write!(s, "{prop}:{pct}%;");
+        }
     }
 }
 

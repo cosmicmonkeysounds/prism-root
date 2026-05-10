@@ -282,6 +282,16 @@ impl WorkspaceSlot {
         json!({ "pages": self.pages_json() })
     }
 
+    /// JSON for `shell.dock-workspace`: the active page's `DockNode`
+    /// tree, serialised through serde so the block can recurse over
+    /// it without depending on `prism-dock` types in its props bag.
+    /// One emission, one source of truth — switching the active
+    /// workflow page (or customising the dock layout) automatically
+    /// flows through this method on the next frame.
+    pub fn dock_workspace_props(&self) -> Value {
+        json!({ "dock": self.workspace.active_dock().root })
+    }
+
     /// Tab list shape consumed by both `shell.menu-bar-row` and
     /// `shell.app-window` (top-bar tabs). Crate-public so the chrome
     /// slot's composition methods can borrow it without duplicating

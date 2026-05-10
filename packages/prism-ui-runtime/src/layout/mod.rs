@@ -208,6 +208,10 @@ pub enum Sizing {
     Grow,
     /// Exact pixel size.
     Fixed(f32),
+    /// Fraction of the parent's main axis (`0.0..=1.0`). Used by
+    /// the dock-workspace block to size split children by ratio
+    /// without recomputing pixel rectangles host-side.
+    Percent(f32),
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -797,6 +801,7 @@ fn sizing_to_taffy(s: Sizing) -> TaffyDimension {
         Sizing::Fit => TaffyDimension::Auto,
         Sizing::Grow => TaffyDimension::Percent(1.0),
         Sizing::Fixed(v) => TaffyDimension::Length(v),
+        Sizing::Percent(p) => TaffyDimension::Percent(p.clamp(0.0, 1.0)),
     }
 }
 

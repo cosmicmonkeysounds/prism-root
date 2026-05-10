@@ -438,7 +438,6 @@ fn emit_grid_cell(
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -621,7 +620,6 @@ mod tests {
         assert!(matches!(err, RenderError::UnknownComponent(ref id) if id == "missing"));
     }
 
-
     // ── Mapped source tests (ADR-006) ────────────────────────────
 
     #[test]
@@ -715,7 +713,6 @@ mod tests {
         let mid = (span.start + span.end) / 2;
         assert_eq!(map.node_at_offset(mid), Some("root"));
     }
-
 
     // ── PropSpan extraction tests ────────────────────────────────
 
@@ -1005,14 +1002,4 @@ mod tests {
     }
 
     // ── Full starter-registry compile tests ──────────────────────
-
-
-
-
-
-
-
-
-
-
 }

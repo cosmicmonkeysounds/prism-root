@@ -4,17 +4,21 @@
   by its registered tag; RegistryTagResolver dispatches to the
   matching Block::lower_ui in prism-shell/src/components/.
   See docs/dev/clay-migration-plan.md sections 13 to 17.
+
+  The body is one tag — `shell.dock-workspace` — that recursively
+  walks the active page's DockNode tree and emits a `shell.dock-panel`
+  for every leaf. Each leaf's `panel-id` routes through
+  `components::panel_routing::PANEL_ROUTES` to the matching content
+  tag (builder → builder-canvas, inspector → inspector-tree, …).
+  Adding a new dockable panel is one row in that table, never a
+  skeleton edit.
 -->
 <shell.app-window
     id="root"
     status="Ready"
     app-name="Studio">
 
-  <shell.dock-panel id="body" panel-id="builder">
-    <container id="content-root">
-      <text id="welcome">Prism Studio</text>
-    </container>
-  </shell.dock-panel>
+  <shell.dock-workspace id="dock"/>
 
 </shell.app-window>
 

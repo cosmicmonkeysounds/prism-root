@@ -119,6 +119,7 @@ pub fn register_shell_builtins(reg: &mut ShellComponentRegistry) -> Result<(), R
     reg!("shell.dock-tab", DockTab);
     reg!("shell.dock-tab-bar", DockTabBar);
     reg!("shell.dock-panel", DockPanel);
+    reg!("shell.dock-workspace", DockWorkspace);
     reg!("shell.toast-stack", ToastStack);
     reg!("shell.inspector-tree", InspectorTree);
     reg!("shell.launchpad", Launchpad);
@@ -178,6 +179,7 @@ mod tests {
         assert!(reg.get("shell.dock-tab").is_some());
         assert!(reg.get("shell.dock-tab-bar").is_some());
         assert!(reg.get("shell.dock-panel").is_some());
+        assert!(reg.get("shell.dock-workspace").is_some());
         assert!(reg.get("shell.toast-stack").is_some());
         assert!(reg.get("shell.inspector-tree").is_some());
         assert!(reg.get("shell.launchpad").is_some());
@@ -205,7 +207,7 @@ mod tests {
         assert!(reg.get("shell.resize-handle").is_some());
         assert!(reg.get("shell.builder-canvas").is_some());
         assert!(reg.get("shell.component-picker").is_some());
-        assert_eq!(reg.len(), 47);
+        assert_eq!(reg.len(), 48);
     }
 
     #[test]
@@ -365,32 +367,23 @@ mod tests {
         };
         assert_eq!(content_props.semantic.tag.as_deref(), Some("main"));
         assert_eq!(content_kids.len(), 1);
-        // The content area now hosts a `<shell.dock-panel>` which itself
-        // adopts the `<container id="content-root">` author wrote inside
-        // it via `host_children` (§14). Walk through the dock-panel to
-        // confirm the inner subtree round-trips.
+        // The content area now hosts a `<shell.dock-workspace>` that
+        // recursively walks the active page's DockNode tree. Its
+        // outer container is tagged `data-role="dock-workspace"`.
         let UiNode::Container {
-            id: dock_id,
-            children: dock_kids,
+            id: ws_id,
+            props: ws_props,
             ..
         } = &content_kids[0]
         else {
-            panic!("dock-panel not a container")
+            panic!("dock-workspace not a container")
         };
-        assert_eq!(dock_id, "body");
-        // dock-panel body is the last (or only) child since no `tabs` prop.
-        let body_section = dock_kids.last().expect("dock-panel body");
-        let UiNode::Container {
-            children: body_section_kids,
-            ..
-        } = body_section
-        else {
-            panic!()
-        };
-        let UiNode::Container { id: cr_id, .. } = &body_section_kids[0] else {
-            panic!("content-root not a container")
-        };
-        assert_eq!(cr_id, "content-root");
+        assert_eq!(ws_id, "dock");
+        assert!(ws_props
+            .semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-role" && v == "dock-workspace"));
 
         // The workflow page bar is a sibling of the app-window —
         // overlays / window-relative chrome live as top-level

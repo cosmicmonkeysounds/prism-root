@@ -4583,3 +4583,103 @@ Nothing else in the host has to learn the feature exists.
 | 2026-05-10 | §26 + §27 land in code as one combined wave (~880 LoC across 9 new files in `prism-shell/src/services/`). **§26 IO**: `services/vfs.rs` (`Vfs` trait, `OsVfs`, `InMemVfs` test support); `services/persistence.rs` (`PersistenceService` — `file.{new,save,save-as,open}` against `Vfs`, `serde_json::Value` wire format direct over `BuilderDocument`); `services/project.rs` (`ProjectService` — `project.{open-folder,close-folder}` with one recursive `ingest_folder` walker); `services/search.rs` (`SearchService` — `search.{open,close,next,prev}` plus `on_event` modal capture; substring-position scorer over `Node` tree). New slots on `AppState`: `ProjectSlot { current_file, root, dirty, recent: Vec<PathBuf> }` (with `touch()` + `title_suffix()`), `SearchSlot { open, query, results: Vec<SearchHit>, selected_index }` (with `search_overlay_props()`). **§27 cross-service**: `services/signals.rs` (`fire_signal` recursive dispatcher, `MAX_CASCADE_DEPTH=8`, six action arms — `SetProperty` / `ToggleVisibility` / `EmitSignal` recursion / `Custom` via `ctx.luau.exec` / `NavigateTo`+`PlayAnimation` documented no-ops); `services/help.rs` (`HelpService` with `Mutex<Option<HelpTooltip>>` queue + `on_event` Esc-while-visible + `help.hide` command); `services/menu.rs` (`MenuService` — single `menu.close` command that clears both `dropdown` and `context`); `services/luau.rs` (`LuauHost` trait, `NoopLuauHost` always-on fallback, `LuauService::run-selection` command exec'ing `state.canvas.code_buffer.source`). **`MutCtx` extended** with `vfs: &'a mut dyn Vfs` and `luau: &'a mut dyn LuauHost` (additive — pre-existing `state`/`viewport`/`undo` services unchanged); `ShellInner` gains `vfs: Box<dyn Vfs>` (`OsVfs`) and `luau: Box<dyn LuauHost>` (`NoopLuauHost`). `register_shell_services` grows by 7 rows; service total now 10. Tests (7 new): one round-trip per IO service (save→open round-trip through `InMemVfs`; close-folder clears slot; search open/close clears query+results), one dispatch test for SignalsService (no-connection no-op), one Esc-clears-tooltip test, one menu-close-both-arrays test, one Luau toast-on-exec test. 236 lib tests green (was 229 at §24 close); `cargo clippy -p prism-shell --all-targets -- -D warnings` is clean. | The wave validates the pattern across the *only* two structural risks the §24 design left: (a) shared resources beyond `state`/`undo`, and (b) cross-service runtime reach. Both resolve through `MutCtx` extension (`vfs` and `luau` fields), not through new traits or new lookup rules. The terminal-state property is now demonstrable: every command body is `\|ctx\| { … }` over the same single carrier; no service has a constructor that takes another service; the registry's `get(id)` is unused at runtime by any service in the tree. The "pickers are host-side" rule is the load-bearing call for IO ergonomics — `PersistenceService` does *not* depend on `rfd`, so the same service runs in tests (with `InMemVfs`), in the browser (with a WebFileSystem-backed `Vfs`), and in the desktop (with `rfd` populating `state.project.current_file` before dispatch). One service body, three platforms, zero `cfg` branches. The Luau seam mirrors the same discipline: `NoopLuauHost` lets every test exercise the `Custom` action arm without linking mlua, and the production host (`mlua`-backed) plugs in at one site (`ShellInner::luau`) when the feature ships. The legacy modules tracked here (`persistence.rs`, `project.rs`, `search.rs`, `signals.rs`, `help.rs`, `menu.rs`, `luau/`) total ~2860 LoC; the replacements are ~880 LoC. The diff is dominated by deletions and the deletions are *load-bearing* — every code path that wired a key-event-to-platform-IO via Slint callbacks, or wired Luau via direct `mlua` linkage in the shell, is gone, and the alternative (the registration table + `MutCtx` resources) is the *only* way to reach the same behaviour. The migration's write side is now the same shape as the read side: one declarative table per seam, every feature one row, every shared resource one field. The seven services landing in this wave are the exhaustive port — no further `app/` or `panels/*` modules remain to reborn against the new contract. |
 | 2026-05-10 | **Phase 5 cutover for `prism-shell` lands** — every legacy on-disk-but-not-in-build module deleted in one PR. Removed: `app/` (commands.rs, inner.rs, mod.rs, mutations.rs, samples.rs, shell.rs), `panels/` (builder.rs, editor.rs, identity.rs, inspector.rs, navigation.rs, properties/, schema.rs, signals.rs), `luau/` (document.rs, signals.rs, mod.rs), and the flat-file legacy crew: `command.rs`, `e2e.rs`, `explorer.rs`, `help.rs`, `input.rs`, `keybindings.rs`, `keyboard.rs`, `menu.rs`, `panel_props.rs`, `persistence.rs`, `project.rs`, `search.rs`, `selection.rs`, `signals.rs`, `telemetry.rs`, `testing.rs`. ~8500 LoC out, 0 LoC in. `Cargo.toml` slimmed in step: dropped `prism-builder/interpreter` feature dep (the only thing transitively pulling `slint` / `slint-interpreter` into the shell), dropped `prism-daemon`, `mlua`, `rfd`, `clap`, `image`, `enigo`, `prism-luau-derive`, `chrono`, `sha2`, `hex` direct deps, retired the `e2e` feature flag. `native` collapses to `["prism-core/crdt", "prism-ui-runtime/femtovg"]`. The `lib.rs` migration-status comment moved from "modules pending re-add" to "modules deleted". 243 lib tests green (was 243 pre-cutover); workspace `cargo check --workspace` green; `cargo clippy -p prism-shell --all-targets -- -D warnings` clean. | Terminal-state proof for the §24-§27 service registry: the registry is genuinely the only write surface — every legacy module had a service-registry replacement (or had moved into `prism-builder` / `prism-core` where it belonged), and removing the on-disk corpses produced zero compile errors and zero test regressions. The Cargo.toml slim is the real load-bearing change — every dropped dependency is a category of code that *cannot* re-enter the shell without first earning a place on `MutCtx` or in the `services/` registry. `rfd`, `mlua`, `enigo`, `image` are now host-side concerns (the desktop bin and e2e harness, neither of which exists yet on the new shape); when they re-enter, they enter through one resource field on `MutCtx` and one constructor in `ShellInner::new`, not through ad-hoc imports scattered across feature modules. The `native` feature collapsing to two flags is the §17 ideal: shell-as-library has one job (render `AppState` through the prism-ui pipeline + dispatch events through services), and Cargo.toml now reflects that. The shell's `src/` listing is now nine entries (`bin/`, `components/`, `services/`, `events.rs`, `lib.rs`, `props.rs`, `render.rs`, `shell.rs`, `state.rs`) — the entire feature surface. Adding a feature is one of: (a) a new component module under `components/` if it's chrome, (b) a new service under `services/` if it's behaviour, (c) a new slot field on `AppState` if it's data. The three canonical edits §27.7 promised are now the *only* edits available — the legacy escape hatches were the modules just deleted. |
 | 2026-05-10 | **Phase 5 cutover continues — Slint runtime fully exorcised from the workspace.** Deleted: `prism-builder/src/live.rs` (1232 LoC `LiveDocument` source-first compile loop, all `slint-interpreter` calls), `prism-builder/src/syntax_provider.rs` (392 LoC compiler-backed `BuilderSyntaxProvider`), the five `#[cfg(feature = "interpreter")]` items in `prism-builder/src/render.rs` (`compile_slint_preview`, `preview_component_factory`, `InstantiateError`, `compile_slint_source`, `instantiate_document` — the Slint compiler / `slint::ComponentFactory` round-trip), and twelve gated test fns. `prism-builder/Cargo.toml` retired the `interpreter` feature outright; `slint`, `slint-interpreter`, and `spin_on` workspace deps deleted from the root `Cargo.toml` and the per-crate `[dependencies]` blocks. `lib.rs` re-exports trimmed: `live::*`, `syntax_provider::*`, and the four `render::compile_*`/`instantiate_*` symbols all gone. Workspace `cargo check` clean; `cargo clippy --workspace --all-targets -- -D warnings` clean; **3123 tests across the workspace green, zero failures**. Slint rows in `Cargo.lock` count: 0. | Validates the §17/§24-27 contract from the *consumer* side — every Phase 5 deletion landed without a single replacement edit elsewhere, because the unified `Component::lower_ui` + `prism-ui-runtime::backends::*` pipeline had already absorbed every render path the deleted code served. The `interpreter` feature was the workspace's load-bearing Slint anchor: it pinned `slint`, `slint-interpreter`, and `spin_on`, and was the only path from prism-shell into the live `.slint` compile/instantiate machinery. With prism-shell already off Slint (previous wave), the feature had no real consumer — the deletion was mechanical confirmation of that. The `render_slint` / `SlintEmitter` source-emission path stays for now (it's still exercised by `prism-builder/src/starter.rs` for the legacy DSL output and is independent of the slint *runtime* — pure string emission, no slint crate dep). Removing the trait method is the next surgical step (every `Block` / `Component` impl has it, ~16 builtins + chrome), but it earns its own decision-log entry once it lands. The point this entry proves: the workspace can now compile the entire codebase with zero `slint*` crates in `Cargo.lock`, and every test passes. The Slint era is functionally over even though the source-emitter API surface lingers; the licence flip to `MIT OR Apache-2.0` (Phase 5 decision #1) is unblocked. |
+
+## 28. Active dock tree → recursive workspace renderer
+
+**Strategy locked 2026-05-10 (post-§27 close-out).** With every
+feature module ported off the legacy stack and the §16 panel
+table entirely landed, the one missing piece for end-to-end
+proof is *connecting* the active workflow page's `DockState` to
+the parsed `app.prism-ui` skeleton. The §16 closing claim — "every
+panel is one row in a table" — needed a runtime walker before it
+could drive the actual Studio chrome.
+
+**The walker.** `shell.dock-workspace` is a 48th shell block. It
+reads one prop (`dock`, the serialised active `DockNode`) and
+recurses:
+
+- `Split { axis, ratio, first, second }` → a `<container>` with
+  `direction = row | column`, two children sized by the ratio
+  through `Sizing::Percent` (new variant on the runtime's `Sizing`
+  enum — Taffy lowers it natively; cross-axis grow / fixed-cross
+  arms unchanged).
+- `TabGroup { tabs, active }` → `ctx.lower_as("shell.dock-panel",
+  ..)` with `panel-id` set to the active tab. When `tabs.len() > 1`
+  the leaf also forwards a `tabs` JSON array to the dock-panel's
+  existing tab-bar dispatch.
+
+**The routing table.** `shell.dock-panel` gained one branch in its
+body-resolution chain: when neither AST children nor `host_children`
+are authored AND `panel-id` is non-empty, fall through to
+`components::panel_routing::tag_for_panel(panel_id)` and
+`ctx.lower_as` the matching content tag. The table
+(`PANEL_ROUTES`) is the single source of truth for "what visual
+lives in this leaf?" — adding a dockable panel is one row in the
+table; the dock-panel block, the workspace walker, and every
+parsed `app.prism-ui` skeleton inherit the new mapping with zero
+additional edits. A test in `panel_routing.rs` keeps the table in
+lockstep with `register_shell_builtins` (every routed tag must be
+a registered shell block).
+
+**The binding.** `WorkspaceSlot::dock_workspace_props()` emits
+`{ "dock": <serialised active DockNode> }`. The skeleton is now
+three lines of meaningful content: `<shell.app-window>` with one
+`<shell.dock-workspace/>` child, plus the seven sibling overlay
+tags. Switching the active workflow page (or customising the
+layout via `DockWorkspace::active_dock_mut`) flows through the
+binding on the next frame — no host-side `push_dock_layout`
+recomputation, no pixel rectangles synthesised in the shell.
+
+**The resolver fix.** The synthetic-attribute round-trip path
+(`fill_compositions` → `value_for`) needed one defence-in-depth
+rule: strings whose first non-whitespace character is `[` or `{`
+are auto-parsed back into `Value::Array` / `Value::Object`. Pre-fix,
+`workflow-page-bar`, `dock-tab-bar`, `command-palette`, and every
+other JSON-array-driven block was *only* exercised through unit
+tests that constructed `Node`s directly with structured
+`serde_json::Value`s; the actual binding-emission → resolver
+pipeline serialised arrays as strings, so blocks reading
+`.as_array()` got `None` end-to-end. The fix is one line in
+`value_for`; the `value_for` test in `ui_resolver.rs` covers the
+bool/number-still-coerce path, and the new render-pipeline test
+(`dock_workspace_emission_round_trips_through_resolver_to_routed_panel`)
+proves the fix end-to-end through the real skeleton.
+
+**Smart-pattern wins.**
+
+- **One walker, one match.** Splits and tab-groups are the only
+  two `DockNode` variants; the walker has exactly two arms.
+- **One routing table.** Adding a panel is one row in `PANEL_ROUTES`;
+  no router-arm match lives in any block body, no per-panel
+  dispatch lives in any service.
+- **One binding row.** `bind_slot!(reg, "shell.dock-workspace",
+  |s| s.workspace.dock_workspace_props())` is the entire
+  host-side wiring; the binding mirrors §19's slot-method
+  discipline (no inline JSON in closures).
+- **Sizing vocabulary grew once.** `Sizing::Percent(f32)` lands in
+  `prism-ui-runtime` as the additive variant; `sizing_to_taffy`,
+  the semantic-HTML `push_sizing` walker, and
+  `prism-builder::ui_lower::sizing_from_dimension` all gain one
+  match arm. Existing `Sizing::Grow` / `Sizing::Fixed` consumers
+  recompile unchanged.
+- **No host-side pixel math.** `push_dock_layout` (legacy: ~60
+  LoC of rectangle flattening into Slint absolutely-positioned
+  models) does not return — Taffy does the layout, ratios stay
+  on the runtime side end-to-end.
+
+**Verification.** 255 prism-shell lib tests green (was 243 at the
+Phase-5 cutover close); workspace `cargo test --workspace --lib`
+green at 6300+ tests; `cargo clippy --workspace --all-targets --
+-D warnings` clean. New tests: 6 in `dock_workspace.rs` (empty,
+single-leaf, horizontal split, vertical split, multi-tab forward,
+string-serialised round-trip), 2 in `dock_panel.rs` (auto-dispatch
+on panel-id, unknown-panel-id empty body), 1 in `panel_routing.rs`
+(every route targets a registered tag), 1 in `render.rs`
+(end-to-end dock-workspace emission through the real skeleton).
+Registry now at 48 shell primitives.
+
+### Decision-log entry
+
+| Date | Decision | Rationale |
+|---|---|---|
+| 2026-05-10 | §28 lands: `shell.dock-workspace` block + `panel_routing::PANEL_ROUTES` table + `Sizing::Percent` runtime variant + `value_for` JSON auto-parse for `[`/`{`-prefixed attribute strings + `dock-panel` panel-id auto-dispatch. Skeleton (`ui/app.prism-ui`) collapses to `<shell.app-window><shell.dock-workspace/></shell.app-window>` plus overlay siblings. 255 lib tests, 48 shell primitives, registry/bindings parity restored. | The §16 closing claim ("every panel is one row in a table") was previously a *static* property of the panel registry; §28 makes it a *runtime* property of the skeleton. The active dock tree drives content selection without any new dispatch pattern — the existing `lower_as` seam (§15), the existing slot-method binding shape (§19), and the existing `Block` registration table (§12) all compose without growth. The runtime gained one variant (`Sizing::Percent`) and one defensive parse rule (`value_for` JSON auto-parse) — both additive, both load-bearing across consumers beyond the dock walker (every binding that emits an array prop now round-trips correctly through the resolver). The smart-pattern budget for the wave is two new files (`panel_routing.rs`, `dock_workspace.rs`) totalling ~250 LoC; legacy `push_dock_layout`-style rectangle-flattening stays deleted. |

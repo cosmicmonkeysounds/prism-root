@@ -181,8 +181,13 @@ fn literal_attribute_value(value: &AttributeValue) -> Option<String> {
 }
 
 /// Coerce a captured attribute string into the JSON value the block's
-/// schema expects. Numbers and bools auto-coerce; everything else
-/// stays a string. Empty (`<el disabled>`) becomes `Bool(true)`,
+/// schema expects. Numbers and bools auto-coerce; strings whose first
+/// non-whitespace character is `[` or `{` are parsed as JSON so blocks
+/// can read array / object props directly via `.as_array()` /
+/// `.as_object()` regardless of whether they arrived from authored
+/// source (`tabs="[…]"`) or from a binding emission (which serialises
+/// JSON arrays / objects through the same string carrier). Everything
+/// else stays a string. Empty (`<el disabled>`) becomes `Bool(true)`,
 /// matching HTML's "boolean attribute" convention.
 fn value_for(raw: Option<String>) -> Value {
     let Some(s) = raw else {
@@ -196,6 +201,11 @@ fn value_for(raw: Option<String>) -> Value {
     }
     if let Ok(f) = s.parse::<f64>() {
         return Value::from(f);
+    }
+    if matches!(s.trim_start().chars().next(), Some('[') | Some('{')) {
+        if let Ok(v) = serde_json::from_str::<Value>(&s) {
+            return v;
+        }
     }
     Value::String(s)
 }

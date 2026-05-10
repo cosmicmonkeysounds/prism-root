@@ -72,11 +72,26 @@ impl Block for DockPanel {
         }
 
         // Body: the inner subtree from `<shell.dock-panel>…</shell.dock-panel>`,
-        // or the builder-Node children when constructed by the host.
-        let body_children = ctx
-            .host_children()
-            .map(|s| s.to_vec())
-            .unwrap_or_else(|| ctx.lower_children(&node.children));
+        // or the builder-Node children when constructed by the host. When
+        // neither is authored, fall through to the `panel-id` routing
+        // table — `shell.dock-panel panel-id="builder"` with no body
+        // dispatches to `shell.builder-canvas` automatically. Adding a
+        // new dockable panel is one row in `panel_routing::PANEL_ROUTES`
+        // (§16 panel-by-panel discipline extended to composition).
+        let body_children = if let Some(slice) = ctx.host_children() {
+            slice.to_vec()
+        } else if !node.children.is_empty() {
+            ctx.lower_children(&node.children)
+        } else if !panel_id.is_empty() {
+            crate::components::panel_routing::tag_for_panel(panel_id)
+                .and_then(|tag| {
+                    ctx.lower_as(tag, format!("{}::content", node.id), serde_json::json!({}))
+                })
+                .map(|child| vec![child])
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         let body = bare_container(format!("{}::body", node.id), body_children, |p| {
             p.width = Sizing::Grow;
             p.height = Sizing::Grow;
@@ -155,6 +170,56 @@ mod tests {
             panic!()
         };
         assert_eq!(children.len(), 2, "tab-bar + body");
+    }
+
+    #[test]
+    fn empty_body_dispatches_to_routed_content_tag() {
+        // §16 panel-routing: a `<shell.dock-panel panel-id="builder"/>`
+        // with no authored body and no `host_children` falls through
+        // to `panel_routing::tag_for_panel("builder")` and embeds the
+        // matching content tag (`shell.builder-canvas`). Adding a new
+        // panel is one row in the routing table — never a router-arm
+        // edit in this block.
+        let ui = lower(json!({ "panel-id": "builder" }), vec![]);
+        let UiNode::Container { children, .. } = ui else {
+            panic!()
+        };
+        // Single body section (no tabs) containing the routed content.
+        let body = children.last().expect("body section");
+        let UiNode::Container {
+            children: body_kids,
+            ..
+        } = body
+        else {
+            panic!()
+        };
+        assert_eq!(body_kids.len(), 1, "auto-dispatched content child");
+        let UiNode::Container { id: content_id, .. } = &body_kids[0] else {
+            panic!("routed content not a container")
+        };
+        assert!(
+            content_id.starts_with("dp::content"),
+            "content id derives from dock-panel id; got {content_id}"
+        );
+    }
+
+    #[test]
+    fn unknown_panel_id_renders_empty_body() {
+        // Defence-in-depth: unknown panel-id yields an empty body
+        // rather than panicking. Live state may surface an unknown
+        // panel during a partial migration.
+        let ui = lower(json!({ "panel-id": "no-such-panel" }), vec![]);
+        let UiNode::Container { children, .. } = ui else {
+            panic!()
+        };
+        let UiNode::Container {
+            children: body_kids,
+            ..
+        } = children.last().expect("body")
+        else {
+            panic!()
+        };
+        assert!(body_kids.is_empty());
     }
 
     #[test]

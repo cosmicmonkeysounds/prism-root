@@ -146,6 +146,12 @@ fn register_builtin_bindings(reg: &mut ShellPropBindings) {
     bind_slot!(reg, "shell.workflow-page-bar", |s: &AppState| s
         .workspace
         .workflow_page_bar_props());
+    // Dock workspace — recursive renderer for the active dock tree.
+    // One binding, one slot method, one block — adding a panel is
+    // one row in `panel_routing::PANEL_ROUTES`, never a binding edit.
+    bind_slot!(reg, "shell.dock-workspace", |s: &AppState| s
+        .workspace
+        .dock_workspace_props());
 
     // Overlay slot — toasts, command palette, help tooltip. Floating
     // chrome that paints over the app-window via the skeleton's
@@ -400,7 +406,7 @@ mod tests {
         // ShellComponentRegistry doesn't expose ids() — once it does,
         // assert set equality. For now, assert count parity via the
         // hard-coded 47 below; updates require touching both tables.
-        assert_eq!(bindings.ids().count(), 47);
-        assert_eq!(reg.len(), 47);
+        assert_eq!(bindings.ids().count(), 48);
+        assert_eq!(reg.len(), 48);
     }
 }

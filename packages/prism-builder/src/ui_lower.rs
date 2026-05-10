@@ -469,10 +469,7 @@ pub fn sizing_from_dimension(dim: Dimension, flex_grow: f32) -> Sizing {
     match dim {
         Dimension::Px { value } => Sizing::Fixed(value),
         Dimension::Auto if flex_grow > 0.0 => Sizing::Grow,
-        // Taffy handles percentages natively, but the runtime `Sizing`
-        // vocabulary doesn't carry them yet — collapse to `Grow` as a
-        // best-effort. Lands properly when Phase 4 grows the primitive.
-        Dimension::Percent { .. } => Sizing::Grow,
+        Dimension::Percent { value } => Sizing::Percent((value / 100.0).clamp(0.0, 1.0)),
         Dimension::Auto => Sizing::Fit,
     }
 }
