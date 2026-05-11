@@ -157,6 +157,16 @@ fn femto(c: Color) -> FemtoColor {
 /// glyph y_offsets relative to the baseline within each run, so we
 /// add `run.line_y` (also relative to the buffer top) to translate
 /// into bounds-local coordinates.
+///
+/// `width` is the Taffy-computed box width. We pass it through to
+/// cosmic-text's `set_size(width, …)` only when it can plausibly fit
+/// the content's natural width — otherwise the buffer would wrap the
+/// label mid-word inside a too-narrow flex parent ("Window" →
+/// "Windo / w"). When the box is narrower than the natural width we
+/// fall back to `f32::INFINITY`, telling cosmic-text "lay this out on
+/// one line"; the visual overflow is much friendlier than the
+/// glyph-broken wrap and pairs with the `flex_shrink: 0` defence on
+/// text leaves so the parent has reserved the space anyway.
 #[allow(clippy::too_many_arguments)]
 fn draw_text<R: Renderer>(
     canvas: &mut Canvas<R>,
@@ -168,7 +178,16 @@ fn draw_text<R: Renderer>(
     colour: Color,
     width: f32,
 ) {
-    let buffer = text.shape(content, font_size, width);
+    // Heuristic natural width — same `chars * font_size * 0.55`
+    // mapping `measure_text` uses, kept in sync intentionally so the
+    // layout and paint passes agree on what counts as "enough room".
+    let natural_w = content.chars().count() as f32 * font_size * 0.55;
+    let shape_width = if width + 0.5 >= natural_w {
+        width
+    } else {
+        f32::INFINITY
+    };
+    let buffer = text.shape(content, font_size, shape_width);
     // Collect placements first so we drop the buffer borrow before we
     // re-enter `text` for glyph baking.
     struct Placement {

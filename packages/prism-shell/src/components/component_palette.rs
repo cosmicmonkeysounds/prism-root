@@ -82,7 +82,15 @@ fn build_row(
     style: &StyleProperties,
     selected: &str,
 ) -> UiNode {
-    let id = item.get("id").and_then(|v| v.as_str()).unwrap_or("");
+    // The binding emits `item-id` to match the kebab-prefixed convention
+    // every other row-block uses (`tab-id`, `page-id`, `node-id`,
+    // `app-id`). Reading the wrong key was the load-bearing bug behind
+    // "palette clicks do nothing in production": the row container got
+    // built with an empty id, so the lowering's
+    // `if !id.is_empty() { s.with_attr("data-target-id", id) }` guard
+    // skipped, and `handle_palette_item_click`'s
+    // `data-target-id`-required short-circuit fired on every click.
+    let id = item.get("item-id").and_then(|v| v.as_str()).unwrap_or("");
     let label = item.get("label").and_then(|v| v.as_str()).unwrap_or(id);
     let icon = item.get("icon").and_then(|v| v.as_str()).unwrap_or("");
     let is_selected = !selected.is_empty() && selected == id;
@@ -148,10 +156,16 @@ mod tests {
 
     #[test]
     fn rows_render() {
+        // `item-id` matches the binding emission shape (see
+        // `CatalogSlot::palette_json`) — using plain `id` here would
+        // silently render rows with empty `data-target-id`, mirroring
+        // the production bug the kebab-prefix convention was supposed
+        // to prevent. Tests follow the binding's shape, not a
+        // convenient shorthand.
         let ui = lower(json!({
             "items": [
-                { "id": "container", "label": "Container", "icon": "icons/box.svg" },
-                { "id": "text", "label": "Text" },
+                { "item-id": "container", "label": "Container", "icon": "icons/box.svg" },
+                { "item-id": "text", "label": "Text" },
             ],
             "selected-id": "text",
         }));
@@ -169,8 +183,8 @@ mod tests {
     fn rows_carry_data_role_and_target_id_for_click_routing() {
         let ui = lower(json!({
             "items": [
-                { "id": "container", "label": "Container" },
-                { "id": "text", "label": "Text" },
+                { "item-id": "container", "label": "Container" },
+                { "item-id": "text", "label": "Text" },
             ],
         }));
         let UiNode::Container { children, .. } = ui else {
@@ -189,5 +203,42 @@ mod tests {
             .attrs
             .iter()
             .any(|(k, v)| k == "data-target-id" && v == "container"));
+    }
+
+    #[test]
+    fn binding_shape_matches_block_read() {
+        // Keystone parity pin: the binding emits `item-id` (see
+        // `CatalogSlot::palette_json`), and the block reads `item-id`.
+        // If a future refactor renames either side, this assertion
+        // fails before the bug ships. The previous mismatch (binding
+        // emits `item-id`, block reads `id`) silently broke every
+        // palette-item click in production while every unit test in
+        // this file passed.
+        use crate::state::{CatalogSlot, PaletteItem};
+        let catalog = CatalogSlot {
+            palette: vec![PaletteItem {
+                id: "container".into(),
+                label: "Container".into(),
+                icon: "icons/box.svg".into(),
+                category: "Layout".into(),
+            }],
+            ..Default::default()
+        };
+        let props = catalog.component_palette_props();
+        let ui = lower(props);
+        let UiNode::Container { children, .. } = ui else {
+            panic!()
+        };
+        let UiNode::Container { props: row, .. } = &children[0] else {
+            panic!()
+        };
+        assert!(
+            row.semantic
+                .attrs
+                .iter()
+                .any(|(k, v)| k == "data-target-id" && v == "container"),
+            "binding-emitted item-id must surface as data-target-id; \
+             palette clicks are dead without this"
+        );
     }
 }

@@ -819,7 +819,18 @@ fn build_taffy_subtree(
                 .expect("taffy: container insert")
         }
         Node::Text { content, props, .. } => {
-            let style = Style::default();
+            // `flex_shrink: 0.0` so Taffy never squeezes a text leaf
+            // below its natural width. The paint pass calls
+            // `cosmic-text::Buffer::set_size(width, …)` with the
+            // Taffy-computed width, and any squeeze cascades into
+            // mid-word wrapping ("Components" → "Component / s",
+            // "Window" → "Windo / w"). Pinning shrink to 0 here means
+            // a text label's parent can shrink the *spacer* siblings
+            // but never the text itself.
+            let style = Style {
+                flex_shrink: 0.0,
+                ..Style::default()
+            };
             let ctx = NodeContext::Text {
                 content: content.clone(),
                 props: props.clone(),
@@ -851,11 +862,19 @@ fn build_taffy_subtree(
         } => {
             // Same Grow→flex_grow rule the container/image arms use — a
             // `width: grow` input fills the parent's main axis exactly
-            // like a sized container would.
+            // like a sized container would. `Fit` along the main axis
+            // pins `flex_shrink: 0.0` for the same anti-wrap reason
+            // text leaves do (the input's placeholder/value would
+            // otherwise cosmic-text-wrap under tight parents).
             let flex_grow = match parent_direction {
                 Some(Direction::Row) if matches!(width, Sizing::Grow) => 1.0,
                 Some(Direction::Column) if matches!(height, Sizing::Grow) => 1.0,
                 _ => 0.0,
+            };
+            let flex_shrink = match parent_direction {
+                Some(Direction::Row) if matches!(width, Sizing::Fit) => 0.0,
+                Some(Direction::Column) if matches!(height, Sizing::Fit) => 0.0,
+                _ => 1.0,
             };
             let style = Style {
                 size: Size {
@@ -863,6 +882,7 @@ fn build_taffy_subtree(
                     height: sizing_to_taffy(*height),
                 },
                 flex_grow,
+                flex_shrink,
                 ..Default::default()
             };
             let (text, is_placeholder) = if value.is_empty() {
@@ -890,12 +910,19 @@ fn build_taffy_subtree(
         } => {
             // Same sizing vocabulary as containers — `Grow` along the
             // parent main axis becomes `flex_grow: 1`, otherwise lowers
-            // through `sizing_to_taffy`. Keeps images interchangeable
-            // with sized containers in flex layouts.
+            // through `sizing_to_taffy`. `Fit` images pin
+            // `flex_shrink: 0.0` so the resolved bitmap rect keeps its
+            // intrinsic size when the parent runs out of room (icon
+            // buttons would otherwise vanish under crowded toolbars).
             let flex_grow = match parent_direction {
                 Some(Direction::Row) if matches!(width, Sizing::Grow) => 1.0,
                 Some(Direction::Column) if matches!(height, Sizing::Grow) => 1.0,
                 _ => 0.0,
+            };
+            let flex_shrink = match parent_direction {
+                Some(Direction::Row) if matches!(width, Sizing::Fit) => 0.0,
+                Some(Direction::Column) if matches!(height, Sizing::Fit) => 0.0,
+                _ => 1.0,
             };
             let style = Style {
                 size: Size {
@@ -903,6 +930,7 @@ fn build_taffy_subtree(
                     height: sizing_to_taffy(*height),
                 },
                 flex_grow,
+                flex_shrink,
                 ..Default::default()
             };
             let ctx = NodeContext::Image {
@@ -932,6 +960,24 @@ fn container_style(props: &ContainerProps, parent_direction: Option<Direction>) 
         Some(Direction::Column) if matches!(props.height, Sizing::Grow) => 1.0,
         _ => 0.0,
     };
+    // `Sizing::Fit` is the authoring vocabulary's "tight to content"
+    // — pills, tabs, icon buttons, status segments, menu labels. In
+    // CSS flex, items default to `flex-shrink: 1`, which lets Taffy
+    // squeeze a Fit child below its natural width when the parent is
+    // tighter than the sum of children. For text-bearing leaves that
+    // squeeze cascades into cosmic-text's `set_size(width, …)` and
+    // visibly wraps the label mid-word ("Window" → "Windo / w",
+    // "Components" → "Component / s"). Setting `flex_shrink: 0` on
+    // Fit children along the main axis preserves their natural
+    // width; overflow goes to the spacer / scroll surface rather
+    // than the label. `Grow`, `Fixed`, and `Percent` children keep
+    // Taffy's default shrink behaviour — they're explicit about
+    // their sizing strategy.
+    let flex_shrink = match parent_direction {
+        Some(Direction::Row) if matches!(props.width, Sizing::Fit) => 0.0,
+        Some(Direction::Column) if matches!(props.height, Sizing::Fit) => 0.0,
+        _ => 1.0,
+    };
     Style {
         display: Display::Flex,
         flex_direction: direction,
@@ -940,6 +986,7 @@ fn container_style(props: &ContainerProps, parent_direction: Option<Direction>) 
             height: sizing_to_taffy(props.height),
         },
         flex_grow,
+        flex_shrink,
         padding: taffy::Rect {
             left: LengthPercentage::Length(props.padding.left),
             right: LengthPercentage::Length(props.padding.right),
@@ -975,35 +1022,51 @@ fn measure_text(
     node_context: Option<&mut NodeContext>,
     _style: &Style,
 ) -> Size<f32> {
-    if let (Some(w), Some(h)) = (known_dimensions.width, known_dimensions.height) {
-        return Size {
-            width: w,
-            height: h,
-        };
-    }
     match node_context {
         Some(NodeContext::Text { content, props }) => {
-            let width = known_dimensions
-                .width
-                .unwrap_or_else(|| content.chars().count() as f32 * props.font_size * 0.55);
+            // Always report the *natural* width — never shrink below it
+            // just because Taffy passed a constrained `known_dimensions.width`.
+            // Returning the smaller of the two used to let cosmic-text wrap
+            // labels mid-word inside narrow flex containers ("Window" →
+            // "Windo / w"); by always reporting the full natural width here
+            // and pairing it with `flex_shrink: 0` on text leaves, the
+            // text keeps its natural width and the parent flexbox handles
+            // any overflow.
+            //
+            // Height is still honoured when Taffy supplies one — the
+            // line-height pass is the only thing that needs that override.
+            let natural_w = content.chars().count() as f32 * props.font_size * 0.55;
+            let width = match known_dimensions.width {
+                Some(w) if w >= natural_w => w,
+                _ => natural_w,
+            };
             let height = known_dimensions.height.unwrap_or(props.font_size * 1.2);
             Size { width, height }
         }
-        // Inputs measure off the same heuristic as text but keep a 1ch
-        // floor so an empty input still has clickable extent. Vertical
-        // padding (4px top + 4px bottom) makes the leaf slightly
-        // taller than a bare `Text`, matching native input affordances.
         Some(NodeContext::TextInput { text, props, .. }) => {
+            // Same anti-shrink rule as Text leaves, plus the 12px / 8px
+            // input padding so empty inputs still have clickable extent.
             let glyph_count = text.chars().count().max(1);
-            let width = known_dimensions
-                .width
-                .unwrap_or(glyph_count as f32 * props.font_size * 0.55 + 12.0);
+            let natural_w = glyph_count as f32 * props.font_size * 0.55 + 12.0;
+            let width = match known_dimensions.width {
+                Some(w) if w >= natural_w => w,
+                _ => natural_w,
+            };
             let height = known_dimensions
                 .height
                 .unwrap_or(props.font_size * 1.2 + 8.0);
             Size { width, height }
         }
-        _ => Size::ZERO,
+        _ => {
+            if let (Some(w), Some(h)) = (known_dimensions.width, known_dimensions.height) {
+                Size {
+                    width: w,
+                    height: h,
+                }
+            } else {
+                Size::ZERO
+            }
+        }
     }
 }
 
