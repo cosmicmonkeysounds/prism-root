@@ -4,9 +4,13 @@
 //!
 //! - `desktop` — `cargo build -p prism-shell` (the native dev bin —
 //!   prism-ui-runtime + femtovg).
-//! - `studio`  — `cargo build -p prism-studio` (the packaged
-//!   desktop shell; bundling/signing lives in Phase 5 via
-//!   `cargo-packager`).
+//! - `studio`  — `cargo build -p prism-studio` plus
+//!   `cargo build -p prism-daemon --bin prism-daemond` (the
+//!   packaged desktop shell + the daemon sidecar it spawns at
+//!   startup; both have to live in the same `target/<profile>/`
+//!   directory or `prism-studio` aborts with "daemon sidecar
+//!   unavailable"). Bundling/signing lives in Phase 5 via
+//!   `cargo-packager`.
 //! - `web`     — two steps:
 //!     1. `cargo build --target wasm32-unknown-unknown
 //!        -p prism-shell --no-default-features --features web`,
@@ -71,6 +75,7 @@ pub fn plan(args: &BuildArgs, workspace: &Workspace) -> Vec<CommandBuilder> {
                 ));
             }
             BuildTarget::Studio => {
+                plan.push(daemon_bin_builder(workspace, !args.debug));
                 plan.push(build_cargo_target(
                     "prism-studio",
                     "studio-build",
@@ -124,6 +129,32 @@ fn build_cargo_target(
     cmd.cwd(workspace.root())
 }
 
+/// `cargo build -p prism-daemon --bin prism-daemond --features
+/// transport-ipc`. Studio's sidecar resolution looks for
+/// `prism-daemond` next to the `prism-studio` binary in
+/// `target/<profile>/`, so the two always have to be built into
+/// the same profile. The `transport-ipc` feature is what enables
+/// the `--ipc-socket <name>` flag the studio host passes when it
+/// spawns the daemon — without it, the daemon aborts immediately
+/// with `--ipc-socket requires the transport-ipc feature at build
+/// time`. It is *not* in the daemon's `default`/`full` preset
+/// (mobile/wasm/embedded builds intentionally drop it), so the
+/// CLI has to opt in here at the studio entry point.
+pub(crate) fn daemon_bin_builder(workspace: &Workspace, release: bool) -> CommandBuilder {
+    let mut cmd = CommandBuilder::cargo()
+        .arg("build")
+        .package("prism-daemon")
+        .arg("--bin")
+        .arg("prism-daemond")
+        .arg("--features")
+        .arg("transport-ipc")
+        .label("daemon-build");
+    if release {
+        cmd = cmd.release();
+    }
+    cmd.cwd(workspace.root())
+}
+
 /// `wasm-bindgen --target web --out-dir <shell-web-dir> <cargo-wasm>`.
 /// Exposed `pub(crate)` so `dev.rs` can reuse the same builder
 /// without duplicating the argv.
@@ -168,15 +199,16 @@ mod tests {
     }
 
     #[test]
-    fn all_target_fans_out_to_five() {
-        // desktop + studio + web-build + web-bindgen + relay
+    fn all_target_fans_out_to_six() {
+        // desktop + daemon-build + studio + web-build + web-bindgen + relay
         let p = plan(&args(BuildTarget::All), &ws());
-        assert_eq!(p.len(), 5);
+        assert_eq!(p.len(), 6);
         let labels: Vec<_> = p.iter().map(|c| c.label_str().unwrap()).collect();
         assert_eq!(
             labels,
             vec![
                 "desktop-build",
+                "daemon-build",
                 "studio-build",
                 "web-build",
                 "web-bindgen",
@@ -203,20 +235,48 @@ mod tests {
     }
 
     #[test]
-    fn studio_uses_cargo_build_release_by_default() {
+    fn studio_prebuilds_daemon_sidecar() {
         let p = plan(&args(BuildTarget::Studio), &ws());
+        assert_eq!(p.len(), 2);
+        assert_eq!(p[0].label_str(), Some("daemon-build"));
         assert_eq!(
             p[0].argv().1,
+            vec![
+                "build",
+                "--package",
+                "prism-daemon",
+                "--bin",
+                "prism-daemond",
+                "--features",
+                "transport-ipc",
+                "--release"
+            ]
+        );
+        assert_eq!(p[1].label_str(), Some("studio-build"));
+        assert_eq!(
+            p[1].argv().1,
             vec!["build", "--package", "prism-studio", "--release"]
         );
     }
 
     #[test]
-    fn studio_debug_omits_release_flag() {
+    fn studio_debug_omits_release_flag_on_both_steps() {
         let mut a = args(BuildTarget::Studio);
         a.debug = true;
         let p = plan(&a, &ws());
-        assert_eq!(p[0].argv().1, vec!["build", "--package", "prism-studio"]);
+        assert_eq!(
+            p[0].argv().1,
+            vec![
+                "build",
+                "--package",
+                "prism-daemon",
+                "--bin",
+                "prism-daemond",
+                "--features",
+                "transport-ipc"
+            ]
+        );
+        assert_eq!(p[1].argv().1, vec!["build", "--package", "prism-studio"]);
     }
 
     #[test]

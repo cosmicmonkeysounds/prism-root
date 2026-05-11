@@ -45,9 +45,17 @@ expanded argv without executing anything.
 ### `prism build [--target desktop|studio|web|relay|all] [--debug]`
 - Defaults to `--target all` + release builds.
 - `desktop` → `cargo build -p prism-shell`.
-- `studio` → `cargo build -p prism-studio`. Phase 5 will wrap this
-  in `cargo-packager` for installer bundles; today it's a plain
-  cargo build.
+- `studio` → two cargo builds in order: first
+  `cargo build -p prism-daemon --bin prism-daemond --features
+  transport-ipc` (the sidecar prism-studio spawns on startup; it
+  has to land in the same `target/<profile>/` directory or studio
+  aborts with "daemon sidecar unavailable"), then
+  `cargo build -p prism-studio`. The `transport-ipc` feature is
+  not in the daemon's `default`/`full` preset (mobile/wasm/embedded
+  builds explicitly drop it), so the CLI opts in here at the
+  studio entry point. Phase 5 will wrap the studio half in
+  `cargo-packager` for installer bundles; today it's a plain cargo
+  build.
 - `web` → a two-step pipeline:
   1. `cargo build --target wasm32-unknown-unknown -p prism-shell
      --no-default-features --features web` emits the cdylib

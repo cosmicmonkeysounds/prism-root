@@ -112,12 +112,16 @@ fn builders_for(target: DevTarget, workspace: &Workspace, hot_reload: bool) -> V
             workspace,
             hot_reload,
         )],
-        DevTarget::Studio => vec![cargo_run_dev_builder(
-            "prism-studio",
-            "studio",
-            workspace,
-            hot_reload,
-        )],
+        DevTarget::Studio => vec![
+            // Studio's `prism-daemond` sidecar lives next to the
+            // studio binary in `target/<profile>/`, so the cargo
+            // build for it has to land in the same profile before
+            // `cargo run -p prism-studio` fires. Treated as
+            // synchronous preflight (like web-build / web-bindgen),
+            // not a long-running supervised child.
+            super::build::daemon_bin_builder(workspace, false),
+            cargo_run_dev_builder("prism-studio", "studio", workspace, hot_reload),
+        ],
         DevTarget::Web => vec![
             web_build_builder(workspace),
             super::build::web_bindgen_builder(workspace, false),
@@ -191,44 +195,62 @@ pub fn run(args: &DevArgs, workspace: &Workspace, dry_run: bool) -> Result<u8> {
         return exec_foreground(serve_cmd);
     }
 
-    // Single-target shell or studio with hot-reload on: wrap the
-    // cargo child in a DevLoop so `.rs` changes kill + respawn the
-    // process.
+    // Single-target studio dev is two steps: cargo build the daemon
+    // sidecar (synchronous preflight, drops `prism-daemond` into
+    // target/debug/), then the long-running `cargo run -p
+    // prism-studio` — wrapped in a DevLoop when hot-reload is on,
+    // foreground exec otherwise.
+    if args.target == DevTarget::Studio {
+        let daemon = plan
+            .iter()
+            .find(|c| c.label_str() == Some("daemon-build"))
+            .expect("studio plan must include daemon-build");
+        let studio = plan
+            .iter()
+            .find(|c| c.label_str() == Some("studio"))
+            .expect("studio plan must include studio");
+        run_cmd_sync(daemon)?;
+        if args.hot_reload() {
+            return exec_dev_loop(
+                studio,
+                vec![workspace.shell_src_dir(), workspace.studio_src_dir()],
+            );
+        }
+        return exec_foreground(studio);
+    }
+
+    // Single-target shell with hot-reload on: wrap the cargo child
+    // in a DevLoop so `.rs` changes kill + respawn the process.
     if args.target == DevTarget::Shell && args.hot_reload() && plan.len() == 1 {
         return exec_dev_loop(&plan[0], vec![workspace.shell_src_dir()]);
     }
-    if args.target == DevTarget::Studio && args.hot_reload() && plan.len() == 1 {
-        return exec_dev_loop(
-            &plan[0],
-            vec![workspace.shell_src_dir(), workspace.studio_src_dir()],
-        );
-    }
 
-    // Single-target (non-web) dev is just a foreground exec — no
-    // supervisor overhead, so Ctrl+C still lands on the child
-    // directly.
+    // Single-target (non-web, non-studio) dev is just a foreground
+    // exec — no supervisor overhead, so Ctrl+C still lands on the
+    // child directly.
     if plan.len() == 1 {
         return exec_foreground(&plan[0]);
     }
 
     // Multi-target dev. Web needs its preflight (cargo + wasm-bindgen)
-    // to finish before the supervisor starts fanning out workers, so
-    // the supervisor sees a clean list of long-running children:
-    // shell, studio, web-serve, relay.
-    let web_included = matches!(args.target, DevTarget::Web | DevTarget::All);
-    let supervisor_plan: Vec<CommandBuilder> = if web_included {
-        let mut remaining = Vec::with_capacity(plan.len().saturating_sub(2));
-        for cmd in plan {
-            match cmd.label_str() {
-                Some("web-build") | Some("web-bindgen") => run_cmd_sync(&cmd)?,
-                _ => remaining.push(cmd),
+    // and Studio needs its daemon-sidecar prebuild to finish before
+    // the supervisor starts fanning out workers, so the supervisor
+    // sees a clean list of long-running children: shell, studio,
+    // web-serve, relay.
+    let mut supervisor_plan: Vec<CommandBuilder> = Vec::with_capacity(plan.len());
+    let mut had_preflight = false;
+    for cmd in plan {
+        match cmd.label_str() {
+            Some("web-build") | Some("web-bindgen") | Some("daemon-build") => {
+                run_cmd_sync(&cmd)?;
+                had_preflight = true;
             }
+            _ => supervisor_plan.push(cmd),
         }
+    }
+    if had_preflight {
         crate::gc::sweep(&workspace.target_dir());
-        remaining
-    } else {
-        plan
-    };
+    }
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -346,22 +368,34 @@ mod tests {
     }
 
     #[test]
-    fn studio_runs_default() {
+    fn studio_prebuilds_daemon_sidecar() {
         let a = args(DevTarget::Studio);
         let p = plan(&a, &ws());
-        assert_eq!(p.len(), 1);
-        assert_eq!(p[0].label_str(), Some("studio"));
-        let argv = p[0].argv().1;
-        assert_eq!(argv, vec!["run", "--package", "prism-studio"]);
+        assert_eq!(p.len(), 2);
+        assert_eq!(p[0].label_str(), Some("daemon-build"));
+        assert_eq!(
+            p[0].argv().1,
+            vec![
+                "build",
+                "--package",
+                "prism-daemon",
+                "--bin",
+                "prism-daemond",
+                "--features",
+                "transport-ipc"
+            ]
+        );
+        assert_eq!(p[1].label_str(), Some("studio"));
+        assert_eq!(p[1].argv().1, vec!["run", "--package", "prism-studio"]);
     }
 
     #[test]
     fn studio_no_hot_reload_same_as_default() {
         let a = args_no_reload(DevTarget::Studio);
         let p = plan(&a, &ws());
-        assert_eq!(p.len(), 1);
-        let argv = p[0].argv().1;
-        assert_eq!(argv, vec!["run", "--package", "prism-studio"]);
+        assert_eq!(p.len(), 2);
+        assert_eq!(p[0].label_str(), Some("daemon-build"));
+        assert_eq!(p[1].argv().1, vec!["run", "--package", "prism-studio"]);
     }
 
     #[test]
@@ -407,16 +441,17 @@ mod tests {
     }
 
     #[test]
-    fn all_target_fans_out_to_six_labeled_commands() {
-        // shell + studio + web-build + web-bindgen + web (serve) + relay
+    fn all_target_fans_out_to_seven_labeled_commands() {
+        // shell + daemon-build + studio + web-build + web-bindgen + web (serve) + relay
         let a = args(DevTarget::All);
         let p = plan(&a, &ws());
-        assert_eq!(p.len(), 6);
+        assert_eq!(p.len(), 7);
         let labels: Vec<_> = p.iter().map(|c| c.label_str().unwrap()).collect();
         assert_eq!(
             labels,
             vec![
                 "shell",
+                "daemon-build",
                 "studio",
                 "web-build",
                 "web-bindgen",
