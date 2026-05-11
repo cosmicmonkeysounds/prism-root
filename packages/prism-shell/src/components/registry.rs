@@ -142,6 +142,7 @@ pub static SHELL_BUILTINS: &[&BlockSpec] = &[
     &super::gizmo_scale::GIZMO_SCALE_SPEC,
     &super::resize_handle::RESIZE_HANDLE_SPEC,
     &super::builder_canvas::BUILDER_CANVAS_SPEC,
+    &super::builder_toolbar::BUILDER_TOOLBAR_SPEC,
     &super::component_picker::COMPONENT_PICKER_SPEC,
 ];
 

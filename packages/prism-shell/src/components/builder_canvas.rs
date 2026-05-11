@@ -87,6 +87,36 @@ fn builder_canvas_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StylePropertie
         .unwrap_or(800.0) as f32
         * zoom;
 
+    // §43 D2: toolbar strip prepended above the page rect. The
+    // canvas binding forwards the toolbar's data (device, zoom,
+    // node-count, tool) through this node's own props bag so the
+    // single host binding row populates both. Falls through cleanly
+    // when no registry is available — `lower_as` returns None and
+    // the canvas paints without the toolbar (headless render paths).
+    let toolbar_props = json!({
+        "device": node
+            .props
+            .get("device")
+            .and_then(|v| v.as_str())
+            .unwrap_or("desktop"),
+        "zoom": zoom,
+        "node-count": node
+            .props
+            .get("node-count")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0),
+        "tool": node
+            .props
+            .get("tool")
+            .and_then(|v| v.as_str())
+            .unwrap_or("move"),
+    });
+    let toolbar = ctx.lower_as(
+        "shell.builder-toolbar",
+        format!("{}::toolbar", node.id),
+        toolbar_props,
+    );
+
     // Author-driven preview tree (the lowered nodes of the active
     // BuilderDocument's component tree). We accept either explicit
     // `host_children` (when `.prism-ui` author embeds them) or the
@@ -122,8 +152,15 @@ fn builder_canvas_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StylePropertie
         },
     );
 
-    bare_container(node.id.clone(), vec![page], |p| {
+    let mut frame_children: Vec<UiNode> = Vec::with_capacity(2);
+    if let Some(t) = toolbar {
+        frame_children.push(t);
+    }
+    frame_children.push(page);
+
+    bare_container(node.id.clone(), frame_children, |p| {
         p.direction = Direction::Column;
+        p.gap = 12.0;
         p.padding = Padding {
             left: 24.0,
             right: 24.0,
@@ -292,17 +329,27 @@ mod tests {
         builder_canvas_lower(&ctx, &n, &cascade)
     }
 
+    /// §43 D2: the canvas frame now prepends a toolbar above the page
+    /// when a registry is available. This helper pulls the page rect
+    /// out of `[toolbar, page]` so the rest of the tests stay readable.
+    fn page_of(children: &[UiNode]) -> &Vec<UiNode> {
+        // [toolbar, page] in the registry-attached path; falls back to
+        // [page] when the resolver couldn't dispatch the toolbar.
+        let page_idx = children.len() - 1;
+        let UiNode::Container { children: page, .. } = &children[page_idx] else {
+            panic!("page slot not a container")
+        };
+        page
+    }
+
     #[test]
     fn renders_page_with_three_layers() {
         let ui = lower(json!({}));
         let UiNode::Container { children, .. } = ui else {
             panic!()
         };
-        let UiNode::Container { children: page, .. } = &children[0] else {
-            panic!()
-        };
         // preview + grid + overlay
-        assert_eq!(page.len(), 3);
+        assert_eq!(page_of(&children).len(), 3);
     }
 
     #[test]
@@ -315,7 +362,8 @@ mod tests {
         let UiNode::Container { children, .. } = ui else {
             panic!()
         };
-        let UiNode::Container { props, .. } = &children[0] else {
+        let page_idx = children.len() - 1;
+        let UiNode::Container { props, .. } = &children[page_idx] else {
             panic!()
         };
         assert_eq!(props.width, Sizing::Fixed(1600.0));
@@ -330,12 +378,9 @@ mod tests {
         let UiNode::Container { children, .. } = ui else {
             panic!()
         };
-        let UiNode::Container { children: page, .. } = &children[0] else {
-            panic!()
-        };
         let UiNode::Container {
             children: overlay, ..
-        } = &page[2]
+        } = &page_of(&children)[2]
         else {
             panic!()
         };
@@ -351,12 +396,9 @@ mod tests {
         let UiNode::Container { children, .. } = ui else {
             panic!()
         };
-        let UiNode::Container { children: page, .. } = &children[0] else {
-            panic!()
-        };
         let UiNode::Container {
             children: overlay, ..
-        } = &page[2]
+        } = &page_of(&children)[2]
         else {
             panic!()
         };
@@ -383,14 +425,11 @@ mod tests {
         let UiNode::Container { children, .. } = ui else {
             panic!()
         };
-        let UiNode::Container { children: page, .. } = &children[0] else {
-            panic!()
-        };
         let UiNode::Container {
             children: cells,
             props,
             ..
-        } = &page[1]
+        } = &page_of(&children)[1]
         else {
             panic!()
         };
@@ -400,5 +439,39 @@ mod tests {
             .attrs
             .iter()
             .any(|(k, v)| k == "role" && v == "grid"));
+    }
+
+    #[test]
+    fn canvas_prepends_toolbar_above_page_when_registry_present() {
+        // §43 D2: the canvas frame's first child is the toolbar; the
+        // page rect is the second child. Without a registry the toolbar
+        // is dropped silently — the existing `lower` helper attaches a
+        // real registry, so the toolbar always appears here.
+        let ui = lower(json!({}));
+        let UiNode::Container {
+            props, children, ..
+        } = ui
+        else {
+            panic!()
+        };
+        assert_eq!(children.len(), 2, "[toolbar, page]");
+        let UiNode::Container {
+            props: toolbar_props,
+            ..
+        } = &children[0]
+        else {
+            panic!("toolbar not a container")
+        };
+        assert!(toolbar_props
+            .semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-role" && v == "builder-toolbar"));
+        // The page rect is the second child.
+        assert!(props
+            .semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-role" && v == "builder-canvas"));
     }
 }

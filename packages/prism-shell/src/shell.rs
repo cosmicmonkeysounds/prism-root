@@ -169,7 +169,19 @@ impl Shell {
         let inner = Rc::clone(&self.inner);
         let skeleton = self.skeleton.clone();
         let handler: prism_ui_runtime::event::EventHandler = Box::new(move |event, surface| {
-            if dispatch_event(&inner, event) {
+            // §43 C2 / C3: PointerDown events consult the runtime's
+            // hit-test cache before dispatch — the topmost container
+            // at the cursor's `data-role` decides whether the click
+            // is a selection / property mutation before the §22
+            // canvas gizmo path sees the event. Other events skip
+            // the lookup (no `Surface` interaction needed).
+            let hit = match event {
+                prism_ui_runtime::event::Event::PointerDown { x, y, .. } => {
+                    surface.hit_test_at(*x, *y).cloned()
+                }
+                _ => None,
+            };
+            if dispatch_event(&inner, event, hit) {
                 let guard = inner.borrow();
                 let tree = render_tree(
                     &skeleton,

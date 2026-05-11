@@ -26,6 +26,7 @@
 use prism_builder::{BuilderDocument, NodeId};
 use prism_core::foundation::spatial::Transform2D;
 use prism_dock::DockWorkspace;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 /// Reloadable root state. `Default` returns the zero-data shell that
@@ -85,6 +86,81 @@ impl AppState {
             &self.canvas.document,
             self.canvas.selection.as_deref(),
         );
+    }
+
+    /// §43 C3: set the canvas selection to a specific doc-node-id and
+    /// resync the builder slot. The single mutator the hit-test
+    /// router (inspector-row click), the keyboard arrow nudges
+    /// (which already mutate `canvas.selection` directly via
+    /// `SelectionService`), and any future programmatic select path
+    /// all converge on. Returns `true` when the selection moved —
+    /// the caller can use this to gate redraw requests.
+    pub fn select_node(
+        &mut self,
+        node_id: &str,
+        registry: Option<&prism_builder::ComponentRegistry>,
+    ) -> bool {
+        // Reject ids that don't exist in the active document — the
+        // hit-test surface can produce stale ids when the document
+        // changes between layout and click. Headless render paths
+        // (no document) also drop here.
+        let exists = self
+            .canvas
+            .document
+            .root
+            .as_ref()
+            .and_then(|r| r.find(node_id))
+            .is_some();
+        if !exists {
+            return false;
+        }
+        let already = self.canvas.selection.as_deref() == Some(node_id);
+        if already {
+            return false;
+        }
+        self.canvas.selection = Some(node_id.into());
+        self.resync_builder_for_selection(registry);
+        true
+    }
+
+    /// §43 C2: set one property on a doc node and resync the builder
+    /// slot. Acts as the "BuilderService::set_node_prop" mutator the
+    /// plan calls for — every property-edit code path (hit-test
+    /// field-editor click, future Luau action, future programmatic
+    /// edit) routes through this method so the derivation pass runs
+    /// exactly once per edit. Returns `true` when the document
+    /// actually changed.
+    pub fn set_node_prop(
+        &mut self,
+        node_id: &str,
+        key: &str,
+        value: Value,
+        registry: Option<&prism_builder::ComponentRegistry>,
+    ) -> bool {
+        let target = self
+            .canvas
+            .document
+            .root
+            .as_mut()
+            .and_then(|r| r.find_mut(node_id));
+        let Some(target) = target else {
+            return false;
+        };
+        if let Value::Object(map) = &mut target.props {
+            // Skip the write when the existing value is identical —
+            // saves a derivation pass on idempotent edits.
+            if map.get(key) == Some(&value) {
+                return false;
+            }
+            map.insert(key.into(), value);
+        } else {
+            // Replace a non-object props bag with a fresh map carrying
+            // the new key. Matches `SignalsService::apply_action`'s
+            // shape so the two write sites stay coherent.
+            target.props = Value::Object([(key.into(), value)].into_iter().collect());
+        }
+        self.resync_builder_for_selection(registry);
+        true
     }
 }
 
@@ -181,18 +257,24 @@ fn derive_property_rows(
         }),
     });
     for spec in schema {
-        rows.push(property_row_from_spec(&spec, &node.props));
+        rows.push(property_row_from_spec(&spec, &node.props, &node.id));
     }
     rows
 }
 
 /// Project one `FieldSpec` onto a `PropertyRow` consumed by
 /// `shell.field-editor`. The editor block reads `key / label / kind /
-/// value / required` — extracting them here keeps the panel binding a
-/// one-line forwarder and pins the shape in tests.
+/// value / required / target-id` — extracting them here keeps the
+/// panel binding a one-line forwarder and pins the shape in tests.
+///
+/// `target_id` flows in from the selected doc node so the lowered
+/// row's `data-target-id` attr carries it. The §43 C2 hit-test
+/// router consults that attr to dispatch the edit back to
+/// [`AppState::set_node_prop`].
 fn property_row_from_spec(
     spec: &prism_core::widget::field::FieldSpec,
     props: &Value,
+    target_id: &str,
 ) -> PropertyRow {
     use prism_core::widget::field::FieldKind;
 
@@ -224,6 +306,7 @@ fn property_row_from_spec(
             "kind": kind,
             "value": value,
             "required": spec.required,
+            "target-id": target_id,
         }),
     }
 }
@@ -395,10 +478,34 @@ impl ChromeSlot {
         })
     }
 
-    /// JSON for `shell.status-bar`. Same shape contract: chrome data
-    /// only, no structural keys.
-    pub fn status_bar_props(&self) -> Value {
-        json!({ "status": self.status })
+    /// JSON for `shell.status-bar`. §43 D5: emits a multi-segment
+    /// strip — `status / active-page / selection / node-count /
+    /// app-name` — so the renderer can paint the DaVinci-style pipe-
+    /// separated footer rather than a single label. Same secondary-
+    /// arg pattern as [`Self::app_window_props`]: the chrome slot
+    /// owns the row, the workspace + canvas slots flow in by
+    /// reference (the cross-slot composition discipline from §19).
+    ///
+    /// `status` is the only string this slot itself owns; every
+    /// other segment is derived from another slot at call time so a
+    /// page switch / selection change / document edit shows up on
+    /// the next frame without any per-segment plumbing.
+    pub fn status_bar_props(&self, workspace: &WorkspaceSlot, canvas: &CanvasSlot) -> Value {
+        let active_page_label = workspace.workspace.active_page().label.clone();
+        let selection_label = canvas.selection_label();
+        let node_count = canvas.node_count();
+        let count_word = if node_count == 1 { "node" } else { "nodes" };
+        let node_count_segment = format!("{node_count} {count_word}");
+        json!({
+            "status": self.status,
+            "segments": Value::Array(vec![
+                json!(self.status),
+                json!(active_page_label),
+                json!(selection_label),
+                json!(node_count_segment),
+                json!(self.app_name),
+            ]),
+        })
     }
 
     fn menus_json(&self) -> Value {
@@ -1226,7 +1333,35 @@ pub struct CanvasSlot {
     pub viewport: CanvasViewport,
     pub picker: PickerState,
     pub code_buffer: CodeBuffer,
+    /// §43 D2: active responsive preview mode. Drives the
+    /// Desktop/Tablet/Mobile button cluster in `shell.builder-toolbar`
+    /// and (eventually) constrains the canvas page width when the
+    /// builder is in preview mode.
+    pub device: Device,
     drag: Option<DragState>,
+}
+
+/// Responsive preview target for the builder canvas. Three discrete
+/// sizes mirror the DaVinci-style toolbar's device cluster; future
+/// "custom width" entries land as a new enum variant rather than a
+/// free-form numeric prop.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Device {
+    #[default]
+    Desktop,
+    Tablet,
+    Mobile,
+}
+
+impl Device {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Desktop => "desktop",
+            Self::Tablet => "tablet",
+            Self::Mobile => "mobile",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -1416,6 +1551,26 @@ impl CanvasSlot {
             "pan-x": self.viewport.pan_x,
             "pan-y": self.viewport.pan_y,
             "place-mode": self.picker.open,
+            "device": self.device.as_str(),
+            "node-count": self.node_count(),
+        })
+    }
+
+    /// JSON for `shell.builder-toolbar` (§43 D2). The toolbar emits
+    /// the alignment buttons, device-mode cluster, zoom, and node
+    /// count — every datum derives from this slot, so a single
+    /// binding row keeps every other panel out of the toolbar's
+    /// shape. The block reads:
+    /// - `device`: active responsive preview mode
+    /// - `zoom`: 0..n multiplier for the page rect
+    /// - `node-count`: total node count in the document
+    /// - `tool`: active tool mode (move/rotate/scale)
+    pub fn builder_toolbar_props(&self) -> Value {
+        json!({
+            "device": self.device.as_str(),
+            "zoom": self.viewport.zoom,
+            "node-count": self.node_count(),
+            "tool": self.tool.as_str(),
         })
     }
 
@@ -1517,6 +1672,34 @@ impl CanvasSlot {
         let id = self.selection.as_deref()?;
         let node = self.document.root.as_ref()?.find(id)?;
         Some((node.transform.position[0], node.transform.position[1]))
+    }
+
+    /// Friendly label for the current selection, or `"No selection"`
+    /// when nothing is selected. Consumed by the §43 D5 multi-segment
+    /// status bar and (eventually) by any future selection-aware
+    /// breadcrumb. Same `inspector_label_for` heuristic the inspector
+    /// tree uses, so the two read sites can never disagree.
+    pub(crate) fn selection_label(&self) -> String {
+        let Some(id) = self.selection.as_deref() else {
+            return "No selection".to_string();
+        };
+        let Some(root) = self.document.root.as_ref() else {
+            return id.to_string();
+        };
+        match root.find(id) {
+            Some(node) => inspector_label_for(node),
+            None => id.to_string(),
+        }
+    }
+
+    /// Total node count in the active document (root + every
+    /// descendant). Consumed by the §43 D5 status bar. One walk, one
+    /// integer — no allocation.
+    pub(crate) fn node_count(&self) -> usize {
+        fn walk(node: &prism_builder::Node) -> usize {
+            1 + node.children.iter().map(walk).sum::<usize>()
+        }
+        self.document.root.as_ref().map(walk).unwrap_or(0)
     }
 
     fn handle_positions_json(&self) -> Value {
@@ -1995,6 +2178,148 @@ mod tests {
     }
 
     #[test]
+    fn selection_change_repopulates_property_rows() {
+        // §43 E2: the named verification test for Phase C. Moving the
+        // selection from one node to another re-derives the
+        // properties form from the *new* node's schema — old rows are
+        // not carried over.
+        let mut reg = prism_builder::ComponentRegistry::new();
+        prism_builder::starter::register_builtins(&mut reg).expect("builtins");
+        let mut state = AppState::default();
+        state.canvas.document = doc_with_three_nodes();
+
+        // Helper: collect `key` strings from every `shell.field-editor`
+        // row's `props` payload.
+        fn keys_of(rows: &[PropertyRow]) -> Vec<String> {
+            rows.iter()
+                .filter(|r| r.component == "shell.field-editor")
+                .filter_map(|r| {
+                    r.props
+                        .get("key")
+                        .and_then(|v| v.as_str())
+                        .map(String::from)
+                })
+                .collect()
+        }
+
+        // Select the `text` heading first → property rows derived from
+        // the `text` schema (must include the `body` key).
+        state.canvas.selection = Some("heading".into());
+        state.resync_builder_for_selection(Some(&reg));
+        let heading_keys = keys_of(&state.builder.property_rows);
+        assert!(
+            heading_keys.iter().any(|k| k == "body"),
+            "text schema must include `body`, got {heading_keys:?}"
+        );
+
+        // Switch the selection to the `button` node — the property
+        // rows must repopulate from the *new* schema. The `text`
+        // and `disabled` fields are on `button` but not on `text`,
+        // pinning the swap.
+        assert!(state.select_node("btn", Some(&reg)));
+        let button_keys = keys_of(&state.builder.property_rows);
+        assert!(
+            button_keys.iter().any(|k| k == "text"),
+            "button schema must include `text`, got {button_keys:?}"
+        );
+        assert!(
+            button_keys.iter().any(|k| k == "disabled"),
+            "button schema must include `disabled`, got {button_keys:?}"
+        );
+        assert!(
+            !button_keys.iter().any(|k| k == "body"),
+            "stale `body` field from previous selection must clear"
+        );
+
+        // Section header repopulates with the new component label.
+        let header = state
+            .builder
+            .property_rows
+            .iter()
+            .find(|r| r.component == "shell.section-header")
+            .expect("section header row");
+        let header_label = header
+            .props
+            .get("label")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        assert_eq!(
+            header_label, "button",
+            "section header must reflect new selection"
+        );
+    }
+
+    #[test]
+    fn select_node_moves_selection_and_resyncs_inspector() {
+        // §43 C3: programmatic `select_node` mutates `canvas.selection`
+        // and re-derives the inspector tree so the new row carries
+        // the `selected` flag.
+        let mut state = AppState::default();
+        state.canvas.document = doc_with_three_nodes();
+        state.canvas.selection = Some("heading".into());
+        state.resync_builder_for_selection(None);
+        assert!(state.select_node("btn", None));
+        assert_eq!(state.canvas.selection.as_deref(), Some("btn"));
+        let row = state
+            .builder
+            .inspector
+            .iter()
+            .find(|n| n.id == "btn")
+            .expect("btn row");
+        assert!(row.selected);
+    }
+
+    #[test]
+    fn select_node_rejects_unknown_ids() {
+        // §43 C3: stale ids surfaced by the hit-test surface (e.g. a
+        // doc edit between layout and click) don't move selection.
+        let mut state = AppState::default();
+        state.canvas.document = doc_with_three_nodes();
+        state.canvas.selection = Some("heading".into());
+        assert!(!state.select_node("missing", None));
+        assert_eq!(state.canvas.selection.as_deref(), Some("heading"));
+    }
+
+    #[test]
+    fn select_node_returns_false_when_selection_already_matches() {
+        let mut state = AppState::default();
+        state.canvas.document = doc_with_three_nodes();
+        state.canvas.selection = Some("heading".into());
+        assert!(!state.select_node("heading", None));
+    }
+
+    #[test]
+    fn set_node_prop_mutates_props_and_resyncs() {
+        // §43 C2: `set_node_prop` writes one key on the target doc
+        // node and re-derives the property rows so the form reflects
+        // the new value on the next frame.
+        let mut reg = prism_builder::ComponentRegistry::new();
+        prism_builder::starter::register_builtins(&mut reg).expect("builtins");
+        let mut state = AppState::default();
+        state.canvas.document = doc_with_three_nodes();
+        state.canvas.selection = Some("heading".into());
+        state.resync_builder_for_selection(Some(&reg));
+
+        assert!(state.set_node_prop("heading", "body", json!("Updated body"), Some(&reg)));
+        let body = state
+            .canvas
+            .document
+            .root
+            .as_ref()
+            .unwrap()
+            .find("heading")
+            .unwrap()
+            .props
+            .get("body")
+            .cloned()
+            .unwrap();
+        assert_eq!(body, json!("Updated body"));
+        // Idempotent edits return false — the derivation pass doesn't
+        // need to rerun when the value didn't change.
+        assert!(!state.set_node_prop("heading", "body", json!("Updated body"), Some(&reg)));
+    }
+
+    #[test]
     fn clear_selection_drops_property_rows_keeps_inspector_with_no_selected() {
         // §43 C1: Esc → no selection → properties empty, inspector
         // intact with all selected flags cleared.
@@ -2024,12 +2349,57 @@ mod tests {
     }
 
     #[test]
-    fn status_bar_props_carries_status_only() {
+    fn status_bar_props_carries_status_and_segments() {
         let mut state = AppState::default();
         state.chrome.status = "Saving…".into();
-        let props = state.chrome.status_bar_props();
+        let props = state
+            .chrome
+            .status_bar_props(&state.workspace, &state.canvas);
+        // Back-compat: the original `status` key is still emitted so
+        // headless / legacy consumers keep working.
         assert_eq!(props["status"], "Saving…");
-        assert!(props.get("app-name").is_none());
+        // §43 D5: the new `segments` array is the multi-segment payload
+        // — `status / active-page / selection / node-count / app-name`.
+        let segments = props["segments"].as_array().expect("segments array");
+        assert_eq!(segments.len(), 5);
+        assert_eq!(segments[0], "Saving…");
+        assert_eq!(
+            segments[1],
+            state.workspace.workspace.active_page().label.as_str()
+        );
+        assert_eq!(segments[2], "No selection");
+        assert_eq!(segments[3], "0 nodes");
+        assert_eq!(segments[4], state.chrome.app_name.as_str());
+    }
+
+    #[test]
+    fn status_bar_segments_track_selection_and_node_count() {
+        use prism_builder::{BuilderDocument, Node};
+        let mut state = AppState::default();
+        state.canvas.document = BuilderDocument {
+            root: Some(Node {
+                id: "root".into(),
+                component: "container".into(),
+                children: vec![Node {
+                    id: "child".into(),
+                    component: "text".into(),
+                    props: json!({ "body": "Hello world" }),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        state.canvas.selection = Some("child".into());
+        let props = state
+            .chrome
+            .status_bar_props(&state.workspace, &state.canvas);
+        let segments = props["segments"].as_array().unwrap();
+        // Selection label uses the inspector heuristic — prefers the
+        // `body`/`label`/`title` prop when present.
+        assert_eq!(segments[2], "Hello world");
+        // 2 nodes — root + child.
+        assert_eq!(segments[3], "2 nodes");
     }
 
     #[test]
@@ -2483,6 +2853,7 @@ mod tests {
                 language: "slint".into(),
                 caret: 7,
             },
+            device: Device::Desktop,
             drag: None,
         }
     }

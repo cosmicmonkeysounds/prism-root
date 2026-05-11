@@ -6037,3 +6037,248 @@ clean.
 | Date | Decision | Rationale |
 |---|---|---|
 | 2026-05-11 | §43 Phase C lands: `AppState::resync_builder_for_selection(registry)` + `derive_inspector_tree` + `derive_property_rows` pure helpers; `MutCtx.registry` mirror of `PropCtx.registry`; `clear_selection` drops property rows; boot path pre-selects `demo-heading` and runs one registry-aware resync after `Shell::new`. | The Phase A wave seeded apps / palette / files / docs / canvas document; Phase B threaded the document into the canvas via the `host_children_by_tag` seam. The right rail still showed an empty properties form because the *derived* state — inspector tree and property rows — was never recomputed when the selection moved. Phase C closes that with two pure projections over `(document, selection)`, gated by one `resync_*` method on `AppState`. The "one re-derivation entry" discipline keeps future selection-bearing slots additive: register a slot, extend the method, no per-command-body sweep. Deferring property-edit round-tripping (C2) and inspector-click selection (C3) keeps this PR scoped to the derivation pass — the data model is ready; the signal-dispatch wiring is a follow-up. |
+
+### Phase C2/C3 + D landed (2026-05-11)
+
+The follow-up after Phase C closes the remaining gaps in one wave:
+
+- **Runtime hit-test surface.** `prism_ui_runtime::layout::HitRect`
+  (`id` + `bounds` + `attrs`) plus `Surface::hit_test_at(x, y) ->
+  Option<&HitRect>` and `Surface::hit_rects()`. The cache is built
+  alongside the existing `commands()` pass — one Taffy build, two
+  outputs — so hot-path callers pay nothing extra. Walks the Taffy
+  tree in lockstep with the source `Node` tree (build order is
+  preserved one-for-one) to harvest each container's resolved rect
+  and a copy of its `Semantic::attrs`. Anonymous wrapper containers
+  (empty id) are skipped so chrome composition layers don't pollute
+  the hit cache.
+
+- **Shell pointer-down router.** `dispatch_event` now accepts
+  `Option<HitRect>` and consults a declarative
+  `POINTER_ROUTES` table keyed on `data-role`. Two routes ship
+  today — `inspector-row` (C3) and `field-edit` (C2 boolean toggle).
+  Adding a new click-routable primitive is one row + one handler;
+  the §22 canvas drag-capture path still runs after the route
+  attempt so toolbar / overlay / canvas clicks coexist.
+
+- **C3 wiring.** Inspector-row containers carry
+  `data-role="inspector-row"` + `data-target-id="<doc-node-id>"`.
+  The runtime hit-test returns the topmost row; `handle_inspector_row_click`
+  resolves the doc-node-id and calls
+  `AppState::select_node(id, registry)`, a new mutator that
+  validates the id exists in the document, sets
+  `canvas.selection`, and runs one `resync_builder_for_selection`
+  pass. `inspector_tree_lower` now consumes its `nodes` JSON-array
+  prop and dispatches each entry through `shell.inspector-row` via
+  `ctx.lower_as` — the §43 C1 derivation pipeline finally reaches
+  the rendered tree.
+
+- **C2 wiring.** Field-editor containers carry
+  `data-role="field-edit"` + `data-target-id` + `data-key` +
+  `data-kind` + `data-value`. Boolean rows route through
+  `handle_field_edit_click` which flips the current value and calls
+  `AppState::set_node_prop(target, key, value, registry)`. The
+  mutator writes one key on the doc node's `props` (matching
+  `SignalsService::apply_action`'s map-coercion shape) and reuses
+  `resync_builder_for_selection`. Non-boolean kinds (text / number
+  / select / color / file) carry the same routing attrs but defer
+  edit UX (text-input focus, drag scrubber, dropdowns) to future
+  follow-ups that need real focus / IME / drag plumbing — the data
+  flow is wired end-to-end through the boolean toggle path.
+
+- **`AppState::set_node_prop` + `select_node`.** Two new write
+  entries on `AppState`. Both validate against the document before
+  mutating (no-op on unknown ids), short-circuit idempotent writes
+  (no derivation pass when nothing changed), and route through
+  `resync_builder_for_selection` so the right-rail panels stay
+  consistent without per-callsite plumbing.
+
+- **D2 — Builder-canvas toolbar.** New `shell.builder-toolbar`
+  block (32px strip, alignment cluster + Desktop/Tablet/Mobile
+  device cluster + zoom controls + node-count badge) prepended by
+  `builder_canvas_lower` above the page rect. `CanvasSlot.device:
+  Device` field (`Desktop | Tablet | Mobile`) drives the active
+  pill via `data-device` / `aria-checked`. `CanvasSlot::node_count()`
+  walks the document tree; `CanvasSlot::builder_toolbar_props()`
+  emits the four data keys. The toolbar's own
+  `data-role="builder-toolbar"` semantic anchors future click
+  routing for alignment / device / zoom buttons (the data attrs
+  are present today, behaviour lands when the second-wave
+  router routes need them).
+
+- **D3 — Workflow page bar centering.** The DaVinci-style bar
+  flanks its tab row with two `Sizing::Grow` spacers — the
+  CSS-flex centering technique. Without runtime `justify_content`,
+  this is the canonical workaround. Pinned by
+  `populated_bar_centres_tabs_with_flanking_grow_spacers`.
+
+- **D5 — Multi-segment status bar.**
+  `ChromeSlot::status_bar_props(&workspace, &canvas)` composes a
+  five-segment array (`status / active-page / selection-label /
+  node-count / app-name`) from three slots through the §19
+  secondary-arg pattern. `status_bar_lower` walks the segments
+  array and emits pipe-separated text nodes; the legacy single-
+  label path stays as the fallback when `segments` is absent or
+  empty. `CanvasSlot::selection_label()` reuses the
+  `inspector_label_for` heuristic so the status bar and inspector
+  tree never disagree about a node's friendly name.
+
+**Smart-pattern wins.**
+
+- **One hit-test cache, two consumers.** `commands()` and
+  `hit_test_at` share the Taffy build; the host pays nothing extra
+  for hit-testing on a dirty frame. `set_tree` / `set_viewport`
+  invalidates both caches simultaneously.
+- **Declarative `data-role` routing.** The shell's pointer-down
+  router is one declarative table. Adding a click-routable
+  primitive is one row in `POINTER_ROUTES` + one handler fn — no
+  per-block dispatch tree, no second router layer.
+- **One `select_node` / `set_node_prop` mutator pair.** Every
+  selection / property write path converges here, so the
+  `resync_builder_for_selection` pass runs exactly once per edit.
+  Stale-id rejection lives on the mutator, not at each caller.
+- **Toolbar prepended in `builder_canvas_lower`.** The toolbar
+  composes with the page rect in the same lowering function that
+  already owns the canvas frame — no second binding row, no
+  parallel routing entry. Headless render paths (no registry)
+  skip the toolbar silently.
+
+**Verification.** 288 prism-shell lib tests (+21 over Phase C's
+267) — added: hit-test routes (`pointer_down_on_inspector_row_selects_target_node`,
+`pointer_down_on_boolean_field_edit_toggles_prop`,
+`pointer_down_with_unknown_role_falls_through_to_canvas`),
+mutators (`select_node_*`, `set_node_prop_mutates_props_and_resyncs`),
+toolbar (5 tests), status segments (3 tests), workflow page bar
+centering (1 test), routing attrs (`lowered_field_carries_routing_attrs`,
+`semantic_carries_role_and_aria_selected` extended,
+`nodes_array_dispatches_one_row_per_entry`). 63 prism-ui-runtime
+tests (+4 for hit-test: `hit_test_returns_topmost_container_for_point_inside`,
+`hit_test_picks_deepest_container`, `hit_test_returns_none_outside_tree`,
+`hit_test_skips_anonymous_wrapper_containers`). Full workspace
+green, `cargo clippy --workspace --all-targets -- -D warnings` clean.
+
+### Decision-log entry
+
+| Date | Decision | Rationale |
+|---|---|---|
+| 2026-05-11 | §43 Phase C2/C3 + D lands: `Surface::hit_test_at` + `HitRect`; `dispatch_event`'s pointer-down arm consults a declarative `POINTER_ROUTES` table; `AppState::select_node` + `set_node_prop` new mutators; inspector-tree dispatches its `nodes` array through `shell.inspector-row`; inspector-row + field-editor lowerings emit `data-role` + `data-target-id` routing attrs; `shell.builder-toolbar` block; `ChromeSlot::status_bar_props` composes multi-segment payload via `workspace + canvas` secondary args; workflow-page-bar centres tabs via grow-spacer flanks. | The Phase C decision log deferred C2 / C3 + D pending a hit-test surface; this wave delivers all three together. The "one declarative table" discipline holds: hit-test routes are one row each, the toolbar is one block, the segments payload is one method. The hit-test cache piggybacks on the existing `commands()` Taffy build (one walk, two outputs) so the runtime pays nothing extra. Boolean field-edit is the only non-trivial UX wired today — text / number / color / select / file rows carry the same routing attrs but defer real edit UX (focus / IME / drag) to follow-ups that need them; the data flow is proven end-to-end through the boolean path. |
+
+### Phase E landed (2026-05-11, post-§43 phase D)
+
+The verification phase closes the §43 wave by pinning the named
+contracts in tests and surfacing the manual visual workflow:
+
+- **E1 — Visual scenes.** `prism visual --scene builder` is the
+  named entry point: the `ALL_SCENES` table in
+  `commands/visual.rs` gains a `"builder"` row that captures the
+  fully-populated Studio frame (chrome + canvas document + right
+  rail), distinct from `builder-empty` (the zero-data shape) and
+  the per-viewport variants. The shell binary's `--scene` /
+  `--screenshot` flag pair is the planned harness for headless
+  capture; until that lands, screenshots in
+  `screenshots/builder.png` are captured manually via `cargo run
+  -p prism-shell` + OS screencapture before/after each phase
+  boundary (the historical record of phases A-D lives in the
+  decision-log entries above).
+
+- **E2 — Named tests pinned.** Four new lib tests carry the
+  Phase-A/B/C contracts as named pins, independent of the existing
+  per-phase assertions:
+  - `seed::tests::boot_state_has_realistic_seed_data` — the boot
+    state hydrates apps / palette / files / docs / canvas + pre-
+    selects `demo-heading` so the inspector flags it on first
+    frame.
+  - `props::tests::canvas_emits_lowered_document_as_host_children`
+    — the `shell.builder-canvas` binding emits
+    `PropEmission::children` (empty without a registry, populated
+    with `demo-heading` / `demo-paragraph` / `demo-button` when
+    one is supplied) so the §43 B2 `host_children_by_tag` seam
+    has a single load-bearing assertion.
+  - `state::tests::selection_change_repopulates_property_rows` —
+    moving the selection from a `text` node to a `button` swaps
+    the field-editor keys from the `text` schema (`body`) to the
+    `button` schema (`text`, `disabled`) and rewrites the
+    section-header label, pinning the §43 C1 derivation pass.
+  - `command_palette::tests::command_palette_hidden_when_closed` —
+    `open=false` collapses the overlay to a zero-size
+    `aria-hidden="true"` container with no children, no
+    `role="dialog"`, no input, no result list; pins the §43 A2
+    visibility gate.
+
+- **E3 — End-to-end script.**
+  `events::tests::e2e_palette_pick_drop_select_edit_updates_tree`
+  drives a booted `Shell` through the full
+  palette → drop → click → edit chain:
+  1. Sets `state.catalog.palette_selected = Some("text")`.
+  2. Calls `state.canvas.insert_at_offset(...)` to insert a new
+     `text` heading sibling of `demo-heading`.
+  3. Dispatches a synthetic `PointerDown` with a
+     `data-role="inspector-row"` `HitRect` targeting the new
+     node — the §43 C3 router fans through `select_node` and
+     moves `canvas.selection`.
+  4. Dispatches a synthetic `PointerDown` with a
+     `data-role="field-edit"` boolean `HitRect` — the §43 C2
+     router fans through `set_node_prop` and toggles the bound
+     prop.
+  5. Asserts the inspector tree carries the new node, the
+     property rows rebuild against the `text` schema, and the
+     edited prop reaches `doc.find(id).props`.
+  The test extends the shell's `ShellComponentRegistry` with the
+  `prism_builder::starter::BUILTINS` table so the post-click
+  resync sees `text` / `button` / etc. — exposing the gap the
+  plan's "boot resync with the live registry" claim glossed over
+  (the production shell registry today carries only `shell.*`
+  blocks; full property-row derivation for builder nodes needs
+  the builder catalog merged into the shell registry, a
+  follow-up).
+
+**Smart-pattern wins.**
+
+- **Tests pin the contract, not the call site.** Each E2 test
+  asserts the *behaviour* the named phase produced
+  (`boot_state_has_realistic_seed_data` over the seed shape,
+  `selection_change_repopulates_property_rows` over the
+  derivation pass), not the function it called to get there.
+  Renaming `derive_property_rows` would break the existing
+  `resync_*` test by name; the E2 test stays green.
+- **One e2e test drives the full chain through `dispatch_event`.**
+  The chain composes from the four data-role routers already in
+  place (inspector-row + field-edit) plus the underlying mutators
+  (`insert_at_offset`, `select_node`, `set_node_prop`). No new
+  test harness, no Playwright-style runner — the `Shell` +
+  `dispatch_event` pair is the test harness, the same shape every
+  per-component test in `events.rs` uses.
+- **Visual scene name aligns with the plan.** The CLI's scene
+  list is the declarative manifest of named visual states;
+  promoting `"builder"` keeps the plan's `prism visual --scene
+  builder` quote literally executable.
+
+**Not in this phase** (deferred to follow-ups):
+
+- The shell binary's `--scene` / `--screenshot` flags. The
+  current `prism visual` CLI shells out to a flag set
+  `prism-shell` doesn't yet accept; before-and-after screenshots
+  are captured manually until those flags land. The CLI plan
+  ahead of the binary is the right shape — the entry point stays
+  declarative; the binary catches up when headless rendering does.
+- Merging `prism_builder::starter::BUILTINS` into the live
+  `ShellComponentRegistry` at boot. The E3 test does it locally
+  to prove the data flow; the production fix is one call in
+  `Shell::new`, but the wave landing it should also reconcile
+  shell-vs-builder block id collisions (none today, but the
+  registries grow independently) and any tag-resolver routing
+  side effects.
+
+**Verification.** 293 prism-shell lib tests (+5 over Phase D's
+288): `boot_state_has_realistic_seed_data`,
+`canvas_emits_lowered_document_as_host_children`,
+`selection_change_repopulates_property_rows`,
+`command_palette_hidden_when_closed`, and
+`e2e_palette_pick_drop_select_edit_updates_tree`. Full workspace
+green, `cargo clippy --workspace --all-targets -- -D warnings` clean.
+
+### Decision-log entry
+
+| Date | Decision | Rationale |
+|---|---|---|
+| 2026-05-11 | §43 Phase E lands: four named lib tests pin the A-B-C contracts (`boot_state_has_realistic_seed_data`, `canvas_emits_lowered_document_as_host_children`, `selection_change_repopulates_property_rows`, `command_palette_hidden_when_closed`); one e2e test (`e2e_palette_pick_drop_select_edit_updates_tree`) drives the full palette → drop → click → edit chain through `dispatch_event`; the CLI scene list grows a `"builder"` entry for the named visual scene. The shell `--scene` / `--screenshot` flags and the builder-builtin merge into `ShellComponentRegistry` stay deferred. | Phase A through D each had its own verification stats baked into the decision-log entry; promoting them to named tests with the plan's literal names gives any future refactor a single grep to find the load-bearing assertion. The e2e test exposes the one architectural gap the plan glossed over (shell registry vs. builder catalog) and pins it as a documented follow-up rather than a silent regression. The visual scene name lands declaratively so the plan's `prism visual --scene builder` quote stays literally executable; full headless capture waits on the binary catching up to the CLI. |

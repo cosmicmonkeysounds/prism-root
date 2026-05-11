@@ -208,6 +208,61 @@ mod tests {
     }
 
     #[test]
+    fn command_palette_hidden_when_closed() {
+        // §43 E2: the named verification test for the overlay gate.
+        // Together with `open_palette_has_dialog_role`, this pins the
+        // visible/hidden contract: closing the palette collapses the
+        // overlay to a zero-size aria-hidden placeholder with no
+        // dialog role, results list, or input — so it occupies no
+        // layout space and is invisible to assistive tech.
+        let closed = lower(json!({ "open": false }));
+        let UiNode::Container {
+            props, children, ..
+        } = &closed
+        else {
+            panic!("closed palette must lower to a container")
+        };
+        // Zero-size envelope.
+        assert_eq!(props.width, Sizing::Fixed(0.0));
+        assert_eq!(props.height, Sizing::Fixed(0.0));
+        // No dialog role leaks through.
+        assert!(
+            !props
+                .semantic
+                .attrs
+                .iter()
+                .any(|(k, v)| k == "role" && v == "dialog"),
+            "closed palette must not carry role=dialog"
+        );
+        // Explicit aria-hidden=true.
+        assert!(props
+            .semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "aria-hidden" && v == "true"));
+        // No content rendered — neither the query input nor the
+        // result list.
+        assert!(
+            children.is_empty(),
+            "closed palette must paint no children, got {} child(ren)",
+            children.len()
+        );
+
+        // Sanity: omitting `open` is the same as `open=false`.
+        let default_closed = lower(json!({}));
+        let UiNode::Container {
+            props: dp,
+            children: dc,
+            ..
+        } = &default_closed
+        else {
+            panic!()
+        };
+        assert_eq!(dp.width, Sizing::Fixed(0.0));
+        assert!(dc.is_empty());
+    }
+
+    #[test]
     fn open_palette_has_dialog_role() {
         let ui = lower(json!({ "open": true }));
         let UiNode::Container { props, .. } = ui else {

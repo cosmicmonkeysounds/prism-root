@@ -388,4 +388,51 @@ mod tests {
         assert_eq!(root.children[0].component, "text");
         assert_eq!(root.children[2].component, "button");
     }
+
+    #[test]
+    fn boot_state_has_realistic_seed_data() {
+        // §43 E2: the named verification test for Phase A. The boot
+        // state must hydrate every panel a user sees on the first
+        // frame — apps, palette, files, docs topic, canvas document,
+        // chrome pills, activity-bar buttons — and pre-select the
+        // demo heading so the right rail boots populated.
+        let s = initial_state();
+
+        // Launchpad: four named app cards.
+        assert!(s.catalog.apps.len() >= 4, "launchpad needs four apps");
+        let app_ids: Vec<&str> = s.catalog.apps.iter().map(|a| a.id.as_str()).collect();
+        for required in ["lattice", "musica", "flux", "studio"] {
+            assert!(
+                app_ids.contains(&required),
+                "app {required} missing from launchpad"
+            );
+        }
+
+        // Palette: every builtin block plus the `card` prefab.
+        assert!(
+            s.catalog.palette.len() > starter::BUILTINS.len(),
+            "palette must cover every builtin + card"
+        );
+
+        // Explorer + docs + canvas + chrome — non-empty by contract.
+        assert!(!s.catalog.files.is_empty(), "explorer needs files");
+        assert!(!s.docs.topic.title.is_empty(), "docs needs a topic");
+        assert!(s.canvas.document.root.is_some(), "canvas needs a document");
+        assert!(!s.chrome.menus.is_empty(), "menu bar needs pills");
+        assert!(
+            !s.chrome.nav_buttons.is_empty(),
+            "activity bar needs buttons"
+        );
+
+        // §43 C1: boot pre-selects `demo-heading` so the inspector
+        // tree carries a `selected` flag for it.
+        assert_eq!(s.canvas.selection.as_deref(), Some("demo-heading"));
+        let selected_row = s
+            .builder
+            .inspector
+            .iter()
+            .find(|n| n.selected)
+            .expect("seed must pre-select a node in the inspector");
+        assert_eq!(selected_row.id, "demo-heading");
+    }
 }

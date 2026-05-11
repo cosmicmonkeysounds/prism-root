@@ -25,6 +25,7 @@ use prism_ui_runtime::layout::{Direction, Node as UiNode, Node as RuntimeNode, S
 const BAR_HEIGHT: f32 = 32.0;
 /// `Palette.alternate-background` — chrome strip.
 const BAR_BG: &str = "#f4000000";
+const TAB_GAP: f32 = 0.0;
 
 fn workflow_page_bar_schema() -> Vec<FieldSpec> {
     vec![
@@ -55,14 +56,39 @@ fn workflow_page_bar_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProper
         })
         .unwrap_or_default();
 
-    bare_container(node.id.clone(), buttons, |p| {
+    // §43 D3: the DaVinci-style bar centres its tabs across the
+    // full bar width. The runtime container doesn't expose a Taffy
+    // `justify_content`, so we flank the button row with two
+    // `Sizing::Grow` spacers — the canonical CSS-flex centering
+    // technique. Empty bars (no pages) skip the spacers and render
+    // as a bare strip.
+    let mut children: Vec<RuntimeNode> = Vec::with_capacity(buttons.len() + 2);
+    if !buttons.is_empty() {
+        children.push(grow_spacer(format!("{}::spacer-left", node.id)));
+        children.extend(buttons);
+        children.push(grow_spacer(format!("{}::spacer-right", node.id)));
+    }
+
+    bare_container(node.id.clone(), children, |p| {
         p.direction = Direction::Row;
+        p.gap = TAB_GAP;
         p.width = Sizing::Grow;
         p.height = Sizing::Fixed(BAR_HEIGHT);
         p.background = parse_color(BAR_BG);
         p.semantic = Semantic::tag("nav")
             .with_attr("role", "tablist")
             .with_attr("aria-label", "Workflow pages");
+    })
+}
+
+/// One-axis grow spacer used to centre a row of tabs in the bar.
+/// Bare container, no decoration — width pushes outward, height
+/// flexes against the parent. Pure layout, no paint.
+fn grow_spacer(id: String) -> RuntimeNode {
+    bare_container(id, vec![], |p| {
+        p.width = Sizing::Grow;
+        p.height = Sizing::Grow;
+        p.semantic = Semantic::tag("div").with_attr("data-role", "spacer");
     })
 }
 
@@ -137,7 +163,51 @@ mod tests {
         let UiNode::Container { children, .. } = ui else {
             panic!()
         };
+        // §43 D3: spacer-flanked centering — 2 grow spacers + 3 tabs.
+        assert_eq!(children.len(), 5);
+    }
+
+    #[test]
+    fn populated_bar_centres_tabs_with_flanking_grow_spacers() {
+        // §43 D3 keystone: the DaVinci-style bar centres its tabs. The
+        // runtime has no `justify_content`, so the bar emits grow
+        // spacers on each side of the tab row. This test pins the
+        // shape so the centering doesn't regress.
+        let ui = lower_with_registry(json!({
+            "pages": [
+                { "page-id": "edit", "label": "Edit", "active": true },
+            ]
+        }));
+        let UiNode::Container { children, .. } = ui else {
+            panic!()
+        };
+        // [spacer-left, tab, spacer-right]
         assert_eq!(children.len(), 3);
+        let UiNode::Container {
+            id: left_id,
+            props: left_props,
+            ..
+        } = &children[0]
+        else {
+            panic!("first child not a container")
+        };
+        assert!(left_id.ends_with("::spacer-left"));
+        assert_eq!(left_props.width, Sizing::Grow);
+        assert!(left_props
+            .semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-role" && v == "spacer"));
+        let UiNode::Container {
+            id: right_id,
+            props: right_props,
+            ..
+        } = &children[2]
+        else {
+            panic!("last child not a container")
+        };
+        assert!(right_id.ends_with("::spacer-right"));
+        assert_eq!(right_props.width, Sizing::Grow);
     }
 
     #[test]

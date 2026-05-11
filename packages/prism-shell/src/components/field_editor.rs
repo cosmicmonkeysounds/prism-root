@@ -132,6 +132,9 @@ fn field_editor_schema() -> Vec<FieldSpec> {
         FieldSpec::boolean("required", "Required").with_default(Value::Bool(false)),
         FieldSpec::number("min", "Minimum", NumericBounds::default()),
         FieldSpec::number("max", "Maximum", NumericBounds::default()),
+        // §43 C2: doc-node-id the edit applies to. Populated by
+        // `derive_property_rows`; consumed by the hit-test router.
+        FieldSpec::text("target-id", "Target node ID"),
     ]
 }
 
@@ -177,12 +180,28 @@ fn field_editor_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties
             top: 6.0,
             bottom: 6.0,
         };
-        let mut s = Semantic::tag("div").with_attr("role", entry.aria_role);
+        // §43 C2 routing keys — the hit-test surface reads
+        // `data-role="field-edit"` + `data-target-id` + `data-key` +
+        // `data-kind` to route a pointer-down on this row into a
+        // `BuilderService::set_node_prop` call. `data-value` carries
+        // the current value so the boolean / select toggle paths can
+        // flip it without an additional lookup.
+        let mut s = Semantic::tag("div")
+            .with_attr("role", entry.aria_role)
+            .with_attr("data-role", "field-edit");
         let key = prop_str(node, "key");
         if !key.is_empty() {
             s = s.with_attr("data-key", key);
         }
         s = s.with_attr("data-kind", entry.kind);
+        let target_id = prop_str(node, "target-id");
+        if !target_id.is_empty() {
+            s = s.with_attr("data-target-id", target_id);
+        }
+        let value = prop_str(node, "value");
+        if !value.is_empty() {
+            s = s.with_attr("data-value", value);
+        }
         props.semantic = s;
     })
 }
@@ -489,13 +508,60 @@ mod tests {
     }
 
     #[test]
-    fn schema_declares_seven_fields() {
+    fn schema_declares_eight_fields() {
         let block = prism_builder::SpecBlock::new(&super::FIELD_EDITOR_SPEC);
         let keys: Vec<String> = block.schema().into_iter().map(|f| f.key).collect();
         assert_eq!(
             keys,
-            vec!["key", "label", "kind", "value", "required", "min", "max"]
+            vec![
+                "key",
+                "label",
+                "kind",
+                "value",
+                "required",
+                "min",
+                "max",
+                "target-id",
+            ]
         );
+    }
+
+    #[test]
+    fn lowered_field_carries_routing_attrs() {
+        // §43 C2: every field-editor row exposes the keys the hit-test
+        // surface needs (`data-role`, `data-target-id`, `data-key`,
+        // `data-kind`, `data-value`).
+        let ui = lower(json!({
+            "kind": "boolean",
+            "label": "Visible",
+            "key": "visible",
+            "value": "true",
+            "target-id": "demo-heading",
+        }));
+        let UiNode::Container { props, .. } = ui else {
+            panic!()
+        };
+        let s = &props.semantic;
+        assert!(s
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-role" && v == "field-edit"));
+        assert!(s
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-target-id" && v == "demo-heading"));
+        assert!(s
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-key" && v == "visible"));
+        assert!(s
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-kind" && v == "boolean"));
+        assert!(s
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-value" && v == "true"));
     }
 
     #[test]

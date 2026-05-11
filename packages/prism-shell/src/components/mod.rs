@@ -9,6 +9,7 @@
 pub mod app_card;
 pub mod app_window;
 pub mod builder_canvas;
+pub mod builder_toolbar;
 pub mod chrome;
 pub mod code_editor;
 pub mod command_palette;

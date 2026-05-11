@@ -45,6 +45,10 @@ pub struct VisualArgs {
 
 const ALL_SCENES: &[&str] = &[
     "launchpad",
+    // §43 Phase E1 verification scene — the populated Studio frame
+    // (chrome + canvas document + right-rail properties) every phase
+    // boundary screenshots against.
+    "builder",
     "builder-empty",
     "builder-grid",
     "builder-tablet",

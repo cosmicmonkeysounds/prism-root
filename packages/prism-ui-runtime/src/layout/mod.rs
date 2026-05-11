@@ -389,6 +389,38 @@ impl Default for TextProps {
     }
 }
 
+/// Hit-test record produced alongside the render commands: a
+/// container's resolved viewport-space rectangle plus the semantic
+/// attribute bag the host needs to route a pointer event.
+///
+/// **Why containers only.** Hit-testing today is interaction-driven —
+/// the host needs to know "what *interactive thing* is under the
+/// pointer." Container nodes carry the `Semantic::attrs` bag where
+/// host-side routing keys (`data-role`, `data-target-id`, …) live;
+/// text / image / spacer leaves never carry handlers, so they don't
+/// need to surface here. Future need for leaf-level hit-testing
+/// would extend [`Self::attrs`] to include leaf semantics without
+/// touching the API shape.
+///
+/// **Ordering.** Hit rects are emitted in **paint order** — same
+/// order as the matching `RenderCommand`s. Callers walking the
+/// vector in reverse find the topmost container at a point.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HitRect {
+    /// Container's stable id (the `id` field of `Node::Container`).
+    /// Empty ids skip the cache — anonymous wrapper containers don't
+    /// participate in hit-testing, so the host never has to filter
+    /// them out.
+    pub id: String,
+    /// Resolved viewport-space rectangle (already includes overlay
+    /// anchor offsets when this rect comes from an overlay subtree).
+    pub bounds: Rect,
+    /// Copy of the container's semantic `attrs` — the host reads
+    /// `data-role` / `data-target-id` / `data-key` / … to decide
+    /// what the pointer event means.
+    pub attrs: Vec<(String, String)>,
+}
+
 /// Compute layout for `tree` against `viewport` and emit a backend-
 /// neutral render-command stream.
 ///
@@ -439,6 +471,33 @@ pub fn compute_full(
     out
 }
 
+/// Sister to [`compute_full`] that also emits a `Vec<HitRect>` for
+/// hit-testing. The two outputs are produced in lockstep through one
+/// Taffy build per (main tree + each overlay), so callers paying the
+/// render cost on a dirty cycle pay nothing extra for hit-testing.
+pub fn compute_full_with_hits(
+    tree: &Node,
+    overlays: &[Overlay],
+    viewport: Viewport,
+    hovered_id: Option<&str>,
+) -> (Vec<RenderCommand>, Vec<HitRect>) {
+    let mut commands = Vec::new();
+    let mut hits = Vec::new();
+    compute_subtree_into_with_hits(
+        tree,
+        viewport,
+        hovered_id,
+        0.0,
+        0.0,
+        &mut commands,
+        &mut hits,
+    );
+    for overlay in overlays {
+        compute_overlay_into_with_hits(overlay, viewport, hovered_id, &mut commands, &mut hits);
+    }
+    (commands, hits)
+}
+
 fn compute_subtree_into(
     tree: &Node,
     viewport: Viewport,
@@ -462,6 +521,105 @@ fn compute_subtree_into(
     let size = taffy.layout(root).map(|l| l.size).ok()?;
     emit_commands(&taffy, root, origin_x, origin_y, out);
     Some(size)
+}
+
+fn compute_subtree_into_with_hits(
+    tree: &Node,
+    viewport: Viewport,
+    hovered_id: Option<&str>,
+    origin_x: f32,
+    origin_y: f32,
+    commands: &mut Vec<RenderCommand>,
+    hits: &mut Vec<HitRect>,
+) -> Option<Size<f32>> {
+    let mut taffy: TaffyTree<NodeContext> = TaffyTree::new();
+    let root = build_taffy_subtree(&mut taffy, tree, None, hovered_id);
+    let available = Size {
+        width: AvailableSpace::Definite(viewport.width),
+        height: AvailableSpace::Definite(viewport.height),
+    };
+    if taffy
+        .compute_layout_with_measure(root, available, measure_text)
+        .is_err()
+    {
+        return None;
+    }
+    let size = taffy.layout(root).map(|l| l.size).ok()?;
+    emit_commands(&taffy, root, origin_x, origin_y, commands);
+    walk_for_hits(&taffy, root, tree, origin_x, origin_y, hits);
+    Some(size)
+}
+
+fn compute_overlay_into_with_hits(
+    overlay: &Overlay,
+    viewport: Viewport,
+    hovered_id: Option<&str>,
+    commands: &mut Vec<RenderCommand>,
+    hits: &mut Vec<HitRect>,
+) {
+    let mut probe: TaffyTree<NodeContext> = TaffyTree::new();
+    let probe_root = build_taffy_subtree(&mut probe, &overlay.node, None, hovered_id);
+    let available = Size {
+        width: AvailableSpace::Definite(viewport.width),
+        height: AvailableSpace::Definite(viewport.height),
+    };
+    if probe
+        .compute_layout_with_measure(probe_root, available, measure_text)
+        .is_err()
+    {
+        return;
+    }
+    let size = match probe.layout(probe_root) {
+        Ok(l) => l.size,
+        Err(_) => return,
+    };
+    let (ox, oy) = overlay.anchor.resolve(viewport, size.width, size.height);
+    emit_commands(&probe, probe_root, ox, oy, commands);
+    walk_for_hits(&probe, probe_root, &overlay.node, ox, oy, hits);
+}
+
+/// Walk the Taffy tree alongside the source `Node` tree in lockstep
+/// (build order = paint order = source order), accumulating one
+/// [`HitRect`] per non-empty-id container. Leaves don't contribute —
+/// see [`HitRect`] for the rationale. The two trees stay in lockstep
+/// because `build_taffy_subtree` preserves child order one-for-one.
+fn walk_for_hits(
+    taffy: &TaffyTree<NodeContext>,
+    taffy_id: NodeId,
+    source: &Node,
+    parent_x: f32,
+    parent_y: f32,
+    out: &mut Vec<HitRect>,
+) {
+    let layout: &Layout = match taffy.layout(taffy_id) {
+        Ok(l) => l,
+        Err(_) => return,
+    };
+    let bounds = Rect {
+        x: parent_x + layout.location.x,
+        y: parent_y + layout.location.y,
+        width: layout.size.width,
+        height: layout.size.height,
+    };
+    if let Node::Container {
+        id,
+        props,
+        children,
+    } = source
+    {
+        if !id.is_empty() {
+            out.push(HitRect {
+                id: id.clone(),
+                bounds,
+                attrs: props.semantic.attrs.clone(),
+            });
+        }
+        // Iterate Taffy children and source children in lockstep.
+        let taffy_children = taffy.children(taffy_id).unwrap_or_default();
+        for (taffy_child, source_child) in taffy_children.iter().zip(children.iter()) {
+            walk_for_hits(taffy, *taffy_child, source_child, bounds.x, bounds.y, out);
+        }
+    }
 }
 
 fn compute_overlay_into(
@@ -976,6 +1134,7 @@ pub struct Surface {
     overlays: Vec<Overlay>,
     viewport: Viewport,
     cache: Vec<RenderCommand>,
+    hit_cache: Vec<HitRect>,
     dirty: bool,
     hovered_id: Option<String>,
 }
@@ -987,6 +1146,7 @@ impl Surface {
             overlays: Vec::new(),
             viewport,
             cache: Vec::new(),
+            hit_cache: Vec::new(),
             dirty: true,
             hovered_id: None,
         }
@@ -1109,16 +1269,58 @@ impl Surface {
     /// the cached slice. **This is the hot-path API the backends
     /// call.** Calling it every frame is cheap when nothing changed.
     pub fn commands(&mut self) -> &[RenderCommand] {
-        if self.dirty {
-            self.cache = compute_full(
-                &self.tree,
-                &self.overlays,
-                self.viewport,
-                self.hovered_id.as_deref(),
-            );
-            self.dirty = false;
-        }
+        self.rebuild_if_dirty();
         &self.cache
+    }
+
+    /// Hit-test the topmost container whose resolved rect contains
+    /// `(x, y)`. Returns `None` when the point lands on an anonymous
+    /// wrapper (empty id), on a leaf, or outside the tree entirely.
+    ///
+    /// **Ordering.** Hit rects are stored in paint order (parents
+    /// before children, earlier siblings before later ones). Walking
+    /// the cache in **reverse** gives "topmost paint = topmost hit",
+    /// which is the convention every host (chrome, gizmo, picker)
+    /// already expects. Overlays sit after the main tree, so an open
+    /// command palette / context menu naturally captures clicks over
+    /// the chrome behind it.
+    ///
+    /// Recomputes the layout cache iff dirty — calling this on every
+    /// `PointerDown` is cheap when nothing has changed since the last
+    /// `commands()` invocation.
+    pub fn hit_test_at(&mut self, x: f32, y: f32) -> Option<&HitRect> {
+        self.rebuild_if_dirty();
+        self.hit_cache.iter().rev().find(|r| {
+            x >= r.bounds.x
+                && x <= r.bounds.x + r.bounds.width
+                && y >= r.bounds.y
+                && y <= r.bounds.y + r.bounds.height
+        })
+    }
+
+    /// All hit rects from the most recent layout pass, in paint
+    /// order. Exposed for diagnostic dumps (e2e screenshot tooling)
+    /// and for cross-cutting hit-tests the host might want to perform
+    /// without an exact point (e.g. "which container has
+    /// `data-role=foo`?"). The hot path is [`Self::hit_test_at`].
+    pub fn hit_rects(&mut self) -> &[HitRect] {
+        self.rebuild_if_dirty();
+        &self.hit_cache
+    }
+
+    fn rebuild_if_dirty(&mut self) {
+        if !self.dirty {
+            return;
+        }
+        let (cmds, hits) = compute_full_with_hits(
+            &self.tree,
+            &self.overlays,
+            self.viewport,
+            self.hovered_id.as_deref(),
+        );
+        self.cache = cmds;
+        self.hit_cache = hits;
+        self.dirty = false;
     }
 }
 
@@ -1680,5 +1882,136 @@ mod tests {
 
         let unlabelled: Semantic = Semantic::button().with_aria_label_opt(None::<&str>);
         assert!(unlabelled.aria_label.is_none());
+    }
+
+    // ── §43 hit-test surface ──────────────────────────────────────────
+
+    fn id_container(
+        id: &str,
+        w: f32,
+        h: f32,
+        attrs: Vec<(&str, &str)>,
+        children: Vec<Node>,
+    ) -> Node {
+        let mut semantic = Semantic::tag("div");
+        for (k, v) in attrs {
+            semantic = semantic.with_attr(k, v);
+        }
+        Node::Container {
+            id: id.into(),
+            props: ContainerProps {
+                width: Sizing::Fixed(w),
+                height: Sizing::Fixed(h),
+                semantic,
+                ..Default::default()
+            },
+            children,
+        }
+    }
+
+    #[test]
+    fn hit_test_returns_topmost_container_for_point_inside() {
+        // Row of two 100x40 boxes, each with a distinct id. Hits at (10,10)
+        // land in the first; hits at (160,20) land in the second.
+        let tree = Node::Container {
+            id: "root".into(),
+            props: ContainerProps {
+                direction: Direction::Row,
+                gap: 0.0,
+                width: Sizing::Fixed(300.0),
+                height: Sizing::Fixed(40.0),
+                semantic: Semantic::tag("div").with_attr("data-role", "row"),
+                ..Default::default()
+            },
+            children: vec![
+                id_container("a", 100.0, 40.0, vec![("data-role", "alpha")], vec![]),
+                id_container("b", 100.0, 40.0, vec![("data-role", "beta")], vec![]),
+            ],
+        };
+        let mut surface = Surface::new(
+            tree,
+            Viewport {
+                width: 400.0,
+                height: 100.0,
+            },
+        );
+        let hit = surface.hit_test_at(10.0, 10.0).expect("hit");
+        assert_eq!(hit.id, "a");
+        assert!(hit
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-role" && v == "alpha"));
+        let hit = surface.hit_test_at(160.0, 20.0).expect("hit");
+        assert_eq!(hit.id, "b");
+        assert!(hit
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-role" && v == "beta"));
+    }
+
+    #[test]
+    fn hit_test_picks_deepest_container() {
+        // Outer 100x100 holding an inner 40x40 — a hit inside the inner
+        // returns the inner (deepest = topmost), not the outer.
+        let tree = id_container(
+            "outer",
+            100.0,
+            100.0,
+            vec![("data-role", "outer")],
+            vec![id_container(
+                "inner",
+                40.0,
+                40.0,
+                vec![("data-role", "inner")],
+                vec![],
+            )],
+        );
+        let mut surface = Surface::new(
+            tree,
+            Viewport {
+                width: 200.0,
+                height: 200.0,
+            },
+        );
+        let hit = surface.hit_test_at(10.0, 10.0).expect("hit inside inner");
+        assert_eq!(hit.id, "inner");
+    }
+
+    #[test]
+    fn hit_test_returns_none_outside_tree() {
+        let tree = id_container("a", 50.0, 50.0, vec![], vec![]);
+        let mut surface = Surface::new(
+            tree,
+            Viewport {
+                width: 200.0,
+                height: 200.0,
+            },
+        );
+        assert!(surface.hit_test_at(80.0, 80.0).is_none());
+    }
+
+    #[test]
+    fn hit_test_skips_anonymous_wrapper_containers() {
+        // The outer wrapper has no id (it's anonymous like a synthesised
+        // surface wrap); only the id'd child shows up in the hit cache.
+        let tree = Node::Container {
+            id: String::new(),
+            props: ContainerProps {
+                width: Sizing::Fixed(100.0),
+                height: Sizing::Fixed(100.0),
+                ..Default::default()
+            },
+            children: vec![id_container("named", 100.0, 100.0, vec![], vec![])],
+        };
+        let mut surface = Surface::new(
+            tree,
+            Viewport {
+                width: 200.0,
+                height: 200.0,
+            },
+        );
+        let hit = surface.hit_test_at(10.0, 10.0).expect("hit");
+        assert_eq!(hit.id, "named");
+        assert_eq!(surface.hit_rects().len(), 1);
     }
 }

@@ -268,7 +268,17 @@ fn inspector_row_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StylePropertie
         // with `aria-selected` driven by the prop. Flat structure
         // is fine for a flat tree; deep tree rendering would carry
         // `aria-level={depth + 1}` but we skip that until needed.
-        let mut s = Semantic::tag("div").with_attr("role", m.aria_role);
+        //
+        // §43 C3 routing keys — `data-role="inspector-row"` plus the
+        // doc-node id under `data-target-id` so the hit-test surface
+        // can route clicks back to `SelectionService` without the
+        // shell having to walk the rendered tree itself.
+        let mut s = Semantic::tag("div")
+            .with_attr("role", m.aria_role)
+            .with_attr("data-role", "inspector-row");
+        if !node_id_text.is_empty() {
+            s = s.with_attr("data-target-id", node_id_text.clone());
+        }
         if selected && m.aria_role == "treeitem" {
             s = s.with_attr("aria-selected", "true");
         }
@@ -437,6 +447,7 @@ mod tests {
             "kind": "node",
             "selected": true,
             "depth": 2,
+            "node-id": "demo-heading",
         })));
         let (props, _) = assert_container(&ui);
         let s = &props.semantic;
@@ -447,6 +458,15 @@ mod tests {
             .iter()
             .any(|(k, v)| k == "aria-selected" && v == "true"));
         assert!(s.attrs.iter().any(|(k, v)| k == "aria-level" && v == "3"));
+        // §43 C3: routing keys for the hit-test surface.
+        assert!(s
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-role" && v == "inspector-row"));
+        assert!(s
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-target-id" && v == "demo-heading"));
     }
 
     #[test]

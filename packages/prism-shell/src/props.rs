@@ -129,7 +129,9 @@ const SLOT_BINDINGS: &[(&str, SlotAccessor)] = &[
     ("shell.menu-bar-row", |s| {
         s.chrome.menu_bar_row_props(&s.workspace)
     }),
-    ("shell.status-bar", |s| s.chrome.status_bar_props()),
+    ("shell.status-bar", |s| {
+        s.chrome.status_bar_props(&s.workspace, &s.canvas)
+    }),
     // Workspace slot — workflow tabs + recursive dock tree. Adding a
     // panel is one row in `prism_dock::PanelKind::ALL`, never a
     // binding edit.
@@ -188,6 +190,9 @@ const SLOT_BINDINGS: &[(&str, SlotAccessor)] = &[
     // edits one site, not three.
     ("shell.code-editor", |s| s.canvas.code_editor_props()),
     ("shell.builder-canvas", |s| s.canvas.builder_canvas_props()),
+    ("shell.builder-toolbar", |s| {
+        s.canvas.builder_toolbar_props()
+    }),
     ("shell.gizmo-move", |s| s.canvas.gizmo_move_props()),
     ("shell.gizmo-rotate", |s| s.canvas.gizmo_rotate_props()),
     ("shell.gizmo-scale", |s| s.canvas.gizmo_scale_props()),
@@ -367,6 +372,87 @@ mod tests {
         assert_eq!(
             binding_ids, builtin_ids,
             "every SHELL_BUILTINS id must have a binding (and vice versa)"
+        );
+    }
+
+    #[test]
+    fn canvas_emits_lowered_document_as_host_children() {
+        // §43 E2: the named verification test for Phase B. The
+        // `shell.builder-canvas` binding is the one row that emits
+        // `PropEmission::children` — the lowered `BuilderDocument`
+        // threads into the canvas tag through the §43 B2
+        // `host_children_by_tag` seam. Empty without a registry
+        // (headless path); non-empty with one (live render path).
+        use prism_builder::ComponentRegistry;
+        use prism_ui_runtime::layout::Node as UiNode;
+
+        let state = crate::seed::initial_state();
+
+        // Headless path: no registry → no children, but props still
+        // emit so the canvas frame paints.
+        let ctx_headless = ctx_for(&state);
+        let bindings = ShellPropBindings::with_builtins();
+        let snap_h = bindings.snapshot(&ctx_headless);
+        let canvas_h = snap_h
+            .get("shell.builder-canvas")
+            .expect("canvas binding registered");
+        assert!(
+            canvas_h.children.is_empty(),
+            "no registry → canvas emits no host children"
+        );
+        assert!(
+            canvas_h.props.get("selection-id").is_some(),
+            "props still emit"
+        );
+
+        // Live path: with a registry, the seed document lowers and
+        // surfaces under the canvas binding's `children`.
+        let mut reg = ComponentRegistry::new();
+        prism_builder::starter::register_builtins(&mut reg).expect("builtins");
+        let ctx_live = PropCtx {
+            state: &state,
+            viewport_w: 1280.0,
+            viewport_h: 800.0,
+            canvas_zoom: 1.0,
+            registry: Some(&reg),
+        };
+        let snap_l = bindings.snapshot(&ctx_live);
+        let canvas_l = snap_l
+            .get("shell.builder-canvas")
+            .expect("canvas binding registered");
+        assert!(
+            !canvas_l.children.is_empty(),
+            "registry + seeded document → canvas emits lowered children"
+        );
+
+        // The emitted child tree contains the demo nodes from the
+        // seed (`demo-heading`, `demo-paragraph`, `demo-button`).
+        fn collect_ids(node: &UiNode, out: &mut Vec<String>) {
+            match node {
+                UiNode::Container { id, children, .. } => {
+                    out.push(id.clone());
+                    for c in children {
+                        collect_ids(c, out);
+                    }
+                }
+                UiNode::Text { id, .. }
+                | UiNode::TextInput { id, .. }
+                | UiNode::Image { id, .. }
+                | UiNode::Spacer { id, .. } => {
+                    out.push(id.clone());
+                }
+            }
+        }
+        let mut ids = Vec::new();
+        for n in &canvas_l.children {
+            collect_ids(n, &mut ids);
+        }
+        // The lowered tree wraps node ids with descendant scopes;
+        // require the prefix to appear on at least one child.
+        let demo_seen = ids.iter().any(|s| s.contains("demo-heading"));
+        assert!(
+            demo_seen,
+            "expected `demo-heading` somewhere in lowered children, got {ids:?}"
         );
     }
 
