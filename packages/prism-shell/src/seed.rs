@@ -25,8 +25,9 @@ use prism_core::foundation::spatial::Transform2D;
 use serde_json::json;
 
 use crate::state::{
-    AppCard, AppState, CatalogSlot, DocsTopic, FileKind, FileNode, MenuLabel, NavButton,
-    PaletteItem, ProjectSlot,
+    AppCard, AppState, CatalogSlot, DocsTopic, FileKind, FileNode, MenuLabel, NavButton, NavEdge,
+    NavEdgeKind, NavPage, NavigationSlot, PaletteItem, ProjectSlot, SchemaDoc, SchemaField,
+    SignalConnection,
 };
 
 /// Build the hydrated boot state. Called from `Shell::new` instead of
@@ -37,10 +38,13 @@ pub fn initial_state() -> AppState {
         chrome: seed_chrome(),
         catalog: seed_catalog(),
         project: seed_project(),
+        navigation: seed_navigation(),
         ..AppState::default()
     };
     state.docs.topic = seed_welcome_topic();
     state.canvas.document = seed_document();
+    state.builder.schema = seed_schema();
+    state.builder.signal_connections = seed_signal_connections();
     // §43 C1: pre-select the demo heading so the properties panel
     // boots with a populated form rather than the empty "select a
     // block" state. Inspector tree is derived here without a registry;
@@ -324,6 +328,108 @@ fn seed_document() -> BuilderDocument {
     doc
 }
 
+/// Starter schema for the Data workflow page. Three fields exercise
+/// the trash → `schema.delete-selected-field` flow end-to-end the
+/// moment a user clicks one of them.
+fn seed_schema() -> SchemaDoc {
+    SchemaDoc {
+        title: "Post".into(),
+        schema_name: "post".into(),
+        fields: vec![
+            SchemaField {
+                name: "title".into(),
+                kind: "text".into(),
+                required: true,
+            },
+            SchemaField {
+                name: "body".into(),
+                kind: "rich-text".into(),
+                required: false,
+            },
+            SchemaField {
+                name: "tags".into(),
+                kind: "list".into(),
+                required: false,
+            },
+        ],
+        selected_field: None,
+    }
+}
+
+/// Starter signal connections that mirror the demo document — the
+/// signals panel renders one row per entry, and the trash on the
+/// selected row routes through `signals.delete-selected-connection`.
+fn seed_signal_connections() -> Vec<SignalConnection> {
+    vec![
+        SignalConnection {
+            id: "c-button-clicked".into(),
+            source_signal: "clicked".into(),
+            action_kind: "EmitSignal".into(),
+            target_label: "demo-button".into(),
+        },
+        SignalConnection {
+            id: "c-heading-hover".into(),
+            source_signal: "hovered".into(),
+            action_kind: "SetProperty".into(),
+            target_label: "demo-heading".into(),
+        },
+    ]
+}
+
+/// Starter navigation pages so the page list (and graph) render
+/// something interactive on the Navigation workflow page. The
+/// per-row chevron / trash affordances need a cursor row to surface;
+/// the boot leaves the cursor empty so the user picks one by clicking.
+fn seed_navigation() -> NavigationSlot {
+    NavigationSlot {
+        pages: vec![
+            NavPage {
+                id: "home".into(),
+                title: "Home".into(),
+                route: "/".into(),
+                x: 60.0,
+                y: 60.0,
+                node_count: 3,
+                link_count: 1,
+                is_active: true,
+            },
+            NavPage {
+                id: "about".into(),
+                title: "About".into(),
+                route: "/about".into(),
+                x: 260.0,
+                y: 60.0,
+                node_count: 1,
+                link_count: 1,
+                is_active: false,
+            },
+            NavPage {
+                id: "contact".into(),
+                title: "Contact".into(),
+                route: "/contact".into(),
+                x: 460.0,
+                y: 60.0,
+                node_count: 1,
+                link_count: 0,
+                is_active: false,
+            },
+        ],
+        edges: vec![
+            NavEdge {
+                from: 0,
+                to: 1,
+                kind: NavEdgeKind::Href,
+            },
+            NavEdge {
+                from: 1,
+                to: 2,
+                kind: NavEdgeKind::Href,
+            },
+        ],
+        selected_page: None,
+    }
+}
+
 fn flow_block() -> prism_builder::layout::LayoutMode {
     prism_builder::layout::LayoutMode::Flow(FlowProps {
         display: FlowDisplay::Block,
@@ -376,6 +482,33 @@ mod tests {
         assert_eq!(title_case("text"), "Text");
         assert_eq!(title_case("graph-view"), "Graph View");
         assert_eq!(title_case("code-editor"), "Code Editor");
+    }
+
+    #[test]
+    fn seed_populates_schema_signals_and_navigation_for_interactive_panels() {
+        // The Data, Edit, and Navigation workflow pages render
+        // `shell.schema-designer`, `shell.signals-panel`, and
+        // `shell.nav-page-list` respectively. Without seed data those
+        // panels appear blank and the row-click / trash routes (B6
+        // fifth wave) have nothing to fire against.
+        let s = initial_state();
+        assert!(
+            !s.builder.schema.fields.is_empty(),
+            "schema designer needs starter fields for the trash + cursor flow"
+        );
+        assert!(
+            !s.builder.signal_connections.is_empty(),
+            "signals panel needs starter rows for the trash + cursor flow"
+        );
+        assert!(
+            !s.navigation.pages.is_empty(),
+            "navigation page list needs starter pages for the chevron flow"
+        );
+        // Cursors start empty — the user picks the row whose chevrons /
+        // trash they want to expose; mirrors the nav-page-row pattern.
+        assert!(s.builder.schema.selected_field.is_none());
+        assert!(s.builder.selected_connection.is_none());
+        assert!(s.navigation.selected_page.is_none());
     }
 
     #[test]

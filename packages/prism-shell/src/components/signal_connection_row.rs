@@ -34,6 +34,7 @@ const ACCENT_COLOR: &str = "#0060c0";
 
 fn signal_connection_row_schema() -> Vec<FieldSpec> {
     vec![
+        FieldSpec::text("connection-id", "Connection id (cursor key)"),
         FieldSpec::text("source-signal", "Source signal"),
         FieldSpec::text("action-kind", "Action kind"),
         FieldSpec::text("target-label", "Target label"),
@@ -59,6 +60,7 @@ fn signal_connection_row_lower(
     _style: &StyleProperties,
 ) -> UiNode {
     let style = StyleProperties::default();
+    let connection_id = prop_string(node, "connection-id");
     let signal = prop_string(node, "source-signal");
     let kind = prop_string(node, "action-kind");
     let target = prop_string(node, "target-label");
@@ -120,16 +122,18 @@ fn signal_connection_row_lower(
 
     let mut row_kids = vec![left_cluster];
     if show_delete {
-        // Connection-delete needs a "selected connection" cursor on
-        // the builder/signals slot before it can identify the right
-        // row — for now the trash threads `None` to keep the lowering
-        // uniform.
+        // Trash dispatches via the command table:
+        // `BuilderSlot::selected_connection` is the cursor
+        // `signals.delete-selected-connection` reads. The row click
+        // route moves the cursor onto this row's `connection-id` before
+        // the trash is visible, so a single command body handles every
+        // row.
         row_kids.push(icon_button_node(
             format!("{}::delete", node.id),
             "icons/trash.svg",
             true,
             Some("Delete connection"),
-            None,
+            Some("signals.delete-selected-connection"),
         ));
     }
 
@@ -151,6 +155,9 @@ fn signal_connection_row_lower(
         let mut s = Semantic::tag("div")
             .with_attr("role", "listitem")
             .with_attr("data-role", "signal-connection-row");
+        if !connection_id.is_empty() {
+            s = s.with_attr("data-target-id", connection_id.clone());
+        }
         if selected {
             s = s.with_attr("aria-selected", "true");
         }
@@ -222,5 +229,50 @@ mod tests {
             panic!()
         };
         assert_eq!(left.len(), 1, "only the (no signal) placeholder");
+    }
+
+    #[test]
+    fn connection_id_prop_surfaces_as_data_target_id_for_routing() {
+        let ui = lower(json!({
+            "connection-id": "c-toggle",
+            "source-signal": "clicked",
+            "action-kind": "SetProperty",
+            "target-label": "x"
+        }));
+        let UiNode::Container { props, .. } = ui else {
+            panic!()
+        };
+        assert!(props
+            .semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-role" && v == "signal-connection-row"));
+        assert!(props
+            .semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-target-id" && v == "c-toggle"));
+    }
+
+    #[test]
+    fn trash_button_threads_delete_selected_connection_command() {
+        let ui = lower(json!({
+            "connection-id": "c-toggle",
+            "source-signal": "clicked",
+            "action-kind": "SetProperty",
+            "target-label": "x",
+            "show-delete": true,
+        }));
+        let UiNode::Container { children, .. } = ui else {
+            panic!()
+        };
+        let UiNode::Container { props, .. } = &children[1] else {
+            panic!("trash icon button expected when show-delete is true")
+        };
+        assert!(props
+            .semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-on-click" && v == "cmd signals.delete-selected-connection"));
     }
 }

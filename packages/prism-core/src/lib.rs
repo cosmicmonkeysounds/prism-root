@@ -1,9 +1,8 @@
-//! `prism-core` — shared Rust foundations for the Slint-era Prism stack.
-//!
-//! This crate is the Phase-2 target of the Slint migration plan (see
-//! `docs/dev/slint-migration-plan.md`). The TypeScript `@prism/core`
-//! package has been deleted; everything reloaded onto Rust lands
-//! here module by module, leaf-first.
+//! `prism-core` — shared Rust foundations for the post-Slint Prism
+//! stack. Post-cutover the workspace is all-Rust on `prism-ui-runtime`;
+//! the Slint runtime + source emitter were deleted (see
+//! `docs/dev/clay-migration-plan.md` Phase 5). The legacy TypeScript
+//! `@prism/core` has been retired in favour of the modules below.
 //!
 //! Modules ported so far:
 //!
@@ -52,12 +51,12 @@
 //!   cycle detection, blocking-chain / impact-analysis BFS, and CPM
 //!   `compute_plan`).
 //!
-//! Phase 2b (see `docs/dev/slint-migration-plan.md` §6.2) is the
-//! residual port scope: the ADR-002 `kernel` orchestration kit
-//! (`actor`, `automation`, `intelligence`, `plugin`, `plugin_bundles`,
-//! `builder`, `initializer`) that `PrismKernel` will compose, plus
-//! `network` and the `statig` rewrite of the xstate tool machine.
-//! None are on Phase 3's critical path.
+//! Residual port scope (tracked in `docs/dev/clay-migration-plan.md`):
+//! the ADR-002 `kernel` orchestration kit (`actor`, `automation`,
+//! `intelligence`, `plugin`, `plugin_bundles`, `builder`,
+//! `initializer`) that `PrismKernel` composes, plus `network` and the
+//! `statig` rewrite of the xstate tool machine. None are on the
+//! critical path; the table in `CLAUDE.md` tracks per-module status.
 
 pub mod boot_config;
 pub mod design_tokens;

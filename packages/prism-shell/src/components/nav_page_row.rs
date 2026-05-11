@@ -119,24 +119,22 @@ fn nav_page_row_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties
 
     let mut right_kids: Vec<UiNode> = Vec::new();
     if selected {
-        // Page-row chevrons / trash stay command-less for now: nav
-        // pages have no "selected page" cursor in `NavigationSlot`,
-        // so a stateless `cmd <id>` dispatch has nothing to act on.
-        // Follow-up adds a selected-page index + `navigation.move-*`
-        // commands.
+        // Chevrons appear only when this row is the selected one in
+        // `NavigationSlot::selected_page`, so the commands operate on
+        // that cursor without needing per-row target ids.
         right_kids.push(icon_button_node(
             format!("{}::move-up", node.id),
             "icons/chevron-up.svg",
             true,
             Some("Move up"),
-            None,
+            Some("navigation.move-page-up"),
         ));
         right_kids.push(icon_button_node(
             format!("{}::move-down", node.id),
             "icons/chevron-down.svg",
             true,
             Some("Move down"),
-            None,
+            Some("navigation.move-page-down"),
         ));
     }
     if show_delete {
@@ -145,7 +143,7 @@ fn nav_page_row_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties
             "icons/trash.svg",
             true,
             Some("Delete page"),
-            None,
+            Some("navigation.delete-selected-page"),
         ));
     }
 

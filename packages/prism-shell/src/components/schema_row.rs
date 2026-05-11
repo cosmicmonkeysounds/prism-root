@@ -34,6 +34,7 @@ const REQUIRED_COLOR: &str = "#b91c1c";
 
 fn schema_row_schema() -> Vec<FieldSpec> {
     vec![
+        FieldSpec::text("field-id", "Field id (cursor key)"),
         FieldSpec::text("field-name", "Field name"),
         FieldSpec::text("field-kind", "Field kind"),
         FieldSpec::boolean("required", "Required").with_default(Value::Bool(false)),
@@ -54,6 +55,7 @@ fn schema_row_signals() -> Vec<prism_builder::signal::SignalDef> {
 
 fn schema_row_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
     let style = StyleProperties::default();
+    let field_id = prop_string(node, "field-id");
     let name = prop_string(node, "field-name");
     let kind = prop_string(node, "field-kind");
     let required = prop_bool(node, "required", false);
@@ -113,15 +115,18 @@ fn schema_row_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) 
 
     let mut row_kids = vec![left_cluster];
     if show_delete {
-        // Schema field-delete needs a "selected schema row" cursor on
-        // the builder slot before it can target the right field — for
-        // now the trash threads `None` to keep the lowering uniform.
+        // Trash dispatches via the command table (no per-row target):
+        // the `BuilderSlot::schema.selected_field` cursor is the
+        // canonical sink — `schema.delete-selected-field` reads it.
+        // The row click route moves the cursor onto this field's
+        // `field-id` before the trash is visible, so a single command
+        // body handles every row.
         row_kids.push(icon_button_node(
             format!("{}::delete", node.id),
             "icons/trash.svg",
             true,
             Some("Delete field"),
-            None,
+            Some("schema.delete-selected-field"),
         ));
     }
 
@@ -143,6 +148,9 @@ fn schema_row_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) 
         let mut s = Semantic::tag("div")
             .with_attr("role", "listitem")
             .with_attr("data-role", "schema-row");
+        if !field_id.is_empty() {
+            s = s.with_attr("data-target-id", field_id.clone());
+        }
         if selected {
             s = s.with_attr("aria-selected", "true");
         }
@@ -207,5 +215,48 @@ mod tests {
             panic!()
         };
         assert_eq!(children.len(), 2);
+    }
+
+    #[test]
+    fn field_id_prop_surfaces_as_data_target_id_for_routing() {
+        let ui = lower(json!({
+            "field-id": "title",
+            "field-name": "Title",
+            "field-kind": "text"
+        }));
+        let UiNode::Container { props, .. } = ui else {
+            panic!()
+        };
+        assert!(props
+            .semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-role" && v == "schema-row"));
+        assert!(props
+            .semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-target-id" && v == "title"));
+    }
+
+    #[test]
+    fn trash_button_threads_delete_selected_field_command() {
+        let ui = lower(json!({
+            "field-id": "title",
+            "field-name": "Title",
+            "field-kind": "text",
+            "show-delete": true,
+        }));
+        let UiNode::Container { children, .. } = ui else {
+            panic!()
+        };
+        let UiNode::Container { props, .. } = &children[1] else {
+            panic!("trash icon button expected when show-delete is true")
+        };
+        assert!(props
+            .semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-on-click" && v == "cmd schema.delete-selected-field"));
     }
 }

@@ -35,6 +35,13 @@ const FIELD_PAD: f32 = 4.0;
 const LABEL_FONT_SIZE: f32 = 12.0;
 const REQUIRED_MARK: &str = " *";
 
+/// Accent ring painted around a focused field-editor row. Sits behind
+/// the existing label + body, so the chrome reads as "this is the
+/// field receiving keystrokes." Color matches the rest of the shell's
+/// "active" accent (the same `#0060c0` family the inspector row uses).
+const FOCUS_RING_BG: &str = "#180060c0";
+const FOCUS_RING_RADIUS: f32 = 4.0;
+
 const SWITCH_WIDTH: f32 = 36.0;
 const SWITCH_HEIGHT: f32 = 18.0;
 const SWITCH_RADIUS: f32 = 9.0;
@@ -132,9 +139,18 @@ fn field_editor_schema() -> Vec<FieldSpec> {
         FieldSpec::boolean("required", "Required").with_default(Value::Bool(false)),
         FieldSpec::number("min", "Minimum", NumericBounds::default()),
         FieldSpec::number("max", "Maximum", NumericBounds::default()),
+        // `options` is the select-kind dropdown contents; the field
+        // editor copies it through to `data-options` so the click router
+        // can cycle without re-resolving the schema. Number/integer rows
+        // ignore it.
+        FieldSpec::text("options", "Select options (JSON array of {value,label})"),
         // §43 C2: doc-node-id the edit applies to. Populated by
         // `derive_property_rows`; consumed by the hit-test router.
         FieldSpec::text("target-id", "Target node ID"),
+        // B4: set by the properties-panel binding when `state.field_focus`
+        // matches this row's `target-id + key`. The lowering paints an
+        // accent outline so the user sees which field is "live."
+        FieldSpec::boolean("focused", "Currently focused").with_default(Value::Bool(false)),
     ]
 }
 
@@ -171,6 +187,7 @@ fn field_editor_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties
     }
     stack.extend((entry.body)(node));
 
+    let focused = prop_bool(node, "focused", false);
     bare_container(node.id.clone(), stack, |props| {
         props.direction = Direction::Column;
         props.gap = VSTACK_GAP;
@@ -180,6 +197,13 @@ fn field_editor_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties
             top: 6.0,
             bottom: 6.0,
         };
+        if focused {
+            // Soft tint behind the row so the user sees which field
+            // is receiving keystrokes; cleared the moment focus moves
+            // away or the user hits Esc / Enter.
+            props.background = parse_color(FOCUS_RING_BG);
+            props.radius = uniform_radius(FOCUS_RING_RADIUS);
+        }
         // §43 C2 routing keys — the hit-test surface reads
         // `data-role="field-edit"` + `data-target-id` + `data-key` +
         // `data-kind` to route a pointer-down on this row into a
@@ -201,6 +225,33 @@ fn field_editor_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties
         let value = prop_str(node, "value");
         if !value.is_empty() {
             s = s.with_attr("data-value", value);
+        }
+        // Kind-specific extras the click-cycle router reads:
+        // `data-options` carries the select values (comma-joined, since
+        // attrs are flat strings), and `data-min` / `data-max` clamp the
+        // number / integer step. Absent attrs default to "no clamp" /
+        // "no cycle" in the router.
+        if entry.kind == "select" {
+            if let Some(options) = node.props.get("options").and_then(|v| v.as_array()) {
+                let joined: Vec<String> = options
+                    .iter()
+                    .filter_map(|o| o.get("value").and_then(|v| v.as_str()).map(String::from))
+                    .collect();
+                if !joined.is_empty() {
+                    s = s.with_attr("data-options", joined.join(","));
+                }
+            }
+        }
+        if entry.kind == "number" || entry.kind == "integer" {
+            if let Some(min) = node.props.get("min").and_then(|v| v.as_f64()) {
+                s = s.with_attr("data-min", min.to_string());
+            }
+            if let Some(max) = node.props.get("max").and_then(|v| v.as_f64()) {
+                s = s.with_attr("data-max", max.to_string());
+            }
+        }
+        if focused {
+            s = s.with_attr("data-focused", "true");
         }
         props.semantic = s;
     })
@@ -508,7 +559,7 @@ mod tests {
     }
 
     #[test]
-    fn schema_declares_eight_fields() {
+    fn schema_declares_ten_fields() {
         let block = prism_builder::SpecBlock::new(&super::FIELD_EDITOR_SPEC);
         let keys: Vec<String> = block.schema().into_iter().map(|f| f.key).collect();
         assert_eq!(
@@ -521,9 +572,32 @@ mod tests {
                 "required",
                 "min",
                 "max",
+                "options",
                 "target-id",
+                "focused",
             ]
         );
+    }
+
+    #[test]
+    fn focused_prop_paints_focus_ring_and_data_focused_attr() {
+        let ui = lower(json!({
+            "kind": "text",
+            "label": "Body",
+            "value": "hello",
+            "key": "body",
+            "target-id": "demo-heading",
+            "focused": true,
+        }));
+        let UiNode::Container { props, .. } = ui else {
+            panic!()
+        };
+        assert!(props.background.is_some(), "focused row must paint a tint");
+        assert!(props
+            .semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-focused" && v == "true"));
     }
 
     #[test]

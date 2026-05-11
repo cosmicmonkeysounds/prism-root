@@ -53,6 +53,12 @@ pub fn dispatch_event(
         // rows / field-editor toggles mutate state without poking
         // through the canvas-tool dispatch.
         Event::PointerDown { x, y, .. } => {
+            // B4: a pointer-down that *isn't* on a text-input field
+            // commits any active field-focus session before any other
+            // routing runs. Clicking a chrome button, a second field
+            // row, or the canvas all reach this branch — none should
+            // leave the focus "stuck" on the previous field.
+            let blurred = pre_route_field_focus_blur(inner, hit.as_ref());
             let routed = hit
                 .as_ref()
                 .map(|h| route_pointer_down(inner, h))
@@ -81,10 +87,46 @@ pub fn dispatch_event(
                     .map(|h| route_canvas_node_select(inner, h))
                     .unwrap_or(false);
             let captured = inner.borrow_mut().state.canvas.pointer_down(*x, *y);
-            routed || acted || selected || captured
+            blurred || routed || acted || selected || captured
         }
-        Event::PointerMove { x, y } => inner.borrow_mut().state.canvas.pointer_move(*x, *y),
-        Event::PointerUp { x, y, .. } => inner.borrow_mut().state.canvas.pointer_up(*x, *y),
+        Event::PointerMove { x, y } => {
+            // B4: a property-row number-scrub session intercepts
+            // pointer-move before the canvas gets a chance — they're
+            // disjoint surfaces (right rail vs canvas) and the canvas
+            // shouldn't see pointer activity that's actually scrubbing
+            // a number field.
+            let scrubbed = {
+                let mut guard = inner.borrow_mut();
+                if guard.state.number_drag.is_some() {
+                    let g = &mut *guard;
+                    let registry = g.registry.as_component_registry();
+                    g.state.update_number_drag(*x, Some(registry))
+                } else {
+                    false
+                }
+            };
+            scrubbed || inner.borrow_mut().state.canvas.pointer_move(*x, *y)
+        }
+        Event::PointerUp { x, y, .. } => {
+            // B4: end the number-scrub session if one was active. If
+            // the user never moved past the threshold, treat the
+            // release as a click → `+1` step (the legacy behaviour
+            // before the drag scrubber landed).
+            // If a scrub session was active and never crossed the
+            // threshold, treat the release as a click → +1 step.
+            // Otherwise (no session, or dragged): fall through to
+            // canvas.
+            let was_click_release = {
+                let mut guard = inner.borrow_mut();
+                matches!(guard.state.end_number_drag(), Some(false))
+            };
+            let stepped = was_click_release
+                && hit
+                    .as_ref()
+                    .map(|h| step_number_on_click(inner, h))
+                    .unwrap_or(false);
+            stepped || inner.borrow_mut().state.canvas.pointer_up(*x, *y)
+        }
         // §24: every other event variant fans out through the service
         // registry. Services declare their interest via `on_event`;
         // the first to return `Handled` short-circuits. Adding a new
@@ -125,6 +167,9 @@ const POINTER_ROUTES: &[(&str, PointerHandler)] = &[
     ("nav-page-row", handle_nav_page_row_click),
     ("toolbar-device-pill", handle_toolbar_device_pill_click),
     ("toolbar-zoom-reset", handle_toolbar_zoom_reset_click),
+    ("app-card", handle_app_card_click),
+    ("schema-row", handle_schema_row_click),
+    ("signal-connection-row", handle_signal_connection_row_click),
 ];
 
 fn route_pointer_down(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
@@ -153,11 +198,21 @@ fn handle_inspector_row_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) ->
 }
 
 /// §43 C2: a click on a field-editor row mutates the bound
-/// property. Boolean rows toggle the value; other kinds carry the
-/// routing attrs through but defer their edit UX (text-input,
-/// drag-number, color-picker, …) to follow-ups that need real focus
-/// / IME / drag plumbing. The single-click toggle path proves the
-/// data flow end-to-end today.
+/// property. Click semantics fan out by kind:
+///
+/// * `boolean` — toggle the current value.
+/// * `select` — cycle to the next option declared in `data-options`
+///   (comma-joined value list from the spec). Wraps at the end.
+/// * `text` / `color` / `file` — set a text-input focus session
+///   (`AppState::field_focus`). The `FieldFocusService` then routes
+///   subsequent `Text` / `Key` events into the bound prop until Esc
+///   (cancel + restore) or Enter (commit). Clicking elsewhere also
+///   commits via the no-target-id fall-through in
+///   [`pre_route_field_focus_blur`].
+/// * `number` / `integer` — fall through to the drag-scrubber path.
+///   The pointer-down here only *initialises* the scrub session;
+///   pointer-move + pointer-up do the actual mutation. Tiny drags
+///   below the threshold count as a click → `+1` step on release.
 fn handle_field_edit_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
     let Some(target) = attr_value(hit, "data-target-id") else {
         return false;
@@ -166,18 +221,66 @@ fn handle_field_edit_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bo
         return false;
     };
     let kind = attr_value(hit, "data-kind").unwrap_or("");
-    let new_value = match kind {
+    // Kinds that flip a value on every click — boolean toggle and
+    // select cycle. The mutation runs through `set_node_prop`.
+    let toggle_value: Option<serde_json::Value> = match kind {
         "boolean" => {
             let cur = attr_value(hit, "data-value").unwrap_or("false") == "true";
-            serde_json::Value::Bool(!cur)
+            Some(serde_json::Value::Bool(!cur))
         }
-        _ => return false,
+        "select" => {
+            let Some(options) = attr_value(hit, "data-options") else {
+                return false;
+            };
+            let opts: Vec<&str> = options.split(',').filter(|s| !s.is_empty()).collect();
+            if opts.is_empty() {
+                return false;
+            }
+            let current = attr_value(hit, "data-value").unwrap_or("");
+            let next = opts
+                .iter()
+                .position(|o| *o == current)
+                .map(|i| (i + 1) % opts.len())
+                .unwrap_or(0);
+            Some(serde_json::Value::String(opts[next].to_string()))
+        }
+        _ => None,
     };
-    let mut guard = inner.borrow_mut();
-    let g = &mut *guard;
-    let registry = g.registry.as_component_registry();
-    g.state
-        .set_node_prop(target, key, new_value, Some(registry))
+    if let Some(value) = toggle_value {
+        let mut guard = inner.borrow_mut();
+        let g = &mut *guard;
+        let registry = g.registry.as_component_registry();
+        return g.state.set_node_prop(target, key, value, Some(registry));
+    }
+    // Number / integer: open a drag-scrub session. Pointer-move
+    // delivers the actual mutation; click (no drag) falls through
+    // to the `+1 step` on pointer-up.
+    if kind == "number" || kind == "integer" {
+        let cur = attr_value(hit, "data-value")
+            .and_then(|s| s.parse::<f64>().ok())
+            .unwrap_or(0.0);
+        let min = attr_value(hit, "data-min").and_then(|s| s.parse::<f64>().ok());
+        let max = attr_value(hit, "data-max").and_then(|s| s.parse::<f64>().ok());
+        let start_x = hit.bounds.x + hit.bounds.width * 0.5;
+        let mut guard = inner.borrow_mut();
+        guard.state.begin_number_drag(crate::state::NumberDragInit {
+            target_id: target,
+            key,
+            kind,
+            start_x,
+            start_value: cur,
+            min,
+            max,
+        });
+        return true;
+    }
+    // Text-editing kinds: open a focus session. Subsequent Text/Key
+    // events route through `FieldFocusService` until commit / cancel.
+    if matches!(kind, "text" | "color" | "file") {
+        let mut guard = inner.borrow_mut();
+        return guard.state.begin_field_focus(target, key, kind);
+    }
+    false
 }
 
 /// Click on a workflow-page tab in the bottom bar — switches the
@@ -220,15 +323,19 @@ fn handle_palette_item_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> 
     true
 }
 
-/// Click on a navigation-panel page row — marks that page as the
-/// active one inside the navigation slot. Returns true when the
-/// active page actually moved.
+/// Click on a navigation-panel page row — moves both the chevron
+/// cursor (`selected_page`) and the active-page flag onto the
+/// clicked row. The cursor drives the `selected` / `show-delete`
+/// props the row reads; the active flag drives the workspace's
+/// current page. Returns `true` when either side moved.
 fn handle_nav_page_row_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
     let Some(target) = attr_value(hit, "data-target-id") else {
         return false;
     };
     let mut guard = inner.borrow_mut();
-    guard.state.navigation.select_page_by_id(target)
+    let cursor_moved = guard.state.navigation.select_row(target);
+    let active_moved = guard.state.navigation.select_page_by_id(target);
+    cursor_moved || active_moved
 }
 
 /// Click on a builder-toolbar device pill — switches the canvas's
@@ -250,6 +357,44 @@ fn handle_toolbar_device_pill_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRe
     true
 }
 
+/// Click on a Launchpad `shell.app-card` — switches the workspace's
+/// `active_app` cursor to the card's `data-app` id. Cards without a
+/// `data-app` value (the "create" affordance) fall through cleanly;
+/// the per-app skeleton swap they should eventually trigger is the
+/// D4 follow-up in `ui-migration-followups.md`.
+fn handle_app_card_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
+    let Some(app_id) = attr_value(hit, "data-app") else {
+        return false;
+    };
+    let mut guard = inner.borrow_mut();
+    guard.state.workspace.set_active_app(app_id)
+}
+
+/// Click on a schema-designer row — moves the chevron cursor
+/// (`builder.schema.selected_field`) onto the row's `data-target-id`.
+/// The trash button visibility / aria-selected flag derive from the
+/// cursor, so the row re-paints with its affordances on the next
+/// frame.
+fn handle_schema_row_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
+    let Some(target) = attr_value(hit, "data-target-id") else {
+        return false;
+    };
+    let mut guard = inner.borrow_mut();
+    guard.state.builder.select_schema_field(target)
+}
+
+/// Click on a signals-panel connection row — moves the chevron cursor
+/// (`builder.selected_connection`) onto the row's `data-target-id`.
+/// `signals.delete-selected-connection` reads the cursor when the
+/// trash button fires.
+fn handle_signal_connection_row_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
+    let Some(target) = attr_value(hit, "data-target-id") else {
+        return false;
+    };
+    let mut guard = inner.borrow_mut();
+    guard.state.builder.select_signal_connection(target)
+}
+
 /// Click on the toolbar's zoom-percentage pill — resets canvas zoom
 /// to 1.0. The `+` / `−` icon buttons inside the same cluster don't
 /// route here; once they grow a `command` prop they dispatch via
@@ -261,6 +406,79 @@ fn handle_toolbar_zoom_reset_click(inner: &Rc<RefCell<ShellInner>>, _hit: &HitRe
     }
     guard.state.canvas.viewport.zoom = 1.0;
     true
+}
+
+/// B4: commit the active text-input focus session when the user
+/// clicks anywhere that isn't the *same* field. The router calls
+/// this *before* every other pointer-down route, so the next route
+/// runs against a freshly cleared focus. Returns `true` when a focus
+/// session ended (any focus mutation requests a redraw).
+fn pre_route_field_focus_blur(inner: &Rc<RefCell<ShellInner>>, hit: Option<&HitRect>) -> bool {
+    let mut guard = inner.borrow_mut();
+    let Some(focus) = guard.state.field_focus.as_ref() else {
+        return false;
+    };
+    // Same-field click → keep focus open. The router's own field-edit
+    // handler will see the hit and (idempotently) re-focus the same
+    // row; without this guard, double-clicking a focused field would
+    // commit + re-open every time.
+    let staying = hit
+        .map(|h| {
+            attr_value(h, "data-role") == Some("field-edit")
+                && attr_value(h, "data-target-id").map(|s| s == focus.target_id) == Some(true)
+                && attr_value(h, "data-key").map(|s| s == focus.key) == Some(true)
+        })
+        .unwrap_or(false);
+    if staying {
+        return false;
+    }
+    // Commit (the draft is already flushed into the prop after every
+    // keystroke). No `Esc`-style restore here — clicking away is the
+    // canonical "I'm done" intent.
+    guard.state.commit_field_focus()
+}
+
+/// B4: on pointer-up over a number/integer field-edit, if the
+/// scrubber never moved past the threshold, treat the release as a
+/// click and step the bound prop by `+1` (clamped to the field's
+/// `data-min` / `data-max`). Preserves the existing click-to-step
+/// behaviour the cursor router shipped before drag-scrub landed.
+fn step_number_on_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
+    let role = attr_value(hit, "data-role");
+    if role != Some("field-edit") {
+        return false;
+    }
+    let kind = attr_value(hit, "data-kind").unwrap_or("");
+    if kind != "number" && kind != "integer" {
+        return false;
+    }
+    let Some(target) = attr_value(hit, "data-target-id") else {
+        return false;
+    };
+    let Some(key) = attr_value(hit, "data-key") else {
+        return false;
+    };
+    let cur = attr_value(hit, "data-value")
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(0.0);
+    let min = attr_value(hit, "data-min").and_then(|s| s.parse::<f64>().ok());
+    let max = attr_value(hit, "data-max").and_then(|s| s.parse::<f64>().ok());
+    let stepped = cur + 1.0;
+    let clamped = match (min, max) {
+        (Some(mn), Some(mx)) => stepped.clamp(mn, mx),
+        (Some(mn), None) => stepped.max(mn),
+        (None, Some(mx)) => stepped.min(mx),
+        (None, None) => stepped,
+    };
+    let value = if kind == "integer" {
+        serde_json::Value::from(clamped.round() as i64)
+    } else {
+        serde_json::json!(clamped)
+    };
+    let mut guard = inner.borrow_mut();
+    let g = &mut *guard;
+    let registry = g.registry.as_component_registry();
+    g.state.set_node_prop(target, key, value, Some(registry))
 }
 
 /// §43 A1: pointer-down on a container that carries a
@@ -539,6 +757,413 @@ mod tests {
             .and_then(|n| n.props.get("visible").cloned())
             .expect("visible prop set");
         assert_eq!(visible, serde_json::Value::Bool(false));
+    }
+
+    #[test]
+    fn pointer_down_on_select_field_edit_cycles_to_next_option() {
+        use prism_ui_runtime::event::PointerButton;
+        let shell = Shell::new().expect("boot");
+        let hit = hit_with(
+            "field-edit",
+            "demo-heading",
+            &[
+                ("data-key", "level"),
+                ("data-kind", "select"),
+                ("data-value", "h1"),
+                ("data-options", "h1,h2,h3"),
+            ],
+        );
+        let dirty = dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 5.0,
+                y: 5.0,
+                button: PointerButton::Primary,
+            },
+            Some(hit),
+        );
+        assert!(dirty);
+        let level = shell
+            .inner
+            .borrow()
+            .state
+            .canvas
+            .document
+            .root
+            .as_ref()
+            .and_then(|r| r.find("demo-heading"))
+            .and_then(|n| n.props.get("level").cloned())
+            .expect("level prop set");
+        assert_eq!(level, serde_json::Value::String("h2".into()));
+    }
+
+    #[test]
+    fn pointer_down_on_select_field_edit_wraps_at_end_of_options() {
+        use prism_ui_runtime::event::PointerButton;
+        let shell = Shell::new().expect("boot");
+        let hit = hit_with(
+            "field-edit",
+            "demo-heading",
+            &[
+                ("data-key", "level"),
+                ("data-kind", "select"),
+                ("data-value", "h3"),
+                ("data-options", "h1,h2,h3"),
+            ],
+        );
+        let _ = dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 5.0,
+                y: 5.0,
+                button: PointerButton::Primary,
+            },
+            Some(hit),
+        );
+        let level = shell
+            .inner
+            .borrow()
+            .state
+            .canvas
+            .document
+            .root
+            .as_ref()
+            .and_then(|r| r.find("demo-heading"))
+            .and_then(|n| n.props.get("level").cloned())
+            .expect("level prop set");
+        assert_eq!(level, serde_json::Value::String("h1".into()));
+    }
+
+    /// Number field-edit shape under the B4 drag-scrubber: pointer-down
+    /// opens a scrub session (no prop write yet), pointer-up with no
+    /// pointer-move in between falls through to the legacy `+1` step.
+    /// The test sends the full {down, up} pair to exercise the click
+    /// path through to the prop mutation.
+    #[test]
+    fn click_on_number_field_edit_increments_clamped_to_max() {
+        use prism_builder::Node;
+        use prism_ui_runtime::event::PointerButton;
+        let shell = Shell::new().expect("boot");
+        {
+            let mut guard = shell.inner.borrow_mut();
+            let g = &mut *guard;
+            let root = g.state.canvas.document.root.as_mut().expect("canvas root");
+            root.children.push(Node {
+                id: "num-target".into(),
+                component: prism_builder::ComponentId::from("text"),
+                props: serde_json::json!({ "count": 4.0 }),
+                children: vec![],
+                layout_mode: Default::default(),
+                transform: Default::default(),
+                modifiers: vec![],
+                style: Default::default(),
+            });
+        }
+        let hit = hit_with(
+            "field-edit",
+            "num-target",
+            &[
+                ("data-key", "count"),
+                ("data-kind", "number"),
+                ("data-value", "4"),
+                ("data-max", "5"),
+            ],
+        );
+        let _ = dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 5.0,
+                y: 5.0,
+                button: PointerButton::Primary,
+            },
+            Some(hit.clone()),
+        );
+        // Pointer-up at the same coordinates → no drag → click step.
+        let _ = dispatch_event(
+            &shell.inner,
+            &Event::PointerUp {
+                x: 5.0,
+                y: 5.0,
+                button: PointerButton::Primary,
+            },
+            Some(hit),
+        );
+        let count = shell
+            .inner
+            .borrow()
+            .state
+            .canvas
+            .document
+            .root
+            .as_ref()
+            .and_then(|r| r.find("num-target"))
+            .and_then(|n| n.props.get("count").cloned())
+            .expect("count prop set");
+        assert_eq!(count.as_f64(), Some(5.0));
+        // Click again: hit value attribute still reflects pre-state but
+        // dispatch uses the attr's value — re-fire confirms the clamp
+        // sticks (5+1 → max-clamped to 5).
+        let hit2 = hit_with(
+            "field-edit",
+            "num-target",
+            &[
+                ("data-key", "count"),
+                ("data-kind", "number"),
+                ("data-value", "5"),
+                ("data-max", "5"),
+            ],
+        );
+        let _ = dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 5.0,
+                y: 5.0,
+                button: PointerButton::Primary,
+            },
+            Some(hit2.clone()),
+        );
+        let _ = dispatch_event(
+            &shell.inner,
+            &Event::PointerUp {
+                x: 5.0,
+                y: 5.0,
+                button: PointerButton::Primary,
+            },
+            Some(hit2),
+        );
+        let count2 = shell
+            .inner
+            .borrow()
+            .state
+            .canvas
+            .document
+            .root
+            .as_ref()
+            .and_then(|r| r.find("num-target"))
+            .and_then(|n| n.props.get("count").cloned())
+            .expect("count prop set");
+        assert_eq!(count2.as_f64(), Some(5.0));
+    }
+
+    #[test]
+    fn click_on_integer_field_edit_emits_integer_json() {
+        use prism_builder::Node;
+        use prism_ui_runtime::event::PointerButton;
+        let shell = Shell::new().expect("boot");
+        {
+            let mut guard = shell.inner.borrow_mut();
+            let g = &mut *guard;
+            let root = g.state.canvas.document.root.as_mut().expect("canvas root");
+            root.children.push(Node {
+                id: "int-target".into(),
+                component: prism_builder::ComponentId::from("text"),
+                props: serde_json::json!({ "ord": 2 }),
+                children: vec![],
+                layout_mode: Default::default(),
+                transform: Default::default(),
+                modifiers: vec![],
+                style: Default::default(),
+            });
+        }
+        let hit = hit_with(
+            "field-edit",
+            "int-target",
+            &[
+                ("data-key", "ord"),
+                ("data-kind", "integer"),
+                ("data-value", "2"),
+            ],
+        );
+        let _ = dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 5.0,
+                y: 5.0,
+                button: PointerButton::Primary,
+            },
+            Some(hit.clone()),
+        );
+        let _ = dispatch_event(
+            &shell.inner,
+            &Event::PointerUp {
+                x: 5.0,
+                y: 5.0,
+                button: PointerButton::Primary,
+            },
+            Some(hit),
+        );
+        let ord = shell
+            .inner
+            .borrow()
+            .state
+            .canvas
+            .document
+            .root
+            .as_ref()
+            .and_then(|r| r.find("int-target"))
+            .and_then(|n| n.props.get("ord").cloned())
+            .expect("ord prop set");
+        // Integer kind keeps it integral, not a float — important because
+        // serde round-trips treat the two differently.
+        assert_eq!(ord, serde_json::Value::from(3i64));
+    }
+
+    /// Drag-scrub variant: pointer-down opens a session, pointer-move
+    /// past the threshold mutates the prop, pointer-up ends the
+    /// session *without* dispatching the click-step (because `moved`
+    /// is true).
+    #[test]
+    fn drag_on_number_field_edit_scrubs_value_proportional_to_delta() {
+        use prism_builder::Node;
+        use prism_ui_runtime::event::PointerButton;
+        let shell = Shell::new().expect("boot");
+        {
+            let mut guard = shell.inner.borrow_mut();
+            let g = &mut *guard;
+            let root = g.state.canvas.document.root.as_mut().expect("canvas root");
+            root.children.push(Node {
+                id: "scrub-target".into(),
+                component: prism_builder::ComponentId::from("text"),
+                props: serde_json::json!({ "count": 10.0 }),
+                children: vec![],
+                layout_mode: Default::default(),
+                transform: Default::default(),
+                modifiers: vec![],
+                style: Default::default(),
+            });
+        }
+        let hit = HitRect {
+            id: "fe".into(),
+            bounds: Rect {
+                x: 100.0,
+                y: 0.0,
+                width: 80.0,
+                height: 24.0,
+            },
+            attrs: vec![
+                ("data-role".into(), "field-edit".into()),
+                ("data-target-id".into(), "scrub-target".into()),
+                ("data-key".into(), "count".into()),
+                ("data-kind".into(), "number".into()),
+                ("data-value".into(), "10".into()),
+            ],
+        };
+        let _ = dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 140.0,
+                y: 12.0,
+                button: PointerButton::Primary,
+            },
+            Some(hit.clone()),
+        );
+        // Move +40px → 40/4 = +10 → value should be 20.0.
+        let _ = dispatch_event(
+            &shell.inner,
+            &Event::PointerMove { x: 180.0, y: 12.0 },
+            Some(hit.clone()),
+        );
+        let _ = dispatch_event(
+            &shell.inner,
+            &Event::PointerUp {
+                x: 180.0,
+                y: 12.0,
+                button: PointerButton::Primary,
+            },
+            Some(hit),
+        );
+        let count = shell
+            .inner
+            .borrow()
+            .state
+            .canvas
+            .document
+            .root
+            .as_ref()
+            .and_then(|r| r.find("scrub-target"))
+            .and_then(|n| n.props.get("count").cloned())
+            .expect("count prop set");
+        assert_eq!(count.as_f64(), Some(20.0));
+        // Drag session must have ended.
+        assert!(shell.inner.borrow().state.number_drag.is_none());
+    }
+
+    #[test]
+    fn click_on_text_field_edit_opens_focus_session() {
+        use prism_ui_runtime::event::PointerButton;
+        let shell = Shell::new().expect("boot");
+        let hit = hit_with(
+            "field-edit",
+            "demo-heading",
+            &[
+                ("data-key", "body"),
+                ("data-kind", "text"),
+                ("data-value", "Welcome to Studio"),
+            ],
+        );
+        let dirty = dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 5.0,
+                y: 5.0,
+                button: PointerButton::Primary,
+            },
+            Some(hit),
+        );
+        assert!(dirty, "opening focus requests a redraw");
+        let focus = shell
+            .inner
+            .borrow()
+            .state
+            .field_focus
+            .clone()
+            .expect("focus opened");
+        assert_eq!(focus.target_id, "demo-heading");
+        assert_eq!(focus.key, "body");
+        assert_eq!(focus.kind, "text");
+        // Original is the current prop value — restored on Esc.
+        assert_eq!(focus.original, "Welcome to Studio");
+    }
+
+    #[test]
+    fn click_elsewhere_commits_active_focus_session() {
+        use prism_ui_runtime::event::PointerButton;
+        let shell = Shell::new().expect("boot");
+        // Open focus on the heading body.
+        let open = hit_with(
+            "field-edit",
+            "demo-heading",
+            &[
+                ("data-key", "body"),
+                ("data-kind", "text"),
+                ("data-value", "Welcome to Studio"),
+            ],
+        );
+        let _ = dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 5.0,
+                y: 5.0,
+                button: PointerButton::Primary,
+            },
+            Some(open),
+        );
+        assert!(shell.inner.borrow().state.field_focus.is_some());
+        // Click on an unrelated chrome row.
+        let blur_hit = hit_with("inspector-row", "demo-paragraph", &[]);
+        let _ = dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 5.0,
+                y: 5.0,
+                button: PointerButton::Primary,
+            },
+            Some(blur_hit),
+        );
+        assert!(
+            shell.inner.borrow().state.field_focus.is_none(),
+            "clicking elsewhere commits + clears the focus"
+        );
     }
 
     #[test]
@@ -1171,6 +1796,7 @@ mod tests {
                     },
                 ],
                 edges: vec![],
+                ..Default::default()
             };
         }
         let hit = hit_with("nav-page-row", "about", &[]);
@@ -1187,6 +1813,210 @@ mod tests {
         let nav = &shell.inner.borrow().state.navigation;
         assert!(nav.pages[1].is_active);
         assert!(!nav.pages[0].is_active);
+    }
+
+    #[test]
+    fn pointer_down_on_nav_page_row_also_moves_chevron_cursor() {
+        use crate::state::{NavPage, NavigationSlot};
+        use prism_ui_runtime::event::PointerButton;
+        let shell = Shell::new().expect("boot");
+        {
+            let mut guard = shell.inner.borrow_mut();
+            guard.state.navigation = NavigationSlot {
+                pages: vec![NavPage {
+                    id: "home".into(),
+                    title: "Home".into(),
+                    route: "/".into(),
+                    x: 0.0,
+                    y: 0.0,
+                    node_count: 0,
+                    link_count: 0,
+                    is_active: true,
+                }],
+                edges: vec![],
+                ..Default::default()
+            };
+        }
+        let hit = hit_with("nav-page-row", "home", &[]);
+        let _ = dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 1.0,
+                y: 1.0,
+                button: PointerButton::Primary,
+            },
+            Some(hit),
+        );
+        assert_eq!(
+            shell
+                .inner
+                .borrow()
+                .state
+                .navigation
+                .selected_page
+                .as_deref(),
+            Some("home"),
+        );
+    }
+
+    #[test]
+    fn pointer_down_on_app_card_sets_workspace_active_app() {
+        use prism_ui_runtime::event::PointerButton;
+        let shell = Shell::new().expect("boot");
+        let hit = HitRect {
+            id: "card-lattice".into(),
+            bounds: Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 160.0,
+                height: 160.0,
+            },
+            attrs: vec![
+                ("data-role".into(), "app-card".into()),
+                ("data-app".into(), "lattice".into()),
+            ],
+        };
+        let dirty = dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 5.0,
+                y: 5.0,
+                button: PointerButton::Primary,
+            },
+            Some(hit),
+        );
+        assert!(dirty, "app-card click requests a redraw");
+        assert_eq!(
+            shell.inner.borrow().state.workspace.active_app.as_deref(),
+            Some("lattice"),
+        );
+    }
+
+    #[test]
+    fn pointer_down_on_create_card_without_data_app_is_a_no_op() {
+        use prism_ui_runtime::event::PointerButton;
+        let shell = Shell::new().expect("boot");
+        let hit = HitRect {
+            id: "card-create".into(),
+            bounds: Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 160.0,
+                height: 160.0,
+            },
+            attrs: vec![
+                ("data-role".into(), "app-card".into()),
+                ("data-create".into(), "true".into()),
+            ],
+        };
+        let _ = dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 5.0,
+                y: 5.0,
+                button: PointerButton::Primary,
+            },
+            Some(hit),
+        );
+        assert!(shell.inner.borrow().state.workspace.active_app.is_none());
+    }
+
+    #[test]
+    fn pointer_down_on_schema_row_moves_schema_field_cursor() {
+        use crate::state::{SchemaDoc, SchemaField};
+        use prism_ui_runtime::event::PointerButton;
+        let shell = Shell::new().expect("boot");
+        {
+            let mut guard = shell.inner.borrow_mut();
+            guard.state.builder.schema = SchemaDoc {
+                fields: vec![
+                    SchemaField {
+                        name: "title".into(),
+                        kind: "text".into(),
+                        required: false,
+                    },
+                    SchemaField {
+                        name: "body".into(),
+                        kind: "rich-text".into(),
+                        required: false,
+                    },
+                ],
+                ..Default::default()
+            };
+        }
+        let hit = hit_with("schema-row", "body", &[]);
+        let dirty = dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 5.0,
+                y: 5.0,
+                button: PointerButton::Primary,
+            },
+            Some(hit),
+        );
+        assert!(dirty, "schema-row click moves the cursor → redraw");
+        assert_eq!(
+            shell
+                .inner
+                .borrow()
+                .state
+                .builder
+                .schema
+                .selected_field
+                .as_deref(),
+            Some("body"),
+        );
+    }
+
+    #[test]
+    fn pointer_down_on_signal_connection_row_moves_connection_cursor() {
+        use crate::state::SignalConnection;
+        use prism_ui_runtime::event::PointerButton;
+        let shell = Shell::new().expect("boot");
+        {
+            let mut guard = shell.inner.borrow_mut();
+            guard
+                .state
+                .builder
+                .signal_connections
+                .push(SignalConnection {
+                    id: "c1".into(),
+                    source_signal: "clicked".into(),
+                    action_kind: "EmitSignal".into(),
+                    target_label: "x".into(),
+                });
+            guard
+                .state
+                .builder
+                .signal_connections
+                .push(SignalConnection {
+                    id: "c2".into(),
+                    source_signal: "hovered".into(),
+                    action_kind: "SetProperty".into(),
+                    target_label: "y".into(),
+                });
+        }
+        let hit = hit_with("signal-connection-row", "c2", &[]);
+        let dirty = dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 5.0,
+                y: 5.0,
+                button: PointerButton::Primary,
+            },
+            Some(hit),
+        );
+        assert!(dirty, "signal-connection-row click moves cursor → redraw");
+        assert_eq!(
+            shell
+                .inner
+                .borrow()
+                .state
+                .builder
+                .selected_connection
+                .as_deref(),
+            Some("c2"),
+        );
     }
 
     #[test]

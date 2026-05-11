@@ -1,16 +1,12 @@
 //! `prism-builder` — the page builder.
 //!
-//! One render target: the unified Taffy pipeline.
+//! Post-Slint, this crate emits `.prism-ui` source via §29's
+//! [`prism_ui_emit`] and lowers documents to `prism_ui_runtime`
+//! through the unified Taffy pipeline.
 //! [`component::Component::lower_ui`] emits `prism_ui_runtime::layout::Node`
 //! trees consumed by the shell renderer *and* by the relay's
 //! semantic-HTML SSR walker
 //! ([`ui_runtime::lower_semantic_html`]).
-//!
-//! The Slint DSL emission path (`render_slint` / `SlintEmitter` / source
-//! map / source parse / `render_document_slint_*`) was deleted in the
-//! Phase 5 cutover follow-up — the Slint runtime had already been
-//! removed from the workspace and the source emitter had no consumers
-//! left. See `docs/dev/clay-migration-plan.md`.
 
 pub mod app;
 pub mod asset;

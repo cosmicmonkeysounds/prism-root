@@ -29,6 +29,74 @@ use prism_dock::DockWorkspace;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+/// Row types that participate in the "selected row + trash button"
+/// pattern (B6 fifth wave). Three call sites compose against this
+/// trait — nav pages, schema fields, signal connections — and share
+/// the [`select_cursor_row`], [`delete_cursor_row`], and
+/// [`iter_with_cursor`] helpers below. Adding a fourth cursor-driven
+/// row is one impl + three short delegators on the owning slot.
+pub trait CursorKey {
+    /// String key used to identify this row when the chevron cursor
+    /// lands on it. Stable for the row's lifetime in the slot; uniqueness
+    /// is the caller's responsibility (mirrors the
+    /// `prism_builder::Connection::id` contract).
+    fn cursor_key(&self) -> &str;
+}
+
+/// Move the chevron `cursor` onto the row whose [`CursorKey::cursor_key`]
+/// matches `id`. Returns `true` when the cursor actually moved (no-op
+/// for unknown ids and for idempotent re-selects). The three slot-side
+/// `select_*` methods all delegate here so the click-route, the
+/// `cmd <id>` dispatch, and any future programmatic select converge
+/// on one implementation.
+pub fn select_cursor_row<T: CursorKey>(items: &[T], cursor: &mut Option<String>, id: &str) -> bool {
+    if !items.iter().any(|x| x.cursor_key() == id) {
+        return false;
+    }
+    if cursor.as_deref() == Some(id) {
+        return false;
+    }
+    *cursor = Some(id.to_string());
+    true
+}
+
+/// Remove the cursored row from `items`, clearing the cursor. Returns
+/// `true` when a row was actually dropped (the cursor was set *and*
+/// pointed at an extant row). The returned `usize` on the [`pop_cursor_row`]
+/// variant is for callers that need to react to the drop site (e.g.
+/// `NavigationSlot::delete_selected` promotes the neighbouring page to
+/// active when the deleted one held the active flag).
+pub fn delete_cursor_row<T: CursorKey>(items: &mut Vec<T>, cursor: &mut Option<String>) -> bool {
+    pop_cursor_row(items, cursor).is_some()
+}
+
+/// Variant of [`delete_cursor_row`] that returns the original index of
+/// the dropped row, so callers can run "after-removal" bookkeeping
+/// (e.g. active-flag promotion) without re-scanning. `None` means the
+/// cursor was empty or pointed at a stale id.
+pub fn pop_cursor_row<T: CursorKey>(
+    items: &mut Vec<T>,
+    cursor: &mut Option<String>,
+) -> Option<usize> {
+    let id = cursor.take()?;
+    let idx = items.iter().position(|x| x.cursor_key() == id)?;
+    items.remove(idx);
+    Some(idx)
+}
+
+/// Pair each row with its `is_selected` boolean (derived from `cursor`).
+/// JSON emitters fold over the returned iterator to write the per-row
+/// `selected` / `show-delete` flags without re-implementing the cursor
+/// comparison at every call site.
+pub fn iter_with_cursor<'a, T: CursorKey>(
+    items: &'a [T],
+    cursor: Option<&'a str>,
+) -> impl Iterator<Item = (&'a T, bool)> {
+    items
+        .iter()
+        .map(move |item| (item, cursor == Some(item.cursor_key())))
+}
+
 /// Reloadable root state. `Default` returns the zero-data shell that
 /// the §17 contract boots into; ports re-introduce real data slot by
 /// slot.
@@ -45,6 +113,67 @@ pub struct AppState {
     pub canvas: CanvasSlot,
     pub project: ProjectSlot,
     pub search: SearchSlot,
+    /// Active text-input focus for the property-row field-edit path
+    /// (`text` / `color` / `file` kinds). `None` means no field is
+    /// editing — the property-row click sets it, `Enter` commits and
+    /// clears it, `Esc` abandons (restoring `original`) and clears it.
+    /// Every keystroke updates `draft` *and* the bound prop so the
+    /// rendered value stays in sync without a separate "commit on
+    /// blur" path.
+    pub field_focus: Option<FieldFocus>,
+    /// Active pointer-drag for the number-scrubber (`number` /
+    /// `integer` field-edits). `None` means no scrub in progress — the
+    /// router's pointer-down on a number field-edit initialises this
+    /// with the start position + start value, pointer-move updates the
+    /// bound prop, pointer-up clears it. Clicks shorter than the drag
+    /// threshold fall through to the existing `+1 step` path.
+    pub number_drag: Option<NumberDrag>,
+}
+
+/// Text-input focus state. Lives on `AppState` rather than a service so
+/// every consumer (renderer, click router, key handler) reads it from
+/// one place. `original` lets `Esc` restore the prop the user was
+/// editing; without it abandoning a half-typed change would still
+/// leave the document dirty.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FieldFocus {
+    pub target_id: String,
+    pub key: String,
+    pub kind: String,
+    pub draft: String,
+    pub original: String,
+}
+
+/// Number-scrubber state. Stored on `AppState` (not the canvas slot)
+/// because the canvas's existing `pointer_down/move/up` triple is
+/// for the document-canvas gizmos; a property-row scrubber lives in a
+/// disjoint surface (the right rail) and needs its own capture.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NumberDrag {
+    pub target_id: String,
+    pub key: String,
+    pub kind: String,
+    pub start_x: f32,
+    pub start_value: f64,
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+    /// `true` once the pointer moved more than the drag threshold —
+    /// distinguishes "click for +1 step" from "drag to scrub" so the
+    /// pointer-up handler can dispatch the click variant.
+    pub moved: bool,
+}
+
+/// Bag of arguments to [`AppState::begin_number_drag`]. Folded into a
+/// struct so the call site reads with named fields and clippy's
+/// `too_many_arguments` lint stays happy.
+pub struct NumberDragInit<'a> {
+    pub target_id: &'a str,
+    pub key: &'a str,
+    pub kind: &'a str,
+    pub start_x: f32,
+    pub start_value: f64,
+    pub min: Option<f64>,
+    pub max: Option<f64>,
 }
 
 impl AppState {
@@ -161,6 +290,185 @@ impl AppState {
         }
         self.resync_builder_for_selection(registry);
         true
+    }
+
+    /// Begin (or move) a text-input focus session onto a property-row
+    /// field. Pulls the current value from the doc node so `Esc` can
+    /// restore it; mirrors the "click sets focus" model. Returns
+    /// `true` when the focus actually moved (no-op when the same
+    /// target/key already holds focus).
+    pub fn begin_field_focus(&mut self, target_id: &str, key: &str, kind: &str) -> bool {
+        if let Some(focus) = &self.field_focus {
+            if focus.target_id == target_id && focus.key == key {
+                return false;
+            }
+        }
+        let original = self
+            .canvas
+            .document
+            .root
+            .as_ref()
+            .and_then(|r| r.find(target_id))
+            .and_then(|n| n.props.get(key))
+            .map(value_as_string)
+            .unwrap_or_default();
+        self.field_focus = Some(FieldFocus {
+            target_id: target_id.into(),
+            key: key.into(),
+            kind: kind.into(),
+            draft: original.clone(),
+            original,
+        });
+        true
+    }
+
+    /// Append one chunk of typed text to the focused field's draft and
+    /// flush the new value into the underlying doc-node prop. Returns
+    /// `true` when a focus session was active.
+    pub fn type_field_text(
+        &mut self,
+        text: &str,
+        registry: Option<&prism_builder::ComponentRegistry>,
+    ) -> bool {
+        let Some(focus) = self.field_focus.as_mut() else {
+            return false;
+        };
+        focus.draft.push_str(text);
+        let (target, key, draft) = (
+            focus.target_id.clone(),
+            focus.key.clone(),
+            focus.draft.clone(),
+        );
+        self.set_node_prop(&target, &key, Value::String(draft), registry);
+        true
+    }
+
+    /// Drop the last character from the focused field's draft (UTF-8
+    /// safe) and flush. Returns `true` when a focus session was active
+    /// *and* something was actually deleted (an empty draft is a
+    /// no-op so repeated backspaces don't keep firing resyncs).
+    pub fn backspace_field(&mut self, registry: Option<&prism_builder::ComponentRegistry>) -> bool {
+        let Some(focus) = self.field_focus.as_mut() else {
+            return false;
+        };
+        if focus.draft.pop().is_none() {
+            return false;
+        }
+        let (target, key, draft) = (
+            focus.target_id.clone(),
+            focus.key.clone(),
+            focus.draft.clone(),
+        );
+        self.set_node_prop(&target, &key, Value::String(draft), registry);
+        true
+    }
+
+    /// Commit the focused field. The draft is already flushed into the
+    /// prop by every keystroke, so this just clears the focus. Returns
+    /// `true` when a focus session ended.
+    pub fn commit_field_focus(&mut self) -> bool {
+        self.field_focus.take().is_some()
+    }
+
+    /// Abandon the focused field. Restores the original value (the one
+    /// the prop carried when focus began) and clears the focus session.
+    pub fn cancel_field_focus(
+        &mut self,
+        registry: Option<&prism_builder::ComponentRegistry>,
+    ) -> bool {
+        let Some(focus) = self.field_focus.take() else {
+            return false;
+        };
+        // Restore — but only if the draft actually diverged. Skipping
+        // the write on no-op edits keeps the resync pass off the
+        // happy path.
+        if focus.draft != focus.original {
+            self.set_node_prop(
+                &focus.target_id,
+                &focus.key,
+                Value::String(focus.original),
+                registry,
+            );
+        }
+        true
+    }
+
+    /// Begin a pointer-scrub session on a number / integer field-edit.
+    /// `min` / `max` come from the schema bounds; clamping happens in
+    /// [`Self::update_number_drag`]. The session records the *start*
+    /// pointer x and start value so move deltas can be applied
+    /// without re-reading the attr on every move tick.
+    pub fn begin_number_drag(&mut self, drag: NumberDragInit<'_>) {
+        self.number_drag = Some(NumberDrag {
+            target_id: drag.target_id.into(),
+            key: drag.key.into(),
+            kind: drag.kind.into(),
+            start_x: drag.start_x,
+            start_value: drag.start_value,
+            min: drag.min,
+            max: drag.max,
+            moved: false,
+        });
+    }
+
+    /// Apply a pointer-move tick to the active scrub session. Returns
+    /// the new value and `true` when the underlying prop actually
+    /// moved (so the router can request a redraw). The first move
+    /// past the drag threshold flips `moved`, which suppresses the
+    /// fallback "click for +1" path on pointer-up.
+    pub fn update_number_drag(
+        &mut self,
+        x: f32,
+        registry: Option<&prism_builder::ComponentRegistry>,
+    ) -> bool {
+        const DRAG_THRESHOLD_PX: f32 = 3.0;
+        const PX_PER_UNIT: f32 = 4.0;
+        let Some(drag) = self.number_drag.as_ref() else {
+            return false;
+        };
+        let dx = x - drag.start_x;
+        if !drag.moved && dx.abs() < DRAG_THRESHOLD_PX {
+            return false;
+        }
+        let raw = drag.start_value + (dx / PX_PER_UNIT) as f64;
+        let clamped = match (drag.min, drag.max) {
+            (Some(mn), Some(mx)) => raw.clamp(mn, mx),
+            (Some(mn), None) => raw.max(mn),
+            (None, Some(mx)) => raw.min(mx),
+            (None, None) => raw,
+        };
+        let value = if drag.kind == "integer" {
+            Value::from(clamped.round() as i64)
+        } else {
+            json!(clamped)
+        };
+        let (target, key) = (drag.target_id.clone(), drag.key.clone());
+        let drag_mut = self.number_drag.as_mut().expect("checked above");
+        drag_mut.moved = true;
+        self.set_node_prop(&target, &key, value, registry)
+    }
+
+    /// End the active scrub session. Returns whether the user dragged
+    /// far enough to count as a scrub — callers use the inverted
+    /// answer to dispatch the click variant (the existing `+1` step
+    /// in the field-edit router).
+    pub fn end_number_drag(&mut self) -> Option<bool> {
+        self.number_drag.take().map(|d| d.moved)
+    }
+}
+
+/// Project an arbitrary serde value to its textual form so the
+/// field-focus path can populate `original` regardless of the prop's
+/// json kind. Strings come through as-is; numbers / booleans go
+/// through `to_string`; null and arrays / objects fall through as the
+/// empty string (the field-edit kinds that focus today —
+/// `text` / `color` / `file` — are always stringly typed).
+fn value_as_string(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.clone(),
+        Value::Number(n) => n.to_string(),
+        Value::Bool(b) => b.to_string(),
+        _ => String::new(),
     }
 }
 
@@ -298,16 +606,40 @@ fn property_row_from_spec(
         .get(&spec.key)
         .cloned()
         .unwrap_or_else(|| spec.default.clone());
+    let mut row_props = json!({
+        "key": spec.key,
+        "label": spec.label,
+        "kind": kind,
+        "value": value,
+        "required": spec.required,
+        "target-id": target_id,
+    });
+    // Kind-specific extensions: select carries its options so the
+    // click-to-cycle path (`handle_field_edit_click`) can step through
+    // them without re-resolving the spec; number / integer carry their
+    // bounds so the +/- step clamps at the schema-declared range.
+    match &spec.kind {
+        FieldKind::Select(options) => {
+            row_props["options"] = Value::Array(
+                options
+                    .iter()
+                    .map(|o| json!({ "value": o.value, "label": o.label }))
+                    .collect(),
+            );
+        }
+        FieldKind::Number(bounds) | FieldKind::Integer(bounds) => {
+            if let Some(min) = bounds.min {
+                row_props["min"] = json!(min);
+            }
+            if let Some(max) = bounds.max {
+                row_props["max"] = json!(max);
+            }
+        }
+        _ => {}
+    }
     PropertyRow {
         component: "shell.field-editor".into(),
-        props: json!({
-            "key": spec.key,
-            "label": spec.label,
-            "kind": kind,
-            "value": value,
-            "required": spec.required,
-            "target-id": target_id,
-        }),
+        props: row_props,
     }
 }
 
@@ -540,17 +872,34 @@ impl ChromeSlot {
 #[derive(Clone, Debug)]
 pub struct WorkspaceSlot {
     pub workspace: DockWorkspace,
+    /// Currently-loaded app id. Drives `shell.app-card`'s
+    /// "active" tint on the Launchpad and is the seam through which
+    /// per-app skeleton swaps will eventually plug in (D4 follow-up
+    /// in `ui-migration-followups.md`).
+    pub active_app: Option<String>,
 }
 
 impl Default for WorkspaceSlot {
     fn default() -> Self {
         Self {
             workspace: DockWorkspace::with_builtins(),
+            active_app: None,
         }
     }
 }
 
 impl WorkspaceSlot {
+    /// Switch the active app to `id`. Returns `true` when the cursor
+    /// actually moved (so the click handler can flag the frame
+    /// dirty). Passing the already-active id is a no-op.
+    pub fn set_active_app(&mut self, id: &str) -> bool {
+        if self.active_app.as_deref() == Some(id) {
+            return false;
+        }
+        self.active_app = Some(id.to_string());
+        true
+    }
+
     /// JSON for `shell.workflow-page-bar`: one row per page with the
     /// active flag pre-resolved.
     pub fn workflow_page_bar_props(&self) -> Value {
@@ -781,11 +1130,20 @@ impl OverlaySlot {
 /// `shell.inspector-row`, `shell.field-editor`) stay stubs — their
 /// data flows down inside the parent's `rows` / `connections` /
 /// `fields` JSON arrays, never through their own binding row.
+///
+/// `selected_connection` / `schema.selected_field` are the chevron-row
+/// cursors that drive the trash affordances on
+/// `shell.signal-connection-row` / `shell.schema-row`. They sit
+/// disjoint from any per-row state because the rows themselves are
+/// projected from `signal_connections` / `schema.fields` every frame;
+/// the cursor lives on the owning slot so a stateless `cmd <id>` body
+/// has a target.
 #[derive(Clone, Debug, Default)]
 pub struct BuilderSlot {
     pub inspector: Vec<InspectorNode>,
     pub property_rows: Vec<PropertyRow>,
     pub signal_connections: Vec<SignalConnection>,
+    pub selected_connection: Option<String>,
     pub schema: SchemaDoc,
 }
 
@@ -807,19 +1165,35 @@ pub struct PropertyRow {
     pub props: Value,
 }
 
+/// One row in the signals panel. The `id` field is the cursor key the
+/// signals trash button targets via
+/// `signals.delete-selected-connection`; mirror the
+/// `prism_builder::Connection::id` when projecting from the canvas
+/// document.
 #[derive(Clone, Debug)]
 pub struct SignalConnection {
+    pub id: String,
     pub source_signal: String,
     pub action_kind: String,
     pub target_label: String,
-    pub selected: bool,
 }
 
+impl CursorKey for SignalConnection {
+    fn cursor_key(&self) -> &str {
+        &self.id
+    }
+}
+
+/// `selected_field` is the cursor the schema-designer trash button
+/// targets via `schema.delete-selected-field`; it stores the field
+/// `name` because `SchemaField` has no separate id and the name is
+/// the registry-facing identifier.
 #[derive(Clone, Debug, Default)]
 pub struct SchemaDoc {
     pub title: String,
     pub schema_name: String,
     pub fields: Vec<SchemaField>,
+    pub selected_field: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -829,13 +1203,28 @@ pub struct SchemaField {
     pub required: bool,
 }
 
+impl CursorKey for SchemaField {
+    fn cursor_key(&self) -> &str {
+        &self.name
+    }
+}
+
 impl BuilderSlot {
     pub fn inspector_tree_props(&self) -> Value {
         json!({ "nodes": self.inspector_json() })
     }
 
     pub fn properties_panel_props(&self) -> Value {
-        json!({ "rows": self.property_rows_json() })
+        self.properties_panel_props_with(None)
+    }
+
+    /// Same shape as [`Self::properties_panel_props`] but stamps
+    /// `focused: true` onto whichever row matches `focus.target_id +
+    /// focus.key`. The properties-panel binding passes the current
+    /// `state.field_focus` here so the field-editor lowering can paint
+    /// an outline / cursor without re-deriving rows on every keystroke.
+    pub fn properties_panel_props_with(&self, focus: Option<&FieldFocus>) -> Value {
+        json!({ "rows": self.property_rows_json_with(focus) })
     }
 
     pub fn signals_panel_props(&self) -> Value {
@@ -851,6 +1240,36 @@ impl BuilderSlot {
             "schema-name": self.schema.schema_name,
             "fields": self.schema_fields_json(),
         })
+    }
+
+    /// Move the chevron cursor (`selected_connection`) onto `id`.
+    /// Returns `true` when the cursor actually moved. Mirrors the
+    /// `NavigationSlot::select_row` shape — all three cursor pairs in
+    /// `state.rs` delegate to [`select_cursor_row`] / [`delete_cursor_row`]
+    /// over their respective `(items, cursor)` pair.
+    pub fn select_signal_connection(&mut self, id: &str) -> bool {
+        select_cursor_row(&self.signal_connections, &mut self.selected_connection, id)
+    }
+
+    /// Remove the currently-cursored connection from the slot mirror
+    /// and clear the cursor. Returns `true` when a row actually went
+    /// away. The canvas document's `Connection` list is the source of
+    /// truth; the resync pass that follows a structural mutation is
+    /// expected to rebuild the slot mirror — for now the slot edit is
+    /// the visible effect (the panel re-paints without the row).
+    pub fn delete_selected_signal_connection(&mut self) -> bool {
+        delete_cursor_row(&mut self.signal_connections, &mut self.selected_connection)
+    }
+
+    /// Move the schema-designer chevron cursor (`schema.selected_field`)
+    /// onto `name`. Returns `true` when the cursor moved.
+    pub fn select_schema_field(&mut self, name: &str) -> bool {
+        select_cursor_row(&self.schema.fields, &mut self.schema.selected_field, name)
+    }
+
+    /// Remove the currently-cursored schema field. Clears the cursor.
+    pub fn delete_selected_schema_field(&mut self) -> bool {
+        delete_cursor_row(&mut self.schema.fields, &mut self.schema.selected_field)
     }
 
     fn inspector_json(&self) -> Value {
@@ -869,41 +1288,74 @@ impl BuilderSlot {
         )
     }
 
-    fn property_rows_json(&self) -> Value {
+    /// JSON shape for the properties-panel rows with optional focus
+    /// folding. When `focus` matches a row's `target-id + key`, the
+    /// emitted props carry `"focused": true`; rows without focus are
+    /// untouched. The field-editor block reads the flag and paints an
+    /// outline.
+    fn property_rows_json_with(&self, focus: Option<&FieldFocus>) -> Value {
         Value::Array(
             self.property_rows
                 .iter()
-                .map(|r| json!({ "component": r.component, "props": r.props }))
+                .map(|r| {
+                    let mut props = r.props.clone();
+                    if let Some(f) = focus {
+                        let target_matches = props
+                            .get("target-id")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s == f.target_id)
+                            .unwrap_or(false);
+                        let key_matches = props
+                            .get("key")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s == f.key)
+                            .unwrap_or(false);
+                        if target_matches && key_matches {
+                            if let Value::Object(map) = &mut props {
+                                map.insert("focused".into(), Value::Bool(true));
+                            }
+                        }
+                    }
+                    json!({ "component": r.component, "props": props })
+                })
                 .collect(),
         )
     }
 
     fn connections_json(&self) -> Value {
         Value::Array(
-            self.signal_connections
-                .iter()
-                .map(|c| {
-                    json!({
-                        "source-signal": c.source_signal,
-                        "action-kind": c.action_kind,
-                        "target-label": c.target_label,
-                        "selected": c.selected,
-                    })
+            iter_with_cursor(
+                &self.signal_connections,
+                self.selected_connection.as_deref(),
+            )
+            .map(|(c, is_selected)| {
+                json!({
+                    "connection-id": c.id,
+                    "source-signal": c.source_signal,
+                    "action-kind": c.action_kind,
+                    "target-label": c.target_label,
+                    "selected": is_selected,
+                    "show-delete": is_selected,
                 })
-                .collect(),
+            })
+            .collect(),
         )
     }
 
     fn schema_fields_json(&self) -> Value {
         Value::Array(
-            self.schema
-                .fields
-                .iter()
-                .map(|f| {
+            iter_with_cursor(&self.schema.fields, self.schema.selected_field.as_deref())
+                .map(|(f, is_selected)| {
                     json!({
+                        // `field-id` doubles as the cursor key — no
+                        // separate id exists on `SchemaField`, and the
+                        // name is unique within a schema.
+                        "field-id": f.name,
                         "field-name": f.name,
                         "field-kind": f.kind,
                         "required": f.required,
+                        "selected": is_selected,
+                        "show-delete": is_selected,
                     })
                 })
                 .collect(),
@@ -921,10 +1373,16 @@ impl BuilderSlot {
 /// `shell.nav-page-list`, `shell.nav-graph`. The per-row block
 /// (`shell.nav-page-row`) stays a stub — page rows render inside the
 /// parent list's `pages` array.
+///
+/// `selected_page` is the cursor the inspector-style chevron / trash
+/// buttons on `shell.nav-page-row` target — disjoint from
+/// `NavPage::is_active`, which tracks "currently open" rather than
+/// "selected in the page list."
 #[derive(Clone, Debug, Default)]
 pub struct NavigationSlot {
     pub pages: Vec<NavPage>,
     pub edges: Vec<NavEdge>,
+    pub selected_page: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -937,6 +1395,12 @@ pub struct NavPage {
     pub node_count: u32,
     pub link_count: u32,
     pub is_active: bool,
+}
+
+impl CursorKey for NavPage {
+    fn cursor_key(&self) -> &str {
+        &self.id
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -999,6 +1463,64 @@ impl NavigationSlot {
         self.pages.last().expect("just pushed")
     }
 
+    /// Move the chevron-cursor (`selected_page`) onto `id`. The cursor
+    /// is disjoint from `is_active` — selecting a row in the page list
+    /// surfaces the move-up / move-down / delete affordances without
+    /// switching the open page. Returns `true` when the cursor
+    /// actually moved. Delegates to [`select_cursor_row`], the shared
+    /// helper that drives every cursor-keyed row in the shell.
+    pub fn select_row(&mut self, id: &str) -> bool {
+        select_cursor_row(&self.pages, &mut self.selected_page, id)
+    }
+
+    /// Swap the currently-selected page with its `dir`-neighbour
+    /// (-1 = previous, +1 = next). Used by the nav-page-row chevrons
+    /// via `navigation.move-page-{up,down}`. The cursor follows the
+    /// page so the chevron stays under the user's pointer.
+    pub fn reorder_selected(&mut self, dir: i32) -> bool {
+        if dir == 0 {
+            return false;
+        }
+        let Some(id) = self.selected_page.clone() else {
+            return false;
+        };
+        let Some(idx) = self.pages.iter().position(|p| p.id == id) else {
+            return false;
+        };
+        let new_idx = idx as i32 + dir;
+        if new_idx < 0 || new_idx as usize >= self.pages.len() {
+            return false;
+        }
+        self.pages.swap(idx, new_idx as usize);
+        true
+    }
+
+    /// Remove the currently-selected page. Clears the cursor and, if
+    /// the page was the active one, transfers `is_active` onto the
+    /// next surviving page (or none when the list empties).
+    pub fn delete_selected(&mut self) -> bool {
+        // Peek the row before delegating so we can detect "was the
+        // dropped page the active one" — the shared helper already
+        // does the cursor + remove dance, but the active-promotion is
+        // navigation-specific bookkeeping.
+        let was_active = self
+            .selected_page
+            .as_deref()
+            .and_then(|id| self.pages.iter().find(|p| p.id == id))
+            .map(|p| p.is_active)
+            .unwrap_or(false);
+        let Some(idx) = pop_cursor_row(&mut self.pages, &mut self.selected_page) else {
+            return false;
+        };
+        if was_active && !self.pages.is_empty() {
+            // Promote the next-best page to active so the workspace
+            // doesn't end up in a "no active page" state.
+            let promote = idx.min(self.pages.len() - 1);
+            self.pages[promote].is_active = true;
+        }
+        true
+    }
+
     /// Mark `id` as the active nav page (clears `is_active` on every
     /// other entry). Returns `true` when the active page actually
     /// moved, so the event router can flag the frame as dirty. Pages
@@ -1030,9 +1552,8 @@ impl NavigationSlot {
 
     fn pages_list_json(&self) -> Value {
         Value::Array(
-            self.pages
-                .iter()
-                .map(|p| {
+            iter_with_cursor(&self.pages, self.selected_page.as_deref())
+                .map(|(p, is_selected)| {
                     json!({
                         "page-id": p.id,
                         "page-title": p.title,
@@ -1040,6 +1561,8 @@ impl NavigationSlot {
                         "node-count": p.node_count,
                         "link-count": p.link_count,
                         "is-active": p.is_active,
+                        "selected": is_selected,
+                        "show-delete": is_selected,
                     })
                 })
                 .collect(),
@@ -2632,6 +3155,72 @@ mod tests {
         assert_eq!(props["title"], "Save");
     }
 
+    // ── cursor helpers ───────────────────────────────────────────
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct CursorRow {
+        id: &'static str,
+    }
+
+    impl CursorKey for CursorRow {
+        fn cursor_key(&self) -> &str {
+            self.id
+        }
+    }
+
+    #[test]
+    fn select_cursor_row_moves_cursor_idempotent_against_self_and_unknown() {
+        let items = vec![CursorRow { id: "a" }, CursorRow { id: "b" }];
+        let mut cursor = None;
+        assert!(select_cursor_row(&items, &mut cursor, "b"));
+        assert_eq!(cursor.as_deref(), Some("b"));
+        // Idempotent.
+        assert!(!select_cursor_row(&items, &mut cursor, "b"));
+        // Unknown ids leave the cursor alone.
+        assert!(!select_cursor_row(&items, &mut cursor, "ghost"));
+        assert_eq!(cursor.as_deref(), Some("b"));
+    }
+
+    #[test]
+    fn delete_cursor_row_drops_cursored_row_and_clears_cursor() {
+        let mut items = vec![CursorRow { id: "a" }, CursorRow { id: "b" }];
+        let mut cursor = Some("a".to_string());
+        assert!(delete_cursor_row(&mut items, &mut cursor));
+        assert_eq!(items, vec![CursorRow { id: "b" }]);
+        assert!(cursor.is_none());
+        // Empty cursor → no-op.
+        assert!(!delete_cursor_row(&mut items, &mut cursor));
+        // Stale cursor → no-op + cleared.
+        cursor = Some("ghost".into());
+        assert!(!delete_cursor_row(&mut items, &mut cursor));
+        assert!(cursor.is_none());
+    }
+
+    #[test]
+    fn pop_cursor_row_returns_original_index_for_post_remove_bookkeeping() {
+        let mut items = vec![
+            CursorRow { id: "a" },
+            CursorRow { id: "b" },
+            CursorRow { id: "c" },
+        ];
+        let mut cursor = Some("b".to_string());
+        assert_eq!(pop_cursor_row(&mut items, &mut cursor), Some(1));
+        assert_eq!(items, vec![CursorRow { id: "a" }, CursorRow { id: "c" }]);
+    }
+
+    #[test]
+    fn iter_with_cursor_pairs_each_row_with_is_selected_flag() {
+        let items = vec![
+            CursorRow { id: "a" },
+            CursorRow { id: "b" },
+            CursorRow { id: "c" },
+        ];
+        let flags: Vec<bool> = iter_with_cursor(&items, Some("b"))
+            .map(|(_, sel)| sel)
+            .collect();
+        assert_eq!(flags, vec![false, true, false]);
+    }
+
     // ── builder ───────────────────────────────────────────────────
 
     #[test]
@@ -2653,19 +3242,123 @@ mod tests {
     }
 
     #[test]
+    fn properties_panel_props_with_focus_stamps_focused_on_matching_row() {
+        let mut builder = BuilderSlot::default();
+        builder.property_rows.push(PropertyRow {
+            component: "shell.field-editor".into(),
+            props: json!({
+                "key": "body",
+                "kind": "text",
+                "value": "hi",
+                "target-id": "demo-heading",
+            }),
+        });
+        builder.property_rows.push(PropertyRow {
+            component: "shell.field-editor".into(),
+            props: json!({
+                "key": "level",
+                "kind": "select",
+                "value": "h1",
+                "target-id": "demo-heading",
+            }),
+        });
+        let focus = FieldFocus {
+            target_id: "demo-heading".into(),
+            key: "body".into(),
+            kind: "text".into(),
+            draft: "hi".into(),
+            original: "hi".into(),
+        };
+        let props = builder.properties_panel_props_with(Some(&focus));
+        let rows = props["rows"].as_array().unwrap();
+        assert_eq!(rows[0]["props"]["focused"], true);
+        // Sibling rows stay unfocused — no stray flag.
+        assert_eq!(rows[1]["props"].get("focused"), None);
+    }
+
+    #[test]
     fn signals_panel_props_emits_connection_array() {
         let mut builder = BuilderSlot::default();
         builder.signal_connections.push(SignalConnection {
+            id: "c1".into(),
             source_signal: "clicked".into(),
             action_kind: "SetProperty".into(),
             target_label: "x".into(),
-            selected: false,
         });
         let props = builder.signals_panel_props();
         assert_eq!(props["title"], "Signals");
         let conns = props["connections"].as_array().unwrap();
+        assert_eq!(conns[0]["connection-id"], "c1");
         assert_eq!(conns[0]["source-signal"], "clicked");
         assert_eq!(conns[0]["action-kind"], "SetProperty");
+        assert_eq!(conns[0]["selected"], false);
+        assert_eq!(conns[0]["show-delete"], false);
+    }
+
+    #[test]
+    fn select_signal_connection_moves_cursor() {
+        let mut builder = BuilderSlot::default();
+        builder.signal_connections.push(SignalConnection {
+            id: "c1".into(),
+            source_signal: "clicked".into(),
+            action_kind: "EmitSignal".into(),
+            target_label: "y".into(),
+        });
+        builder.signal_connections.push(SignalConnection {
+            id: "c2".into(),
+            source_signal: "hovered".into(),
+            action_kind: "SetProperty".into(),
+            target_label: "x".into(),
+        });
+        assert!(builder.select_signal_connection("c2"));
+        assert_eq!(builder.selected_connection.as_deref(), Some("c2"));
+        // Idempotent: re-selecting the same row returns false.
+        assert!(!builder.select_signal_connection("c2"));
+        // Unknown ids leave the cursor alone.
+        assert!(!builder.select_signal_connection("ghost"));
+    }
+
+    #[test]
+    fn signals_panel_props_marks_cursor_row_selected_and_show_delete() {
+        let mut builder = BuilderSlot::default();
+        for id in ["c1", "c2"] {
+            builder.signal_connections.push(SignalConnection {
+                id: id.into(),
+                source_signal: "clicked".into(),
+                action_kind: "EmitSignal".into(),
+                target_label: "x".into(),
+            });
+        }
+        builder.select_signal_connection("c2");
+        let props = builder.signals_panel_props();
+        let conns = props["connections"].as_array().unwrap();
+        assert_eq!(conns[0]["selected"], false);
+        assert_eq!(conns[1]["selected"], true);
+        assert_eq!(conns[1]["show-delete"], true);
+    }
+
+    #[test]
+    fn delete_selected_signal_connection_drops_cursor_row() {
+        let mut builder = BuilderSlot::default();
+        for id in ["c1", "c2"] {
+            builder.signal_connections.push(SignalConnection {
+                id: id.into(),
+                source_signal: "clicked".into(),
+                action_kind: "EmitSignal".into(),
+                target_label: "x".into(),
+            });
+        }
+        builder.select_signal_connection("c2");
+        assert!(builder.delete_selected_signal_connection());
+        let remaining: Vec<&str> = builder
+            .signal_connections
+            .iter()
+            .map(|c| c.id.as_str())
+            .collect();
+        assert_eq!(remaining, vec!["c1"]);
+        assert!(builder.selected_connection.is_none());
+        // Idempotent: no cursor, nothing to delete.
+        assert!(!builder.delete_selected_signal_connection());
     }
 
     #[test]
@@ -2679,6 +3372,7 @@ mod tests {
                     kind: "text".into(),
                     required: true,
                 }],
+                ..Default::default()
             },
             ..Default::default()
         };
@@ -2688,6 +3382,95 @@ mod tests {
         let fields = props["fields"].as_array().unwrap();
         assert_eq!(fields[0]["field-name"], "title");
         assert_eq!(fields[0]["required"], true);
+        assert_eq!(fields[0]["selected"], false);
+        assert_eq!(fields[0]["show-delete"], false);
+    }
+
+    #[test]
+    fn select_schema_field_moves_cursor() {
+        let mut builder = BuilderSlot {
+            schema: SchemaDoc {
+                fields: vec![
+                    SchemaField {
+                        name: "title".into(),
+                        kind: "text".into(),
+                        required: true,
+                    },
+                    SchemaField {
+                        name: "body".into(),
+                        kind: "rich-text".into(),
+                        required: false,
+                    },
+                ],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(builder.select_schema_field("body"));
+        assert_eq!(builder.schema.selected_field.as_deref(), Some("body"));
+        assert!(!builder.select_schema_field("body"));
+        assert!(!builder.select_schema_field("ghost"));
+    }
+
+    #[test]
+    fn schema_designer_props_marks_cursor_row_selected_and_show_delete() {
+        let mut builder = BuilderSlot {
+            schema: SchemaDoc {
+                fields: vec![
+                    SchemaField {
+                        name: "title".into(),
+                        kind: "text".into(),
+                        required: false,
+                    },
+                    SchemaField {
+                        name: "body".into(),
+                        kind: "rich-text".into(),
+                        required: false,
+                    },
+                ],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        builder.select_schema_field("body");
+        let props = builder.schema_designer_props();
+        let fields = props["fields"].as_array().unwrap();
+        assert_eq!(fields[0]["selected"], false);
+        assert_eq!(fields[1]["selected"], true);
+        assert_eq!(fields[1]["show-delete"], true);
+    }
+
+    #[test]
+    fn delete_selected_schema_field_drops_cursor_row() {
+        let mut builder = BuilderSlot {
+            schema: SchemaDoc {
+                fields: vec![
+                    SchemaField {
+                        name: "title".into(),
+                        kind: "text".into(),
+                        required: false,
+                    },
+                    SchemaField {
+                        name: "body".into(),
+                        kind: "rich-text".into(),
+                        required: false,
+                    },
+                ],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        builder.select_schema_field("body");
+        assert!(builder.delete_selected_schema_field());
+        let remaining: Vec<&str> = builder
+            .schema
+            .fields
+            .iter()
+            .map(|f| f.name.as_str())
+            .collect();
+        assert_eq!(remaining, vec!["title"]);
+        assert!(builder.schema.selected_field.is_none());
+        assert!(!builder.delete_selected_schema_field());
     }
 
     #[test]
@@ -2736,6 +3519,7 @@ mod tests {
                 to: 1,
                 kind: NavEdgeKind::Href,
             }],
+            ..Default::default()
         }
     }
 
@@ -2772,6 +3556,65 @@ mod tests {
         assert!(!nav.select_page_by_id("nonexistent"));
         // Active flag stays put.
         assert!(nav.pages[0].is_active);
+    }
+
+    #[test]
+    fn select_row_moves_the_chevron_cursor_without_touching_active_flag() {
+        let mut nav = sample_nav();
+        assert!(nav.select_row("about"));
+        assert_eq!(nav.selected_page.as_deref(), Some("about"));
+        // Active page didn't move — cursor is disjoint from is_active.
+        assert!(nav.pages[0].is_active);
+        assert!(!nav.pages[1].is_active);
+    }
+
+    #[test]
+    fn pages_list_props_emits_selected_and_show_delete_for_cursor_row() {
+        let mut nav = sample_nav();
+        nav.select_row("about");
+        let props = nav.nav_page_list_props();
+        let pages = props["pages"].as_array().unwrap();
+        assert_eq!(pages[0]["selected"], false);
+        assert_eq!(pages[1]["selected"], true);
+        assert_eq!(pages[1]["show-delete"], true);
+    }
+
+    #[test]
+    fn reorder_selected_swaps_cursor_page_with_neighbour() {
+        let mut nav = sample_nav();
+        nav.select_row("about");
+        assert!(nav.reorder_selected(-1));
+        assert_eq!(nav.pages[0].id, "about");
+        assert_eq!(nav.pages[1].id, "home");
+        // Cursor still points at "about" — it moved with the page.
+        assert_eq!(nav.selected_page.as_deref(), Some("about"));
+    }
+
+    #[test]
+    fn reorder_selected_at_boundary_returns_false() {
+        let mut nav = sample_nav();
+        nav.select_row("home");
+        assert!(!nav.reorder_selected(-1));
+    }
+
+    #[test]
+    fn delete_selected_removes_page_and_clears_cursor() {
+        let mut nav = sample_nav();
+        nav.select_row("about");
+        assert!(nav.delete_selected());
+        assert_eq!(nav.pages.len(), 1);
+        assert!(nav.selected_page.is_none());
+    }
+
+    #[test]
+    fn delete_selected_active_page_promotes_a_survivor() {
+        let mut nav = sample_nav();
+        nav.select_row("home"); // Home is active.
+        assert!(nav.delete_selected());
+        // "about" inherits active status so the workspace stays
+        // pointed at something.
+        assert!(nav.pages[0].is_active);
+        assert_eq!(nav.pages[0].id, "about");
     }
 
     #[test]

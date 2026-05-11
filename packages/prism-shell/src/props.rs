@@ -155,7 +155,8 @@ const SLOT_BINDINGS: &[(&str, SlotAccessor)] = &[
     // once and every binding pulls from it.
     ("shell.inspector-tree", |s| s.builder.inspector_tree_props()),
     ("shell.properties-panel", |s| {
-        s.builder.properties_panel_props()
+        s.builder
+            .properties_panel_props_with(s.field_focus.as_ref())
     }),
     ("shell.signals-panel", |s| s.builder.signals_panel_props()),
     ("shell.schema-designer", |s| {

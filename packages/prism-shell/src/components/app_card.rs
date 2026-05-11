@@ -112,13 +112,20 @@ fn app_card_lower(_ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> 
     // standard hover-overrides path. SSR semantic is <article> with
     // the app-id surfaced as `data-app` so launchpad screen-readers
     // / nav scripts have something to target.
+    //
+    // B6 follow-up: the article carries `data-role="app-card"` so
+    // `POINTER_ROUTES` can dispatch the click to
+    // `WorkspaceSlot::set_active_app`; the `data-app` attr does
+    // double duty as the route's target id. The "create" card opts
+    // out of the route (no app id to load) by simply not carrying a
+    // `data-app` value, which the route guard treats as a no-op.
     bare_container(node.id.clone(), vec![rail, body], |props| {
         props.direction = Direction::Column;
         props.height = Sizing::Fixed(CARD_HEIGHT);
         props.background = parse_color(CARD_BG);
         props.radius = uniform_radius(CARD_RADIUS);
         props.hover = hover_bg(CARD_HOVER_BG);
-        let mut semantic = Semantic::tag("article");
+        let mut semantic = Semantic::tag("article").with_attr("data-role", "app-card");
         if !app_id.is_empty() {
             semantic = semantic.with_attr("data-app", &app_id);
         }
@@ -289,6 +296,13 @@ mod tests {
                 .attrs
                 .iter()
                 .any(|(k, v)| k == "data-app" && v == "lattice"));
+            // B6 follow-up: card carries the `data-role` routing key
+            // POINTER_ROUTES dispatches through.
+            assert!(props
+                .semantic
+                .attrs
+                .iter()
+                .any(|(k, v)| k == "data-role" && v == "app-card"));
         } else {
             panic!("not a container")
         }

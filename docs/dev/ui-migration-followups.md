@@ -48,10 +48,138 @@ narrates the *transition*; this doc enumerates what's still open
 > all selection-affecting commands run
 > `AppState::resync_builder_for_selection` so the inspector tree and
 > property rows stay coherent. Tests: 331 lib (was 293), clippy clean,
-> workspace `cargo test` green. See **B6** below for which chrome
-> rows still pass `None` for `command` (nav-page chevrons /
-> schema-row trash / signal-row trash) — they're waiting on a
-> "selected page / field / connection" cursor on the owning slot.
+> workspace `cargo test` green.
+>
+> **Status update — 2026-05-11 (fourth wave).** Two more B6 click
+> surfaces light up. `shell.app-card` now carries `data-role="app-card"`
+> and routes through a new `POINTER_ROUTES` row to
+> `WorkspaceSlot::set_active_app` — clicking a Launchpad card sets
+> `state.workspace.active_app`. `shell.nav-page-row` chevrons + trash
+> thread through three new commands
+> (`navigation.move-page-{up,down}` / `navigation.delete-selected-page`)
+> against a new `selected_page: Option<String>` cursor on
+> `NavigationSlot`; `pages_list_json` emits `selected` /
+> `show-delete` per row from it, and clicking a nav-page-row moves
+> both the chevron cursor and the existing `is_active` flag. Tests:
+> 340 lib (+9 over the third wave), clippy clean. The only B6 rows
+> still passing `None` for `command` are `shell.schema-row` /
+> `shell.signal-connection-row` — each needs a "selected field" /
+> "selected connection" cursor on its owning panel before a
+> stateless `cmd <id>` has a target.
+>
+> **Status update — 2026-05-11 (fifth wave).** Last two B6 click
+> surfaces light up. `shell.schema-row` and `shell.signal-connection-row`
+> both grew a cursor-key prop (`field-id` / `connection-id`) that
+> lowers to `data-target-id`, and the trash icon button now threads
+> `Some("schema.delete-selected-field")` /
+> `Some("signals.delete-selected-connection")` instead of the placeholder
+> `None`. Two new cursors land on `BuilderSlot`:
+> `schema.selected_field: Option<String>` (stores the field name —
+> there is no separate id on `SchemaField` and the name is unique
+> per schema) and `selected_connection: Option<String>` on
+> `BuilderSlot` itself. `SignalConnection` grew an `id: String` field
+> (mirroring `prism_builder::Connection::id`) and dropped the
+> per-row `selected: bool`; selection is now derived from the cursor
+> the same way `NavigationSlot::selected_page` drives nav-page-row
+> selection. Two new mutators on `BuilderSlot`
+> (`select_schema_field` / `delete_selected_schema_field`) and two
+> more (`select_signal_connection` /
+> `delete_selected_signal_connection`) plug into two new POINTER_ROUTES
+> rows (`schema-row` → schema cursor, `signal-connection-row` →
+> connection cursor) and two new `BuilderService` commands
+> (`schema.delete-selected-field`,
+> `signals.delete-selected-connection`). The
+> `schema_fields_json` / `connections_json` emitters now project
+> `selected` / `show-delete` per row from the cursor, so the rows
+> reveal their chevron / trash cluster exactly when their owning
+> slot's cursor lands on them — identical UX shape to nav-page-row.
+> Tests: 355 lib (+15 over the fourth wave), clippy clean, workspace
+> `cargo test` green. B6 is now empty modulo
+> `shell.dock-tab-bar` "close tab" / "+new tab" — still deferred
+> until the dock workspace grows user-facing tab management.
+>
+> **Status update — 2026-05-11 (sixth wave).** Interactivity push.
+> Three landings on top of the cursor-row plumbing:
+>
+> 1. **Boot seed for the panels with click-routes.** `seed.rs` now
+>    hydrates `BuilderSlot::schema` (3 starter fields), 
+>    `BuilderSlot::signal_connections` (2 starter rows), and
+>    `NavigationSlot::pages` (3 pages with 2 edges). Without these,
+>    the Data / Edit / Navigation workflow pages rendered the
+>    schema-designer / signals-panel / nav-page-list as empty
+>    strips, and the B6 click routes had no targets to fire
+>    against.
+> 2. **Field-edit click cycles select + steps number/integer.**
+>    `handle_field_edit_click` grew arms for `select` (cycles
+>    through the comma-joined `data-options` list, wrapping at
+>    the end) and `number` / `integer` (step `+1`, clamped by
+>    `data-min` / `data-max`). The select path threads
+>    `FieldKind::Select(options)` through
+>    `property_row_from_spec` → field-editor lowering as
+>    `data-options`; number/integer surface their
+>    `NumericBounds` as `data-min` / `data-max`. Three
+>    property-row kinds (boolean, select, number/integer) are
+>    now click-interactive end-to-end; text / color / file still
+>    defer to the B4 follow-up.
+> 3. **`CursorKey` trait + shared helpers** fold the three
+>    "cursor + select-row + delete-cursored-row" pairs onto one
+>    trait impl and three free helpers
+>    (`select_cursor_row`, `delete_cursor_row`,
+>    `iter_with_cursor`). Nav pages, schema fields, and signal
+>    connections all delegate; the JSON emitters share one
+>    iterator helper for the per-row `selected` / `show-delete`
+>    derivation. Adding a fourth cursor-driven row is one
+>    `impl CursorKey` + three short delegators on the owning
+>    slot.
+>
+> Tests: 364 lib (+9 over the fifth wave), clippy clean,
+> workspace `cargo test` green.
+>
+> **Status update — 2026-05-11 (seventh wave).** B4 landed.
+> Text-input focus + drag-scrub close the field-editor
+> interactivity loop:
+>
+> 1. **Text / color / file kinds** open a focus session
+>    (`AppState::field_focus`) on click. A new
+>    `FieldFocusService` registers ahead of every modal so
+>    `Text` events route into `AppState::type_field_text`,
+>    `Backspace` into `backspace_field`, `Enter` into
+>    `commit_field_focus`, `Esc` into `cancel_field_focus`
+>    (restores `original`). Every keystroke flushes the
+>    bound prop through `set_node_prop` so the rendered
+>    value stays in sync without a "commit on blur" pass.
+>    Modifier-bearing keys (Ctrl+S, etc.) pass through so
+>    global shortcuts still resolve while the user is mid-
+>    edit. Clicking anywhere outside the field commits and
+>    clears the focus via a pre-route blur pass in
+>    `dispatch_event`.
+> 2. **Number / integer kinds** open a `NumberDrag` session
+>    on pointer-down. Pointer-move past a 3px threshold
+>    scrubs the bound prop proportional to `dx/4`px-per-
+>    unit, clamped to `data-min` / `data-max`. Pointer-up
+>    without crossing the threshold falls through to the
+>    legacy `+1 step` so single clicks still increment.
+> 3. **Focus visual.** The properties-panel binding folds
+>    `state.field_focus` into the row props
+>    (`properties_panel_props_with`) so the focused row
+>    carries `focused: true`; the field-editor lowering
+>    paints an accent tint + `data-focused="true"` on that
+>    row.
+>
+> Tests: 376 lib (+12 over the sixth wave), workspace
+> `cargo test` 3199 green, clippy clean.
+>
+> **Status update — 2026-05-11 (docs cleanup, partial F).** Slint-era
+> headers retired from `prism-core/src/lib.rs`,
+> `prism-core/CLAUDE.md`, `prism-builder/src/lib.rs`,
+> `prism-builder/src/prism_ui_emit.rs`, and
+> `prism-builder/src/schemas.rs` — every doc string that opened with
+> "Slint-era" or "Phase-2 target of the Slint migration" now reads
+> against the post-cutover reality. The remaining
+> `docs/dev/slint-migration-plan.md` cross-references in other
+> crates (daemon / studio / cli) point to a still-extant historical
+> doc and can stay until they have a `clay-migration-plan.md`
+> equivalent or are themselves rewritten.
 
 The Slint exorcism is functionally complete: zero `slint*` rows in
 `Cargo.lock`, `cargo test --workspace` is green at 6300+ tests, and
@@ -188,13 +316,21 @@ button — but the click does nothing.
   binary that paints once and never updates. Every interaction
   the native window handles is dead in the browser.
 
-### B4. Text-input focus / IME / drag scrubber
-- **Status:** `Node::TextInput` renders as a static rect with
-  a value; `dispatch_event::Text` arms are no-ops for
-  non-modal focus. The boolean field-edit path
-  (`prism-shell/src/events.rs`) works end-to-end through a
-  `data-role` route; text / number / select / color / file
-  rows carry the same routing attrs but defer real edit UX.
+### B4. Text-input focus / IME / drag scrubber — LANDED
+- **Status:** every shipped field-editor kind is now click-
+  interactive. Boolean toggles, select cycles through
+  `data-options`, number/integer step `+1` clamped by
+  `data-min` / `data-max` on a release-without-drag, and drag
+  scrubs the value proportional to pointer delta. Text /
+  color / file rows open a text-input focus session
+  (`AppState::field_focus`) that captures the keyboard:
+  `Text` events append to the draft, `Backspace` pops one
+  char, `Enter` commits, `Esc` cancels (restoring the
+  original value). Every keystroke flushes the bound prop
+  through `set_node_prop` so the renderer stays in sync.
+  Clicking anywhere outside the focused field commits + clears.
+  Modifier-bearing keys (Ctrl+S etc.) pass through so global
+  shortcuts still work mid-edit.
 - **Plan §:** §43 Phase C2 "Not in this phase" note.
 - **Lands in:** runtime focus model on `Surface`
   (current selection or null), `dispatch_event::Text` routes
@@ -238,22 +374,44 @@ button — but the click does nothing.
   tests up from 293).
 
   Still dead-clickable:
-  - `shell.app-card` (Launchpad): carries `data-app="<id>"` but no
-    `data-role` and no state hook for "active app." Needs a model
-    decision (does clicking a card switch the loaded
-    `app.prism-ui` skeleton, set a slot field, dispatch a command?)
-    before the route is meaningful.
-  - `shell.nav-page-row` chevrons + trash, `shell.schema-row`
-    trash, `shell.signal-connection-row` trash. The lowering call
-    sites now thread `command: None` for API uniformity, but the
-    slots don't yet carry a "selected page" / "selected field" /
-    "selected connection" cursor that a stateless `cmd <id>` body
-    could target. Threading commands here lands once those
-    cursors exist — three small slot fields plus three commands
-    on `BuilderService`.
   - `shell.dock-tab-bar` "close tab" / "+new tab" affordances —
     not authored yet; deferred until the dock workspace grows
     user-facing tab management.
+
+  **Landed in the fourth wave (2026-05-11):**
+  - `shell.app-card` carries `data-role="app-card"` and routes
+    through `POINTER_ROUTES` to `WorkspaceSlot::set_active_app`.
+    `WorkspaceSlot` gained an `active_app: Option<String>` cursor;
+    the per-app skeleton swap that should eventually consume it is
+    the D4 follow-up. The "create" card naturally falls through
+    the route (no `data-app` attr).
+  - `shell.nav-page-row` chevrons + trash route through
+    `navigation.move-page-up` / `navigation.move-page-down` /
+    `navigation.delete-selected-page`. `NavigationSlot` gained a
+    `selected_page: Option<String>` cursor disjoint from
+    `is_active`; `pages_list_json` emits `selected` / `show-delete`
+    per row from it. Clicking a nav-page-row both moves the active
+    flag (existing behaviour) and the chevron cursor.
+
+  **Landed in the fifth wave (2026-05-11):**
+  - `shell.schema-row` trash routes through
+    `schema.delete-selected-field`. `BuilderSlot::schema` gained
+    `selected_field: Option<String>` (stores the field `name` —
+    `SchemaField` has no separate id and the name is unique per
+    schema); the lowering threads the cursor key through a new
+    `field-id` prop that surfaces as `data-target-id`. A new
+    POINTER_ROUTES row (`schema-row` → `select_schema_field`)
+    moves the cursor on click; `schema_fields_json` emits
+    `selected` / `show-delete` per row from it.
+  - `shell.signal-connection-row` trash routes through
+    `signals.delete-selected-connection`. `SignalConnection` gained
+    an `id: String` field (mirrors `prism_builder::Connection::id`)
+    and dropped its per-row `selected: bool` — selection is now
+    derived from the new `BuilderSlot::selected_connection`
+    cursor, matching the nav-page-row shape. New `connection-id`
+    prop surfaces as `data-target-id`; matching POINTER_ROUTES row
+    moves the cursor on click; `connections_json` emits
+    `selected` / `show-delete` from the cursor.
 - **Lands in:** one new row in `POINTER_ROUTES` per role *or*
   threading a `command` id through `icon_button_node` /
   `icon_button_node_tinted` / `menu-item` / new

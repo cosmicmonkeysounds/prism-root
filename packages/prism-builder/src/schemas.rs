@@ -1,5 +1,6 @@
 //! Shared component schemas — single source of truth for field
-//! definitions used by both the Slint and HTML render paths.
+//! definitions used by both the live render path and the relay's
+//! semantic-HTML SSR walker.
 //!
 //! Every schema is a `#[derive(PrismField)]` struct with a thin
 //! free-function wrapper that returns `Vec<FieldSpec>`. The legacy

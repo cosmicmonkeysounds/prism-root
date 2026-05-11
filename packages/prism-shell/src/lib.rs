@@ -42,10 +42,10 @@ mod shell;
 pub use shell::{Shell, ShellError};
 pub use state::{
     AppState, BuilderSlot, CanvasSlot, CanvasViewport, ChromeSlot, CodeBuffer, CommandPalette,
-    CommandResult, HandleSide, HelpTooltip, InspectorNode, MenuLabel, NavButton, NavEdge,
-    NavEdgeKind, NavPage, NavigationSlot, OverlaySlot, PickerCandidate, PickerState, ProjectSlot,
-    PropertyRow, SchemaDoc, SchemaField, SearchHit, SearchSlot, SignalConnection, Toast, ToastKind,
-    ToolMode, TransformSnapshot, WorkspaceSlot,
+    CommandResult, CursorKey, FieldFocus, HandleSide, HelpTooltip, InspectorNode, MenuLabel,
+    NavButton, NavEdge, NavEdgeKind, NavPage, NavigationSlot, NumberDrag, OverlaySlot,
+    PickerCandidate, PickerState, ProjectSlot, PropertyRow, SchemaDoc, SchemaField, SearchHit,
+    SearchSlot, SignalConnection, Toast, ToastKind, ToolMode, TransformSnapshot, WorkspaceSlot,
 };
 
 /// Browser entry point. `wasm-bindgen` calls this automatically via

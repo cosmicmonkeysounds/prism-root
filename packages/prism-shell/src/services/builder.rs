@@ -90,6 +90,46 @@ impl ShellService for BuilderService {
             cmd!("navigation.add-page", "Add Page", "Navigation", |ctx| {
                 ctx.state.navigation.add_page();
             }),
+            cmd!(
+                "navigation.move-page-up",
+                "Move Page Up",
+                "Navigation",
+                |ctx| {
+                    ctx.state.navigation.reorder_selected(-1);
+                }
+            ),
+            cmd!(
+                "navigation.move-page-down",
+                "Move Page Down",
+                "Navigation",
+                |ctx| {
+                    ctx.state.navigation.reorder_selected(1);
+                }
+            ),
+            cmd!(
+                "navigation.delete-selected-page",
+                "Delete Selected Page",
+                "Navigation",
+                |ctx| {
+                    ctx.state.navigation.delete_selected();
+                }
+            ),
+            cmd!(
+                "schema.delete-selected-field",
+                "Delete Selected Schema Field",
+                "Schema",
+                |ctx| {
+                    ctx.state.builder.delete_selected_schema_field();
+                }
+            ),
+            cmd!(
+                "signals.delete-selected-connection",
+                "Delete Selected Connection",
+                "Signals",
+                |ctx| {
+                    ctx.state.builder.delete_selected_signal_connection();
+                }
+            ),
         ]
     }
 }
@@ -250,6 +290,74 @@ mod tests {
         state.canvas.viewport.zoom = 0.1;
         run(&mut state, "view.zoom-out");
         assert_eq!(state.canvas.viewport.zoom, 0.1);
+    }
+
+    #[test]
+    fn delete_selected_schema_field_removes_cursor_row_and_clears_cursor() {
+        use crate::state::{SchemaDoc, SchemaField};
+        let mut state = AppState::default();
+        state.builder.schema = SchemaDoc {
+            fields: vec![
+                SchemaField {
+                    name: "title".into(),
+                    kind: "text".into(),
+                    required: false,
+                },
+                SchemaField {
+                    name: "body".into(),
+                    kind: "rich-text".into(),
+                    required: false,
+                },
+            ],
+            ..Default::default()
+        };
+        assert!(state.builder.select_schema_field("body"));
+        assert!(run(&mut state, "schema.delete-selected-field"));
+        let remaining: Vec<String> = state
+            .builder
+            .schema
+            .fields
+            .iter()
+            .map(|f| f.name.clone())
+            .collect();
+        assert_eq!(remaining, vec!["title"]);
+        assert!(state.builder.schema.selected_field.is_none());
+    }
+
+    #[test]
+    fn delete_selected_schema_field_with_no_cursor_is_a_no_op() {
+        let mut state = AppState::default();
+        // No fields, no cursor — dispatch still succeeds, document untouched.
+        assert!(run(&mut state, "schema.delete-selected-field"));
+        assert!(state.builder.schema.fields.is_empty());
+    }
+
+    #[test]
+    fn delete_selected_signal_connection_removes_cursor_row_and_clears_cursor() {
+        use crate::state::SignalConnection;
+        let mut state = AppState::default();
+        state.builder.signal_connections.push(SignalConnection {
+            id: "c1".into(),
+            source_signal: "clicked".into(),
+            action_kind: "EmitSignal".into(),
+            target_label: "x".into(),
+        });
+        state.builder.signal_connections.push(SignalConnection {
+            id: "c2".into(),
+            source_signal: "hovered".into(),
+            action_kind: "SetProperty".into(),
+            target_label: "y".into(),
+        });
+        assert!(state.builder.select_signal_connection("c1"));
+        assert!(run(&mut state, "signals.delete-selected-connection"));
+        let remaining: Vec<String> = state
+            .builder
+            .signal_connections
+            .iter()
+            .map(|c| c.id.clone())
+            .collect();
+        assert_eq!(remaining, vec!["c2"]);
+        assert!(state.builder.selected_connection.is_none());
     }
 
     #[test]

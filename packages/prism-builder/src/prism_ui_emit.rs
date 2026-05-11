@@ -1,12 +1,12 @@
 //! `BuilderDocument` / `Node` → `.prism-ui` source emitter.
 //!
-//! The Slint source emitter (`render_slint`, `SlintEmitter`,
-//! `render_document_slint_*`) was deleted in the Phase 5 cutover; with
-//! it went the auto-population path for `Page::source`. This module is
-//! the replacement: a single declarative walker that turns the
-//! authoritative `BuilderDocument` tree into well-formed `.prism-ui`
-//! text suitable for round-tripping through
-//! `prism_core::language::prism_ui::parse`.
+//! Post-Slint replacement for the deleted source emitter. A single
+//! declarative walker turns the authoritative `BuilderDocument` tree
+//! into well-formed `.prism-ui` text suitable for round-tripping
+//! through `prism_core::language::prism_ui::parse`. The legacy
+//! `Page::source` auto-emit path was retired alongside the Slint
+//! runtime in the Phase 5 cutover — `prism_ui_emit::emit_document` is
+//! the only seam left, called explicitly by hosts that want source.
 //!
 //! ## Shape
 //!

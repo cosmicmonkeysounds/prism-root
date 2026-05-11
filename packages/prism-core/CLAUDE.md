@@ -1,8 +1,11 @@
 # prism-core
 
-Shared Rust foundations for the Slint-era Prism stack. Phase-2 target of
-the Slint migration: the old `@prism/core` TypeScript package has been
-deleted, and the modules that still matter land here leaf-first.
+Shared Rust foundations for the post-Slint Prism stack. With Slint
+exorcised in the Phase 5 cutover (see `docs/dev/clay-migration-plan.md`),
+this crate is the workspace's leaf — design tokens, language /
+syntax, kernel orchestration, networking — feeding `prism-builder`,
+`prism-ui-runtime`, `prism-shell`, and the relay / studio hosts above
+it. Modules land leaf-first; the table below tracks status.
 
 ## Build & Test
 - `cargo build -p prism-core` — default features (no `loro`).

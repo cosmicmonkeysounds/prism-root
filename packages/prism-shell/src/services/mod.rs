@@ -34,6 +34,7 @@ use crate::AppState;
 pub mod base;
 pub mod builder;
 pub mod clipboard;
+pub mod field_focus;
 pub mod help;
 pub mod input;
 pub mod luau;
@@ -50,6 +51,7 @@ pub mod vfs;
 pub use base::ShellBaseService;
 pub use builder::BuilderService;
 pub use clipboard::{Clipboard, ClipboardService};
+pub use field_focus::FieldFocusService;
 pub use help::HelpService;
 pub use input::{InputScheme, InputService};
 pub use luau::{LuauHost, LuauService, NoopLuauHost};
@@ -296,6 +298,13 @@ impl ServiceRegistry {
 pub fn register_shell_services(reg: &mut ServiceRegistry) {
     reg.add(ShellBaseService);
     reg.add(UndoRedoService);
+    // B4 — `FieldFocusService` must register ahead of `InputService`
+    // and the modal overlays. When the user is typing into a
+    // property-row text field, Text events and plain Esc/Enter/
+    // Backspace key events should reach the focus session before any
+    // global shortcut, palette, or search modal interprets them.
+    // Modifier-bearing keys (Ctrl+S etc.) still pass through.
+    reg.add(FieldFocusService);
     // §25 — `CommandPaletteService` MUST register ahead of `InputService`
     // so its modal-capture `on_event` (returns `Handled` while open)
     // short-circuits Ctrl+S / Ctrl+F / etc. before InputService can
