@@ -126,6 +126,14 @@ pub struct MutCtx<'a> {
     /// only consumer; system-clipboard plug-ins (`arboard`) attach
     /// at the service body, not on this field.
     pub clipboard: &'a mut Clipboard,
+    /// §43 C1 read-only seam: command bodies that re-derive the
+    /// builder slot's selection-driven panels (inspector tree,
+    /// property rows) reach the live `ComponentRegistry` through
+    /// this field. The mirror of `PropCtx.registry` on the write
+    /// side. `None` keeps headless tests and command-table-only
+    /// callers compiling — derivations no-op when the registry
+    /// isn't available.
+    pub registry: Option<&'a prism_builder::ComponentRegistry>,
 }
 
 // ── command spec + table ──────────────────────────────────────────
@@ -423,6 +431,7 @@ mod tests {
             vfs: &mut vfs,
             luau: &mut luau,
             clipboard: &mut clipboard,
+            registry: None,
         };
         assert_eq!(
             reg.fan_out(&Event::Wheel { dx: 0.0, dy: 0.0 }, &mut ctx),

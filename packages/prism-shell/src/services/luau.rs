@@ -100,6 +100,7 @@ mod tests {
             vfs: &mut vfs,
             luau: &mut luau,
             clipboard: &mut clipboard,
+            registry: None,
         };
         assert!(reg.commands().run("luau.run-selection", &mut ctx));
         assert_eq!(state.overlay.toasts.len(), 1);

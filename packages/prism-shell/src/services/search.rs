@@ -173,6 +173,7 @@ mod tests {
             vfs: &mut vfs,
             luau: &mut luau,
             clipboard: &mut clipboard,
+            registry: None,
         };
         assert!(reg.commands().run("search.open", &mut ctx));
         assert!(state.search.open);
@@ -186,6 +187,7 @@ mod tests {
             vfs: &mut vfs,
             luau: &mut luau,
             clipboard: &mut clipboard,
+            registry: None,
         };
         assert!(reg.commands().run("search.close", &mut ctx));
         assert!(!state.search.open);

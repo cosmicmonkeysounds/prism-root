@@ -49,6 +49,7 @@ pub fn dispatch_event(inner: &Rc<RefCell<ShellInner>>, event: &Event) -> bool {
             let g = &mut *guard;
             let viewport = g.viewport;
             let services = &g.services;
+            let registry = g.registry.as_component_registry();
             let mut ctx = crate::services::MutCtx {
                 state: &mut g.state,
                 viewport,
@@ -56,6 +57,7 @@ pub fn dispatch_event(inner: &Rc<RefCell<ShellInner>>, event: &Event) -> bool {
                 vfs: g.vfs.as_mut(),
                 luau: g.luau.as_mut(),
                 clipboard: &mut g.clipboard,
+                registry: Some(registry),
             };
             matches!(services.fan_out(event, &mut ctx), EventOutcome::Handled)
         }

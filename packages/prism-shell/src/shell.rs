@@ -84,6 +84,11 @@ impl ShellInner {
     /// Adding a new datum = one field on `MutCtx` and one assignment
     /// here.
     pub fn mut_ctx(&mut self) -> MutCtx<'_> {
+        // Split-borrow: the registry comes from `self.registry`
+        // (immutable), every other field comes from `self` (mutable).
+        // Re-borrow explicitly so the borrow checker sees the disjoint
+        // slices.
+        let registry = self.registry.as_component_registry();
         MutCtx {
             state: &mut self.state,
             viewport: self.viewport,
@@ -91,6 +96,7 @@ impl ShellInner {
             vfs: self.vfs.as_mut(),
             luau: self.luau.as_mut(),
             clipboard: &mut self.clipboard,
+            registry: Some(registry),
         }
     }
 }
@@ -127,6 +133,17 @@ impl Shell {
             luau: Box::new(NoopLuauHost::default()),
             clipboard: Clipboard::default(),
         }));
+        // §43 C1: one-shot post-boot resync. The seed sets selection
+        // and the inspector tree, but `derive_property_rows` needs the
+        // live registry — which `seed::initial_state` doesn't have.
+        // Running it once here means the boot frame's properties panel
+        // is already populated for the pre-selected node.
+        {
+            let mut guard = inner.borrow_mut();
+            let g = &mut *guard;
+            let registry = g.registry.as_component_registry();
+            g.state.resync_builder_for_selection(Some(registry));
+        }
         Ok(Self { inner, skeleton })
     }
 

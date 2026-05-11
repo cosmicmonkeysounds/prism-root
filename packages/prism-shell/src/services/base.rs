@@ -73,6 +73,7 @@ mod tests {
                 vfs: &mut vfs,
                 luau: &mut luau,
                 clipboard: &mut clipboard,
+                registry: None,
             };
             assert!(reg.commands().run("palette.toggle", &mut ctx));
         }
@@ -88,6 +89,7 @@ mod tests {
                 vfs: &mut vfs,
                 luau: &mut luau,
                 clipboard: &mut clipboard,
+                registry: None,
             };
             assert!(reg.commands().run("palette.toggle", &mut ctx));
         }

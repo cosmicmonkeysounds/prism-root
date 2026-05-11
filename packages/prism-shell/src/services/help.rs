@@ -113,6 +113,7 @@ mod tests {
             vfs: &mut vfs,
             luau: &mut luau,
             clipboard: &mut clipboard,
+            registry: None,
         };
         let ev = Event::Key {
             code: "escape".into(),

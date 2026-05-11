@@ -107,6 +107,7 @@ mod tests {
             vfs,
             luau,
             clipboard,
+            registry: None,
         }
     }
 

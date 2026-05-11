@@ -150,6 +150,7 @@ mod tests {
             vfs: &mut vfs,
             luau: &mut luau,
             clipboard: &mut clipboard,
+            registry: None,
         };
         assert!(reg.commands().run("project.close-folder", &mut ctx));
         assert!(state.project.root.is_none());

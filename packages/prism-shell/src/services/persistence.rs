@@ -164,6 +164,7 @@ mod tests {
                 vfs: &mut vfs,
                 luau: &mut luau,
                 clipboard: &mut clipboard,
+                registry: None,
             };
             assert!(reg.commands().run("file.save", &mut ctx));
         }
@@ -182,6 +183,7 @@ mod tests {
             vfs: &mut vfs,
             luau: &mut luau,
             clipboard: &mut clipboard,
+            registry: None,
         };
         assert!(reg.commands().run("file.open", &mut ctx));
         assert_eq!(state2.project.current_file, Some(path));

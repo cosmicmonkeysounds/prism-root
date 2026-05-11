@@ -57,6 +57,174 @@ impl AppState {
         for node in &mut self.builder.inspector {
             node.selected = false;
         }
+        // §43 C1: no selection → no property rows. The inspector
+        // tree stays (a fresh selection re-flips the flag on the
+        // matching row); the form must reset because it's keyed
+        // entirely to the selected node's schema.
+        self.builder.property_rows.clear();
+    }
+
+    /// §43 C1: re-derive `builder.inspector` and `builder.property_rows`
+    /// from the current canvas document and selection. Called whenever
+    /// a mutation could have changed either side — document edit,
+    /// selection change, registry swap.
+    ///
+    /// Splitting `set_selection` into a derivation pass means the
+    /// router can mutate `canvas.selection` directly through whatever
+    /// path makes sense (pointer arms, palette commands, keyboard
+    /// nav) and then call this once to keep the builder panels in
+    /// sync — no per-callsite duplication.
+    pub fn resync_builder_for_selection(
+        &mut self,
+        registry: Option<&prism_builder::ComponentRegistry>,
+    ) {
+        self.builder.inspector =
+            derive_inspector_tree(&self.canvas.document, &self.canvas.selection);
+        self.builder.property_rows = derive_property_rows(
+            registry,
+            &self.canvas.document,
+            self.canvas.selection.as_deref(),
+        );
+    }
+}
+
+/// Walk `doc.root` depth-first and project each node onto an
+/// `InspectorNode` row. Single source of truth for the inspector's
+/// shape; called from `resync_builder_for_selection`.
+fn derive_inspector_tree(
+    doc: &prism_builder::BuilderDocument,
+    selection: &Option<NodeId>,
+) -> Vec<InspectorNode> {
+    let mut out: Vec<InspectorNode> = Vec::new();
+    if let Some(root) = doc.root.as_ref() {
+        walk_inspector(root, 0, selection.as_deref(), &mut out);
+    }
+    out
+}
+
+fn walk_inspector(
+    node: &prism_builder::Node,
+    depth: u32,
+    selection: Option<&str>,
+    out: &mut Vec<InspectorNode>,
+) {
+    let label = inspector_label_for(node);
+    out.push(InspectorNode {
+        id: node.id.clone(),
+        label,
+        depth,
+        selected: selection == Some(node.id.as_str()),
+    });
+    for child in &node.children {
+        walk_inspector(child, depth + 1, selection, out);
+    }
+}
+
+/// Friendly label for an inspector row. Prefers a string prop the user
+/// likely recognises (`label` / `body` / `title`) over the raw id,
+/// falling back to `"<component> · <id>"` when no human-readable text
+/// is set. Mirrors the Slint era's row-label heuristic.
+fn inspector_label_for(node: &prism_builder::Node) -> String {
+    for key in ["label", "title", "body", "name"] {
+        if let Some(s) = node.props.get(key).and_then(|v| v.as_str()) {
+            let trimmed = s.trim();
+            if !trimmed.is_empty() {
+                let snippet: String = trimmed.chars().take(40).collect();
+                return snippet;
+            }
+        }
+    }
+    if node.id.is_empty() {
+        node.component.clone()
+    } else {
+        format!("{} · {}", node.component, node.id)
+    }
+}
+
+/// Project the selected node's schema (`Vec<FieldSpec>` from the
+/// registry) onto a flat list of `PropertyRow`s the
+/// `shell.properties-panel` block consumes. Each row carries the
+/// `component` id (`shell.field-editor`) and the `props` shape the
+/// editor block reads (key / label / kind / value).
+///
+/// Returns an empty vector when there's no selection, no registry,
+/// or the selected node's component isn't registered — every case
+/// the live shell can hit during boot, headless tests, or partially
+/// loaded plugins. Headless render paths keep working.
+fn derive_property_rows(
+    registry: Option<&prism_builder::ComponentRegistry>,
+    doc: &prism_builder::BuilderDocument,
+    selection: Option<&str>,
+) -> Vec<PropertyRow> {
+    let Some(id) = selection else {
+        return Vec::new();
+    };
+    let Some(root) = doc.root.as_ref() else {
+        return Vec::new();
+    };
+    let Some(node) = root.find(id) else {
+        return Vec::new();
+    };
+    let Some(reg) = registry else {
+        return Vec::new();
+    };
+    let Some(component) = reg.get(&node.component) else {
+        return Vec::new();
+    };
+    let schema = component.schema();
+    let mut rows: Vec<PropertyRow> = Vec::with_capacity(schema.len() + 1);
+    rows.push(PropertyRow {
+        component: "shell.section-header".into(),
+        props: json!({
+            "label": node.component,
+            "data-target-id": node.id,
+        }),
+    });
+    for spec in schema {
+        rows.push(property_row_from_spec(&spec, &node.props));
+    }
+    rows
+}
+
+/// Project one `FieldSpec` onto a `PropertyRow` consumed by
+/// `shell.field-editor`. The editor block reads `key / label / kind /
+/// value / required` — extracting them here keeps the panel binding a
+/// one-line forwarder and pins the shape in tests.
+fn property_row_from_spec(
+    spec: &prism_core::widget::field::FieldSpec,
+    props: &Value,
+) -> PropertyRow {
+    use prism_core::widget::field::FieldKind;
+
+    let kind: &str = match &spec.kind {
+        FieldKind::Text => "text",
+        FieldKind::TextArea => "textarea",
+        FieldKind::Number(_) => "number",
+        FieldKind::Integer(_) => "integer",
+        FieldKind::Boolean => "boolean",
+        FieldKind::Select(_) => "select",
+        FieldKind::Color => "color",
+        FieldKind::File(_) => "file",
+        FieldKind::Date => "date",
+        FieldKind::DateTime => "datetime",
+        FieldKind::Duration => "duration",
+        FieldKind::Currency { .. } => "currency",
+        FieldKind::Calculation { .. } => "calculation",
+        FieldKind::Custom { tag, .. } => tag.as_str(),
+    };
+    let value = props
+        .get(&spec.key)
+        .cloned()
+        .unwrap_or_else(|| spec.default.clone());
+    PropertyRow {
+        component: "shell.field-editor".into(),
+        props: json!({
+            "key": spec.key,
+            "label": spec.label,
+            "kind": kind,
+            "value": value,
+            "required": spec.required,
+        }),
     }
 }
 
@@ -1742,6 +1910,108 @@ fn delete_under(parent: &mut prism_builder::Node, target_id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn doc_with_three_nodes() -> prism_builder::BuilderDocument {
+        use prism_builder::{BuilderDocument, Node};
+        BuilderDocument {
+            root: Some(Node {
+                id: "root".into(),
+                component: "container".into(),
+                children: vec![
+                    Node {
+                        id: "heading".into(),
+                        component: "text".into(),
+                        props: json!({ "body": "Hello", "level": "h1" }),
+                        ..Default::default()
+                    },
+                    Node {
+                        id: "btn".into(),
+                        component: "button".into(),
+                        props: json!({ "label": "Go" }),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn resync_builds_inspector_tree_depth_first_with_selection_flag() {
+        // §43 C1: every node in the document shows up as an inspector
+        // row, depth-first, with `selected` set on the matching id.
+        let mut state = AppState::default();
+        state.canvas.document = doc_with_three_nodes();
+        state.canvas.selection = Some("btn".into());
+        state.resync_builder_for_selection(None);
+        let ids: Vec<&str> = state
+            .builder
+            .inspector
+            .iter()
+            .map(|n| n.id.as_str())
+            .collect();
+        assert_eq!(ids, vec!["root", "heading", "btn"]);
+        let selected_ids: Vec<&str> = state
+            .builder
+            .inspector
+            .iter()
+            .filter(|n| n.selected)
+            .map(|n| n.id.as_str())
+            .collect();
+        assert_eq!(selected_ids, vec!["btn"]);
+    }
+
+    #[test]
+    fn resync_builds_property_rows_from_selected_node_schema() {
+        // §43 C1: with a registry, the selected node's schema lowers
+        // to property rows. Without a registry, the rows stay empty.
+        let mut reg = prism_builder::ComponentRegistry::new();
+        prism_builder::starter::register_builtins(&mut reg).expect("builtins");
+        let mut state = AppState::default();
+        state.canvas.document = doc_with_three_nodes();
+        state.canvas.selection = Some("heading".into());
+
+        state.resync_builder_for_selection(Some(&reg));
+        let rows = &state.builder.property_rows;
+        assert!(
+            !rows.is_empty(),
+            "expected property rows for `text` component"
+        );
+        assert_eq!(rows[0].component, "shell.section-header");
+        let editors: Vec<&PropertyRow> = rows
+            .iter()
+            .filter(|r| r.component == "shell.field-editor")
+            .collect();
+        assert!(
+            !editors.is_empty(),
+            "expected at least one field-editor row"
+        );
+
+        // Without a registry, no rows are derived — keeps headless
+        // and partially-loaded paths working.
+        state.resync_builder_for_selection(None);
+        assert!(state.builder.property_rows.is_empty());
+    }
+
+    #[test]
+    fn clear_selection_drops_property_rows_keeps_inspector_with_no_selected() {
+        // §43 C1: Esc → no selection → properties empty, inspector
+        // intact with all selected flags cleared.
+        let mut reg = prism_builder::ComponentRegistry::new();
+        prism_builder::starter::register_builtins(&mut reg).expect("builtins");
+        let mut state = AppState::default();
+        state.canvas.document = doc_with_three_nodes();
+        state.canvas.selection = Some("heading".into());
+        state.resync_builder_for_selection(Some(&reg));
+        assert!(!state.builder.property_rows.is_empty());
+
+        state.clear_selection();
+        assert!(state.canvas.selection.is_none());
+        assert!(state.builder.property_rows.is_empty());
+        assert_eq!(state.builder.inspector.len(), 3, "inspector still there");
+        assert!(state.builder.inspector.iter().all(|n| !n.selected));
+    }
 
     #[test]
     fn default_chrome_emits_app_name_and_status() {

@@ -5943,3 +5943,97 @@ green, `cargo clippy --workspace --all-targets -- -D warnings` clean.
 | Date | Decision | Rationale |
 |---|---|---|
 | 2026-05-10 | §43 Phase B lands: `LowerScope::host_children_by_tag` + `with_host_children_by_tag` + `host_children_for`; `RegistryTagResolver` prefers scope-injected children over AST pre-lowering; `PropCtx.registry` new field; `CanvasSlot::lower_document_to_ui` + canvas binding override; `render::harvest_host_children` folds emission children into the scope. | The Phase A wave proved every panel was wired but content-empty; the canvas in particular paints the page frame but never lowered `state.canvas.document` into its preview layer. §43 B2 closes that with one runtime extension and one binding override, putting binding-driven children on equal footing with source-authored AST children. Option A over B keeps the document tree out of attribute-JSON serialisation and reserves the seam for future binding-driven compositions (modal embeds, live previews) — same "one declarative seam, every composition flows through it" discipline §13-§15 used for tag resolution and AST host_children. |
+
+### Phase C landed (2026-05-11, post-§43 phase B)
+
+Phase B made the canvas render the document but the right rail still
+showed an empty properties panel — `BuilderSlot::property_rows` and
+`inspector` were never derived from the active selection. Phase C
+closes that with two derivation passes on `AppState`, threaded
+through one read-side seam:
+
+- **`AppState::resync_builder_for_selection(registry)`.** Single
+  re-derivation entry. Mutators that change the selection (Esc,
+  arrow nudges, future pointer hit-tests) call this once and the
+  inspector tree + property rows both regenerate. The split keeps
+  the derivation passes pure functions — they take the document and
+  selection, return data — and gives the router exactly one line
+  to remember.
+
+- **`derive_inspector_tree(doc, selection)`.** Depth-first walk of
+  the document, flat list of `InspectorNode` rows with `depth` and
+  the per-row `selected` flag. Friendly labels come from
+  `inspector_label_for(node)` — prefers a `label`/`title`/`body`
+  string prop, falls back to `"<component> · <id>"`. Pure function,
+  no registry dependency.
+
+- **`derive_property_rows(registry, doc, selection)`.** Reaches
+  through the registry for the selected node's `schema()` and
+  projects each `FieldSpec` onto a `PropertyRow` shaped for
+  `shell.field-editor` (`key / label / kind / value / required`).
+  Prepends a `shell.section-header` row carrying the component
+  label. Returns an empty vector when any prerequisite is missing
+  (no selection, no registry, unknown component) — headless render
+  paths and partially-loaded plugins keep working.
+
+- **`MutCtx.registry`.** New `Option<&ComponentRegistry>` field on
+  the write-side borrow-pack, mirror of `PropCtx.registry`.
+  Populated by `ShellInner::mut_ctx` and by the events-router's
+  fan-out arm. Command bodies that mutate selection call
+  `state.resync_builder_for_selection(ctx.registry)` to keep the
+  builder panels in sync.
+
+- **`AppState::clear_selection`** now drops `property_rows`
+  alongside the existing cross-slot clear. The form must reset
+  because every row is keyed to the previously-selected node's
+  schema; the inspector survives (with all `selected` flags
+  cleared).
+
+- **Boot integration.** `seed::initial_state()` pre-selects
+  `demo-heading` and derives the inspector tree at boot (no
+  registry needed). `Shell::new` runs one post-boot resync with
+  the live registry so the first frame's properties panel is
+  already populated.
+
+**Smart-pattern wins.**
+
+- **One re-derivation entry**, not one per panel: the inspector
+  tree and property form are *derived state* from one source pair
+  (document + selection). The seam owns both rebuilds so any
+  future selection-bearing slot extends `resync_builder_for_selection`
+  rather than every command body.
+- **Pure functions for both projections.** `derive_inspector_tree`
+  and `derive_property_rows` take their inputs by reference and
+  return owned `Vec`s — trivially testable, no `&mut self`
+  ceremony in the test bodies.
+- **Registry seam unified.** `PropCtx.registry` (read side, §43 B3)
+  and `MutCtx.registry` (write side, §43 C1) are siblings with
+  identical shape — `Option<&ComponentRegistry>` populated from
+  `ShellInner.registry.as_component_registry()`. Future
+  registry-aware bindings or command bodies plug in through one
+  field, not parallel paths.
+
+**Not in this phase** (deferred to follow-ups):
+
+- C2 (property edits round-trip through `BuilderService::set_node_prop`)
+  and C3 (inspector tree clicks → SelectionService::select) wait
+  on the signals dispatch wiring. The data model is ready; the
+  callback plumbing is the remaining piece.
+
+- Pointer-driven canvas selection (clicking a rendered node on the
+  canvas) needs a hit-test surface on `prism_ui_runtime::Surface`
+  that the canvas slot can consult. Today's pointer arms capture
+  drags but don't surface the hit node id.
+
+**Verification.** 267 prism-shell lib tests (+3 over Phase B's 264):
+`resync_builds_inspector_tree_depth_first_with_selection_flag`,
+`resync_builds_property_rows_from_selected_node_schema`,
+`clear_selection_drops_property_rows_keeps_inspector_with_no_selected`.
+Full workspace green, `cargo clippy --workspace --all-targets -- -D warnings`
+clean.
+
+### Decision-log entry
+
+| Date | Decision | Rationale |
+|---|---|---|
+| 2026-05-11 | §43 Phase C lands: `AppState::resync_builder_for_selection(registry)` + `derive_inspector_tree` + `derive_property_rows` pure helpers; `MutCtx.registry` mirror of `PropCtx.registry`; `clear_selection` drops property rows; boot path pre-selects `demo-heading` and runs one registry-aware resync after `Shell::new`. | The Phase A wave seeded apps / palette / files / docs / canvas document; Phase B threaded the document into the canvas via the `host_children_by_tag` seam. The right rail still showed an empty properties form because the *derived* state — inspector tree and property rows — was never recomputed when the selection moved. Phase C closes that with two pure projections over `(document, selection)`, gated by one `resync_*` method on `AppState`. The "one re-derivation entry" discipline keeps future selection-bearing slots additive: register a slot, extend the method, no per-command-body sweep. Deferring property-edit round-tripping (C2) and inspector-click selection (C3) keeps this PR scoped to the derivation pass — the data model is ready; the signal-dispatch wiring is a follow-up. |

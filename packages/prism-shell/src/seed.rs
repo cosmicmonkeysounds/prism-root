@@ -41,6 +41,13 @@ pub fn initial_state() -> AppState {
     };
     state.docs.topic = seed_welcome_topic();
     state.canvas.document = seed_document();
+    // §43 C1: pre-select the demo heading so the properties panel
+    // boots with a populated form rather than the empty "select a
+    // block" state. Inspector tree is derived here without a registry;
+    // the property-row derivation runs in `Shell::new` after the
+    // registry is constructed.
+    state.canvas.selection = Some("demo-heading".into());
+    state.resync_builder_for_selection(None);
     state
 }
 
