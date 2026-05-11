@@ -102,7 +102,16 @@ impl TagResolver for RegistryTagResolver {
         } else {
             lower_ast_children(&element.children, scope)
         };
-        let ctx = LowerCtx::new(Some(&self.registry), &cascade).with_host_children(&pre_lowered);
+        // Thread the scope's tag-keyed emission snapshot into LowerCtx
+        // so any `lower_as` call inside `component.lower_ui` (the
+        // dock-panel routing path is the canonical caller) picks up
+        // the same per-tag binding emission this resolver call sees
+        // for host_children. Without this thread-through, routed
+        // content tags (`shell.builder-canvas`, `shell.component-palette`,
+        // `shell.properties-panel`) get empty props / zero children.
+        let ctx = LowerCtx::new(Some(&self.registry), &cascade)
+            .with_host_children(&pre_lowered)
+            .with_tag_emissions(scope.tag_emissions_arc());
         let mut lowered = component.lower_ui(&ctx, &node, &cascade);
         // §43 A1: any `on:<event>="<action>"` attribute on the source
         // element rides through to the lowered container as a

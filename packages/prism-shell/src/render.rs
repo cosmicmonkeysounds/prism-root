@@ -20,7 +20,9 @@ use prism_core::language::prism_ui::{
     self as prism_ui_ast, AttributeName, AttributeNamespace, AttributeValue,
 };
 use prism_core::language::syntax::{Position, SourceRange};
-use prism_ui_runtime::interpret::{lower_document_with_scope, LowerScope, TagResolver};
+use prism_ui_runtime::interpret::{
+    lower_document_with_scope, LowerScope, TagEmission, TagResolver,
+};
 use prism_ui_runtime::layout::Node as UiNode;
 use serde_json::Value;
 
@@ -73,9 +75,18 @@ pub fn render_tree(
     let emissions = bindings.snapshot(ctx);
     let doc = fill_compositions(skeleton, &emissions);
     let host_children = harvest_host_children(&emissions);
+    // Build the same emissions map keyed by tag for the
+    // `lower_as` consultation path. Dock-panel routes by `panel-id`
+    // → content tag at lower time, bypassing the resolver/AST seam
+    // that `host_children_by_tag` plugs into; without this second
+    // map, routed panels (`shell.builder-canvas`,
+    // `shell.component-palette`, `shell.properties-panel`, …) get
+    // empty props and zero children. One snapshot, two consumers.
+    let tag_emissions = harvest_tag_emissions(&emissions);
     let scope = LowerScope::default()
         .with_resolver(resolver)
-        .with_host_children_by_tag(host_children);
+        .with_host_children_by_tag(host_children)
+        .with_tag_emissions(tag_emissions);
     lower_document_with_scope(&doc, &scope)
 }
 
@@ -93,6 +104,28 @@ fn harvest_host_children(
             continue;
         }
         out.insert((*tag).to_string(), emission.children.clone());
+    }
+    out
+}
+
+/// Project every emission into a `TagEmission` snapshot for the
+/// `LowerCtx::lower_as` consultation path. Unlike
+/// [`harvest_host_children`], this map keeps the entry even when
+/// children are empty — the props alone are valuable (toolbar
+/// numbers, canvas selection-id, palette items …) and a synthesised
+/// `lower_as` call still wants them merged in.
+fn harvest_tag_emissions(
+    emissions: &HashMap<&'static str, PropEmission>,
+) -> HashMap<String, TagEmission> {
+    let mut out: HashMap<String, TagEmission> = HashMap::new();
+    for (tag, emission) in emissions {
+        out.insert(
+            (*tag).to_string(),
+            TagEmission {
+                props: emission.props.clone(),
+                children: emission.children.clone(),
+            },
+        );
     }
     out
 }

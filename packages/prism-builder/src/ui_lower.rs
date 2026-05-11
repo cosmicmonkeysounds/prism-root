@@ -28,7 +28,11 @@
 //! lowering automatically — same behaviour the legacy `ui_runtime`
 //! translator gave for unknown component ids.
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use prism_ui_runtime::command::{Color, CornerRadius};
+use prism_ui_runtime::interpret::TagEmission;
 use prism_ui_runtime::layout::{
     ContainerProps, Direction, HoverOverrides, Node as UiNode, Padding, Semantic, Sizing, TextProps,
 };
@@ -59,6 +63,18 @@ pub struct LowerCtx<'a> {
     /// no new abstraction, no parallel context type, the existing
     /// `LowerCtx` simply carries a sparse extra slot.
     host_children: Option<&'a [UiNode]>,
+    /// Tag-keyed binding emissions snapshot, threaded through from
+    /// [`prism_ui_runtime::interpret::LowerScope::with_tag_emissions`].
+    /// When [`Self::lower_as`] synthesises a routed content tag (the
+    /// dock-panel `panel-id` path is the canonical caller) it merges
+    /// the caller's props with this map's entry and threads the
+    /// recorded children through as `host_children` — without this
+    /// the synthesised tag is rendered with empty props and zero
+    /// children, ignoring whatever the binding registered emit.
+    /// `Arc<HashMap<...>>` so the field can outlive the originating
+    /// `LowerScope` value (the resolver consumes scope by reference
+    /// but stores an Arc clone here for child-scope propagation).
+    tag_emissions: Option<Arc<HashMap<String, TagEmission>>>,
 }
 
 impl<'a> LowerCtx<'a> {
@@ -70,6 +86,7 @@ impl<'a> LowerCtx<'a> {
             registry,
             parent_style,
             host_children: None,
+            tag_emissions: None,
         }
     }
 
@@ -81,6 +98,25 @@ impl<'a> LowerCtx<'a> {
     pub fn with_host_children(mut self, children: &'a [UiNode]) -> Self {
         self.host_children = Some(children);
         self
+    }
+
+    /// Install the tag-keyed emissions map snapshot. The resolver hands
+    /// this through from
+    /// [`prism_ui_runtime::interpret::LowerScope::tag_emissions_arc`];
+    /// it propagates into every child `LowerCtx` constructed inside
+    /// `lower_as` / `lower` so routed content several layers deep
+    /// still inherits the live binding data.
+    pub fn with_tag_emissions(mut self, emissions: Arc<HashMap<String, TagEmission>>) -> Self {
+        self.tag_emissions = Some(emissions);
+        self
+    }
+
+    /// Look up the binding emission recorded under `tag`, if any.
+    /// Returns `None` either when no map was installed (headless
+    /// tests, no-DI render paths) or when the tag was never registered
+    /// — the caller falls through to its synthesised default.
+    pub fn tag_emission(&self, tag: &str) -> Option<&TagEmission> {
+        self.tag_emissions.as_ref().and_then(|m| m.get(tag))
     }
 
     /// Pre-lowered children, if a host upstream of `lower_ui`
@@ -105,11 +141,13 @@ impl<'a> LowerCtx<'a> {
         let style = resolve_cascade(self.parent_style, &StyleProperties::default(), &node.style);
         // Note: host_children is intentionally not propagated — it
         // belongs to the block currently being resolved, not its
-        // recursive sub-children.
+        // recursive sub-children. tag_emissions *is* propagated:
+        // it's a snapshot keyed by tag, valid for the entire pass.
         let child = LowerCtx {
             registry: self.registry,
             parent_style: &style,
             host_children: None,
+            tag_emissions: self.tag_emissions.clone(),
         };
         if let Some(reg) = self.registry {
             if let Some(comp) = reg.get(&node.component) {
@@ -225,10 +263,16 @@ impl<'a> LowerCtx<'a> {
     ) -> Option<UiNode> {
         let reg = self.registry?;
         let comp = reg.get(component_id)?;
+        // Pull the host's emission for this tag, if any. The caller's
+        // own props win (so dock-panel can still pass `{ panel-id: ...
+        // }` and have it stick); every key the caller didn't set falls
+        // back to the binding's. Children are wholesale — no merge.
+        let emission = self.tag_emission(component_id);
+        let merged_props = merge_with_emission_props(props, emission.map(|e| &e.props));
         let derived = Node {
             id: derived_id.into(),
             component: component_id.into(),
-            props,
+            props: merged_props,
             children: Vec::new(),
             layout_mode: LayoutMode::default(),
             transform: prism_core::foundation::spatial::Transform2D::default(),
@@ -240,13 +284,54 @@ impl<'a> LowerCtx<'a> {
             &StyleProperties::default(),
             &derived.style,
         );
+        // Only thread an emission's children through as host_children
+        // when it actually carries any. The shell registers an
+        // auto-stub `{}`-props binding for every `SHELL_BUILTINS` row
+        // that doesn't get a live binding (e.g. `shell.dock-panel`,
+        // `shell.menu-item`, every per-row leaf). If we propagated
+        // those empty children slices, callers that compose the tag
+        // via `lower_as` (the dock-workspace routing path) would see
+        // `ctx.host_children() == Some(&[])` and short-circuit their
+        // fallback recursion. Treating "empty" as "no override"
+        // preserves the original routing semantics.
+        let host_children = emission
+            .map(|e| e.children.as_slice())
+            .filter(|s| !s.is_empty());
         let child = LowerCtx {
             registry: self.registry,
             parent_style: &style,
-            host_children: None,
+            host_children,
+            tag_emissions: self.tag_emissions.clone(),
         };
         Some(comp.lower_ui(&child, &derived, &style))
     }
+}
+
+/// Overlay caller-provided props on top of a binding emission. The
+/// caller's keys win (so explicit `panel-id="builder"` is preserved
+/// even when the `shell.dock-panel` binding also emits one) and any
+/// emission key absent from the caller drops in. Returns a JSON
+/// `Object` even when both sides are empty so downstream code that
+/// expects an object shape (every chrome block does) keeps working.
+fn merge_with_emission_props(
+    caller: serde_json::Value,
+    emission: Option<&serde_json::Value>,
+) -> serde_json::Value {
+    let mut map = match caller {
+        serde_json::Value::Object(m) => m,
+        // Caller passed a non-object (a leaf string, an array): treat
+        // it as "no props" and just hand back the emission's object.
+        // Same shape every chrome block reads through `node.props.get(...)`.
+        _ => serde_json::Map::new(),
+    };
+    if let Some(serde_json::Value::Object(em)) = emission {
+        for (k, v) in em {
+            if !map.contains_key(k) {
+                map.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    serde_json::Value::Object(map)
 }
 
 /// Build a `UiNode::Container` *without* going through a builder

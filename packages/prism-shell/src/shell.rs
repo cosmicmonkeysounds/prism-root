@@ -218,12 +218,27 @@ impl Shell {
 }
 
 /// `Surface` takes a single root `Node`. The skeleton lowers to a
-/// flat `Vec<Node>` (app-window + overlay siblings); wrap them in an
-/// anonymous container so the surface has one entry point.
+/// flat `Vec<Node>` (app-window + workflow-page-bar + overlay
+/// siblings); wrap them in an anonymous Column container that fills
+/// the viewport so the app-window (`Sizing::Grow`) and the
+/// workflow-page-bar (`Sizing::Fixed(32)`) both land at their
+/// intended sizes.
+///
+/// Without `Sizing::Grow` on both axes here, the wrapper would
+/// collapse to its content's intrinsic size (`Sizing::Fit`), and a
+/// Taffy flex column anchored at viewport(1280×800) with auto-width
+/// children would have ambiguous cross-axis stretching — visible as
+/// the menu bar text wrapping mid-word when label widths exceed the
+/// shrunk column.
 fn wrap_root(children: Vec<UiNode>) -> UiNode {
     UiNode::Container {
         id: String::new(),
-        props: Default::default(),
+        props: prism_ui_runtime::layout::ContainerProps {
+            direction: prism_ui_runtime::layout::Direction::Column,
+            width: prism_ui_runtime::layout::Sizing::Grow,
+            height: prism_ui_runtime::layout::Sizing::Grow,
+            ..Default::default()
+        },
         children,
     }
 }
@@ -305,10 +320,8 @@ mod tests {
         // request a redraw when the cursor enters a container whose
         // `props.hover` is set — without this, every chrome tint that
         // declares a hover override stays dead in production.
-        use prism_ui_runtime::layout::{
-            ContainerProps, HoverOverrides, Padding, Sizing,
-        };
         use prism_ui_runtime::command::{Color, CornerRadius};
+        use prism_ui_runtime::layout::{ContainerProps, HoverOverrides, Padding, Sizing};
         let tree = UiNode::Container {
             id: String::new(),
             props: ContainerProps::default(),
@@ -365,10 +378,7 @@ mod tests {
         // Leaving the node back to nowhere should re-dirty the surface
         // so the tint clears.
         let _ = surface.commands();
-        let event = Event::PointerMove {
-            x: 199.0,
-            y: 199.0,
-        };
+        let event = Event::PointerMove { x: 199.0, y: 199.0 };
         let hit = compute_hit(&event, &mut surface);
         assert!(hit.is_none());
         surface.set_hovered(None);

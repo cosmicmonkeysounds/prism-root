@@ -68,6 +68,24 @@ pub trait TagResolver: Send + Sync {
     fn resolve(&self, element: &Element, scope: &LowerScope) -> Option<Vec<Node>>;
 }
 
+/// Per-tag host emission: the props the binding emitted and the
+/// pre-lowered children, kept side-by-side in one record. Used by
+/// downstream `lower_as` callers (the dock-panel routing path is
+/// the canonical consumer) to populate a synthesised content tag
+/// with the same data the resolver-driven path would have applied
+/// for an authored AST tag.
+///
+/// Distinct from [`LowerScope::host_children_by_tag`], which is
+/// children-only and consumed by the resolver. The two could be
+/// folded together; they're kept separate so the resolver path
+/// (which uses host_children) and the `lower_as` path (which also
+/// wants props) can evolve independently.
+#[derive(Debug, Clone, Default)]
+pub struct TagEmission {
+    pub props: serde_json::Value,
+    pub children: Vec<Node>,
+}
+
 /// Scope handed to every element lowering. Owns the bindings used by
 /// `{ident}` interpolations and control-flow predicates, plus the
 /// slot bindings a parent component injected.
@@ -96,6 +114,13 @@ pub struct LowerScope {
     /// / slot expansion; the inner map is replaced wholesale through
     /// [`Self::with_host_children_by_tag`], never mutated in place.
     host_children_by_tag: Arc<HashMap<String, Vec<Node>>>,
+    /// Tag-keyed props + children emissions, surfaced through
+    /// `LowerCtx::lower_as` so dynamically routed content tags (the
+    /// dock-panel `panel-id` → content-tag path is the canonical case)
+    /// inherit the same binding data the resolver-driven AST path
+    /// would have applied. `Arc` for the same cheap-fork rationale as
+    /// `host_children_by_tag`.
+    tag_emissions: Arc<HashMap<String, TagEmission>>,
 }
 
 impl std::fmt::Debug for LowerScope {
@@ -164,6 +189,16 @@ impl LowerScope {
         self
     }
 
+    /// Install the tag-keyed emissions map. Mirrors
+    /// [`Self::with_host_children_by_tag`] in shape — a host snapshots
+    /// every binding's `(props, children)` pair into this map so
+    /// `lower_as` callers (dock-panel routing, future composition
+    /// blocks) inherit the live data.
+    pub fn with_tag_emissions(mut self, map: HashMap<String, TagEmission>) -> Self {
+        self.tag_emissions = Arc::new(map);
+        self
+    }
+
     pub fn binding(&self, name: &str) -> Option<&serde_json::Value> {
         self.bindings.get(name)
     }
@@ -176,6 +211,22 @@ impl LowerScope {
     /// Resolvers call this before falling back to AST pre-lowering.
     pub fn host_children_for(&self, tag: &str) -> Option<&[Node]> {
         self.host_children_by_tag.get(tag).map(|v| v.as_slice())
+    }
+
+    /// Look up the full tag emission (props + children) for `tag`.
+    /// Returns `None` when no host binding emitted under that tag
+    /// during this snapshot — the caller falls back to its own props
+    /// shape (the dock-panel routing path: passes `{}`).
+    pub fn tag_emission_for(&self, tag: &str) -> Option<&TagEmission> {
+        self.tag_emissions.get(tag)
+    }
+
+    /// Borrow the underlying `Arc<HashMap<…>>` for embedding into a
+    /// [`crate::layout::Node`]-side lookup carrier (the `LowerCtx`'s
+    /// new `tag_emissions` field). `Arc` clone is cheap and lets the
+    /// builder-side lookup outlive any single scope value.
+    pub fn tag_emissions_arc(&self) -> Arc<HashMap<String, TagEmission>> {
+        Arc::clone(&self.tag_emissions)
     }
 }
 

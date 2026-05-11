@@ -142,6 +142,13 @@ fn menu_bar_row_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties
     bare_container(node.id.clone(), row_children, |props| {
         props.direction = Direction::Row;
         props.gap = MENU_GAP;
+        // `Sizing::Grow` so the row spans the full app-window width.
+        // Without this, the row was `Sizing::Fit` (tight to children),
+        // which Taffy lays out by squeezing child widths under the
+        // anonymous wrapper container — long labels like "Window"
+        // wrapped to two lines because the pill's intrinsic width
+        // was being shrunk below `chars * font_size * 0.55`.
+        props.width = Sizing::Grow;
         props.height = Sizing::Fixed(ROW_HEIGHT);
         props.padding = Padding {
             left: 8.0,

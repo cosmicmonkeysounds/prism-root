@@ -1949,6 +1949,22 @@ impl Device {
     }
 }
 
+/// Canonical page-rect pixel dimensions per device preset. Drives the
+/// `page-width` / `page-height` emission on `shell.builder-canvas`.
+/// The toolbar's device cluster flips between these without touching
+/// the document; `zoom` multiplies independently on top.
+///
+/// Sizes chosen so a Desktop preview fits inside a ~600px-wide builder
+/// dock panel at zoom 1.0 without clipping (the previous default of
+/// 1280×800 overflowed every realistic viewport at 1.0×).
+pub(crate) fn device_page_dims(device: Device) -> (u32, u32) {
+    match device {
+        Device::Desktop => (960, 600),
+        Device::Tablet => (768, 1024),
+        Device::Mobile => (375, 667),
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ToolMode {
     #[default]
@@ -2127,11 +2143,20 @@ impl CanvasSlot {
     /// this method JSON-only stays compatible with every other binding
     /// shape (props only) without inventing a parallel emission type.
     pub fn builder_canvas_props(&self) -> Value {
+        // `page-width` / `page-height` drive the canvas-page rect inside
+        // the canvas frame. The block defaults to 1280x800 — way too
+        // big for the panel column it lives in (the Edit page allocates
+        // ~60% of viewport width to the builder, so a 1280-wide page
+        // overflows on every realistic viewport). Picking the device
+        // preset here keeps the canvas page reasonable across devices.
+        let (page_w, page_h) = device_page_dims(self.device);
         json!({
             "selection-id": self.selection.clone().unwrap_or_default(),
             "tool": self.tool.as_str(),
             "viewport-width": self.viewport.width,
             "viewport-height": self.viewport.height,
+            "page-width": page_w,
+            "page-height": page_h,
             "zoom": self.viewport.zoom,
             "pan-x": self.viewport.pan_x,
             "pan-y": self.viewport.pan_y,

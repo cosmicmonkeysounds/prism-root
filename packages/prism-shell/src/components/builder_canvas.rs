@@ -543,15 +543,15 @@ mod tests {
         else {
             return None;
         };
-        let tagged = props.semantic.attrs.iter().any(|(k, v)| {
-            k == "data-canvas-node" && v == id
-        });
+        let tagged = props
+            .semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-canvas-node" && v == id);
         if tagged {
             return Some(root);
         }
-        children
-            .iter()
-            .find_map(|c| find_canvas_node(c, id))
+        children.iter().find_map(|c| find_canvas_node(c, id))
     }
 
     fn lower_with_preview(props: Value, doc_nodes: Vec<prism_builder::Node>) -> UiNode {
