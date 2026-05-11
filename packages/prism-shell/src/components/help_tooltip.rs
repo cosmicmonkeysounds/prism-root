@@ -16,6 +16,8 @@ use prism_builder::{
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
 
+use crate::components::chrome::hidden_overlay;
+
 const TOOLTIP_WIDTH: f32 = 280.0;
 const TOOLTIP_RADIUS: f32 = 6.0;
 const TOOLTIP_BG: &str = "#f0202020";
@@ -31,6 +33,12 @@ fn help_tooltip_schema() -> Vec<FieldSpec> {
 
 fn help_tooltip_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
     let title = prop_string(node, "title");
+    // Visibility gate (§43 A2): an empty title means no tooltip is
+    // armed — render a 0×0 placeholder. `OverlaySlot::help_tooltip`
+    // emits empty strings for both fields when no entry is showing.
+    if title.is_empty() {
+        return hidden_overlay(node.id.clone(), "help-tooltip");
+    }
     let summary = prop_string(node, "summary");
     let style = StyleProperties::default();
 

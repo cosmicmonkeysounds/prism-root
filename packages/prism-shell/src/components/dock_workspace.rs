@@ -115,7 +115,12 @@ fn render_dock(ctx: &LowerCtx<'_>, tree: &DockNode, base_id: &str) -> UiNode {
                 let entries: Vec<Value> = tabs
                     .iter()
                     .enumerate()
-                    .map(|(i, t)| json!({ "tab-id": t, "label": t, "active": i == active_idx }))
+                    .map(|(i, t)| {
+                        let label = prism_dock::PanelKind::from_id(t)
+                            .map(|p| p.label)
+                            .unwrap_or(t.as_str());
+                        json!({ "tab-id": t, "label": label, "active": i == active_idx })
+                    })
                     .collect();
                 props["tabs"] = Value::Array(entries);
             }
@@ -324,6 +329,49 @@ mod tests {
             panic!()
         };
         assert_eq!(panel_kids.len(), 2, "tab-bar + body");
+    }
+
+    #[test]
+    fn multi_tab_leaf_uses_friendly_label_not_panel_id() {
+        // §43 A3 pin: the tab label must come from `PanelKind.label`,
+        // not the kebab-case panel id. Regression catcher for the
+        // "component-palette" / "properties" leak in the screenshot
+        // that motivated the §43 plan.
+        //
+        // We walk the lowered tree to collect every `Text { content }`
+        // string; the panel id (`component-palette`) must not appear
+        // as visible text, while the friendly label (`Components`)
+        // must.
+        let dock = PdNode::TabGroup {
+            tabs: vec!["component-palette".into(), "inspector".into()],
+            active: 0,
+        };
+        let ui = lower(
+            json!({ "dock": serde_json::to_value(&dock).unwrap() }),
+            true,
+        );
+        let mut texts: Vec<String> = Vec::new();
+        collect_text_content(&ui, &mut texts);
+        assert!(
+            texts.iter().any(|t| t == "Components"),
+            "expected friendly label `Components` as visible text; got texts={texts:?}"
+        );
+        assert!(
+            !texts.iter().any(|t| t == "component-palette"),
+            "raw panel id `component-palette` leaked as visible text; got texts={texts:?}"
+        );
+    }
+
+    fn collect_text_content(node: &UiNode, out: &mut Vec<String>) {
+        match node {
+            UiNode::Text { content, .. } => out.push(content.clone()),
+            UiNode::Container { children, .. } => {
+                for c in children {
+                    collect_text_content(c, out);
+                }
+            }
+            _ => {}
+        }
     }
 
     #[test]

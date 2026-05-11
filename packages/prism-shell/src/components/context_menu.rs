@@ -11,6 +11,8 @@ use prism_builder::{
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
 
+use crate::components::chrome::hidden_overlay;
+
 const MIN_WIDTH: f32 = 220.0;
 const RADIUS: f32 = 6.0;
 const BG: &str = "#ffffff";
@@ -20,10 +22,13 @@ fn context_menu_schema() -> Vec<FieldSpec> {
 }
 
 fn context_menu_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
-    let items: Vec<UiNode> = node
-        .props
-        .get("items")
-        .and_then(|v| v.as_array())
+    // Visibility gate (§43 A2): an empty `items` array means the
+    // context menu isn't open. Mirrors `shell.menu-dropdown`.
+    let items_arr = node.props.get("items").and_then(|v| v.as_array());
+    if items_arr.is_none_or(|a| a.is_empty()) {
+        return hidden_overlay(node.id.clone(), "context-menu");
+    }
+    let items: Vec<UiNode> = items_arr
         .map(|arr| {
             arr.iter()
                 .enumerate()

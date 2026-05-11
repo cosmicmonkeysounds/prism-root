@@ -99,6 +99,27 @@ pub fn icon_button_node_tinted(
     })
 }
 
+/// Zero-size placeholder used by overlay blocks (command palette,
+/// menu dropdown, context menu, component picker, help tooltip) when
+/// their visibility prop is `false`. The skeleton authors every
+/// overlay as a sibling of the app-window so they always reach the
+/// resolver — visibility is host state, not skeleton state. Returning
+/// a 0×0 container preserves structural symmetry while taking the
+/// overlay out of the layout pass entirely.
+///
+/// `data-role` mirrors the live overlay's role so SSR consumers can
+/// still detect "this overlay was authored but is currently hidden."
+pub fn hidden_overlay(id: impl Into<String>, role: &'static str) -> UiNode {
+    bare_container(id, vec![], move |props| {
+        props.width = Sizing::Fixed(0.0);
+        props.height = Sizing::Fixed(0.0);
+        props.semantic = Semantic::tag("div")
+            .with_attr("data-role", role)
+            .with_attr("data-visible", "false")
+            .with_attr("aria-hidden", "true");
+    })
+}
+
 /// Tiny indent dot — the 6×6 marker the inspector / outline / dock
 /// list use to anchor each row visually. `radius_px` typically 1px
 /// for "row" shapes (square-ish) and 3px for "node" shapes (circular).

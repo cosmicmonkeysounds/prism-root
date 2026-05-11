@@ -11,6 +11,8 @@ use prism_builder::{
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
 
+use crate::components::chrome::hidden_overlay;
+
 const MIN_WIDTH: f32 = 200.0;
 const RADIUS: f32 = 6.0;
 const BG: &str = "#ffffff";
@@ -20,10 +22,14 @@ fn menu_dropdown_schema() -> Vec<FieldSpec> {
 }
 
 fn menu_dropdown_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
-    let items: Vec<UiNode> = node
-        .props
-        .get("items")
-        .and_then(|v| v.as_array())
+    // Visibility gate (§43 A2): an empty `items` array means the
+    // dropdown isn't open — render a 0×0 placeholder so it occupies no
+    // layout space.
+    let items_arr = node.props.get("items").and_then(|v| v.as_array());
+    if items_arr.is_none_or(|a| a.is_empty()) {
+        return hidden_overlay(node.id.clone(), "menu-dropdown");
+    }
+    let items: Vec<UiNode> = items_arr
         .map(|arr| {
             arr.iter()
                 .enumerate()
@@ -66,6 +72,22 @@ mod tests {
     use crate::components::registry::{register_shell_builtins, ShellComponentRegistry};
     use crate::components::testing::test_node;
     use serde_json::json;
+
+    #[test]
+    fn closed_dropdown_is_hidden_zero_size() {
+        // §43 A2: an empty `items` array means the dropdown is closed.
+        let n = test_node("md", "shell.menu-dropdown", json!({ "items": [] }));
+        let mut reg = ShellComponentRegistry::new();
+        register_shell_builtins(&mut reg).expect("register");
+        let owned = reg;
+        let cascade = StyleProperties::default();
+        let ctx = LowerCtx::new(Some(owned.as_component_registry()), &cascade);
+        let UiNode::Container { props, .. } = menu_dropdown_lower(&ctx, &n, &cascade) else {
+            panic!()
+        };
+        assert_eq!(props.width, Sizing::Fixed(0.0));
+        assert_eq!(props.height, Sizing::Fixed(0.0));
+    }
 
     #[test]
     fn dispatches_items_through_registry() {

@@ -15,13 +15,15 @@ use prism_builder::{
     signal::SignalDef,
     style::StyleProperties,
     ui_lower::{
-        bare_container, colored_text_node, hover_bg, parse_color, text_input_node, uniform_radius,
-        LowerCtx,
+        bare_container, colored_text_node, hover_bg, parse_color, prop_bool, text_input_node,
+        uniform_radius, LowerCtx,
     },
     with_common_signals,
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
 use serde_json::Value;
+
+use crate::components::chrome::hidden_overlay;
 
 const PALETTE_WIDTH: f32 = 480.0;
 const PALETTE_RADIUS: f32 = 8.0;
@@ -54,6 +56,13 @@ fn command_palette_signals() -> Vec<prism_builder::signal::SignalDef> {
 }
 
 fn command_palette_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    // Visibility gate (§43 A2): closed palette renders a zero-size
+    // placeholder so it occupies no layout space. The skeleton authors
+    // it as a sibling of the app-window so it always reaches the
+    // resolver — visibility is host state, not skeleton state.
+    if !prop_bool(node, "open", false) {
+        return hidden_overlay(node.id.clone(), "command-palette");
+    }
     let query = node
         .props
         .get("query")
@@ -182,8 +191,25 @@ mod tests {
     }
 
     #[test]
-    fn dialog_role() {
+    fn closed_palette_is_hidden_zero_size() {
+        // §43 A2: visibility gate. With `open=false` (default) the
+        // palette must not paint any dialog chrome.
         let ui = lower(json!({}));
+        let UiNode::Container { props, .. } = ui else {
+            panic!()
+        };
+        assert_eq!(props.width, Sizing::Fixed(0.0));
+        assert_eq!(props.height, Sizing::Fixed(0.0));
+        assert!(props
+            .semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "aria-hidden" && v == "true"));
+    }
+
+    #[test]
+    fn open_palette_has_dialog_role() {
+        let ui = lower(json!({ "open": true }));
         let UiNode::Container { props, .. } = ui else {
             panic!()
         };
@@ -197,6 +223,7 @@ mod tests {
     #[test]
     fn results_render_as_rows() {
         let ui = lower(json!({
+            "open": true,
             "results": [
                 { "id": "save", "label": "Save", "shortcut": "Ctrl+S" },
                 { "id": "open", "label": "Open" },
@@ -221,7 +248,7 @@ mod tests {
 
     #[test]
     fn input_carries_query_value() {
-        let ui = lower(json!({ "query": "hello" }));
+        let ui = lower(json!({ "open": true, "query": "hello" }));
         let UiNode::Container { children, .. } = ui else {
             panic!()
         };

@@ -5671,3 +5671,196 @@ but not the binding stub.
 | Date | Decision | Rationale |
 |---|---|---|
 | 2026-05-10 | §42 lands: `STUB_BINDINGS` collapsed into a `SHELL_BUILTINS \ SLOT_BINDINGS` derivation inside `register_builtin_bindings`; `bindings_cover_every_registered_shell_block` upgraded to set-equality; the 48-assert `registers_icon_button` test replaced with a `for spec in SHELL_BUILTINS` loop + a namespace-and-dedup pin. | §41 left three tables describing the same set ("what shell blocks exist"): `SHELL_BUILTINS` (source of truth), `SLOT_BINDINGS` (which ones derive from slot accessors), and `STUB_BINDINGS` (the rest). The third was redundant by construction — `STUB_BINDINGS == SHELL_BUILTINS \ SLOT_BINDINGS`. Deriving it eliminates the second edit when adding a per-row block; promotes "missing stub" from a runtime-blank-panel bug to a test failure (because the structural invariant is asserted, not merely upheld). The table-driven test refactor falls out for free: with the derivation in place, the test simply iterates the source-of-truth table. |
+
+## 43. Boot-state seed, document plumbing, and overlay gates — making the new shell *show* something
+
+**Strategy locked 2026-05-10 (post-§42).** The §28-§42 wave landed
+the *structural* port: dock-workspace recursion, panel routing, slot
+accessors, declarative binding tables, and the auto-derived stub
+list. Every shell block now resolves through the registry and every
+binding row is one accessor on a typed slot. With that scaffolding
+green, a fresh `cargo run -p prism-shell` boots — and renders an
+almost-empty window: bare panel rectangles, no component list, no
+properties form, an unstyled page void in the canvas, and the
+overlay row (command palette, menu dropdown, context menu,
+component picker, help tooltip) painting at all times because the
+lowerings ignore their `open` prop. The chrome works; the *content*
+doesn't flow through it.
+
+The gap analysis decomposes into five concrete root causes, every
+one downstream of the §17 cutover deleting the legacy `app/`,
+`panels/`, `samples.rs`, and selection-sync modules without their
+replacements landing alongside the new bindings:
+
+1. **`AppState::default()` is empty.** `Shell::new()` builds the
+   registry, bindings, and skeleton, then constructs
+   `AppState::default()` and stops. The Slint-era `app/inner.rs` +
+   `app/samples.rs` (~800 LoC) seeded apps, palette items, docs,
+   menus, files, and an initial `BuilderDocument`; that path was
+   deleted in Phase 5 with no replacement. Every binding emits
+   `{"items": []}`, `{"rows": []}`, `{"pages": []}`, etc. The
+   chrome renders correctly — it just has nothing to render.
+2. **No `BuilderDocument` → canvas pipeline.**
+   `CanvasSlot::builder_canvas_props` emits selection metadata only.
+   `builder_canvas_lower` reads `ctx.host_children()` for the
+   document preview, but no binding ever sets
+   `PropEmission::children`, and `render::fill_compositions` only
+   merges the `props` field into AST attributes — the `children`
+   field on `PropEmission` is dead infrastructure end-to-end.
+3. **Selection never re-derives panel content.**
+   `BuilderSlot::property_rows`, `inspector_nodes`, and
+   `signal_connections` exist but are never repopulated when
+   `state.canvas.selection` changes. The Slint era had
+   `app/sync/properties.rs`, `app/sync/inspector.rs`, etc.; the
+   service that fans out selection changes back to the builder
+   slot doesn't exist yet.
+4. **Overlays paint unconditionally.** `command_palette`,
+   `menu_dropdown`, `context_menu`, `component_picker`, and
+   `help_tooltip` all consume their respective slots' `open` /
+   `visible` flag in props — and then ignore it in the lowering
+   body. The skeleton authors them as siblings of the app-window
+   so they always reach the resolver, and the resolver always
+   produces a fully-styled overlay regardless of state.
+5. **Empty panels look broken.** `bare_container` with no children
+   plus `Sizing::Grow` paints the panel's `#fafafa` background but
+   nothing inside; the Slint UI relied on every panel having at
+   least a header/title strip and a non-empty body. A handful of
+   `aria-label` strings ("component-palette", "properties") leak
+   through the femtovg backend's text pass — needs a one-line
+   diagnosis: either the backend renders certain semantic attrs as
+   text, or a `colored_text_node` is using the panel id as content.
+
+### Phase A — Make the chrome show real data
+
+The smallest fix-to-impact ratio. Three sub-items, all in
+`prism-shell`, no runtime/framework changes:
+
+- **A1. Seed `AppState`.** A new `crate::seed::initial_state()`
+  that returns a hydrated `AppState`. `Shell::new` calls it instead
+  of `AppState::default()`. Concretely:
+  - `catalog.apps` ← Lattice / Musica / Flux / Studio cards
+    (matches the four-apps memo).
+  - `catalog.palette` ← walk `prism_builder::starter::BUILTINS`
+    and emit a `PaletteItem` per registered builtin (Heading, Text,
+    Image, Container, Card, Columns, List, Table, Tabs, Accordion,
+    Divider, Spacer, Code, Form, Input, Button — the Slint
+    left-rail set).
+  - `catalog.files` ← project-tree sample placeholder (real
+    population lands when `ProjectService` comes back online).
+  - `docs.topic` ← starter "Welcome to Studio" topic.
+  - `canvas.document` ← `BuilderDocument::page_shell()` plus a
+    few demo nodes (heading + text + button) so the canvas renders
+    something visible.
+  - `chrome.menus` extended to File/Edit/View/Window/Help.
+- **A2. Overlay visibility gates.** Five lowerings get an early
+  return: when their visibility prop is `false`, emit a 0×0
+  bare container (preserving the parent's structural shape but
+  invisible to the layout pass). Two tests per block — visible
+  and hidden branches.
+- **A3. Diagnose and fix the leaking semantic labels.** Inspect the
+  rendered tree (e2e dumper) to identify whether the visible
+  "component-palette" / "properties" strings come from a `Text`
+  node or a `Semantic::tag(...)` attr leak in the femtovg backend.
+  Fix at source.
+
+Phase A alone moves the screenshot from "blank panels with floating
+labels" to "every panel populated, canvas with sample nodes,
+overlays hidden until invoked" — the visible 70% of the regression.
+
+### Phase B — Document renders inside the canvas
+
+The single biggest piece of new plumbing in the migration: binding-
+emitted children need a path to the canvas's `host_children` slot.
+Two design options, with the recommended path **(a)** below:
+
+- **(a) Resolver-scope route (recommended).** Extend
+  `prism_ui_runtime::interpret::LowerScope` with
+  `with_host_children_for_tag(map: HashMap<&'static str, Vec<Node>>)`.
+  When the resolver lowers a tag with an entry in this map,
+  `LowerCtx::host_children()` returns `Some(&map[tag])`. `render_tree`
+  builds this map from `emissions[id].children` for every binding
+  and threads it into the scope. Puts binding-driven children on
+  equal footing with source-authored `<shell.foo>...</shell.foo>`
+  children. Touches `prism-ui-runtime/src/interpret.rs` (~30 LoC)
+  and `render.rs` (~10 LoC).
+- **(b) JSON-tree-in-props route.** Encode `BuilderDocument` as
+  JSON in the canvas binding's props and have
+  `builder_canvas_lower` decode it via `prism_builder::lower_ui`.
+  Simpler but couples the canvas block to the document IR through
+  a JSON round-trip; option (a) keeps the §14 host_children seam
+  clean for future binding-driven compositions (live previews,
+  auxiliary panels, etc.).
+
+`PropCtx` then grows a `&ComponentRegistry` field, the binding
+closure for `shell.builder-canvas` calls
+`prism_builder::lower_ui(&state.canvas.document, &lower_ctx)`,
+and emits the result as `PropEmission::with_children(...)`.
+
+Pointer hit-testing already exists at the runtime layer; once
+document children render, the existing
+`CanvasSlot::pointer_down` plumbing surfaces the hit node id.
+Confirm `Surface::hit_test_at` (or equivalent) returns a string
+node id and have the canvas slot use it instead of raw coords.
+
+### Phase C — Selection-driven panels
+
+- **C1. `SelectionService::on_selection_change`.** Every mutation
+  that touches `state.canvas.selection` re-derives:
+  - `state.builder.property_rows` from the selected node's
+    `FieldSpec` schema (port the Slint `from_spec` row builder
+    verbatim — pure function over schema + props).
+  - `state.builder.inspector_nodes` from a depth-first walk of
+    `state.canvas.document` with the selection flag.
+  - `state.builder.signal_connections` from the selected node's
+    connection list.
+- **C2. Property edits.** `field_editor` already fires
+  `value-changed`; route via `SignalsService` →
+  `BuilderService::set_node_prop(node_id, key, value)`. Mutation
+  re-renders the document and (via C1) re-derives property rows.
+- **C3. Inspector tree clicks.** `node-selected` →
+  `SelectionService::select(node_id)` → cascade.
+
+### Phase D — Visual / chrome polish
+
+Parallel with Phase A-C; pure presentation:
+
+- **D1. Dock-panel titles.** 28px header strip showing
+  `PanelKind::label(panel_id)`. Restores the Slint
+  "Components / Inspector / Explorer" / "Properties / Code Editor"
+  panel headers.
+- **D2. Builder-canvas toolbar.** Above the page, restore the
+  alignment / Desktop-Tablet-Mobile / zoom / node-count strip from
+  the Slint screenshot. New `shell.builder-toolbar` block; binding
+  reads from `CanvasSlot` (add `device: Device` field).
+- **D3. Bottom workflow page bar.** `shell.workflow-page-bar`
+  already binds the seven-page list; the regression is purely
+  styling/sizing — verify and fix.
+- **D4. Page Layout controls.** Defer; low priority.
+- **D5. Multi-segment status bar.** "Editor | Flux | Canvas |
+  Selected | 1 nodes | Prism Studio" — `chrome.status` formatting
+  helper or `status_bar_props` returning an array.
+
+### Phase E — Verification
+
+- **E1.** `prism visual --scene builder` screenshots before/after
+  each phase boundary.
+- **E2.** Tests: `boot_state_has_realistic_seed_data`,
+  `canvas_emits_lowered_document_as_host_children`,
+  `selection_change_repopulates_property_rows`,
+  `command_palette_hidden_when_closed`.
+- **E3.** `prism e2e` script: "click Heading in palette, drop in
+  canvas, click it, edit text in properties → tree updates."
+
+### Sequencing
+
+Phase A is **one PR by itself** — it's the visible 70% improvement
+and ships independent of the runtime extension Phase B introduces.
+Phase B's design choice (host_children scope vs. JSON-in-props) is
+worth a 30-minute spike before committing. Phases C-D-E follow in
+their own PRs.
+
+### Decision-log entry
+
+| Date | Decision | Rationale |
+|---|---|---|
+| 2026-05-10 | §43 documents the post-§42 gap: `AppState::default()` empties every binding, the canvas binding never emits the document as `host_children`, no service re-derives properties/inspector on selection change, five overlays ignore their `open` prop, and the femtovg backend leaks panel-id strings as visible text. Phase A (boot seed + overlay gates + label diagnosis) ships as one PR. Phase B introduces the `LowerScope::with_host_children_for_tag` extension or the JSON-tree-in-props alternative. Phase C wires selection change → builder slot re-derivation. Phase D restores chrome polish (panel titles, builder toolbar, multi-segment status bar). | The §17-§42 work was structurally complete: every block resolved, every binding emitted, every panel routed. What was missing was *content* — the Slint era's `samples.rs` + `app/sync/*` + boot wiring was deleted in Phase 5 alongside the parts that *were* replaced, and the gap was invisible because each individual subsystem still passed its tests. The `cargo run` smoke test was the missing invariant; landing it as a §43 follow-up keeps the per-section discipline (one structural decision per section + decision-log row) intact. The phase split keeps Phase A independently mergeable — every other phase needs a runtime extension or a service port wave, while Phase A is "seed the slots, gate the overlays, find the leaking text" and nothing else. |

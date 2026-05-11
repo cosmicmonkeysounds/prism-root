@@ -108,7 +108,11 @@ impl Shell {
             resolver,
             bindings,
             services,
-            state: crate::AppState::default(),
+            // §43 A1: hydrated boot state. `AppState::default()` is the
+            // zero-data shape for tests and headless renders;
+            // `Shell::new` boots into a populated catalog + canvas
+            // document so the first frame looks like Studio.
+            state: crate::seed::initial_state(),
             viewport: Viewport {
                 width: 1280.0,
                 height: 800.0,

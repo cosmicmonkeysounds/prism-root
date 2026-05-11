@@ -13,13 +13,15 @@ use prism_builder::{
     signal::SignalDef,
     style::StyleProperties,
     ui_lower::{
-        bare_container, colored_text_node, hover_bg, image_node, parse_color, prop_string,
-        uniform_radius, LowerCtx,
+        bare_container, colored_text_node, hover_bg, image_node, parse_color, prop_bool,
+        prop_string, uniform_radius, LowerCtx,
     },
     with_common_signals,
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
 use serde_json::Value;
+
+use crate::components::chrome::hidden_overlay;
 
 const POPUP_WIDTH: f32 = 280.0;
 const POPUP_BG: &str = "#f0ffffff";
@@ -50,6 +52,12 @@ fn component_picker_signals() -> Vec<prism_builder::signal::SignalDef> {
 }
 
 fn component_picker_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    // Visibility gate (§43 A2): closed picker renders a 0×0
+    // placeholder. The host opens the picker by mutating
+    // `CanvasSlot.picker.open`, which the binding emits as `open`.
+    if !prop_bool(node, "open", false) {
+        return hidden_overlay(node.id.clone(), "component-picker");
+    }
     let style = StyleProperties::default();
     let query = prop_string(node, "query");
 
@@ -174,8 +182,20 @@ mod tests {
     }
 
     #[test]
-    fn empty_picker_renders_dialog() {
+    fn closed_picker_is_hidden_zero_size() {
+        // §43 A2: visibility gate. The picker is hidden until the host
+        // sets `open=true` (canvas place-mode entry).
         let ui = lower(json!({}));
+        let UiNode::Container { props, .. } = ui else {
+            panic!()
+        };
+        assert_eq!(props.width, Sizing::Fixed(0.0));
+        assert_eq!(props.height, Sizing::Fixed(0.0));
+    }
+
+    #[test]
+    fn open_empty_picker_renders_dialog() {
+        let ui = lower(json!({ "open": true }));
         let UiNode::Container {
             props, children, ..
         } = ui
@@ -193,6 +213,7 @@ mod tests {
     #[test]
     fn categories_and_items_render() {
         let ui = lower(json!({
+            "open": true,
             "query": "tx",
             "categories": [
                 { "label": "Layout", "items": [
