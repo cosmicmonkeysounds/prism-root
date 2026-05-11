@@ -748,20 +748,30 @@ pub struct ChromeSlot {
     pub status: String,
     pub nav_buttons: Vec<NavButton>,
     pub menus: Vec<MenuLabel>,
+    /// Currently expanded menu pill (`Some(id)` when a menu dropdown
+    /// should render). The block reads this through `active-menu`
+    /// in `menu_bar_row_props`. `None` means no menu is open.
+    pub active_menu: Option<String>,
 }
 
 /// Top-bar menu pill. Rendered in `shell.menu-bar-row` and reused by
-/// `shell.app-window` for embedded chrome.
+/// `shell.app-window` for embedded chrome. The `id` is the stable
+/// routing key — surfaced as `data-target-id` on the rendered pill so
+/// `handle_menu_pill_click` can move the active-menu cursor without
+/// a parallel array lookup.
 #[derive(Clone, Debug)]
 pub struct MenuLabel {
+    pub id: String,
     pub label: String,
 }
 
-/// Activity-bar button. The runtime block reads `icon`/`selected`;
-/// the underlying `panel_id` (where the click would route) is not
-/// emitted yet — wired up when the navigation slot lands.
+/// Activity-bar button. The runtime block reads `icon`/`selected`/`nav-id`;
+/// the `id` is the stable routing key (`home` / `folder` / `search` / …)
+/// so `handle_nav_button_click` can flip the radio-style selection
+/// state on the matching row.
 #[derive(Clone, Debug)]
 pub struct NavButton {
+    pub id: String,
     pub icon: String,
     pub selected: bool,
 }
@@ -772,14 +782,62 @@ impl Default for ChromeSlot {
             app_name: "Prism".into(),
             status: "Ready".into(),
             nav_buttons: vec![NavButton {
+                id: "home".into(),
                 icon: "icons/home.svg".into(),
                 selected: true,
             }],
             menus: ["File", "Edit", "View", "Help"]
                 .into_iter()
-                .map(|l| MenuLabel { label: l.into() })
+                .map(|l| MenuLabel {
+                    id: l.to_lowercase(),
+                    label: l.into(),
+                })
                 .collect(),
+            active_menu: None,
         }
+    }
+}
+
+impl ChromeSlot {
+    /// Toggle which activity-bar button is the radio-selected one. The
+    /// `nav-id` flows from the click handler; clicking the already-
+    /// selected button is a no-op (`returns false`) so the frame can
+    /// stay clean. Clicking a different button flips both the old and
+    /// new rows' `selected` flags in one pass.
+    pub fn select_nav_button(&mut self, id: &str) -> bool {
+        if self.nav_buttons.iter().any(|b| b.id == id && b.selected) {
+            return false;
+        }
+        let mut moved = false;
+        for b in self.nav_buttons.iter_mut() {
+            let want = b.id == id;
+            if b.selected != want {
+                b.selected = want;
+                moved = true;
+            }
+        }
+        moved
+    }
+
+    /// Toggle the active menu cursor. Clicking the already-open menu
+    /// closes it; clicking a different pill moves the cursor; clicking
+    /// an unknown id is a no-op. The `shell.menu-bar-row` block reads
+    /// the cursor through the `active-menu` index emission so the
+    /// pill paints its `aria-expanded` + tinted background on the
+    /// next frame.
+    pub fn select_menu(&mut self, id: &str) -> bool {
+        let next = if self.active_menu.as_deref() == Some(id) {
+            None
+        } else if self.menus.iter().any(|m| m.id == id) {
+            Some(id.to_string())
+        } else {
+            return false;
+        };
+        if next == self.active_menu {
+            return false;
+        }
+        self.active_menu = next;
+        true
     }
 }
 
@@ -793,6 +851,7 @@ impl ChromeSlot {
             "app-name": self.app_name,
             "status": self.status,
             "menus": self.menus_json(),
+            "active-menu": self.active_menu_index(),
             "tabs": workspace.tabs_json(),
             "nav-buttons": self.nav_buttons_json(),
         })
@@ -806,6 +865,7 @@ impl ChromeSlot {
         json!({
             "app-name": self.app_name,
             "menus": self.menus_json(),
+            "active-menu": self.active_menu_index(),
             "tabs": workspace.tabs_json(),
         })
     }
@@ -844,7 +904,7 @@ impl ChromeSlot {
         Value::Array(
             self.menus
                 .iter()
-                .map(|m| json!({ "label": m.label }))
+                .map(|m| json!({ "id": m.id, "label": m.label }))
                 .collect(),
         )
     }
@@ -853,9 +913,31 @@ impl ChromeSlot {
         Value::Array(
             self.nav_buttons
                 .iter()
-                .map(|b| json!({ "icon": b.icon, "selected": b.selected }))
+                .map(|b| {
+                    json!({
+                        "nav-id": b.id,
+                        "icon": b.icon,
+                        "selected": b.selected,
+                    })
+                })
                 .collect(),
         )
+    }
+
+    /// `active-menu` resolved to the matching index for the
+    /// `shell.menu-bar-row` lowering, which currently reads index
+    /// rather than id. Returns -1 when no menu is open (the same
+    /// sentinel the block already understands).
+    fn active_menu_index(&self) -> i64 {
+        match self.active_menu.as_deref() {
+            None => -1,
+            Some(active) => self
+                .menus
+                .iter()
+                .position(|m| m.id == active)
+                .map(|i| i as i64)
+                .unwrap_or(-1),
+        }
     }
 }
 

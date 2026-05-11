@@ -408,6 +408,7 @@ pub fn with_semantic(node: UiNode, semantic: Semantic) -> UiNode {
             width,
             height,
             radius,
+            focused,
             ..
         } => UiNode::TextInput {
             id,
@@ -418,6 +419,7 @@ pub fn with_semantic(node: UiNode, semantic: Semantic) -> UiNode {
             height,
             radius,
             semantic,
+            focused,
         },
         UiNode::Spacer { .. } => node,
     }
@@ -644,6 +646,34 @@ pub fn text_input_node(
     height: Sizing,
     default_size: f32,
 ) -> UiNode {
+    text_input_node_with_focus(
+        node_id,
+        value,
+        placeholder,
+        style,
+        width,
+        height,
+        default_size,
+        false,
+    )
+}
+
+/// Variant of [`text_input_node`] that lets the caller mark the input
+/// as the active focus target. The paint pass uses this to bump the
+/// border to the accent colour and draw a 1-px caret bar after the
+/// rendered text. Field-editor rows wire this through their
+/// `focused` prop so users can see where their keystrokes will land.
+#[allow(clippy::too_many_arguments)]
+pub fn text_input_node_with_focus(
+    node_id: String,
+    value: String,
+    placeholder: String,
+    style: &StyleProperties,
+    width: Sizing,
+    height: Sizing,
+    default_size: f32,
+    focused: bool,
+) -> UiNode {
     let font_size = style.font_size.unwrap_or(default_size);
     let color = style
         .color
@@ -663,6 +693,7 @@ pub fn text_input_node(
         height,
         radius: style.border_radius.map(uniform_radius).unwrap_or_default(),
         semantic: Semantic::default(),
+        focused,
     }
 }
 

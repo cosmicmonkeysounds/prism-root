@@ -49,6 +49,14 @@ pub enum RenderCommand {
         content: String,
         color: Color,
         font_size: f32,
+        /// When set, the renderer paints a 1.5-px caret bar at the
+        /// shaped-text end position (i.e. *after* cosmic-text laid
+        /// out the glyphs). Carries the colour the caret should
+        /// take. Used by focused `TextInput` leaves so users see
+        /// where the next keystroke will land. SSR backends ignore
+        /// this field — caret rendering is a native-only concern.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        caret: Option<Color>,
     },
     Image {
         bounds: Rect,

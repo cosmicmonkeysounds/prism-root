@@ -43,6 +43,8 @@ fn every_clickable_role_carries_its_routing_key() {
         "nav-page-row",
         "schema-row",
         "signal-connection-row",
+        "nav-button",
+        "menu-pill",
     ];
 
     let hits = surface.hit_rects();

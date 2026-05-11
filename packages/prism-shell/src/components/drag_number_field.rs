@@ -104,13 +104,16 @@ mod tests {
     }
 
     #[test]
-    fn lowers_to_24px_row_with_value_only_when_label_empty() {
+    fn lowers_to_drag_row_with_value_only_when_label_empty() {
         let ui = lower(&field(json!({ "key": "x", "value": 3.0 })));
         if let UiNode::Container {
             props, children, ..
         } = ui
         {
-            assert_eq!(props.height, Sizing::Fixed(24.0));
+            assert_eq!(
+                props.height,
+                Sizing::Fixed(super::super::chrome::DRAG_NUMBER_HEIGHT),
+            );
             assert!(props.hover.is_some(), "hover-bg declared");
             // Single child: the row.
             assert_eq!(children.len(), 1);

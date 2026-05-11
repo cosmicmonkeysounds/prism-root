@@ -102,6 +102,7 @@ fn menu_bar_row_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties
         let id = item.get("id").and_then(|v| v.as_str()).unwrap_or(label);
         row_children.push(menu_pill_node(
             format!("{}::menu::{}", node.id, id),
+            id,
             label,
             idx as i64 == active_menu,
         ));
@@ -168,7 +169,7 @@ pub const MENU_BAR_ROW_SPEC: prism_builder::BlockSpec =
         .lower(menu_bar_row_lower)
         .signals(menu_bar_row_signals);
 
-fn menu_pill_node(id: impl Into<String>, label: &str, active: bool) -> UiNode {
+fn menu_pill_node(id: impl Into<String>, menu_id: &str, label: &str, active: bool) -> UiNode {
     let id = id.into();
     let style = StyleProperties::default();
     let text = colored_text_node(
@@ -191,10 +192,19 @@ fn menu_pill_node(id: impl Into<String>, label: &str, active: bool) -> UiNode {
             p.background = parse_color(MENU_ACTIVE_BG);
         }
         p.hover = hover_bg(MENU_HOVER_BG);
-        p.semantic = Semantic::tag("button")
+        // §B6 routing — `data-role="menu-pill"` + `data-target-id`
+        // routes a pointer-down into the menu-bar's active-menu
+        // cursor. Adding a new menu pill is one row in
+        // `ChromeSlot::menus`; click routing comes for free.
+        let mut s = Semantic::tag("button")
             .with_attr("type", "button")
             .with_attr("role", "menuitem")
-            .with_attr_if(active, "aria-expanded", "true");
+            .with_attr("data-role", "menu-pill")
+            .with_attr("data-target-id", menu_id.to_string());
+        if active {
+            s = s.with_attr("aria-expanded", "true");
+        }
+        p.semantic = s;
     })
 }
 

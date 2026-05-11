@@ -70,6 +70,28 @@ pub fn translate(event: &WindowEvent, state: &mut InputState) -> Option<Event> {
         }
         WindowEvent::KeyboardInput { event: ke, .. } => {
             let pressed = ke.state == ElementState::Pressed;
+            // A *character-producing* key press without Ctrl / Meta /
+            // Alt held becomes an `Event::Text` so it flows through
+            // `FieldFocusService`'s typing arm — the same path IME
+            // commits use. Without this branch, plain "abc" typing
+            // generated `Event::Key { code: "a", ... }` events that
+            // the focus service handled-but-ignored (only matching
+            // backspace / enter / escape), so every keystroke into
+            // a text field was silently dropped in production. winit's
+            // `KeyEvent::text` field is precisely the text the OS
+            // produced for this key chord (honouring Shift / AltGr /
+            // dead-key composition) — preferring it over our own
+            // `Key::Character` mapping handles uppercase, accents,
+            // and IME-less input correctly.
+            if pressed && !state.modifiers.ctrl && !state.modifiers.meta {
+                if let Some(text) = ke.text.as_deref() {
+                    if !text.is_empty() && !text.chars().all(|c| c.is_control()) {
+                        return Some(Event::Text {
+                            text: text.to_string(),
+                        });
+                    }
+                }
+            }
             let code = key_code(&ke.logical_key);
             Some(Event::Key {
                 code,
@@ -97,39 +119,47 @@ fn key_code(k: &Key) -> String {
     }
 }
 
+/// Named-key strings are emitted in lowercase so the shell's service
+/// layer (`FieldFocusService`, `PaletteService`, `InputService`) can
+/// match them with simple `code.as_str() == "backspace"` without
+/// case-aware comparisons or maintenance of a parallel Title-Case
+/// table. Existing service code (and its unit tests) was already
+/// authored against the lowercase form; the previous Title-Case
+/// emission silently broke every Backspace / Enter / Escape inside a
+/// focused field-edit row in production.
 fn named_key_code(n: NamedKey) -> &'static str {
     match n {
-        NamedKey::Enter => "Enter",
-        NamedKey::Escape => "Escape",
-        NamedKey::Backspace => "Backspace",
-        NamedKey::Tab => "Tab",
-        NamedKey::Space => "Space",
-        NamedKey::ArrowDown => "ArrowDown",
-        NamedKey::ArrowLeft => "ArrowLeft",
-        NamedKey::ArrowRight => "ArrowRight",
-        NamedKey::ArrowUp => "ArrowUp",
-        NamedKey::End => "End",
-        NamedKey::Home => "Home",
-        NamedKey::PageDown => "PageDown",
-        NamedKey::PageUp => "PageUp",
-        NamedKey::Delete => "Delete",
-        NamedKey::Insert => "Insert",
-        NamedKey::F1 => "F1",
-        NamedKey::F2 => "F2",
-        NamedKey::F3 => "F3",
-        NamedKey::F4 => "F4",
-        NamedKey::F5 => "F5",
-        NamedKey::F6 => "F6",
-        NamedKey::F7 => "F7",
-        NamedKey::F8 => "F8",
-        NamedKey::F9 => "F9",
-        NamedKey::F10 => "F10",
-        NamedKey::F11 => "F11",
-        NamedKey::F12 => "F12",
-        NamedKey::Shift => "Shift",
-        NamedKey::Control => "Control",
-        NamedKey::Alt => "Alt",
-        NamedKey::Super => "Meta",
+        NamedKey::Enter => "enter",
+        NamedKey::Escape => "escape",
+        NamedKey::Backspace => "backspace",
+        NamedKey::Tab => "tab",
+        NamedKey::Space => "space",
+        NamedKey::ArrowDown => "arrowdown",
+        NamedKey::ArrowLeft => "arrowleft",
+        NamedKey::ArrowRight => "arrowright",
+        NamedKey::ArrowUp => "arrowup",
+        NamedKey::End => "end",
+        NamedKey::Home => "home",
+        NamedKey::PageDown => "pagedown",
+        NamedKey::PageUp => "pageup",
+        NamedKey::Delete => "delete",
+        NamedKey::Insert => "insert",
+        NamedKey::F1 => "f1",
+        NamedKey::F2 => "f2",
+        NamedKey::F3 => "f3",
+        NamedKey::F4 => "f4",
+        NamedKey::F5 => "f5",
+        NamedKey::F6 => "f6",
+        NamedKey::F7 => "f7",
+        NamedKey::F8 => "f8",
+        NamedKey::F9 => "f9",
+        NamedKey::F10 => "f10",
+        NamedKey::F11 => "f11",
+        NamedKey::F12 => "f12",
+        NamedKey::Shift => "shift",
+        NamedKey::Control => "control",
+        NamedKey::Alt => "alt",
+        NamedKey::Super => "meta",
         _ => "",
     }
 }

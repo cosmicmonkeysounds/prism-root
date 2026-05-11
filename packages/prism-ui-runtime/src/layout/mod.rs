@@ -140,6 +140,14 @@ pub enum Node {
         radius: CornerRadius,
         #[serde(default, skip_serializing_if = "Semantic::is_empty")]
         semantic: Semantic,
+        /// When `true`, the paint pass draws a 1-px vertical caret bar
+        /// after the rendered text + bumps the border colour to the
+        /// accent so the user can see where their keystrokes will land.
+        /// Hosts set this on the input that's currently receiving
+        /// keyboard input (`state.field_focus` in the shell). Defaults
+        /// to `false` so headless / SSR paths render the resting box.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        focused: bool,
     },
 }
 
@@ -777,6 +785,7 @@ enum NodeContext {
         is_placeholder: bool,
         props: TextProps,
         radius: CornerRadius,
+        focused: bool,
     },
 }
 
@@ -858,6 +867,7 @@ fn build_taffy_subtree(
             width,
             height,
             radius,
+            focused,
             ..
         } => {
             // Same Grow→flex_grow rule the container/image arms use — a
@@ -895,6 +905,7 @@ fn build_taffy_subtree(
                 is_placeholder,
                 props: props.clone(),
                 radius: *radius,
+                focused: *focused,
             };
             taffy
                 .new_leaf_with_context(style, ctx)
@@ -1103,6 +1114,7 @@ fn emit_commands(
                 content: content.clone(),
                 color: props.color,
                 font_size: props.font_size,
+                caret: None,
             });
         }
         Some(NodeContext::Image {
@@ -1132,6 +1144,7 @@ fn emit_commands(
             is_placeholder,
             props,
             radius,
+            focused,
         }) => {
             out.push(RenderCommand::Rectangle {
                 bounds,
@@ -1143,15 +1156,31 @@ fn emit_commands(
                 },
                 radius: *radius,
             });
-            out.push(RenderCommand::Border {
-                bounds,
-                color: Color {
+            // Border colour bumps to the accent when the input is the
+            // active focus target — same `#0060c0` family the rest of
+            // the shell's "active" chrome uses. Resting border is
+            // neutral grey. SSR backends ignore `focused` so the
+            // semantic-HTML pass renders the resting form.
+            let border = if *focused {
+                Color {
+                    r: 0,
+                    g: 96,
+                    b: 192,
+                    a: 255,
+                }
+            } else {
+                Color {
                     r: 200,
                     g: 200,
                     b: 200,
                     a: 255,
-                },
-                width: 1.0,
+                }
+            };
+            let border_width = if *focused { 2.0 } else { 1.0 };
+            out.push(RenderCommand::Border {
+                bounds,
+                color: border,
+                width: border_width,
                 radius: *radius,
             });
             // Inset the text by the same 6px the measure callback
@@ -1166,16 +1195,41 @@ fn emit_commands(
             } else {
                 props.color
             };
+            let text_left = bounds.x + 6.0;
+            let text_top = bounds.y + 4.0;
+            let text_width = (bounds.width - 12.0).max(0.0);
+            let text_height = (bounds.height - 8.0).max(0.0);
+            // When focused, attach a caret colour to the Text
+            // command so the paint pass can place the bar at the
+            // *shaped* text end — cosmic-text knows the exact pixel
+            // width of the rendered glyphs, which is what we want.
+            // The previous approach (a separate Rectangle at the
+            // `chars * font_size * 0.55` natural-width estimate) was
+            // an *upper bound* on the actual glyph width, so the
+            // caret sat a few pixels past the last glyph and
+            // Backspace then deleted the next-to-last char from the
+            // user's mental model.
+            let caret = if *focused && !*is_placeholder {
+                Some(Color {
+                    r: 0,
+                    g: 96,
+                    b: 192,
+                    a: 255,
+                })
+            } else {
+                None
+            };
             out.push(RenderCommand::Text {
                 bounds: Rect {
-                    x: bounds.x + 6.0,
-                    y: bounds.y + 4.0,
-                    width: (bounds.width - 12.0).max(0.0),
-                    height: (bounds.height - 8.0).max(0.0),
+                    x: text_left,
+                    y: text_top,
+                    width: text_width,
+                    height: text_height,
                 },
                 content: text.clone(),
                 color: text_color,
                 font_size: props.font_size,
+                caret,
             });
         }
         Some(NodeContext::Spacer) | None => {}

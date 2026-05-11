@@ -39,6 +39,10 @@ fn nav_button_schema() -> Vec<FieldSpec> {
         FieldSpec::text("icon", "Icon").required(),
         FieldSpec::boolean("selected", "Selected").with_default(Value::Bool(false)),
         FieldSpec::text("help-id", "Help ID"),
+        // Stable activity-bar id (`home` / `folder` / `search` / …)
+        // surfaced as `data-target-id` so a click routes through
+        // `ChromeSlot::select_nav_button`.
+        FieldSpec::text("nav-id", "Activity-bar id"),
     ]
 }
 
@@ -60,11 +64,19 @@ fn nav_button_signals() -> Vec<prism_builder::signal::SignalDef> {
 fn nav_button_lower(ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> UiNode {
     let icon = prop_string(node, "icon");
     let selected = prop_bool(node, "selected", false);
+    let nav_id = prop_string(node, "nav-id");
 
     // Left accent rail — 3px-wide vertical stroke that's only painted
     // when selected. We always emit the container to keep the layout
     // deterministic; transparent fills compose to no draw call.
-    let rail = bare_container(format!("{}::rail", node.id), vec![], |props| {
+    //
+    // **Empty id on purpose** so the rail doesn't register its own
+    // hit rect — `Surface::hit_test_at` returns the deepest container
+    // under the cursor, and a non-empty id here would shadow the
+    // outer nav-button's `data-role` for clicks landing on the rail
+    // strip (the same "inner container eclipses outer routing" trap
+    // every chrome composite block needs to dodge).
+    let rail = bare_container(String::new(), vec![], |props| {
         props.width = Sizing::Fixed(RAIL_WIDTH);
         props.height = Sizing::Grow;
         if selected {
@@ -82,7 +94,8 @@ fn nav_button_lower(ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) ->
 
     // Right side hosts the centred glyph in its own grow container so
     // the rail floats at x=0 and the icon sits in the remaining 45px.
-    let body = bare_container(format!("{}::body", node.id), vec![glyph], |props| {
+    // Same empty-id rationale as `rail` above.
+    let body = bare_container(String::new(), vec![glyph], |props| {
         props.width = Sizing::Grow;
         props.height = Sizing::Grow;
         props.padding = Padding {
@@ -105,7 +118,19 @@ fn nav_button_lower(ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) ->
         if !selected {
             props.hover = hover_bg(HOVER_BG);
         }
-        props.semantic = Semantic::button().with_attr_if(selected, "aria-pressed", "true");
+        // Pointer routing — `data-role="nav-button"` + the stable
+        // `nav-id` (`home` / `folder` / `search` / `settings`) so a
+        // click flips `ChromeSlot::nav_buttons[*].selected` via the
+        // `handle_nav_button_click` route. Without the routing pair,
+        // every activity-bar click was a silent no-op in production.
+        let mut s = Semantic::button().with_attr("data-role", "nav-button");
+        if !nav_id.is_empty() {
+            s = s.with_attr("data-target-id", nav_id);
+        }
+        if selected {
+            s = s.with_attr("aria-pressed", "true");
+        }
+        props.semantic = s;
     })
 }
 
@@ -179,9 +204,30 @@ mod tests {
     }
 
     #[test]
-    fn schema_declares_three_fields() {
+    fn schema_declares_routing_keys() {
         let block = prism_builder::SpecBlock::new(&super::NAV_BUTTON_SPEC);
         let keys: Vec<String> = block.schema().into_iter().map(|f| f.key).collect();
-        assert_eq!(keys, vec!["icon", "selected", "help-id"]);
+        assert_eq!(keys, vec!["icon", "selected", "help-id", "nav-id"]);
+    }
+
+    #[test]
+    fn lowered_button_carries_data_role_and_target_id() {
+        let ui = lower_one(&nav(json!({
+            "icon": "icons/home.svg",
+            "nav-id": "home",
+        })));
+        let UiNode::Container { props, .. } = ui else {
+            panic!()
+        };
+        assert!(props
+            .semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-role" && v == "nav-button"));
+        assert!(props
+            .semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-target-id" && v == "home"));
     }
 }

@@ -35,18 +35,12 @@ const FIELD_PAD: f32 = 4.0;
 const LABEL_FONT_SIZE: f32 = 12.0;
 const REQUIRED_MARK: &str = " *";
 
-/// Accent ring painted around a focused field-editor row. Sits behind
-/// the existing label + body, so the chrome reads as "this is the
-/// field receiving keystrokes." Color matches the rest of the shell's
-/// "active" accent (the same `#0060c0` family the inspector row uses).
-const FOCUS_RING_BG: &str = "#330060c0";
-const FOCUS_RING_RADIUS: f32 = 4.0;
-/// Resting hover tint painted as `props.hover.background` so the
-/// field row signals "I'm clickable" before the user actually clicks.
-/// Same intensity the palette + canvas-doc nodes use — every
-/// clickable chrome surface reads the same on cursor pass.
-const FIELD_HOVER_BG: &str = "#1a0060c0";
-const FIELD_HOVER_RADIUS: f32 = 4.0;
+/// Subtle row-wide hover tint — just enough to signal "this row is
+/// part of the active form" when the cursor passes. The *interactive*
+/// chrome (input box, drag-number pill, swatch) carries its own
+/// distinct visual; this row tint stays small so the input remains
+/// the focal point. Matches the inspector-row resting tint.
+const FIELD_HOVER_BG: &str = "#0a000000";
 
 const SWITCH_WIDTH: f32 = 36.0;
 const SWITCH_HEIGHT: f32 = 18.0;
@@ -203,22 +197,13 @@ fn field_editor_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties
             top: 6.0,
             bottom: 6.0,
         };
-        if focused {
-            // Soft tint behind the row so the user sees which field
-            // is receiving keystrokes; cleared the moment focus moves
-            // away or the user hits Esc / Enter.
-            props.background = parse_color(FOCUS_RING_BG);
-            props.radius = uniform_radius(FOCUS_RING_RADIUS);
-        } else {
-            // Resting hover affordance — every field row tints the
-            // moment the cursor crosses its bounds, the same way
-            // palette rows / canvas-doc nodes / chrome buttons do.
-            // Authoring a field row needs to *do* nothing here; the
-            // single `props.hover = ...` line is the declarative
-            // contract every clickable chrome surface follows.
-            props.hover = hover_bg(FIELD_HOVER_BG);
-            props.radius = uniform_radius(FIELD_HOVER_RADIUS);
-        }
+        // Subtle row tint on hover — the visible "I'm clickable" cue
+        // belongs to the *input widget* (text-input box, drag-number
+        // pill, color swatch), not the row chrome. A heavy row-wide
+        // background drowned out the input and made every property
+        // look "monolithic" instead of "label + distinct input".
+        props.hover = hover_bg(FIELD_HOVER_BG);
+        props.radius = uniform_radius(4.0);
         // §43 C2 routing keys — the hit-test surface reads
         // `data-role="field-edit"` + `data-target-id` + `data-key` +
         // `data-kind` to route a pointer-down on this row into a
@@ -237,9 +222,22 @@ fn field_editor_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties
         if !target_id.is_empty() {
             s = s.with_attr("data-target-id", target_id);
         }
-        let value = prop_str(node, "value");
-        if !value.is_empty() {
-            s = s.with_attr("data-value", value);
+        // `data-value` mirrors the bound prop so the click router can
+        // route a `boolean` toggle / `select` cycle / `number` drag
+        // off the rendered hit without re-reading the doc. `prop_str`
+        // only handles `Value::String`, so a number prop (e.g.
+        // `child-spacing: 8`) would surface as an empty attr — and the
+        // drag handler would default `start_value` to `0`, snapping
+        // the field to zero before the first move tick. Project every
+        // primitive variant to its string form so the attr survives.
+        let value_attr = match node.props.get("value") {
+            Some(Value::String(s)) => s.clone(),
+            Some(Value::Number(n)) => n.to_string(),
+            Some(Value::Bool(b)) => b.to_string(),
+            _ => String::new(),
+        };
+        if !value_attr.is_empty() {
+            s = s.with_attr("data-value", value_attr);
         }
         // Kind-specific extras the click-cycle router reads:
         // `data-options` carries the select values (comma-joined, since
@@ -295,8 +293,14 @@ fn build_boolean_body(node: &Node) -> Vec<UiNode> {
     let on = prop_str(node, "value") == "true";
     // Track + thumb. Thumb's left padding flips by state; this is the
     // declarative equivalent of the original Slint `Switch`.
+    //
+    // **Empty inner ids** on track + thumb so they don't shadow the
+    // outer field-edit row in `Surface::hit_test_at`. The boolean
+    // field's click semantics live on the row (`handle_field_edit_click`
+    // toggles the bound prop); the inner track is purely decorative
+    // for hit-testing purposes.
     let track_bg = if on { SWITCH_ON_BG } else { SWITCH_OFF_BG };
-    let thumb = bare_container(format!("{}::thumb", node.id), vec![], |p| {
+    let thumb = bare_container(String::new(), vec![], |p| {
         p.width = Sizing::Fixed(SWITCH_THUMB_SIZE);
         p.height = Sizing::Fixed(SWITCH_THUMB_SIZE);
         p.radius = uniform_radius(SWITCH_THUMB_SIZE / 2.0);
@@ -307,7 +311,8 @@ fn build_boolean_body(node: &Node) -> Vec<UiNode> {
     } else {
         2.0
     };
-    let track = bare_container(format!("{}::switch", node.id), vec![thumb], |p| {
+    let _ = &node.id; // ids on inner widgets are intentionally empty
+    let track = bare_container(String::new(), vec![thumb], |p| {
         p.width = Sizing::Fixed(SWITCH_WIDTH);
         p.height = Sizing::Fixed(SWITCH_HEIGHT);
         p.radius = uniform_radius(SWITCH_RADIUS);
@@ -327,17 +332,21 @@ fn build_boolean_body(node: &Node) -> Vec<UiNode> {
 
 fn build_select_body(node: &Node) -> Vec<UiNode> {
     let value = prop_str(node, "value");
-    vec![pill_with_chevron(
-        format!("{}::select", node.id),
-        value,
-        false,
-    )]
+    // Empty pill id — same hit-test-transparency rule as the
+    // drag-number pill and the boolean switch.
+    let _ = &node.id;
+    vec![pill_with_chevron(String::new(), value, false)]
 }
 
 fn build_color_body(node: &Node) -> Vec<UiNode> {
     let value = prop_str(node, "value");
     let style = StyleProperties::default();
 
+    // Swatch keeps a non-empty id only because the swatch *does*
+    // carry its own click semantic (`color-swatch` → opens a picker
+    // in the future). Until that handler lands the swatch routes
+    // nowhere; the surrounding field-edit row's click-cycle still
+    // owns the interaction.
     let swatch = bare_container(format!("{}::swatch", node.id), vec![], |p| {
         p.width = Sizing::Fixed(SWATCH_SIZE);
         p.height = Sizing::Fixed(SWATCH_SIZE);
@@ -358,15 +367,13 @@ fn build_color_body(node: &Node) -> Vec<UiNode> {
         12.0,
     );
 
-    vec![bare_container(
-        format!("{}::color-row", node.id),
-        vec![swatch, hex],
-        |p| {
-            p.direction = Direction::Row;
-            p.gap = PICKER_GAP;
-            p.height = Sizing::Fixed(PILL_HEIGHT);
-        },
-    )]
+    // Outer color-row container uses empty id so the row's hit
+    // returns the field-edit container, not the color-row.
+    vec![bare_container(String::new(), vec![swatch, hex], |p| {
+        p.direction = Direction::Row;
+        p.gap = PICKER_GAP;
+        p.height = Sizing::Fixed(PILL_HEIGHT);
+    })]
 }
 
 fn build_number_body(node: &Node) -> Vec<UiNode> {
@@ -382,19 +389,75 @@ fn build_number_body(node: &Node) -> Vec<UiNode> {
                 .and_then(|s| s.parse().ok())
         })
         .unwrap_or(0.0);
-    vec![drag_number_field_node(
+    let min = node.props.get("min").and_then(|v| v.as_f64());
+    let max = node.props.get("max").and_then(|v| v.as_f64());
+
+    let drag = drag_number_field_node(
         format!("{}::drag", node.id),
         "",
         DRAG_NUMBER_LABEL_COLOR,
         format_drag_value(value),
         key,
-    )]
+    );
+
+    // Sliding track — only when both bounds are present (otherwise
+    // there's nothing to scale against). Matches the Slint Spacing /
+    // Radius / size-with-clamp inputs that paired a number pill with
+    // a min..max track on the right. Outer number-row container has
+    // an empty id so the field-edit row stays the hit-test target.
+    match (min, max) {
+        (Some(mn), Some(mx)) if mx > mn => {
+            let fill = ((value - mn) / (mx - mn)).clamp(0.0, 1.0) as f32;
+            vec![bare_container(
+                String::new(),
+                vec![drag, slider_track(node.id.as_str(), fill)],
+                |p| {
+                    p.direction = Direction::Row;
+                    p.gap = 8.0;
+                    p.height = Sizing::Fixed(PILL_HEIGHT);
+                },
+            )]
+        }
+        _ => vec![drag],
+    }
+}
+
+/// Inline slider track painted to the right of the drag-number pill
+/// for number / integer fields with explicit `min` + `max` bounds.
+/// `fill` is the clamped 0..1 fraction the value sits at; the track
+/// renders as a 4-px-tall horizontal strip with a sub-rect for the
+/// filled portion. Click / drag wiring on the track itself is a
+/// follow-up — for now the pill carries the interactivity and the
+/// track is the visual readout.
+fn slider_track(_field_id: &str, fill: f32) -> UiNode {
+    const TRACK_BG: &str = "#1f000000";
+    const TRACK_FILL: &str = "#0060c0";
+    let fill_pct = fill.clamp(0.0, 1.0);
+    // Both track + fill carry empty ids so they don't shadow the
+    // outer field-edit row in hit-testing. Click-on-slider routing
+    // is a follow-up that'd want its own role anyway.
+    let filled = bare_container(String::new(), vec![], |p| {
+        p.height = Sizing::Grow;
+        p.width = Sizing::Percent(fill_pct);
+        p.background = parse_color(TRACK_FILL);
+        p.radius = uniform_radius(2.0);
+    });
+    bare_container(String::new(), vec![filled], |p| {
+        p.direction = Direction::Row;
+        p.width = Sizing::Grow;
+        p.height = Sizing::Fixed(4.0);
+        p.background = parse_color(TRACK_BG);
+        p.radius = uniform_radius(2.0);
+        p.padding = Padding::default();
+        p.semantic = Semantic::tag("div").with_attr("data-role", "slider-track");
+    })
 }
 
 fn build_text_body(node: &Node) -> Vec<UiNode> {
     let value = prop_str(node, "value");
+    let focused = prop_bool(node, "focused", false);
     let style = StyleProperties::default();
-    vec![text_input_node(
+    vec![prism_builder::ui_lower::text_input_node_with_focus(
         format!("{}::input", node.id),
         value.into(),
         String::new(),
@@ -402,6 +465,7 @@ fn build_text_body(node: &Node) -> Vec<UiNode> {
         Sizing::Grow,
         Sizing::Fixed(PILL_HEIGHT),
         12.0,
+        focused,
     )]
 }
 
@@ -595,7 +659,13 @@ mod tests {
     }
 
     #[test]
-    fn focused_prop_paints_focus_ring_and_data_focused_attr() {
+    fn focused_prop_stamps_data_focused_attr() {
+        // The focused row used to paint a heavy row-wide tint;
+        // that drowned the input widget and made every property
+        // look "monolithic" (see the 2026-05-11 screenshot
+        // feedback). Visual focus now lives on the input itself —
+        // the row only carries the `data-focused` semantic attr
+        // so SSR / accessibility tools can still announce it.
         let ui = lower(json!({
             "kind": "text",
             "label": "Body",
@@ -607,7 +677,6 @@ mod tests {
         let UiNode::Container { props, .. } = ui else {
             panic!()
         };
-        assert!(props.background.is_some(), "focused row must paint a tint");
         assert!(props
             .semantic
             .attrs

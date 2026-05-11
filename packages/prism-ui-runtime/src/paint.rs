@@ -77,6 +77,7 @@ pub fn draw<R: Renderer>(
                 content,
                 color,
                 font_size,
+                caret,
             } => {
                 draw_text(
                     canvas,
@@ -87,6 +88,8 @@ pub fn draw<R: Renderer>(
                     *font_size,
                     *color,
                     bounds.width,
+                    *caret,
+                    bounds.height,
                 );
             }
             RenderCommand::Image {
@@ -167,6 +170,14 @@ fn femto(c: Color) -> FemtoColor {
 /// one line"; the visual overflow is much friendlier than the
 /// glyph-broken wrap and pairs with the `flex_shrink: 0` defence on
 /// text leaves so the parent has reserved the space anyway.
+///
+/// `caret` paints a 1.5-px-wide vertical bar in `caret`'s colour
+/// immediately after the rendered glyphs. The position is taken
+/// from the cosmic-text buffer's max-glyph-x (i.e. the actual
+/// shaped end), so the caret sits exactly at the next-character
+/// insertion point — unlike a chars-times-font-size estimate, which
+/// drifts past the real glyph end and gives the user the impression
+/// that Backspace deletes the wrong character.
 #[allow(clippy::too_many_arguments)]
 fn draw_text<R: Renderer>(
     canvas: &mut Canvas<R>,
@@ -177,6 +188,8 @@ fn draw_text<R: Renderer>(
     font_size: f32,
     colour: Color,
     width: f32,
+    caret: Option<Color>,
+    box_height: f32,
 ) {
     // Heuristic natural width — same `chars * font_size * 0.55`
     // mapping `measure_text` uses, kept in sync intentionally so the
@@ -189,14 +202,21 @@ fn draw_text<R: Renderer>(
     };
     let buffer = text.shape(content, font_size, shape_width);
     // Collect placements first so we drop the buffer borrow before we
-    // re-enter `text` for glyph baking.
+    // re-enter `text` for glyph baking. We also track the rightmost
+    // glyph end on the first line — that's the pixel offset the caret
+    // bar should sit at (immediately after the last shaped glyph).
     struct Placement {
         x: f32,
         y: f32,
         cache: cosmic_text::CacheKey,
     }
     let mut placements: Vec<Placement> = Vec::new();
-    for run in buffer.layout_runs() {
+    let mut shaped_end_x: f32 = 0.0;
+    let mut first_line_top: f32 = 0.0;
+    for (line_idx, run) in buffer.layout_runs().enumerate() {
+        if line_idx == 0 {
+            first_line_top = run.line_top;
+        }
         for glyph in run.glyphs.iter() {
             let physical = glyph.physical((0.0, 0.0), 1.0);
             placements.push(Placement {
@@ -204,6 +224,15 @@ fn draw_text<R: Renderer>(
                 y: run.line_y + physical.y as f32,
                 cache: physical.cache_key,
             });
+            if line_idx == 0 {
+                // glyph.x is the horizontal advance origin within the
+                // run; adding glyph.w gives the post-glyph cursor
+                // position the caret should land at.
+                let end = glyph.x + glyph.w;
+                if end > shaped_end_x {
+                    shaped_end_x = end;
+                }
+            }
         }
     }
     drop(buffer);
@@ -224,6 +253,22 @@ fn draw_text<R: Renderer>(
             0.0,
             1.0,
         );
+        canvas.fill_path(&path, &paint);
+    }
+    if let Some(caret_color) = caret {
+        // Paint a 1.5-px-wide caret bar at the shaped-text end. The
+        // x lands one pixel after the last glyph's advance so the bar
+        // sits in the "next insertion point" slot, exactly matching
+        // Backspace's "delete the previous character" semantic. The
+        // bar height tracks the box with 2-px padding so it doesn't
+        // crowd the input's border.
+        let caret_x = left + shaped_end_x + 1.0;
+        let pad_y = 2.0;
+        let caret_top = top + first_line_top + pad_y;
+        let caret_height = (box_height - pad_y * 2.0).max(font_size * 0.9);
+        let mut path = Path::new();
+        path.rect(caret_x, caret_top, 1.5, caret_height);
+        let paint = Paint::color(femto(caret_color));
         canvas.fill_path(&path, &paint);
     }
 }

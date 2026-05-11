@@ -31,6 +31,7 @@ pub fn lower(commands: &[RenderCommand]) -> String {
                 content,
                 color,
                 font_size,
+                ..
             } => {
                 out.push_str(&format!(
                     "<span style=\"position:absolute;left:{}px;top:{}px;width:{}px;height:{}px;color:{};font-size:{}px\">{}</span>",
@@ -199,6 +200,7 @@ mod tests {
                 a: 255,
             },
             font_size: 14.0,
+            caret: None,
         };
         let html = lower(&[cmd]);
         assert!(html.contains("&lt;script&gt;"));

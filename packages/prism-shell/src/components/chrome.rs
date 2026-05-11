@@ -159,14 +159,18 @@ pub fn indent_dot(id: impl Into<String>, color: &str, radius_px: f32) -> UiNode 
 ///
 /// `key` populates the SSR `data-key` attr; aria-label is derived from
 /// `label` when set.
-pub const DRAG_NUMBER_HEIGHT: f32 = 24.0;
-pub const DRAG_NUMBER_RADIUS: f32 = 3.0;
-pub const DRAG_NUMBER_RESTING_BG: &str = "#08000000";
-pub const DRAG_NUMBER_HOVER_BG: &str = "#14000000";
+pub const DRAG_NUMBER_HEIGHT: f32 = 28.0;
+pub const DRAG_NUMBER_RADIUS: f32 = 4.0;
+/// 16% black — visible as a distinct input pill against the panel's
+/// near-white background, mirroring the Slint-era number-input chrome.
+/// The previous 3% alpha was so subtle the input read as plain text
+/// (the "monolithic property row" complaint).
+pub const DRAG_NUMBER_RESTING_BG: &str = "#28000000";
+pub const DRAG_NUMBER_HOVER_BG: &str = "#3c000000";
 pub const DRAG_NUMBER_VALUE_COLOR: &str = "#000000";
 pub const DRAG_NUMBER_LABEL_COLOR: &str = "#99000000";
 pub const DRAG_NUMBER_LABEL_SIZE: f32 = 11.0;
-pub const DRAG_NUMBER_VALUE_SIZE: f32 = 11.0;
+pub const DRAG_NUMBER_VALUE_SIZE: f32 = 12.0;
 
 pub fn drag_number_field_node(
     id: impl Into<String>,
@@ -175,12 +179,12 @@ pub fn drag_number_field_node(
     value_text: String,
     key: &str,
 ) -> UiNode {
-    let id = id.into();
+    let _ = id; // outer container is hit-test-transparent — see below
     let style = StyleProperties::default();
     let mut row_children: Vec<UiNode> = Vec::with_capacity(2);
     if !label.is_empty() {
         row_children.push(colored_text_node(
-            format!("{id}::label"),
+            String::new(),
             label.into(),
             &style,
             DRAG_NUMBER_LABEL_SIZE,
@@ -188,14 +192,14 @@ pub fn drag_number_field_node(
         ));
     }
     row_children.push(colored_text_node(
-        format!("{id}::value"),
+        String::new(),
         value_text,
         &style,
         DRAG_NUMBER_VALUE_SIZE,
         DRAG_NUMBER_VALUE_COLOR,
     ));
 
-    let row = bare_container(format!("{id}::row"), row_children, |p| {
+    let row = bare_container(String::new(), row_children, |p| {
         p.direction = Direction::Row;
         p.gap = 4.0;
         p.padding = Padding {
@@ -207,7 +211,15 @@ pub fn drag_number_field_node(
         p.height = Sizing::Grow;
     });
 
-    bare_container(id, vec![row], |props| {
+    // **Empty outer id** so this pill doesn't register its own hit
+    // rect. The field-editor row above it carries the routing keys
+    // (`data-role="field-edit"`, `data-target-id`, `data-key`,
+    // `data-kind`, `data-value`); a non-empty id here would surface
+    // a deeper hit, `Surface::hit_test_at` would return the pill,
+    // and the click would land on a container with no `data-role` —
+    // exactly the silent-failure mode the user reported as "clicking
+    // and dragging does not work" on number fields.
+    bare_container(String::new(), vec![row], |props| {
         props.height = Sizing::Fixed(DRAG_NUMBER_HEIGHT);
         props.radius = uniform_radius(DRAG_NUMBER_RADIUS);
         props.background = parse_color(DRAG_NUMBER_RESTING_BG);

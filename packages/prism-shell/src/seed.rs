@@ -64,26 +64,34 @@ fn seed_chrome() -> crate::state::ChromeSlot {
         status: "Ready".into(),
         nav_buttons: vec![
             NavButton {
+                id: "home".into(),
                 icon: "icons/home.svg".into(),
                 selected: true,
             },
             NavButton {
+                id: "folder".into(),
                 icon: "icons/folder.svg".into(),
                 selected: false,
             },
             NavButton {
+                id: "search".into(),
                 icon: "icons/search.svg".into(),
                 selected: false,
             },
             NavButton {
+                id: "settings".into(),
                 icon: "icons/settings.svg".into(),
                 selected: false,
             },
         ],
         menus: ["File", "Edit", "View", "Window", "Help"]
             .into_iter()
-            .map(|l| MenuLabel { label: l.into() })
+            .map(|l| MenuLabel {
+                id: l.to_lowercase(),
+                label: l.into(),
+            })
             .collect(),
+        active_menu: None,
     }
 }
 

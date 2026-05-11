@@ -638,6 +638,7 @@ fn input_from(el: &Element, scope: &LowerScope) -> Node {
         height,
         radius: CornerRadius::default(),
         semantic: Semantic::default(),
+        focused: false,
     }
 }
 

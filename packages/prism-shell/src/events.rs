@@ -170,6 +170,8 @@ const POINTER_ROUTES: &[(&str, PointerHandler)] = &[
     ("app-card", handle_app_card_click),
     ("schema-row", handle_schema_row_click),
     ("signal-connection-row", handle_signal_connection_row_click),
+    ("nav-button", handle_nav_button_click),
+    ("menu-pill", handle_menu_pill_click),
 ];
 
 fn route_pointer_down(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
@@ -393,6 +395,32 @@ fn handle_signal_connection_row_click(inner: &Rc<RefCell<ShellInner>>, hit: &Hit
     };
     let mut guard = inner.borrow_mut();
     guard.state.builder.select_signal_connection(target)
+}
+
+/// Click on an activity-bar nav-button — flips
+/// `ChromeSlot::nav_buttons[*].selected` so the radio-style selection
+/// follows the click. `select_nav_button` returns `true` only when
+/// the selection actually moved, so an idempotent re-click of the
+/// already-selected button is a clean no-op.
+fn handle_nav_button_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
+    let Some(target) = attr_value(hit, "data-target-id") else {
+        return false;
+    };
+    let mut guard = inner.borrow_mut();
+    guard.state.chrome.select_nav_button(target)
+}
+
+/// Click on a menu-bar pill — toggles `ChromeSlot::active_menu`.
+/// Same pill re-clicked closes the menu; a different pill moves the
+/// cursor; clicking outside (the global pre-route blur) doesn't fire
+/// this handler at all, which is fine — the menu-dropdown overlay
+/// will own its own outside-click dismiss once it's authored.
+fn handle_menu_pill_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
+    let Some(target) = attr_value(hit, "data-target-id") else {
+        return false;
+    };
+    let mut guard = inner.borrow_mut();
+    guard.state.chrome.select_menu(target)
 }
 
 /// Click on the toolbar's zoom-percentage pill — resets canvas zoom
