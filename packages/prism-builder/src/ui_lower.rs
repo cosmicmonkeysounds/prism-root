@@ -498,6 +498,40 @@ pub fn uniform_radius(r: f32) -> CornerRadius {
     }
 }
 
+/// Shared "this surface responds to a pointer" tint. Every clickable
+/// chrome surface uses the same intensity so hover reads identically
+/// across the whole window — palette rows, inspector rows, canvas-doc
+/// nodes, field-editor rows, menu pills. Authors who need a stronger
+/// or softer tint can still pass any colour to [`hover_bg`] directly.
+pub const POINTER_HOVER_TINT: &str = "#1a0060c0";
+
+/// One-liner for the "clickable chrome surface" recipe — bundles
+/// the three things every routable container needs into a single
+/// call: a hover-bg tint, `data-role`, and (optional) `data-target-id`.
+///
+/// ```ignore
+/// bare_container(node.id.clone(), kids, |p| {
+///     p.padding = Padding::all(8.0);
+///     p.radius = uniform_radius(4.0);
+///     pointer_routing(p, "my-row", target_id);
+/// });
+/// ```
+///
+/// The caller still owns the rest of the `Semantic` shape (`tag`,
+/// `aria-*`, custom `data-*`) — `pointer_routing` only appends the
+/// two routing attrs and the hover tint, so existing builder calls
+/// compose cleanly. The function deliberately takes `&mut props` so
+/// it threads naturally through `bare_container`'s closure shape.
+pub fn pointer_routing(props: &mut ContainerProps, role: &'static str, target_id: &str) {
+    props.hover = hover_bg(POINTER_HOVER_TINT);
+    let semantic = std::mem::take(&mut props.semantic);
+    let mut s = semantic.with_attr("data-role", role);
+    if !target_id.is_empty() {
+        s = s.with_attr("data-target-id", target_id.to_string());
+    }
+    props.semantic = s;
+}
+
 /// Build runtime `ContainerProps` from a node's `FlowProps` + cascade.
 /// Single source of truth — every container-shaped block routes here.
 pub fn container_props_from(flow: Option<&FlowProps>, style: &StyleProperties) -> ContainerProps {

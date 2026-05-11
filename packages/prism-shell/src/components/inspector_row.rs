@@ -38,7 +38,10 @@ const INDENT_PX: f32 = 16.0;
 const PAD_LEFT_BASE: f32 = 12.0;
 const PAD_RIGHT: f32 = 8.0;
 const ROW_GAP: f32 = 6.0;
-const HOVER_BG: &str = "#0a000000";
+// Matches the shared chrome tint (`#1a0060c0`) the palette + canvas-doc
+// rows already use. The previous near-invisible 4% black was too subtle
+// against the row's resting bg to read as a hover affordance.
+const HOVER_BG: &str = "#1a0060c0";
 
 /// Per-`kind` declarative table — every visual difference between
 /// `node` / `row` / `empty` lives here; the lowering body never

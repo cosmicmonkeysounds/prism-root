@@ -119,3 +119,66 @@ fn production_pointer_down_on_palette_item_mutates_selection() {
         "palette_selected should track the clicked item"
     );
 }
+
+#[test]
+fn production_pointer_down_on_text_field_opens_focus_session() {
+    // The properties panel's Body row is a text-kind field-edit. A
+    // click on it should open `state.field_focus` — the keyboard
+    // routing path that flows typed characters into the bound prop.
+    // If `data-key` / `data-kind` / `data-target-id` aren't all on
+    // the rendered container, `handle_field_edit_click` short-circuits
+    // and the user can't type into the input. That was the reported
+    // production symptom: "properties aren't interactable."
+    let shell = Shell::new().expect("boot");
+    let nodes = shell.render();
+    let viewport = shell.inner.borrow().viewport;
+    let mut surface = Surface::new(wrap_root(nodes), viewport);
+    let _ = surface.commands();
+
+    // Find a text-kind field-edit hit (the Body row of the demo-heading).
+    let row_hit = surface
+        .hit_rects()
+        .iter()
+        .find(|h| {
+            let role_ok = h
+                .attrs
+                .iter()
+                .any(|(k, v)| k == "data-role" && v == "field-edit");
+            let kind_text = h.attrs.iter().any(|(k, v)| k == "data-kind" && v == "text");
+            role_ok && kind_text
+        })
+        .cloned()
+        .expect("at least one text field-edit row");
+    println!("clicking field-edit row attrs={:?}", row_hit.attrs);
+    let target = row_hit
+        .attrs
+        .iter()
+        .find(|(k, _)| k == "data-target-id")
+        .map(|(_, v)| v.clone())
+        .expect("data-target-id present");
+    let key = row_hit
+        .attrs
+        .iter()
+        .find(|(k, _)| k == "data-key")
+        .map(|(_, v)| v.clone())
+        .expect("data-key present");
+
+    let event = Event::PointerDown {
+        x: row_hit.bounds.x + 1.0,
+        y: row_hit.bounds.y + 1.0,
+        button: PointerButton::Primary,
+    };
+    let hit = surface
+        .hit_test_at(row_hit.bounds.x + 1.0, row_hit.bounds.y + 1.0)
+        .cloned();
+    let dirty = dispatch_event(&shell.inner, &event, hit);
+    assert!(dirty, "text field click must dirty the frame");
+    let guard = shell.inner.borrow();
+    let focus = guard
+        .state
+        .field_focus
+        .as_ref()
+        .expect("text-kind click must open a focus session");
+    assert_eq!(focus.target_id, target);
+    assert_eq!(focus.key, key);
+}

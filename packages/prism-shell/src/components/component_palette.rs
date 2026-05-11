@@ -17,8 +17,14 @@ use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Siz
 use serde_json::Value;
 
 const ROW_HEIGHT: f32 = 32.0;
-const ROW_HOVER: &str = "#0f000000";
-const ROW_SELECTED: &str = "#190060c0";
+/// Same tint intensity the canvas-document preview nodes use
+/// (`builder_canvas::CANVAS_NODE_HOVER_BG`). The previous black tint
+/// at 6% alpha was too subtle to register against the panel's near-
+/// white background — users couldn't tell hover was wired. Matching
+/// the canvas tint keeps "hovered chrome" reading the same across
+/// the whole window.
+const ROW_HOVER: &str = "#1a0060c0";
+const ROW_SELECTED: &str = "#330060c0";
 const ROW_RADIUS: f32 = 4.0;
 const LABEL_COLOR: &str = "#000000";
 const ICON_SIZE: f32 = 16.0;

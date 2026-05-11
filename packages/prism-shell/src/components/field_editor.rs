@@ -39,8 +39,14 @@ const REQUIRED_MARK: &str = " *";
 /// the existing label + body, so the chrome reads as "this is the
 /// field receiving keystrokes." Color matches the rest of the shell's
 /// "active" accent (the same `#0060c0` family the inspector row uses).
-const FOCUS_RING_BG: &str = "#180060c0";
+const FOCUS_RING_BG: &str = "#330060c0";
 const FOCUS_RING_RADIUS: f32 = 4.0;
+/// Resting hover tint painted as `props.hover.background` so the
+/// field row signals "I'm clickable" before the user actually clicks.
+/// Same intensity the palette + canvas-doc nodes use — every
+/// clickable chrome surface reads the same on cursor pass.
+const FIELD_HOVER_BG: &str = "#1a0060c0";
+const FIELD_HOVER_RADIUS: f32 = 4.0;
 
 const SWITCH_WIDTH: f32 = 36.0;
 const SWITCH_HEIGHT: f32 = 18.0;
@@ -203,6 +209,15 @@ fn field_editor_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties
             // away or the user hits Esc / Enter.
             props.background = parse_color(FOCUS_RING_BG);
             props.radius = uniform_radius(FOCUS_RING_RADIUS);
+        } else {
+            // Resting hover affordance — every field row tints the
+            // moment the cursor crosses its bounds, the same way
+            // palette rows / canvas-doc nodes / chrome buttons do.
+            // Authoring a field row needs to *do* nothing here; the
+            // single `props.hover = ...` line is the declarative
+            // contract every clickable chrome surface follows.
+            props.hover = hover_bg(FIELD_HOVER_BG);
+            props.radius = uniform_radius(FIELD_HOVER_RADIUS);
         }
         // §43 C2 routing keys — the hit-test surface reads
         // `data-role="field-edit"` + `data-target-id` + `data-key` +
