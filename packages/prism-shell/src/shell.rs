@@ -16,8 +16,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use prism_ui_runtime::event::Event;
 use prism_ui_runtime::interpret::TagResolver;
-use prism_ui_runtime::layout::{Node as UiNode, Surface, Viewport};
+use prism_ui_runtime::layout::{HitRect, Node as UiNode, Surface, Viewport};
 
 use crate::components::{
     register_document_builtins, register_shell_builtins, ShellComponentRegistry,
@@ -173,18 +174,23 @@ impl Shell {
         let inner = Rc::clone(&self.inner);
         let skeleton = self.skeleton.clone();
         let handler: prism_ui_runtime::event::EventHandler = Box::new(move |event, surface| {
-            // §43 C2 / C3: PointerDown events consult the runtime's
-            // hit-test cache before dispatch — the topmost container
-            // at the cursor's `data-role` decides whether the click
-            // is a selection / property mutation before the §22
-            // canvas gizmo path sees the event. Other events skip
-            // the lookup (no `Surface` interaction needed).
-            let hit = match event {
-                prism_ui_runtime::event::Event::PointerDown { x, y, .. } => {
-                    surface.hit_test_at(*x, *y).cloned()
-                }
-                _ => None,
-            };
+            // Single hit-test per pointer event. Reused for: hover
+            // paint (`set_hovered` on PointerMove), click routing
+            // (PointerDown chrome / canvas-node routes), and the
+            // click-without-drag step on PointerUp. Non-pointer
+            // events yield `None` and pass through cleanly.
+            let hit = compute_hit(event, surface);
+            // Hover paint: PointerMove syncs `Surface::hovered_id`
+            // so every container declaring `props.hover` (inspector
+            // rows, icon buttons, nav buttons, menu items, tabs, app
+            // cards, drag-number fields, ...) tints as the cursor
+            // passes. `set_hovered` is a no-op when the id hasn't
+            // changed and only marks the surface dirty when at
+            // least one side of the transition has hover overrides
+            // — clean hovers stay clean.
+            if matches!(event, Event::PointerMove { .. }) {
+                surface.set_hovered(hit.as_ref().map(|h| h.id.clone()));
+            }
             if dispatch_event(&inner, event, hit) {
                 let guard = inner.borrow();
                 let tree = render_tree(
@@ -222,6 +228,27 @@ fn wrap_root(children: Vec<UiNode>) -> UiNode {
     }
 }
 
+/// Pointer-event hit-test. One closed-form helper so every pointer
+/// variant — `PointerMove` for hover paint, `PointerDown` for click
+/// routing, `PointerUp` for the no-drag click-step fall-through —
+/// resolves through the same `Surface::hit_test_at` call. Non-pointer
+/// events (Wheel / Key / Text / Focus / Resize) yield `None` and pass
+/// through dispatch unchanged.
+#[cfg(feature = "native")]
+fn compute_hit(event: &Event, surface: &mut Surface) -> Option<HitRect> {
+    let (x, y) = pointer_xy(event)?;
+    surface.hit_test_at(x, y).cloned()
+}
+
+fn pointer_xy(event: &Event) -> Option<(f32, f32)> {
+    match event {
+        Event::PointerMove { x, y }
+        | Event::PointerDown { x, y, .. }
+        | Event::PointerUp { x, y, .. } => Some((*x, *y)),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -239,5 +266,115 @@ mod tests {
         let a = shell.render();
         let b = shell.render();
         assert_eq!(a, b, "two consecutive renders must be equal");
+    }
+
+    #[test]
+    fn pointer_xy_extracts_position_for_every_pointer_variant() {
+        use prism_ui_runtime::event::PointerButton;
+        // The shell's hover + click routing assumes every pointer
+        // variant yields a position; non-pointer events explicitly
+        // pass through dispatch unchanged.
+        assert_eq!(
+            pointer_xy(&Event::PointerMove { x: 1.0, y: 2.0 }),
+            Some((1.0, 2.0))
+        );
+        assert_eq!(
+            pointer_xy(&Event::PointerDown {
+                x: 3.0,
+                y: 4.0,
+                button: PointerButton::Primary,
+            }),
+            Some((3.0, 4.0))
+        );
+        assert_eq!(
+            pointer_xy(&Event::PointerUp {
+                x: 5.0,
+                y: 6.0,
+                button: PointerButton::Primary,
+            }),
+            Some((5.0, 6.0))
+        );
+        assert_eq!(pointer_xy(&Event::Wheel { dx: 0.0, dy: 1.0 }), None);
+        assert_eq!(pointer_xy(&Event::Focus { gained: true }), None);
+    }
+
+    #[test]
+    fn hover_pump_marks_surface_dirty_when_passing_over_hover_aware_node() {
+        // The femtovg backend's redraw loop polls `Surface::is_dirty()`
+        // after every event. The shell's hover pump must therefore
+        // request a redraw when the cursor enters a container whose
+        // `props.hover` is set — without this, every chrome tint that
+        // declares a hover override stays dead in production.
+        use prism_ui_runtime::layout::{
+            ContainerProps, HoverOverrides, Padding, Sizing,
+        };
+        use prism_ui_runtime::command::{Color, CornerRadius};
+        let tree = UiNode::Container {
+            id: String::new(),
+            props: ContainerProps::default(),
+            children: vec![UiNode::Container {
+                id: "hot-button".into(),
+                props: ContainerProps {
+                    width: Sizing::Fixed(100.0),
+                    height: Sizing::Fixed(40.0),
+                    padding: Padding::default(),
+                    hover: Some(HoverOverrides {
+                        background: Some(Color {
+                            r: 0,
+                            g: 0,
+                            b: 0,
+                            a: 32,
+                        }),
+                        radius: Some(CornerRadius {
+                            tl: 4.0,
+                            tr: 4.0,
+                            br: 4.0,
+                            bl: 4.0,
+                        }),
+                    }),
+                    ..Default::default()
+                },
+                children: Vec::new(),
+            }],
+        };
+        let mut surface = Surface::new(
+            tree,
+            Viewport {
+                width: 200.0,
+                height: 200.0,
+            },
+        );
+        // Prime the layout cache; this is what the femtovg backend does
+        // on first redraw, after which `is_dirty()` returns false until
+        // something mutates.
+        let _ = surface.commands();
+        assert!(!surface.is_dirty());
+
+        // Simulate the shell's hover-pump path: compute a hit at a
+        // point inside the button's bounds and call `set_hovered`.
+        let event = Event::PointerMove { x: 10.0, y: 10.0 };
+        let hit = compute_hit(&event, &mut surface);
+        assert_eq!(hit.as_ref().map(|h| h.id.as_str()), Some("hot-button"));
+        surface.set_hovered(hit.as_ref().map(|h| h.id.clone()));
+        assert!(
+            surface.is_dirty(),
+            "entering a hover-aware node must dirty the surface so the \
+             backend redraws with the tint applied"
+        );
+
+        // Leaving the node back to nowhere should re-dirty the surface
+        // so the tint clears.
+        let _ = surface.commands();
+        let event = Event::PointerMove {
+            x: 199.0,
+            y: 199.0,
+        };
+        let hit = compute_hit(&event, &mut surface);
+        assert!(hit.is_none());
+        surface.set_hovered(None);
+        assert!(
+            surface.is_dirty(),
+            "leaving a hover-aware node must re-dirty so the tint clears"
+        );
     }
 }

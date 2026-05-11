@@ -14,7 +14,9 @@ use prism_builder::{
     registry::FieldSpec,
     signal::SignalDef,
     style::StyleProperties,
-    ui_lower::{bare_container, parse_color, prop_bool, prop_string, uniform_radius, LowerCtx},
+    ui_lower::{
+        bare_container, hover_bg, parse_color, prop_bool, prop_string, uniform_radius, LowerCtx,
+    },
     with_common_signals,
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
@@ -24,6 +26,18 @@ const CANVAS_BG: &str = "#040000";
 const PAGE_BG: &str = "#ffffff";
 const GRID_LINE: &str = "#22000000";
 const SELECTION_BORDER: &str = "#0060c0";
+/// Translucent blue tint painted as the background of the currently
+/// selected canvas-document node. Visible against any underlying
+/// content (white page bg, text glyphs, button fills) without
+/// occluding it — gives the user immediate "I selected this"
+/// feedback even before a proper bbox outline lands.
+const SELECTION_TINT: &str = "#330060c0";
+/// Resting hover tint painted as `props.hover.background` on every
+/// canvas-document container. With `Surface::set_hovered` wired in
+/// the shell, the cursor passing over a preview node now flashes
+/// this tint — the canvas tree behaves like every other clickable
+/// chrome surface.
+const CANVAS_NODE_HOVER_BG: &str = "#1a0060c0";
 const HANDLE_DIRECTIONS: [&str; 8] = ["tl", "t", "tr", "r", "br", "b", "bl", "l"];
 
 fn builder_canvas_schema() -> Vec<FieldSpec> {
@@ -68,6 +82,12 @@ fn builder_canvas_signals() -> Vec<prism_builder::signal::SignalDef> {
 }
 
 fn builder_canvas_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let selection_id = prop_string(node, "selection-id");
+    let selection_id = if selection_id.is_empty() {
+        None
+    } else {
+        Some(selection_id)
+    };
     let zoom = node
         .props
         .get("zoom")
@@ -132,7 +152,14 @@ fn builder_canvas_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StylePropertie
     // a chrome container that happens to share an id (the most
     // notable collision is `root` — both `<shell.app-window
     // id="root">` and `BuilderDocument::page_shell()` use it).
-    tag_canvas_subtree(&mut preview);
+    //
+    // The same walk also paints two visual affordances: a hover-bg
+    // override (so every preview node tints when the cursor passes,
+    // mirroring the chrome's clickability cue) and the selection
+    // tint when the node id matches the currently selected document
+    // node. Both run off `selection-id` from `builder_canvas_props`
+    // — no separate "lookup the layout bbox" pass required.
+    tag_canvas_subtree(&mut preview, selection_id.as_deref());
 
     let preview_layer = bare_container(format!("{}::preview", node.id), preview, |p| {
         p.width = Sizing::Grow;
@@ -313,12 +340,28 @@ fn build_selection_layer(ctx: &LowerCtx<'_>, node: &Node) -> UiNode {
     })
 }
 
-/// Annotate every container in `nodes` (recursively) with
-/// `data-canvas-node="<id>"`. Only Container variants contribute to
-/// `Surface::hit_test_at` hits; tagging them is enough for the
-/// pointer-routing path to recognise canvas-doc descendants without
-/// false positives on chrome containers that share an id.
-fn tag_canvas_subtree(nodes: &mut [UiNode]) {
+/// Annotate every container in `nodes` (recursively) with the three
+/// canvas-preview affordances:
+///
+/// 1. `data-canvas-node="<id>"` semantic attr — pointer-down routing
+///    uses this to recognise canvas-doc descendants without false
+///    positives on chrome containers that share an id (the canonical
+///    collision is `root` — both `<shell.app-window id="root">` and
+///    `BuilderDocument::page_shell()` use it).
+/// 2. A `props.hover` background tint — so the cursor passing over a
+///    preview node tints it, mirroring how chrome surfaces signal
+///    clickability. The shell's hover dispatch (`Surface::set_hovered`
+///    on every PointerMove) drives the paint swap.
+/// 3. A selection background tint when `selection_id` matches the
+///    container's id — the user's "I selected this" feedback before
+///    a proper bbox outline lands. Pre-existing `background` settings
+///    are preserved by *only* overriding when the resting bg is `None`
+///    on hover, and unconditionally tinting on selection (the selection
+///    paint wins over any base bg colour by design).
+///
+/// Only Container variants contribute to `Surface::hit_test_at` hits;
+/// only they receive the decoration — leaves never carry hover state.
+fn tag_canvas_subtree(nodes: &mut [UiNode], selection_id: Option<&str>) {
     for n in nodes {
         if let UiNode::Container {
             id,
@@ -331,8 +374,24 @@ fn tag_canvas_subtree(nodes: &mut [UiNode]) {
                     .semantic
                     .attrs
                     .push(("data-canvas-node".into(), id.clone()));
+                // Universal hover affordance — every preview node
+                // flashes the tint as the cursor passes. Authors who
+                // declared their own `props.hover` in a custom block
+                // keep it (we only fill the slot when it's empty).
+                if props.hover.is_none() {
+                    props.hover = hover_bg(CANVAS_NODE_HOVER_BG);
+                }
+                if selection_id == Some(id.as_str()) {
+                    if let Some(c) = parse_color(SELECTION_TINT) {
+                        props.background = Some(c);
+                    }
+                    props
+                        .semantic
+                        .attrs
+                        .push(("data-selected".into(), "true".into()));
+                }
             }
-            tag_canvas_subtree(children);
+            tag_canvas_subtree(children, selection_id);
         }
     }
 }
@@ -471,6 +530,139 @@ mod tests {
             .attrs
             .iter()
             .any(|(k, v)| k == "role" && v == "grid"));
+    }
+
+    /// Walk a lowered tree and return the first container whose
+    /// `data-canvas-node` attr matches `id`. Encapsulates the
+    /// preview-layer search so the selection / hover tests stay
+    /// readable.
+    fn find_canvas_node<'a>(root: &'a UiNode, id: &str) -> Option<&'a UiNode> {
+        let UiNode::Container {
+            props, children, ..
+        } = root
+        else {
+            return None;
+        };
+        let tagged = props.semantic.attrs.iter().any(|(k, v)| {
+            k == "data-canvas-node" && v == id
+        });
+        if tagged {
+            return Some(root);
+        }
+        children
+            .iter()
+            .find_map(|c| find_canvas_node(c, id))
+    }
+
+    fn lower_with_preview(props: Value, doc_nodes: Vec<prism_builder::Node>) -> UiNode {
+        // Build a canvas node carrying a synthetic preview child tree —
+        // the lower path forwards `node.children` through
+        // `ctx.lower_children` when no `host_children` are injected,
+        // which is exactly the shape we need to exercise
+        // `tag_canvas_subtree`.
+        let mut n = test_node("bc", "shell.builder-canvas", props);
+        n.children = doc_nodes;
+        let mut reg = ShellComponentRegistry::new();
+        register_shell_builtins(&mut reg).expect("register shell");
+        // The preview nodes are `container` / `text` etc. — register
+        // the builder builtins so `lower_children` can resolve them.
+        let mut comp_reg = prism_builder::ComponentRegistry::new();
+        prism_builder::starter::register_builtins(&mut comp_reg)
+            .expect("register builder builtins");
+        // Merge: re-register every shell-side spec onto the builder reg
+        // — the lower path takes ONE registry. The test only needs to
+        // resolve the document's own component ids, so the builder reg
+        // alone is enough.
+        let cascade = StyleProperties::default();
+        let ctx = LowerCtx::new(Some(&comp_reg), &cascade);
+        builder_canvas_lower(&ctx, &n, &cascade)
+    }
+
+    #[test]
+    fn selected_canvas_node_paints_tint_and_carries_data_selected_attr() {
+        // The §B5 click route mutates `state.canvas.selection`; the
+        // canvas binding forwards it as `selection-id`; this lower
+        // pass must show the user *something* changed by tinting
+        // the matching preview container.
+        // Use the `container` block so the lowered preview entry is a
+        // `UiNode::Container` (the only variant `tag_canvas_subtree`
+        // walks into). `text` lowers to a `UiNode::Text` leaf, which
+        // would never carry `data-canvas-node` regardless of the
+        // tagging pass.
+        let doc = vec![prism_builder::Node {
+            id: "demo-heading".into(),
+            component: prism_builder::ComponentId::from("container"),
+            props: json!({}),
+            ..Default::default()
+        }];
+        let ui = lower_with_preview(json!({ "selection-id": "demo-heading" }), doc);
+        let found = find_canvas_node(&ui, "demo-heading").expect("preview node");
+        let UiNode::Container { props, .. } = found else {
+            panic!()
+        };
+        assert!(
+            props.background.is_some(),
+            "selected canvas node paints the SELECTION_TINT background"
+        );
+        assert!(props
+            .semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-selected" && v == "true"));
+    }
+
+    #[test]
+    fn unselected_canvas_node_does_not_carry_data_selected_attr() {
+        // Use the `container` block so the lowered preview entry is a
+        // `UiNode::Container` (the only variant `tag_canvas_subtree`
+        // walks into). `text` lowers to a `UiNode::Text` leaf, which
+        // would never carry `data-canvas-node` regardless of the
+        // tagging pass.
+        let doc = vec![prism_builder::Node {
+            id: "demo-heading".into(),
+            component: prism_builder::ComponentId::from("container"),
+            props: json!({}),
+            ..Default::default()
+        }];
+        let ui = lower_with_preview(json!({ "selection-id": "" }), doc);
+        let found = find_canvas_node(&ui, "demo-heading").expect("preview node");
+        let UiNode::Container { props, .. } = found else {
+            panic!()
+        };
+        assert!(props
+            .semantic
+            .attrs
+            .iter()
+            .all(|(k, _)| k != "data-selected"));
+    }
+
+    #[test]
+    fn every_canvas_node_declares_hover_bg_for_set_hovered_paint() {
+        // The shell's `Surface::set_hovered` wiring lights up
+        // `props.hover` on the container under the cursor. Without
+        // this declaration on each preview container, hovering a
+        // canvas node would do nothing — defeating the visual
+        // affordance the rest of the chrome already carries.
+        // Use the `container` block so the lowered preview entry is a
+        // `UiNode::Container` (the only variant `tag_canvas_subtree`
+        // walks into). `text` lowers to a `UiNode::Text` leaf, which
+        // would never carry `data-canvas-node` regardless of the
+        // tagging pass.
+        let doc = vec![prism_builder::Node {
+            id: "demo-heading".into(),
+            component: prism_builder::ComponentId::from("container"),
+            props: json!({}),
+            ..Default::default()
+        }];
+        let ui = lower_with_preview(json!({}), doc);
+        let found = find_canvas_node(&ui, "demo-heading").expect("preview node");
+        let UiNode::Container { props, .. } = found else {
+            panic!()
+        };
+        assert!(
+            props.hover.is_some(),
+            "every canvas preview container declares hover_bg"
+        );
     }
 
     #[test]
