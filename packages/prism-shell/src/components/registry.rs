@@ -152,6 +152,19 @@ pub fn register_shell_builtins(reg: &mut ShellComponentRegistry) -> Result<(), R
     register_specs(&mut reg.inner, SHELL_BUILTINS)
 }
 
+/// Merge the document-side builder catalog (`prism_builder::starter::BUILTINS`
+/// plus the `card` prefab and `facet` component) into the live shell
+/// registry. Required so `select_node` →
+/// `resync_builder_for_selection` can resolve schemas for builder
+/// nodes (`text` / `button` / …) and populate the inspector property
+/// rows. The shell registry and the document builtins share a flat id
+/// namespace; `register_specs` rejects duplicates by returning
+/// `RegistryError::AlreadyRegistered`, so collisions surface at boot
+/// rather than as silent shadowing.
+pub fn register_document_builtins(reg: &mut ShellComponentRegistry) -> Result<(), RegistryError> {
+    prism_builder::starter::register_builtins(&mut reg.inner)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -389,6 +402,46 @@ mod tests {
         };
         assert_eq!(wf_id, "workflow");
         assert_eq!(props.semantic.tag.as_deref(), Some("nav"));
+    }
+
+    #[test]
+    fn document_builtins_resolve_alongside_shell_builtins() {
+        // §43 D1: merging `prism_builder::starter::register_builtins`
+        // into the shell registry is what lets `select_node` →
+        // `resync_builder_for_selection` find schemas for document
+        // nodes (`text` / `button` / …). The two id sets are disjoint
+        // (`shell.*` vs unprefixed), so the merge can't shadow.
+        let mut reg = ShellComponentRegistry::new();
+        register_shell_builtins(&mut reg).expect("shell");
+        register_document_builtins(&mut reg).expect("document");
+        // A representative shell tag still resolves…
+        assert!(reg.get("shell.icon-button").is_some());
+        // …and the merged builder builtins do too.
+        for id in ["text", "button", "image", "container", "form", "list"] {
+            assert!(
+                reg.get(id).is_some(),
+                "builder builtin `{id}` not resolvable after document merge"
+            );
+        }
+    }
+
+    #[test]
+    fn shell_and_document_builtin_ids_are_disjoint() {
+        // Lock the namespace invariant: a future shell-side primitive
+        // that drops the `shell.` prefix (or a document-side block that
+        // adopts it) would collide. `register_document_builtins`
+        // surfaces collisions as `RegistryError::AlreadyRegistered`,
+        // but this test catches them at the table level so failures
+        // point at the literal id, not the registration order.
+        let shell_ids: std::collections::HashSet<&str> =
+            SHELL_BUILTINS.iter().map(|s| s.id).collect();
+        for spec in prism_builder::starter::BUILTINS {
+            assert!(
+                !shell_ids.contains(spec.id),
+                "document builtin `{}` collides with a shell.* id",
+                spec.id
+            );
+        }
     }
 
     #[test]

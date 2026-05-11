@@ -113,11 +113,15 @@ fn schema_row_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) 
 
     let mut row_kids = vec![left_cluster];
     if show_delete {
+        // Schema field-delete needs a "selected schema row" cursor on
+        // the builder slot before it can target the right field — for
+        // now the trash threads `None` to keep the lowering uniform.
         row_kids.push(icon_button_node(
             format!("{}::delete", node.id),
             "icons/trash.svg",
             true,
             Some("Delete field"),
+            None,
         ));
     }
 

@@ -29,7 +29,8 @@ use serde_json::Value;
 use super::chrome::icon_button_node_tinted;
 
 /// `shell.icon-button` block. Schema mirrors the four `in property`
-/// declarations on the original Slint component.
+/// declarations on the original Slint component, plus a `command`
+/// hook that bridges to the §43 A1 action grammar.
 fn icon_button_schema() -> Vec<FieldSpec> {
     vec![
         FieldSpec::text("icon", "Icon").required(),
@@ -40,6 +41,10 @@ fn icon_button_schema() -> Vec<FieldSpec> {
         // Mirrors the original Slint `colorize` property on the
         // icon's `Image` element.
         FieldSpec::text("tint", "Glyph tint"),
+        // Optional command-table id; when set, the lowered button
+        // carries `data-on-click="cmd <id>"` and `route_on_click`
+        // dispatches through the command table on click.
+        FieldSpec::text("command", "Command id to dispatch on click"),
     ]
 }
 
@@ -70,12 +75,14 @@ fn icon_button_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties)
     let enabled = prop_bool(node, "enabled", true);
     let tooltip = Some(prop_str(node, "tooltip-text")).filter(|s| !s.is_empty());
     let tint = parse_color(prop_str(node, "tint"));
+    let command = Some(prop_str(node, "command")).filter(|s| !s.is_empty());
     icon_button_node_tinted(
         node.id.clone(),
         prop_str(node, "icon").to_string(),
         enabled,
         tooltip,
         tint,
+        command,
     )
 }
 
@@ -168,14 +175,55 @@ mod tests {
     }
 
     #[test]
-    fn schema_declares_five_fields() {
+    fn schema_declares_six_fields() {
         let block = prism_builder::SpecBlock::new(&super::ICON_BUTTON_SPEC);
         let schema = block.schema();
         let keys: Vec<&str> = schema.iter().map(|f| f.key.as_str()).collect();
         assert_eq!(
             keys,
-            vec!["icon", "enabled", "tooltip-text", "help-id", "tint"]
+            vec![
+                "icon",
+                "enabled",
+                "tooltip-text",
+                "help-id",
+                "tint",
+                "command",
+            ]
         );
+    }
+
+    #[test]
+    fn command_prop_emits_data_on_click_cmd_attribute_when_enabled() {
+        let node = icon_node(json!({
+            "icon": "icons/save.svg",
+            "enabled": true,
+            "command": "file.save",
+        }));
+        let UiNode::Container { props, .. } = lower_one(&node) else {
+            panic!()
+        };
+        assert!(props
+            .semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-on-click" && v == "cmd file.save"));
+    }
+
+    #[test]
+    fn disabled_button_omits_data_on_click_even_with_command() {
+        let node = icon_node(json!({
+            "icon": "icons/save.svg",
+            "enabled": false,
+            "command": "file.save",
+        }));
+        let UiNode::Container { props, .. } = lower_one(&node) else {
+            panic!()
+        };
+        assert!(props
+            .semantic
+            .attrs
+            .iter()
+            .all(|(k, _)| k != "data-on-click"));
     }
 
     #[test]

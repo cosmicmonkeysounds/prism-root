@@ -34,6 +34,8 @@ pub mod luau_types;
 // gated together so a host that pulls just `html` doesn't drag in
 // femtovg / cosmic-text.
 #[cfg(any(feature = "femtovg", feature = "web"))]
+pub mod images;
+#[cfg(any(feature = "femtovg", feature = "web"))]
 pub mod paint;
 #[cfg(any(feature = "femtovg", feature = "web"))]
 pub mod text;

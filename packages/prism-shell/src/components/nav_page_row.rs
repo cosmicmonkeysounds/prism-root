@@ -31,6 +31,7 @@ const SECONDARY_COLOR: &str = "#80000000";
 
 fn nav_page_row_schema() -> Vec<FieldSpec> {
     vec![
+        FieldSpec::text("page-id", "Page id"),
         FieldSpec::text("page-title", "Page title"),
         FieldSpec::text("route", "Route"),
         FieldSpec::boolean("is-active", "Active page").with_default(Value::Bool(false)),
@@ -62,6 +63,7 @@ fn nav_page_row_signals() -> Vec<prism_builder::signal::SignalDef> {
 
 fn nav_page_row_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
     let style = StyleProperties::default();
+    let page_id = prop_string(node, "page-id");
     let title = prop_string(node, "page-title");
     let route = prop_string(node, "route");
     let is_active = prop_bool(node, "is-active", false);
@@ -117,17 +119,24 @@ fn nav_page_row_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties
 
     let mut right_kids: Vec<UiNode> = Vec::new();
     if selected {
+        // Page-row chevrons / trash stay command-less for now: nav
+        // pages have no "selected page" cursor in `NavigationSlot`,
+        // so a stateless `cmd <id>` dispatch has nothing to act on.
+        // Follow-up adds a selected-page index + `navigation.move-*`
+        // commands.
         right_kids.push(icon_button_node(
             format!("{}::move-up", node.id),
             "icons/chevron-up.svg",
             true,
             Some("Move up"),
+            None,
         ));
         right_kids.push(icon_button_node(
             format!("{}::move-down", node.id),
             "icons/chevron-down.svg",
             true,
             Some("Move down"),
+            None,
         ));
     }
     if show_delete {
@@ -136,6 +145,7 @@ fn nav_page_row_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties
             "icons/trash.svg",
             true,
             Some("Delete page"),
+            None,
         ));
     }
 
@@ -174,6 +184,9 @@ fn nav_page_row_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties
         let mut s = Semantic::tag("div")
             .with_attr("role", "listitem")
             .with_attr("data-role", "nav-page-row");
+        if !page_id.is_empty() {
+            s = s.with_attr("data-target-id", page_id.clone());
+        }
         if is_active {
             s = s.with_attr("aria-current", "page");
         }
@@ -246,5 +259,23 @@ mod tests {
             panic!()
         };
         assert_eq!(right.len(), 2);
+    }
+
+    #[test]
+    fn page_id_prop_surfaces_as_data_target_id_for_click_routing() {
+        let ui = lower(json!({ "page-id": "home", "page-title": "Home" }));
+        let UiNode::Container { props, .. } = ui else {
+            panic!()
+        };
+        assert!(props
+            .semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-role" && v == "nav-page-row"));
+        assert!(props
+            .semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-target-id" && v == "home"));
     }
 }

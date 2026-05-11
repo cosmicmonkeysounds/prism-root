@@ -968,6 +968,54 @@ impl NavigationSlot {
         json!({ "pages": self.pages_list_json() })
     }
 
+    /// Append a fresh untitled page and mark it as active. Used by
+    /// the menu-bar "+page" button via `navigation.add-page`. The
+    /// new id is `page-<n>` where `n` is the smallest natural number
+    /// that doesn't collide with an existing page.
+    pub fn add_page(&mut self) -> &NavPage {
+        let mut n = self.pages.len() + 1;
+        let id = loop {
+            let candidate = format!("page-{n}");
+            if !self.pages.iter().any(|p| p.id == candidate) {
+                break candidate;
+            }
+            n += 1;
+        };
+        let title = format!("Page {n}");
+        let route = format!("/{}", id);
+        for p in &mut self.pages {
+            p.is_active = false;
+        }
+        self.pages.push(NavPage {
+            id,
+            title,
+            route,
+            x: 0.0,
+            y: 0.0,
+            node_count: 0,
+            link_count: 0,
+            is_active: true,
+        });
+        self.pages.last().expect("just pushed")
+    }
+
+    /// Mark `id` as the active nav page (clears `is_active` on every
+    /// other entry). Returns `true` when the active page actually
+    /// moved, so the event router can flag the frame as dirty. Pages
+    /// without a matching id leave the slot unchanged.
+    pub fn select_page_by_id(&mut self, id: &str) -> bool {
+        let Some(target_idx) = self.pages.iter().position(|p| p.id == id) else {
+            return false;
+        };
+        if self.pages[target_idx].is_active {
+            return false;
+        }
+        for (i, p) in self.pages.iter_mut().enumerate() {
+            p.is_active = i == target_idx;
+        }
+        true
+    }
+
     /// JSON for `shell.nav-graph`. Composes the same page list with
     /// graph positions + edges. The shared subset (page-title, route,
     /// is-active) flows through the same `iter().map()` shape — no
@@ -1360,6 +1408,20 @@ impl Device {
             Self::Desktop => "desktop",
             Self::Tablet => "tablet",
             Self::Mobile => "mobile",
+        }
+    }
+
+    /// Reverse of [`Self::as_str`] — parses the kebab-case id the
+    /// toolbar emits in `data-device`. Returns `None` for unknown
+    /// strings rather than silently falling back to `Desktop`, so the
+    /// caller can decide whether to ignore the click or surface an
+    /// error.
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "desktop" => Some(Self::Desktop),
+            "tablet" => Some(Self::Tablet),
+            "mobile" => Some(Self::Mobile),
+            _ => None,
         }
     }
 }
@@ -2015,6 +2077,63 @@ impl CanvasSlot {
         }
         delete_under(root, &id);
     }
+
+    /// Swap the selected node with its previous (`dir = -1`) or next
+    /// (`dir = +1`) sibling within its parent's `children` vec. Used
+    /// by the inspector-row up / down chevrons. Returns `true` when
+    /// the document actually changed.
+    pub fn reorder_selection(&mut self, dir: i32) -> bool {
+        if dir == 0 {
+            return false;
+        }
+        let Some(id) = self.selection.clone() else {
+            return false;
+        };
+        let Some(root) = self.document.root.as_mut() else {
+            return false;
+        };
+        // Selection at the root has no siblings to swap with.
+        if root.id == id {
+            return false;
+        }
+        swap_sibling_under(root, &id, dir)
+    }
+
+    /// Multiply the canvas zoom by `factor`, clamped to the
+    /// `[0.1, 8.0]` range the toolbar's schema declares. Returns
+    /// `true` when the zoom actually moved.
+    pub fn zoom_by(&mut self, factor: f32) -> bool {
+        let new_zoom = (self.viewport.zoom * factor).clamp(0.1, 8.0);
+        if (new_zoom - self.viewport.zoom).abs() < f32::EPSILON {
+            return false;
+        }
+        self.viewport.zoom = new_zoom;
+        true
+    }
+
+    /// Set a `text-align` prop on the selected node. The string is
+    /// passed through verbatim — the lowering layer interprets
+    /// `"left"` / `"center"` / `"right"` against `Node::Text`'s
+    /// horizontal-alignment prop. Returns `true` when the prop
+    /// actually changed.
+    pub fn set_selection_align(&mut self, align: &str) -> bool {
+        let Some(id) = self.selection.clone() else {
+            return false;
+        };
+        let Some(node) = self.document.root.as_mut().and_then(|r| r.find_mut(&id)) else {
+            return false;
+        };
+        let value = Value::String(align.to_string());
+        if let Value::Object(map) = &mut node.props {
+            if map.get("text-align") == Some(&value) {
+                return false;
+            }
+            map.insert("text-align".into(), value);
+        } else {
+            node.props = Value::Object([("text-align".into(), value)].into_iter().collect());
+        }
+        true
+    }
 }
 
 /// Recursively rewrite ids in `node` so they don't collide with any
@@ -2084,6 +2203,27 @@ fn delete_under(parent: &mut prism_builder::Node, target_id: &str) -> bool {
     }
     for child in &mut parent.children {
         if delete_under(child, target_id) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Swap the child `target_id` with its `dir`-neighbour (negative =
+/// previous, positive = next) under any descendant of `parent`.
+/// Returns true once the swap landed.
+fn swap_sibling_under(parent: &mut prism_builder::Node, target_id: &str, dir: i32) -> bool {
+    if let Some(idx) = parent.children.iter().position(|c| c.id == target_id) {
+        let len = parent.children.len();
+        let new_idx = idx as i32 + dir;
+        if new_idx < 0 || new_idx as usize >= len {
+            return false;
+        }
+        parent.children.swap(idx, new_idx as usize);
+        return true;
+    }
+    for child in &mut parent.children {
+        if swap_sibling_under(child, target_id, dir) {
             return true;
         }
     }
@@ -2611,6 +2751,30 @@ mod tests {
     }
 
     #[test]
+    fn select_page_by_id_moves_active_flag_and_returns_true() {
+        let mut nav = sample_nav();
+        assert!(nav.pages[0].is_active);
+        assert!(!nav.pages[1].is_active);
+        assert!(nav.select_page_by_id("about"));
+        assert!(!nav.pages[0].is_active);
+        assert!(nav.pages[1].is_active);
+    }
+
+    #[test]
+    fn select_page_by_id_returns_false_when_already_active() {
+        let mut nav = sample_nav();
+        assert!(!nav.select_page_by_id("home"));
+    }
+
+    #[test]
+    fn select_page_by_id_returns_false_for_unknown_id() {
+        let mut nav = sample_nav();
+        assert!(!nav.select_page_by_id("nonexistent"));
+        // Active flag stays put.
+        assert!(nav.pages[0].is_active);
+    }
+
+    #[test]
     fn nav_graph_props_emits_pages_with_positions_and_edges() {
         let nav = sample_nav();
         let props = nav.nav_graph_props();
@@ -2864,6 +3028,15 @@ mod tests {
         assert_eq!(props["source"], "Window {}");
         assert_eq!(props["caret"], 7);
         assert_eq!(props["language"], "slint");
+    }
+
+    #[test]
+    fn device_from_id_parses_known_ids_and_rejects_others() {
+        assert_eq!(Device::from_id("desktop"), Some(Device::Desktop));
+        assert_eq!(Device::from_id("tablet"), Some(Device::Tablet));
+        assert_eq!(Device::from_id("mobile"), Some(Device::Mobile));
+        assert_eq!(Device::from_id("phablet"), None);
+        assert_eq!(Device::from_id(""), None);
     }
 
     #[test]

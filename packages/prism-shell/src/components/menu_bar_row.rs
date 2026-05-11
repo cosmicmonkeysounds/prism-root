@@ -129,6 +129,7 @@ fn menu_bar_row_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties
             "icons/plus.svg",
             true,
             Some("Add page"),
+            Some("navigation.add-page"),
         ));
     }
 

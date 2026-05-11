@@ -10,7 +10,7 @@ use prism_builder::{
     document::Node,
     registry::FieldSpec,
     style::StyleProperties,
-    ui_lower::{prop_bool, prop_string, LowerCtx},
+    ui_lower::{prop_bool, prop_str, prop_string, LowerCtx},
 };
 use prism_ui_runtime::layout::{Node as UiNode, Padding};
 use serde_json::Value;
@@ -30,6 +30,7 @@ const TAB_STYLE: TabStyle = TabStyle {
     hover_bg: "#0f000000",
     underline_height: 2.0,
     underline_active: "#0060c0",
+    data_role: "dock-tab",
 };
 
 fn dock_tab_schema() -> Vec<FieldSpec> {
@@ -47,6 +48,7 @@ fn dock_tab_lower(ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> U
         style,
         prop_string(node, "label"),
         prop_bool(node, "active", false),
+        prop_str(node, "tab-id"),
         &TAB_STYLE,
     )
 }
@@ -88,5 +90,23 @@ mod tests {
         };
         assert!(props.background.is_none());
         assert!(props.hover.is_some());
+    }
+
+    #[test]
+    fn carries_data_role_and_target_id_for_click_routing() {
+        let ui = lower(json!({ "tab-id": "builder", "label": "Builder" }));
+        let UiNode::Container { props, .. } = ui else {
+            panic!()
+        };
+        assert!(props
+            .semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-role" && v == "dock-tab"));
+        assert!(props
+            .semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-target-id" && v == "builder"));
     }
 }

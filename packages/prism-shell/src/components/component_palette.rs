@@ -121,9 +121,16 @@ fn build_row(
         } else {
             p.hover = hover_bg(ROW_HOVER);
         }
-        p.semantic = Semantic::tag("div")
+        let mut s = Semantic::tag("div")
             .with_attr("role", "option")
-            .with_attr_if(is_selected, "aria-selected", "true");
+            .with_attr("data-role", "palette-item");
+        if !id.is_empty() {
+            s = s.with_attr("data-target-id", id);
+        }
+        if is_selected {
+            s = s.with_attr("aria-selected", "true");
+        }
+        p.semantic = s;
     })
 }
 
@@ -156,5 +163,31 @@ mod tests {
             panic!()
         };
         assert!(row.background.is_some(), "selected row tinted");
+    }
+
+    #[test]
+    fn rows_carry_data_role_and_target_id_for_click_routing() {
+        let ui = lower(json!({
+            "items": [
+                { "id": "container", "label": "Container" },
+                { "id": "text", "label": "Text" },
+            ],
+        }));
+        let UiNode::Container { children, .. } = ui else {
+            panic!()
+        };
+        let UiNode::Container { props: row, .. } = &children[0] else {
+            panic!()
+        };
+        assert!(row
+            .semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-role" && v == "palette-item"));
+        assert!(row
+            .semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-target-id" && v == "container"));
     }
 }

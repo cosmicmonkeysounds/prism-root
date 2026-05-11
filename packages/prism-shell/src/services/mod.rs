@@ -32,6 +32,7 @@ use prism_ui_runtime::layout::Viewport;
 use crate::AppState;
 
 pub mod base;
+pub mod builder;
 pub mod clipboard;
 pub mod help;
 pub mod input;
@@ -47,6 +48,7 @@ pub mod undo;
 pub mod vfs;
 
 pub use base::ShellBaseService;
+pub use builder::BuilderService;
 pub use clipboard::{Clipboard, ClipboardService};
 pub use help::HelpService;
 pub use input::{InputScheme, InputService};
@@ -303,6 +305,7 @@ pub fn register_shell_services(reg: &mut ServiceRegistry) {
     reg.add(CommandPaletteService);
     reg.add(InputService::with_defaults());
     reg.add(SelectionService);
+    reg.add(BuilderService);
     reg.add(ClipboardService);
     // §26 — IO services (Persistence / Project / Search).
     reg.add(PersistenceService);

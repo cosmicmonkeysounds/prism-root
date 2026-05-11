@@ -302,17 +302,22 @@ fn build_right_cluster(
 ) -> Option<UiNode> {
     let mut buttons: Vec<UiNode> = Vec::new();
     if selected && m.show_move_buttons {
+        // The chevrons only render against the *selected* tree node,
+        // so the commands operate on `canvas.selection` and need no
+        // per-row target id.
         buttons.push(icon_button_node(
             format!("{}::move-up", node.id),
             "icons/chevron-up.svg",
             true,
             Some("Move up"),
+            Some("builder.move-selected-up"),
         ));
         buttons.push(icon_button_node(
             format!("{}::move-down", node.id),
             "icons/chevron-down.svg",
             true,
             Some("Move down"),
+            Some("builder.move-selected-down"),
         ));
     }
     if show_delete && m.allow_delete_button {
@@ -321,6 +326,7 @@ fn build_right_cluster(
             "icons/trash.svg",
             true,
             Some("Delete"),
+            Some("builder.delete-selected"),
         ));
     }
     if buttons.is_empty() {

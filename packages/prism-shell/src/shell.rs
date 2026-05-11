@@ -19,7 +19,9 @@ use std::sync::Arc;
 use prism_ui_runtime::interpret::TagResolver;
 use prism_ui_runtime::layout::{Node as UiNode, Surface, Viewport};
 
-use crate::components::{register_shell_builtins, ShellComponentRegistry};
+use crate::components::{
+    register_document_builtins, register_shell_builtins, ShellComponentRegistry,
+};
 use crate::events::dispatch_event;
 use crate::props::{PropCtx, ShellPropBindings};
 use crate::render::{render_tree, Skeleton};
@@ -110,6 +112,8 @@ impl Shell {
     pub fn new() -> Result<Self, ShellError> {
         let mut registry = ShellComponentRegistry::new();
         register_shell_builtins(&mut registry).map_err(|e| ShellError::Registry(e.to_string()))?;
+        register_document_builtins(&mut registry)
+            .map_err(|e| ShellError::Registry(e.to_string()))?;
         let resolver = registry.tag_resolver();
         let bindings = ShellPropBindings::with_builtins();
         let services = ServiceRegistry::with_builtins();
@@ -193,7 +197,7 @@ impl Shell {
             }
         });
 
-        prism_ui_runtime::backends::femtovg::run(surface, handler)
+        prism_ui_runtime::backends::femtovg::run(surface, handler, crate::assets::loader())
             .map_err(|e| Box::<dyn std::error::Error>::from(e.to_string()))
     }
 

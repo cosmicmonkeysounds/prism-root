@@ -62,6 +62,138 @@ pub enum ActionKind {
     Custom { handler: String },
 }
 
+/// §43 A1: parsed shape of a `.prism-ui` `on:*` attribute value.
+///
+/// Authoring grammar (plan §4.4):
+///
+/// ```text
+/// on:click="emit save"           // fire the `save` signal on this node
+/// on:click="cmd file.save"       // invoke the shell command by id
+/// on:click="navigate /dashboard" // (parsed, runtime handler TBD)
+/// on:click="luau { … }"          // custom Luau snippet (TBD)
+/// ```
+///
+/// Only `emit` and `cmd` carry runtime handlers in this first wave —
+/// the rest parse cleanly but the executor's match arm is a no-op,
+/// surfaced via [`ParsedAction::Unsupported`]. This keeps every
+/// shipped grammar token round-trippable through the parser without
+/// gating on the full executor matrix.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ParsedAction {
+    /// `emit <signal>` — cascade through `SignalsService::fire_signal`
+    /// against the clicked node's id.
+    Emit { signal: String },
+    /// `cmd <command-id>` — dispatch a shell command by id (the same
+    /// ids the command palette exposes).
+    Command { id: String },
+    /// `navigate <target>` — page / workspace switch. Parsed but the
+    /// host-side handler is a follow-up (§43 D3 — navigation slot).
+    Navigate { target: String },
+    /// `set <node>.<key> = <value>` — direct prop write. Parsed but
+    /// the SignalsService path already handles this via canvas-doc
+    /// connections, so the inline-action executor is a follow-up.
+    SetProperty {
+        node: String,
+        key: String,
+        value: Value,
+    },
+    /// `toggle <node>` — visibility toggle. Same follow-up note as
+    /// `SetProperty`.
+    Toggle { node: String },
+    /// `play <animation>` — animation trigger. Parsed; executor TBD.
+    Play { animation: String },
+    /// `luau { ... }` — Luau snippet. Parsed; executor lands once a
+    /// real `LuauHost` plugs in (followup D2).
+    Luau { source: String },
+    /// Verb didn't parse — preserved as the raw string for diagnostics
+    /// without poisoning the dispatch chain.
+    Unsupported { raw: String },
+}
+
+/// Parse the right-hand side of a `.prism-ui` `on:*` attribute.
+///
+/// The grammar splits the trimmed string into `verb rest` on the first
+/// whitespace run. Empty input or a verb with no body falls through to
+/// `None` so the lowering pass can skip the attribute entirely; valid
+/// verbs whose runtime handler isn't wired yet still parse — they land
+/// as [`ParsedAction::Unsupported`] (or the variant-specific carrier),
+/// so the executor can decide "no-op for now" without losing the
+/// authored text.
+pub fn parse_action(raw: &str) -> Option<ParsedAction> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Some(body) = trimmed.strip_prefix("luau") {
+        // `luau { ... }` — capture the brace-delimited body if present;
+        // otherwise treat the rest as a Luau expression.
+        let body = body.trim_start();
+        let snippet = body
+            .strip_prefix('{')
+            .and_then(|b| b.strip_suffix('}'))
+            .map(str::trim)
+            .unwrap_or(body)
+            .to_string();
+        if snippet.is_empty() {
+            return None;
+        }
+        return Some(ParsedAction::Luau { source: snippet });
+    }
+    let (verb, rest) = trimmed
+        .split_once(char::is_whitespace)
+        .map(|(v, r)| (v, r.trim()))
+        .unwrap_or((trimmed, ""));
+    if rest.is_empty() {
+        // `cmd` with no body is meaningless — same for `emit`. Return
+        // `None` so the lower pass treats it as "no handler authored".
+        return None;
+    }
+    Some(match verb {
+        "emit" => ParsedAction::Emit {
+            signal: rest.to_string(),
+        },
+        "cmd" => ParsedAction::Command {
+            id: rest.to_string(),
+        },
+        "navigate" => ParsedAction::Navigate {
+            target: rest.to_string(),
+        },
+        "toggle" => ParsedAction::Toggle {
+            node: rest.to_string(),
+        },
+        "play" => ParsedAction::Play {
+            animation: rest.to_string(),
+        },
+        "set" => {
+            parse_set_body(rest).unwrap_or_else(|| ParsedAction::Unsupported { raw: raw.into() })
+        }
+        _ => ParsedAction::Unsupported { raw: raw.into() },
+    })
+}
+
+fn parse_set_body(rest: &str) -> Option<ParsedAction> {
+    // Shape: `<node>.<key> = <value>`. The value is JSON-parsed when
+    // it looks like a literal (`true` / `42` / `"text"` / `[…]`),
+    // otherwise it lands as a string — same coercion the resolver
+    // uses for bare attributes.
+    let (lhs, value_raw) = rest.split_once('=')?;
+    let lhs = lhs.trim();
+    let value_raw = value_raw.trim();
+    let (node, key) = lhs.split_once('.')?;
+    let node = node.trim();
+    let key = key.trim();
+    if node.is_empty() || key.is_empty() || value_raw.is_empty() {
+        return None;
+    }
+    let value = serde_json::from_str::<Value>(value_raw)
+        .unwrap_or_else(|_| Value::String(value_raw.to_string()));
+    Some(ParsedAction::SetProperty {
+        node: node.to_string(),
+        key: key.to_string(),
+        value,
+    })
+}
+
 /// Payload carried by a fired signal — the source node, signal name,
 /// and a JSON map of the payload fields (matching the `SignalDef::payload`
 /// spec).
@@ -342,6 +474,60 @@ pub fn signal_contexts(signals: &[SignalDef]) -> Vec<prism_core::language::synta
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn parse_action_emit_picks_the_signal_name() {
+        let a = parse_action("emit save").expect("parses");
+        match a {
+            ParsedAction::Emit { signal } => assert_eq!(signal, "save"),
+            other => panic!("expected Emit, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_action_cmd_picks_the_command_id() {
+        match parse_action("cmd file.save").expect("parses") {
+            ParsedAction::Command { id } => assert_eq!(id, "file.save"),
+            other => panic!("expected Command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_action_set_round_trips_node_key_and_json_value() {
+        match parse_action("set modal.open = true").expect("parses") {
+            ParsedAction::SetProperty { node, key, value } => {
+                assert_eq!(node, "modal");
+                assert_eq!(key, "open");
+                assert_eq!(value, json!(true));
+            }
+            other => panic!("expected SetProperty, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_action_luau_unwraps_brace_block() {
+        match parse_action("luau { print('hi') }").expect("parses") {
+            ParsedAction::Luau { source } => assert_eq!(source, "print('hi')"),
+            other => panic!("expected Luau, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_action_returns_none_for_empty_or_body_only_input() {
+        assert!(parse_action("").is_none());
+        assert!(parse_action("   ").is_none());
+        // Verb with no body — meaningless, treated as no handler.
+        assert!(parse_action("emit").is_none());
+        assert!(parse_action("cmd  ").is_none());
+    }
+
+    #[test]
+    fn parse_action_unknown_verb_lands_as_unsupported_for_diagnostics() {
+        match parse_action("yodel high-and-low").expect("parses") {
+            ParsedAction::Unsupported { raw } => assert_eq!(raw, "yodel high-and-low"),
+            other => panic!("expected Unsupported, got {other:?}"),
+        }
+    }
 
     #[test]
     fn signal_def_builder() {

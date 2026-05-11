@@ -47,20 +47,29 @@ pub fn icon_button_node(
     icon: impl Into<String>,
     enabled: bool,
     aria_label: Option<&str>,
+    command: Option<&str>,
 ) -> UiNode {
-    icon_button_node_tinted(id, icon, enabled, aria_label, None)
+    icon_button_node_tinted(id, icon, enabled, aria_label, None, command)
 }
 
 /// Tinted variant of [`icon_button_node`] — paints the glyph through
 /// `tint` as a mask. The original Slint shell drove icon colour via
 /// the `colorize` property; in the runtime that's a `Node::Image`
 /// `tint`. `None` falls back to the as-authored monochrome render.
+///
+/// `command` is an optional command-table id; when set and the
+/// button is enabled, the lowered container carries
+/// `data-on-click="cmd <id>"` so the shell's `route_on_click`
+/// dispatches the click through the command table. Disabled buttons
+/// drop the attr so the rest of the pointer-down chain still gets
+/// to run.
 pub fn icon_button_node_tinted(
     id: impl Into<String>,
     icon: impl Into<String>,
     enabled: bool,
     aria_label: Option<&str>,
     tint: Option<Color>,
+    command: Option<&str>,
 ) -> UiNode {
     let id = id.into();
     let glyph_id = format!("{id}::glyph");
@@ -86,6 +95,10 @@ pub fn icon_button_node_tinted(
         ),
     };
 
+    let command = command
+        .filter(|s| !s.is_empty() && enabled)
+        .map(String::from);
+
     bare_container(id, vec![glyph], |props| {
         props.width = Sizing::Fixed(ICON_BUTTON_SIZE);
         props.height = Sizing::Fixed(ICON_BUTTON_SIZE);
@@ -93,9 +106,13 @@ pub fn icon_button_node_tinted(
         if enabled {
             props.hover = hover_bg(ICON_BUTTON_HOVER_BG);
         }
-        props.semantic = Semantic::button()
+        let mut s = Semantic::button()
             .with_aria_label_opt(aria_label)
             .with_attr_if(!enabled, "disabled", "disabled");
+        if let Some(cmd) = command {
+            s = s.with_attr("data-on-click", format!("cmd {cmd}"));
+        }
+        props.semantic = s;
     })
 }
 
@@ -224,6 +241,13 @@ pub fn format_drag_value(v: f64) -> String {
 /// between `shell.dock-tab` and `shell.workflow-page-button` (and any
 /// future tab-shaped chrome). The variation between consumers is
 /// purely metric/colour — captured here as a `&'static TabStyle`.
+///
+/// `data_role` is the hit-test routing key the shell's event router
+/// reads off the lowered container's semantic attrs (see
+/// `prism-shell/src/events.rs::POINTER_ROUTES`). Each consumer pins
+/// its own role string so a click on a workflow-page tab can be told
+/// apart from a click on a dock-panel tab even though the lowered
+/// shape is identical.
 pub struct TabStyle {
     pub height: f32,
     pub padding: Padding,
@@ -234,6 +258,7 @@ pub struct TabStyle {
     pub hover_bg: &'static str,
     pub underline_height: f32,
     pub underline_active: &'static str,
+    pub data_role: &'static str,
 }
 
 pub fn active_underline_tab(
@@ -242,6 +267,7 @@ pub fn active_underline_tab(
     style: &StyleProperties,
     label_text: String,
     active: bool,
+    target_id: &str,
     spec: &TabStyle,
 ) -> UiNode {
     let label = colored_text_node(
@@ -271,11 +297,16 @@ pub fn active_underline_tab(
         } else {
             p.hover = hover_bg(spec.hover_bg);
         }
-        p.semantic = Semantic::button().with_attr("role", "tab").with_attr_if(
-            active,
-            "aria-selected",
-            "true",
-        );
+        let mut s = Semantic::button()
+            .with_attr("role", "tab")
+            .with_attr("data-role", spec.data_role);
+        if !target_id.is_empty() {
+            s = s.with_attr("data-target-id", target_id);
+        }
+        if active {
+            s = s.with_attr("aria-selected", "true");
+        }
+        p.semantic = s;
     })
 }
 
@@ -376,7 +407,7 @@ mod tests {
 
     #[test]
     fn icon_button_node_has_28x28_frame_and_16x16_glyph() {
-        let n = icon_button_node("ib", "icons/x.svg", true, None);
+        let n = icon_button_node("ib", "icons/x.svg", true, None, None);
         let UiNode::Container {
             props, children, ..
         } = n
@@ -396,7 +427,7 @@ mod tests {
 
     #[test]
     fn icon_button_disabled_omits_hover_and_propagates_attr() {
-        let n = icon_button_node("ib", "icons/x.svg", false, Some("Close"));
+        let n = icon_button_node("ib", "icons/x.svg", false, Some("Close"), None);
         let UiNode::Container { props, .. } = n else {
             panic!()
         };
@@ -425,5 +456,18 @@ mod tests {
     fn color_or_transparent_falls_back_when_parse_fails() {
         let c = color_or_transparent("not-a-color");
         assert_eq!(c.a, 0);
+    }
+
+    #[test]
+    fn icon_button_node_command_arg_emits_data_on_click() {
+        let n = icon_button_node("ib", "icons/x.svg", true, Some("Save"), Some("file.save"));
+        let UiNode::Container { props, .. } = n else {
+            panic!()
+        };
+        assert!(props
+            .semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-on-click" && v == "cmd file.save"));
     }
 }

@@ -18,7 +18,7 @@ use prism_builder::{
     document::Node,
     registry::FieldSpec,
     style::StyleProperties,
-    ui_lower::{prop_bool, prop_string, LowerCtx},
+    ui_lower::{prop_bool, prop_str, prop_string, LowerCtx},
 };
 use prism_ui_runtime::layout::{Node as UiNode, Padding};
 use serde_json::Value;
@@ -38,6 +38,7 @@ const TAB_STYLE: TabStyle = TabStyle {
     hover_bg: "#1f000000",
     underline_height: 2.0,
     underline_active: "#0060c0",
+    data_role: "workflow-page-button",
 };
 
 fn workflow_page_button_schema() -> Vec<FieldSpec> {
@@ -55,6 +56,7 @@ fn workflow_page_button_lower(ctx: &LowerCtx<'_>, node: &Node, style: &StyleProp
         style,
         prop_string(node, "label"),
         prop_bool(node, "active", false),
+        prop_str(node, "page-id"),
         &TAB_STYLE,
     )
 }
@@ -114,6 +116,24 @@ mod tests {
             panic!()
         };
         assert!(under.background.is_none());
+    }
+
+    #[test]
+    fn carries_data_role_and_target_id_for_click_routing() {
+        let ui = lower(json!({ "page-id": "edit", "label": "Edit" }));
+        let UiNode::Container { props, .. } = ui else {
+            panic!()
+        };
+        assert!(props
+            .semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-role" && v == "workflow-page-button"));
+        assert!(props
+            .semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-target-id" && v == "edit"));
     }
 
     #[test]

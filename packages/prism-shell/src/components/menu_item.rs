@@ -26,13 +26,19 @@ fn menu_item_schema() -> Vec<FieldSpec> {
         FieldSpec::text("label", "Label").required(),
         FieldSpec::text("shortcut", "Shortcut hint"),
         FieldSpec::boolean("disabled", "Disabled").with_default(Value::Bool(false)),
+        FieldSpec::text("command", "Command id to dispatch on click"),
     ]
 }
 
 fn menu_item_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
     let label = prop_string(node, "label");
     let shortcut = prop_string(node, "shortcut");
-    let disabled = prop_bool(node, "disabled", false);
+    // `MenuSlot::items_json` emits `enabled` (state-side struct uses
+    // that name); the legacy schema field is `disabled`. Read both so
+    // either authoring path disables the row.
+    let enabled = prop_bool(node, "enabled", true);
+    let disabled = prop_bool(node, "disabled", false) || !enabled;
+    let command = prop_string(node, "command");
     let style = StyleProperties::default();
     let label_color = if disabled {
         DISABLED_COLOR
@@ -71,9 +77,18 @@ fn menu_item_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -
         if !disabled {
             p.hover = hover_bg(ROW_HOVER);
         }
-        p.semantic = Semantic::tag("div")
+        let mut s = Semantic::tag("div")
             .with_attr("role", "menuitem")
             .with_attr_if(disabled, "aria-disabled", "true");
+        // §43 A1 reuse: surface the command binding as a
+        // `data-on-click="cmd <id>"` so the existing `route_on_click`
+        // dispatches through the command table. Disabled rows skip
+        // the attr so route_on_click falls through to the canvas /
+        // drag chain (i.e. clicking a greyed-out item is a no-op).
+        if !disabled && !command.is_empty() {
+            s = s.with_attr("data-on-click", format!("cmd {command}"));
+        }
+        p.semantic = s;
     })
 }
 
@@ -113,5 +128,60 @@ mod tests {
             .attrs
             .iter()
             .any(|(k, v)| k == "aria-disabled" && v == "true"));
+    }
+
+    #[test]
+    fn command_prop_emits_data_on_click_cmd_attribute() {
+        let ui = lower(json!({
+            "item-id": "save",
+            "label": "Save",
+            "command": "file.save",
+        }));
+        let UiNode::Container { props, .. } = ui else {
+            panic!()
+        };
+        assert!(props
+            .semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-on-click" && v == "cmd file.save"));
+    }
+
+    #[test]
+    fn disabled_item_omits_data_on_click() {
+        let ui = lower(json!({
+            "item-id": "save",
+            "label": "Save",
+            "command": "file.save",
+            "disabled": true,
+        }));
+        let UiNode::Container { props, .. } = ui else {
+            panic!()
+        };
+        assert!(props
+            .semantic
+            .attrs
+            .iter()
+            .all(|(k, _)| k != "data-on-click"));
+    }
+
+    #[test]
+    fn enabled_false_also_omits_data_on_click() {
+        // The state-side `MenuItem` struct emits `enabled` rather than
+        // `disabled`; menu_item_lower honours either authoring path.
+        let ui = lower(json!({
+            "item-id": "save",
+            "label": "Save",
+            "command": "file.save",
+            "enabled": false,
+        }));
+        let UiNode::Container { props, .. } = ui else {
+            panic!()
+        };
+        assert!(props
+            .semantic
+            .attrs
+            .iter()
+            .all(|(k, _)| k != "data-on-click"));
     }
 }

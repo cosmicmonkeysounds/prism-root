@@ -103,7 +103,42 @@ impl TagResolver for RegistryTagResolver {
             lower_ast_children(&element.children, scope)
         };
         let ctx = LowerCtx::new(Some(&self.registry), &cascade).with_host_children(&pre_lowered);
-        Some(vec![component.lower_ui(&ctx, &node, &cascade)])
+        let mut lowered = component.lower_ui(&ctx, &node, &cascade);
+        // §43 A1: any `on:<event>="<action>"` attribute on the source
+        // element rides through to the lowered container as a
+        // `data-on-<event>` semantic attr. The `element_to_builder_node`
+        // helper deliberately drops the `On` namespace (per the
+        // attribute table in its docstring) because the block doesn't
+        // need it during render — the shell event router reads it
+        // back from the resulting `HitRect.attrs` instead.
+        attach_on_handlers(&mut lowered, element);
+        Some(vec![lowered])
+    }
+}
+
+/// Annotate the lowered runtime node with `data-on-<event>` semantic
+/// attributes for every `on:*` attribute on the source element. The
+/// surface contract is "containers carry handlers" — leaves (text,
+/// spacer, image, text-input) don't contribute to `Surface::hit_test_at`
+/// hits and so can't dispatch. Authors who want a clickable text node
+/// today wrap it in a container; a follow-up can either tag the
+/// inner leaf's outer container or grow hit-testable leaves.
+fn attach_on_handlers(node: &mut UiNode, element: &Element) {
+    let mut on_attrs: Vec<(String, String)> = Vec::new();
+    for attr in &element.attributes {
+        if !matches!(attr.name.namespace, AttributeNamespace::On) {
+            continue;
+        }
+        let Some(value) = literal_attribute_value(&attr.value) else {
+            continue;
+        };
+        on_attrs.push((format!("data-on-{}", attr.name.local), value));
+    }
+    if on_attrs.is_empty() {
+        return;
+    }
+    if let UiNode::Container { props, .. } = node {
+        props.semantic.attrs.extend(on_attrs);
     }
 }
 
@@ -489,6 +524,57 @@ mod tests {
             content, "injected",
             "host-injected children must override AST pre-lowering"
         );
+    }
+
+    #[test]
+    fn on_click_attribute_attaches_data_on_click_to_lowered_container() {
+        // §43 A1: `on:click="emit save"` on a registered tag rides
+        // through to the lowered container as `data-on-click`. The
+        // shell event router reads this attr at pointer-down time
+        // and dispatches through `signal::parse_action`.
+        let resolver = Arc::new(RegistryTagResolver::new(registry_with_demo()));
+        let (doc, errs) =
+            parse(r##"<demo.box id="b" on:click="emit save" on:hover="cmd help.show"/>"##);
+        assert!(errs.is_empty(), "parse errors: {errs:?}");
+        let scope = LowerScope::default().with_resolver(resolver);
+        let nodes = lower_document_with_scope(&doc, &scope);
+        let UiNode::Container { props, .. } = &nodes[0] else {
+            panic!("DemoBox should lower to a container")
+        };
+        let attrs: std::collections::HashMap<_, _> = props
+            .semantic
+            .attrs
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        assert_eq!(
+            attrs.get("data-on-click").map(String::as_str),
+            Some("emit save")
+        );
+        assert_eq!(
+            attrs.get("data-on-hover").map(String::as_str),
+            Some("cmd help.show")
+        );
+    }
+
+    #[test]
+    fn on_attributes_are_skipped_when_their_value_is_empty() {
+        // Defensive: an `on:click` with no value should not produce
+        // a `data-on-click` attr — handlers without an action body
+        // are meaningless. Matches the lowering rule in the runtime's
+        // `apply_container_attributes` (no `raw` → skip).
+        let resolver = Arc::new(RegistryTagResolver::new(registry_with_demo()));
+        let (doc, _) = parse(r##"<demo.box id="b" on:click/>"##);
+        let scope = LowerScope::default().with_resolver(resolver);
+        let nodes = lower_document_with_scope(&doc, &scope);
+        let UiNode::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        assert!(!props
+            .semantic
+            .attrs
+            .iter()
+            .any(|(k, _)| k == "data-on-click"));
     }
 
     #[test]

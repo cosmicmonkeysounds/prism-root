@@ -126,8 +126,17 @@ getrandom = "0.2"
 
 # Image processing — screenshot comparison in `prism-shell`'s e2e test
 # framework. Loads PNG screenshots, compares pixel-by-pixel, generates
-# visual diff images highlighting regressions.
-image = { version = "0.25", default-features = false, features = ["png"] }
+# visual diff images highlighting regressions. Also the decoder
+# femtovg's `image-loading` feature leans on for PNG / JPEG `Image`
+# render-command sources in `prism-ui-runtime`.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+
+# SVG rasterisation — `prism-ui-runtime`'s `ImageCache` decodes SVG
+# icon sources through resvg / usvg / tiny-skia, then hands the
+# resulting RGBA pixmap to femtovg as an `ImageSource`. Pulled only
+# by the native + web rendering paths; the HTML / SSR backend stays
+# resvg-free.
+resvg = { version = "0.47", default-features = false }
 
 # Native file dialog — opens the OS file picker so the shell can
 # browse for images, documents, and other binary assets without a

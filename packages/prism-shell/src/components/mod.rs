@@ -58,7 +58,9 @@ pub mod transform_editor;
 pub mod workflow_page_bar;
 pub mod workflow_page_button;
 
-pub use registry::{register_shell_builtins, ShellComponentRegistry, SHELL_BUILTINS};
+pub use registry::{
+    register_document_builtins, register_shell_builtins, ShellComponentRegistry, SHELL_BUILTINS,
+};
 
 /// Test-only helpers shared across every component's `#[cfg(test)]`
 /// module. The "build a `BuilderNode` with these props" boilerplate

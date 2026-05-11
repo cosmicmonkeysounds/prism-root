@@ -659,6 +659,22 @@ fn apply_container_attributes(
                 }
                 _ => {}
             },
+            // §43 A1: `on:<event>="<action>"` lowers to a
+            // `data-on-<event>` semantic attribute. The shell event
+            // router reads it back at pointer-down time and dispatches
+            // through `prism_builder::signal::parse_action`. Only
+            // containers contribute to the runtime's hit-test cache,
+            // so attaching handlers to text / spacer leaves is a
+            // separate follow-up (every leaf with author-driven
+            // events lives inside a container today).
+            AttributeNamespace::On => {
+                if let Some(action) = raw {
+                    props
+                        .semantic
+                        .attrs
+                        .push((format!("data-on-{}", local), action));
+                }
+            }
             _ => {}
         }
     }
@@ -1327,6 +1343,37 @@ mod tests {
             panic!()
         };
         assert_eq!(children.len(), 3, "resolver fired once per iteration");
+    }
+
+    /// §43 A1: `on:<event>="<action>"` on a bare `<container>`
+    /// lowers to a `data-on-<event>` semantic attribute that the
+    /// shell event router reads at pointer-down time. The runtime
+    /// is intentionally action-grammar-agnostic — it preserves the
+    /// raw string and lets the host parse it via
+    /// `prism_builder::signal::parse_action`.
+    #[test]
+    fn on_event_attribute_lowers_to_data_on_attr_on_container() {
+        let nodes =
+            interpret(r#"<container id="btn" on:click="emit save" on:hover="cmd help.show"/>"#)
+                .unwrap();
+        let crate::layout::Node::Container { id, props, .. } = &nodes[0] else {
+            panic!("expected container, got {:?}", nodes[0])
+        };
+        assert_eq!(id, "btn");
+        let attrs: std::collections::HashMap<_, _> = props
+            .semantic
+            .attrs
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        assert_eq!(
+            attrs.get("data-on-click").map(String::as_str),
+            Some("emit save"),
+        );
+        assert_eq!(
+            attrs.get("data-on-hover").map(String::as_str),
+            Some("cmd help.show"),
+        );
     }
 
     #[test]

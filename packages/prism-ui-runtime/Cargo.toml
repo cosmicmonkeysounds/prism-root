@@ -21,6 +21,8 @@ femtovg = [
     "dep:glutin",
     "dep:glutin-winit",
     "dep:raw-window-handle",
+    "dep:image",
+    "dep:resvg",
 ]
 # Web: winit-on-wasm + WebGL2 (femtovg's OpenGl renderer over a
 # `<canvas>`-derived context).
@@ -33,6 +35,8 @@ web = [
     "dep:web-sys",
     "dep:js-sys",
     "dep:console_error_panic_hook",
+    "dep:image",
+    "dep:resvg",
 ]
 # SSR: pure render-command → HTML/CSS lowering. No event loop.
 # Always-on for `prism-relay`; default-on so a host pulling
@@ -67,6 +71,13 @@ cosmic-text = { workspace = true, optional = true }
 winit = { workspace = true, optional = true }
 raw-window-handle = { workspace = true, optional = true }
 
+# Image decoders for `RenderCommand::Image` — PNG / JPEG through the
+# `image` crate (already in the workspace for screenshot diffing),
+# SVG through resvg. Both are pulled by the rendering features only;
+# the HTML / SSR path doesn't decode raster images.
+image = { workspace = true, optional = true }
+resvg = { workspace = true, optional = true }
+
 # Native-only.
 glutin = { workspace = true, optional = true }
 glutin-winit = { workspace = true, optional = true }
@@ -89,3 +100,6 @@ features = [
 
 [dev-dependencies]
 insta = { workspace = true }
+# Scratch directory for `images::filesystem_loader` tests — writes a
+# fixture file under the OS temp root and points the loader at it.
+tempfile = { workspace = true }

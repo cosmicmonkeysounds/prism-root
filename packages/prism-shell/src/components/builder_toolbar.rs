@@ -53,6 +53,11 @@ struct AlignEntry {
     id: &'static str,
     icon: &'static str,
     tooltip: &'static str,
+    /// Command id dispatched on click — wired through the
+    /// `chrome::icon_button_node` `command` parameter so `route_on_click`
+    /// runs the matching `BuilderService` body without growing a
+    /// `POINTER_ROUTES` row per button.
+    command: &'static str,
 }
 
 const ALIGN_ENTRIES: &[AlignEntry] = &[
@@ -60,16 +65,19 @@ const ALIGN_ENTRIES: &[AlignEntry] = &[
         id: "align-left",
         icon: "icons/align-left.svg",
         tooltip: "Align left",
+        command: "builder.align-left",
     },
     AlignEntry {
         id: "align-center",
         icon: "icons/align-center.svg",
         tooltip: "Align center",
+        command: "builder.align-center",
     },
     AlignEntry {
         id: "align-right",
         icon: "icons/align-right.svg",
         tooltip: "Align right",
+        command: "builder.align-right",
     },
 ];
 
@@ -189,6 +197,7 @@ fn build_align_cluster(node: &Node) -> UiNode {
                 entry.icon,
                 true,
                 Some(entry.tooltip),
+                Some(entry.command),
             )
         })
         .collect();
@@ -264,12 +273,14 @@ fn build_zoom_cluster(node: &Node, zoom: f32) -> UiNode {
         "icons/minus.svg",
         true,
         Some("Zoom out"),
+        Some("view.zoom-out"),
     );
     let plus = icon_button_node(
         format!("{}::zoom::in", node.id),
         "icons/plus.svg",
         true,
         Some("Zoom in"),
+        Some("view.zoom-in"),
     );
     let percent = format!("{}%", (zoom * 100.0).round() as i32);
     let cascade = StyleProperties::default();

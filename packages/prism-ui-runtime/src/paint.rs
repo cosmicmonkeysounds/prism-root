@@ -8,6 +8,7 @@
 use femtovg::{Canvas, Color as FemtoColor, Paint, Path, Renderer};
 
 use crate::command::{Color, RenderCommand};
+use crate::images::ImageCache;
 use crate::layout::Viewport;
 use crate::text::TextSystem;
 
@@ -20,6 +21,7 @@ pub fn draw<R: Renderer>(
     _viewport: Viewport,
     commands: &[RenderCommand],
     text: &mut TextSystem,
+    images: &mut ImageCache,
 ) {
     for cmd in commands {
         match cmd {
@@ -87,8 +89,50 @@ pub fn draw<R: Renderer>(
                     bounds.width,
                 );
             }
-            RenderCommand::Image { .. } => {
-                // Phase 1: image lowering pending — no decoder wired yet.
+            RenderCommand::Image {
+                bounds,
+                source,
+                radius,
+                tint,
+            } => {
+                let Some(image_id) = images.ensure(canvas, source) else {
+                    continue;
+                };
+                let mut path = Path::new();
+                if radius.tl == 0.0 && radius.tr == 0.0 && radius.br == 0.0 && radius.bl == 0.0 {
+                    path.rect(bounds.x, bounds.y, bounds.width, bounds.height);
+                } else {
+                    path.rounded_rect_varying(
+                        bounds.x,
+                        bounds.y,
+                        bounds.width,
+                        bounds.height,
+                        radius.tl,
+                        radius.tr,
+                        radius.br,
+                        radius.bl,
+                    );
+                }
+                let mut paint = Paint::image(
+                    image_id,
+                    bounds.x,
+                    bounds.y,
+                    bounds.width,
+                    bounds.height,
+                    0.0,
+                    1.0,
+                );
+                // Tint contract: when `Some`, the renderer treats the
+                // source as a mask and multiplies in the tint colour.
+                // femtovg's image paint already multiplies the colour
+                // attached to the paint against the sampled texel,
+                // which matches the `tint = mask × colour` contract
+                // for icon glyphs. `None` paints the image verbatim
+                // (white = identity multiplier).
+                if let Some(c) = tint {
+                    paint.set_color(femto(*c));
+                }
+                canvas.fill_path(&path, &paint);
             }
             RenderCommand::ScissorStart { bounds } => {
                 canvas.save();

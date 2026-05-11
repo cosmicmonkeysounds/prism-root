@@ -33,6 +33,9 @@ use winit::window::{Window, WindowId};
 #[cfg(target_arch = "wasm32")]
 use crate::backends::input::{translate, InputState};
 use crate::event::EventHandler;
+use crate::images::AssetLoader;
+#[cfg(target_arch = "wasm32")]
+use crate::images::ImageCache;
 use crate::layout::Surface;
 #[cfg(target_arch = "wasm32")]
 use crate::layout::Viewport;
@@ -47,11 +50,17 @@ use crate::text::TextSystem;
 /// every translated input event; mutating the supplied `Surface`
 /// inside the handler triggers the next redraw. Off wasm this is a
 /// stub so host code can call it from cross-target binaries without
-/// a cfg dance.
-pub fn mount(canvas_id: &str, surface: Surface, handler: EventHandler) -> Result<(), String> {
+/// a cfg dance. `loader` resolves image sources for
+/// `RenderCommand::Image` — see [`crate::images::AssetLoader`].
+pub fn mount(
+    canvas_id: &str,
+    surface: Surface,
+    handler: EventHandler,
+    loader: AssetLoader,
+) -> Result<(), String> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let _ = (canvas_id, surface, handler);
+        let _ = (canvas_id, surface, handler, loader);
         Err("prism-ui-runtime web backend is only available on wasm32".into())
     }
 
@@ -67,7 +76,7 @@ pub fn mount(canvas_id: &str, surface: Surface, handler: EventHandler) -> Result
             .dyn_into::<web_sys::HtmlCanvasElement>()
             .map_err(|_| "element is not a <canvas>".to_string())?;
         let event_loop = EventLoop::new().map_err(|e| format!("event loop: {e}"))?;
-        let app = WebApp::new(surface, handler, canvas_el);
+        let app = WebApp::new(surface, handler, canvas_el, loader);
         event_loop.spawn_app(app);
         Ok(())
     }
@@ -77,6 +86,7 @@ pub fn mount(canvas_id: &str, surface: Surface, handler: EventHandler) -> Result
 struct WebApp {
     surface: Surface,
     text: TextSystem,
+    images: ImageCache,
     handler: EventHandler,
     input: InputState,
     canvas_el: web_sys::HtmlCanvasElement,
@@ -91,10 +101,16 @@ struct RenderState {
 
 #[cfg(target_arch = "wasm32")]
 impl WebApp {
-    fn new(surface: Surface, handler: EventHandler, canvas_el: web_sys::HtmlCanvasElement) -> Self {
+    fn new(
+        surface: Surface,
+        handler: EventHandler,
+        canvas_el: web_sys::HtmlCanvasElement,
+        loader: AssetLoader,
+    ) -> Self {
         Self {
             surface,
             text: TextSystem::new(),
+            images: ImageCache::new(loader),
             handler,
             input: InputState::default(),
             canvas_el,
@@ -175,7 +191,7 @@ impl ApplicationHandler for WebApp {
                     canvas.height(),
                     FemtoColor::rgbf(1.0, 1.0, 1.0),
                 );
-                paint::draw(canvas, viewport, &cmds, &mut self.text);
+                paint::draw(canvas, viewport, &cmds, &mut self.text, &mut self.images);
                 canvas.flush_to_output(());
                 return;
             }

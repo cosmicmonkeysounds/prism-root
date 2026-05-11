@@ -120,11 +120,16 @@ fn signal_connection_row_lower(
 
     let mut row_kids = vec![left_cluster];
     if show_delete {
+        // Connection-delete needs a "selected connection" cursor on
+        // the builder/signals slot before it can identify the right
+        // row — for now the trash threads `None` to keep the lowering
+        // uniform.
         row_kids.push(icon_button_node(
             format!("{}::delete", node.id),
             "icons/trash.svg",
             true,
             Some("Delete connection"),
+            None,
         ));
     }
 

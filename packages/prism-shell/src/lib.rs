@@ -22,6 +22,13 @@
 //! lives entirely in the `services/` registry plus the slot-typed
 //! `AppState`.
 
+// `assets` plugs into `prism_ui_runtime::images::AssetLoader`, which
+// is only compiled when one of the rendering backends is selected.
+// The shell's `native` / `web` features each pull in the matching
+// runtime feature; library-only builds (neither feature) stay
+// asset-free.
+#[cfg(any(feature = "native", feature = "web"))]
+pub mod assets;
 pub mod components;
 pub mod events;
 pub mod props;

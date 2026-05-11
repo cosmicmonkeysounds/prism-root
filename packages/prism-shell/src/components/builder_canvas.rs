@@ -121,10 +121,18 @@ fn builder_canvas_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StylePropertie
     // BuilderDocument's component tree). We accept either explicit
     // `host_children` (when `.prism-ui` author embeds them) or the
     // recursed children path.
-    let preview = ctx
+    let mut preview = ctx
         .host_children()
         .map(|s| s.to_vec())
         .unwrap_or_else(|| ctx.lower_children(&node.children));
+
+    // §43 B5: tag every container in the preview subtree with
+    // `data-canvas-node="<id>"` so pointer-down routing can
+    // distinguish a click on a canvas document node from a click on
+    // a chrome container that happens to share an id (the most
+    // notable collision is `root` — both `<shell.app-window
+    // id="root">` and `BuilderDocument::page_shell()` use it).
+    tag_canvas_subtree(&mut preview);
 
     let preview_layer = bare_container(format!("{}::preview", node.id), preview, |p| {
         p.width = Sizing::Grow;
@@ -303,6 +311,30 @@ fn build_selection_layer(ctx: &LowerCtx<'_>, node: &Node) -> UiNode {
             .with_attr("role", "presentation")
             .with_attr("data-role", "canvas-overlay");
     })
+}
+
+/// Annotate every container in `nodes` (recursively) with
+/// `data-canvas-node="<id>"`. Only Container variants contribute to
+/// `Surface::hit_test_at` hits; tagging them is enough for the
+/// pointer-routing path to recognise canvas-doc descendants without
+/// false positives on chrome containers that share an id.
+fn tag_canvas_subtree(nodes: &mut [UiNode]) {
+    for n in nodes {
+        if let UiNode::Container {
+            id,
+            props,
+            children,
+        } = n
+        {
+            if !id.is_empty() {
+                props
+                    .semantic
+                    .attrs
+                    .push(("data-canvas-node".into(), id.clone()));
+            }
+            tag_canvas_subtree(children);
+        }
+    }
 }
 
 fn format_coord(v: f64) -> String {

@@ -32,23 +32,42 @@ use winit::window::{Window, WindowId};
 
 use crate::backends::input::{translate, InputState};
 use crate::event::EventHandler;
+use crate::images::{noop_loader, AssetLoader, ImageCache};
 use crate::layout::{Surface, Viewport};
 use crate::paint;
 use crate::text::TextSystem;
 
 /// Open a native window and render `surface` into it. `handler` is
 /// invoked on every translated input event before each redraw.
-/// Blocks until the window closes.
-pub fn run(surface: Surface, handler: EventHandler) -> Result<(), Box<dyn std::error::Error>> {
+/// Blocks until the window closes. `loader` resolves the source
+/// strings carried by `RenderCommand::Image` to raw bytes; hosts
+/// that have no images can pass [`crate::images::noop_loader`].
+pub fn run(
+    surface: Surface,
+    handler: EventHandler,
+    loader: AssetLoader,
+) -> Result<(), Box<dyn std::error::Error>> {
     let event_loop = EventLoop::new()?;
-    let mut app = App::new(surface, handler);
+    let mut app = App::new(surface, handler, loader);
     event_loop.run_app(&mut app)?;
     Ok(())
+}
+
+/// Back-compat helper for hosts that don't yet plug in an
+/// [`AssetLoader`]. Equivalent to `run(surface, handler,
+/// noop_loader())` — every `Image` render command renders as
+/// nothing.
+pub fn run_without_images(
+    surface: Surface,
+    handler: EventHandler,
+) -> Result<(), Box<dyn std::error::Error>> {
+    run(surface, handler, noop_loader())
 }
 
 struct App {
     surface: Surface,
     text: TextSystem,
+    images: ImageCache,
     handler: EventHandler,
     input: InputState,
     state: Option<RenderState>,
@@ -62,10 +81,11 @@ struct RenderState {
 }
 
 impl App {
-    fn new(surface: Surface, handler: EventHandler) -> Self {
+    fn new(surface: Surface, handler: EventHandler, loader: AssetLoader) -> Self {
         Self {
             surface,
             text: TextSystem::new(),
+            images: ImageCache::new(loader),
             handler,
             input: InputState::default(),
             state: None,
@@ -187,7 +207,7 @@ impl ApplicationHandler for App {
                     .set_size(size.width, size.height, state.window.scale_factor() as f32);
             }
             WindowEvent::RedrawRequested => {
-                redraw(state, &mut self.surface, &mut self.text);
+                redraw(state, &mut self.surface, &mut self.text, &mut self.images);
                 return;
             }
             _ => {}
@@ -206,7 +226,12 @@ impl ApplicationHandler for App {
     }
 }
 
-fn redraw(state: &mut RenderState, surface: &mut Surface, text: &mut TextSystem) {
+fn redraw(
+    state: &mut RenderState,
+    surface: &mut Surface,
+    text: &mut TextSystem,
+    images: &mut ImageCache,
+) {
     let viewport = surface.viewport();
     let cmds: Vec<_> = surface.commands().to_vec();
     let canvas = &mut state.canvas;
@@ -217,7 +242,7 @@ fn redraw(state: &mut RenderState, surface: &mut Surface, text: &mut TextSystem)
         canvas.height(),
         FemtoColor::rgbf(1.0, 1.0, 1.0),
     );
-    paint::draw(canvas, viewport, &cmds, text);
+    paint::draw(canvas, viewport, &cmds, text, images);
     canvas.flush_to_output(());
     let _ = state.gl_surface.swap_buffers(&state.gl_ctx);
 }
