@@ -10,6 +10,7 @@
 
 use std::collections::HashMap;
 
+use prism_builder::ComponentRegistry;
 use prism_ui_runtime::layout::Node as UiNode;
 use serde_json::Value;
 
@@ -19,11 +20,17 @@ use crate::AppState;
 /// Built once per frame from `ShellInner` and threaded into every
 /// binding — closures destructure exactly the fields they need and
 /// ignore the rest.
+///
+/// `registry` is the live `ComponentRegistry` for binding closures
+/// that need to lower a host-side tree (currently
+/// `shell.builder-canvas` rendering `state.canvas.document`). The
+/// pure slot-accessor bindings ignore the field entirely.
 pub struct PropCtx<'a> {
     pub state: &'a AppState,
     pub viewport_w: f32,
     pub viewport_h: f32,
     pub canvas_zoom: f32,
+    pub registry: Option<&'a ComponentRegistry>,
 }
 
 /// What a single binding emits for one frame:
@@ -202,6 +209,22 @@ fn register_builtin_bindings(reg: &mut ShellPropBindings) {
         );
     }
 
+    // Special-case override: `shell.builder-canvas` is the one binding
+    // whose emission carries children alongside props. The host's
+    // active `BuilderDocument` lowers through the live registry, and
+    // the result threads into the canvas via the §43 B2
+    // `host_children_by_tag` injection seam. The slot's
+    // `builder_canvas_props` is still the single source of metadata —
+    // the children-emission path layers on top, it doesn't replace it.
+    reg.register(
+        "shell.builder-canvas",
+        Box::new(|ctx| {
+            let props = ctx.state.canvas.builder_canvas_props();
+            let children = ctx.state.canvas.lower_document_to_ui(ctx.registry);
+            PropEmission::from_props(props).with_children(children)
+        }),
+    );
+
     // Stub bindings — derived, not maintained. Every id in
     // `SHELL_BUILTINS` that doesn't appear in `SLOT_BINDINGS` is a
     // *per-row* block (`shell.dock-tab`, `shell.menu-item`,
@@ -237,6 +260,7 @@ mod tests {
             viewport_w: 1280.0,
             viewport_h: 800.0,
             canvas_zoom: 1.0,
+            registry: None,
         }
     }
 

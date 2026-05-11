@@ -58,9 +58,12 @@ impl Skeleton {
 /// Build the runtime `Node` tree for one frame.
 ///
 /// Pipeline (each step is one function, every block flows through it):
-///   `bindings.snapshot(ctx)`            — typed substate → JSON props
-///   → `fill_compositions(skeleton, e)`  — merge into AST attributes
-///   → `lower_document_with_scope(...)`  — resolver dispatches per tag
+///   `bindings.snapshot(ctx)`            — typed substate → JSON props (+ optional children)
+///   → `fill_compositions(skeleton, e)`  — merge props into AST attributes
+///   → `harvest_host_children(e)`        — collect emission children by tag (§43 B2)
+///   → `lower_document_with_scope(...)`  — resolver dispatches per tag,
+///                                         consulting both the AST and the
+///                                         scope's `host_children_by_tag` map.
 pub fn render_tree(
     skeleton: &Skeleton,
     bindings: &ShellPropBindings,
@@ -69,8 +72,29 @@ pub fn render_tree(
 ) -> Vec<UiNode> {
     let emissions = bindings.snapshot(ctx);
     let doc = fill_compositions(skeleton, &emissions);
-    let scope = LowerScope::default().with_resolver(resolver);
+    let host_children = harvest_host_children(&emissions);
+    let scope = LowerScope::default()
+        .with_resolver(resolver)
+        .with_host_children_by_tag(host_children);
     lower_document_with_scope(&doc, &scope)
+}
+
+/// Collect `emission.children` slices into a tag-keyed map for
+/// injection into [`LowerScope::with_host_children_by_tag`]. Tags
+/// whose emission carries no children are omitted (no point taking
+/// space in the map). The values are moved out of the emissions —
+/// the props field stays behind for `fill_compositions` to use.
+fn harvest_host_children(
+    emissions: &HashMap<&'static str, PropEmission>,
+) -> HashMap<String, Vec<UiNode>> {
+    let mut out: HashMap<String, Vec<UiNode>> = HashMap::new();
+    for (tag, emission) in emissions {
+        if emission.children.is_empty() {
+            continue;
+        }
+        out.insert((*tag).to_string(), emission.children.clone());
+    }
+    out
 }
 
 /// Pure recursive walk: for every `<shell.foo>` element, merge
@@ -168,6 +192,7 @@ mod tests {
             viewport_w: 1280.0,
             viewport_h: 800.0,
             canvas_zoom: 1.0,
+            registry: None,
         }
     }
 
@@ -407,6 +432,90 @@ mod tests {
             "dock-workspace should wrap one recursive subtree, got {}",
             ws_kids.len()
         );
+    }
+
+    #[test]
+    fn canvas_binding_emits_document_as_host_children() {
+        // §43 B3 end-to-end: a non-empty `BuilderDocument` flows out of
+        // `state.canvas.document`, through `lower_document_to_ui`,
+        // into the canvas binding's `PropEmission::children`,
+        // harvested by `harvest_host_children`, and into LowerScope's
+        // tag-keyed map. The resolver then prefers those over any
+        // (empty) AST pre-lowering for `shell.builder-canvas`.
+        use prism_builder::{BuilderDocument, Node};
+
+        let bindings = ShellPropBindings::with_builtins();
+        let mut shell_reg = ShellComponentRegistry::new();
+        register_shell_builtins(&mut shell_reg).expect("register");
+        // Builder builtins must be registered too so the document's
+        // `text` / `button` / etc. components resolve at lower time.
+        let mut comp_reg = prism_builder::ComponentRegistry::new();
+        prism_builder::starter::register_builtins(&mut comp_reg).expect("builder builtins");
+        // Merge the two so the canvas binding can see both shell tags
+        // and builder block ids through one registry. For this test we
+        // only need the builder side — the resolver path doesn't run
+        // the canvas binding through `shell_reg`.
+        let live_reg = comp_reg;
+
+        let mut state = AppState::default();
+        let mut doc = BuilderDocument::page_shell();
+        if let Some(root) = doc.root.as_mut() {
+            root.children = vec![Node {
+                id: "demo-text".into(),
+                component: "text".into(),
+                props: serde_json::json!({ "body": "Hi" }),
+                ..Default::default()
+            }];
+        }
+        state.canvas.document = doc;
+
+        let ctx = PropCtx {
+            state: &state,
+            viewport_w: 1280.0,
+            viewport_h: 800.0,
+            canvas_zoom: 1.0,
+            registry: Some(&live_reg),
+        };
+        let emissions = bindings.snapshot(&ctx);
+        let canvas = emissions
+            .get("shell.builder-canvas")
+            .expect("canvas emission");
+        assert_eq!(
+            canvas.children.len(),
+            1,
+            "canvas emission carries one root container child"
+        );
+        // Harvest folds non-empty children into the map; absent
+        // emissions never appear there.
+        let host_children = harvest_host_children(&emissions);
+        assert!(
+            host_children.contains_key("shell.builder-canvas"),
+            "harvest_host_children must surface canvas emission"
+        );
+        assert!(
+            !host_children.contains_key("shell.status-bar"),
+            "harvest_host_children skips empty emissions"
+        );
+    }
+
+    #[test]
+    fn canvas_binding_emits_empty_children_when_registry_absent() {
+        // Headless / no-DI path: same binding, no registry → empty
+        // children, no panic. Pure slot-accessor bindings keep working.
+        let bindings = ShellPropBindings::with_builtins();
+        let state = AppState::default();
+        let ctx = PropCtx {
+            state: &state,
+            viewport_w: 1280.0,
+            viewport_h: 800.0,
+            canvas_zoom: 1.0,
+            registry: None,
+        };
+        let emissions = bindings.snapshot(&ctx);
+        let canvas = emissions
+            .get("shell.builder-canvas")
+            .expect("canvas emission");
+        assert!(canvas.children.is_empty());
     }
 
     #[test]

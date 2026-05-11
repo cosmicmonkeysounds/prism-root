@@ -81,14 +81,23 @@ impl TagResolver for RegistryTagResolver {
         let component = self.registry.get(&element.tag)?;
         let node = element_to_builder_node(element);
         let cascade = StyleProperties::default();
-        // Pre-lower the AST children through the runtime first so
-        // composition-style blocks (`shell.app-window`) can host real
-        // subtrees from `.prism-ui` source. Plain blocks (the 12/13
-        // chrome primitives whose layout comes from props) ignore
-        // `host_children` entirely — the slot is opt-in. Re-uses the
-        // same scope so iteration variables / named slots / nested
-        // resolver dispatch propagate identically.
-        let pre_lowered: Vec<UiNode> = if element.children.is_empty() {
+        // Host-injected children (binding-driven composition) win over
+        // AST-pre-lowered children. The two paths cover disjoint cases
+        // today — a host injects for tags whose live content is
+        // computed (e.g. `shell.builder-canvas` rendering a
+        // `BuilderDocument`), while AST children land on tags whose
+        // source authors a literal subtree
+        // (`<shell.app-window>…</shell.app-window>`). Both reach
+        // `host_children` on `LowerCtx` through the same opt-in slot —
+        // the block doesn't care which path produced them. See
+        // `LowerScope::with_host_children_by_tag` for the host-side
+        // injection seam.
+        let host_supplied: Option<Vec<UiNode>> = scope
+            .host_children_for(&element.tag)
+            .map(|slice| slice.to_vec());
+        let pre_lowered: Vec<UiNode> = if let Some(injected) = host_supplied {
+            injected
+        } else if element.children.is_empty() {
             Vec::new()
         } else {
             lower_ast_children(&element.children, scope)
@@ -439,6 +448,47 @@ mod tests {
         assert_eq!(inner_id, "inner");
         assert_eq!(inner_kids.len(), 1);
         assert!(matches!(inner_kids[0], UiNode::Text { .. }));
+    }
+
+    #[test]
+    fn resolver_prefers_scope_injected_children_over_ast() {
+        // §43 B2: when the host injects a tag-keyed pre-lowered children
+        // slice via `LowerScope::with_host_children_by_tag`, those
+        // children win over any AST children the resolver would
+        // otherwise pre-lower. This is the seam binding-driven
+        // composition uses (canvas hosting a `BuilderDocument`).
+        let mut reg = ComponentRegistry::new();
+        register_block(&mut reg, Arc::new(DemoHost::default())).unwrap();
+        let resolver = Arc::new(RegistryTagResolver::new(Arc::new(reg)));
+        // Source authors an `<text>ast</text>` child — but the host
+        // injects an alternate text node for this tag, which must
+        // override.
+        let (doc, _) = parse(r#"<demo.host id="h"><text>ast</text></demo.host>"#);
+        let mut map: std::collections::HashMap<String, Vec<UiNode>> =
+            std::collections::HashMap::new();
+        map.insert(
+            "demo.host".into(),
+            vec![UiNode::Text {
+                id: "from-host".into(),
+                content: "injected".into(),
+                props: prism_ui_runtime::layout::TextProps::default(),
+            }],
+        );
+        let scope = LowerScope::default()
+            .with_resolver(resolver)
+            .with_host_children_by_tag(map);
+        let nodes = lower_document_with_scope(&doc, &scope);
+        let UiNode::Container { children, .. } = &nodes[0] else {
+            panic!()
+        };
+        assert_eq!(children.len(), 1);
+        let UiNode::Text { content, .. } = &children[0] else {
+            panic!("expected the host-injected text node")
+        };
+        assert_eq!(
+            content, "injected",
+            "host-injected children must override AST pre-lowering"
+        );
     }
 
     #[test]

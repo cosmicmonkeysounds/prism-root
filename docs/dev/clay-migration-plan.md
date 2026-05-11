@@ -5864,3 +5864,82 @@ their own PRs.
 | Date | Decision | Rationale |
 |---|---|---|
 | 2026-05-10 | §43 documents the post-§42 gap: `AppState::default()` empties every binding, the canvas binding never emits the document as `host_children`, no service re-derives properties/inspector on selection change, five overlays ignore their `open` prop, and the femtovg backend leaks panel-id strings as visible text. Phase A (boot seed + overlay gates + label diagnosis) ships as one PR. Phase B introduces the `LowerScope::with_host_children_for_tag` extension or the JSON-tree-in-props alternative. Phase C wires selection change → builder slot re-derivation. Phase D restores chrome polish (panel titles, builder toolbar, multi-segment status bar). | The §17-§42 work was structurally complete: every block resolved, every binding emitted, every panel routed. What was missing was *content* — the Slint era's `samples.rs` + `app/sync/*` + boot wiring was deleted in Phase 5 alongside the parts that *were* replaced, and the gap was invisible because each individual subsystem still passed its tests. The `cargo run` smoke test was the missing invariant; landing it as a §43 follow-up keeps the per-section discipline (one structural decision per section + decision-log row) intact. The phase split keeps Phase A independently mergeable — every other phase needs a runtime extension or a service port wave, while Phase A is "seed the slots, gate the overlays, find the leaking text" and nothing else. |
+
+### Phase B landed (2026-05-10, post-§43 phase A)
+
+The 30-minute spike picked **Option A** (extend `LowerScope`) over
+Option B (JSON-tree-in-props). Rationale: ~70 LoC of mechanical
+change vs. round-tripping the entire `BuilderDocument` through
+attribute JSON every frame, and the seam composes for any future
+binding-driven composition use case (live previews, modal embeds,
+auxiliary canvases).
+
+**Implementation.**
+
+- **`LowerScope` extension.** New `host_children_by_tag:
+  Arc<HashMap<String, Vec<Node>>>` field. Builder method
+  `with_host_children_by_tag(map)`. Getter `host_children_for(tag)`.
+  `Arc` keeps scope clones cheap during control-flow / slot
+  expansion. Distinct from the existing `SlotBindings` (AST nodes,
+  for `<slot/>` expansion) and from `LowerCtx::host_children`
+  (already-lowered nodes set by the resolver from AST children).
+
+- **`RegistryTagResolver`.** Now consults
+  `scope.host_children_for(element.tag)` first; if present, those
+  override AST pre-lowering for this tag. Otherwise the existing
+  pre-lower-then-attach path runs unchanged. Other tags are
+  unaffected — the map is sparse by design.
+
+- **`PropCtx.registry`.** New `Option<&ComponentRegistry>` field.
+  Pure slot-accessor bindings ignore it; the canvas binding uses it
+  to lower `state.canvas.document` via
+  `prism_builder::ui_lower::LowerCtx`. `ShellInner::prop_ctx`
+  populates it from `self.registry.as_component_registry()`.
+
+- **`CanvasSlot::lower_document_to_ui(registry)`.** Lowers the
+  active `BuilderDocument` to a `Vec<UiNode>` (one root container
+  child today). Returns empty when either the document has no root
+  or no registry is supplied — headless render paths keep working.
+
+- **Canvas binding override.** The `shell.builder-canvas` row is
+  a special-case in `register_builtin_bindings`: it forwards
+  metadata via `builder_canvas_props()` *and* attaches the
+  document lowering as `PropEmission::children`. Every other
+  binding stays a pure slot-accessor.
+
+- **`render::harvest_host_children`.** New helper folds non-empty
+  `emission.children` slices into a `HashMap<String, Vec<UiNode>>`
+  keyed by tag, threaded into `LowerScope::with_host_children_by_tag`.
+  Empty emissions are omitted — the map stays sparse.
+
+**Smart-pattern wins.**
+
+- **One injection seam, sparse map.** The runtime extension is one
+  field, one builder, one getter; `RegistryTagResolver`'s preference
+  is a single `if let Some(...)` ahead of the existing branch.
+  Composition blocks that don't opt in pay zero cost.
+- **`PropEmission::children` finally load-bearing.** The field
+  existed in §17's binding contract but was dead infrastructure
+  through §17-§42 — every emission returned `vec![]`. Phase B
+  promotes it to its intended purpose without changing the
+  `ShellPropBindings` shape.
+- **Pure slot-accessor majority unchanged.** Only one binding row
+  (the canvas) needs special handling; the 26 other live bindings
+  stay one-line forwarders on the `SLOT_BINDINGS` const table.
+- **Net deletion of plumbing**: the comment on
+  `CanvasSlot::builder_canvas_props` that said "the canvas walks
+  the existing `BuilderDocument` directly via `lower_ui`" — the
+  aspirational claim that didn't exist before this phase — is now
+  factually true.
+
+**Verification.** 264 prism-shell lib tests (up from 262 in Phase A);
+59 prism-ui-runtime tests (+1 for `host_children_by_tag_round_trips_
+through_scope_getter`); 340 prism-builder lib tests (+1 for
+`resolver_prefers_scope_injected_children_over_ast`). Full workspace
+green, `cargo clippy --workspace --all-targets -- -D warnings` clean.
+
+### Decision-log entry
+
+| Date | Decision | Rationale |
+|---|---|---|
+| 2026-05-10 | §43 Phase B lands: `LowerScope::host_children_by_tag` + `with_host_children_by_tag` + `host_children_for`; `RegistryTagResolver` prefers scope-injected children over AST pre-lowering; `PropCtx.registry` new field; `CanvasSlot::lower_document_to_ui` + canvas binding override; `render::harvest_host_children` folds emission children into the scope. | The Phase A wave proved every panel was wired but content-empty; the canvas in particular paints the page frame but never lowered `state.canvas.document` into its preview layer. §43 B2 closes that with one runtime extension and one binding override, putting binding-driven children on equal footing with source-authored AST children. Option A over B keeps the document tree out of attribute-JSON serialisation and reserves the seam for future binding-driven compositions (modal embeds, live previews) — same "one declarative seam, every composition flows through it" discipline §13-§15 used for tag resolution and AST host_children. |

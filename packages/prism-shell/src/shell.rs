@@ -71,6 +71,11 @@ impl ShellInner {
             viewport_w: self.viewport.width,
             viewport_h: self.viewport.height,
             canvas_zoom: 1.0,
+            // §43 B3: bindings that lower host-side trees (currently
+            // `shell.builder-canvas` rendering `state.canvas.document`)
+            // call into the live registry through this field. Pure
+            // slot-accessor bindings ignore it.
+            registry: Some(self.registry.as_component_registry()),
         }
     }
 

@@ -1233,8 +1233,11 @@ impl CanvasSlot {
     /// JSON for `shell.builder-canvas`. The block reads the selection
     /// id (so it can paint the selection rectangle), the canvas
     /// viewport, and the picker's place-mode flag. The full document
-    /// tree is *not* serialised here — the canvas walks the existing
-    /// `BuilderDocument` directly via `lower_ui` for the page subtree.
+    /// tree is *not* serialised here — the binding lowers it through
+    /// `lower_document_to_ui` and threads the result into the canvas
+    /// via the `host_children_by_tag` injection seam (§43 B2). Keeping
+    /// this method JSON-only stays compatible with every other binding
+    /// shape (props only) without inventing a parallel emission type.
     pub fn builder_canvas_props(&self) -> Value {
         json!({
             "selection-id": self.selection.clone().unwrap_or_default(),
@@ -1246,6 +1249,32 @@ impl CanvasSlot {
             "pan-y": self.viewport.pan_y,
             "place-mode": self.picker.open,
         })
+    }
+
+    /// Lower `self.document` to a runtime `Vec<UiNode>` against a
+    /// live registry. The binding for `shell.builder-canvas` calls
+    /// this and forwards the result via `PropEmission::with_children`
+    /// — the render pipeline then injects those nodes into the
+    /// resolver scope's `host_children_by_tag` map, so the canvas
+    /// block sees the document as its `host_children`.
+    ///
+    /// Returns an empty vector when the document has no root (the
+    /// canvas falls through to its grid + selection overlay only) or
+    /// when no registry is available (headless / no-DI render paths
+    /// keep working with metadata-only canvas emission).
+    pub fn lower_document_to_ui(
+        &self,
+        registry: Option<&prism_builder::ComponentRegistry>,
+    ) -> Vec<prism_ui_runtime::layout::Node> {
+        let Some(reg) = registry else {
+            return Vec::new();
+        };
+        let Some(root) = self.document.root.as_ref() else {
+            return Vec::new();
+        };
+        let cascade = prism_builder::StyleProperties::default();
+        let ctx = prism_builder::ui_lower::LowerCtx::new(Some(reg), &cascade);
+        vec![ctx.lower(root)]
     }
 
     /// JSON for `shell.gizmo-move`. Forwards through the shared

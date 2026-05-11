@@ -82,6 +82,20 @@ pub struct LowerScope {
     bindings: HashMap<String, serde_json::Value>,
     slots: SlotBindings,
     resolver: Option<Arc<dyn TagResolver>>,
+    /// Tag-keyed pre-lowered children supplied by the *host*, not the
+    /// AST. Distinct from [`SlotBindings`] (which holds AST nodes for
+    /// `<slot/>` expansion) and from
+    /// [`crate::layout::Node`]-as-host_children inside `LowerCtx`
+    /// (which is set by the resolver from AST children). This slot lets
+    /// a host inject already-lowered children for a specific tag —
+    /// the canonical use case is rendering a host-side document tree
+    /// (`prism_builder::BuilderDocument`) inside a registered tag's
+    /// composition slot (`shell.builder-canvas`).
+    ///
+    /// `Arc` so scope clones stay cheap when forking for control-flow
+    /// / slot expansion; the inner map is replaced wholesale through
+    /// [`Self::with_host_children_by_tag`], never mutated in place.
+    host_children_by_tag: Arc<HashMap<String, Vec<Node>>>,
 }
 
 impl std::fmt::Debug for LowerScope {
@@ -92,6 +106,10 @@ impl std::fmt::Debug for LowerScope {
             .field(
                 "resolver",
                 &self.resolver.as_ref().map(|_| "<dyn TagResolver>"),
+            )
+            .field(
+                "host_children_by_tag",
+                &self.host_children_by_tag.keys().collect::<Vec<_>>(),
             )
             .finish()
     }
@@ -128,12 +146,36 @@ impl LowerScope {
         self
     }
 
+    /// Install a tag-keyed map of pre-lowered children. When the
+    /// resolver dispatches an element whose tag is a key in this map,
+    /// the values become the block's `host_children` — overriding the
+    /// pre-lowered AST children for that tag. Other tags are
+    /// unaffected.
+    ///
+    /// Single use case today: a host populates this map from binding
+    /// emissions so a registered tag (`shell.builder-canvas`) can host
+    /// a live `BuilderDocument` tree without round-tripping it through
+    /// attribute JSON. The propagation rule mirrors the existing
+    /// resolver: the map carries through scope clones (control-flow,
+    /// slot expansion) so nested resolver dispatches see the same
+    /// host_children injection.
+    pub fn with_host_children_by_tag(mut self, map: HashMap<String, Vec<Node>>) -> Self {
+        self.host_children_by_tag = Arc::new(map);
+        self
+    }
+
     pub fn binding(&self, name: &str) -> Option<&serde_json::Value> {
         self.bindings.get(name)
     }
 
     pub fn resolver(&self) -> Option<&Arc<dyn TagResolver>> {
         self.resolver.as_ref()
+    }
+
+    /// Look up a host-injected pre-lowered children slice for `tag`.
+    /// Resolvers call this before falling back to AST pre-lowering.
+    pub fn host_children_for(&self, tag: &str) -> Option<&[Node]> {
+        self.host_children_by_tag.get(tag).map(|v| v.as_slice())
     }
 }
 
@@ -1248,6 +1290,30 @@ mod tests {
             panic!()
         };
         assert_eq!(content, "kept");
+    }
+
+    #[test]
+    fn host_children_by_tag_round_trips_through_scope_getter() {
+        // Pin the new injection seam: a host-supplied map keyed by tag
+        // surfaces through `host_children_for(tag)` and clones cheaply
+        // through scope forks (the `Arc` discipline).
+        let mut map: HashMap<String, Vec<Node>> = HashMap::new();
+        map.insert(
+            "my.canvas".into(),
+            vec![Node::Text {
+                id: "leaf".into(),
+                content: "from-host".into(),
+                props: TextProps::default(),
+            }],
+        );
+        let scope = LowerScope::default().with_host_children_by_tag(map);
+        let supplied = scope.host_children_for("my.canvas").expect("entry");
+        assert_eq!(supplied.len(), 1);
+        assert!(scope.host_children_for("absent").is_none());
+        // Clone propagates the Arc — every fork sees the same entries
+        // without re-cloning the underlying Vec<Node>.
+        let forked = scope.clone();
+        assert!(forked.host_children_for("my.canvas").is_some());
     }
 
     #[test]
