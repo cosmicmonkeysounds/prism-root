@@ -13,12 +13,10 @@ pub mod builder_toolbar;
 pub mod chrome;
 pub mod code_editor;
 pub mod command_palette;
-pub mod component_palette;
 pub mod component_picker;
 pub mod connection_picker;
 pub mod dock_divider;
 pub mod dock_panel;
-pub mod dock_tab;
 pub mod dock_tab_bar;
 pub mod dock_workspace;
 pub mod drag_number_field;
@@ -26,9 +24,7 @@ pub mod field_editor;
 pub mod gizmo_move;
 pub mod gizmo_rotate;
 pub mod gizmo_scale;
-pub mod icon_button;
 pub mod inspector_row;
-pub mod menu_bar_row;
 pub mod modifier_header;
 pub mod modifier_picker;
 pub mod nav_graph;
@@ -36,9 +32,7 @@ pub mod prism_ui_loader;
 pub mod registry;
 pub mod resize_handle;
 pub mod schema_designer;
-pub mod status_bar;
 pub mod transform_editor;
-pub mod workflow_page_button;
 
 pub use registry::{
     register_document_builtins, register_shell_builtins, ShellComponentRegistry, SHELL_BUILTINS,

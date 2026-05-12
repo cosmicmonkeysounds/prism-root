@@ -1,0 +1,20 @@
+<!--
+  shell.workflow-page-button — single labelled tab inside the
+  DaVinci-style bottom workflow page bar. Active state paints a 2px
+  accent underline plus a tinted background; resting state gets a
+  translucent hover tint.
+
+  Wave 11.2 chrome lift: composes shell.tab-button with workflow-
+  specific metrics. The shared primitive owns the visual recipe.
+-->
+<shell.tab-button
+    target-id="{page-id}"
+    label="{label}"
+    active="{active}"
+    data-role="workflow-page-button"
+    height="32"
+    padding-x="16"
+    padding-top="8"
+    active-bg="#190060c0"
+    hover-bg="#1f000000"
+    underline-active="#0060c0"/>

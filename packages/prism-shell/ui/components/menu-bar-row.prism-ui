@@ -1,0 +1,93 @@
+<!--
+  shell.menu-bar-row — 28px top chrome row carrying menu pills,
+  optional app-name pill, and the workflow-page tab strip.
+
+  Wave 11.2 migration of menu_bar_row.rs. The Rust block hand-rolled
+  three pill kinds (menu-pill, app-name-pill, tab-pill) and the "+"
+  add button; in DSL each pill kind is one `<for>` loop and one
+  `<container>` shape, the add button composes shell.icon-button, and
+  the surrounding row is one outer `<container tag="nav">`.
+
+  The active-menu accent + aria-expanded swap rides on
+  `idx == active-menu` — Wave 11.2 substrate (boolean `==` against
+  numeric scope binding).
+-->
+<container
+    tag="nav"
+    direction="row"
+    gap="0"
+    width="grow"
+    height="28"
+    padding-left="8"
+    style:background="#08000000"
+    role="menubar"
+    aria-label="Application menu">
+  <container
+      for="item, idx in menus"
+      id="menu::{idx}"
+      tag="button"
+      direction="row"
+      height="28"
+      padding-left="10"
+      padding-right="10"
+      style:radius="4"
+      style:background="{idx == active-menu ? '#14336699' : ''}"
+      style:background:hovered="#14000000"
+      role="menuitem"
+      data:role="menu-pill"
+      data:target-id="{item.id}"
+      aria:expanded="{idx == active-menu ? 'true' : ''}">
+    <text font-size="12" style:color="#000000">{item.label}</text>
+  </container>
+  <container
+      if="{show-tabs}"
+      id="menu-sep"
+      width="1"
+      height="16"
+      style:background="#26000000"
+      tag="hr"
+      role="separator"
+      aria:orientation="vertical"/>
+  <container
+      if="{show-tabs && app-name}"
+      id="app-name-pill"
+      height="28"
+      padding-left="8"
+      padding-right="8"
+      tag="strong"
+      data:role="app-name">
+    <text font-size="11" style:color="#336699">{app-name}</text>
+  </container>
+  <container
+      if="{show-tabs}"
+      for="tab, idx in tabs"
+      id="tab::{idx}"
+      tag="button"
+      direction="column"
+      height="28"
+      role="tab"
+      style:background="{tab.active ? '#ffffff' : ''}"
+      style:background:hovered="#14000000"
+      aria:selected="{tab.active ? 'true' : ''}">
+    <container
+        direction="row"
+        padding-left="10"
+        padding-right="10"
+        height="grow">
+      <text
+          font-size="11"
+          style:color="{tab.active ? '#000000' : '#99000000'}">{tab.title}</text>
+    </container>
+    <container
+        height="2"
+        style:background="{tab.active ? '#336699' : '#1a000000'}"/>
+  </container>
+  <shell.icon-button
+      if="{show-tabs}"
+      id="add-page"
+      icon="icons/plus.svg"
+      enabled="true"
+      tooltip-text="Add page"
+      command="navigation.add-page"/>
+  <container id="flex" width="grow" height="grow"/>
+</container>

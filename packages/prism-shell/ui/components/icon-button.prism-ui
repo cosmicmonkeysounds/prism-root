@@ -1,0 +1,24 @@
+<!--
+  shell.icon-button — 28×28 icon-only button used across toolbars,
+  inspector rows, toasts, dock chrome, and every other slot that
+  needs "one icon, one click". Wave 11.2 migration of icon_button.rs.
+
+  Slint origin: `IconButton` in ui/app.slint (lines 334-373).
+
+  Disabled buttons skip the hover background and drop the
+  data-on-click affordance — downstream `parse_action` treats an
+  empty body as a no-op so the conditional omission is the correct
+  behaviour. Optional `tint` paints the 16×16 glyph through a colour
+  mask (mirrors the Slint `colorize` property on Image).
+-->
+<container
+    tag="button"
+    width="28"
+    height="28"
+    style:radius="6"
+    style:background:hovered="{enabled ? '#1f000000' : ''}"
+    aria-label="{tooltip-text}"
+    aria:disabled="{!enabled ? 'true' : ''}"
+    data:on-click="{enabled && command ? 'cmd ' + command : ''}">
+  <image src="{icon}" width="16" height="16" style:tint="{tint}"/>
+</container>

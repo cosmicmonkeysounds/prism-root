@@ -1,0 +1,19 @@
+<!--
+  shell.dock-tab — single tab inside a DockTabBar. Active tabs paint
+  a tinted bg + 2px underline; inactive tabs swap on :hovered.
+
+  Wave 11.2 chrome lift: composes shell.tab-button with dock-specific
+  metrics. The shared primitive owns the visual recipe; this row is
+  a pure prop forwarding.
+-->
+<shell.tab-button
+    target-id="{tab-id}"
+    label="{label}"
+    active="{active}"
+    data-role="dock-tab"
+    height="26"
+    padding-x="12"
+    padding-top="6"
+    active-bg="#19000000"
+    hover-bg="#0f000000"
+    underline-active="#0060c0"/>

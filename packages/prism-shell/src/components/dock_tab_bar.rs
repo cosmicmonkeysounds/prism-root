@@ -57,7 +57,7 @@ pub const DOCK_TAB_BAR_SPEC: prism_builder::BlockSpec =
 mod tests {
     use super::*;
 
-    use crate::components::registry::{register_shell_builtins, ShellComponentRegistry};
+    use crate::components::registry::{register_full_shell_chrome, ShellComponentRegistry};
     use crate::components::testing::test_node;
     use serde_json::json;
 
@@ -67,7 +67,10 @@ mod tests {
         let owned;
         let ctx = if with_reg {
             let mut r = ShellComponentRegistry::new();
-            register_shell_builtins(&mut r).expect("register");
+            // Wave 11.2 batch 4: shell.dock-tab is DSL-authored, so the
+            // tab-bar's dispatch path needs the full chrome registry
+            // (native builtins + DSL components + resolver finalised).
+            register_full_shell_chrome(&mut r).expect("register");
             owned = r;
             LowerCtx::new(Some(owned.as_component_registry()), &cascade)
         } else {

@@ -545,6 +545,134 @@ fn properties_panel_schema() -> Vec<FieldSpec> {
     )]
 }
 
+// ── Batch 4 (Wave 11.2): chrome lifts ──
+//
+// The remaining Tier-1 components share a small set of visual recipes
+// (icon-button glyph, active-underline tab pill). Lifting those recipes
+// to .prism-ui source — and authoring every consumer in DSL — removes
+// the per-call-site `chrome::*_node` helper coupling. Wave 11.2's
+// "shared-chrome lift" substrate, landed declaratively.
+
+fn icon_button_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("icon", "Icon").required(),
+        FieldSpec::boolean("enabled", "Enabled").with_default(Value::Bool(true)),
+        FieldSpec::text("tooltip-text", "Tooltip text"),
+        FieldSpec::text("help-id", "Help ID"),
+        FieldSpec::text("tint", "Glyph tint"),
+        FieldSpec::text("command", "Command id to dispatch on click"),
+    ]
+}
+
+fn icon_button_signals() -> Vec<SignalDef> {
+    with_common_signals(vec![
+        SignalDef::new(
+            "hover-start",
+            "Pointer entered the button — positional payload for tooltip placement.",
+        )
+        .with_payload(vec![
+            FieldSpec::text("help_id", "Help ID"),
+            FieldSpec::number("x", "X (px)", NumericBounds::default()),
+            FieldSpec::number("y", "Y (px)", NumericBounds::default()),
+        ]),
+        SignalDef::new("hover-end", "Pointer left the button."),
+    ])
+}
+
+fn dock_tab_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("tab-id", "Tab id").required(),
+        FieldSpec::text("label", "Label").required(),
+        FieldSpec::boolean("active", "Active").with_default(Value::Bool(false)),
+    ]
+}
+
+fn workflow_page_button_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("page-id", "Page ID").required(),
+        FieldSpec::text("label", "Label").required(),
+        FieldSpec::boolean("active", "Active").with_default(Value::Bool(false)),
+    ]
+}
+
+fn tab_button_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("target-id", "Hit-routing target id").required(),
+        FieldSpec::text("label", "Label").required(),
+        FieldSpec::text("data-role", "data-role for hit routing").required(),
+        FieldSpec::boolean("active", "Active").with_default(Value::Bool(false)),
+        FieldSpec::number("height", "Tab height (px)", NumericBounds::min(0.0))
+            .with_default(Value::from(26.0)),
+        FieldSpec::number(
+            "padding-x",
+            "Horizontal padding (px)",
+            NumericBounds::min(0.0),
+        )
+        .with_default(Value::from(12.0)),
+        FieldSpec::number("padding-top", "Top padding (px)", NumericBounds::min(0.0))
+            .with_default(Value::from(6.0)),
+        FieldSpec::text("active-bg", "Active background colour")
+            .with_default(Value::String("#19000000".into())),
+        FieldSpec::text("hover-bg", "Hover background colour")
+            .with_default(Value::String("#0f000000".into())),
+        FieldSpec::text("underline-active", "Active underline colour")
+            .with_default(Value::String("#0060c0".into())),
+    ]
+}
+
+fn status_bar_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("text", "Status text"),
+        FieldSpec::text("status", "Status text (back-compat alias)"),
+        FieldSpec::text("segments", "Segments (JSON array)"),
+    ]
+}
+
+fn menu_bar_row_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("app-name", "App name"),
+        FieldSpec::boolean("show-tabs", "Show tabs").with_default(Value::Bool(false)),
+        FieldSpec::text("menus", "Menu pills (JSON array)"),
+        FieldSpec::text("tabs", "Tab pills (JSON array)"),
+        FieldSpec::number("active-menu", "Active menu index", NumericBounds::default())
+            .with_default(Value::from(-1.0)),
+    ]
+}
+
+fn menu_bar_row_signals() -> Vec<SignalDef> {
+    with_common_signals(vec![
+        SignalDef::new(
+            "item-clicked",
+            "Menu pill clicked — payload is the menu id.",
+        ),
+        SignalDef::new("tab-activated", "Tab clicked — payload is the tab index."),
+        SignalDef::new("add-page", "The trailing + button was clicked."),
+    ])
+}
+
+// ── Wave 12 (component palette migration) ──
+//
+// shell.component-palette migrated to DSL alongside the style-prop
+// substrate landing. Wave 12 is the first first-class user of the
+// resolver-side `style:` / `style="{obj}"` seam: the selected vs.
+// hover-only branch on the row container is expressed as ternary
+// `style:background` overrides resolved against `selected-id` ==
+// `item.item-id`.
+
+fn component_palette_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("items", "Items (JSON array of palette entries)"),
+        FieldSpec::text("selected-id", "Selected item id"),
+    ]
+}
+
+fn component_palette_signals() -> Vec<SignalDef> {
+    with_common_signals(vec![SignalDef::new(
+        "item-activated",
+        "Palette item picked.",
+    )])
+}
+
 pub static SHELL_PRISM_UI_COMPONENTS: &[PrismUiSpec] = &[
     PrismUiSpec::new(
         "shell.toolbar-separator",
@@ -674,6 +802,49 @@ pub static SHELL_PRISM_UI_COMPONENTS: &[PrismUiSpec] = &[
         include_str!("../../ui/components/properties-panel.prism-ui"),
     )
     .schema(properties_panel_schema),
+    // Batch 4 — chrome lift. shell.icon-button moves to DSL, taking
+    // tooltip/tint/command/enabled with it; shell.tab-button is the
+    // new shared recipe powering shell.dock-tab + shell.workflow-page-button.
+    PrismUiSpec::new(
+        "shell.icon-button",
+        include_str!("../../ui/components/icon-button.prism-ui"),
+    )
+    .schema(icon_button_schema)
+    .signals(icon_button_signals),
+    PrismUiSpec::new(
+        "shell.tab-button",
+        include_str!("../../ui/components/tab-button.prism-ui"),
+    )
+    .schema(tab_button_schema),
+    PrismUiSpec::new(
+        "shell.dock-tab",
+        include_str!("../../ui/components/dock-tab.prism-ui"),
+    )
+    .schema(dock_tab_schema),
+    PrismUiSpec::new(
+        "shell.workflow-page-button",
+        include_str!("../../ui/components/workflow-page-button.prism-ui"),
+    )
+    .schema(workflow_page_button_schema),
+    PrismUiSpec::new(
+        "shell.status-bar",
+        include_str!("../../ui/components/status-bar.prism-ui"),
+    )
+    .schema(status_bar_schema),
+    PrismUiSpec::new(
+        "shell.menu-bar-row",
+        include_str!("../../ui/components/menu-bar-row.prism-ui"),
+    )
+    .schema(menu_bar_row_schema)
+    .signals(menu_bar_row_signals),
+    // Wave 12 — first DSL component authored against the style-prop
+    // substrate (`attach_style_overrides` in `prism-builder::ui_resolver`).
+    PrismUiSpec::new(
+        "shell.component-palette",
+        include_str!("../../ui/components/component-palette.prism-ui"),
+    )
+    .schema(component_palette_schema)
+    .signals(component_palette_signals),
 ];
 
 #[cfg(test)]

@@ -95,21 +95,24 @@ impl ShellComponentRegistry {
 /// a `&'static BlockSpec` declared in the matching `components/foo.rs`
 /// file. Adding a primitive = one new const + one row here.
 pub static SHELL_BUILTINS: &[&BlockSpec] = &[
-    &super::icon_button::ICON_BUTTON_SPEC,
     // Wave 11.2 — the following ids were Rust-authored before being
     // migrated to `.prism-ui` source. Each row was deleted alongside
     // its `components/<id>.rs` file:
     //   First wave  (2026-05-12 a9c199c): toolbar-separator, help-tooltip,
     //     docs-view, docs-sidebar, toast-stack, launchpad.
-    //   Second wave (a previous commit): explorer, docs-content,
-    //     section-header, nav-button, inspector-tree, nav-page-list,
-    //     signals-panel, workflow-page-bar, menu-dropdown, context-menu,
-    //     add-modifier-button, add-connection-button.
-    //   Third wave (this commit, substrate-unblocked): toast, menu-item,
-    //     signal-connection-row, schema-row, nav-page-row,
-    //     properties-panel. These six unlocked when the Wave 11.2 DSL
-    //     substrate landed (ternary, C-style `||`/`&&`/`!`, dotted-path
-    //     comparison, `<dispatch component="{…}"/>`).
+    //   Second wave: explorer, docs-content, section-header, nav-button,
+    //     inspector-tree, nav-page-list, signals-panel, workflow-page-bar,
+    //     menu-dropdown, context-menu, add-modifier-button,
+    //     add-connection-button.
+    //   Third wave (substrate-unblocked): toast, menu-item,
+    //     signal-connection-row, schema-row, nav-page-row, properties-panel.
+    //     Unlocked when the Wave 11.2 DSL substrate landed (ternary,
+    //     C-style `||`/`&&`/`!`, dotted-path comparison, dynamic
+    //     `<dispatch component="{…}"/>`).
+    //   Fourth wave (chrome lift): icon-button, dock-tab,
+    //     workflow-page-button, status-bar, menu-bar-row, plus the
+    //     shared `shell.tab-button` primitive that dock-tab +
+    //     workflow-page-button now compose against.
     // They land into the registry through
     // `register_prism_ui_components` in `shell.rs`. The
     // `prism_ui_specs_register_disjoint_from_native_builtins` test in
@@ -118,18 +121,13 @@ pub static SHELL_BUILTINS: &[&BlockSpec] = &[
     &super::drag_number_field::DRAG_NUMBER_FIELD_SPEC,
     &super::inspector_row::INSPECTOR_ROW_SPEC,
     &super::transform_editor::TRANSFORM_EDITOR_SPEC,
-    &super::menu_bar_row::MENU_BAR_ROW_SPEC,
     &super::field_editor::FIELD_EDITOR_SPEC,
-    &super::status_bar::STATUS_BAR_SPEC,
-    &super::workflow_page_button::WORKFLOW_PAGE_BUTTON_SPEC,
     &super::app_window::APP_WINDOW_SPEC,
     &super::dock_divider::DOCK_DIVIDER_SPEC,
-    &super::dock_tab::DOCK_TAB_SPEC,
     &super::dock_tab_bar::DOCK_TAB_BAR_SPEC,
     &super::dock_panel::DOCK_PANEL_SPEC,
     &super::dock_workspace::DOCK_WORKSPACE_SPEC,
     &super::command_palette::COMMAND_PALETTE_SPEC,
-    &super::component_palette::COMPONENT_PALETTE_SPEC,
     &super::schema_designer::SCHEMA_DESIGNER_SPEC,
     &super::nav_graph::NAV_GRAPH_SPEC,
     &super::code_editor::CODE_EDITOR_SPEC,
@@ -333,8 +331,10 @@ mod tests {
         use prism_ui_runtime::interpret::{lower_document_with_scope, LowerScope};
         use prism_ui_runtime::layout::Node as UiNode;
 
+        // Wave 11.2 batch 4: shell.icon-button is now DSL-authored, so
+        // it resolves only through the full-chrome registration path.
         let mut reg = ShellComponentRegistry::new();
-        register_shell_builtins(&mut reg).expect("register");
+        register_full_shell_chrome(&mut reg).expect("register");
 
         let scope = LowerScope::default().with_resolver(reg.tag_resolver());
         let (doc, errs) = parse(
@@ -349,8 +349,6 @@ mod tests {
             panic!("root not a container")
         };
         assert_eq!(children.len(), 1);
-        // Resolver dispatched into IconButton::lower_ui — the result
-        // is the 28×28 icon-button frame from `chrome.rs`.
         let UiNode::Container { id, props, .. } = &children[0] else {
             panic!("icon button did not lower to a container")
         };
@@ -521,10 +519,11 @@ mod tests {
         // §43 D1: merging `prism_builder::starter::register_builtins`
         // into the shell registry is what lets `select_node` →
         // `resync_builder_for_selection` find schemas for document
-        // nodes (`text` / `button` / …). The two id sets are disjoint
-        // (`shell.*` vs unprefixed), so the merge can't shadow.
+        // nodes (`text` / `button` / …). The shell namespace is
+        // `shell.*` / `prism.*` vs unprefixed document builtins, so
+        // the merge can't shadow.
         let mut reg = ShellComponentRegistry::new();
-        register_shell_builtins(&mut reg).expect("shell");
+        register_full_shell_chrome(&mut reg).expect("shell");
         register_document_builtins(&mut reg).expect("document");
         // A representative shell tag still resolves…
         assert!(reg.get("shell.icon-button").is_some());
@@ -559,7 +558,7 @@ mod tests {
     #[test]
     fn underlying_component_registry_is_borrowable() {
         let mut reg = ShellComponentRegistry::new();
-        register_shell_builtins(&mut reg).expect("register");
+        register_full_shell_chrome(&mut reg).expect("register");
         // The relay-shaped consumer that takes `&ComponentRegistry` works.
         let cr = reg.as_component_registry();
         assert!(cr.get("shell.icon-button").is_some());

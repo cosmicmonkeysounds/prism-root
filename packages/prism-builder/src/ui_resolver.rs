@@ -45,7 +45,7 @@ use prism_core::language::prism_ui::{
     ast::TemplatePart, AttributeNamespace, AttributeValue, Element,
 };
 use prism_ui_runtime::interpret::{
-    evaluate_expression, lookup_expression_in_scope, lower_ast_children,
+    apply_style_override, evaluate_expression, lookup_expression_in_scope, lower_ast_children,
     stringify_value_for_template, LowerScope, TagResolver,
 };
 use prism_ui_runtime::layout::Node as UiNode;
@@ -145,6 +145,16 @@ impl TagResolver for RegistryTagResolver {
         // need it during render — the shell event router reads it
         // back from the resulting `HitRect.attrs` instead.
         attach_on_handlers(&mut lowered, element, scope);
+        // Wave 12 — Vue/React-style style prop passing. `style:<k>="<v>"`
+        // and `style="{obj}"` spread on the source element override
+        // matching fields on the lowered container's `ContainerProps`.
+        // Applied AFTER `lower_ui` so the block computes its natural
+        // styling first; the caller's overrides win. Single seam —
+        // `apply_style_override` in the runtime owns the vocabulary
+        // (background / radius / padding / gap / width / height + the
+        // `:hovered` overrides), and the resolver feeds keys through
+        // it verbatim.
+        attach_style_overrides(&mut lowered, element, scope);
         Some(vec![lowered])
     }
 }
@@ -172,6 +182,66 @@ fn attach_on_handlers(node: &mut UiNode, element: &Element, scope: &LowerScope) 
     }
     if let UiNode::Container { props, .. } = node {
         props.semantic.attrs.extend(on_attrs);
+    }
+}
+
+/// Apply every `style:<key>[:<state>]` attribute and `style="{obj}"`
+/// spread on the source element to the block's lowered container.
+/// Runs AFTER `Component::lower_ui` so the block's natural styling
+/// computes first; the parent's overrides win.
+///
+/// **Vue/React parallel:** in React you write
+/// `<Button style={{background: 'red'}}/>`; here you write
+/// `<shell.icon-button style:background="#ff0000"/>` or
+/// `<shell.icon-button style="{theme.button}"/>`. Both reach the
+/// same final container, both behave the same — the caller can
+/// reshape any child's resting visual without the child opting in.
+///
+/// Leaves (text / spacer / image) silently ignore overrides — same
+/// pattern `attach_on_handlers` uses; future leaf-level overrides
+/// (e.g. text color) land as a sibling helper if needed.
+fn attach_style_overrides(node: &mut UiNode, element: &Element, scope: &LowerScope) {
+    let mut overrides: Vec<(String, String)> = Vec::new();
+    for attr in &element.attributes {
+        match attr.name.namespace {
+            // `style:<key>="<value>"` — typed per-key override.
+            AttributeNamespace::Style => {
+                if let Some(value) = resolved_attribute_string(&attr.value, scope) {
+                    overrides.push((attr.name.local.clone(), value));
+                }
+            }
+            // `style="{obj}"` — spread a JSON object's entries as
+            // style overrides. Mirrors the `props="{item}"` spread
+            // pattern: each (k, v) becomes a per-key override, where
+            // values are coerced to strings the same way authored
+            // `style:k="v"` reaches `apply_style_override`. Non-object
+            // resolutions are silently ignored — same shape as the
+            // props spread fallback.
+            AttributeNamespace::Bare if attr.name.local == "style" => {
+                let resolved = resolved_attribute_value(&attr.value, scope);
+                if let Value::Object(map) = resolved {
+                    for (k, v) in map {
+                        let s = match v {
+                            Value::String(s) => s,
+                            Value::Number(n) => n.to_string(),
+                            Value::Bool(b) => b.to_string(),
+                            Value::Null => continue,
+                            other => other.to_string(),
+                        };
+                        overrides.push((k, s));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    if overrides.is_empty() {
+        return;
+    }
+    if let UiNode::Container { props, .. } = node {
+        for (key, value) in overrides {
+            apply_style_override(props, &key, &value);
+        }
     }
 }
 
@@ -222,6 +292,11 @@ fn element_to_builder_node(element: &Element, scope: &LowerScope) -> BuilderNode
                     }
                 }
             }
+            // Wave 12 — `style="{obj}"` is a styling spread consumed
+            // by `attach_style_overrides` post-lower; it is NOT a
+            // block prop. Swallow it here so blocks don't see a stray
+            // `style` key in their props bag.
+            AttributeNamespace::Bare if local == "style" => {}
             AttributeNamespace::Bare => {
                 props.insert(
                     local.to_string(),
@@ -382,6 +457,9 @@ fn dispatch_element_to_builder_node(
             // follows the same per-namespace mapping as
             // `element_to_builder_node`.
             AttributeNamespace::Bare if local == "component" => {}
+            // Wave 12 — `style="{obj}"` is consumed post-lower by
+            // `attach_style_overrides`, not as a prop. Swallow.
+            AttributeNamespace::Bare if local == "style" => {}
             AttributeNamespace::Bare if local == "props" => {
                 if let Value::Object(map) = resolved_attribute_value(&attr.value, scope) {
                     for (k, v) in map {
@@ -906,5 +984,151 @@ mod tests {
         };
         let bn = element_to_builder_node(n, &LowerScope::default());
         assert_eq!(bn.props["value"], Value::Null);
+    }
+
+    #[test]
+    fn style_namespace_overrides_lowered_container_background() {
+        // Wave 12 — Vue/React-style style prop passing.
+        // `style:background="#…"` on the source element wins over the
+        // block's natural background after `lower_ui` runs.
+        let resolver = Arc::new(RegistryTagResolver::new(registry_with_demo()));
+        // DemoBox's natural background comes from its `tint` prop.
+        let (doc, errs) =
+            parse(r##"<demo.box id="b" tint="#ff0000" style:background="#00ff00"/>"##);
+        assert!(errs.is_empty(), "parse errors: {errs:?}");
+        let scope = LowerScope::default().with_resolver(resolver);
+        let nodes = lower_document_with_scope(&doc, &scope);
+        let UiNode::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let bg = props.background.expect("override should set bg");
+        assert_eq!(
+            (bg.r, bg.g, bg.b),
+            (0x00, 0xff, 0x00),
+            "style:background must win over the block's tint-derived bg",
+        );
+    }
+
+    #[test]
+    fn style_spread_object_unpacks_each_key_as_override() {
+        // `style="{obj}"` spread parallels `props="{item}"`.
+        // Each key in the resolved object becomes a style override
+        // applied post-lower, exactly like an authored
+        // `style:k="v"`.
+        let resolver = Arc::new(RegistryTagResolver::new(registry_with_demo()));
+        let scope = LowerScope::default().with_resolver(resolver).with_binding(
+            "theme",
+            serde_json::json!({ "background": "#0000ff", "radius": 8 }),
+        );
+        let (doc, errs) = parse(r##"<demo.box id="b" tint="#ff0000" style="{theme}"/>"##);
+        assert!(errs.is_empty(), "parse errors: {errs:?}");
+        let nodes = lower_document_with_scope(&doc, &scope);
+        let UiNode::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let bg = props.background.expect("spread should set bg");
+        assert_eq!((bg.r, bg.g, bg.b), (0x00, 0x00, 0xff));
+        // CornerRadius is uniform → all four corners equal.
+        assert_eq!(props.radius.tl, 8.0);
+        assert_eq!(props.radius.tr, 8.0);
+        assert_eq!(props.radius.br, 8.0);
+        assert_eq!(props.radius.bl, 8.0);
+    }
+
+    #[test]
+    fn style_namespace_overrides_with_state_suffix_route_to_hover() {
+        // `style:background:hovered="#…"` lands on
+        // `ContainerProps.hover.background` — same vocabulary the
+        // runtime's `apply_container_attributes` uses, lifted through
+        // the resolver seam.
+        let resolver = Arc::new(RegistryTagResolver::new(registry_with_demo()));
+        let (doc, errs) = parse(r##"<demo.box id="b" style:background:hovered="#102030"/>"##);
+        assert!(errs.is_empty(), "parse errors: {errs:?}");
+        let scope = LowerScope::default().with_resolver(resolver);
+        let nodes = lower_document_with_scope(&doc, &scope);
+        let UiNode::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let hover_bg = props
+            .hover
+            .as_ref()
+            .and_then(|h| h.background)
+            .expect("hover background should be set");
+        assert_eq!(
+            (hover_bg.r, hover_bg.g, hover_bg.b),
+            (0x10, 0x20, 0x30),
+            "style:background:hovered must populate the hover override",
+        );
+    }
+
+    #[test]
+    fn style_spread_value_is_not_visible_as_block_prop() {
+        // The `style="{obj}"` spread is consumed by the post-lower
+        // override pipeline, not as a block prop. Blocks that read
+        // `node.props["style"]` would see the raw JSON if we didn't
+        // swallow it; pin the contract so a future refactor doesn't
+        // accidentally re-expose the key.
+        let scope = LowerScope::default()
+            .with_binding("theme", serde_json::json!({ "background": "#0000ff" }));
+        let (doc, _) = parse(r#"<demo.box style="{theme}" label="kept"/>"#);
+        let n = match &doc.nodes[0] {
+            prism_core::language::prism_ui::Node::Element(e) => e,
+            _ => panic!(),
+        };
+        let bn = element_to_builder_node(n, &scope);
+        assert!(
+            bn.props.get("style").is_none(),
+            "style spread must not appear in node.props",
+        );
+        assert_eq!(bn.props["label"], Value::String("kept".into()));
+    }
+
+    #[test]
+    fn style_overrides_unknown_bare_key_drops_silently() {
+        // Unknown bare-key style attrs (no `:state` suffix) drop
+        // silently — mirroring the pre-Wave-12 behavior of
+        // `apply_container_attributes`. Authors who want arbitrary
+        // `data-*` payloads use the `data:` namespace. Future
+        // expansions of the known-key vocabulary in
+        // `apply_style_override` light the key up uniformly across
+        // every consumer (direct authoring + resolver pass-through).
+        let resolver = Arc::new(RegistryTagResolver::new(registry_with_demo()));
+        let (doc, _) = parse(r##"<demo.box style:tint="#beadee"/>"##);
+        let scope = LowerScope::default().with_resolver(resolver);
+        let nodes = lower_document_with_scope(&doc, &scope);
+        let UiNode::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        assert!(
+            !props
+                .semantic
+                .attrs
+                .iter()
+                .any(|(k, _)| k.starts_with("data-style-tint")),
+            "unknown bare-key style attr must drop silently; got attrs {:?}",
+            props.semantic.attrs,
+        );
+    }
+
+    #[test]
+    fn style_overrides_apply_through_dynamic_dispatch() {
+        // `<dispatch component="{…}" style:background="#…"/>` — style
+        // overrides must apply to the resolved target's lowered
+        // container just like a directly-named tag would.
+        let resolver = Arc::new(RegistryTagResolver::new(registry_with_demo()));
+        let scope = LowerScope::default().with_resolver(resolver).with_binding(
+            "row",
+            serde_json::json!({ "component": "demo.box", "props": { "tint": "#ff0000" } }),
+        );
+        let (doc, errs) = parse(
+            r##"<dispatch component="{row.component}" props="{row.props}" style:background="#00ff00"/>"##,
+        );
+        assert!(errs.is_empty(), "parse errors: {errs:?}");
+        let nodes = lower_document_with_scope(&doc, &scope);
+        let UiNode::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let bg = props.background.expect("override should set bg");
+        assert_eq!((bg.r, bg.g, bg.b), (0x00, 0xff, 0x00));
     }
 }

@@ -13,11 +13,10 @@
 //! layer, no new builder type — just composition over the
 //! already-shared `ui_lower` namespace.
 
-use prism_builder::document::Node as BuilderNode;
 use prism_builder::style::StyleProperties;
 use prism_builder::ui_lower::{
     bare_container, colored_text_node, hover_bg, image_node, parse_color, tinted_image_node,
-    uniform_radius, LowerCtx,
+    uniform_radius,
 };
 use prism_ui_runtime::command::Color;
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
@@ -302,81 +301,6 @@ pub fn format_drag_value(v: f64) -> String {
     } else {
         trimmed.to_string()
     }
-}
-
-/// Static visual recipe for an "active-underline tab": a column with a
-/// label on top and a 2px underline at the bottom; active state paints
-/// a tinted background, resting state swaps to a hover-bg. Shared
-/// between `shell.dock-tab` and `shell.workflow-page-button` (and any
-/// future tab-shaped chrome). The variation between consumers is
-/// purely metric/colour — captured here as a `&'static TabStyle`.
-///
-/// `data_role` is the hit-test routing key the shell's event router
-/// reads off the lowered container's semantic attrs (see
-/// `prism-shell/src/events.rs::POINTER_ROUTES`). Each consumer pins
-/// its own role string so a click on a workflow-page tab can be told
-/// apart from a click on a dock-panel tab even though the lowered
-/// shape is identical.
-pub struct TabStyle {
-    pub height: f32,
-    pub padding: Padding,
-    pub label_size: f32,
-    pub label_active: &'static str,
-    pub label_resting: &'static str,
-    pub active_bg: &'static str,
-    pub hover_bg: &'static str,
-    pub underline_height: f32,
-    pub underline_active: &'static str,
-    pub data_role: &'static str,
-}
-
-pub fn active_underline_tab(
-    ctx: &LowerCtx<'_>,
-    node: &BuilderNode,
-    style: &StyleProperties,
-    label_text: String,
-    active: bool,
-    target_id: &str,
-    spec: &TabStyle,
-) -> UiNode {
-    let label = colored_text_node(
-        format!("{}::label", node.id),
-        label_text,
-        style,
-        spec.label_size,
-        if active {
-            spec.label_active
-        } else {
-            spec.label_resting
-        },
-    );
-    let underline = bare_container(format!("{}::underline", node.id), vec![], |p| {
-        p.width = Sizing::Grow;
-        p.height = Sizing::Fixed(spec.underline_height);
-        if active {
-            p.background = parse_color(spec.underline_active);
-        }
-    });
-    ctx.synthetic_container(node, style, vec![label, underline], |p| {
-        p.direction = Direction::Column;
-        p.height = Sizing::Fixed(spec.height);
-        p.padding = spec.padding;
-        if active {
-            p.background = parse_color(spec.active_bg);
-        } else {
-            p.hover = hover_bg(spec.hover_bg);
-        }
-        let mut s = Semantic::button()
-            .with_attr("role", "tab")
-            .with_attr("data-role", spec.data_role);
-        if !target_id.is_empty() {
-            s = s.with_attr("data-target-id", target_id);
-        }
-        if active {
-            s = s.with_attr("aria-selected", "true");
-        }
-        p.semantic = s;
-    })
 }
 
 /// Single coloured rectangle representing one axis arm of a gizmo

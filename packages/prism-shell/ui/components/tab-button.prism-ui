@@ -1,0 +1,32 @@
+<!--
+  shell.tab-button — shared "active-underline tab" recipe. A 26-32px
+  column carrying a centred label and a 2px underline strip. Active
+  state paints a tinted background and a coloured underline; resting
+  state swaps the bg via :hovered.
+
+  Wave 11.2 chrome lift: previously the same recipe was open-coded
+  twice in `chrome::active_underline_tab` and consumed by both
+  shell.dock-tab (TabStyle{height=26, active-bg=#19000000}) and
+  shell.workflow-page-button (TabStyle{height=32, active-bg=#190060c0}).
+  Now both compose against this one DSL primitive — passing the
+  varying metrics/colours through as props.
+-->
+<container
+    tag="button"
+    direction="column"
+    height="{height}"
+    padding-left="{padding-x}"
+    padding-right="{padding-x}"
+    padding-top="{padding-top}"
+    style:background="{active ? active-bg : ''}"
+    style:background:hovered="{active ? '' : hover-bg}"
+    role="tab"
+    data:role="{data-role}"
+    data:target-id="{target-id}"
+    aria:selected="{active ? 'true' : ''}">
+  <text font-size="12" style:color="{active ? '#000000' : '#99000000'}">{label}</text>
+  <container
+      width="grow"
+      height="2"
+      style:background="{active ? underline-active : ''}"/>
+</container>

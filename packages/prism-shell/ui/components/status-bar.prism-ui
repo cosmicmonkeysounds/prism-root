@@ -1,0 +1,35 @@
+<!--
+  shell.status-bar — 26px footer strip at the bottom of the app
+  window. Two modes: single-text fallback or pipe-separated multi-
+  segment strip ("Editor | Flux | Canvas | 1 node | Studio").
+
+  Wave 11.2 migration of status_bar.rs. The segments path emits an
+  interleaved (segment, separator) sequence via `for, idx`; the
+  separator is suppressed on the first row via the index pin. Empty
+  segments are skipped declaratively through the leading `if=`
+  guard on each text node.
+-->
+<container
+    tag="footer"
+    direction="row"
+    height="26"
+    gap="10"
+    padding-left="12"
+    padding-right="12"
+    style:background="#08000000"
+    role="contentinfo">
+  <text
+      if="{!segments}"
+      font-size="11"
+      style:color="#99000000">{text ? text : status}</text>
+  <container
+      for="seg, idx in segments"
+      if="{seg}"
+      id="status::seg::{idx}"
+      direction="row"
+      gap="10"
+      height="grow">
+    <text if="{idx}" font-size="11" style:color="#44000000">|</text>
+    <text font-size="11" style:color="#99000000">{seg}</text>
+  </container>
+</container>

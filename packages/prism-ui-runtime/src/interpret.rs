@@ -902,53 +902,8 @@ fn apply_container_attributes(
             // lands as a follow-up without changing the authoring
             // grammar.
             AttributeNamespace::Style => {
-                let (key, state) = split_state_suffix(local);
-                match (key, state) {
-                    ("background", None) => {
-                        if let Some(c) = raw.as_deref().and_then(parse_color) {
-                            props.background = Some(c);
-                        }
-                    }
-                    ("radius", None) => {
-                        if let Some(v) = raw.as_deref().and_then(parse_f32) {
-                            props.radius = CornerRadius {
-                                tl: v,
-                                tr: v,
-                                br: v,
-                                bl: v,
-                            };
-                        }
-                    }
-                    ("background", Some("hovered")) => {
-                        if let Some(c) = raw.as_deref().and_then(parse_color) {
-                            props
-                                .hover
-                                .get_or_insert_with(HoverOverrides::default)
-                                .background = Some(c);
-                        }
-                    }
-                    ("radius", Some("hovered")) => {
-                        if let Some(v) = raw.as_deref().and_then(parse_f32) {
-                            props
-                                .hover
-                                .get_or_insert_with(HoverOverrides::default)
-                                .radius = Some(CornerRadius {
-                                tl: v,
-                                tr: v,
-                                br: v,
-                                bl: v,
-                            });
-                        }
-                    }
-                    (key, Some(state)) => {
-                        if let Some(value) = raw {
-                            props
-                                .semantic
-                                .attrs
-                                .push((format!("data-style-{}-{}", key, state), value));
-                        }
-                    }
-                    _ => {}
+                if let Some(value) = raw.as_deref() {
+                    apply_style_override(props, local, value);
                 }
             }
             // §43 A1: `on:<event>="<action>"` lowers to a
@@ -1100,18 +1055,38 @@ fn collect_text_content(children: &[AstNode], scope: &LowerScope) -> String {
     for c in children {
         match c {
             AstNode::Text { value, .. } => {
+                let resolved = interpolate(value.trim(), scope);
+                if resolved.is_empty() {
+                    continue;
+                }
                 if !out.is_empty() {
                     out.push(' ');
                 }
-                out.push_str(&interpolate(value.trim(), scope));
+                out.push_str(&resolved);
             }
             AstNode::Interpolation(expr) => {
-                if let Some(v) = lookup_expression(&expr.body, scope) {
-                    if !out.is_empty() {
-                        out.push(' ');
-                    }
-                    out.push_str(&stringify_value(v));
+                // Cheap bare-path lookup first (Wave 11.2 substrate);
+                // operator-bearing bodies (ternary, `||`, `&&`, `==`)
+                // fall through to the full evaluator so authors can
+                // write `<text>{text ? text : status}</text>` against
+                // the same vocabulary attribute interpolations use.
+                let resolved = if let Some(v) = lookup_expression(&expr.body, scope) {
+                    stringify_value(v)
+                } else if let Some(v) = evaluate_expression(&expr.body, scope) {
+                    stringify_value(&v)
+                } else {
+                    continue;
+                };
+                if resolved.is_empty() {
+                    // Skip the leading-space insertion when an interpolation
+                    // resolves to "" — `{text}{status}` with `status=""`
+                    // shouldn't add a trailing separator.
+                    continue;
                 }
+                if !out.is_empty() {
+                    out.push(' ');
+                }
+                out.push_str(&resolved);
             }
             _ => {}
         }
@@ -1430,6 +1405,103 @@ pub fn stringify_value_for_template(value: &serde_json::Value) -> String {
 
 fn parse_f32(s: &str) -> Option<f32> {
     s.trim().trim_end_matches("px").parse::<f32>().ok()
+}
+
+/// Apply one `style:<key>[:<state>]="<value>"` override onto a
+/// [`ContainerProps`]. Single source of truth for the style-attribute
+/// vocabulary: every consumer (`apply_container_attributes`'s
+/// `AttributeNamespace::Style` branch, the resolver-side
+/// parent-passes-style-to-child seam in `ui_resolver.rs`, future Luau
+/// style writers) calls this so the keys stay in sync.
+///
+/// The `local` argument is the attribute's local part (`background`,
+/// `radius:hovered`, etc.). [`split_state_suffix`] is consulted
+/// internally to peel any trailing `:state` so callers don't need
+/// to.
+///
+/// Unknown keys land as `data-style-<key>` / `data-style-<key>-<state>`
+/// semantic attrs so author intent survives even when the runtime
+/// doesn't have first-class support for the override yet — same
+/// "data round-trips, behaviour follows" pattern Waves 9.2/9.4 use.
+pub fn apply_style_override(props: &mut ContainerProps, local: &str, value: &str) {
+    let (key, state) = split_state_suffix(local);
+    match (key, state) {
+        ("background", None) => {
+            if let Some(c) = parse_color(value) {
+                props.background = Some(c);
+            }
+        }
+        ("radius", None) => {
+            if let Some(v) = parse_f32(value) {
+                props.radius = CornerRadius {
+                    tl: v,
+                    tr: v,
+                    br: v,
+                    bl: v,
+                };
+            }
+        }
+        ("padding", None) => {
+            if let Some(v) = parse_f32(value) {
+                props.padding = Padding::all(v);
+            }
+        }
+        ("padding-left", None) => set_padding_side(&mut props.padding, Some(value), Side::Left),
+        ("padding-right", None) => set_padding_side(&mut props.padding, Some(value), Side::Right),
+        ("padding-top", None) => set_padding_side(&mut props.padding, Some(value), Side::Top),
+        ("padding-bottom", None) => set_padding_side(&mut props.padding, Some(value), Side::Bottom),
+        ("gap", None) => {
+            if let Some(v) = parse_f32(value) {
+                props.gap = v;
+            }
+        }
+        ("width", None) => {
+            if let Some(s) = parse_sizing(value) {
+                props.width = s;
+            }
+        }
+        ("height", None) => {
+            if let Some(s) = parse_sizing(value) {
+                props.height = s;
+            }
+        }
+        ("background", Some("hovered")) => {
+            if let Some(c) = parse_color(value) {
+                props
+                    .hover
+                    .get_or_insert_with(HoverOverrides::default)
+                    .background = Some(c);
+            }
+        }
+        ("radius", Some("hovered")) => {
+            if let Some(v) = parse_f32(value) {
+                props
+                    .hover
+                    .get_or_insert_with(HoverOverrides::default)
+                    .radius = Some(CornerRadius {
+                    tl: v,
+                    tr: v,
+                    br: v,
+                    bl: v,
+                });
+            }
+        }
+        (key, Some(state)) => {
+            // Known state suffix (`:selected` / `:focused`), unknown
+            // key — round-trip as a semantic attr so author intent
+            // survives (Wave 9.2 pattern).
+            props
+                .semantic
+                .attrs
+                .push((format!("data-style-{}-{}", key, state), value.to_string()));
+        }
+        (_, None) => {
+            // Unknown bare key (no recognized state suffix). Drop
+            // silently — same shape as the pre-extraction
+            // `apply_container_attributes` branch. Authors who want
+            // arbitrary `data-*` payloads have the `data:` namespace.
+        }
+    }
 }
 
 fn parse_direction(s: &str) -> Direction {

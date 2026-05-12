@@ -161,7 +161,7 @@ fn apply_axis_sizing(node: &mut UiNode, axis: Axis, sz: Sizing) {
 mod tests {
     use super::*;
 
-    use crate::components::registry::{register_shell_builtins, ShellComponentRegistry};
+    use crate::components::registry::{register_full_shell_chrome, ShellComponentRegistry};
     use crate::components::testing::test_node;
     use prism_dock::DockNode as PdNode;
     use serde_json::json;
@@ -172,7 +172,7 @@ mod tests {
         let owned;
         let ctx = if with_reg {
             let mut r = ShellComponentRegistry::new();
-            register_shell_builtins(&mut r).expect("register");
+            register_full_shell_chrome(&mut r).expect("register");
             owned = r;
             LowerCtx::new(Some(owned.as_component_registry()), &cascade)
         } else {

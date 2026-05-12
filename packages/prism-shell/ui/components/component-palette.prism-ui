@@ -1,0 +1,52 @@
+<!--
+  shell.component-palette — left rail palette listing draggable
+  component types. Reads an `items` JSON array of
+  `{ item-id, label, icon? }` entries plus a `selected-id` string.
+
+  Wave 11.2 / Wave 12 migration of component_palette.rs. Each row
+  carries `data-role="palette-item"` + `data-target-id="{item-id}"`
+  so the existing palette-pick routes in `POINTER_ROUTES` light up.
+  The selected row paints `#330060c0`; non-selected rows fall back
+  to the hover-tint background. Composes against shell.icon-button
+  for nothing here, but demonstrates the Wave 12 style-prop seam:
+  `style:background:hovered` overrides the row container's hover
+  bundle from caller-supplied data.
+-->
+<container
+    tag="aside"
+    direction="column"
+    gap="2"
+    padding-left="6"
+    padding-right="6"
+    padding-top="6"
+    padding-bottom="6"
+    width="grow"
+    height="grow"
+    aria-label="Component palette"
+    data:role="component-palette">
+  <container
+      for="item, idx in items"
+      id="palette::row::{idx}"
+      direction="row"
+      gap="8"
+      padding-left="8"
+      padding-right="8"
+      padding-top="6"
+      padding-bottom="6"
+      height="32"
+      style:radius="4"
+      style:background="{selected-id == item.item-id ? '#330060c0' : ''}"
+      style:background:hovered="{selected-id == item.item-id ? '' : '#1a0060c0'}"
+      tag="div"
+      role="option"
+      data:role="palette-item"
+      data:target-id="{item.item-id}"
+      aria:selected="{selected-id == item.item-id ? 'true' : ''}">
+    <image
+        if="{item.icon}"
+        src="{item.icon}"
+        width="16"
+        height="16"/>
+    <text font-size="12" style:color="#000000">{item.label ? item.label : item.item-id}</text>
+  </container>
+</container>
