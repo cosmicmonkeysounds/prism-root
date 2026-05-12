@@ -109,7 +109,7 @@ pub use doc_manager::DocManager;
 
 #[cfg(feature = "transport-ipc")]
 pub use transport::ipc_local::{
-    bind_listener, connect_client, read_frame, serve_blocking, write_frame, IpcRequest,
+    bind_listener, connect_client, read_frame, serve_blocking, write_frame, IpcInvoker, IpcRequest,
     IpcResponse, ServeError, MAX_FRAME_BYTES,
 };
 

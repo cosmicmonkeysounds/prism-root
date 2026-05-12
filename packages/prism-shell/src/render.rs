@@ -226,6 +226,7 @@ mod tests {
             viewport_h: 800.0,
             canvas_zoom: 1.0,
             registry: None,
+            block_invalidator: None,
         }
     }
 
@@ -508,6 +509,7 @@ mod tests {
             viewport_h: 800.0,
             canvas_zoom: 1.0,
             registry: Some(&live_reg),
+            block_invalidator: None,
         };
         let emissions = bindings.snapshot(&ctx);
         let canvas = emissions
@@ -543,6 +545,7 @@ mod tests {
             viewport_h: 800.0,
             canvas_zoom: 1.0,
             registry: None,
+            block_invalidator: None,
         };
         let emissions = bindings.snapshot(&ctx);
         let canvas = emissions

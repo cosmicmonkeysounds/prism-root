@@ -92,6 +92,10 @@ impl ShellInner {
             // call into the live registry through this field. Pure
             // slot-accessor bindings ignore it.
             registry: Some(self.registry.as_component_registry()),
+            // Phase 3b: hand the canvas binding the shell's
+            // per-block invalidator so document blocks lower inside
+            // per-NodeId reactive contexts wired to the dirty queue.
+            block_invalidator: Some(self.render_scope.block_invalidator()),
         }
     }
 
@@ -170,20 +174,30 @@ impl Shell {
     /// bindings, resolver, ctx)` — exposed so tests, alternate hosts,
     /// and the per-frame redraw closure all hit the same path.
     ///
-    /// Wrapped in `subsecond::call` under the `hot-reload` feature
-    /// so changes to `render_tree`'s body (and transitively, the
-    /// block lower bodies it calls) patch in-place via subsecond
-    /// without dropping the `Surface` tree or the reactive `Owner`
-    /// graph. Phase 9 of `docs/dev/dioxus-inspiration.md`.
+    /// Wrapped in two layers:
+    /// 1. `render_scope.run_in_render_pass(...)` — **Phase 3a** of
+    ///    `docs/dev/dioxus-inspiration.md`. Any reactive signal read
+    ///    inside the walk (today: nothing yet; Phase 4 wires
+    ///    `ReactiveProps`; Phase 2 wires CRDT-backed atoms) subscribes
+    ///    a persistent frame context whose dirty callback marks
+    ///    `FRAME_DIRTY_SENTINEL` into the dirty queue. Signal writes
+    ///    drive redraws without any per-binding wiring.
+    /// 2. `subsecond::call` under the `hot-reload` feature so changes
+    ///    to `render_tree`'s body (and transitively, the block lower
+    ///    bodies it calls) patch in-place via subsecond without
+    ///    dropping the `Surface` tree or the reactive `Owner` graph.
+    ///    Phase 9.
     pub fn render(&self) -> Vec<UiNode> {
         let inner = self.inner.borrow();
-        render_with_hot_reload(|| {
-            render_tree(
-                &self.skeleton,
-                &inner.bindings,
-                Arc::clone(&inner.resolver),
-                &inner.prop_ctx(),
-            )
+        inner.render_scope.run_in_render_pass(|| {
+            render_with_hot_reload(|| {
+                render_tree(
+                    &self.skeleton,
+                    &inner.bindings,
+                    Arc::clone(&inner.resolver),
+                    &inner.prop_ctx(),
+                )
+            })
         })
     }
 
@@ -232,13 +246,15 @@ impl Shell {
             };
             if event_dirty || reactive_dirty {
                 let guard = inner.borrow();
-                let tree = render_with_hot_reload(|| {
-                    render_tree(
-                        &skeleton,
-                        &guard.bindings,
-                        Arc::clone(&guard.resolver),
-                        &guard.prop_ctx(),
-                    )
+                let tree = guard.render_scope.run_in_render_pass(|| {
+                    render_with_hot_reload(|| {
+                        render_tree(
+                            &skeleton,
+                            &guard.bindings,
+                            Arc::clone(&guard.resolver),
+                            &guard.prop_ctx(),
+                        )
+                    })
                 });
                 surface.set_tree(wrap_root(tree));
             }

@@ -162,7 +162,15 @@ are thin wrappers:
   Slint-based Studio (`prism-studio/src-tauri`, name is a
   historical artefact) is the canonical client and uses it to talk to
   the daemon sidecar over this wire (see
-  `docs/dev/slint-migration-plan.md`).
+  `docs/dev/slint-migration-plan.md`). **Phase 6 of
+  `docs/dev/dioxus-inspiration.md`:** the same wire is also reachable
+  through `IpcInvoker::connect(display)` — a
+  `prism_core::reactive::ipc::DaemonInvoker` impl that holds the
+  socket behind a `Mutex` and serialises each `invoke(id, payload)`
+  call into one request/response frame pair. The macro-emitted
+  `<name>_client` stubs from `#[daemon_fn]` accept any
+  `&dyn DaemonInvoker`, so the same code path drives `MockInvoker`
+  in tests and a live daemon sidecar in production.
 - **Mobile C-ABI**: `cargo-mobile2` staticlib, same C ABI as the browser
   build — the host (UIKit on iOS, Activity on Android via `winit`) calls
   `prism_daemon_{create,invoke,destroy}` directly. No webview bridge.

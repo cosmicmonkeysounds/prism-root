@@ -322,6 +322,102 @@ fn dispatch(kernel: &DaemonKernel, req: IpcRequest) -> IpcResponse {
     }
 }
 
+// ───── IpcInvoker — postcard-over-interprocess DaemonInvoker ─────
+//
+// Implements `prism_core::reactive::ipc::DaemonInvoker` over the same
+// `IpcRequest` / `IpcResponse` wire format `serve_blocking` speaks.
+// This is the real Phase 6 transport the `#[daemon_fn]` client stubs
+// can use to round-trip typed payloads through a daemon sidecar.
+//
+// `IpcInvoker` owns a long-lived [`Stream`] guarded by a `Mutex` so it
+// stays sync-friendly: each `invoke` call locks the stream, writes one
+// request frame, reads one response frame, and releases the lock. No
+// pipelining; matches the kernel's sync invoke shape end-to-end.
+
+use std::sync::Mutex;
+
+use prism_core::reactive::ipc::{DaemonInvoker, IpcPayload, RemoteError};
+
+/// Postcard-over-interprocess implementation of
+/// [`prism_core::reactive::ipc::DaemonInvoker`].
+///
+/// `IpcInvoker::connect` opens the socket and reads the server-initiated
+/// banner before returning, so callers see a "ready" invoker. The
+/// underlying connection is held behind a `Mutex` because `Stream`'s
+/// reads and writes are not `Sync` on their own.
+pub struct IpcInvoker {
+    inner: Mutex<IpcInvokerInner>,
+}
+
+struct IpcInvokerInner {
+    stream: Stream,
+    next_id: u64,
+}
+
+impl IpcInvoker {
+    /// Open a connection to a daemon bound by [`serve_blocking`] on
+    /// the same `display` name. Reads the server-initiated banner
+    /// before returning. Errors are mapped to [`RemoteError`] so the
+    /// shape matches what `DaemonInvoker::invoke` itself returns.
+    pub fn connect(display: &str) -> Result<Self, RemoteError> {
+        let mut stream =
+            connect_client(display).map_err(|e| RemoteError::Offline(e.to_string()))?;
+        let _banner: Option<IpcResponse> =
+            read_frame(&mut stream).map_err(|e| RemoteError::Offline(e.to_string()))?;
+        Ok(Self {
+            inner: Mutex::new(IpcInvokerInner {
+                stream,
+                // ID `0` is reserved for the server-initiated banner;
+                // start at `1` so request IDs don't collide.
+                next_id: 1,
+            }),
+        })
+    }
+}
+
+impl DaemonInvoker for IpcInvoker {
+    fn invoke(&self, id: &str, payload: IpcPayload) -> Result<IpcPayload, RemoteError> {
+        let mut guard = self
+            .inner
+            .lock()
+            .map_err(|e| RemoteError::Offline(format!("ipc invoker mutex poisoned: {e}")))?;
+        let req_id = guard.next_id;
+        guard.next_id = guard.next_id.wrapping_add(1).max(1);
+
+        let req = IpcRequest {
+            id: req_id,
+            command: id.to_string(),
+            payload_json: payload.to_string(),
+        };
+        write_frame(&mut guard.stream, &req)
+            .map_err(|e| RemoteError::Offline(format!("ipc write {id}: {e}")))?;
+
+        let resp: IpcResponse = read_frame(&mut guard.stream)
+            .map_err(|e| RemoteError::Offline(format!("ipc read {id}: {e}")))?
+            .ok_or_else(|| {
+                RemoteError::Offline(format!("daemon hung up while waiting for {id}"))
+            })?;
+
+        if resp.id != req_id {
+            return Err(RemoteError::Decode(format!(
+                "ipc id mismatch for {id}: expected {req_id}, got {}",
+                resp.id
+            )));
+        }
+
+        if resp.ok {
+            match resp.payload_json {
+                Some(s) => {
+                    serde_json::from_str(&s).map_err(|e| RemoteError::Decode(format!("{id}: {e}")))
+                }
+                None => Ok(JsonValue::Null),
+            }
+        } else {
+            Err(RemoteError::Remote(resp.error.unwrap_or_default()))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -449,6 +545,59 @@ mod tests {
         let mut empty: &[u8] = &[];
         let got: Option<IpcRequest> = read_frame(&mut empty).unwrap();
         assert!(got.is_none());
+    }
+
+    #[test]
+    fn ipc_invoker_round_trips_a_kernel_command() {
+        // Phase 6 of `docs/dev/dioxus-inspiration.md`: the IpcInvoker
+        // hits a live daemon listener, sends a postcard-framed
+        // request, reads a postcard-framed response, and returns the
+        // decoded JSON payload as `Result<IpcPayload, RemoteError>` —
+        // the contract every `#[daemon_fn]` client stub depends on.
+        let kernel = Arc::new(
+            DaemonBuilder::new()
+                .with_defaults()
+                .build()
+                .expect("kernel built"),
+        );
+        let display = format!("prism-daemon-test-invoker-{}.sock", std::process::id());
+        let (listener, fs_path) = bind_listener(&display).expect("bind");
+
+        // Single-shot server thread: accept one client, dispatch
+        // until the client closes the connection, then exit.
+        let server = std::thread::spawn({
+            let kernel = kernel.clone();
+            move || {
+                let stream = listener
+                    .incoming()
+                    .next()
+                    .expect("one connection")
+                    .expect("accept");
+                let _ = handle_connection(&kernel, stream);
+            }
+        });
+
+        let invoker = IpcInvoker::connect(&display).expect("invoker connected");
+
+        // Use a reserved kernel command — every default kernel has
+        // `daemon.capabilities` available.
+        let resp = invoker
+            .invoke("daemon.capabilities", JsonValue::Null)
+            .expect("invoke ok");
+        let cmd_list = resp["commands"].as_array().expect("commands array");
+        assert!(!cmd_list.is_empty());
+
+        // Confirm error path: unknown command surfaces as RemoteError::Remote.
+        let err = invoker
+            .invoke("no.such.command", JsonValue::Null)
+            .expect_err("unknown command must error");
+        assert!(matches!(err, RemoteError::Remote(ref msg) if msg.contains("no.such.command")));
+
+        drop(invoker);
+        server.join().unwrap();
+        if let Some(path) = fs_path {
+            let _ = std::fs::remove_file(path);
+        }
     }
 
     #[test]

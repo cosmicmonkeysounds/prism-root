@@ -2281,6 +2281,20 @@ impl CanvasSlot {
         &self,
         registry: Option<&prism_builder::ComponentRegistry>,
     ) -> Vec<prism_ui_runtime::layout::Node> {
+        self.lower_document_to_ui_with_invalidator(registry, None)
+    }
+
+    /// Phase 3b of `docs/dev/dioxus-inspiration.md`: lower the
+    /// builder document with an optional [`BlockInvalidator`]. When
+    /// the shell hands one in, every recursive `lower()` wraps the
+    /// block's `Component::lower_ui` body in a per-NodeId reactive
+    /// context, so signal reads inside the block body subscribe and
+    /// drive the invalidator's on_dirty callback on later writes.
+    pub fn lower_document_to_ui_with_invalidator(
+        &self,
+        registry: Option<&prism_builder::ComponentRegistry>,
+        invalidator: Option<prism_builder::ui_lower::BlockInvalidator>,
+    ) -> Vec<prism_ui_runtime::layout::Node> {
         let Some(reg) = registry else {
             return Vec::new();
         };
@@ -2288,7 +2302,10 @@ impl CanvasSlot {
             return Vec::new();
         };
         let cascade = prism_builder::StyleProperties::default();
-        let ctx = prism_builder::ui_lower::LowerCtx::new(Some(reg), &cascade);
+        let mut ctx = prism_builder::ui_lower::LowerCtx::new(Some(reg), &cascade);
+        if let Some(inv) = invalidator {
+            ctx = ctx.with_block_invalidator(inv);
+        }
         vec![ctx.lower(root)]
     }
 

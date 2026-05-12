@@ -252,6 +252,77 @@ impl TemplateFingerprint {
     }
 }
 
+/// One literal slot changed between two template versions.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LiteralPatch {
+    pub path: String,
+    pub attr: String,
+    pub old_value: String,
+    pub new_value: String,
+}
+
+/// Outcome of comparing two `TemplateFingerprint`s. Drives the
+/// hot-reload fast path: literal-only edits skip AST re-evaluation;
+/// structural changes fall back to full re-render.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PatchOutcome {
+    /// Both hashes match — no change. Nothing to patch.
+    NoChange,
+    /// Same structural hash, different full hash. The patch is
+    /// exactly the carrying [`LiteralPatch`] entries — slots whose
+    /// literal values differ between the two versions. No structural
+    /// change; the runtime can patch in place without re-evaluating
+    /// the AST.
+    LiteralOnly { diffs: Vec<LiteralPatch> },
+    /// Structural hashes differ. The patch can't fast-path —
+    /// callers must re-evaluate the AST and (typically) drop the
+    /// `Surface` tree.
+    Structural,
+}
+
+/// Compare two template fingerprints and return the appropriate
+/// patch shape for hot-reload. This is the **Phase 10** consumer
+/// the hashes were built to enable: the build script emits a
+/// `TemplateFingerprint` at compile time, the dev loop computes one
+/// from the on-disk source after each edit, and a literal-only
+/// outcome lets the runtime patch in place via the slot table
+/// without parsing the full AST.
+pub fn compare_fingerprints(
+    prev: &TemplateFingerprint,
+    next: &TemplateFingerprint,
+) -> PatchOutcome {
+    if prev.full == next.full {
+        return PatchOutcome::NoChange;
+    }
+    if prev.structural != next.structural {
+        return PatchOutcome::Structural;
+    }
+    // Same structure, different full hash → diff the literal slots.
+    // The slot lists are produced by the same `collect_literal_slots`
+    // walk on each side, so identical paths + attrs line up
+    // positionally. (A path or attr mismatch here means the slot
+    // walk diverged, which by definition is a structural change —
+    // shouldn't reach this arm; fall back to Structural defensively.)
+    let mut diffs = Vec::new();
+    if prev.literals.len() != next.literals.len() {
+        return PatchOutcome::Structural;
+    }
+    for (a, b) in prev.literals.iter().zip(next.literals.iter()) {
+        if a.path != b.path || a.attr != b.attr {
+            return PatchOutcome::Structural;
+        }
+        if a.value != b.value {
+            diffs.push(LiteralPatch {
+                path: b.path.clone(),
+                attr: b.attr.clone(),
+                old_value: a.value.clone(),
+                new_value: b.value.clone(),
+            });
+        }
+    }
+    PatchOutcome::LiteralOnly { diffs }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -369,6 +440,63 @@ mod tests {
             assert_eq!(sa.path, sb.path);
             assert_eq!(sa.attr, sb.attr);
             assert_ne!(sa.value, sb.value);
+        }
+    }
+
+    // ── compare_fingerprints (Phase 10 hot-reload consumer) ──
+
+    #[test]
+    fn compare_fingerprints_no_change_when_identical() {
+        let a = TemplateFingerprint::of(&doc(r#"<button label="Save"/>"#));
+        let b = TemplateFingerprint::of(&doc(r#"<button label="Save"/>"#));
+        assert_eq!(compare_fingerprints(&a, &b), PatchOutcome::NoChange);
+    }
+
+    #[test]
+    fn compare_fingerprints_literal_only_when_only_values_differ() {
+        let a = TemplateFingerprint::of(&doc(r#"<button label="Save"/>"#));
+        let b = TemplateFingerprint::of(&doc(r#"<button label="Submit"/>"#));
+        match compare_fingerprints(&a, &b) {
+            PatchOutcome::LiteralOnly { diffs } => {
+                assert_eq!(diffs.len(), 1);
+                assert_eq!(diffs[0].path, "0");
+                assert_eq!(diffs[0].attr, "label");
+                assert_eq!(diffs[0].old_value, "Save");
+                assert_eq!(diffs[0].new_value, "Submit");
+            }
+            other => panic!("expected LiteralOnly, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn compare_fingerprints_structural_when_tag_changes() {
+        let a = TemplateFingerprint::of(&doc(r#"<button label="x"/>"#));
+        let b = TemplateFingerprint::of(&doc(r#"<heading label="x"/>"#));
+        assert_eq!(compare_fingerprints(&a, &b), PatchOutcome::Structural);
+    }
+
+    #[test]
+    fn compare_fingerprints_structural_when_nesting_changes() {
+        let a = TemplateFingerprint::of(&doc("<a><b/></a>"));
+        let b = TemplateFingerprint::of(&doc("<a/><b/>"));
+        assert_eq!(compare_fingerprints(&a, &b), PatchOutcome::Structural);
+    }
+
+    #[test]
+    fn compare_fingerprints_literal_only_with_multiple_diffs() {
+        let a = TemplateFingerprint::of(&doc(
+            r#"<container><button label="A"/><text body="B"/></container>"#,
+        ));
+        let b = TemplateFingerprint::of(&doc(
+            r#"<container><button label="X"/><text body="Y"/></container>"#,
+        ));
+        match compare_fingerprints(&a, &b) {
+            PatchOutcome::LiteralOnly { diffs } => {
+                assert_eq!(diffs.len(), 2);
+                assert_eq!(diffs[0].new_value, "X");
+                assert_eq!(diffs[1].new_value, "Y");
+            }
+            other => panic!("expected LiteralOnly, got {other:?}"),
         }
     }
 }

@@ -68,6 +68,15 @@ async fn index(State(state): State<Arc<AppState>>) -> Response {
 /// L3 portals render with `<form>` support (the form component handles this).
 /// L4 portals inject a hydration script that connects to WebSocket for
 /// real-time CRDT sync.
+///
+/// **Phase 8** of `docs/dev/dioxus-inspiration.md`: the handler
+/// first asks the `SsrWorker` for a cached body. On cache miss
+/// (first request for this portal id since boot — and after any
+/// `state.portals.upsert(...)` invalidation), the handler computes
+/// the body inline and seeds the cache so the next request gets a
+/// zero-walk hit. The cache's reactive substrate will eventually
+/// invalidate fragments on `FederatedSignal` / `RelaySignal`
+/// updates (today the seed body is a static snapshot).
 async fn portal_detail(State(state): State<Arc<AppState>>, Path(id): Path<String>) -> Response {
     let Some(portal) = state.portals.get(&id) else {
         return not_found();
@@ -76,10 +85,17 @@ async fn portal_detail(State(state): State<Arc<AppState>>, Path(id): Path<String
         return not_found();
     }
 
-    // Unified pipeline: walk the typed `Node` tree through every
-    // block's `lower_ui` impl and emit semantic HTML in one pass.
+    let cache_key = format!("/portals/{}", portal.id);
+    if let Some(cached) = state.ssr.render(&cache_key).await {
+        return html_response(cached);
+    }
+
+    // Cache miss: walk the typed `Node` tree through every block's
+    // `lower_ui` impl and emit semantic HTML, then seed the cache.
     let body = lower_semantic_html(&portal.document, Some(&state.registry));
     let page = wrap_portal_page(&portal, &body);
+    let page_for_cache = page.clone();
+    state.ssr.insert_static(cache_key, page_for_cache).await;
     html_response(page)
 }
 

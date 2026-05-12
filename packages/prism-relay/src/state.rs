@@ -6,11 +6,14 @@
 //! the HTTP server can scale across tokio worker threads without
 //! contention on a single owner.
 
+use std::sync::Arc;
+
 use prism_builder::{starter::register_builtins, BuilderDocument, ComponentRegistry, Node};
 use prism_core::design_tokens::{DesignTokens, DEFAULT_TOKENS};
 use serde_json::json;
 
 use crate::portal::{Portal, PortalLevel, PortalMeta, PortalStore};
+use crate::ssr_worker::SsrWorker;
 
 /// Everything a relay route handler needs. Construct once at boot,
 /// stuff into an `Arc`, hand to `axum::Router::with_state`.
@@ -18,6 +21,14 @@ pub struct AppState {
     pub portals: PortalStore,
     pub registry: ComponentRegistry,
     pub tokens: DesignTokens,
+    /// **Phase 8** of `docs/dev/dioxus-inspiration.md`: the
+    /// single-threaded SSR renderer worker. Lazy-installed per
+    /// portal-id; handlers call `ssr.render("/portals/{id}").await`
+    /// for cached HTML, falling back to direct
+    /// `lower_semantic_html` + a one-shot insert on first miss.
+    /// `Arc` so `Drop` doesn't fire just because a handler clone
+    /// goes out of scope.
+    pub ssr: Arc<SsrWorker>,
 }
 
 impl AppState {
@@ -32,6 +43,7 @@ impl AppState {
             portals: PortalStore::new(),
             registry,
             tokens: DEFAULT_TOKENS,
+            ssr: Arc::new(SsrWorker::spawn()),
         }
     }
 

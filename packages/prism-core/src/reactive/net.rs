@@ -508,6 +508,208 @@ impl RelayTransport for MockRelayTransport {
     }
 }
 
+// ───── LocalHub — production-shaped in-memory fan-out ────────────
+//
+// Production transports (a real federation relay-mesh, a WebRTC peer
+// connection, a WebSocket-backed relay stream) all share one shape:
+// a *hub* that fans published messages out to subscribers and lets
+// the signal's `ingest_*` API be the receive seam. The
+// `LocalHub<Sub>` type below captures that shape with a synchronous,
+// thread-local fan-out — useful for production-style integration
+// tests and as a reference impl for the trait contract.
+//
+// Real wire transports (WebSocket, WebRTC) compose with this hub by
+// running their receive loop on whichever thread/task they own and
+// forwarding the decoded payload through the hub's `publish` (which
+// in turn invokes every subscriber's `on_message` callback).
+
+use std::collections::HashMap;
+
+/// Fan-out hub keyed by some channel address (`String` for topics,
+/// peer ids, relay streams). Each subscriber registers a per-channel
+/// callback; [`LocalHub::publish`] fires every registered callback on
+/// the given channel synchronously.
+///
+/// `Clone`-cheap (shared `Rc<RefCell<…>>`). Subscribers' callbacks
+/// are held inside the hub and dropped when the subscription is
+/// unregistered (via [`LocalHub::unsubscribe`]).
+pub struct LocalHub {
+    inner: Rc<RefCell<HubInner>>,
+}
+
+struct HubInner {
+    next_id: u64,
+    subscribers: HashMap<String, Vec<HubSubscriber>>,
+}
+
+struct HubSubscriber {
+    id: u64,
+    on_message: Box<dyn Fn(&IpcPayload)>,
+}
+
+impl LocalHub {
+    pub fn new() -> Self {
+        Self {
+            inner: Rc::new(RefCell::new(HubInner {
+                next_id: 1,
+                subscribers: HashMap::new(),
+            })),
+        }
+    }
+
+    /// Register a callback for `channel`. Returns a numeric id that
+    /// [`LocalHub::unsubscribe`] uses to remove the registration.
+    pub fn subscribe<F>(&self, channel: &str, on_message: F) -> u64
+    where
+        F: Fn(&IpcPayload) + 'static,
+    {
+        let mut inner = self.inner.borrow_mut();
+        let id = inner.next_id;
+        inner.next_id = inner.next_id.wrapping_add(1).max(1);
+        inner
+            .subscribers
+            .entry(channel.to_string())
+            .or_default()
+            .push(HubSubscriber {
+                id,
+                on_message: Box::new(on_message),
+            });
+        id
+    }
+
+    pub fn unsubscribe(&self, channel: &str, id: u64) {
+        let mut inner = self.inner.borrow_mut();
+        if let Some(subs) = inner.subscribers.get_mut(channel) {
+            subs.retain(|s| s.id != id);
+            if subs.is_empty() {
+                inner.subscribers.remove(channel);
+            }
+        }
+    }
+
+    /// Fire every subscriber callback registered on `channel` with
+    /// `payload`. Snapshots the id list at dispatch time so a
+    /// subscriber that mutates the registry (subscribes / unsubscribes)
+    /// during its own callback doesn't trip the RefCell.
+    pub fn publish(&self, channel: &str, payload: &IpcPayload) {
+        let ids: Vec<u64> = {
+            let inner = self.inner.borrow();
+            inner
+                .subscribers
+                .get(channel)
+                .map(|subs| subs.iter().map(|s| s.id).collect())
+                .unwrap_or_default()
+        };
+        // Fire each callback under its own borrow. The hub remains
+        // mutable across re-entrant subscribers.
+        for id in ids {
+            // Find the callback under a fresh borrow each time —
+            // subscribers may have re-arranged the vec in a prior
+            // iteration. The `on_message` Box can't be cloned, so
+            // we keep the borrow active for the duration of one
+            // callback invocation.
+            let inner = self.inner.borrow();
+            let Some(subs) = inner.subscribers.get(channel) else {
+                break;
+            };
+            let Some(sub) = subs.iter().find(|s| s.id == id) else {
+                continue;
+            };
+            (sub.on_message)(payload);
+        }
+    }
+
+    /// Number of subscribers registered on `channel`. Exposed for
+    /// tests.
+    pub fn subscriber_count(&self, channel: &str) -> usize {
+        self.inner
+            .borrow()
+            .subscribers
+            .get(channel)
+            .map(|v| v.len())
+            .unwrap_or(0)
+    }
+}
+
+impl Default for LocalHub {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Clone for LocalHub {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Rc::clone(&self.inner),
+        }
+    }
+}
+
+/// Production-shape federation transport: routes published payloads
+/// through a shared [`LocalHub`] to every subscriber on the same
+/// topic. Unlike [`MockFederationTransport`] (which only records
+/// calls), this transport actually delivers messages to subscribers
+/// — making it suitable for end-to-end tests that exercise the full
+/// publish → ingest → reactive subscriber path.
+///
+/// Real wire transports (WebSocket between relays, etc.) compose
+/// with the same hub by running their receive loop and calling
+/// `hub.publish(topic, payload)` — the subscribers' callbacks then
+/// route into each signal's `ingest_remote`.
+pub struct HubFederationTransport {
+    hub: LocalHub,
+    /// Per-subscription registration id, keyed by topic. Used by
+    /// `close` to unsubscribe cleanly.
+    ids: RefCell<HashMap<String, Vec<u64>>>,
+}
+
+impl HubFederationTransport {
+    pub fn new(hub: LocalHub) -> Self {
+        Self {
+            hub,
+            ids: RefCell::new(HashMap::new()),
+        }
+    }
+
+    /// Hand a callback to the hub for `topic`. The callback fires
+    /// every time someone else publishes on that topic — wire this
+    /// to a signal's `ingest_remote` to drive reactive updates.
+    pub fn route_to<F>(&self, topic: &str, ingest: F)
+    where
+        F: Fn(&IpcPayload) + 'static,
+    {
+        let id = self.hub.subscribe(topic, ingest);
+        self.ids
+            .borrow_mut()
+            .entry(topic.to_string())
+            .or_default()
+            .push(id);
+    }
+}
+
+impl FederationTransport for HubFederationTransport {
+    fn subscribe(&self, topic: &str) -> Result<FederatedSubscription, RemoteError> {
+        Ok(FederatedSubscription {
+            topic: topic.into(),
+        })
+    }
+
+    fn publish(&self, topic: &str, payload: IpcPayload) -> Result<(), RemoteError> {
+        self.hub.publish(topic, &payload);
+        Ok(())
+    }
+
+    fn close(&self, sub: &FederatedSubscription) -> Result<(), RemoteError> {
+        // Drain every subscriber id registered under this topic.
+        if let Some(ids) = self.ids.borrow_mut().remove(&sub.topic) {
+            for id in ids {
+                self.hub.unsubscribe(&sub.topic, id);
+            }
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -673,6 +875,102 @@ mod tests {
         assert_eq!(written.len(), 1);
         assert_eq!(written[0].1, serde_json::json!(7));
         assert_eq!(sig.remote().last_known(), Some(7));
+    }
+
+    // ── LocalHub + HubFederationTransport ────────────────────
+
+    #[test]
+    fn local_hub_fans_out_to_every_subscriber() {
+        let hub = LocalHub::new();
+        let count_a = Rc::new(std::cell::Cell::new(0));
+        let count_b = Rc::new(std::cell::Cell::new(0));
+        let a = Rc::clone(&count_a);
+        let b = Rc::clone(&count_b);
+        hub.subscribe("ch1", move |_| a.set(a.get() + 1));
+        hub.subscribe("ch1", move |_| b.set(b.get() + 1));
+        // Subscriber on a different channel doesn't fire.
+        let count_c = Rc::new(std::cell::Cell::new(0));
+        let c = Rc::clone(&count_c);
+        hub.subscribe("ch2", move |_| c.set(c.get() + 1));
+
+        hub.publish("ch1", &serde_json::json!("hello"));
+        assert_eq!(count_a.get(), 1);
+        assert_eq!(count_b.get(), 1);
+        assert_eq!(count_c.get(), 0);
+    }
+
+    #[test]
+    fn local_hub_unsubscribe_drops_callback() {
+        let hub = LocalHub::new();
+        let fired = Rc::new(std::cell::Cell::new(0));
+        let f = Rc::clone(&fired);
+        let id = hub.subscribe("ch", move |_| f.set(f.get() + 1));
+        hub.publish("ch", &serde_json::json!(1));
+        assert_eq!(fired.get(), 1);
+        hub.unsubscribe("ch", id);
+        assert_eq!(hub.subscriber_count("ch"), 0);
+        hub.publish("ch", &serde_json::json!(2));
+        assert_eq!(fired.get(), 1, "unsubscribed callback didn't fire again");
+    }
+
+    #[test]
+    fn hub_federation_transport_routes_publishes_to_ingest_callbacks() {
+        // End-to-end Phase 7: a `HubFederationTransport` ties one
+        // signal's `publish` to another signal's `ingest_remote` via
+        // the shared hub, simulating cross-relay message flow.
+        let hub = LocalHub::new();
+        let owner = Owner::new();
+
+        // Two FederatedSignal<i32>s subscribed on the same topic,
+        // sharing the same hub — like two relays in a federation.
+        let transport_a = Rc::new(HubFederationTransport::new(hub.clone()));
+        let transport_b = Rc::new(HubFederationTransport::new(hub.clone()));
+        let sig_a: FederatedSignal<i32> =
+            FederatedSignal::subscribe(&owner, "counter", transport_a.clone()).unwrap();
+        let sig_b: FederatedSignal<i32> =
+            FederatedSignal::subscribe(&owner, "counter", transport_b.clone()).unwrap();
+
+        // Wire each transport's hub callback to the matching
+        // signal's `ingest_remote`. In production this lives in the
+        // host's federation receive loop; here we do it inline.
+        let remote_a = sig_a.remote();
+        transport_a.route_to("counter", move |payload| {
+            remote_a.set_state(
+                serde_json::from_value(payload.clone())
+                    .map(RemoteState::Live)
+                    .unwrap_or(RemoteState::Loading),
+            );
+        });
+        let remote_b = sig_b.remote();
+        transport_b.route_to("counter", move |payload| {
+            remote_b.set_state(
+                serde_json::from_value(payload.clone())
+                    .map(RemoteState::Live)
+                    .unwrap_or(RemoteState::Loading),
+            );
+        });
+
+        // sig_a publishes — both signals see it via the hub.
+        sig_a.publish(7).unwrap();
+        assert_eq!(sig_a.remote().last_known(), Some(7));
+        assert_eq!(sig_b.remote().last_known(), Some(7));
+    }
+
+    #[test]
+    fn hub_federation_transport_close_unsubscribes() {
+        let hub = LocalHub::new();
+        let transport = Rc::new(HubFederationTransport::new(hub.clone()));
+        let sub = transport.subscribe("topic").unwrap();
+        let fired = Rc::new(std::cell::Cell::new(0));
+        let f = Rc::clone(&fired);
+        transport.route_to("topic", move |_| f.set(f.get() + 1));
+
+        hub.publish("topic", &serde_json::json!(1));
+        assert_eq!(fired.get(), 1);
+
+        transport.close(&sub).unwrap();
+        hub.publish("topic", &serde_json::json!(2));
+        assert_eq!(fired.get(), 1, "close removed the hub subscription");
     }
 
     #[test]

@@ -1,9 +1,27 @@
 # Dioxus-Inspired Reactive Overhaul
 
-**Status:** plan
+**Status:** Phases 0–10 landed (see status block below).
 **Date:** 2026-05-11
 **Owner:** JJM
 **Supersedes:** the earlier "watch list" version of this doc
+
+## Status snapshot (2026-05-12)
+
+| Phase | What | Status |
+|---|---|---|
+| 0 | Workspace scaffold + `prism-core::reactive` re-exports | ✅ done |
+| 1 | `Signal` / `Memo` / `Effect` / `ReactiveContext` / `Owner` | ✅ done |
+| 2 | `kernel::atom` + `crdt_sync` on top of `reactive::Signal` | ✅ done |
+| 3a | `render_tree` runs inside frame-level `ReactiveContext` | ✅ done — `RenderScope::run_in_render_pass` |
+| 3b | Per-block `lower_ui` reactive contexts | ✅ done — `BlockInvalidator` + per-NodeId cache |
+| 4a | `ActionKind::Bind` → `Effect` install on document load | ✅ done — `DocumentBindings::install_for` |
+| 4b | `Node::props` → `ReactiveProps` migration | ⏳ deferred — primitive ready, full Node migration is a dedicated PR (touches `luau_component` / `prefab` / `ui_resolver` / `facet`) |
+| 5 | Luau `Signal::read`/`write` UserData surface | ✅ done — `prism-core::luau_reactive` |
+| 6 | `#[daemon_fn]` + `RemoteSignal<T>` + IpcInvoker | ✅ done — `prism-daemon::IpcInvoker` over postcard-on-interprocess |
+| 7 | `FederatedSignal` / `PeerSignal` / `RelaySignal` + `LocalHub` | ✅ done (trait seam + production-shape fan-out hub; per-transport wire integration is host-side) |
+| 8 | `SsrCache` wired into prism-relay routes | ✅ done — `SsrWorker` single-threaded worker + `portal_detail` cache hit/miss path |
+| 9 | `subsecond` hot-reload anchor in shell | ✅ done — `--features hot-reload` wraps render walk; patch pipeline integration deferred |
+| 10 | `.prism-ui` template hash fast-path | ✅ done — `FingerprintCache::observe` returns `TemplateChange::{NoChange,LiteralOnly,Structural,…}` |
 
 The previous draft of this document was a ranked shopping list of
 Dioxus subpackages worth borrowing. Useful, but it dodged the real

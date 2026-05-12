@@ -28,9 +28,12 @@
 //! lowering automatically — same behaviour the legacy `ui_runtime`
 //! translator gave for unknown component ids.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::Arc;
 
+use prism_core::reactive::ReactiveContext;
 use prism_ui_runtime::command::{Color, CornerRadius};
 use prism_ui_runtime::interpret::TagEmission;
 use prism_ui_runtime::layout::{
@@ -41,6 +44,97 @@ use crate::document::Node;
 use crate::layout::{Dimension, FlexDirection, FlowProps, LayoutMode};
 use crate::registry::ComponentRegistry;
 use crate::style::{resolve_cascade, StyleProperties};
+
+/// **Phase 3b** of `docs/dev/dioxus-inspiration.md`: per-block reactive
+/// invalidator. The host (shell, relay, tests) installs one of these
+/// onto a [`LowerCtx`] via [`LowerCtx::with_block_invalidator`]; every
+/// recursive `LowerCtx::lower(node)` call then wraps the block's
+/// `Component::lower_ui` body in a per-NodeId
+/// [`prism_core::reactive::ReactiveContext`].
+///
+/// Per-node contexts are cached across frames — the same NodeId reuses
+/// its context via `ReactiveContext::reset_and_run_in`, which re-tracks
+/// the dependency set on each lower call. When a tracked signal later
+/// fires, the context's dirty callback invokes the host-supplied
+/// [`on_dirty`] callback with the NodeId so the host can mark the node
+/// for selective re-lower next frame.
+///
+/// `BlockInvalidator` is `Clone`-cheap (shared `Rc<Inner>`).
+#[derive(Clone)]
+pub struct BlockInvalidator {
+    inner: Rc<BlockInvalidatorInner>,
+}
+
+struct BlockInvalidatorInner {
+    contexts: RefCell<HashMap<String, ReactiveContext>>,
+    on_dirty: Rc<dyn Fn(&str)>,
+}
+
+impl BlockInvalidator {
+    /// Build an invalidator whose dirty callback fires `on_dirty(node_id)`
+    /// whenever a tracked signal subscribed inside that NodeId's
+    /// `lower_ui` body is later written to.
+    pub fn new<F>(on_dirty: F) -> Self
+    where
+        F: Fn(&str) + 'static,
+    {
+        Self {
+            inner: Rc::new(BlockInvalidatorInner {
+                contexts: RefCell::new(HashMap::new()),
+                on_dirty: Rc::new(on_dirty),
+            }),
+        }
+    }
+
+    /// Run `body` inside the per-NodeId reactive context for `node_id`.
+    /// Creates the context lazily on first call for that id; on
+    /// subsequent calls, the context is reused and its subscription
+    /// set is rebuilt via `reset_and_run_in`.
+    pub fn run_for_node<R, F>(&self, node_id: &str, body: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        let ctx = self.ensure_context(node_id);
+        ctx.reset_and_run_in(body)
+    }
+
+    fn ensure_context(&self, node_id: &str) -> ReactiveContext {
+        if let Some(ctx) = self.inner.contexts.borrow().get(node_id) {
+            return *ctx;
+        }
+        let id_owned = node_id.to_string();
+        let on_dirty = Rc::clone(&self.inner.on_dirty);
+        let ctx = ReactiveContext::new(move || on_dirty(&id_owned));
+        self.inner
+            .contexts
+            .borrow_mut()
+            .insert(node_id.to_string(), ctx);
+        ctx
+    }
+
+    /// Reclaim the per-NodeId context — call when a node is removed
+    /// from the document so the thread-local context table doesn't
+    /// accumulate dead entries.
+    pub fn forget_node(&self, node_id: &str) {
+        if let Some(ctx) = self.inner.contexts.borrow_mut().remove(node_id) {
+            ctx.dispose();
+        }
+    }
+
+    /// Number of NodeId contexts currently cached. Exposed for tests
+    /// and diagnostics.
+    pub fn cached_len(&self) -> usize {
+        self.inner.contexts.borrow().len()
+    }
+}
+
+impl Drop for BlockInvalidatorInner {
+    fn drop(&mut self) {
+        for (_, ctx) in self.contexts.borrow_mut().drain() {
+            ctx.dispose();
+        }
+    }
+}
 
 /// Context threaded through `Component::lower_ui` impls during the
 /// `BuilderDocument` → `prism_ui_runtime::layout::Node` walk.
@@ -75,6 +169,12 @@ pub struct LowerCtx<'a> {
     /// `LowerScope` value (the resolver consumes scope by reference
     /// but stores an Arc clone here for child-scope propagation).
     tag_emissions: Option<Arc<HashMap<String, TagEmission>>>,
+    /// **Phase 3b**: per-block reactive invalidator. When present,
+    /// every recursive `lower()` call wraps its `Component::lower_ui`
+    /// body in a per-NodeId reactive context. Propagates through
+    /// child scopes unchanged (a single invalidator instance covers
+    /// the whole document walk).
+    block_invalidator: Option<BlockInvalidator>,
 }
 
 impl<'a> LowerCtx<'a> {
@@ -87,7 +187,27 @@ impl<'a> LowerCtx<'a> {
             parent_style,
             host_children: None,
             tag_emissions: None,
+            block_invalidator: None,
         }
+    }
+
+    /// Install a [`BlockInvalidator`] — every recursive `lower()`
+    /// call wraps its `Component::lower_ui` body in a per-NodeId
+    /// `ReactiveContext` so signal reads inside the block body
+    /// subscribe and writes drive the host's `on_dirty(node_id)`
+    /// callback. **Phase 3b** of
+    /// `docs/dev/dioxus-inspiration.md`.
+    pub fn with_block_invalidator(mut self, invalidator: BlockInvalidator) -> Self {
+        self.block_invalidator = Some(invalidator);
+        self
+    }
+
+    /// The currently installed block invalidator, if any. Exposed for
+    /// composition-style blocks (e.g. shell chrome wrappers) that
+    /// recursively lower host-provided subtrees and need to share the
+    /// same invalidator with the inner pass.
+    pub fn block_invalidator(&self) -> Option<&BlockInvalidator> {
+        self.block_invalidator.as_ref()
     }
 
     /// Builder-style installer for host-supplied pre-lowered children.
@@ -143,18 +263,32 @@ impl<'a> LowerCtx<'a> {
         // belongs to the block currently being resolved, not its
         // recursive sub-children. tag_emissions *is* propagated:
         // it's a snapshot keyed by tag, valid for the entire pass.
+        // block_invalidator IS propagated: one invalidator instance
+        // covers the whole document walk; per-NodeId contexts are
+        // managed inside the invalidator.
         let child = LowerCtx {
             registry: self.registry,
             parent_style: &style,
             host_children: None,
             tag_emissions: self.tag_emissions.clone(),
+            block_invalidator: self.block_invalidator.clone(),
         };
-        if let Some(reg) = self.registry {
-            if let Some(comp) = reg.get(&node.component) {
-                return comp.lower_ui(&child, node, &style);
+        // Phase 3b: wrap the `Component::lower_ui` call in a per-NodeId
+        // reactive context when an invalidator is installed. Signal
+        // reads inside the block body subscribe automatically; later
+        // writes invoke the invalidator's `on_dirty(node_id)` callback.
+        let body = || -> UiNode {
+            if let Some(reg) = self.registry {
+                if let Some(comp) = reg.get(&node.component) {
+                    return comp.lower_ui(&child, node, &style);
+                }
             }
+            child.default_container(node, &style)
+        };
+        match &self.block_invalidator {
+            Some(inv) if !node.id.is_empty() => inv.run_for_node(&node.id, body),
+            _ => body(),
         }
-        child.default_container(node, &style)
     }
 
     /// Recurse into a slice of children with this context's cascade
@@ -302,8 +436,16 @@ impl<'a> LowerCtx<'a> {
             parent_style: &style,
             host_children,
             tag_emissions: self.tag_emissions.clone(),
+            block_invalidator: self.block_invalidator.clone(),
         };
-        Some(comp.lower_ui(&child, &derived, &style))
+        // Phase 3b: wrap the synthesised composition's lower in a
+        // per-NodeId reactive context too, scoped on the *derived* id.
+        let body = || comp.lower_ui(&child, &derived, &style);
+        let lowered = match &self.block_invalidator {
+            Some(inv) if !derived.id.is_empty() => inv.run_for_node(&derived.id, body),
+            _ => body(),
+        };
+        Some(lowered)
     }
 }
 
@@ -860,6 +1002,198 @@ mod tests {
         assert!(ctx
             .lower_as("never.registered", "x", serde_json::json!({}))
             .is_none());
+    }
+
+    #[test]
+    fn block_invalidator_subscribes_signal_reads_inside_lower_ui() {
+        // Phase 3b: a block's `lower_ui` body that reads a reactive
+        // Signal auto-subscribes a per-NodeId reactive context;
+        // a later signal write fires the invalidator's on_dirty
+        // callback with that NodeId. The signal lives in a thread-
+        // local so the Block struct stays Send+Sync as required by
+        // the Block trait.
+        use crate::block::{register_block, Block};
+        use crate::registry::{ComponentRegistry, FieldSpec};
+        use crate::ComponentId;
+        use prism_core::reactive::{Owner, Signal};
+        use prism_ui_runtime::layout::{ContainerProps, Sizing};
+        use std::cell::{Cell, RefCell};
+        use std::rc::Rc;
+        use std::sync::Arc;
+
+        thread_local! {
+            static SIG: Cell<Option<Signal<i32>>> = const { Cell::new(None) };
+        }
+
+        struct Reader {
+            id: ComponentId,
+        }
+        impl Block for Reader {
+            fn id(&self) -> &ComponentId {
+                &self.id
+            }
+            fn schema(&self) -> Vec<FieldSpec> {
+                vec![]
+            }
+            fn lower_ui(&self, _: &LowerCtx<'_>, node: &Node, _: &StyleProperties) -> UiNode {
+                // Read the thread-local signal inside the lower body.
+                SIG.with(|s| {
+                    if let Some(sig) = s.get() {
+                        let _ = sig.get();
+                    }
+                });
+                UiNode::Container {
+                    id: node.id.clone(),
+                    props: ContainerProps {
+                        width: Sizing::Fixed(1.0),
+                        ..Default::default()
+                    },
+                    children: vec![],
+                }
+            }
+        }
+
+        let outer = Owner::new();
+        let sig = outer.insert(0_i32);
+        SIG.with(|s| s.set(Some(sig)));
+
+        let mut reg = ComponentRegistry::new();
+        register_block(
+            &mut reg,
+            Arc::new(Reader {
+                id: "test.reader".into(),
+            }),
+        )
+        .unwrap();
+
+        let dirty: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+        let dirty_cb = Rc::clone(&dirty);
+        let invalidator =
+            BlockInvalidator::new(move |id: &str| dirty_cb.borrow_mut().push(id.to_string()));
+
+        let cascade = StyleProperties::default();
+        let ctx = LowerCtx::new(Some(&reg), &cascade).with_block_invalidator(invalidator.clone());
+        let node = Node {
+            id: "node-A".into(),
+            component: "test.reader".into(),
+            ..Default::default()
+        };
+        let _ = ctx.lower(&node);
+        assert!(dirty.borrow().is_empty(), "initial subscribe did not fire");
+
+        sig.set(1);
+        assert_eq!(
+            dirty.borrow().as_slice(),
+            &["node-A".to_string()],
+            "signal write fired the invalidator with the block's NodeId",
+        );
+        SIG.with(|s| s.set(None));
+    }
+
+    #[test]
+    fn block_invalidator_reuses_per_node_contexts_across_lowers() {
+        // Phase 3b: lowering the same node twice must reuse the
+        // cached per-NodeId reactive context (via reset_and_run_in
+        // semantics) rather than allocate a fresh one each frame.
+        use crate::block::{register_block, Block};
+        use crate::registry::{ComponentRegistry, FieldSpec};
+        use crate::ComponentId;
+        use prism_ui_runtime::layout::ContainerProps;
+        use std::sync::Arc;
+
+        struct Pass {
+            id: ComponentId,
+        }
+        impl Block for Pass {
+            fn id(&self) -> &ComponentId {
+                &self.id
+            }
+            fn schema(&self) -> Vec<FieldSpec> {
+                vec![]
+            }
+            fn lower_ui(&self, _: &LowerCtx<'_>, node: &Node, _: &StyleProperties) -> UiNode {
+                UiNode::Container {
+                    id: node.id.clone(),
+                    props: ContainerProps::default(),
+                    children: vec![],
+                }
+            }
+        }
+
+        let mut reg = ComponentRegistry::new();
+        register_block(&mut reg, Arc::new(Pass { id: "p".into() })).unwrap();
+
+        let invalidator = BlockInvalidator::new(|_id: &str| {});
+
+        let cascade = StyleProperties::default();
+        let node = Node {
+            id: "stable-id".into(),
+            component: "p".into(),
+            ..Default::default()
+        };
+
+        for _ in 0..3 {
+            let ctx =
+                LowerCtx::new(Some(&reg), &cascade).with_block_invalidator(invalidator.clone());
+            let _ = ctx.lower(&node);
+        }
+        // One context per distinct NodeId, regardless of how many
+        // times we re-lowered.
+        assert_eq!(invalidator.cached_len(), 1);
+    }
+
+    #[test]
+    fn block_invalidator_forget_node_disposes_context() {
+        let invalidator = BlockInvalidator::new(|_id: &str| {});
+        // Force a context to materialise via run_for_node.
+        invalidator.run_for_node("ephemeral", || ());
+        assert_eq!(invalidator.cached_len(), 1);
+        invalidator.forget_node("ephemeral");
+        assert_eq!(invalidator.cached_len(), 0);
+    }
+
+    #[test]
+    fn lower_without_invalidator_is_pass_through() {
+        // Headless test path: no invalidator installed → blocks lower
+        // exactly as before, no reactive wrapping.
+        use crate::block::{register_block, Block};
+        use crate::registry::{ComponentRegistry, FieldSpec};
+        use crate::ComponentId;
+        use prism_ui_runtime::layout::ContainerProps;
+        use std::sync::Arc;
+
+        struct Pass {
+            id: ComponentId,
+        }
+        impl Block for Pass {
+            fn id(&self) -> &ComponentId {
+                &self.id
+            }
+            fn schema(&self) -> Vec<FieldSpec> {
+                vec![]
+            }
+            fn lower_ui(&self, _: &LowerCtx<'_>, node: &Node, _: &StyleProperties) -> UiNode {
+                UiNode::Container {
+                    id: node.id.clone(),
+                    props: ContainerProps::default(),
+                    children: vec![],
+                }
+            }
+        }
+        let mut reg = ComponentRegistry::new();
+        register_block(&mut reg, Arc::new(Pass { id: "p".into() })).unwrap();
+        let cascade = StyleProperties::default();
+        let ctx = LowerCtx::new(Some(&reg), &cascade);
+        let n = Node {
+            id: "n1".into(),
+            component: "p".into(),
+            ..Default::default()
+        };
+        let out = ctx.lower(&n);
+        let UiNode::Container { id, .. } = out else {
+            panic!()
+        };
+        assert_eq!(id, "n1");
     }
 
     #[test]

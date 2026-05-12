@@ -30,9 +30,12 @@ use std::path::Path;
 use prism_core::language::prism_ui::{parse, AttributeValue, Document, Element, Node, ParseError};
 
 pub mod template_hash;
+pub mod template_watch;
 pub use template_hash::{
-    collect_literal_slots, full_hash, structural_hash, LiteralSlot, TemplateFingerprint,
+    collect_literal_slots, compare_fingerprints, full_hash, structural_hash, LiteralPatch,
+    LiteralSlot, PatchOutcome, TemplateFingerprint,
 };
+pub use template_watch::{FingerprintCache, TemplateChange};
 
 #[derive(Debug, thiserror::Error)]
 pub enum CompileError {

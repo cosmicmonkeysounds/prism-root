@@ -236,19 +236,26 @@ Modules in `src/` (excluding `lib.rs`):
   reactive binding compiled to an `Effect` on document load (the
   Effect-installation seam itself is a follow-up; today the
   dispatch executor surfaces `Bind` verbatim).
-- `reactive_props.rs` — **Phase 4 primitive** of
-  `docs/dev/dioxus-inspiration.md`. `ReactiveProps` is a
-  `Clone`-cheap (shared `Rc<Inner>`) prop bag backing the
-  end-state `Node::props`: a per-key `IndexMap<String,
-  reactive::Signal<Value>>` materialised lazily on first
-  `signal(key)` call plus a canonical JSON store kept in sync
-  through `set(key, value)`. Today this lives alongside
-  `Node::props: Value`; the migration of `Node` itself to a
-  `ReactiveProps` field touches every consumer of `Node::props[..]`
-  (`luau_component`, `prefab`, `ui_resolver`, `facet`) and is a
-  dedicated PR. The primitive unblocks `ActionKind::Bind` testing
-  + per-block reactive prop reads against a standalone
-  `ReactiveProps`. 11 unit tests.
+- `reactive_props.rs` — **Phase 4 primitive + Bind installer** of
+  `docs/dev/dioxus-inspiration.md`. Two cooperating types:
+  1. `ReactiveProps` — `Clone`-cheap (shared `Rc<Inner>`) prop bag.
+     Per-key `IndexMap<String, reactive::Signal<Value>>` materialised
+     lazily on first `signal(key)` call plus a canonical JSON store
+     kept in sync through `set(key, value)`.
+  2. `DocumentBindings` — the **Phase 4a runtime installer**.
+     `BuilderDocument::install_bindings()` returns one of these,
+     walking `connections` and registering an `Effect` per
+     `ActionKind::Bind` variant. Sources parse as
+     `<node_id>.<key>` (subscribe + mirror), `$<selector>.<key>`
+     (recorded as `UnresolvedBind { reason: SelectorReference }`
+     for host wiring), or literal strings (one-shot write, no
+     subscription). Per-NodeId `ReactiveProps` are cached via
+     `DocumentBindings::props_for(node_id, initial_props)`. Drop
+     disposes every installed effect via the shared `Owner`. The
+     full migration of `Node::props` itself to a `ReactiveProps`
+     field touches every consumer of `Node::props[..]`
+     (`luau_component`, `prefab`, `ui_resolver`, `facet`) and is
+     a dedicated follow-up PR. 20 unit tests.
 - `starter.rs` — 17 built-in blocks + `register_builtins`.
 - `style.rs` — `StyleProperties` + `resolve_cascade`.
 - `ui_lower.rs` — shared `LowerCtx` + helpers (`container_with`,

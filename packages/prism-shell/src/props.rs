@@ -10,6 +10,7 @@
 
 use std::collections::HashMap;
 
+use prism_builder::ui_lower::BlockInvalidator;
 use prism_builder::ComponentRegistry;
 use prism_ui_runtime::layout::Node as UiNode;
 use serde_json::Value;
@@ -31,6 +32,13 @@ pub struct PropCtx<'a> {
     pub viewport_h: f32,
     pub canvas_zoom: f32,
     pub registry: Option<&'a ComponentRegistry>,
+    /// **Phase 3b** of `docs/dev/dioxus-inspiration.md`: per-block
+    /// reactive invalidator from `ShellInner::render_scope`. Passed
+    /// down so the canvas binding can plumb it into the builder's
+    /// document lowering, giving every `BuilderDocument` block a
+    /// per-NodeId reactive context. `None` in headless / test paths
+    /// where no reactive tracking is wanted.
+    pub block_invalidator: Option<&'a BlockInvalidator>,
 }
 
 /// What a single binding emits for one frame:
@@ -226,7 +234,10 @@ fn register_builtin_bindings(reg: &mut ShellPropBindings) {
         "shell.builder-canvas",
         Box::new(|ctx| {
             let props = ctx.state.canvas.builder_canvas_props();
-            let children = ctx.state.canvas.lower_document_to_ui(ctx.registry);
+            let children = ctx.state.canvas.lower_document_to_ui_with_invalidator(
+                ctx.registry,
+                ctx.block_invalidator.cloned(),
+            );
             PropEmission::from_props(props).with_children(children)
         }),
     );
@@ -267,6 +278,7 @@ mod tests {
             viewport_h: 800.0,
             canvas_zoom: 1.0,
             registry: None,
+            block_invalidator: None,
         }
     }
 
@@ -416,6 +428,7 @@ mod tests {
             viewport_h: 800.0,
             canvas_zoom: 1.0,
             registry: Some(&reg),
+            block_invalidator: None,
         };
         let snap_l = bindings.snapshot(&ctx_live);
         let canvas_l = snap_l

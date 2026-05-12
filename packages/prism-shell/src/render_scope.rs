@@ -47,7 +47,15 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use prism_core::reactive::{DirtyQueue, Owner};
+use prism_builder::ui_lower::BlockInvalidator;
+use prism_core::reactive::{DirtyQueue, Owner, ReactiveContext};
+
+/// Sentinel node id pushed into the dirty queue by the frame-level
+/// reactive context — see [`RenderScope::run_in_render_pass`]. Reads
+/// inside the render walk that don't get a finer-grained per-block
+/// context bubble up to this sentinel, which means "the whole frame
+/// needs to redraw on the next tick."
+pub const FRAME_DIRTY_SENTINEL: &str = "__render_frame__";
 
 /// Shared dirty-queue handle so effects on `RenderScope::owner` can
 /// push from inside their closure.
@@ -63,15 +71,44 @@ type SharedDirty = Rc<RefCell<DirtyQueue<String>>>;
 pub struct RenderScope {
     owner: Rc<Owner>,
     dirty: SharedDirty,
+    /// Lazily-created frame-level reactive context. Constructed on
+    /// first [`RenderScope::run_in_render_pass`]; reused across every
+    /// subsequent frame so subscriptions auto-re-track via
+    /// `reset_and_run_in`. Marks [`FRAME_DIRTY_SENTINEL`] into the
+    /// dirty queue when any tracked signal fires.
+    frame_ctx: Rc<RefCell<Option<ReactiveContext>>>,
+    /// **Phase 3b**: per-block reactive invalidator wired to this
+    /// scope's dirty queue. Shell callers pass `block_invalidator()`
+    /// into the builder's `LowerCtx::with_block_invalidator(...)` so
+    /// every recursive `lower()` of a `BuilderDocument` block runs
+    /// inside a per-NodeId reactive context. When any signal read
+    /// inside a block's `lower_ui` body is later written to, the
+    /// callback marks the NodeId into the dirty queue.
+    block_invalidator: BlockInvalidator,
 }
 
 impl RenderScope {
     /// Construct a fresh scope with an empty dirty queue.
     pub fn new() -> Self {
+        let dirty: SharedDirty = Rc::new(RefCell::new(DirtyQueue::new()));
+        let dirty_for_blocks = Rc::clone(&dirty);
+        let block_invalidator = BlockInvalidator::new(move |node_id: &str| {
+            dirty_for_blocks.borrow_mut().mark(node_id.to_string());
+        });
         Self {
             owner: Rc::new(Owner::new()),
-            dirty: Rc::new(RefCell::new(DirtyQueue::new())),
+            dirty,
+            frame_ctx: Rc::new(RefCell::new(None)),
+            block_invalidator,
         }
+    }
+
+    /// The per-block reactive invalidator wired to this scope's
+    /// dirty queue. Pass this into the builder's `LowerCtx` via
+    /// `LowerCtx::with_block_invalidator(...)` to enable per-block
+    /// signal subscription during document lowering.
+    pub fn block_invalidator(&self) -> &BlockInvalidator {
+        &self.block_invalidator
     }
 
     /// The per-shell reactive `Owner`. Effects allocated through
@@ -106,6 +143,43 @@ impl RenderScope {
     /// of a specific node without authoring an effect.
     pub fn mark_dirty(&self, node_id: impl Into<String>) {
         self.dirty.borrow_mut().mark(node_id.into());
+    }
+
+    /// Run `body` inside the frame-level reactive context. Any
+    /// `Signal::read` / `Signal::get` / `Signal::track` calls made
+    /// during `body` subscribe to a persistent context whose dirty
+    /// callback pushes [`FRAME_DIRTY_SENTINEL`] into the dirty queue.
+    /// When any subscribed signal later fires, [`needs_redraw`]
+    /// returns `true` and the shell re-renders.
+    ///
+    /// The context is created lazily on first call and reused
+    /// thereafter; each call re-tracks its dependency set via
+    /// [`ReactiveContext::reset_and_run_in`], so the subscription
+    /// graph naturally follows whichever signals the current frame
+    /// actually reads.
+    ///
+    /// This is the **Phase 3a** entry point — the seam where
+    /// arbitrary signal reads inside the per-frame render walk drive
+    /// invalidation without any per-binding wiring. Per-block
+    /// contexts (Phase 3b) layer on top.
+    pub fn run_in_render_pass<F, R>(&self, body: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        let ctx = self.ensure_frame_context();
+        ctx.reset_and_run_in(body)
+    }
+
+    fn ensure_frame_context(&self) -> ReactiveContext {
+        if let Some(ctx) = *self.frame_ctx.borrow() {
+            return ctx;
+        }
+        let dirty = Rc::clone(&self.dirty);
+        let ctx = ReactiveContext::new(move || {
+            dirty.borrow_mut().mark(FRAME_DIRTY_SENTINEL.to_string());
+        });
+        *self.frame_ctx.borrow_mut() = Some(ctx);
+        ctx
     }
 
     /// Build an effect that fires once initially (to subscribe its
@@ -143,6 +217,20 @@ impl RenderScope {
 impl Default for RenderScope {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Drop for RenderScope {
+    fn drop(&mut self) {
+        // Only the last clone owns the frame context — dispose it
+        // when the underlying refcell becomes uniquely held so the
+        // thread-local context table doesn't leak across shell
+        // restarts (matters in tests + dev hot-reload).
+        if Rc::strong_count(&self.frame_ctx) == 1 {
+            if let Some(ctx) = self.frame_ctx.borrow_mut().take() {
+                ctx.dispose();
+            }
+        }
     }
 }
 
@@ -246,6 +334,81 @@ mod tests {
         // No panic, no observable side effect.
         sig.set(2);
         sig.set(3);
+    }
+
+    #[test]
+    fn run_in_render_pass_subscribes_reads_and_marks_frame_dirty() {
+        // The frame-level reactive context: any signal read inside
+        // run_in_render_pass auto-subscribes, and a later write to
+        // any subscribed signal marks FRAME_DIRTY_SENTINEL into the
+        // dirty queue. This is the Phase 3a contract.
+        let outer = CoreOwner::new();
+        let sig = outer.insert(0_i32);
+        let scope = RenderScope::new();
+
+        let v = scope.run_in_render_pass(|| sig.get());
+        assert_eq!(v, 0);
+        // Initial subscribe didn't dirty anything.
+        assert!(!scope.needs_redraw());
+
+        // Writing the subscribed signal marks the frame sentinel.
+        sig.set(1);
+        assert!(scope.needs_redraw());
+        assert_eq!(scope.drain_dirty(), vec![FRAME_DIRTY_SENTINEL.to_string()]);
+    }
+
+    #[test]
+    fn run_in_render_pass_retracks_each_call() {
+        // Per the ReactiveContext::reset_and_run_in contract, the
+        // subscription set is rebuilt on every render pass. A signal
+        // we no longer read this frame must no longer drive redraws.
+        let outer = CoreOwner::new();
+        let read_first = outer.insert(false);
+        let sig_a = outer.insert(0);
+        let sig_b = outer.insert(0);
+        let scope = RenderScope::new();
+
+        scope.run_in_render_pass(|| {
+            if read_first.get() {
+                let _ = sig_a.get();
+            } else {
+                let _ = sig_b.get();
+            }
+        });
+        // First pass subscribed sig_b only.
+        sig_a.set(1);
+        assert!(!scope.needs_redraw(), "sig_a was not read first pass");
+        sig_b.set(1);
+        assert!(scope.needs_redraw());
+        let _ = scope.drain_dirty();
+
+        // Switch flag and re-render — now sig_a is subscribed, sig_b isn't.
+        read_first.set(true);
+        scope.run_in_render_pass(|| {
+            if read_first.get() {
+                let _ = sig_a.get();
+            } else {
+                let _ = sig_b.get();
+            }
+        });
+        // `read_first.set(true)` above fired the still-subscribed
+        // context (the second pass hadn't run its `reset_and_run_in`
+        // yet); drain that residual dirty mark before testing the
+        // post-retracking subscription set.
+        let _ = scope.drain_dirty();
+        sig_b.set(2);
+        assert!(!scope.needs_redraw(), "sig_b dropped from subscription");
+        sig_a.set(2);
+        assert!(scope.needs_redraw());
+    }
+
+    #[test]
+    fn run_in_render_pass_returns_value() {
+        let scope = RenderScope::new();
+        let outer = CoreOwner::new();
+        let sig = outer.insert(42_i32);
+        let v = scope.run_in_render_pass(|| sig.get() * 2);
+        assert_eq!(v, 84);
     }
 
     #[test]

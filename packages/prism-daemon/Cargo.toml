@@ -135,7 +135,7 @@ transport-uniffi = ["dep:uniffi"]
 # tokio, so mobile builds that want to embed the daemon and route
 # local calls through the same wire can opt in without pulling an
 # async runtime.
-transport-ipc = ["dep:interprocess", "dep:postcard"]
+transport-ipc = ["dep:interprocess", "dep:postcard", "dep:prism-core"]
 
 [dependencies]
 # CRDT source of truth — pure Rust, works on every target.

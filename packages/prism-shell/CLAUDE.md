@@ -94,18 +94,38 @@ From `src/lib.rs`:
   one assignment in each ctx builder.
 - `RenderScope` — Phase 3 of
   `docs/dev/dioxus-inspiration.md`. Owns a `reactive::Owner` plus a
-  `DirtyQueue<NodeId>` (node IDs are `String`s). The femtovg event
-  handler reads `render_scope.needs_redraw()` after every dispatch
-  and merges it with the existing `dispatch_event` bool to decide
-  whether to re-render. Reactive code (services, bindings) calls
-  `render_scope.invalidate_on(node_id, || sig.read(..))` to wire
-  signal-driven invalidation without authoring a new dispatch arm;
-  the effect runs once to subscribe (skipped) and re-fires on every
-  subsequent write to anything `sig.read` touched, pushing
-  `node_id` into the dirty queue. Per-block lower scoping (the
-  "only re-lower the dirty subtrees" half of Phase 3) is a
-  follow-up; today the queue's non-emptiness drives a full
-  `render_tree` re-walk like the event-dispatch path always has.
+  `DirtyQueue<NodeId>` (node IDs are `String`s) plus a per-shell
+  `prism_builder::ui_lower::BlockInvalidator`. Three reactive
+  entrypoints, all sharing the same dirty queue:
+  1. **Phase 3a — frame-level context.**
+     `render_scope.run_in_render_pass(body)` wraps the per-frame
+     render walk in a persistent `ReactiveContext`. Any
+     `Signal::read` inside the walk auto-subscribes the frame
+     context; signal writes mark `FRAME_DIRTY_SENTINEL` into the
+     queue, surfacing as `needs_redraw() = true`. Used by
+     `Shell::render` + the femtovg event handler so signal-driven
+     redraws happen without any per-binding wiring.
+  2. **Phase 3b — per-block contexts.**
+     `render_scope.block_invalidator()` is a `BlockInvalidator`
+     wired to the dirty queue. The canvas binding plumbs it into
+     `state.canvas.lower_document_to_ui_with_invalidator(reg, Some(inv))`,
+     and the builder's `LowerCtx::with_block_invalidator(inv)` then
+     runs every recursive `lower(node)` inside the node's per-NodeId
+     reactive context. Signal reads inside a block's `lower_ui`
+     body subscribe to that context; writes mark the block's NodeId
+     into the dirty queue.
+  3. **Imperative.** `render_scope.invalidate_on(node_id, || sig.read(..))`
+     for explicit "mark this node dirty when this signal changes"
+     wiring without authoring a new dispatch arm.
+
+  The femtovg event handler reads `render_scope.needs_redraw()`
+  after every dispatch and merges it with the existing
+  `dispatch_event` bool to decide whether to re-render. Selective
+  per-subtree re-lowering — the "only walk dirty subtrees, reuse
+  cached `UiNode`s for the rest" half — is a follow-up; today the
+  queue's non-emptiness drives a full `render_tree` re-walk, but
+  every block already runs inside its own reactive scope so the
+  subtree-cache layer is a pure addition when it lands.
 - `AppState` + slot types — `BuilderSlot`, `CanvasSlot`,
   `ChromeSlot`, `OverlaySlot`, `NavigationSlot`, `WorkspaceSlot`,
   `ProjectSlot`, `SearchSlot`, plus the leaf records (`Toast`,
