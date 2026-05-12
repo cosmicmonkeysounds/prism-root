@@ -1,0 +1,24 @@
+<!--
+  shell.add-connection-button — ghost "+ Add Connection" affordance
+  at the bottom of the Signals panel. Wave 11.2 migration of
+  add_connection_button.rs. See docs/dev/composable-builder-plan.md
+  Wave 4.3.
+
+  The on:click routes through the existing `route_on_click`
+  command-table dispatch — no new POINTER_ROUTES entry needed.
+-->
+<container
+    tag="button"
+    direction="row"
+    gap="6"
+    padding-left="12"
+    padding-right="12"
+    height="32"
+    width="grow"
+    style:radius="6"
+    style:background:hovered="#0a000000"
+    data:role="add-connection"
+    on:click="cmd signals.open-connection-picker"
+    aria-label="Add connection">
+  <text font-size="11" style:color="#7f000000">+ Add Connection</text>
+</container>

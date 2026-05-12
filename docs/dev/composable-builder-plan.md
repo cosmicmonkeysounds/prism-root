@@ -488,7 +488,7 @@ the upgraded
 `components::registry::tests::no_overlapping_block_ids_between_shell_and_starter`
 (now asserts shell/builder/primitive triplet disjointness).
 
-### Wave 11 — `.prism-ui` self-hosting (long tail) — substrates + 11.4 + 11.5 landed; loader seam + first 6 Tier-1 migrations landed 2026-05-12
+### Wave 11 — `.prism-ui` self-hosting (long tail) — substrates + 11.4 + 11.5 landed; loader seam + 18 Tier-1 migrations landed 2026-05-12
 - [x] **11.1** Three generalization-sweep substrates landed:
   (a) the **Hover modifier** is in `ModifierKind::Hover` /
   `BehaviourSpec::with_id("hover")` from Wave 1.7 — every shell
@@ -503,44 +503,77 @@ the upgraded
   remove the existing duplication land file-by-file alongside
   Tier-1 migration.
 - [~] **11.2** Tier-1 migration: loader seam landed +
-  **first 6 components migrated** 2026-05-12. New module
+  **18 components migrated** across two passes 2026-05-12. New module
   `packages/prism-shell/src/components/prism_ui_loader.rs`
   ships `PrismUiSpec` (declarative form mirroring `BlockSpec`),
   `PrismUiBlock` (runtime `Block` impl backed by a parsed AST +
   shared `OnceLock<Arc<dyn TagResolver>>`), and the
   `SHELL_PRISM_UI_COMPONENTS` table threaded through
-  `Shell::new` alongside `register_shell_builtins`. Each
-  migrated component is **one `.prism-ui` source +
-  one row in the table**; the loader resolves composed
-  `<shell.*>` / `<prism.*>` tags through the same live registry
-  the native blocks dispatch against. The shared resolver cell
-  is populated post-registration via
-  `finalize_prism_ui_resolver` so DSL blocks can compose with
-  each other without ordering constraints. First batch shipped:
-  `shell.toolbar-separator`, `shell.help-tooltip`,
-  `shell.docs-view`, `shell.docs-sidebar`, `shell.toast-stack`,
-  `shell.launchpad` — net ~566 lines of Rust deleted, ~116
-  lines of `.prism-ui` added (loader infra ~310 LoC is a fixed
-  cost paid once). DSL grammar gained two surgical additions:
-  bare `tag` / `role` / `aria-label` container attrs (set
-  dedicated `Semantic` fields directly, instead of routing
-  through the generic `attrs` vec) and a `<host-children/>`
-  element that emits the caller's pre-lowered children at the
-  composition seam (parity with the Rust-side
-  `ctx.host_children()` pattern). Tests:
+  `Shell::new` (via `register_full_shell_chrome`) alongside
+  `register_shell_builtins`. Each migrated component is
+  **one `.prism-ui` source + one row in the table**; the loader
+  resolves composed `<shell.*>` / `<prism.*>` tags through the
+  same live registry the native blocks dispatch against. The
+  shared resolver cell is populated post-registration via
+  `finalize_prism_ui_resolver` so DSL blocks compose with each
+  other without ordering constraints.
+
+  - **Batch 1** (commit `a9c199c`): `shell.toolbar-separator`,
+    `shell.help-tooltip`, `shell.docs-view`, `shell.docs-sidebar`,
+    `shell.toast-stack`, `shell.launchpad`.
+  - **Batch 2** (this commit): `shell.explorer`,
+    `shell.docs-content`, `shell.section-header`,
+    `shell.nav-button`, `shell.inspector-tree`,
+    `shell.nav-page-list`, `shell.signals-panel`,
+    `shell.workflow-page-bar`, `shell.menu-dropdown`,
+    `shell.context-menu`, `shell.add-modifier-button`,
+    `shell.add-connection-button`.
+
+  Net ~1900 LoC of Rust removed across both batches; ~350 LoC of
+  `.prism-ui` added (loader infra ~310 LoC paid once). DSL grammar
+  picked up four substrate additions to unblock these migrations:
+  (a) bare `tag` / `role` / `aria-label` container attrs set the
+  dedicated `Semantic` fields directly; (b) `<host-children/>`
+  emits the caller's pre-lowered children at the composition seam;
+  (c) a new `<image src=… width=… height=… style:radius=…
+  style:tint=…/>` element closes the last image-bearing gap
+  (chevrons, nav-button icons, …); (d) `lookup_expression` grew
+  dotted-path support (`{item.label}` / `{tabs.0.name}`) so
+  `for="item in items"` loops over `Vec<Object>` can address typed
+  fields. Two resolver-side closes: `RegistryTagResolver` now
+  resolves attribute interpolations through scope before building
+  the dispatched `BuilderNode` (pure `{expr}` returns the underlying
+  JSON value verbatim, templated `prefix-{expr}` resolves to string),
+  and a new `props="{expr}"` spread attribute unpacks an object
+  into the dispatched node's props so `<shell.nav-page-row props="{item}"/>`
+  forwards the full row without enumerating each schema key. The
+  loader seeds schema defaults into scope before applying
+  `node.props`, so missing-but-defaulted props (`show-add=true` on
+  `signals-panel`) inherit the Rust-side default without re-stating
+  it in the DSL. Tests:
   `components::prism_ui_loader::tests::{every_prism_ui_spec_id_uses_shell_namespace,
   every_prism_ui_spec_parses_without_errors,
   loader_populates_resolver_after_finalize,
   prism_ui_specs_register_disjoint_from_native_builtins,
-  toolbar_separator_lowers_to_1x20_translucent_stroke}` +
-  upgraded
-  `props::tests::{bindings_cover_every_registered_shell_block,
-  slot_bindings_are_subset_of_shell_builtins}` (now walk both
-  the native and DSL tables), +
-  `interpret::tests::bare_semantic_attrs_set_dedicated_fields_on_container`.
-  The remaining ~27 Tier-1 components are deferred — each next
-  migration is one `.prism-ui` file + one row, no
-  infrastructure changes.
+  toolbar_separator_lowers_to_1x20_translucent_stroke,
+  workflow_page_bar_iterates_pages_and_dispatches_through_resolver,
+  workflow_page_bar_via_render_tree_pipeline_emits_workflow_page_buttons,
+  shell_new_render_carries_workflow_page_button_hits}` +
+  `ui_resolver::tests::{interpolated_attribute_resolves_from_scope_as_typed_json,
+  interpolated_attribute_with_missing_binding_returns_null,
+  props_spread_attribute_unpacks_object_into_node_props,
+  props_spread_ignores_non_object_values}` +
+  `interpret::tests::{image_lowers_to_image_node_with_source_and_sizing,
+  image_data_and_aria_namespaces_round_trip_on_semantic,
+  for_loop_supports_dotted_field_access_on_object_items}`. The
+  remaining ~15 Tier-1 components stay Rust for now — each blocked
+  on either ternary expressions (`toast` kind→color mapping,
+  selected/non-selected row variants), boolean `||` (`menu-item`
+  enabled/disabled), dynamic component dispatch (`properties-panel`
+  rows array), or shared chrome helpers used by other Rust blocks
+  (`icon-button` ← `inspector-row`, `workflow-page-button` ←
+  `dock-tab`). Each surfaces as a focused DSL extension when its
+  first consumer needs it.
 - [ ] **11.3** Tier-2 migration: ~14 stateful / gesture
   components using the new primitives. **Deferred** — each
   primitive's first consumer fills out the primitive's full
@@ -1113,3 +1146,4 @@ move, break, fix. `cargo check --workspace` is the safety net."
 | 2026-05-12 | **Waves 7.3, 8, 9.2, 11.4, 11.5 land** — five remaining checklist items closed in one pass. (7.3) `prism visual` shells through `prism-shell --scene/--screenshot` directly; the macOS `screencapture` shim is gone, scene names mirror `BuiltinScene::ALL` via a named pin (`scene_names_match_shell_builtin_set`), and per-scene output extension is `.json` today (`.png` swaps in when Wave 7.2 PNG lands). (8) Luau parity for modifiers — `packages/prism-builder/src/luau_modifier.rs` ships a `LuauModifierRegistry` sibling to `LuauRenderRegistry`, a `prism.modifier {…}` global helper, a `ModifierBehaviour` impl that delegates schema/wrap/install_effects to Luau, `register_modifier_from_luau` first-class entry point, and `generate_modifier_type_stubs` codegen. `ReactiveProps` now has an `mlua::UserData` impl exposing `read/write/signal` so Luau-authored modifiers read/write per-key reactive signals through the same `Signal<Value>` UserData Rust uses. (9.2) `:state` selectors lower in `interpret.rs` via the new `prism_core::language::prism_ui::split_state_suffix` helper — `:hovered` folds into `ContainerProps.hover` (existing infra), `:selected`/`:focused` round-trip as `data-style-<key>-<state>` semantic attrs. (11.4) `prism.builder-host` joins the primitive registry as the 15th entry, lifting the shell's `shell.builder-canvas` composition into a primitive any `.prism-ui` document can compose against (props: `document` required, `viewport`, `show-selection`, `read-only`). (11.5) `prism dev shell` and `prism dev studio` now watch `packages/prism-shell/ui/` for `.prism-ui` edits alongside `src/` for `.rs` edits; `DEFAULT_EXTENSIONS = &["rs", "prism-ui"]` is the named pin guarding the filter. **Workspace state: 423 prism-builder tests with `--features luau`, 2108 prism-core tests, all suites green; default-feature clippy clean.** Wave 7.2 PNG remains the one explicit deferral — it needs either a tiny-skia software paint backend or a glutin pbuffer/EGL offscreen context (platform-specific, ~1000 lines either way) and belongs to backend-level work outside this seam. | The user's "everything tractable, one shot" target picked the items where the seams the plan describes were already in place. Wave 8 was the largest of these: the `ModifierBehaviour` trait shape, `DocumentBindings`, `ReactiveProps::signal(k)`, the `LuauRenderRegistry` thread-local pattern — all landed in Waves 1 + 4b + 6a. The mlua-surface work was bookkeeping the seams: 240 LoC of new module + 11 named pin tests. Wave 9.2 (`:state`) and Wave 11.4 (`prism.builder-host`) similarly closed long-anchored gaps with one helper / one BlockSpec each. Wave 11.5 was a five-line dev_loop extension turning the already-existing watcher into a true hot-reload pipe. The deferred items (Wave 7.2 PNG, Wave 11.2/11.3 file-by-file Tier-1/2 migrations) are the ones that genuinely need their own commits — PNG needs a backend, the 47 migrations need their own per-PR before/after frame-dump gates per §11.5 discipline. |
 | 2026-05-12 | **Dedup pass over Wave 1.** Three independent patterns collapsed to one source each: (1) the twelve hand-rolled `ModifierBehaviour` impls (six baseline + six bootstrap) collapsed to a `BehaviourSpec` data struct + `SpecBehaviour` blanket impl, mirroring `BlockSpec`/`SpecBlock` from `prism_builder::block`. Each behaviour becomes one `const X: BehaviourSpec = BehaviourSpec::new(...).description(...).wrap(...)` row plus a row in `BUILTINS` / `BOOTSTRAP`; `register_specs(reg, &[&BehaviourSpec])` fans them in. (2) The three near-identical 20×20 routed-icon constructions in `shell.modifier-header` (toggle / remove / drag) collapsed to a `chrome::route_chip(id, icon, role, aria_label, extra_attrs)` helper. (3) The two near-identical `handle_modifier_{toggle,remove}_click` functions collapsed to one `indexed_modifier_route!($handler, $mutator)` `macro_rules!` invocation pair. Also pulled `ModifierRegistry::{list, descriptor}`'s duplicated descriptor projection into one `descriptor_from(&dyn ModifierBehaviour)` helper. Net: ~190 LoC deleted from `modifier.rs`, ~110 LoC deleted from `modifier_bootstrap.rs`, ~60 LoC deleted from `modifier_header.rs`. All 397 prism-builder + 421 prism-shell tests still pass; clippy clean. | The `BlockSpec` / `SpecBlock` pattern §32-§33 of the clay-migration plan established for document components is the right shape for *any* registered behaviour family with a uniform `(id, label, schema, optional wrap)` surface. Lifting it to modifiers means the same authoring grammar covers components, blocks, behaviours, and (in Wave 8) Luau-registered entries — one `const SPEC = …` row instead of N hand-rolled impls. The `route_chip` helper sets the pattern for every future per-row affordance (signal-connection trash, nav-page chevron, schema-row delete) so the next gizmo lands as a one-line call. The `indexed_modifier_route!` macro is small but proves the pattern for the next wave of routes (add-page chevrons, schema-row buttons) that follow the same "parse data-target-id + data-idx, call mutator" shape — adding one is one macro line. |
 | 2026-05-12 | **Wave 11.2 loader seam + first 6 Tier-1 migrations land.** New module `packages/prism-shell/src/components/prism_ui_loader.rs` ships the `.prism-ui`-authored-shell-component pipeline: `PrismUiSpec` (declarative form mirroring `BlockSpec`), `PrismUiBlock` (runtime `Block` impl that lowers via `lower_document_with_scope` against a snapshot of `node.props` as scope bindings + `host_children` as a new `<host-children/>` DSL element), and a shared `Arc<OnceLock<Arc<dyn TagResolver>>>` populated post-registration via `finalize_prism_ui_resolver` so DSL blocks compose with each other and with native blocks against the live merged registry. Six components migrated as the first proof batch — `shell.toolbar-separator`, `shell.help-tooltip`, `shell.docs-view`, `shell.docs-sidebar`, `shell.toast-stack`, `shell.launchpad` — each one `.prism-ui` source + one row in `SHELL_PRISM_UI_COMPONENTS`. The corresponding Rust files were deleted; net ~566 LoC of Rust removed, ~116 LoC of `.prism-ui` added (plus the ~310-LoC loader infra paid once). DSL grammar gained two surgical closes: (a) bare `tag` / `role` / `aria-label` container attrs set the dedicated `Semantic` fields directly (no double-write through `attrs`), so a DSL author can express `<container tag="section" role="navigation" aria-label="Pages"/>` against the same struct the hand-rolled Rust blocks build via `Semantic::tag(..).with_role(..).with_aria_label(..)`; (b) `<host-children/>` emits the caller's pre-lowered `ctx.host_children()` verbatim, so DSL-side composition wrappers (toast-stack, launchpad, future app-window/dock-panel/properties-panel migrations) consume their children with one declarative element instead of a Rust seam. `LowerCtx::registry()` is a new pub accessor for future loader bodies that want a fresh `RegistryTagResolver` over the live merged registry without the post-registration OnceLock dance. The two binding-table invariants (`bindings_cover_every_registered_shell_block`, `slot_bindings_are_subset_of_shell_builtins`) were upgraded to walk both `SHELL_BUILTINS` and `SHELL_PRISM_UI_COMPONENTS` so the parity contract scales with the migration. **Workspace state: 473 prism-shell tests pass; full workspace test sweep (36 suites) and `cargo clippy --workspace --all-targets -- -D warnings` both clean.** Remaining ~27 Tier-1 components are deferred — each next migration is one `.prism-ui` file + one table row, no infrastructure changes; the patterns that block (boolean `||` in expressions, attribute spread for `for`-loop dispatch into a registered tag, conditional-single-attribute sugar) all surface as DSL extension follow-ups when their first consumer lands. | The plan's Wave 11 vision — "the shell becomes a Builder project, the DSL self-hosts" — needed the missing piece of infrastructure: a registered `Block` whose body is a parsed `.prism-ui` source. The loader is that piece. Smart-pattern shape mirrors `BlockSpec` + `SpecBlock` (declarative spec → runtime block) so authoring a DSL component reads the same as authoring a Rust one: one row in a table. The shared resolver cell breaks the chicken-and-egg between "block holds resolver" and "resolver enumerates blocks" with a one-time post-registration init — no thread-locals, no late-bound globals, no parallel registry. The two DSL grammar additions (`tag` / `role` / `aria-label` bare attrs, `<host-children/>` element) were the smallest possible changes to close real gaps; both unlock composition migrations (toast-stack, launchpad) that the §11.4 generalisation sweep referred to but couldn't actually land without these DSL surfaces. The six-component batch is intentionally conservative — proof-of-concept on the simplest visual leaves + the simplest composition wrappers; tomorrow's session picks up the next tier (`status-bar`, `app-card`, `inspector-row`, etc.) without rebuilding the loader. |
+| 2026-05-12 | **Wave 11.2 second batch + DSL/resolver substrate generalisations.** Twelve more Tier-1 components migrate to `.prism-ui` source — `shell.explorer`, `shell.docs-content`, `shell.section-header`, `shell.nav-button`, `shell.inspector-tree`, `shell.nav-page-list`, `shell.signals-panel`, `shell.workflow-page-bar`, `shell.menu-dropdown`, `shell.context-menu`, `shell.add-modifier-button`, `shell.add-connection-button`. Total Tier-1 count is now 18 (the original 6 + this 12). Net ~2000 LoC of Rust deleted; ~250 LoC of `.prism-ui` added. **Four DSL/resolver substrate generalisations** unblocked the batch by removing the per-migration friction: (a) `<image src=… width=… height=… style:radius=… style:tint=…/>` element in `prism-ui-runtime::interpret::image_from` closes the chevron/icon gap that blocked `shell.section-header` and `shell.nav-button`; (b) `lookup_expression` grew dotted-path support (`{item.label}`, `{tabs.0.name}`) so a `for="item in items"` loop over `Vec<Object>` addresses typed fields, and `eval_truthy` re-uses the same lookup so `if="{row.selected}"` works identically; (c) `RegistryTagResolver` now resolves attribute interpolations through scope before building the dispatched `BuilderNode` — pure `{expr}` returns the underlying JSON value verbatim (preserves typed arrays / objects / numbers / bools across the dispatch seam), templated `prefix-{expr}` resolves to a string, the new `resolved_attribute_value` / `resolved_attribute_string` helpers replaced the old `literal_attribute_value` shape that round-tripped `{item.label}` as the literal string `"{item.label}"`; (d) `props="{expr}"` spread attribute on the resolver path unpacks a JSON object into the dispatched node's props so `<shell.nav-page-row for="item in pages" id="{item.page-id}" props="{item}"/>` forwards the row's full schema in one expression — sibling bare attrs layer on top, non-object spreads are no-ops. Two more low-friction loader closes: (e) `PrismUiBlock::lower_ui` seeds schema defaults into scope before applying `node.props`, so missing-but-defaulted props (`show-add=true` on `signals-panel`, `attached=[]` on `add-modifier-button`) inherit the Rust-side default without re-stating it in the DSL; (f) a new `register_full_shell_chrome` helper composes `register_shell_builtins` + `register_prism_ui_components` + `finalize_prism_ui_resolver` into one call — the single source of truth for "what chrome the shell ships," shared between `Shell::new` and any test that needs the complete registry. The two Wave 1 buttons (`shell.add-modifier-button`, `shell.add-connection-button`) migrated as well, validating that DSL can carry `data-on-click="cmd <id>"` route attrs and dispatch through the existing `route_on_click` command-table chain without a Rust block. **Workspace state: 3500 tests pass across 36 suites; `cargo clippy --workspace --all-targets -- -D warnings` clean.** Remaining ~15 Tier-1 components stay Rust pending one of four DSL extension follow-ups: ternary expressions (`toast` kind→color mapping, selected/non-selected row variants on `signal-connection-row` / `schema-row` / `nav-page-row` / `inspector-row` / `app-card`), boolean `||` (`menu-item` enabled/disabled normalisation), dynamic component dispatch (`properties-panel` rows-with-component-field), or a shared-chrome lift (`workflow-page-button` ← `dock-tab` share `chrome::active_underline_tab`; `icon-button` ← `inspector-row` share `chrome::icon_button_node_tinted`). Each surfaces as a focused DSL extension when its first consumer needs it. | The user's "finish implementing the waves fully — use smart patterns to minimise duplication" target read as: (i) keep walking the Tier-1 migration list while it's still tractable, (ii) lift each new constraint into the DSL/resolver substrate rather than re-stating it per migration. The four substrate generalisations are exactly that: each removes a per-migration friction (image authoring, field access in iteration, type-preserving prop forwarding, schema-driven defaults) so the next batch of migrations gets shorter, not longer. The `register_full_shell_chrome` helper is the DI seam version of the same idea — the production bootstrap and every test now register the chrome catalog through one declarative call, so adding a Wave 3 batch of migrations doesn't fork three call sites. The remaining-15 list is the next tier of friction; once any one of them ships, the DSL grows the matching expression construct and the rest of that group falls in line. |

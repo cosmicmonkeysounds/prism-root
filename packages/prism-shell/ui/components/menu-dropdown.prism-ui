@@ -1,0 +1,30 @@
+<!--
+  shell.menu-dropdown — column of `shell.menu-item` rows. Wave 11.2
+  migration of menu_dropdown.rs.
+
+  Visibility gate (§43 A2): an empty `items` array collapses the
+  overlay to a 0×0 hidden placeholder.
+-->
+<container
+    if="{items}"
+    tag="div"
+    direction="column"
+    padding-left="4"
+    padding-right="4"
+    padding-top="4"
+    padding-bottom="4"
+    width="200"
+    role="menu"
+    data:role="menu-dropdown"
+    style:radius="6"
+    style:background="#ffffff">
+  <shell.menu-item for="item in items" id="{item.item-id}" props="{item}"/>
+</container>
+<container
+    else
+    tag="div"
+    width="0"
+    height="0"
+    data:role="menu-dropdown"
+    data:visible="false"
+    aria:hidden="true"/>

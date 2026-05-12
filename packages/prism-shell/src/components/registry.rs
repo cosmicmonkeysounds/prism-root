@@ -96,19 +96,15 @@ impl ShellComponentRegistry {
 /// file. Adding a primitive = one new const + one row here.
 pub static SHELL_BUILTINS: &[&BlockSpec] = &[
     &super::icon_button::ICON_BUTTON_SPEC,
-    &super::section_header::SECTION_HEADER_SPEC,
-    &super::nav_button::NAV_BUTTON_SPEC,
     &super::toast::TOAST_SPEC,
-    &super::docs_content::DOCS_CONTENT_SPEC,
     // Wave 11.2 — the following ids were Rust-authored before being
     // migrated to `.prism-ui` source. Each row was deleted alongside
     // its `components/<id>.rs` file:
-    //   * shell.toolbar-separator (ui/components/toolbar-separator.prism-ui)
-    //   * shell.help-tooltip      (ui/components/help-tooltip.prism-ui)
-    //   * shell.docs-view         (ui/components/docs-view.prism-ui)
-    //   * shell.docs-sidebar      (ui/components/docs-sidebar.prism-ui)
-    //   * shell.toast-stack       (ui/components/toast-stack.prism-ui)
-    //   * shell.launchpad         (ui/components/launchpad.prism-ui)
+    //   First wave  (2026-05-12 a9c199c): toolbar-separator, help-tooltip,
+    //     docs-view, docs-sidebar, toast-stack, launchpad.
+    //   Second wave (this commit): explorer, docs-content,
+    //     section-header, nav-button, inspector-tree, nav-page-list,
+    //     signals-panel.
     // They land into the registry through
     // `register_prism_ui_components` in `shell.rs`. The
     // `prism_ui_specs_register_disjoint_from_native_builtins` test in
@@ -121,27 +117,20 @@ pub static SHELL_BUILTINS: &[&BlockSpec] = &[
     &super::field_editor::FIELD_EDITOR_SPEC,
     &super::status_bar::STATUS_BAR_SPEC,
     &super::workflow_page_button::WORKFLOW_PAGE_BUTTON_SPEC,
-    &super::workflow_page_bar::WORKFLOW_PAGE_BAR_SPEC,
     &super::app_window::APP_WINDOW_SPEC,
     &super::dock_divider::DOCK_DIVIDER_SPEC,
     &super::dock_tab::DOCK_TAB_SPEC,
     &super::dock_tab_bar::DOCK_TAB_BAR_SPEC,
     &super::dock_panel::DOCK_PANEL_SPEC,
     &super::dock_workspace::DOCK_WORKSPACE_SPEC,
-    &super::inspector_tree::INSPECTOR_TREE_SPEC,
     &super::command_palette::COMMAND_PALETTE_SPEC,
     &super::menu_item::MENU_ITEM_SPEC,
-    &super::menu_dropdown::MENU_DROPDOWN_SPEC,
-    &super::context_menu::CONTEXT_MENU_SPEC,
     &super::properties_panel::PROPERTIES_PANEL_SPEC,
     &super::component_palette::COMPONENT_PALETTE_SPEC,
-    &super::explorer::EXPLORER_SPEC,
     &super::signal_connection_row::SIGNAL_CONNECTION_ROW_SPEC,
-    &super::signals_panel::SIGNALS_PANEL_SPEC,
     &super::schema_row::SCHEMA_ROW_SPEC,
     &super::schema_designer::SCHEMA_DESIGNER_SPEC,
     &super::nav_page_row::NAV_PAGE_ROW_SPEC,
-    &super::nav_page_list::NAV_PAGE_LIST_SPEC,
     &super::nav_graph::NAV_GRAPH_SPEC,
     &super::code_editor::CODE_EDITOR_SPEC,
     &super::gizmo_move::GIZMO_MOVE_SPEC,
@@ -155,13 +144,10 @@ pub static SHELL_BUILTINS: &[&BlockSpec] = &[
     // inspector trio: one section header per attached behaviour, an
     // add-modifier footer, and an overlay picker.
     &super::modifier_header::MODIFIER_HEADER_SPEC,
-    &super::add_modifier_button::ADD_MODIFIER_BUTTON_SPEC,
     &super::modifier_picker::MODIFIER_PICKER_SPEC,
-    // Wave 4 — connection picker + add-connection footer. The
-    // signals panel renders the add-button as its bottom row and
-    // the picker overlay sits sibling to the other window-relative
-    // overlays in `ui/app.prism-ui`.
-    &super::add_connection_button::ADD_CONNECTION_BUTTON_SPEC,
+    // Wave 4 — connection picker (overlay) lands here; the
+    // add-connection footer button migrated to `.prism-ui` source in
+    // Wave 11.2 (see prism_ui_loader::SHELL_PRISM_UI_COMPONENTS).
     &super::connection_picker::CONNECTION_PICKER_SPEC,
 ];
 
@@ -169,6 +155,38 @@ pub static SHELL_BUILTINS: &[&BlockSpec] = &[
 /// [`register_specs`].
 pub fn register_shell_builtins(reg: &mut ShellComponentRegistry) -> Result<(), RegistryError> {
     register_specs(&mut reg.inner, SHELL_BUILTINS)
+}
+
+/// Register every native + `.prism-ui`-authored shell block alongside
+/// each other and finalize the shared resolver cell. Wave 11.2: the
+/// chrome catalog spans both `SHELL_BUILTINS` (native) and
+/// [`super::prism_ui_loader::SHELL_PRISM_UI_COMPONENTS`] (DSL); tests
+/// and host bootstrap that want the *complete* registry call this
+/// instead of the two halves separately. `Shell::new` mirrors the same
+/// fan-out so this helper is the single source of truth for "what
+/// chrome the shell ships."
+pub fn register_full_shell_chrome(reg: &mut ShellComponentRegistry) -> Result<(), RegistryError> {
+    use super::prism_ui_loader::{
+        finalize_prism_ui_resolver, make_shared_resolver, register_prism_ui_components,
+        SHELL_PRISM_UI_COMPONENTS,
+    };
+    register_shell_builtins(reg)?;
+    let resolver = make_shared_resolver();
+    register_prism_ui_components(reg, SHELL_PRISM_UI_COMPONENTS, &resolver).map_err(|e| {
+        // Loader errors collapse to the same `RegistryError` shape so
+        // call sites don't fork their error handling.
+        match e {
+            super::prism_ui_loader::PrismUiLoadError::Register(err) => err,
+            super::prism_ui_loader::PrismUiLoadError::Parse { id, errors } => {
+                RegistryError::AlreadyRegistered(format!(
+                    "parse error in `{id}`: {}",
+                    errors.join("; ")
+                ))
+            }
+        }
+    })?;
+    finalize_prism_ui_resolver(&resolver, reg);
+    Ok(())
 }
 
 /// Merge the document-side builder catalog (`prism_builder::starter::BUILTINS`
@@ -423,7 +441,11 @@ mod tests {
         use prism_ui_runtime::layout::Node as UiNode;
 
         let mut reg = ShellComponentRegistry::new();
-        register_shell_builtins(&mut reg).expect("register");
+        // Wave 11.2: the skeleton references both native and DSL-authored
+        // shell blocks (`shell.workflow-page-bar` is DSL since this
+        // commit). The full-chrome bootstrap is the single source of
+        // truth for "what tags the resolver can dispatch."
+        register_full_shell_chrome(&mut reg).expect("register");
 
         let source = include_str!("../../ui/app.prism-ui");
         let (doc, errs) = parse(source);

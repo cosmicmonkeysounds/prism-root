@@ -1,0 +1,27 @@
+<!--
+  shell.add-modifier-button — ghost "+ Add Behaviour" footer in the
+  Inspector's modifier stack. Wave 11.2 migration of
+  add_modifier_button.rs. See docs/dev/composable-builder-plan.md
+  Wave 1.4.
+
+  Routing: data-role="add-modifier-open" + data-target-id routes
+  through `events::POINTER_ROUTES`; data-attached carries the
+  JSON-stringified list of already-attached behaviour ids so the
+  picker overlay can filter the live `ModifierRegistry` snapshot.
+-->
+<container
+    tag="button"
+    direction="row"
+    gap="6"
+    padding-left="12"
+    padding-right="12"
+    height="32"
+    width="grow"
+    style:radius="6"
+    style:background:hovered="#0a000000"
+    data:role="add-modifier-open"
+    data:target-id="{target-id}"
+    data:attached="{attached}"
+    aria-label="Add behaviour">
+  <text font-size="11" style:color="#7f000000">+ Add Behaviour</text>
+</container>

@@ -41,8 +41,13 @@
 
 use std::sync::Arc;
 
-use prism_core::language::prism_ui::{AttributeNamespace, AttributeValue, Element};
-use prism_ui_runtime::interpret::{lower_ast_children, LowerScope, TagResolver};
+use prism_core::language::prism_ui::{
+    ast::TemplatePart, AttributeNamespace, AttributeValue, Element,
+};
+use prism_ui_runtime::interpret::{
+    lookup_expression_in_scope, lower_ast_children, stringify_value_for_template, LowerScope,
+    TagResolver,
+};
 use prism_ui_runtime::layout::Node as UiNode;
 use serde_json::{Map, Value};
 
@@ -79,7 +84,7 @@ impl RegistryTagResolver {
 impl TagResolver for RegistryTagResolver {
     fn resolve(&self, element: &Element, scope: &LowerScope) -> Option<Vec<UiNode>> {
         let component = self.registry.get(&element.tag)?;
-        let node = element_to_builder_node(element);
+        let node = element_to_builder_node(element, scope);
         let cascade = StyleProperties::default();
         // Host-injected children (binding-driven composition) win over
         // AST-pre-lowered children. The two paths cover disjoint cases
@@ -120,7 +125,7 @@ impl TagResolver for RegistryTagResolver {
         // attribute table in its docstring) because the block doesn't
         // need it during render — the shell event router reads it
         // back from the resulting `HitRect.attrs` instead.
-        attach_on_handlers(&mut lowered, element);
+        attach_on_handlers(&mut lowered, element, scope);
         Some(vec![lowered])
     }
 }
@@ -132,13 +137,13 @@ impl TagResolver for RegistryTagResolver {
 /// hits and so can't dispatch. Authors who want a clickable text node
 /// today wrap it in a container; a follow-up can either tag the
 /// inner leaf's outer container or grow hit-testable leaves.
-fn attach_on_handlers(node: &mut UiNode, element: &Element) {
+fn attach_on_handlers(node: &mut UiNode, element: &Element, scope: &LowerScope) {
     let mut on_attrs: Vec<(String, String)> = Vec::new();
     for attr in &element.attributes {
         if !matches!(attr.name.namespace, AttributeNamespace::On) {
             continue;
         }
-        let Some(value) = literal_attribute_value(&attr.value) else {
+        let Some(value) = resolved_attribute_string(&attr.value, scope) else {
             continue;
         };
         on_attrs.push((format!("data-on-{}", attr.name.local), value));
@@ -168,24 +173,47 @@ fn attach_on_handlers(node: &mut UiNode, element: &Element) {
 ///
 /// Boolean attributes (`<el disabled>`) become `Bool(true)`.
 /// Strings stay strings; the block's schema does the typed coercion.
-fn element_to_builder_node(element: &Element) -> BuilderNode {
+///
+/// Interpolated attributes resolve through `scope`: a pure
+/// `key="{expr}"` returns the underlying JSON Value verbatim (so a
+/// `for="item in items"` over `Vec<Object>` can spread fields directly
+/// onto the dispatched block via `prop="{item.field}"`), while a
+/// templated `key="prefix-{expr}"` resolves to its expanded string.
+fn element_to_builder_node(element: &Element, scope: &LowerScope) -> BuilderNode {
     let mut id = String::new();
     let mut props: Map<String, Value> = Map::new();
     for attr in &element.attributes {
         let local = attr.name.local.as_str();
-        let raw = literal_attribute_value(&attr.value);
         match attr.name.namespace {
             AttributeNamespace::Identifier if local == "id" => {
-                id = raw.unwrap_or_default();
+                id = resolved_attribute_string(&attr.value, scope).unwrap_or_default();
+            }
+            // `props="{expr}"` spread: when `expr` resolves to a JSON
+            // object, every (k, v) becomes a prop on the dispatched
+            // node. Subsequent bare attrs in the same element override
+            // matching keys. Wave 11.2 enabler for list-binding rows
+            // (`shell.nav-page-list` / `shell.explorer` /
+            // `shell.signals-panel`) — `<shell.nav-page-row props="{item}"/>`
+            // spreads the entire item object onto the row without
+            // enumerating every schema key in the DSL.
+            AttributeNamespace::Bare if local == "props" => {
+                if let Value::Object(map) = resolved_attribute_value(&attr.value, scope) {
+                    for (k, v) in map {
+                        props.insert(k, v);
+                    }
+                }
             }
             AttributeNamespace::Bare => {
-                props.insert(local.to_string(), value_for(raw));
+                props.insert(local.to_string(), resolved_attribute_value(&attr.value, scope));
             }
             AttributeNamespace::Data => {
-                props.insert(local.to_string(), value_for(raw));
+                props.insert(local.to_string(), resolved_attribute_value(&attr.value, scope));
             }
             AttributeNamespace::Aria => {
-                props.insert(format!("aria-{local}"), value_for(raw));
+                props.insert(
+                    format!("aria-{local}"),
+                    resolved_attribute_value(&attr.value, scope),
+                );
             }
             // Styling, signals, bindings, facets, control-flow keywords
             // are not block-prop carriers — the cascade handles styles,
@@ -207,29 +235,47 @@ fn element_to_builder_node(element: &Element) -> BuilderNode {
     }
 }
 
-/// Pull a literal string out of an attribute value. Skips
-/// interpolation segments — those would need scope-aware resolution,
-/// and chrome props are typically literal strings/numbers in source.
-/// Templates with embedded `{expr}` parts collapse to their literal
-/// segments concatenated; downstream blocks that need full interpolation
-/// can opt in once the expression evaluator lands.
-fn literal_attribute_value(value: &AttributeValue) -> Option<String> {
+/// Resolve an attribute value to a string under `scope`. Handles
+/// pure literals, single `{expr}` interpolations (stringified via the
+/// runtime's `Value` → `String` coercion), and templated mixes.
+/// Returns `None` for `AttributeValue::Empty` (boolean attrs).
+fn resolved_attribute_string(value: &AttributeValue, scope: &LowerScope) -> Option<String> {
     match value {
         AttributeValue::String { value, .. } => Some(value.clone()),
         AttributeValue::Empty => None,
-        AttributeValue::Expression(expr) => Some(format!("{{{}}}", expr.body)),
+        AttributeValue::Expression(expr) => lookup_expression_in_scope(&expr.body, scope)
+            .map(stringify_value_for_template)
+            .or_else(|| Some(String::new())),
         AttributeValue::Template { parts, .. } => {
             let mut out = String::new();
             for part in parts {
-                if let prism_core::language::prism_ui::ast::TemplatePart::Literal {
-                    value, ..
-                } = part
-                {
-                    out.push_str(value);
+                match part {
+                    TemplatePart::Literal { value, .. } => out.push_str(value),
+                    TemplatePart::Expression(expr) => {
+                        if let Some(v) = lookup_expression_in_scope(&expr.body, scope) {
+                            out.push_str(&stringify_value_for_template(v));
+                        }
+                    }
                 }
             }
             Some(out)
         }
+    }
+}
+
+/// Resolve an attribute value to a typed JSON [`Value`] under `scope`.
+/// A pure `{expr}` returns the bound JSON value verbatim (preserving
+/// arrays / objects / numbers / bools), so dynamic dispatch through
+/// `for="item in items"` can spread typed fields onto the dispatched
+/// block. Everything else (literal strings, templates) is coerced
+/// through [`value_for`].
+fn resolved_attribute_value(value: &AttributeValue, scope: &LowerScope) -> Value {
+    match value {
+        AttributeValue::Empty => Value::Bool(true),
+        AttributeValue::Expression(expr) => lookup_expression_in_scope(&expr.body, scope)
+            .cloned()
+            .unwrap_or(Value::Null),
+        _ => value_for(resolved_attribute_string(value, scope)),
     }
 }
 
@@ -364,7 +410,7 @@ mod tests {
                 _ => None,
             })
             .unwrap();
-        let bn = element_to_builder_node(n);
+        let bn = element_to_builder_node(n, &LowerScope::default());
         assert_eq!(bn.props["disabled"], Value::Bool(true));
     }
 
@@ -375,7 +421,7 @@ mod tests {
             prism_core::language::prism_ui::Node::Element(e) => e,
             _ => panic!(),
         };
-        let bn = element_to_builder_node(n);
+        let bn = element_to_builder_node(n, &LowerScope::default());
         assert_eq!(bn.props["count"], Value::from(3i64));
         assert_eq!(bn.props["ratio"], Value::from(0.5));
     }
@@ -593,7 +639,83 @@ mod tests {
             prism_core::language::prism_ui::Node::Element(e) => e,
             _ => panic!(),
         };
-        let bn = element_to_builder_node(n);
+        let bn = element_to_builder_node(n, &LowerScope::default());
         assert_eq!(bn.props["aria-label"], Value::String("Close".into()));
+    }
+
+    #[test]
+    fn interpolated_attribute_resolves_from_scope_as_typed_json() {
+        // Pure `{expr}` attrs return the underlying JSON value verbatim,
+        // so a `for="item in items"` loop over Vec<Object> can spread
+        // typed fields onto a dispatched block. Templates with literals
+        // resolve to strings (the old behaviour, but interpolation-aware).
+        let scope = LowerScope::default()
+            .with_binding("count", Value::from(42i64))
+            .with_binding("label", Value::String("Hello".into()))
+            .with_binding(
+                "row",
+                serde_json::json!({ "name": "Beta", "depth": 1 }),
+            );
+        let (doc, _) = parse(
+            r#"<demo.box count="{count}" label="{label}" name="{row.name}" depth="{row.depth}" prefixed="d={row.depth}"/>"#,
+        );
+        let n = match &doc.nodes[0] {
+            prism_core::language::prism_ui::Node::Element(e) => e,
+            _ => panic!(),
+        };
+        let bn = element_to_builder_node(n, &scope);
+        assert_eq!(bn.props["count"], Value::from(42i64));
+        assert_eq!(bn.props["label"], Value::String("Hello".into()));
+        assert_eq!(bn.props["name"], Value::String("Beta".into()));
+        assert_eq!(bn.props["depth"], Value::from(1i64));
+        assert_eq!(bn.props["prefixed"], Value::String("d=1".into()));
+    }
+
+    #[test]
+    fn props_spread_attribute_unpacks_object_into_node_props() {
+        // `<el props="{item}"/>` spreads a JSON object onto the dispatched
+        // node. Wave 11.2 enabler for list-binding migrations
+        // (shell.nav-page-list, shell.explorer, shell.signals-panel)
+        // that today rely on `ctx.lower_as(tag, id, item.clone())` to
+        // forward whole-row props.
+        let scope = LowerScope::default().with_binding(
+            "row",
+            serde_json::json!({ "page-title": "Home", "route": "/", "selected": true }),
+        );
+        let (doc, _) = parse(r#"<demo.box props="{row}"/>"#);
+        let n = match &doc.nodes[0] {
+            prism_core::language::prism_ui::Node::Element(e) => e,
+            _ => panic!(),
+        };
+        let bn = element_to_builder_node(n, &scope);
+        assert_eq!(bn.props["page-title"], Value::String("Home".into()));
+        assert_eq!(bn.props["route"], Value::String("/".into()));
+        assert_eq!(bn.props["selected"], Value::Bool(true));
+    }
+
+    #[test]
+    fn props_spread_ignores_non_object_values() {
+        let scope = LowerScope::default().with_binding("v", Value::from(7i64));
+        let (doc, _) = parse(r#"<demo.box props="{v}" label="kept"/>"#);
+        let n = match &doc.nodes[0] {
+            prism_core::language::prism_ui::Node::Element(e) => e,
+            _ => panic!(),
+        };
+        let bn = element_to_builder_node(n, &scope);
+        // The spread of a non-object is a no-op; the sibling `label`
+        // attribute still lands.
+        assert!(bn.props.get("v").is_none());
+        assert_eq!(bn.props["label"], Value::String("kept".into()));
+    }
+
+    #[test]
+    fn interpolated_attribute_with_missing_binding_returns_null() {
+        let (doc, _) = parse(r#"<demo.box value="{missing}"/>"#);
+        let n = match &doc.nodes[0] {
+            prism_core::language::prism_ui::Node::Element(e) => e,
+            _ => panic!(),
+        };
+        let bn = element_to_builder_node(n, &LowerScope::default());
+        assert_eq!(bn.props["value"], Value::Null);
     }
 }

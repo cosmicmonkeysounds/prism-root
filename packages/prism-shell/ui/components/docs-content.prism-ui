@@ -1,0 +1,32 @@
+<!--
+  shell.docs-content — title + summary + optional body block used in
+  the launchpad, the docs panel, and any "what is this thing?" surface.
+  Wave 11.2 migration of docs_content.rs.
+
+  Two display modes (full vs compact) only vary font sizes + gaps; the
+  body block (hairline + body text) only appears when `doc-body` is
+  non-empty. Author intent: the `if`/`else` forks switch by `compact`
+  truthy state, and the body block is gated on `doc-body`.
+-->
+<container tag="article" direction="column">
+  <!-- Full mode -->
+  <text if="{compact}" font-size="14" style:color="#000000">{doc-title}</text>
+  <text else font-size="22" style:color="#000000">{doc-title}</text>
+
+  <container if="{compact}" height="8"/>
+  <container else height="12"/>
+
+  <text if="{compact}" font-size="12" style:color="#cc000000">{doc-summary}</text>
+  <text else font-size="14" style:color="#cc000000">{doc-summary}</text>
+
+  <!-- Body block (only when doc-body is non-empty) -->
+  <container if="{doc-body}" direction="column">
+    <container if="{compact}" height="10"/>
+    <container else height="16"/>
+    <container height="1" style:background="#26000000"/>
+    <container if="{compact}" height="10"/>
+    <container else height="16"/>
+    <text if="{compact}" font-size="12" style:color="#b3000000">{doc-body}</text>
+    <text else font-size="13" style:color="#b3000000">{doc-body}</text>
+  </container>
+</container>

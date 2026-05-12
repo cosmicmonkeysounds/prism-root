@@ -417,6 +417,7 @@ fn lower_element(el: &Element, scope: &LowerScope) -> Vec<Node> {
         }
         "spacer" => vec![spacer_from(el, scope)],
         "input" => vec![input_from(el, scope)],
+        "image" => vec![image_from(el, scope)],
         // `<slot/>` and `<slot name="x"/>` resolve to whatever the
         // caller injected. Default slot uses the unnamed binding;
         // named slots match by `name`. If the caller didn't bind a
@@ -624,6 +625,90 @@ fn spacer_from(el: &Element, scope: &LowerScope) -> Node {
         }
     }
     Node::Spacer { id, width, height }
+}
+
+/// Lower `<image src="…" width="…" height="…"/>` to [`Node::Image`].
+/// Wave 11.2: closes the last shape gap blocking icon-bearing shell
+/// components (icon-button, nav-button, section-header, app-card, …)
+/// from migrating to `.prism-ui` source. Same attr vocabulary the
+/// container shape uses — `width`/`height` parse through
+/// [`parse_sizing`], `style:radius` builds a uniform [`CornerRadius`],
+/// `style:tint` parses through [`parse_color`], `aria-label` /
+/// `aria:*` / `data:*` round-trip onto [`Semantic`].
+fn image_from(el: &Element, scope: &LowerScope) -> Node {
+    let mut id = String::new();
+    let mut source = String::new();
+    let mut width = Sizing::default();
+    let mut height = Sizing::default();
+    let mut radius = CornerRadius::default();
+    let mut tint: Option<Color> = None;
+    let mut semantic = Semantic::default();
+    for attr in &el.attributes {
+        let local = attr.name.local.as_str();
+        let raw = resolved_attribute_string(&attr.value, scope);
+        match attr.name.namespace {
+            AttributeNamespace::Bare => match local {
+                "src" | "source" => source = raw.unwrap_or_default(),
+                "width" => {
+                    if let Some(s) = raw.as_deref().and_then(parse_sizing) {
+                        width = s;
+                    }
+                }
+                "height" => {
+                    if let Some(s) = raw.as_deref().and_then(parse_sizing) {
+                        height = s;
+                    }
+                }
+                "tag" => semantic.tag = raw,
+                "role" => semantic.role = raw,
+                "aria-label" => semantic.aria_label = raw,
+                _ => {}
+            },
+            AttributeNamespace::Identifier if local == "id" => {
+                if let Some(v) = raw {
+                    id = v;
+                }
+            }
+            AttributeNamespace::Style => match local {
+                "radius" => {
+                    if let Some(v) = raw.as_deref().and_then(parse_f32) {
+                        radius = CornerRadius {
+                            tl: v,
+                            tr: v,
+                            br: v,
+                            bl: v,
+                        };
+                    }
+                }
+                "tint" | "color" => {
+                    if let Some(c) = raw.as_deref().and_then(parse_color) {
+                        tint = Some(c);
+                    }
+                }
+                _ => {}
+            },
+            AttributeNamespace::Aria => {
+                if let Some(value) = raw {
+                    semantic.attrs.push((format!("aria-{}", local), value));
+                }
+            }
+            AttributeNamespace::Data | AttributeNamespace::Route => {
+                if let Some(value) = raw {
+                    semantic.attrs.push((format!("data-{}", local), value));
+                }
+            }
+            _ => {}
+        }
+    }
+    Node::Image {
+        id,
+        source,
+        width,
+        height,
+        radius,
+        tint,
+        semantic,
+    }
 }
 
 fn input_from(el: &Element, scope: &LowerScope) -> Node {
@@ -1080,17 +1165,48 @@ fn interpolate(text: &str, scope: &LowerScope) -> String {
 }
 
 /// Resolve a `{...}`-style expression body against the scope. Phase-2
-/// minimum: bare identifiers + the literals `true`/`false`/numbers.
-/// Anything else lowers to `None` and the caller falls back to an
-/// empty string. The full expression evaluator lives in
-/// `prism_core::language::expression` and lands here behind the same
-/// seam when component instantiation grows past identifiers.
+/// minimum: bare identifiers + dotted paths into the bound JSON value
+/// (object fields, array indices). Anything richer returns `None` and
+/// the caller falls back to an empty string. The full expression
+/// evaluator lives in `prism_core::language::expression` and lands here
+/// behind the same seam when component instantiation grows past
+/// identifiers.
+///
+/// Public-but-`#[doc(hidden)]` so the `prism-builder` resolver
+/// (`RegistryTagResolver`) can pre-resolve attribute interpolations
+/// before constructing the builder `Node`. Sole non-runtime caller.
+#[doc(hidden)]
+pub fn lookup_expression_in_scope<'a>(
+    body: &str,
+    scope: &'a LowerScope,
+) -> Option<&'a serde_json::Value> {
+    lookup_expression(body, scope)
+}
+
+/// Internal counterpart used by `lower_*` paths.
 fn lookup_expression<'a>(body: &str, scope: &'a LowerScope) -> Option<&'a serde_json::Value> {
     let body = body.trim();
     if body.is_empty() {
         return None;
     }
-    scope.binding(body)
+    let mut parts = body.split('.');
+    let head = parts.next()?.trim();
+    let mut cursor = scope.binding(head)?;
+    for segment in parts {
+        let key = segment.trim();
+        if key.is_empty() {
+            return None;
+        }
+        cursor = match cursor {
+            serde_json::Value::Object(map) => map.get(key)?,
+            serde_json::Value::Array(arr) => {
+                let idx: usize = key.parse().ok()?;
+                arr.get(idx)?
+            }
+            _ => return None,
+        };
+    }
+    Some(cursor)
 }
 
 /// Truthy evaluator for `if=` / `else-if=`. Mirrors the JS rule:
@@ -1116,7 +1232,10 @@ fn eval_truthy(body: &str, scope: &LowerScope) -> bool {
     if let Ok(n) = body.parse::<f64>() {
         return n != 0.0;
     }
-    match scope.binding(body) {
+    // Walk dotted paths through `lookup_expression` so `if="{row.selected}"`
+    // works the same way `{row.selected}` interpolations do — same
+    // resolver, same truthy rules.
+    match lookup_expression(body, scope) {
         None => false,
         Some(serde_json::Value::Null) => false,
         Some(serde_json::Value::Bool(b)) => *b,
@@ -1133,6 +1252,15 @@ fn stringify_value(value: &serde_json::Value) -> String {
         serde_json::Value::Null => String::new(),
         other => other.to_string(),
     }
+}
+
+/// Public-but-`#[doc(hidden)]` mirror of [`stringify_value`] for the
+/// `prism-builder` resolver's templated-attribute path. Same shape:
+/// strings pass through verbatim, nulls become empty, everything
+/// else uses `Display`.
+#[doc(hidden)]
+pub fn stringify_value_for_template(value: &serde_json::Value) -> String {
+    stringify_value(value)
 }
 
 fn parse_f32(s: &str) -> Option<f32> {
@@ -1409,6 +1537,34 @@ mod tests {
     }
 
     #[test]
+    fn for_loop_supports_dotted_field_access_on_object_items() {
+        let scope = LowerScope::default().with_binding(
+            "items",
+            serde_json::json!([
+                { "label": "Alpha", "depth": 0 },
+                { "label": "Beta", "depth": 2 },
+            ]),
+        );
+        let (doc, errs) = parse(
+            r#"<container><text for="item in items">{item.label}={item.depth}</text></container>"#,
+        );
+        assert!(errs.is_empty());
+        let nodes = lower_document_with_scope(&doc, &scope);
+        let Node::Container { children, .. } = &nodes[0] else {
+            panic!()
+        };
+        assert_eq!(children.len(), 2);
+        let Node::Text { content: a, .. } = &children[0] else {
+            panic!()
+        };
+        let Node::Text { content: b, .. } = &children[1] else {
+            panic!()
+        };
+        assert!(a.contains("Alpha") && a.contains('0'));
+        assert!(b.contains("Beta") && b.contains('2'));
+    }
+
+    #[test]
     fn for_clones_children_with_iteration_binding() {
         let (doc, _) = parse(
             r#"<container>
@@ -1458,6 +1614,53 @@ mod tests {
         };
         assert_eq!(value, "hello");
         assert_eq!(placeholder, "search...");
+    }
+
+    #[test]
+    fn image_lowers_to_image_node_with_source_and_sizing() {
+        let nodes = interpret(
+            r##"<image src="icons/chevron-down.svg" width="10" height="10"
+                       style:radius="2" style:tint="#cc000000" aria-label="open"/>"##,
+        )
+        .unwrap();
+        assert_eq!(nodes.len(), 1);
+        let Node::Image {
+            source,
+            width,
+            height,
+            radius,
+            tint,
+            semantic,
+            ..
+        } = &nodes[0]
+        else {
+            panic!("expected Image, got {:?}", nodes[0])
+        };
+        assert_eq!(source, "icons/chevron-down.svg");
+        assert!(matches!(width, Sizing::Fixed(v) if (v - 10.0).abs() < f32::EPSILON));
+        assert!(matches!(height, Sizing::Fixed(v) if (v - 10.0).abs() < f32::EPSILON));
+        assert!((radius.tl - 2.0).abs() < f32::EPSILON);
+        assert!(tint.is_some());
+        assert_eq!(semantic.aria_label.as_deref(), Some("open"));
+    }
+
+    #[test]
+    fn image_data_and_aria_namespaces_round_trip_on_semantic() {
+        let nodes = interpret(
+            r##"<image src="icons/x.svg" data:role="close-icon" aria:hidden="true"/>"##,
+        )
+        .unwrap();
+        let Node::Image { semantic, .. } = &nodes[0] else {
+            panic!("expected Image")
+        };
+        assert!(semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-role" && v == "close-icon"));
+        assert!(semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "aria-hidden" && v == "true"));
     }
 
     #[test]

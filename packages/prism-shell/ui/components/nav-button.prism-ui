@@ -1,0 +1,55 @@
+<!--
+  shell.nav-button — 48×48 activity-bar icon. Wave 11.2 migration of
+  nav_button.rs.
+
+  Layout: a 48×48 row of [3px accent rail, 45px centred glyph body].
+  Selected paints the rail + an accent background, sets aria-pressed,
+  and stays accent under hover; resting paints a translucent hover
+  tint. The `nav-id` flows to `data-target-id` so the existing
+  `handle_nav_button_click` route routes off it.
+
+  Note: padding values land via the existing `aria:` / `data:` /
+  numeric vocabulary; the rail/body share an empty container id so
+  the outer button is the only hit target the runtime registers.
+-->
+<container
+    if="{selected}"
+    tag="button"
+    direction="row"
+    width="48"
+    height="48"
+    style:background="#260060c0"
+    data:role="nav-button"
+    data:target-id="{nav-id}"
+    aria:pressed="true">
+  <container width="3" height="grow" style:background="#0060c0"/>
+  <container
+      width="grow"
+      height="grow"
+      padding-left="11"
+      padding-right="11"
+      padding-top="14"
+      padding-bottom="14">
+    <image src="{icon}" width="20" height="20"/>
+  </container>
+</container>
+<container
+    else
+    tag="button"
+    direction="row"
+    width="48"
+    height="48"
+    style:background:hovered="#1f000000"
+    data:role="nav-button"
+    data:target-id="{nav-id}">
+  <container width="3" height="grow"/>
+  <container
+      width="grow"
+      height="grow"
+      padding-left="11"
+      padding-right="11"
+      padding-top="14"
+      padding-bottom="14">
+    <image src="{icon}" width="20" height="20"/>
+  </container>
+</container>

@@ -41,13 +41,14 @@ use std::sync::{Arc, OnceLock};
 use prism_builder::{
     component::ComponentId,
     document::Node,
-    registry::{FieldSpec, RegistryError},
-    signal::{common_signals, SignalDef},
+    registry::{FieldSpec, NumericBounds, RegistryError},
+    signal::{common_signals, with_common_signals, SignalDef},
     style::StyleProperties,
     ui_lower::LowerCtx,
     ui_resolver::RegistryTagResolver,
     Block,
 };
+use serde_json::Value;
 use prism_core::language::prism_ui::{parse, Document as AstDocument};
 use prism_ui_runtime::interpret::{lower_document_with_scope, LowerScope, TagResolver};
 use prism_ui_runtime::layout::Node as UiNode;
@@ -150,11 +151,20 @@ impl Block for PrismUiBlock {
             scope = scope.with_resolver(Arc::new(RegistryTagResolver::new(arc)));
         }
 
-        // Seed every prop as a scope binding so `{title}` /
-        // `{enabled}` interpolations resolve verbatim. The DSL's
-        // `lookup_expression` reads `scope.binding(name)`; matching
-        // the prop key naming preserves Rust-side `ctx.prop_str` /
-        // `ctx.prop_bool` semantics without a translation layer.
+        // Seed schema defaults first so `{title}` / `{enabled}`
+        // interpolations have a sensible fallback when the caller
+        // didn't pass the prop. Authored `.prism-ui` source treats a
+        // missing prop the same as an empty one in `if=` / `else=`
+        // checks, so a schema default lets the DSL inherit the
+        // Rust-side `with_default` value without re-stating it.
+        for field in (self.schema)() {
+            if !field.default.is_null() {
+                scope = scope.with_binding(field.key, field.default);
+            }
+        }
+        // Then seed the actual `node.props` — overriding defaults
+        // where present, mirroring Rust-side `ctx.prop_str` /
+        // `ctx.prop_bool` precedence (caller wins over schema default).
         if let Some(map) = node.props.as_object() {
             for (k, v) in map {
                 scope = scope.with_binding(k.clone(), v.clone());
@@ -293,7 +303,7 @@ impl std::error::Error for PrismUiLoadError {}
 //   3. Delete the old `components/<id>.rs` Rust file + its
 //      `pub mod` row in `mod.rs` + its row in `SHELL_BUILTINS`.
 
-fn toolbar_separator_schema() -> Vec<FieldSpec> {
+fn no_schema() -> Vec<FieldSpec> {
     vec![]
 }
 
@@ -321,12 +331,108 @@ fn docs_sidebar_schema() -> Vec<FieldSpec> {
     ]
 }
 
-fn toast_stack_schema() -> Vec<FieldSpec> {
-    vec![]
-}
-
 fn launchpad_schema() -> Vec<FieldSpec> {
     vec![FieldSpec::text("title", "Hero title")]
+}
+
+// Wave 11.2 batch — Tier-1 migrations landed alongside the loader
+// generalisations (schema-default seeding into scope + `props="{expr}"`
+// resolver-side spread). Each schema mirrors its Rust-side source
+// 1:1 so the Rust → DSL switch is invisible to consumers.
+
+fn explorer_schema() -> Vec<FieldSpec> {
+    vec![FieldSpec::text("nodes", "Nodes (JSON array of row props)")]
+}
+
+fn docs_content_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("doc-title", "Title").required(),
+        FieldSpec::text("doc-summary", "Summary"),
+        FieldSpec::textarea("doc-body", "Body"),
+        FieldSpec::boolean("compact", "Compact").with_default(Value::Bool(false)),
+    ]
+}
+
+fn section_header_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("label", "Label").required(),
+        FieldSpec::boolean("collapsed", "Collapsed").with_default(Value::Bool(false)),
+        FieldSpec::text("section-id", "Section ID"),
+    ]
+}
+
+fn section_header_signals() -> Vec<SignalDef> {
+    with_common_signals(vec![SignalDef::new(
+        "section-toggled",
+        "Fires when the header is clicked — payload carries the section id.",
+    )
+    .with_payload(vec![FieldSpec::text("section_id", "Section ID")])])
+}
+
+fn nav_button_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("icon", "Icon").required(),
+        FieldSpec::boolean("selected", "Selected").with_default(Value::Bool(false)),
+        FieldSpec::text("help-id", "Help ID"),
+        FieldSpec::text("nav-id", "Activity-bar id"),
+    ]
+}
+
+fn nav_button_signals() -> Vec<SignalDef> {
+    with_common_signals(vec![
+        SignalDef::new(
+            "hover-start",
+            "Pointer entered the button — positional payload for tooltip placement.",
+        )
+        .with_payload(vec![
+            FieldSpec::text("help_id", "Help ID"),
+            FieldSpec::number("x", "X (px)", NumericBounds::default()),
+            FieldSpec::number("y", "Y (px)", NumericBounds::default()),
+        ]),
+        SignalDef::new("hover-end", "Pointer left the button."),
+    ])
+}
+
+fn inspector_tree_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("aria-label", "ARIA label"),
+        FieldSpec::text("nodes", "Inspector rows (JSON array)"),
+    ]
+}
+
+fn nav_page_list_schema() -> Vec<FieldSpec> {
+    vec![FieldSpec::text(
+        "pages",
+        "Pages (JSON array of nav-page-row props)",
+    )]
+}
+
+fn signals_panel_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("title", "Section title"),
+        FieldSpec::text(
+            "connections",
+            "Connections (JSON array of signal-connection-row props)",
+        ),
+        FieldSpec::boolean("show-add", "Render the add-connection footer")
+            .with_default(Value::Bool(true)),
+    ]
+}
+
+fn workflow_page_bar_schema() -> Vec<FieldSpec> {
+    vec![FieldSpec::text("pages", "Pages (JSON array)")]
+}
+
+fn items_only_schema() -> Vec<FieldSpec> {
+    vec![FieldSpec::text("items", "Items (JSON array)")]
+}
+
+fn add_modifier_button_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("target-id", "Owning node id").required(),
+        FieldSpec::text("attached", "Already-attached ids (JSON array)")
+            .with_default(Value::Array(Vec::new())),
+    ]
 }
 
 pub static SHELL_PRISM_UI_COMPONENTS: &[PrismUiSpec] = &[
@@ -334,7 +440,7 @@ pub static SHELL_PRISM_UI_COMPONENTS: &[PrismUiSpec] = &[
         "shell.toolbar-separator",
         include_str!("../../ui/components/toolbar-separator.prism-ui"),
     )
-    .schema(toolbar_separator_schema),
+    .schema(no_schema),
     PrismUiSpec::new(
         "shell.help-tooltip",
         include_str!("../../ui/components/help-tooltip.prism-ui"),
@@ -354,12 +460,75 @@ pub static SHELL_PRISM_UI_COMPONENTS: &[PrismUiSpec] = &[
         "shell.toast-stack",
         include_str!("../../ui/components/toast-stack.prism-ui"),
     )
-    .schema(toast_stack_schema),
+    .schema(no_schema),
     PrismUiSpec::new(
         "shell.launchpad",
         include_str!("../../ui/components/launchpad.prism-ui"),
     )
     .schema(launchpad_schema),
+    // Wave 11.2 batch — 7 Tier-1 migrations
+    PrismUiSpec::new(
+        "shell.explorer",
+        include_str!("../../ui/components/explorer.prism-ui"),
+    )
+    .schema(explorer_schema),
+    PrismUiSpec::new(
+        "shell.docs-content",
+        include_str!("../../ui/components/docs-content.prism-ui"),
+    )
+    .schema(docs_content_schema),
+    PrismUiSpec::new(
+        "shell.section-header",
+        include_str!("../../ui/components/section-header.prism-ui"),
+    )
+    .schema(section_header_schema)
+    .signals(section_header_signals),
+    PrismUiSpec::new(
+        "shell.nav-button",
+        include_str!("../../ui/components/nav-button.prism-ui"),
+    )
+    .schema(nav_button_schema)
+    .signals(nav_button_signals),
+    PrismUiSpec::new(
+        "shell.inspector-tree",
+        include_str!("../../ui/components/inspector-tree.prism-ui"),
+    )
+    .schema(inspector_tree_schema),
+    PrismUiSpec::new(
+        "shell.nav-page-list",
+        include_str!("../../ui/components/nav-page-list.prism-ui"),
+    )
+    .schema(nav_page_list_schema),
+    PrismUiSpec::new(
+        "shell.signals-panel",
+        include_str!("../../ui/components/signals-panel.prism-ui"),
+    )
+    .schema(signals_panel_schema),
+    PrismUiSpec::new(
+        "shell.workflow-page-bar",
+        include_str!("../../ui/components/workflow-page-bar.prism-ui"),
+    )
+    .schema(workflow_page_bar_schema),
+    PrismUiSpec::new(
+        "shell.menu-dropdown",
+        include_str!("../../ui/components/menu-dropdown.prism-ui"),
+    )
+    .schema(items_only_schema),
+    PrismUiSpec::new(
+        "shell.context-menu",
+        include_str!("../../ui/components/context-menu.prism-ui"),
+    )
+    .schema(items_only_schema),
+    PrismUiSpec::new(
+        "shell.add-modifier-button",
+        include_str!("../../ui/components/add-modifier-button.prism-ui"),
+    )
+    .schema(add_modifier_button_schema),
+    PrismUiSpec::new(
+        "shell.add-connection-button",
+        include_str!("../../ui/components/add-connection-button.prism-ui"),
+    )
+    .schema(no_schema),
 ];
 
 #[cfg(test)]
@@ -455,6 +624,145 @@ mod tests {
                 spec.id
             );
         }
+    }
+
+    #[test]
+    fn shell_new_render_carries_workflow_page_button_hits() {
+        // Production parity: a fresh `Shell::new()` boots the default
+        // workspace (6 workflow pages), renders, and the resulting
+        // tree must include the dispatched workflow-page-button
+        // descendants. Regression guard against the DSL migration
+        // dropping the `for` loop or its `props="{item}"` spread.
+        let shell = crate::Shell::new().expect("boot");
+        let nodes = shell.render();
+        // Collect every `data-role` across the rendered tree.
+        fn walk(n: &UiNode, sink: &mut Vec<String>) {
+            if let UiNode::Container { props, children, .. } = n {
+                for (k, v) in &props.semantic.attrs {
+                    if k == "data-role" {
+                        sink.push(v.clone());
+                    }
+                }
+                for c in children {
+                    walk(c, sink);
+                }
+            }
+        }
+        let mut roles = Vec::new();
+        for n in &nodes {
+            walk(n, &mut roles);
+        }
+        roles.sort();
+        roles.dedup();
+        assert!(
+            roles.iter().any(|r| r == "workflow-page-button"),
+            "rendered tree missing workflow-page-button; got {roles:?}"
+        );
+    }
+
+    #[test]
+    fn workflow_page_bar_via_render_tree_pipeline_emits_workflow_page_buttons() {
+        // Production parity: drive the DSL block through the same
+        // `render_tree` pipeline the shell uses at runtime —
+        // `fill_compositions` injects the workflow-page-bar emission
+        // as a string `pages="[…]"` attribute, the resolver decodes
+        // it via `value_for`'s JSON parse rule, and the DSL block
+        // iterates and dispatches to `shell.workflow-page-button`.
+        use crate::props::{PropCtx, PropEmission, ShellPropBindings};
+        use crate::render::{render_tree, Skeleton};
+
+        let skel = Skeleton::from_source(
+            r#"<shell.workflow-page-bar id="workflow"/>"#,
+        )
+        .expect("parse");
+
+        let (reg, _) = build_registry();
+        let bindings = {
+            let mut b = ShellPropBindings::default();
+            b.register("shell.workflow-page-bar", Box::new(|_| {
+                PropEmission::from_props(json!({
+                    "pages": [
+                        { "page-id": "edit", "label": "Edit", "active": true },
+                        { "page-id": "code", "label": "Code" },
+                    ],
+                }))
+            }));
+            b
+        };
+        let state = crate::AppState::default();
+        let ctx = PropCtx {
+            state: &state,
+            viewport_w: 1280.0,
+            viewport_h: 800.0,
+            canvas_zoom: 1.0,
+            registry: None,
+            block_invalidator: None,
+            modifier_registry: None,
+        };
+        let nodes = render_tree(&skel, &bindings, reg.tag_resolver(), &ctx);
+        let UiNode::Container { children, .. } = &nodes[0] else {
+            panic!("not a container")
+        };
+        let roles: Vec<String> = children
+            .iter()
+            .filter_map(|c| match c {
+                UiNode::Container { props, .. } => props
+                    .semantic
+                    .attrs
+                    .iter()
+                    .find(|(k, _)| k == "data-role")
+                    .map(|(_, v)| v.clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            roles.iter().any(|r| r == "workflow-page-button"),
+            "no child carries data-role=workflow-page-button; got {roles:?}; \
+             children: {children:#?}"
+        );
+    }
+
+    #[test]
+    fn workflow_page_bar_iterates_pages_and_dispatches_through_resolver() {
+        let (reg, _) = build_registry();
+        let ui = lower_from_registry(
+            &reg,
+            "shell.workflow-page-bar",
+            json!({
+                "pages": [
+                    { "page-id": "edit", "label": "Edit", "active": true },
+                    { "page-id": "code", "label": "Code" },
+                ]
+            }),
+        );
+        let UiNode::Container { children, .. } = ui else {
+            panic!("not a container")
+        };
+        // Two flanking spacers + two dispatched workflow-page-button
+        // containers = 4 children.
+        assert_eq!(
+            children.len(),
+            4,
+            "expected 2 spacers + 2 page buttons, got {children:#?}"
+        );
+        // Find the dispatched buttons and verify they carry the
+        // expected `data-role` attribute.
+        let roles: Vec<String> = children
+            .iter()
+            .filter_map(|c| match c {
+                UiNode::Container { props, .. } => props
+                    .semantic
+                    .attrs
+                    .iter()
+                    .find(|(k, _)| k == "data-role")
+                    .map(|(_, v)| v.clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            roles.iter().any(|r| r == "workflow-page-button"),
+            "no child carries data-role=workflow-page-button; got {roles:?}"
+        );
     }
 
     #[test]

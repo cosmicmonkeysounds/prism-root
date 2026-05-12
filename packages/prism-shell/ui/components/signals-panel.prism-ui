@@ -1,0 +1,30 @@
+<!--
+  shell.signals-panel — composition panel for the signals editor.
+  Wave 11.2 migration of signals_panel.rs.
+
+  Reads `connections` (JSON array → spread onto signal-connection-row),
+  optional `title` for the section header, and `show-add` (default
+  true) to append the "+ Add Connection" footer. `<host-children/>`
+  lets `.prism-ui` source author bespoke headers / footers above the
+  dispatched rows.
+-->
+<container
+    tag="section"
+    direction="column"
+    gap="4"
+    padding-left="12"
+    padding-right="12"
+    padding-top="12"
+    padding-bottom="12"
+    width="grow"
+    height="grow"
+    aria-label="Signals"
+    data:role="signals-panel">
+  <text if="{title}" font-size="11" style:color="#80000000">{title}</text>
+  <host-children/>
+  <shell.signal-connection-row
+      for="item in connections"
+      id="{item.connection-id}"
+      props="{item}"/>
+  <shell.add-connection-button if="{show-add}"/>
+</container>

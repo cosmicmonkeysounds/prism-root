@@ -207,9 +207,9 @@ mod tests {
     /// the resolver path uses. Used by tests that assert on the
     /// rendered content of those sections.
     fn lower_with_full_registry(props: Value, children: Vec<BuilderNode>) -> UiNode {
-        use crate::components::registry::{register_shell_builtins, ShellComponentRegistry};
+        use crate::components::registry::{register_full_shell_chrome, ShellComponentRegistry};
         let mut reg = ShellComponentRegistry::new();
-        register_shell_builtins(&mut reg).expect("register");
+        register_full_shell_chrome(&mut reg).expect("register");
         let owned = reg;
         let cr = owned.as_component_registry();
         lower_in(props, children, Some(cr))

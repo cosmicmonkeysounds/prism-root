@@ -69,14 +69,14 @@ pub const PROPERTIES_PANEL_SPEC: prism_builder::BlockSpec =
 mod tests {
     use super::*;
 
-    use crate::components::registry::{register_shell_builtins, ShellComponentRegistry};
+    use crate::components::registry::{register_full_shell_chrome, ShellComponentRegistry};
     use crate::components::testing::test_node;
     use serde_json::json;
 
     fn lower(props: serde_json::Value) -> UiNode {
         let n = test_node("pp", "shell.properties-panel", props);
         let mut reg = ShellComponentRegistry::new();
-        register_shell_builtins(&mut reg).expect("register");
+        register_full_shell_chrome(&mut reg).expect("register");
         let owned = reg;
         let cascade = StyleProperties::default();
         let ctx = LowerCtx::new(Some(owned.as_component_registry()), &cascade);

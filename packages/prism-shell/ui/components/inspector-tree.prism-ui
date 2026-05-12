@@ -1,0 +1,43 @@
+<!--
+  shell.inspector-tree — composition wrapper hosting
+  `shell.inspector-row` children. Wave 11.2 migration of
+  inspector_tree.rs.
+
+  The `nodes` JSON array drives the dispatched-row path (the §43 C3
+  selection-driven binding); `<host-children/>` lets a `.prism-ui`
+  caller embed extra rows inline (used by the canonical skeleton tests).
+-->
+<container
+    if="{aria-label}"
+    tag="ul"
+    direction="column"
+    width="grow"
+    role="tree"
+    aria-label="{aria-label}">
+  <host-children/>
+  <shell.inspector-row
+      for="item in nodes"
+      id="{item.node-id}"
+      node-id="{item.node-id}"
+      component-id="{item.label}"
+      kind="node"
+      depth="{item.depth}"
+      selected="{item.selected}"/>
+</container>
+<container
+    else
+    tag="ul"
+    direction="column"
+    width="grow"
+    role="tree"
+    aria-label="Document tree">
+  <host-children/>
+  <shell.inspector-row
+      for="item in nodes"
+      id="{item.node-id}"
+      node-id="{item.node-id}"
+      component-id="{item.label}"
+      kind="node"
+      depth="{item.depth}"
+      selected="{item.selected}"/>
+</container>

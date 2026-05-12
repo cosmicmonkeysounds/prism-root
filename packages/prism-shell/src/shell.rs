@@ -21,7 +21,7 @@ use prism_ui_runtime::interpret::TagResolver;
 use prism_ui_runtime::layout::{HitRect, Node as UiNode, Surface, Viewport};
 
 use crate::components::{
-    register_document_builtins, register_shell_builtins, ShellComponentRegistry,
+    register_document_builtins, ShellComponentRegistry,
 };
 use crate::events::dispatch_event;
 use crate::props::{PropCtx, ShellPropBindings};
@@ -142,26 +142,17 @@ pub struct Shell {
 impl Shell {
     pub fn new() -> Result<Self, ShellError> {
         let mut registry = ShellComponentRegistry::new();
-        register_shell_builtins(&mut registry).map_err(|e| ShellError::Registry(e.to_string()))?;
+        // Wave 11.2 single-call bootstrap: native `SHELL_BUILTINS` +
+        // `.prism-ui`-authored `SHELL_PRISM_UI_COMPONENTS` land into
+        // the same registry, then `finalize_prism_ui_resolver` lets
+        // composed `<shell.*>` / `<prism.*>` tags inside a DSL source
+        // dispatch against the live merged registry. The helper is
+        // also the test-side bootstrap so test/prod paths share the
+        // exact same registration order.
+        crate::components::registry::register_full_shell_chrome(&mut registry)
+            .map_err(|e| ShellError::Registry(e.to_string()))?;
         register_document_builtins(&mut registry)
             .map_err(|e| ShellError::Registry(e.to_string()))?;
-        // Wave 11.2 — load every `.prism-ui`-authored shell component
-        // alongside the native `SHELL_BUILTINS` rows. The shared
-        // resolver cell is populated *after* every block (native and
-        // DSL) registers, so composed `<shell.*>` / `<prism.*>` tags
-        // inside a DSL source dispatch against the live merged
-        // registry.
-        let prism_ui_resolver = crate::components::prism_ui_loader::make_shared_resolver();
-        crate::components::prism_ui_loader::register_prism_ui_components(
-            &mut registry,
-            crate::components::prism_ui_loader::SHELL_PRISM_UI_COMPONENTS,
-            &prism_ui_resolver,
-        )
-        .map_err(|e| ShellError::Registry(e.to_string()))?;
-        crate::components::prism_ui_loader::finalize_prism_ui_resolver(
-            &prism_ui_resolver,
-            &registry,
-        );
         let resolver = registry.tag_resolver();
         let bindings = ShellPropBindings::with_builtins();
         let services = ServiceRegistry::with_builtins();

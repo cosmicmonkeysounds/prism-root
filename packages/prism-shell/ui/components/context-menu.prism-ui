@@ -1,0 +1,31 @@
+<!--
+  shell.context-menu — right-click menu. Wave 11.2 migration of
+  context_menu.rs. Same lowering shape as shell.menu-dropdown
+  (a column of menu items), distinct registered tag.
+
+  Visibility gate (§43 A2): an empty `items` array collapses the
+  overlay to a 0×0 hidden placeholder (matches `chrome::hidden_overlay`).
+-->
+<container
+    if="{items}"
+    tag="div"
+    direction="column"
+    padding-left="4"
+    padding-right="4"
+    padding-top="4"
+    padding-bottom="4"
+    width="220"
+    role="menu"
+    data:role="context-menu"
+    style:radius="6"
+    style:background="#ffffff">
+  <shell.menu-item for="item in items" id="{item.item-id}" props="{item}"/>
+</container>
+<container
+    else
+    tag="div"
+    width="0"
+    height="0"
+    data:role="context-menu"
+    data:visible="false"
+    aria:hidden="true"/>

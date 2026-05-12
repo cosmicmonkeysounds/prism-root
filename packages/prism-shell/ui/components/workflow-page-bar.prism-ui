@@ -1,0 +1,26 @@
+<!--
+  shell.workflow-page-bar — DaVinci-style 32px bottom strip with
+  centred workflow-page tabs. Wave 11.2 migration of
+  workflow_page_bar.rs.
+
+  The runtime container has no `justify_content` so the bar flanks
+  the tab row with two `width="grow"` spacers — the canonical
+  CSS-flex centring technique. Empty bars (no pages) skip the
+  spacers and render as a bare strip.
+-->
+<container
+    tag="nav"
+    direction="row"
+    gap="0"
+    width="grow"
+    height="32"
+    role="tablist"
+    aria-label="Workflow pages"
+    style:background="#f4000000">
+  <container if="{pages}" id="wf-spacer-left" width="grow" height="grow" data:role="spacer"/>
+  <shell.workflow-page-button
+      for="item in pages"
+      id="{item.page-id}"
+      props="{item}"/>
+  <container if="{pages}" id="wf-spacer-right" width="grow" height="grow" data:role="spacer"/>
+</container>

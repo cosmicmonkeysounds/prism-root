@@ -1,0 +1,23 @@
+<!--
+  shell.nav-page-list — thin host that columns nav-page-row entries.
+  Wave 11.2 migration of nav_page_list.rs.
+
+  Reads a `pages` JSON array; each entry is spread verbatim onto a
+  `shell.nav-page-row` via `props="{item}"` so the row's full prop
+  schema is forwarded without enumerating each key in the DSL.
+-->
+<container
+    tag="ul"
+    direction="column"
+    gap="2"
+    padding-left="6"
+    padding-right="6"
+    padding-top="6"
+    padding-bottom="6"
+    width="grow"
+    height="grow"
+    role="list"
+    aria-label="Pages"
+    data:role="nav-page-list">
+  <shell.nav-page-row for="item in pages" id="{item.page-id}" props="{item}"/>
+</container>
