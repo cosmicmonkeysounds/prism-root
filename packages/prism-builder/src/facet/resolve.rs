@@ -9,7 +9,8 @@ use prism_core::language::expression::{evaluate_expression, ExprValue};
 use prism_core::widget::{get_json_field, json_sort_key, FilterOp, QueryFilter};
 
 use crate::document::{Node, NodeId};
-use crate::prefab::{apply_prop_to_node, PrefabDef};
+use crate::mutator::NodeMutator;
+use crate::prefab::PrefabDef;
 use crate::registry::FieldKind;
 
 use super::*;
@@ -45,12 +46,9 @@ pub fn apply_scalar_bindings(doc: &mut crate::document::BuilderDocument) {
         .collect();
 
     if let Some(root) = &mut doc.root {
+        let mutator = NodeMutator::new();
         for (node_id, prop_key, val) in pairs {
-            if let Some(node) = root.find_mut(&node_id) {
-                if let Value::Object(ref mut map) = node.props {
-                    map.insert(prop_key, val);
-                }
-            }
+            mutator.write_at(root, &node_id, &prop_key, val);
         }
     }
 }
@@ -93,10 +91,11 @@ pub(super) fn apply_bindings(
     bindings: &[FacetBinding],
     item: &Value,
 ) {
+    let mutator = NodeMutator::new();
     for binding in bindings {
         if let Some(slot) = prefab.exposed.iter().find(|s| s.key == binding.slot_key) {
             if let Some(value) = get_json_field(item, &binding.item_field) {
-                apply_prop_to_node(root, &slot.target_node, &slot.target_prop, value);
+                mutator.write_at(root, &slot.target_node, &slot.target_prop, value);
             }
         }
     }
@@ -106,6 +105,7 @@ pub(super) fn apply_bindings(
 /// sets the axis key prop so the variant system picks it up during render.
 #[allow(dead_code)]
 pub(super) fn evaluate_variant_rules(root: &mut Node, rules: &[FacetVariantRule], item: &Value) {
+    let mutator = NodeMutator::new();
     for rule in rules {
         let raw = get_json_field(item, &rule.field);
         let sort_key = raw.clone().map(json_sort_key).unwrap_or_default();
@@ -115,12 +115,7 @@ pub(super) fn evaluate_variant_rules(root: &mut Node, rules: &[FacetVariantRule]
                 .map(|v| v.to_string().trim_matches('"') == rule.value)
                 .unwrap_or(false);
         if matches {
-            if let Value::Object(ref mut map) = root.props {
-                map.insert(
-                    rule.axis_key.clone(),
-                    Value::String(rule.axis_value.clone()),
-                );
-            }
+            mutator.write(root, &rule.axis_key, Value::String(rule.axis_value.clone()));
         }
     }
 }

@@ -33,15 +33,17 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use prism_core::reactive::ReactiveContext;
+use prism_core::reactive::{ReactiveContext, Signal};
 use prism_ui_runtime::command::{Color, CornerRadius};
 use prism_ui_runtime::interpret::TagEmission;
 use prism_ui_runtime::layout::{
     ContainerProps, Direction, HoverOverrides, Node as UiNode, Padding, Semantic, Sizing, TextProps,
 };
+use serde_json::Value;
 
 use crate::document::Node;
 use crate::layout::{Dimension, FlexDirection, FlowProps, LayoutMode};
+use crate::reactive_props::DocumentBindings;
 use crate::registry::ComponentRegistry;
 use crate::style::{resolve_cascade, StyleProperties};
 
@@ -175,6 +177,14 @@ pub struct LowerCtx<'a> {
     /// child scopes unchanged (a single invalidator instance covers
     /// the whole document walk).
     block_invalidator: Option<BlockInvalidator>,
+    /// **Phase 4b**: per-document reactive prop store. When present,
+    /// every [`Self::prop`] / [`Self::prop_str`] / [`Self::prop_bool`]
+    /// call goes through `bindings.props_for(node.id, ..).signal(key)`,
+    /// subscribing the current per-block reactive context (Phase 3b)
+    /// so a later write to the prop signal marks the node dirty.
+    /// `None` for headless tests + the non-reactive SSR path — those
+    /// callers read directly from `node.props` and don't subscribe.
+    bindings: Option<&'a DocumentBindings>,
 }
 
 impl<'a> LowerCtx<'a> {
@@ -188,6 +198,7 @@ impl<'a> LowerCtx<'a> {
             host_children: None,
             tag_emissions: None,
             block_invalidator: None,
+            bindings: None,
         }
     }
 
@@ -208,6 +219,23 @@ impl<'a> LowerCtx<'a> {
     /// same invalidator with the inner pass.
     pub fn block_invalidator(&self) -> Option<&BlockInvalidator> {
         self.block_invalidator.as_ref()
+    }
+
+    /// Install a [`DocumentBindings`] — every `prop_*` read on this
+    /// context (and on every recursively-derived child) goes through
+    /// `bindings.props_for(node.id, ..).signal(key)`, subscribing the
+    /// current per-block reactive context (Phase 3b). Writes through
+    /// [`crate::mutator::NodeMutator`] reach the same signal and wake
+    /// subscribers automatically. **Phase 4b** of
+    /// `docs/dev/dioxus-inspiration.md`.
+    pub fn with_bindings(mut self, bindings: &'a DocumentBindings) -> Self {
+        self.bindings = Some(bindings);
+        self
+    }
+
+    /// The currently installed reactive prop store, if any.
+    pub fn bindings(&self) -> Option<&DocumentBindings> {
+        self.bindings
     }
 
     /// Builder-style installer for host-supplied pre-lowered children.
@@ -272,6 +300,7 @@ impl<'a> LowerCtx<'a> {
             host_children: None,
             tag_emissions: self.tag_emissions.clone(),
             block_invalidator: self.block_invalidator.clone(),
+            bindings: self.bindings,
         };
         // Phase 3b: wrap the `Component::lower_ui` call in a per-NodeId
         // reactive context when an invalidator is installed. Signal
@@ -369,6 +398,77 @@ impl<'a> LowerCtx<'a> {
         self.parent_style
     }
 
+    /// Subscribing read of one of `node`'s props. When a
+    /// [`DocumentBindings`] is installed on this scope (Phase 4b), the
+    /// read goes through `bindings.props_for(node.id, &node.props).signal(key)`,
+    /// subscribing the current reactive context — a later write to the
+    /// same prop (through [`crate::mutator::NodeMutator`] or any signal
+    /// writer pointing at the same bag) marks the node dirty. Without
+    /// bindings, falls back to a direct, non-subscribing `node.props`
+    /// read so headless tests / no-reactivity SSR keep working.
+    ///
+    /// Returns `Value::Null` when the key isn't present. Block authors
+    /// typically prefer the typed accessors ([`Self::prop_str`],
+    /// [`Self::prop_bool`]); this is the escape hatch for object /
+    /// array values.
+    pub fn prop(&self, node: &Node, key: &str) -> Value {
+        match self.bindings {
+            Some(b) if !node.id.is_empty() => {
+                let bag = b.props_for(&node.id, &node.props);
+                bag.signal(key).get()
+            }
+            _ => node.props.get(key).cloned().unwrap_or(Value::Null),
+        }
+    }
+
+    /// Raw reactive signal handle for `node.props[key]`. Returns `None`
+    /// when no [`DocumentBindings`] is installed on this scope.
+    /// Advanced consumers (memos that derive across multiple props,
+    /// effects authored outside `lower_ui`) hold this directly; chrome
+    /// blocks normally use [`Self::prop_str`] / [`Self::prop_bool`].
+    pub fn prop_signal(&self, node: &Node, key: &str) -> Option<Signal<Value>> {
+        let b = self.bindings?;
+        if node.id.is_empty() {
+            return None;
+        }
+        Some(b.props_for(&node.id, &node.props).signal(key))
+    }
+
+    /// Subscribing read of a string-valued prop. Returns an empty
+    /// `String` when missing or not a string. Owned (rather than
+    /// borrowed-from-`Node`) so the call site composes uniformly
+    /// whether reading from JSON or from a reactive signal — the
+    /// latter doesn't hand out borrows into the cell.
+    pub fn prop_str(&self, node: &Node, key: &str) -> String {
+        match self.bindings {
+            Some(b) if !node.id.is_empty() => b
+                .props_for(&node.id, &node.props)
+                .signal(key)
+                .read(|v| v.as_str().unwrap_or("").to_string()),
+            _ => node
+                .props
+                .get(key)
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+        }
+    }
+
+    /// Subscribing read of a bool-valued prop with a fallback.
+    pub fn prop_bool(&self, node: &Node, key: &str, default: bool) -> bool {
+        match self.bindings {
+            Some(b) if !node.id.is_empty() => b
+                .props_for(&node.id, &node.props)
+                .signal(key)
+                .read(|v| v.as_bool().unwrap_or(default)),
+            _ => node
+                .props
+                .get(key)
+                .and_then(|v| v.as_bool())
+                .unwrap_or(default),
+        }
+    }
+
     /// Resolve and lower an *embedded* block by its registered component
     /// id, synthesising a derived `Node` from a JSON props value. The
     /// dispatch goes through whichever [`ComponentRegistry`] is on this
@@ -437,6 +537,7 @@ impl<'a> LowerCtx<'a> {
             host_children,
             tag_emissions: self.tag_emissions.clone(),
             block_invalidator: self.block_invalidator.clone(),
+            bindings: self.bindings,
         };
         // Phase 3b: wrap the synthesised composition's lower in a
         // per-NodeId reactive context too, scoped on the *derived* id.
@@ -565,33 +666,6 @@ pub fn with_semantic(node: UiNode, semantic: Semantic) -> UiNode {
         },
         UiNode::Spacer { .. } => node,
     }
-}
-
-/// Read a string-valued prop. Returns `""` when the key is missing
-/// or the value isn't a string. Most chrome primitives reach for the
-/// "give me the icon path / label / kind, defaulting to empty when
-/// unset" pattern several times per `lower_ui` impl — centralising
-/// the `node.props.get(k).and_then(|v| v.as_str()).unwrap_or("")`
-/// dance keeps each call site to one line.
-pub fn prop_str<'a>(node: &'a Node, key: &str) -> &'a str {
-    node.props.get(key).and_then(|v| v.as_str()).unwrap_or("")
-}
-
-/// Owned variant of [`prop_str`] for the (very common) case where the
-/// extracted prop is immediately interpolated into a child id /
-/// `text_node` content / `image_node` source.
-pub fn prop_string(node: &Node, key: &str) -> String {
-    prop_str(node, key).to_string()
-}
-
-/// Read a bool-valued prop with a fallback. Mirrors the
-/// `matches!(node.props.get(k), Some(Value::Bool(true)))` pattern
-/// every chrome primitive open-coded before this helper landed.
-pub fn prop_bool(node: &Node, key: &str, default: bool) -> bool {
-    node.props
-        .get(key)
-        .and_then(|v| v.as_bool())
-        .unwrap_or(default)
 }
 
 /// Build a [`UiNode::Text`] with the cascade colour overridden by an
@@ -1223,12 +1297,59 @@ mod tests {
             modifiers: vec![],
             style: StyleProperties::default(),
         };
-        assert_eq!(prop_str(&node, "label"), "Hi");
-        assert_eq!(prop_str(&node, "missing"), "");
-        assert_eq!(prop_string(&node, "label"), "Hi");
-        assert!(prop_bool(&node, "selected", false));
-        assert!(!prop_bool(&node, "missing", false));
-        assert!(prop_bool(&node, "missing", true));
+        let style = StyleProperties::default();
+        let ctx = LowerCtx::new(None, &style);
+        assert_eq!(ctx.prop_str(&node, "label"), "Hi");
+        assert_eq!(ctx.prop_str(&node, "missing"), "");
+        assert!(ctx.prop_bool(&node, "selected", false));
+        assert!(!ctx.prop_bool(&node, "missing", false));
+        assert!(ctx.prop_bool(&node, "missing", true));
+    }
+
+    #[test]
+    fn prop_helpers_subscribe_through_bindings() {
+        // Phase 4b: when a `DocumentBindings` is wired and we read a
+        // prop through `ctx.prop_str` inside a reactive context, the
+        // context subscribes; a later write through `NodeMutator`
+        // fires the dirty callback. This is the contract that makes
+        // `lower_ui` bodies reactive without per-block plumbing.
+        use crate::layout::LayoutMode;
+        use crate::mutator::NodeMutator;
+        use crate::reactive_props::DocumentBindings;
+        use prism_core::foundation::spatial::Transform2D;
+        use prism_core::reactive::ReactiveContext;
+        use serde_json::json;
+        use std::cell::Cell;
+        let mut node = Node {
+            id: "n".into(),
+            component: "x".into(),
+            props: json!({ "label": "hello" }),
+            children: vec![],
+            layout_mode: LayoutMode::default(),
+            transform: Transform2D::default(),
+            modifiers: vec![],
+            style: StyleProperties::default(),
+        };
+        let bindings = DocumentBindings::new();
+        let style = StyleProperties::default();
+        let ctx = LowerCtx::new(None, &style).with_bindings(&bindings);
+
+        let dirty = Rc::new(Cell::new(0_usize));
+        let dirty_for_ctx = Rc::clone(&dirty);
+        let rcx = ReactiveContext::new(move || {
+            dirty_for_ctx.set(dirty_for_ctx.get() + 1);
+        });
+        let read = rcx.reset_and_run_in(|| ctx.prop_str(&node, "label"));
+        assert_eq!(read, "hello");
+        assert_eq!(dirty.get(), 0, "subscribe alone doesn't fire dirty");
+
+        NodeMutator::with_bindings(&bindings).write(&mut node, "label", json!("world"));
+        assert_eq!(
+            dirty.get(),
+            1,
+            "reactive write wakes the subscribing context"
+        );
+        rcx.dispose();
     }
 
     #[test]

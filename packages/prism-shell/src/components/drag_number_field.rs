@@ -20,7 +20,7 @@ use prism_builder::{
     registry::{FieldSpec, NumericBounds},
     signal::SignalDef,
     style::StyleProperties,
-    ui_lower::{prop_str, prop_string, LowerCtx},
+    ui_lower::LowerCtx,
     with_common_signals,
 };
 use prism_ui_runtime::layout::Node as UiNode;
@@ -64,17 +64,17 @@ fn drag_number_field_signals() -> Vec<prism_builder::signal::SignalDef> {
     ])
 }
 
-fn drag_number_field_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
-    let label = prop_str(node, "label");
+fn drag_number_field_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let label = ctx.prop_str(node, "label");
     let value = node
         .props
         .get("value")
         .and_then(|v| v.as_f64())
         .unwrap_or(0.0);
-    let key = prop_string(node, "key");
+    let key = ctx.prop_str(node, "key");
     drag_number_field_node(
         node.id.clone(),
-        label,
+        &label,
         DRAG_NUMBER_LABEL_COLOR,
         format_drag_value(value),
         &key,

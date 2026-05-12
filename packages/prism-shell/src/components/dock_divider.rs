@@ -12,7 +12,7 @@ use prism_builder::{
     document::Node,
     registry::FieldSpec,
     style::StyleProperties,
-    ui_lower::{bare_container, parse_color, prop_str, LowerCtx},
+    ui_lower::{bare_container, parse_color, LowerCtx},
 };
 use prism_ui_runtime::layout::{Node as UiNode, Semantic, Sizing};
 
@@ -26,8 +26,8 @@ fn dock_divider_schema() -> Vec<FieldSpec> {
     ]
 }
 
-fn dock_divider_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
-    let orientation = prop_str(node, "orientation");
+fn dock_divider_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let orientation = ctx.prop_str(node, "orientation");
     let length = node
         .props
         .get("length")

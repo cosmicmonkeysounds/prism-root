@@ -13,13 +13,13 @@
 //! through `Block::lower_ui` like every other registered block.
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use prism_core::help::HelpEntry;
 
 use crate::block::Block;
 use crate::component::ComponentId;
 use crate::document::{Node, NodeId};
+use crate::mutator::NodeMutator;
 use crate::registry::FieldSpec;
 use crate::signal::{common_signals, SignalDef};
 use crate::variant::VariantAxis;
@@ -104,16 +104,21 @@ impl Block for PrefabComponent {
         //    node's id (so `card-title` becomes `nXX::card-title`).
         let mut materialised = clone_with_id_prefix(&self.def.root, &node.id);
 
-        // 2. Apply each ExposedSlot: read `key` from the host props,
-        //    write into `target_node.props[target_prop]`. Skip slots
-        //    whose key isn't present — the inner template's authored
-        //    default stands.
+        // 2. Apply each ExposedSlot through the unified mutation seam:
+        //    read `key` from the host props, write into
+        //    `target_node.props[target_prop]`. Skip slots whose key
+        //    isn't present — the inner template's authored default
+        //    stands.
+        let mutator = match ctx.bindings() {
+            Some(b) => NodeMutator::with_bindings(b),
+            None => NodeMutator::new(),
+        };
         for slot in &self.def.exposed {
             let Some(value) = node.props.get(&slot.key) else {
                 continue;
             };
             let prefixed_target = format!("{}::{}", node.id, slot.target_node);
-            apply_prop_to_node(
+            mutator.write_at(
                 &mut materialised,
                 &prefixed_target,
                 &slot.target_prop,
@@ -145,26 +150,6 @@ fn clone_with_id_prefix(node: &Node, prefix: &str) -> Node {
         layout_mode: node.layout_mode.clone(),
         transform: node.transform.clone(),
         modifiers: node.modifiers.clone(),
-    }
-}
-
-/// Walk `node` and write `value` into `node.props[prop_key]` for the
-/// first node with a matching id. Used by [`PrefabComponent::lower_ui`]
-/// and by the document-level `materialize_prefab` flow that flattens
-/// a prefab into the document tree (see `starter::materialize_prefab`).
-pub(crate) fn apply_prop_to_node(node: &mut Node, target_id: &str, prop_key: &str, value: Value) {
-    if node.id == target_id {
-        if let Value::Object(ref mut map) = node.props {
-            map.insert(prop_key.to_string(), value);
-            return;
-        }
-        let mut map = serde_json::Map::new();
-        map.insert(prop_key.to_string(), value);
-        node.props = Value::Object(map);
-        return;
-    }
-    for child in &mut node.children {
-        apply_prop_to_node(child, target_id, prop_key, value.clone());
     }
 }
 
@@ -234,38 +219,6 @@ mod tests {
     fn prefab_component_id() {
         let comp = PrefabComponent::new(hero_prefab());
         assert_eq!(Component::id(&comp), "prefab:hero");
-    }
-
-    #[test]
-    fn apply_prop_to_node_updates_target() {
-        let mut node = Node {
-            id: "a".into(),
-            component: "text".into(),
-            props: json!({ "body": "old" }),
-            children: vec![],
-            ..Default::default()
-        };
-        apply_prop_to_node(&mut node, "a", "body", json!("new"));
-        assert_eq!(node.props["body"], "new");
-    }
-
-    #[test]
-    fn apply_prop_to_node_finds_nested_target() {
-        let mut node = Node {
-            id: "root".into(),
-            component: "container".into(),
-            props: json!({}),
-            children: vec![Node {
-                id: "child".into(),
-                component: "text".into(),
-                props: json!({ "body": "old" }),
-                children: vec![],
-                ..Default::default()
-            }],
-            ..Default::default()
-        };
-        apply_prop_to_node(&mut node, "child", "body", json!("new"));
-        assert_eq!(node.children[0].props["body"], "new");
     }
 
     #[test]

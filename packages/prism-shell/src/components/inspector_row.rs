@@ -22,8 +22,7 @@ use prism_builder::{
     signal::SignalDef,
     style::StyleProperties,
     ui_lower::{
-        bare_container, colored_text_node, hover_bg, parse_color, prop_bool, prop_str, prop_string,
-        uniform_radius, LowerCtx,
+        bare_container, colored_text_node, hover_bg, parse_color, uniform_radius, LowerCtx,
     },
     with_common_signals,
 };
@@ -173,19 +172,19 @@ fn inspector_row_signals() -> Vec<prism_builder::signal::SignalDef> {
     ])
 }
 
-fn inspector_row_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
-    let kind = prop_str(node, "kind");
-    let m = metrics_for_kind(kind);
-    let selected = prop_bool(node, "selected", false);
-    let show_delete = prop_bool(node, "show-delete", false);
+fn inspector_row_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let kind = ctx.prop_str(node, "kind");
+    let m = metrics_for_kind(&kind);
+    let selected = ctx.prop_bool(node, "selected", false);
+    let show_delete = ctx.prop_bool(node, "show-delete", false);
     let depth = node
         .props
         .get("depth")
         .and_then(|v| v.as_f64())
         .unwrap_or(0.0)
         .max(0.0) as f32;
-    let component_label = prop_str(node, "component-id");
-    let node_id_text = prop_string(node, "node-id");
+    let component_label = ctx.prop_str(node, "component-id");
+    let node_id_text = ctx.prop_str(node, "node-id");
 
     // Style scaffold for child text — the kind table picks color
     // and size, `colored_text_node` clones a fresh StyleProperties
@@ -212,7 +211,7 @@ fn inspector_row_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StylePropertie
     ));
     left_children.push(colored_text_node(
         format!("{}::label", node.id),
-        component_label.into(),
+        component_label,
         &style,
         m.label_size,
         label_color,

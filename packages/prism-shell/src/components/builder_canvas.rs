@@ -14,9 +14,7 @@ use prism_builder::{
     registry::FieldSpec,
     signal::SignalDef,
     style::StyleProperties,
-    ui_lower::{
-        bare_container, hover_bg, parse_color, prop_bool, prop_string, uniform_radius, LowerCtx,
-    },
+    ui_lower::{bare_container, hover_bg, parse_color, uniform_radius, LowerCtx},
     with_common_signals,
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
@@ -82,7 +80,7 @@ fn builder_canvas_signals() -> Vec<prism_builder::signal::SignalDef> {
 }
 
 fn builder_canvas_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
-    let selection_id = prop_string(node, "selection-id");
+    let selection_id = ctx.prop_str(node, "selection-id");
     let selection_id = if selection_id.is_empty() {
         None
     } else {
@@ -270,8 +268,8 @@ fn build_grid_cell(node: &Node, idx: usize, item: &Value) -> UiNode {
 
 fn build_selection_layer(ctx: &LowerCtx<'_>, node: &Node) -> UiNode {
     let selection_rect = node.props.get("selection-rect");
-    let show_gizmo = prop_bool(node, "show-gizmo", false);
-    let tool = prop_string(node, "tool");
+    let show_gizmo = ctx.prop_bool(node, "show-gizmo", false);
+    let tool = ctx.prop_str(node, "tool");
 
     let mut layer_kids: Vec<UiNode> = Vec::new();
 

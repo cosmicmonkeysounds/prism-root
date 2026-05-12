@@ -20,9 +20,7 @@ use prism_builder::{
     registry::FieldSpec,
     signal::SignalDef,
     style::StyleProperties,
-    ui_lower::{
-        bare_container, colored_text_node, parse_color, prop_str, uniform_radius, LowerCtx,
-    },
+    ui_lower::{bare_container, colored_text_node, parse_color, uniform_radius, LowerCtx},
     with_common_signals,
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
@@ -142,8 +140,8 @@ fn builder_toolbar_signals() -> Vec<SignalDef> {
     ])
 }
 
-fn builder_toolbar_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
-    let device = prop_str(node, "device");
+fn builder_toolbar_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let device = ctx.prop_str(node, "device");
     let zoom = node
         .props
         .get("zoom")
@@ -158,7 +156,7 @@ fn builder_toolbar_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StylePropert
     let mut clusters: Vec<UiNode> = Vec::with_capacity(8);
     clusters.push(build_align_cluster(node));
     clusters.push(separator(format!("{}::sep-1", node.id)));
-    clusters.push(build_device_cluster(node, device));
+    clusters.push(build_device_cluster(node, &device));
     clusters.push(separator(format!("{}::sep-2", node.id)));
     clusters.push(build_zoom_cluster(node, zoom));
     clusters.push(separator(format!("{}::sep-3", node.id)));

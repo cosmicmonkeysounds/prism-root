@@ -12,7 +12,7 @@ use prism_builder::{
     registry::FieldSpec,
     signal::SignalDef,
     style::StyleProperties,
-    ui_lower::{bare_container, parse_color, prop_string, uniform_radius, LowerCtx},
+    ui_lower::{bare_container, parse_color, uniform_radius, LowerCtx},
     with_common_signals,
 };
 use prism_ui_runtime::layout::{Node as UiNode, Semantic, Sizing};
@@ -32,8 +32,8 @@ fn resize_handle_signals() -> Vec<prism_builder::signal::SignalDef> {
     ])
 }
 
-fn resize_handle_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
-    let dir = prop_string(node, "direction");
+fn resize_handle_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let dir = ctx.prop_str(node, "direction");
     let cursor = cursor_for(&dir);
 
     bare_container(node.id.clone(), vec![], |p| {

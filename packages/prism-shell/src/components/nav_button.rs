@@ -16,9 +16,7 @@ use prism_builder::{
     registry::{FieldSpec, NumericBounds},
     signal::SignalDef,
     style::StyleProperties,
-    ui_lower::{
-        bare_container, hover_bg, image_node, parse_color, prop_bool, prop_string, LowerCtx,
-    },
+    ui_lower::{bare_container, hover_bg, image_node, parse_color, LowerCtx},
     with_common_signals,
 };
 use prism_ui_runtime::layout::{Node as UiNode, Padding, Semantic, Sizing};
@@ -62,9 +60,9 @@ fn nav_button_signals() -> Vec<prism_builder::signal::SignalDef> {
 }
 
 fn nav_button_lower(ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> UiNode {
-    let icon = prop_string(node, "icon");
-    let selected = prop_bool(node, "selected", false);
-    let nav_id = prop_string(node, "nav-id");
+    let icon = ctx.prop_str(node, "icon");
+    let selected = ctx.prop_bool(node, "selected", false);
+    let nav_id = ctx.prop_str(node, "nav-id");
 
     // Left accent rail — 3px-wide vertical stroke that's only painted
     // when selected. We always emit the container to keep the layout

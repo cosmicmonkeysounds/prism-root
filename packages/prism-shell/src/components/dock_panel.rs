@@ -16,7 +16,7 @@ use prism_builder::{
     document::Node,
     registry::FieldSpec,
     style::StyleProperties,
-    ui_lower::{bare_container, parse_color, prop_str, LowerCtx},
+    ui_lower::{bare_container, parse_color, LowerCtx},
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Semantic, Sizing};
 use serde_json::Value;
@@ -33,7 +33,7 @@ fn dock_panel_schema() -> Vec<FieldSpec> {
 }
 
 fn dock_panel_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
-    let panel_id = prop_str(node, "panel-id");
+    let panel_id = ctx.prop_str(node, "panel-id");
     let mut sections: Vec<UiNode> = Vec::with_capacity(2);
 
     // Optional tab bar: present when the host gave us a `tabs`
@@ -71,7 +71,7 @@ fn dock_panel_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -
     } else if !node.children.is_empty() {
         ctx.lower_children(&node.children)
     } else if !panel_id.is_empty() {
-        prism_dock::PanelKind::tag_for(panel_id)
+        prism_dock::PanelKind::tag_for(&panel_id)
             .and_then(|tag| {
                 ctx.lower_as(tag, format!("{}::content", node.id), serde_json::json!({}))
             })

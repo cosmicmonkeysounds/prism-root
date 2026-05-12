@@ -13,8 +13,7 @@ use prism_builder::{
     signal::SignalDef,
     style::StyleProperties,
     ui_lower::{
-        bare_container, colored_text_node, hover_bg, parse_color, prop_bool, prop_string,
-        uniform_radius, LowerCtx,
+        bare_container, colored_text_node, hover_bg, parse_color, uniform_radius, LowerCtx,
     },
     with_common_signals,
 };
@@ -55,17 +54,17 @@ fn signal_connection_row_signals() -> Vec<prism_builder::signal::SignalDef> {
 }
 
 fn signal_connection_row_lower(
-    _ctx: &LowerCtx<'_>,
+    ctx: &LowerCtx<'_>,
     node: &Node,
     _style: &StyleProperties,
 ) -> UiNode {
     let style = StyleProperties::default();
-    let connection_id = prop_string(node, "connection-id");
-    let signal = prop_string(node, "source-signal");
-    let kind = prop_string(node, "action-kind");
-    let target = prop_string(node, "target-label");
-    let selected = prop_bool(node, "selected", false);
-    let show_delete = prop_bool(node, "show-delete", false);
+    let connection_id = ctx.prop_str(node, "connection-id");
+    let signal = ctx.prop_str(node, "source-signal");
+    let kind = ctx.prop_str(node, "action-kind");
+    let target = ctx.prop_str(node, "target-label");
+    let selected = ctx.prop_bool(node, "selected", false);
+    let show_delete = ctx.prop_bool(node, "show-delete", false);
 
     let signal_label = if signal.is_empty() {
         "(no signal)".into()

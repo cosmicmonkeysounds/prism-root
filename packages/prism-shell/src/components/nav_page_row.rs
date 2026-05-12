@@ -11,8 +11,7 @@ use prism_builder::{
     signal::SignalDef,
     style::StyleProperties,
     ui_lower::{
-        bare_container, colored_text_node, hover_bg, parse_color, prop_bool, prop_string,
-        uniform_radius, LowerCtx,
+        bare_container, colored_text_node, hover_bg, parse_color, uniform_radius, LowerCtx,
     },
     with_common_signals,
 };
@@ -61,14 +60,14 @@ fn nav_page_row_signals() -> Vec<prism_builder::signal::SignalDef> {
     ])
 }
 
-fn nav_page_row_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+fn nav_page_row_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
     let style = StyleProperties::default();
-    let page_id = prop_string(node, "page-id");
-    let title = prop_string(node, "page-title");
-    let route = prop_string(node, "route");
-    let is_active = prop_bool(node, "is-active", false);
-    let selected = prop_bool(node, "selected", false);
-    let show_delete = prop_bool(node, "show-delete", false);
+    let page_id = ctx.prop_str(node, "page-id");
+    let title = ctx.prop_str(node, "page-title");
+    let route = ctx.prop_str(node, "route");
+    let is_active = ctx.prop_bool(node, "is-active", false);
+    let selected = ctx.prop_bool(node, "selected", false);
+    let show_delete = ctx.prop_bool(node, "show-delete", false);
     let node_count = node
         .props
         .get("node-count")

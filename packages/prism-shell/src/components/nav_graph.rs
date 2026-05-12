@@ -15,8 +15,7 @@ use prism_builder::{
     registry::FieldSpec,
     style::StyleProperties,
     ui_lower::{
-        bare_container, colored_text_node, hover_bg, parse_color, prop_string, uniform_radius,
-        LowerCtx,
+        bare_container, colored_text_node, hover_bg, parse_color, uniform_radius, LowerCtx,
     },
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
@@ -43,9 +42,9 @@ fn nav_graph_schema() -> Vec<FieldSpec> {
     ]
 }
 
-fn nav_graph_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+fn nav_graph_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
     let style = StyleProperties::default();
-    let title = prop_string(node, "title");
+    let title = ctx.prop_str(node, "title");
 
     let edges_node = build_edge_layer(node);
     let cards = build_cards(node, &style);

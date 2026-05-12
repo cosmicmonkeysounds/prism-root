@@ -15,10 +15,7 @@
 
 use super::chrome::{active_underline_tab, TabStyle};
 use prism_builder::{
-    document::Node,
-    registry::FieldSpec,
-    style::StyleProperties,
-    ui_lower::{prop_bool, prop_str, prop_string, LowerCtx},
+    document::Node, registry::FieldSpec, style::StyleProperties, ui_lower::LowerCtx,
 };
 use prism_ui_runtime::layout::{Node as UiNode, Padding};
 use serde_json::Value;
@@ -54,9 +51,9 @@ fn workflow_page_button_lower(ctx: &LowerCtx<'_>, node: &Node, style: &StyleProp
         ctx,
         node,
         style,
-        prop_string(node, "label"),
-        prop_bool(node, "active", false),
-        prop_str(node, "page-id"),
+        ctx.prop_str(node, "label"),
+        ctx.prop_bool(node, "active", false),
+        &ctx.prop_str(node, "page-id"),
         &TAB_STYLE,
     )
 }

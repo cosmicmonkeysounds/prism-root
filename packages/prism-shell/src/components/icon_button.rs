@@ -20,7 +20,7 @@ use prism_builder::{
     schemas, // unused — reserved for shared field factories as we grow
     signal::SignalDef,
     style::StyleProperties,
-    ui_lower::{parse_color, prop_bool, prop_str, LowerCtx},
+    ui_lower::{parse_color, LowerCtx},
     with_common_signals,
 };
 use prism_ui_runtime::layout::Node as UiNode;
@@ -67,22 +67,22 @@ fn icon_button_signals() -> Vec<prism_builder::signal::SignalDef> {
     ])
 }
 
-fn icon_button_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+fn icon_button_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
     // Visual recipe lives in `chrome::icon_button_node` so it's
     // reusable from any chrome primitive that embeds a chevron /
     // trash / move button (InspectorRow, Tab pills, MenuBar items).
     // The Block layer's job is just prop → helper-arg translation.
-    let enabled = prop_bool(node, "enabled", true);
-    let tooltip = Some(prop_str(node, "tooltip-text")).filter(|s| !s.is_empty());
-    let tint = parse_color(prop_str(node, "tint"));
-    let command = Some(prop_str(node, "command")).filter(|s| !s.is_empty());
+    let enabled = ctx.prop_bool(node, "enabled", true);
+    let tooltip = Some(ctx.prop_str(node, "tooltip-text")).filter(|s| !s.is_empty());
+    let tint = parse_color(&ctx.prop_str(node, "tint"));
+    let command = Some(ctx.prop_str(node, "command")).filter(|s| !s.is_empty());
     icon_button_node_tinted(
         node.id.clone(),
-        prop_str(node, "icon").to_string(),
+        ctx.prop_str(node, "icon"),
         enabled,
-        tooltip,
+        tooltip.as_deref(),
         tint,
-        command,
+        command.as_deref(),
     )
 }
 

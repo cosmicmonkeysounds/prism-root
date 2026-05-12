@@ -24,10 +24,7 @@ use prism_builder::{
     registry::FieldSpec,
     signal::SignalDef,
     style::StyleProperties,
-    ui_lower::{
-        bare_container, colored_text_node, parse_color, prop_str, prop_string, uniform_radius,
-        LowerCtx,
-    },
+    ui_lower::{bare_container, colored_text_node, parse_color, uniform_radius, LowerCtx},
     with_common_signals,
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
@@ -70,12 +67,14 @@ fn toast_signals() -> Vec<prism_builder::signal::SignalDef> {
     )])
 }
 
-fn toast_lower(_ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> UiNode {
-    let title = prop_string(node, "title");
-    let body = prop_string(node, "body");
-    let kind = match prop_str(node, "kind") {
-        "" => "info",
-        other => other,
+fn toast_lower(ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> UiNode {
+    let title = ctx.prop_str(node, "title");
+    let body = ctx.prop_str(node, "body");
+    let kind = ctx.prop_str(node, "kind");
+    let kind: &str = if kind.is_empty() {
+        "info"
+    } else {
+        kind.as_str()
     };
     let (rail_color, role) = kind_chrome(kind);
 

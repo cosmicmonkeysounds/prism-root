@@ -15,8 +15,8 @@ use prism_builder::{
     signal::SignalDef,
     style::StyleProperties,
     ui_lower::{
-        bare_container, colored_text_node, hover_bg, parse_color, prop_bool, text_input_node,
-        uniform_radius, LowerCtx,
+        bare_container, colored_text_node, hover_bg, parse_color, text_input_node, uniform_radius,
+        LowerCtx,
     },
     with_common_signals,
 };
@@ -55,12 +55,12 @@ fn command_palette_signals() -> Vec<prism_builder::signal::SignalDef> {
     ])
 }
 
-fn command_palette_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+fn command_palette_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
     // Visibility gate (§43 A2): closed palette renders a zero-size
     // placeholder so it occupies no layout space. The skeleton authors
     // it as a sibling of the app-window so it always reaches the
     // resolver — visibility is host state, not skeleton state.
-    if !prop_bool(node, "open", false) {
+    if !ctx.prop_bool(node, "open", false) {
         return hidden_overlay(node.id.clone(), "command-palette");
     }
     let query = node

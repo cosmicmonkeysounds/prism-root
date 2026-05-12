@@ -8,8 +8,8 @@ use prism_builder::{
     signal::SignalDef,
     style::StyleProperties,
     ui_lower::{
-        bare_container, colored_text_node, hover_bg, image_node, parse_color, prop_string,
-        uniform_radius, LowerCtx,
+        bare_container, colored_text_node, hover_bg, image_node, parse_color, uniform_radius,
+        LowerCtx,
     },
     with_common_signals,
 };
@@ -43,8 +43,8 @@ fn component_palette_signals() -> Vec<prism_builder::signal::SignalDef> {
     )])
 }
 
-fn component_palette_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
-    let selected = prop_string(node, "selected-id");
+fn component_palette_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let selected = ctx.prop_str(node, "selected-id");
     let style = StyleProperties::default();
 
     let rows: Vec<UiNode> = node

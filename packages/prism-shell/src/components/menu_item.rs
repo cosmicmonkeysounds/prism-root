@@ -6,10 +6,7 @@ use prism_builder::{
     document::Node,
     registry::FieldSpec,
     style::StyleProperties,
-    ui_lower::{
-        bare_container, colored_text_node, hover_bg, prop_bool, prop_string, uniform_radius,
-        LowerCtx,
-    },
+    ui_lower::{bare_container, colored_text_node, hover_bg, uniform_radius, LowerCtx},
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
 use serde_json::Value;
@@ -30,15 +27,15 @@ fn menu_item_schema() -> Vec<FieldSpec> {
     ]
 }
 
-fn menu_item_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
-    let label = prop_string(node, "label");
-    let shortcut = prop_string(node, "shortcut");
+fn menu_item_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let label = ctx.prop_str(node, "label");
+    let shortcut = ctx.prop_str(node, "shortcut");
     // `MenuSlot::items_json` emits `enabled` (state-side struct uses
     // that name); the legacy schema field is `disabled`. Read both so
     // either authoring path disables the row.
-    let enabled = prop_bool(node, "enabled", true);
-    let disabled = prop_bool(node, "disabled", false) || !enabled;
-    let command = prop_string(node, "command");
+    let enabled = ctx.prop_bool(node, "enabled", true);
+    let disabled = ctx.prop_bool(node, "disabled", false) || !enabled;
+    let command = ctx.prop_str(node, "command");
     let style = StyleProperties::default();
     let label_color = if disabled {
         DISABLED_COLOR

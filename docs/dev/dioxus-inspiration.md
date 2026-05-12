@@ -5,7 +5,7 @@
 **Owner:** JJM
 **Supersedes:** the earlier "watch list" version of this doc
 
-## Status snapshot (2026-05-12)
+## Status snapshot (2026-05-11)
 
 | Phase | What | Status |
 |---|---|---|
@@ -15,13 +15,55 @@
 | 3a | `render_tree` runs inside frame-level `ReactiveContext` | ✅ done — `RenderScope::run_in_render_pass` |
 | 3b | Per-block `lower_ui` reactive contexts | ✅ done — `BlockInvalidator` + per-NodeId cache |
 | 4a | `ActionKind::Bind` → `Effect` install on document load | ✅ done — `DocumentBindings::install_for` |
-| 4b | `Node::props` → `ReactiveProps` migration | ⏳ deferred — primitive ready, full Node migration is a dedicated PR (touches `luau_component` / `prefab` / `ui_resolver` / `facet`) |
+| 4b | `Node::props` → `ReactiveProps` migration | ✅ done — `LowerCtx::with_bindings` + `ctx.prop_*` reactive accessors + `NodeMutator` single-seam write path |
 | 5 | Luau `Signal::read`/`write` UserData surface | ✅ done — `prism-core::luau_reactive` |
 | 6 | `#[daemon_fn]` + `RemoteSignal<T>` + IpcInvoker | ✅ done — `prism-daemon::IpcInvoker` over postcard-on-interprocess |
 | 7 | `FederatedSignal` / `PeerSignal` / `RelaySignal` + `LocalHub` | ✅ done (trait seam + production-shape fan-out hub; per-transport wire integration is host-side) |
 | 8 | `SsrCache` wired into prism-relay routes | ✅ done — `SsrWorker` single-threaded worker + `portal_detail` cache hit/miss path |
 | 9 | `subsecond` hot-reload anchor in shell | ✅ done — `--features hot-reload` wraps render walk; patch pipeline integration deferred |
 | 10 | `.prism-ui` template hash fast-path | ✅ done — `FingerprintCache::observe` returns `TemplateChange::{NoChange,LiteralOnly,Structural,…}` |
+
+### Phase 4b shape (as landed)
+
+Disk format unchanged — `Node::props: serde_json::Value` is still the
+serializable form. The reactive surface comes from three cooperating
+DI-shaped pieces:
+
+- **`LowerCtx::with_bindings(&DocumentBindings)`** (builder side) —
+  one slot, propagates through `lower()` / `lower_as()` like
+  `with_block_invalidator` does. When wired, every
+  `ctx.prop_str(node, k)` / `ctx.prop_bool` / `ctx.prop` /
+  `ctx.prop_signal` read routes through
+  `bindings.props_for(node.id, &node.props).signal(k)`, subscribing
+  the current per-block reactive context. The free
+  `prop_str` / `prop_string` / `prop_bool` helpers are gone — the
+  three call shapes consolidated onto `LowerCtx` so blocks compose
+  uniformly across the reactive and headless paths.
+- **`NodeMutator` builder** (`prism-builder/src/mutator.rs`) — the
+  single seam for every `Node::props` mutation across prefab
+  materialisation, facet scalar resolution, facet variant rule
+  evaluation, and the shell's `AppState::set_node_prop`.
+  `NodeMutator::with_bindings(b).write(&mut node, k, v)` writes the
+  canonical JSON *and* pokes the matching reactive bag — every
+  subscriber wired by `ctx.prop_*` wakes on the next dirty drain.
+  The pre-existing `apply_prop_to_node` and four open-coded
+  `Value::Object(ref mut map).insert(...)` patterns retired in
+  favour of this one builder.
+- **`CanvasSlot::bindings`** (shell side) — one
+  `prism_builder::DocumentBindings` lives per canvas, threaded into
+  `LowerCtx::with_bindings(..)` from the render walk and into
+  `NodeMutator::with_bindings(..)` from the prop-write seam. Block
+  bodies that read `ctx.prop_str(node, "label")` subscribe; a later
+  `state.set_node_prop("n", "label", "Hi", reg)` writes through the
+  canvas's bag and the BlockInvalidator marks `"n"` dirty next
+  frame — zero per-block plumbing required.
+
+Three new accessors on `LowerCtx`: `prop(node, key) -> Value`
+(subscribing JSON read), `prop_signal(node, key) -> Option<Signal<Value>>`
+(raw signal for memos and cross-block effects), and the typed
+`prop_str` / `prop_bool` shortcuts. Old free functions deleted; the
+106-call-site sweep across `prism-shell/src/components/*` and
+`prism-builder/src/starter.rs` rerouted in one pass.
 
 The previous draft of this document was a ranked shopping list of
 Dioxus subpackages worth borrowing. Useful, but it dodged the real
@@ -406,20 +448,30 @@ chrome.
 
 ### Phase 4 — reactive props on builder blocks
 
-Make `props: serde_json::Value` reactive.
+Make `props: serde_json::Value` reactive. **Landed** as the trio
+above: disk format stays `serde_json::Value`, in-memory access goes
+through `DocumentBindings.props_for(node.id, &node.props).signal(key)`
+via the `LowerCtx::prop_*` accessors and writes through the
+`NodeMutator` builder. The original plan called for a typed
+`ctx.prop_signal::<String>("title")` returning `Signal<String>`; the
+landed surface gives `ctx.prop_signal(node, "title") -> Option<Signal<Value>>`
+plus the typed `prop_str` / `prop_bool` reads — full
+`Signal<String>` is a follow-up `Memo` one-liner if it becomes a
+common need.
 
-- `Node::props` is still serializable JSON for the on-disk
-  document, but the in-memory representation is a per-key
-  `IndexMap<String, Signal<Value>>` materialized lazily on first
-  read.
-- Block authors get a typed accessor: `ctx.prop_signal::<String>("title")`
-  returns `Signal<String>`, subscribing the current reactive
-  context.
-- The `Connection` system gains a new `ActionKind::Bind` variant:
-  `Bind { target_key: String, source: SignalRef }` — a reactive
-  one-way binding from any signal to a prop. Authored as
+- `Node::props` stays serializable JSON for the on-disk document.
+  In-memory access goes through `DocumentBindings`, which lazily
+  materialises a per-key `Signal<Value>` on first
+  `ctx.prop_*(node, key)` read.
+- Block authors get one declarative seam: `ctx.prop_str(node, "title")`
+  / `ctx.prop_bool` / `ctx.prop` (`Value`) / `ctx.prop_signal`
+  (raw signal). Every read subscribes the current per-block
+  reactive context (Phase 3b).
+- The `Connection` system gained a new `ActionKind::Bind` variant
+  (Phase 4a — already shipped): `Bind { target_key, source }` — a
+  reactive one-way binding from any signal to a prop. Authored as
   `bind title = $selection.name` in the inline-action grammar.
-  Internally registers an `Effect` on document load.
+  Internally registers an `Effect` on `BuilderDocument::install_bindings()`.
 - Existing `SetProperty` keeps working unchanged — it is the
   imperative variant. `Bind` is the declarative variant.
 

@@ -21,8 +21,7 @@ use prism_builder::{
     signal::SignalDef,
     style::StyleProperties,
     ui_lower::{
-        bare_container, colored_text_node, hover_bg, parse_color, prop_str, uniform_radius,
-        LowerCtx,
+        bare_container, colored_text_node, hover_bg, parse_color, uniform_radius, LowerCtx,
     },
     with_common_signals,
 };
@@ -70,7 +69,7 @@ fn menu_bar_row_signals() -> Vec<prism_builder::signal::SignalDef> {
     ])
 }
 
-fn menu_bar_row_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+fn menu_bar_row_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
     let menus = node
         .props
         .get("menus")
@@ -83,7 +82,7 @@ fn menu_bar_row_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
-    let app_name = prop_str(node, "app-name");
+    let app_name = ctx.prop_str(node, "app-name");
     let show_tabs = node
         .props
         .get("show-tabs")
@@ -113,7 +112,7 @@ fn menu_bar_row_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties
         if !app_name.is_empty() {
             row_children.push(app_name_pill_node(
                 format!("{}::app-name", node.id),
-                app_name,
+                &app_name,
             ));
         }
         for (idx, tab) in tabs.iter().enumerate() {

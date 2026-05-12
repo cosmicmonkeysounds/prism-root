@@ -19,8 +19,8 @@ use prism_builder::{
     registry::{FieldSpec, NumericBounds},
     style::StyleProperties,
     ui_lower::{
-        bare_container, colored_text_node, hover_bg, image_node, parse_color, prop_bool, prop_str,
-        prop_string, uniform_radius, LowerCtx,
+        bare_container, colored_text_node, hover_bg, image_node, parse_color, uniform_radius,
+        LowerCtx,
     },
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
@@ -75,19 +75,23 @@ fn app_card_schema() -> Vec<FieldSpec> {
     ]
 }
 
-fn app_card_lower(_ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> UiNode {
-    let app_id = prop_string(node, "app-id");
-    let name = prop_string(node, "name");
-    let description = prop_string(node, "description");
-    let icon_name = prop_str(node, "icon");
-    let accent = prop_str(node, "accent-color");
-    let accent = if accent.is_empty() { "#0060c0" } else { accent };
+fn app_card_lower(ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> UiNode {
+    let app_id = ctx.prop_str(node, "app-id");
+    let name = ctx.prop_str(node, "name");
+    let description = ctx.prop_str(node, "description");
+    let icon_name = ctx.prop_str(node, "icon");
+    let accent = ctx.prop_str(node, "accent-color");
+    let accent: &str = if accent.is_empty() {
+        "#0060c0"
+    } else {
+        accent.as_str()
+    };
     let page_count = node
         .props
         .get("page-count")
         .and_then(|v| v.as_i64())
         .unwrap_or(1);
-    let is_create = prop_bool(node, "is-create", false);
+    let is_create = ctx.prop_bool(node, "is-create", false);
 
     let rail = bare_container(format!("{}::rail", node.id), vec![], |p| {
         p.height = Sizing::Fixed(RAIL_HEIGHT);
@@ -102,7 +106,7 @@ fn app_card_lower(_ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> 
             style,
             &name,
             &description,
-            icon_name,
+            &icon_name,
             accent,
             page_count,
         )

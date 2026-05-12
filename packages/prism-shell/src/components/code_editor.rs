@@ -14,9 +14,7 @@ use prism_builder::{
     registry::FieldSpec,
     signal::SignalDef,
     style::StyleProperties,
-    ui_lower::{
-        bare_container, colored_text_node, parse_color, prop_string, uniform_radius, LowerCtx,
-    },
+    ui_lower::{bare_container, colored_text_node, parse_color, uniform_radius, LowerCtx},
     with_common_signals,
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
@@ -55,9 +53,9 @@ fn code_editor_signals() -> Vec<prism_builder::signal::SignalDef> {
     ])
 }
 
-fn code_editor_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+fn code_editor_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
     let style = StyleProperties::default();
-    let language = prop_string(node, "language");
+    let language = ctx.prop_str(node, "language");
     let cursor_line = node
         .props
         .get("cursor-line")

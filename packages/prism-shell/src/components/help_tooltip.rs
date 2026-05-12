@@ -10,9 +10,7 @@ use prism_builder::{
     document::Node,
     registry::FieldSpec,
     style::StyleProperties,
-    ui_lower::{
-        bare_container, colored_text_node, parse_color, prop_string, uniform_radius, LowerCtx,
-    },
+    ui_lower::{bare_container, colored_text_node, parse_color, uniform_radius, LowerCtx},
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
 
@@ -31,15 +29,15 @@ fn help_tooltip_schema() -> Vec<FieldSpec> {
     ]
 }
 
-fn help_tooltip_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
-    let title = prop_string(node, "title");
+fn help_tooltip_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let title = ctx.prop_str(node, "title");
     // Visibility gate (§43 A2): an empty title means no tooltip is
     // armed — render a 0×0 placeholder. `OverlaySlot::help_tooltip`
     // emits empty strings for both fields when no entry is showing.
     if title.is_empty() {
         return hidden_overlay(node.id.clone(), "help-tooltip");
     }
-    let summary = prop_string(node, "summary");
+    let summary = ctx.prop_str(node, "summary");
     let style = StyleProperties::default();
 
     let mut kids = vec![colored_text_node(

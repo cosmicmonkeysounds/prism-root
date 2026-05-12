@@ -9,7 +9,7 @@ use prism_builder::{
     document::Node,
     registry::FieldSpec,
     style::StyleProperties,
-    ui_lower::{bare_container, colored_text_node, prop_string, LowerCtx},
+    ui_lower::{bare_container, colored_text_node, LowerCtx},
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
 
@@ -25,8 +25,8 @@ fn schema_designer_schema() -> Vec<FieldSpec> {
 
 fn schema_designer_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
     let style = StyleProperties::default();
-    let title = prop_string(node, "title");
-    let schema_name = prop_string(node, "schema-name");
+    let title = ctx.prop_str(node, "title");
+    let schema_name = ctx.prop_str(node, "schema-name");
 
     let mut kids: Vec<UiNode> = Vec::new();
 

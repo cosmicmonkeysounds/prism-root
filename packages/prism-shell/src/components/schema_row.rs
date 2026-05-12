@@ -13,8 +13,7 @@ use prism_builder::{
     signal::SignalDef,
     style::StyleProperties,
     ui_lower::{
-        bare_container, colored_text_node, hover_bg, parse_color, prop_bool, prop_string,
-        uniform_radius, LowerCtx,
+        bare_container, colored_text_node, hover_bg, parse_color, uniform_radius, LowerCtx,
     },
     with_common_signals,
 };
@@ -53,14 +52,14 @@ fn schema_row_signals() -> Vec<prism_builder::signal::SignalDef> {
     ])
 }
 
-fn schema_row_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+fn schema_row_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
     let style = StyleProperties::default();
-    let field_id = prop_string(node, "field-id");
-    let name = prop_string(node, "field-name");
-    let kind = prop_string(node, "field-kind");
-    let required = prop_bool(node, "required", false);
-    let selected = prop_bool(node, "selected", false);
-    let show_delete = prop_bool(node, "show-delete", false);
+    let field_id = ctx.prop_str(node, "field-id");
+    let name = ctx.prop_str(node, "field-name");
+    let kind = ctx.prop_str(node, "field-kind");
+    let required = ctx.prop_bool(node, "required", false);
+    let selected = ctx.prop_bool(node, "selected", false);
+    let show_delete = ctx.prop_bool(node, "show-delete", false);
 
     let kind_badge = bare_container(
         format!("{}::badge", node.id),

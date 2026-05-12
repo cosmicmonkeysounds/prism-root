@@ -24,8 +24,9 @@
 //! `DocumentBindings::props_for(node_id)` lazily mirrors a node's
 //! props into a `ReactiveProps` keyed by NodeId, and a `Bind`
 //! connection's effect reads from one bag and writes to another.
-//! Migrating `Node::props` itself to a `ReactiveProps` field stays
-//! a follow-up.
+//! Phase 4b (`LowerCtx::with_bindings` + `NodeMutator`) wires these
+//! bags into the render walk + the prop-write seam; the on-disk
+//! `Node::props: Value` shape is unchanged.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -201,6 +202,7 @@ impl Default for ReactiveProps {
 /// the host to walk later. Plain literals (`"hello"`) parse as
 /// [`SourceRef::Literal`] — the effect fires once and writes the
 /// literal, no subscription.
+#[derive(Clone)]
 pub struct DocumentBindings {
     /// Reactive owner backing every materialised prop signal *and*
     /// every installed Bind effect — all reactive state owned by
@@ -219,6 +221,16 @@ pub struct DocumentBindings {
     /// source nodes). The host can iterate these later to wire up
     /// alternative resolution paths.
     unresolved: Vec<UnresolvedBind>,
+}
+
+impl std::fmt::Debug for DocumentBindings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DocumentBindings")
+            .field("effect_count", &self.effect_count)
+            .field("cached_nodes", &self.props.borrow().len())
+            .field("unresolved", &self.unresolved.len())
+            .finish()
+    }
 }
 
 /// A `Bind` connection whose `source` didn't resolve at install

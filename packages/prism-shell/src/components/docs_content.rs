@@ -16,7 +16,7 @@ use prism_builder::{
     document::Node,
     registry::FieldSpec,
     style::StyleProperties,
-    ui_lower::{bare_container, colored_text_node, parse_color, prop_bool, prop_string, LowerCtx},
+    ui_lower::{bare_container, colored_text_node, parse_color, LowerCtx},
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Semantic, Sizing};
 use serde_json::Value;
@@ -63,10 +63,10 @@ fn docs_content_schema() -> Vec<FieldSpec> {
 }
 
 fn docs_content_lower(ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> UiNode {
-    let title = prop_string(node, "doc-title");
-    let summary = prop_string(node, "doc-summary");
-    let body = prop_string(node, "doc-body");
-    let compact = prop_bool(node, "compact", false);
+    let title = ctx.prop_str(node, "doc-title");
+    let summary = ctx.prop_str(node, "doc-summary");
+    let body = ctx.prop_str(node, "doc-body");
+    let compact = ctx.prop_bool(node, "compact", false);
     let m = if compact { &COMPACT } else { &FULL };
 
     let mut children = vec![

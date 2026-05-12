@@ -16,10 +16,7 @@ use prism_builder::{
     registry::FieldSpec,
     signal::SignalDef,
     style::StyleProperties,
-    ui_lower::{
-        bare_container, colored_text_node, image_node, parse_color, prop_bool, prop_string,
-        LowerCtx,
-    },
+    ui_lower::{bare_container, colored_text_node, image_node, parse_color, LowerCtx},
     with_common_signals,
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Sizing};
@@ -51,9 +48,9 @@ fn section_header_signals() -> Vec<prism_builder::signal::SignalDef> {
 }
 
 fn section_header_lower(ctx: &LowerCtx<'_>, node: &Node, style: &StyleProperties) -> UiNode {
-    let label = prop_string(node, "label");
-    let collapsed = prop_bool(node, "collapsed", false);
-    let section_id = prop_string(node, "section-id");
+    let label = ctx.prop_str(node, "label");
+    let collapsed = ctx.prop_bool(node, "collapsed", false);
+    let section_id = ctx.prop_str(node, "section-id");
 
     let chevron_src = if collapsed {
         "icons/chevron-left.svg"

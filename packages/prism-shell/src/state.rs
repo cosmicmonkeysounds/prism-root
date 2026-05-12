@@ -266,6 +266,10 @@ impl AppState {
         value: Value,
         registry: Option<&prism_builder::ComponentRegistry>,
     ) -> bool {
+        // PartialEq gate: skip the derivation pass on idempotent
+        // edits. The reactive seam (`NodeMutator::write`) is
+        // unconditional otherwise — repeated equal writes still wake
+        // subscribers (matches `Signal::set` semantics).
         let target = self
             .canvas
             .document
@@ -275,19 +279,10 @@ impl AppState {
         let Some(target) = target else {
             return false;
         };
-        if let Value::Object(map) = &mut target.props {
-            // Skip the write when the existing value is identical —
-            // saves a derivation pass on idempotent edits.
-            if map.get(key) == Some(&value) {
-                return false;
-            }
-            map.insert(key.into(), value);
-        } else {
-            // Replace a non-object props bag with a fresh map carrying
-            // the new key. Matches `SignalsService::apply_action`'s
-            // shape so the two write sites stay coherent.
-            target.props = Value::Object([(key.into(), value)].into_iter().collect());
+        if target.props.get(key) == Some(&value) {
+            return false;
         }
+        prism_builder::NodeMutator::with_bindings(&self.canvas.bindings).write(target, key, value);
         self.resync_builder_for_selection(registry);
         true
     }
@@ -1992,6 +1987,14 @@ pub struct CanvasSlot {
     /// builder is in preview mode.
     pub device: Device,
     drag: Option<DragState>,
+    /// **Phase 4b** of `docs/dev/dioxus-inspiration.md`: per-canvas
+    /// reactive prop store. Threaded into `LowerCtx::with_bindings(..)`
+    /// on every render walk so block `lower_ui` bodies that read props
+    /// through `ctx.prop_*` subscribe automatically; threaded into
+    /// `NodeMutator::with_bindings(..)` on every prop write so the
+    /// matching subscribers wake. One field, two consumers, zero
+    /// per-block plumbing.
+    pub(crate) bindings: prism_builder::DocumentBindings,
 }
 
 /// Responsive preview target for the builder canvas. Three discrete
@@ -2284,12 +2287,16 @@ impl CanvasSlot {
         self.lower_document_to_ui_with_invalidator(registry, None)
     }
 
-    /// Phase 3b of `docs/dev/dioxus-inspiration.md`: lower the
-    /// builder document with an optional [`BlockInvalidator`]. When
-    /// the shell hands one in, every recursive `lower()` wraps the
-    /// block's `Component::lower_ui` body in a per-NodeId reactive
-    /// context, so signal reads inside the block body subscribe and
-    /// drive the invalidator's on_dirty callback on later writes.
+    /// Phase 3b + Phase 4b of `docs/dev/dioxus-inspiration.md`: lower
+    /// the builder document with an optional [`BlockInvalidator`]
+    /// (per-block dirty subscriptions) and the canvas's
+    /// [`prism_builder::DocumentBindings`] (per-NodeId reactive prop
+    /// bags). When both are installed every recursive `lower()` wraps
+    /// the block's `Component::lower_ui` body in a per-NodeId reactive
+    /// context AND routes `ctx.prop_*` reads through the matching
+    /// signal — so a `NodeMutator::with_bindings(..).write(..)` on the
+    /// same NodeId fires the invalidator's `on_dirty` callback
+    /// automatically.
     pub fn lower_document_to_ui_with_invalidator(
         &self,
         registry: Option<&prism_builder::ComponentRegistry>,
@@ -2302,10 +2309,12 @@ impl CanvasSlot {
             return Vec::new();
         };
         let cascade = prism_builder::StyleProperties::default();
-        let mut ctx = prism_builder::ui_lower::LowerCtx::new(Some(reg), &cascade);
-        if let Some(inv) = invalidator {
-            ctx = ctx.with_block_invalidator(inv);
-        }
+        let ctx = prism_builder::ui_lower::LowerCtx::new(Some(reg), &cascade)
+            .with_bindings(&self.bindings);
+        let ctx = match invalidator {
+            Some(inv) => ctx.with_block_invalidator(inv),
+            None => ctx,
+        };
         vec![ctx.lower(root)]
     }
 
@@ -3986,6 +3995,7 @@ mod tests {
             },
             device: Device::Desktop,
             drag: None,
+            bindings: prism_builder::DocumentBindings::new(),
         }
     }
 

@@ -6,7 +6,7 @@ use prism_builder::{
     document::Node,
     registry::FieldSpec,
     style::StyleProperties,
-    ui_lower::{bare_container, parse_color, prop_string, LowerCtx},
+    ui_lower::{bare_container, parse_color, LowerCtx},
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
 use serde_json::json;
@@ -24,7 +24,7 @@ fn docs_sidebar_schema() -> Vec<FieldSpec> {
 }
 
 fn docs_sidebar_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
-    let mode = prop_string(node, "mode");
+    let mode = ctx.prop_str(node, "mode");
     let mode = if mode.is_empty() {
         "compact".into()
     } else {

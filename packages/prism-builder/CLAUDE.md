@@ -251,17 +251,32 @@ Modules in `src/` (excluding `lib.rs`):
      for host wiring), or literal strings (one-shot write, no
      subscription). Per-NodeId `ReactiveProps` are cached via
      `DocumentBindings::props_for(node_id, initial_props)`. Drop
-     disposes every installed effect via the shared `Owner`. The
-     full migration of `Node::props` itself to a `ReactiveProps`
-     field touches every consumer of `Node::props[..]`
-     (`luau_component`, `prefab`, `ui_resolver`, `facet`) and is
-     a dedicated follow-up PR. 20 unit tests.
+     disposes every installed effect via the shared `Owner`.
+     Threaded into the render walk via
+     `LowerCtx::with_bindings(..)` and into the prop-write seam
+     via `NodeMutator::with_bindings(..)` — Phase 4b's wiring lives
+     in `mutator.rs` + `ui_lower.rs`.
 - `starter.rs` — 17 built-in blocks + `register_builtins`.
 - `style.rs` — `StyleProperties` + `resolve_cascade`.
 - `ui_lower.rs` — shared `LowerCtx` + helpers (`container_with`,
   `synthetic_container`, `bare_container`, `text_node`,
   `spacer_node`, `image_node`, `with_semantic`, `uniform_radius`,
-  `parse_color`, `prop_str`, `prop_bool`).
+  `parse_color`). Prop access is on the context itself:
+  `ctx.prop_str(node, key)` / `ctx.prop_string(node, key)` /
+  `ctx.prop_bool(node, key, default)` / `ctx.prop(node, key)` /
+  `ctx.prop_signal(node, key)`. When a `DocumentBindings` is
+  installed via `LowerCtx::with_bindings(..)` (Phase 4b — the
+  shell wires this from `CanvasSlot::bindings`), every read goes
+  through the per-NodeId reactive prop bag and subscribes the
+  current per-block reactive context. With no bindings (headless
+  tests, SSR), reads fall back to direct `node.props.get(..)`.
+- `mutator.rs` — **Phase 4b** mutation seam.
+  `NodeMutator::with_bindings(&b).write(node, key, value)` and
+  `.write_at(root, target_id, key, value)` replace the open-coded
+  `Value::Object(ref mut map).insert(..)` patterns and the legacy
+  `prefab::apply_prop_to_node`. Single builder; JSON write +
+  reactive notify in one call. Used by `prefab`, `facet`, and the
+  shell's `AppState::set_node_prop`.
 - `ui_resolver.rs` — `<shell.*>` tag resolution helpers consumed by
   the runtime's interpret pipeline.
 - `ui_runtime.rs` — `BuilderDocument` →

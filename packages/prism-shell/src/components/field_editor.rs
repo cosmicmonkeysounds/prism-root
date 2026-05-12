@@ -20,8 +20,8 @@ use prism_builder::{
     signal::SignalDef,
     style::StyleProperties,
     ui_lower::{
-        bare_container, colored_text_node, hover_bg, parse_color, prop_bool, prop_str,
-        text_input_node, text_node, uniform_radius, LowerCtx,
+        bare_container, colored_text_node, hover_bg, parse_color, text_input_node, text_node,
+        uniform_radius, LowerCtx,
     },
     with_common_signals,
 };
@@ -61,7 +61,7 @@ const SWATCH_RADIUS: f32 = 4.0;
 /// Closure-shape for kind-specific bodies. Receives the parent node
 /// (for id namespacing + props) and returns the children that go
 /// *below* the label inside the field-editor stack.
-type KindBuilder = fn(&Node) -> Vec<UiNode>;
+type KindBuilder = fn(&LowerCtx<'_>, &Node) -> Vec<UiNode>;
 
 struct KindEntry {
     /// Match string from `node.props["kind"]`.
@@ -171,10 +171,10 @@ fn field_editor_signals() -> Vec<prism_builder::signal::SignalDef> {
     ])
 }
 
-fn field_editor_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
-    let kind = prop_str(node, "kind");
-    let entry = lookup_kind(kind);
-    let label_text = label_with_required(node);
+fn field_editor_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+    let kind = ctx.prop_str(node, "kind");
+    let entry = lookup_kind(&kind);
+    let label_text = label_with_required(ctx, node);
 
     let mut stack: Vec<UiNode> = Vec::with_capacity(2);
     if !label_text.is_empty() {
@@ -185,9 +185,9 @@ fn field_editor_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties
             LABEL_FONT_SIZE,
         ));
     }
-    stack.extend((entry.body)(node));
+    stack.extend((entry.body)(ctx, node));
 
-    let focused = prop_bool(node, "focused", false);
+    let focused = ctx.prop_bool(node, "focused", false);
     bare_container(node.id.clone(), stack, |props| {
         props.direction = Direction::Column;
         props.gap = VSTACK_GAP;
@@ -213,12 +213,12 @@ fn field_editor_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties
         let mut s = Semantic::tag("div")
             .with_attr("role", entry.aria_role)
             .with_attr("data-role", "field-edit");
-        let key = prop_str(node, "key");
+        let key = ctx.prop_str(node, "key");
         if !key.is_empty() {
             s = s.with_attr("data-key", key);
         }
         s = s.with_attr("data-kind", entry.kind);
-        let target_id = prop_str(node, "target-id");
+        let target_id = ctx.prop_str(node, "target-id");
         if !target_id.is_empty() {
             s = s.with_attr("data-target-id", target_id);
         }
@@ -275,22 +275,22 @@ pub const FIELD_EDITOR_SPEC: prism_builder::BlockSpec =
         .lower(field_editor_lower)
         .signals(field_editor_signals);
 
-fn label_with_required(node: &Node) -> String {
-    let label = prop_str(node, "label");
+fn label_with_required(ctx: &LowerCtx<'_>, node: &Node) -> String {
+    let label = ctx.prop_str(node, "label");
     if label.is_empty() {
         return String::new();
     }
-    if prop_bool(node, "required", false) {
+    if ctx.prop_bool(node, "required", false) {
         format!("{label}{REQUIRED_MARK}")
     } else {
-        label.into()
+        label
     }
 }
 
 // ── kind bodies ──────────────────────────────────────────────────────
 
-fn build_boolean_body(node: &Node) -> Vec<UiNode> {
-    let on = prop_str(node, "value") == "true";
+fn build_boolean_body(ctx: &LowerCtx<'_>, node: &Node) -> Vec<UiNode> {
+    let on = ctx.prop_str(node, "value") == "true";
     // Track + thumb. Thumb's left padding flips by state; this is the
     // declarative equivalent of the original Slint `Switch`.
     //
@@ -330,16 +330,16 @@ fn build_boolean_body(node: &Node) -> Vec<UiNode> {
     vec![track]
 }
 
-fn build_select_body(node: &Node) -> Vec<UiNode> {
-    let value = prop_str(node, "value");
+fn build_select_body(ctx: &LowerCtx<'_>, node: &Node) -> Vec<UiNode> {
+    let value = ctx.prop_str(node, "value");
     // Empty pill id — same hit-test-transparency rule as the
     // drag-number pill and the boolean switch.
     let _ = &node.id;
-    vec![pill_with_chevron(String::new(), value, false)]
+    vec![pill_with_chevron(String::new(), &value, false)]
 }
 
-fn build_color_body(node: &Node) -> Vec<UiNode> {
-    let value = prop_str(node, "value");
+fn build_color_body(ctx: &LowerCtx<'_>, node: &Node) -> Vec<UiNode> {
+    let value = ctx.prop_str(node, "value");
     let style = StyleProperties::default();
 
     // Swatch keeps a non-empty id only because the swatch *does*
@@ -351,7 +351,7 @@ fn build_color_body(node: &Node) -> Vec<UiNode> {
         p.width = Sizing::Fixed(SWATCH_SIZE);
         p.height = Sizing::Fixed(SWATCH_SIZE);
         p.radius = uniform_radius(SWATCH_RADIUS);
-        p.background = parse_color(value);
+        p.background = parse_color(&value);
         p.semantic = Semantic::tag("button")
             .with_attr("type", "button")
             .with_attr("data-role", "color-swatch");
@@ -359,7 +359,7 @@ fn build_color_body(node: &Node) -> Vec<UiNode> {
 
     let hex = text_input_node(
         format!("{}::hex", node.id),
-        value.into(),
+        value,
         "#000000".into(),
         &style,
         Sizing::Grow,
@@ -376,8 +376,8 @@ fn build_color_body(node: &Node) -> Vec<UiNode> {
     })]
 }
 
-fn build_number_body(node: &Node) -> Vec<UiNode> {
-    let key = prop_str(node, "key");
+fn build_number_body(ctx: &LowerCtx<'_>, node: &Node) -> Vec<UiNode> {
+    let key = ctx.prop_str(node, "key");
     let value = node
         .props
         .get("value")
@@ -397,7 +397,7 @@ fn build_number_body(node: &Node) -> Vec<UiNode> {
         "",
         DRAG_NUMBER_LABEL_COLOR,
         format_drag_value(value),
-        key,
+        &key,
     );
 
     // Sliding track — only when both bounds are present (otherwise
@@ -453,13 +453,13 @@ fn slider_track(_field_id: &str, fill: f32) -> UiNode {
     })
 }
 
-fn build_text_body(node: &Node) -> Vec<UiNode> {
-    let value = prop_str(node, "value");
-    let focused = prop_bool(node, "focused", false);
+fn build_text_body(ctx: &LowerCtx<'_>, node: &Node) -> Vec<UiNode> {
+    let value = ctx.prop_str(node, "value");
+    let focused = ctx.prop_bool(node, "focused", false);
     let style = StyleProperties::default();
     vec![prism_builder::ui_lower::text_input_node_with_focus(
         format!("{}::input", node.id),
-        value.into(),
+        value,
         String::new(),
         &style,
         Sizing::Grow,

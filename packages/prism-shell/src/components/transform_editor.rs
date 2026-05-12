@@ -20,8 +20,7 @@ use prism_builder::{
     signal::SignalDef,
     style::StyleProperties,
     ui_lower::{
-        bare_container, colored_text_node, hover_bg, parse_color, prop_str, uniform_radius,
-        LowerCtx,
+        bare_container, colored_text_node, hover_bg, parse_color, uniform_radius, LowerCtx,
     },
     with_common_signals,
 };
@@ -126,12 +125,12 @@ fn transform_editor_signals() -> Vec<prism_builder::signal::SignalDef> {
     ])
 }
 
-fn transform_editor_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+fn transform_editor_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
     let mut rows: Vec<UiNode> = Vec::with_capacity(ROW_SPECS.len() + 1);
     for row_spec in ROW_SPECS {
         rows.push(build_row(node, row_spec));
     }
-    rows.push(build_anchor_row(node));
+    rows.push(build_anchor_row(ctx, node));
 
     bare_container(node.id.clone(), rows, |props| {
         props.direction = Direction::Column;
@@ -191,8 +190,8 @@ fn build_row(node: &Node, row: &RowSpec) -> UiNode {
     })
 }
 
-fn build_anchor_row(node: &Node) -> UiNode {
-    let anchor_value = prop_str(node, "anchor");
+fn build_anchor_row(ctx: &LowerCtx<'_>, node: &Node) -> UiNode {
+    let anchor_value = ctx.prop_str(node, "anchor");
     let style = StyleProperties::default();
     let label = colored_text_node(
         format!("{}::anchor-label", node.id),
@@ -212,7 +211,7 @@ fn build_anchor_row(node: &Node) -> UiNode {
 
     let value_text = colored_text_node(
         format!("{}::anchor::value", node.id),
-        anchor_value.into(),
+        anchor_value,
         &style,
         11.0,
         "#000000",

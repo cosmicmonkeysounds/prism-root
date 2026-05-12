@@ -15,7 +15,7 @@ use prism_builder::{
     document::Node,
     registry::FieldSpec,
     style::StyleProperties,
-    ui_lower::{bare_container, colored_text_node, prop_string, LowerCtx},
+    ui_lower::{bare_container, colored_text_node, LowerCtx},
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
 
@@ -28,7 +28,7 @@ fn launchpad_schema() -> Vec<FieldSpec> {
 }
 
 fn launchpad_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
-    let title = prop_string(node, "title");
+    let title = ctx.prop_str(node, "title");
     let title_node = colored_text_node(
         format!("{}::title", node.id),
         if title.is_empty() {

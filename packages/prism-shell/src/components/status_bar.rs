@@ -16,7 +16,7 @@ use prism_builder::{
     document::Node,
     registry::FieldSpec,
     style::StyleProperties,
-    ui_lower::{bare_container, colored_text_node, parse_color, prop_str, LowerCtx},
+    ui_lower::{bare_container, colored_text_node, parse_color, LowerCtx},
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
 
@@ -35,14 +35,14 @@ fn status_bar_schema() -> Vec<FieldSpec> {
     ]
 }
 
-fn status_bar_lower(_ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
+fn status_bar_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
     let cascade = StyleProperties::default();
     // The §43 D5 binding emits a `segments` array; legacy / headless
     // hosts may still pass a single `text` (or `status`) string. The
     // segments path wins when populated, falls through to the single-
     // label path otherwise.
     let children = segment_children(node, &cascade).unwrap_or_else(|| {
-        let text = single_status_text(node);
+        let text = single_status_text(ctx, node);
         vec![colored_text_node(
             format!("{}::label", node.id),
             text,
@@ -110,12 +110,12 @@ fn segment_children(node: &Node, cascade: &StyleProperties) -> Option<Vec<UiNode
 /// Single-label fallback. The §43 D5 binding emits both `status` and
 /// `segments`; older hosts emit only `text`. Reading both keys keeps
 /// the single-label call sites working without per-host branching.
-fn single_status_text(node: &Node) -> String {
-    let text = prop_str(node, "text");
+fn single_status_text(ctx: &LowerCtx<'_>, node: &Node) -> String {
+    let text = ctx.prop_str(node, "text");
     if !text.is_empty() {
-        return text.into();
+        return text;
     }
-    prop_str(node, "status").into()
+    ctx.prop_str(node, "status")
 }
 
 pub const STATUS_BAR_SPEC: prism_builder::BlockSpec =
