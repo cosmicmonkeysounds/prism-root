@@ -1,0 +1,16 @@
+<!--
+  shell.toolbar-separator — 1x20 vertical stroke that separates
+  groups in toolbars and menu rows. Wave 11.2 of
+  docs/dev/composable-builder-plan.md: replaces the hand-rolled
+  packages/prism-shell/src/components/toolbar_separator.rs.
+
+  The default colour (Palette.foreground transparentize(80%))
+  remains hard-coded as `#33000000` here — the design-tokens
+  cascade lands when the runtime style cascade ships.
+-->
+<container
+    width="1"
+    height="20"
+    role="separator"
+    aria:orientation="vertical"
+    style:background="#33000000"/>

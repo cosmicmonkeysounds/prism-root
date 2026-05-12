@@ -218,6 +218,7 @@ const SLOT_BINDINGS: &[(&str, SlotAccessor)] = &[
 ];
 
 fn register_builtin_bindings(reg: &mut ShellPropBindings) {
+    use crate::components::prism_ui_loader::SHELL_PRISM_UI_COMPONENTS;
     use crate::components::SHELL_BUILTINS;
 
     // Live bindings from the declarative `SLOT_BINDINGS` table.
@@ -295,6 +296,32 @@ fn register_builtin_bindings(reg: &mut ShellPropBindings) {
     // slot; the auto-stub vanishes because the id is now claimed.
     for spec in SHELL_BUILTINS {
         if SLOT_BINDINGS.iter().any(|(id, _)| *id == spec.id) {
+            continue;
+        }
+        reg.register(
+            spec.id,
+            Box::new(|_| PropEmission::from_props(Value::Object(Default::default()))),
+        );
+    }
+
+    // Wave 11.2 — every `.prism-ui`-authored shell component lands in
+    // the registry alongside the native `SHELL_BUILTINS` rows, so the
+    // auto-stub binding pass must walk the DSL table too. Without
+    // this, a migrated component renders with no prop snapshot at all
+    // (binding lookup returns `None`, the per-frame props closure
+    // never fires). Same rule as native: a row in `SLOT_BINDINGS`
+    // wins over the stub.
+    for spec in SHELL_PRISM_UI_COMPONENTS {
+        if SLOT_BINDINGS.iter().any(|(id, _)| *id == spec.id) {
+            continue;
+        }
+        if SHELL_BUILTINS.iter().any(|s| s.id == spec.id) {
+            // Defence-in-depth — the loader's
+            // `prism_ui_specs_register_disjoint_from_native_builtins`
+            // test pins this can't happen, but if a future change
+            // bypasses that pin we'd panic on double-registration
+            // instead of double-writing. Skip silently here; the
+            // dedicated test surfaces the literal collision.
             continue;
         }
         reg.register(
@@ -413,20 +440,26 @@ mod tests {
 
     #[test]
     fn bindings_cover_every_registered_shell_block() {
-        // Load-bearing invariant: every id in `SHELL_BUILTINS` has a
-        // matching binding (live or derived stub). Since
-        // `register_builtin_bindings` walks `SHELL_BUILTINS` for its
-        // stub pass, this is now a structural truth — but the assertion
-        // pins it so that any future refactor that breaks the link is a
-        // test failure, not a silent blank panel at runtime.
+        // Load-bearing invariant: every shell-block id (native
+        // `SHELL_BUILTINS` plus DSL-authored
+        // `SHELL_PRISM_UI_COMPONENTS`) has a matching binding (live
+        // or derived stub). The stub-pass loop in
+        // `register_builtin_bindings` walks both tables; this
+        // assertion pins the parity so a future migration that adds a
+        // `.prism-ui` row without seeding a binding surfaces as a
+        // test failure, not a blank panel at runtime.
+        use crate::components::prism_ui_loader::SHELL_PRISM_UI_COMPONENTS;
         use crate::components::SHELL_BUILTINS;
         let bindings = ShellPropBindings::with_builtins();
         let binding_ids: std::collections::HashSet<&str> = bindings.ids().collect();
-        let builtin_ids: std::collections::HashSet<&str> =
+        let mut block_ids: std::collections::HashSet<&str> =
             SHELL_BUILTINS.iter().map(|s| s.id).collect();
+        for spec in SHELL_PRISM_UI_COMPONENTS {
+            block_ids.insert(spec.id);
+        }
         assert_eq!(
-            binding_ids, builtin_ids,
-            "every SHELL_BUILTINS id must have a binding (and vice versa)"
+            binding_ids, block_ids,
+            "every registered shell block (native or .prism-ui) must have a binding (and vice versa)"
         );
     }
 
@@ -517,14 +550,20 @@ mod tests {
     fn slot_bindings_are_subset_of_shell_builtins() {
         // Adding a row to SLOT_BINDINGS for a non-existent shell block
         // would silently register a dead binding (and shadow the stub
-        // derivation). Catch that at test time.
+        // derivation). Catch that at test time. A SLOT_BINDINGS row
+        // can target either a native (`SHELL_BUILTINS`) or
+        // `.prism-ui`-authored (`SHELL_PRISM_UI_COMPONENTS`) block.
+        use crate::components::prism_ui_loader::SHELL_PRISM_UI_COMPONENTS;
         use crate::components::SHELL_BUILTINS;
-        let builtin_ids: std::collections::HashSet<&str> =
+        let mut block_ids: std::collections::HashSet<&str> =
             SHELL_BUILTINS.iter().map(|s| s.id).collect();
+        for spec in SHELL_PRISM_UI_COMPONENTS {
+            block_ids.insert(spec.id);
+        }
         for (id, _) in SLOT_BINDINGS {
             assert!(
-                builtin_ids.contains(id),
-                "SLOT_BINDINGS row `{id}` has no matching block in SHELL_BUILTINS"
+                block_ids.contains(id),
+                "SLOT_BINDINGS row `{id}` has no matching block in SHELL_BUILTINS or SHELL_PRISM_UI_COMPONENTS"
             );
         }
     }

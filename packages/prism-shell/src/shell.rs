@@ -145,6 +145,23 @@ impl Shell {
         register_shell_builtins(&mut registry).map_err(|e| ShellError::Registry(e.to_string()))?;
         register_document_builtins(&mut registry)
             .map_err(|e| ShellError::Registry(e.to_string()))?;
+        // Wave 11.2 — load every `.prism-ui`-authored shell component
+        // alongside the native `SHELL_BUILTINS` rows. The shared
+        // resolver cell is populated *after* every block (native and
+        // DSL) registers, so composed `<shell.*>` / `<prism.*>` tags
+        // inside a DSL source dispatch against the live merged
+        // registry.
+        let prism_ui_resolver = crate::components::prism_ui_loader::make_shared_resolver();
+        crate::components::prism_ui_loader::register_prism_ui_components(
+            &mut registry,
+            crate::components::prism_ui_loader::SHELL_PRISM_UI_COMPONENTS,
+            &prism_ui_resolver,
+        )
+        .map_err(|e| ShellError::Registry(e.to_string()))?;
+        crate::components::prism_ui_loader::finalize_prism_ui_resolver(
+            &prism_ui_resolver,
+            &registry,
+        );
         let resolver = registry.tag_resolver();
         let bindings = ShellPropBindings::with_builtins();
         let services = ServiceRegistry::with_builtins();

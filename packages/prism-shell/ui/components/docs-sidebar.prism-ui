@@ -1,0 +1,36 @@
+<!--
+  shell.docs-sidebar — slim docs panel hosted in the right rail.
+  Wraps shell.docs-content with a sidebar chrome shell. Wave 11.2
+  migration of docs_sidebar.rs.
+
+  The `mode` prop default of "compact" is encoded via an if/else fork
+  on the bound value — the DSL doesn't have a schema-driven default
+  carrier yet, and the runtime semantics need the empty-string case
+  to fall through to "compact" so unauthored callers still render.
+-->
+<container
+    tag="aside"
+    role="complementary"
+    aria-label="Documentation"
+    data:role="docs-sidebar"
+    direction="column"
+    padding-left="16"
+    padding-right="16"
+    padding-top="16"
+    padding-bottom="16"
+    width="320"
+    height="grow"
+    style:background="#fafafa">
+  <shell.docs-content
+      if="{mode}"
+      title="{title}"
+      summary="{summary}"
+      body="{body}"
+      mode="{mode}"/>
+  <shell.docs-content
+      else
+      title="{title}"
+      summary="{summary}"
+      body="{body}"
+      mode="compact"/>
+</container>

@@ -96,11 +96,23 @@ impl ShellComponentRegistry {
 /// file. Adding a primitive = one new const + one row here.
 pub static SHELL_BUILTINS: &[&BlockSpec] = &[
     &super::icon_button::ICON_BUTTON_SPEC,
-    &super::toolbar_separator::TOOLBAR_SEPARATOR_SPEC,
     &super::section_header::SECTION_HEADER_SPEC,
     &super::nav_button::NAV_BUTTON_SPEC,
     &super::toast::TOAST_SPEC,
     &super::docs_content::DOCS_CONTENT_SPEC,
+    // Wave 11.2 — the following ids were Rust-authored before being
+    // migrated to `.prism-ui` source. Each row was deleted alongside
+    // its `components/<id>.rs` file:
+    //   * shell.toolbar-separator (ui/components/toolbar-separator.prism-ui)
+    //   * shell.help-tooltip      (ui/components/help-tooltip.prism-ui)
+    //   * shell.docs-view         (ui/components/docs-view.prism-ui)
+    //   * shell.docs-sidebar      (ui/components/docs-sidebar.prism-ui)
+    //   * shell.toast-stack       (ui/components/toast-stack.prism-ui)
+    //   * shell.launchpad         (ui/components/launchpad.prism-ui)
+    // They land into the registry through
+    // `register_prism_ui_components` in `shell.rs`. The
+    // `prism_ui_specs_register_disjoint_from_native_builtins` test in
+    // `prism_ui_loader.rs` pins that they don't double-register.
     &super::app_card::APP_CARD_SPEC,
     &super::drag_number_field::DRAG_NUMBER_FIELD_SPEC,
     &super::inspector_row::INSPECTOR_ROW_SPEC,
@@ -116,16 +128,11 @@ pub static SHELL_BUILTINS: &[&BlockSpec] = &[
     &super::dock_tab_bar::DOCK_TAB_BAR_SPEC,
     &super::dock_panel::DOCK_PANEL_SPEC,
     &super::dock_workspace::DOCK_WORKSPACE_SPEC,
-    &super::toast_stack::TOAST_STACK_SPEC,
     &super::inspector_tree::INSPECTOR_TREE_SPEC,
-    &super::launchpad::LAUNCHPAD_SPEC,
     &super::command_palette::COMMAND_PALETTE_SPEC,
-    &super::help_tooltip::HELP_TOOLTIP_SPEC,
     &super::menu_item::MENU_ITEM_SPEC,
     &super::menu_dropdown::MENU_DROPDOWN_SPEC,
     &super::context_menu::CONTEXT_MENU_SPEC,
-    &super::docs_sidebar::DOCS_SIDEBAR_SPEC,
-    &super::docs_view::DOCS_VIEW_SPEC,
     &super::properties_panel::PROPERTIES_PANEL_SPEC,
     &super::component_palette::COMPONENT_PALETTE_SPEC,
     &super::explorer::EXPLORER_SPEC,

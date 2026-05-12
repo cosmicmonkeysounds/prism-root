@@ -450,6 +450,17 @@ impl<'a> LowerCtx<'a> {
         self.parent_style
     }
 
+    /// The live [`ComponentRegistry`] the cascade walk is dispatching
+    /// against. Exposed so composition seams (the Wave 11.2 `.prism-ui`
+    /// shell-component loader, future DSL-authored prefab hosts) can
+    /// build a fresh [`crate::ui_resolver::RegistryTagResolver`] over
+    /// the same id namespace the calling render walk uses. `None` on
+    /// headless / no-DI paths (matching the existing
+    /// [`Self::new`] signature).
+    pub fn registry(&self) -> Option<&ComponentRegistry> {
+        self.registry
+    }
+
     /// Subscribing read of one of `node`'s props. When a
     /// [`DocumentBindings`] is installed on this scope (Phase 4b), the
     /// read goes through `bindings.props_for(node.id, &node.props).signal(key)`,

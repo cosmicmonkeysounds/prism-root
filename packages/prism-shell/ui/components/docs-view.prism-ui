@@ -1,0 +1,21 @@
+<!--
+  shell.docs-view — full-page docs reader. Wraps shell.docs-content in
+  `mode="full"`. Wave 11.2 migration of docs_view.rs.
+-->
+<container
+    tag="article"
+    data:role="docs-view"
+    direction="column"
+    padding-left="64"
+    padding-right="64"
+    padding-top="48"
+    padding-bottom="48"
+    width="grow"
+    height="grow"
+    style:background="#ffffff">
+  <shell.docs-content
+      title="{title}"
+      summary="{summary}"
+      body="{body}"
+      mode="full"/>
+</container>

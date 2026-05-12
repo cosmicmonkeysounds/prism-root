@@ -1,0 +1,29 @@
+<!--
+  shell.launchpad — Studio home screen. Centres a vertical column with
+  a hero title and a row of `shell.app-card` children supplied by the
+  caller through `<host-children/>`. Wave 11.2 migration of
+  launchpad.rs.
+
+  The default title ("Welcome to Prism") is encoded via the if/else
+  fork on the bound `{title}` so an empty prop still renders text.
+-->
+<container
+    tag="section"
+    data:role="launchpad"
+    direction="column"
+    gap="24"
+    padding-left="32"
+    padding-right="32"
+    padding-top="64"
+    padding-bottom="32"
+    width="grow"
+    height="grow">
+  <text if="{title}" font-size="24" style:color="#000000">{title}</text>
+  <text else font-size="24" style:color="#000000">Welcome to Prism</text>
+  <container
+      direction="row"
+      gap="16"
+      data:role="app-card-row">
+    <host-children/>
+  </container>
+</container>

@@ -123,6 +123,15 @@ pub struct LowerScope {
     /// would have applied. `Arc` for the same cheap-fork rationale as
     /// `host_children_by_tag`.
     tag_emissions: Arc<HashMap<String, TagEmission>>,
+    /// Wave 11.2 — `<host-children/>` injection point for a DSL-
+    /// authored shell component composing its caller's pre-lowered
+    /// children. The loader's [`crate::interpret::lower_document_with_scope`]
+    /// caller stuffs the calling `LowerCtx::host_children()` here at
+    /// invocation time; the element handler emits the UiNodes
+    /// verbatim. Distinct from `host_children_by_tag` (resolver-side,
+    /// tag-keyed pre-injection) and from [`SlotBindings`] (AST-level
+    /// `<slot/>` expansion). `None` outside the loader's seam.
+    host_children_ui: Option<Arc<Vec<Node>>>,
 }
 
 impl std::fmt::Debug for LowerScope {
@@ -229,6 +238,23 @@ impl LowerScope {
     /// builder-side lookup outlive any single scope value.
     pub fn tag_emissions_arc(&self) -> Arc<HashMap<String, TagEmission>> {
         Arc::clone(&self.tag_emissions)
+    }
+
+    /// Wave 11.2 — install the pre-lowered children the `<host-children/>`
+    /// element should emit. The shell's `.prism-ui` loader sets this
+    /// before invoking [`lower_document_with_scope`] so a DSL-authored
+    /// wrapper component (toast-stack, launchpad) consumes its caller's
+    /// children via one declarative element instead of a Rust `ctx.host_children()`
+    /// call.
+    pub fn with_host_children_ui(mut self, children: Vec<Node>) -> Self {
+        self.host_children_ui = Some(Arc::new(children));
+        self
+    }
+
+    /// The pre-lowered children currently bound to the
+    /// `<host-children/>` element. `None` outside the loader's seam.
+    pub fn host_children_ui(&self) -> Option<&[Node]> {
+        self.host_children_ui.as_deref().map(|v| v.as_slice())
     }
 }
 
@@ -404,6 +430,19 @@ fn lower_element(el: &Element, scope: &LowerScope) -> Vec<Node> {
                 None => lower_children(&el.children, scope),
             }
         }
+        // Wave 11.2 — `<host-children/>` injection point. A DSL-
+        // authored shell component (toast-stack, launchpad, app-window)
+        // composes its caller's pre-lowered children at this seam.
+        // The shell's `.prism-ui` loader installs the children via
+        // [`LowerScope::with_host_children_ui`] before invoking
+        // `lower_document_with_scope`; here the runtime emits the
+        // stored `Vec<Node>` verbatim. Falls back to the element's own
+        // AST children (acting as a fallback slot) when nothing is
+        // bound — same semantics `<slot/>` carries.
+        "host-children" => match scope.host_children_ui() {
+            Some(injected) => injected.to_vec(),
+            None => lower_children(&el.children, scope),
+        },
         // Unknown tag — first ask the host's tag resolver (if any).
         // Hosts plug a `TagResolver` (e.g. `prism-builder`'s
         // `RegistryTagResolver`) through `LowerScope::with_resolver`
@@ -686,6 +725,32 @@ fn apply_container_attributes(
                 "height" => {
                     if let Some(s) = raw.as_deref().and_then(parse_sizing) {
                         props.height = s;
+                    }
+                }
+                // Wave 11.2 — Semantic surface for `.prism-ui`-authored
+                // shell components. Hand-rolled Rust blocks build
+                // `Semantic::tag(..).with_role(..).with_aria_label(..)`
+                // imperatively; the DSL needs the same vocabulary so
+                // an author can write `<container tag="section"
+                // role="navigation" aria-label="Pages"/>` against the
+                // same struct. The dedicated fields land on
+                // `props.semantic.{tag, role, aria_label}` (separate
+                // from the generic `attrs` vec the `data:` / `aria:` /
+                // `route:` namespaces append to) so the HTML emitter
+                // picks them up at the same seam it always did.
+                "tag" => {
+                    if let Some(v) = raw {
+                        props.semantic.tag = Some(v);
+                    }
+                }
+                "role" => {
+                    if let Some(v) = raw {
+                        props.semantic.role = Some(v);
+                    }
+                }
+                "aria-label" => {
+                    if let Some(v) = raw {
+                        props.semantic.aria_label = Some(v);
                     }
                 }
                 _ => {}
@@ -1614,6 +1679,34 @@ mod tests {
             .collect();
         assert_eq!(attrs.get("aria-label").map(String::as_str), Some("Resize"));
         assert_eq!(attrs.get("aria-hidden").map(String::as_str), Some("false"));
+    }
+
+    /// Wave 11.2 — bare `tag` / `role` / `aria-label` attrs on
+    /// `<container>` set the dedicated `Semantic` fields directly.
+    /// Hand-rolled Rust shell components build these via
+    /// `Semantic::tag(..).with_role(..).with_aria_label(..)`; the
+    /// DSL needs the same vocabulary for the `.prism-ui`-authored
+    /// shell-component migration. The `attrs` vec used by `aria:` /
+    /// `data:` namespaces is independent — these three set the
+    /// typed fields the HTML emitter reads at the same seam it
+    /// always did.
+    #[test]
+    fn bare_semantic_attrs_set_dedicated_fields_on_container() {
+        let nodes = interpret(
+            r#"<container tag="section" role="separator" aria-label="Toolbar divider"/>"#,
+        )
+        .unwrap();
+        let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        assert_eq!(props.semantic.tag.as_deref(), Some("section"));
+        assert_eq!(props.semantic.role.as_deref(), Some("separator"));
+        assert_eq!(
+            props.semantic.aria_label.as_deref(),
+            Some("Toolbar divider")
+        );
+        // The dedicated fields don't double-write into `attrs`.
+        assert!(props.semantic.attrs.is_empty());
     }
 
     /// Wave 9.4 — `transition:<prop>="<duration>"` lowers to a
