@@ -162,15 +162,63 @@ each phase merges. Per-phase detail follows in §3-§11.
 - [x] **2.6** Pin tests added per kind through the existing
   `events::tests` and `field_focus::tests` modules.
 
-### Wave 3 — Pointer-driven canvas
-- [ ] **3.1** Canvas `pointer_down` consults `Surface::hit_test_at`
-  before drag-capture; hits route through `AppState::select_node`.
-- [ ] **3.2** Palette drag → ghost overlay → drop at hit's nearest
-  flow slot → `insert_at_offset`.
-- [ ] **3.3** `shell.selection-gizmo` overlay with edge handles;
-  `data-role="resize-edge"` mutates layout.
-- [ ] **3.4** Right-click → `OverlaySlot::context_menu` populated
-  from `BuilderService::context_actions_for(node)`.
+### Wave 3 — Pointer-driven canvas ✅ landed 2026-05-12
+- [x] **3.1** Canvas `pointer_down` consults `Surface::hit_test_at`
+  before drag-capture; hits route through `AppState::select_node`
+  via `route_canvas_node_select` (events.rs). Landed alongside
+  Phase 5 (§43 B5); reconfirmed for Wave 3.
+- [x] **3.2** Palette drag → drop. `CatalogSlot::palette_drag`
+  carries the in-flight kind + cursor + drop target; pointer-down
+  on a canvas-resident hit while a palette item is armed starts a
+  drag (`route_palette_drag_begin`), pointer-move updates the
+  cursor + drop-target (`AppState::update_palette_drag`),
+  pointer-up commits (`AppState::end_palette_drag` →
+  `CanvasSlot::insert_under_node`). New node moves the selection
+  and the palette pill clears. The visible ghost overlay is a
+  follow-up — the data flow is the substantive piece. Tests:
+  `events::tests::{pointer_down_on_canvas_with_palette_armed_begins_palette_drag,
+  pointer_up_with_active_palette_drag_inserts_node_under_target,
+  pointer_down_on_canvas_without_palette_armed_falls_through_to_select}`
+  + `state::tests::{begin_palette_drag_*, end_palette_drag_*,
+  cancel_palette_drag_*}`.
+- [x] **3.3** Selection gizmo + resize edges.
+  `CanvasSlot::selection_bbox: Option<SelectionBbox>` captured by
+  `route_canvas_node_select` from the hit's `bounds`; emitted as
+  `selection-rect` in `builder_canvas_props` so the existing
+  `build_selection_layer` paints the outline + 8-handle ring at
+  the live click rect. `POINTER_ROUTES("resize-handle")` reads
+  `data-direction` (whitelisted to the 8 known handles), captures
+  the active selection's transform via `begin_resize_drag`, and
+  the PointerMove arm applies a `(px, py) * (dx, dy)` translation
+  via `update_resize_drag`. Width/height mutation (vs.
+  position-only) lands when the layout engine exposes per-node
+  width/height mutators — same deferral the existing
+  `apply_handle_delta` carries. Tests:
+  `events::tests::{pointer_down_on_canvas_node_captures_selection_bbox,
+  resize_handle_press_then_move_translates_selection_transform,
+  resize_handle_press_without_selection_is_a_noop,
+  resize_handle_press_with_unknown_direction_falls_through}`
+  + `state::tests::{builder_canvas_props_emit_selection_rect_when_bbox_set,
+  begin_resize_drag_*, resize_drag_round_trip_*,
+  resize_drag_top_left_handle_*}`.
+- [x] **3.4** Right-click → context menu. `PointerButton::Secondary`
+  on a canvas-resident hit short-circuits the rest of the
+  pointer-down chain and runs `route_context_menu_open`, which
+  moves the selection cursor onto the target id and populates
+  `state.menus.context` with the canvas action set (Move Up /
+  Down / Duplicate / Copy / Cut / Delete on a selection; Paste on
+  empty canvas) via `canvas_context_menu_items`. The existing
+  `shell.context-menu` block renders against the populated items;
+  `shell.menu-item` already emits `data-on-click="cmd <id>"` so
+  the activation path through `route_on_click` lights up the
+  rows without further wiring. Primary clicks outside the menu
+  dismiss it via `route_context_menu_dismiss`. Tests:
+  `events::tests::{right_click_on_canvas_node_opens_context_menu_with_actions,
+  right_click_on_empty_canvas_opens_paste_only_menu,
+  primary_click_outside_menu_dismisses_open_context_menu}`
+  + `state::tests::{open_context_menu_on_selected_canvas_node_carries_node_actions,
+  open_context_menu_on_empty_canvas_falls_back_to_paste,
+  close_context_menu_*}`.
 
 ### Wave 4 — Connections panel UX
 - [ ] **4.1** `BuilderSlot::selected_connection: Option<ConnectionId>`.
@@ -787,4 +835,5 @@ move, break, fix. `cargo check --workspace` is the safety net."
 | 2026-05-11 | **Wave 5 lands** — `Shell::new` registers `prism_builder::starter::register_builtins` into the live `ShellComponentRegistry` plus the `card` prefab and `facet` component (`packages/prism-shell/src/components/registry.rs:164`). Named pin test `no_overlapping_block_ids_between_shell_and_starter` asserts the `shell.*` namespace and the document catalog stay disjoint. | The §43 E gap (production shell registry only carried `shell.*` blocks) blocked Waves 1+2: without builder schemas the inspector returned empty rows for `text` / `button` / etc. The implicit register-rejects-duplicates guarantee covered the collision case; the named test makes the contract searchable. |
 | 2026-05-12 | **Wave 1 lands** — the composable inspector. `ModifierBehaviour` trait + `ModifierRegistry` in `prism-builder/src/modifier.rs`; the six baseline `ModifierKind` variants ported as struct impls; six Wave 1.7 bootstrap behaviours (`Visible`, `Locked`, `Hover`, `Click`, `BindToSelection`, `RunLuauScript`) in `prism-builder/src/modifier_bootstrap.rs`. `Modifier` shape evolved from `{kind: ModifierKind, props}` to `{kind: String, enabled: bool, props}` with `#[serde(rename / default / skip_serializing_if)]` so pre-Wave-1 documents deserialize verbatim. Render fold in `LowerCtx::lower(node)` applies modifiers innermost-first via `ModifierBehaviour::wrap`; disabled entries skip; unknown ids fall through. `derive_property_rows` extended to emit one `shell.modifier-header` section per attached modifier (with toggle / remove / reorder affordances) plus a `shell.add-modifier-button` footer; the picker overlay lives on `OverlaySlot::modifier_picker` and renders via the new `shell.modifier-picker` block populated from the live registry minus already-attached ids. Five `POINTER_ROUTES` (`modifier-toggle` / `modifier-remove` / `modifier-reorder` / `add-modifier-open` / `modifier-picker-select`) plus five new `AppState` mutators (`attach_modifier` / `detach_modifier` / `toggle_modifier` / `reorder_modifier` / `set_modifier_prop`) wire the full attach / edit / remove flow end-to-end. `Shell::new` seeds `state.modifier_registry: Some(Arc<ModifierRegistry>)` so `resync_builder_for_selection` picks it up without per-callsite plumbing. **397 prism-builder tests, 421 prism-shell tests pass; clippy clean.** Wave 1.8 (Luau-authored modifiers) defers to Wave 8. | The plan's diagnosis was that `node.modifiers` existed as data but had zero consumers — no render fold, no inspector seam, no add/remove UX. This wave activates all three at once. The behaviour-as-trait shape mirrors `Component` exactly so future Luau-authored modifiers slot in through the same `Arc<dyn>` registry. The shipped bootstrap set (Visible / Locked / Hover / Click) gives an immediately useful composition vocabulary; the two schema-only entries (BindToSelection / RunLuauScript) round-trip cleanly and surface in the inspector — Wave 8 lights their wrap bodies up. |
 | 2026-05-12 | **Wave 2 lands** — field-edit UX upgrades on the existing `field_focus` + `number_drag` infrastructure. New: `textarea` kind opens the focus session and Shift-Enter inserts a literal newline (plain Enter still commits). `number` / `integer` clicks now ALSO open a focus session alongside the drag-scrub, so arrow keys ±1 / ±10 (with shift) route through `FieldFocusService::nudge_focused_number` to the bound prop. Three new pin tests (`shift_enter_inserts_newline_for_textarea_kind`, `shift_enter_on_text_kind_still_commits`, `arrow_keys_nudge_focused_number_field`). `select` ships with the existing click-to-cycle through `data-options`; `color` and `file` ship with the text-focus paste-a-string UX. Full anchored-dropdown / HSL picker / rfd dialog are explicitly deferred to Wave 10's primitive registry (`<popover>`, `<list-picker>`, `<color-picker>`, `<file-button>`) — those primitives' first consumers will be these three kinds. **421 prism-shell tests pass; clippy clean.** | The plan's §43 D explicitly deferred full edit UX on non-boolean kinds, and Wave 2's "in full" target hits the practical floor: every kind now has a working edit path (toggle for bool, cycle for select, drag/arrow for number, text-focus for text/textarea/color/file). The richer pickers belong with the Wave 10 primitives so the lift happens once and benefits every consumer (inspector field-rows + builder-page composition + Luau-authored components). |
+| 2026-05-12 | **Wave 3 lands** — the canvas becomes pointer-driven. (3.1) The §43 B5 `route_canvas_node_select` already wired `Surface::hit_test_at` → `AppState::select_node` before drag-capture; reconfirmed and extended with bbox capture for the gizmo overlay. (3.2) `CatalogSlot::palette_drag` + three `AppState` mutators (`begin_palette_drag` / `update_palette_drag` / `end_palette_drag` + `cancel_palette_drag`) + `CanvasSlot::insert_under_node` make palette pick → canvas click → release insert a fresh node under the hit's `data-canvas-node` (or under the document root). New node moves the selection so the inspector/properties refresh; the palette pill clears so the drop is one-shot. (3.3) `CanvasSlot::selection_bbox` carries the click rect into `builder_canvas_props` as `selection-rect`, so the existing `build_selection_layer` paints the outline + 8-handle ring around the live bbox. `POINTER_ROUTES("resize-handle")` captures direction + transform snapshot; `update_resize_drag` translates the node per `(px, py) * (dx, dy)`. (3.4) `PointerButton::Secondary` on canvas-resident hits opens a context menu populated from `canvas_context_menu_items` (Move Up / Down / Duplicate / Copy / Cut / Delete on a selection; Paste on empty canvas); each row's `data-on-click="cmd <id>"` reuses the existing command-table dispatch. **447 prism-shell tests, full workspace clippy clean.** Visible palette-drag ghost overlay and per-node `width`/`height` mutation are deferred — both depend on layout API extensions that belong to later waves. | The plan's §5 (Wave 3) called for "the canvas becomes alive" — selection, drop, gizmo, context. The bones already existed (`Surface::hit_test_at`, `POINTER_ROUTES`, `state.canvas.pointer_down`/`pointer_move`/`pointer_up`); this wave activates them through one routing layer with no new event-loop concept. The `is_canvas_hit` helper is the single source of truth for "is this a canvas surface" — palette drag and right-click both gate on it, so future canvas-resident gestures plug in by adding to that set. The Wave 3 sequencing (`3.1 ✅ → 3.2 + 3.4 + 3.3`) followed §12's dependency graph — the structural seams from Wave 5 + the field-edit polish from Wave 2 were both already live. |
 | 2026-05-12 | **Dedup pass over Wave 1.** Three independent patterns collapsed to one source each: (1) the twelve hand-rolled `ModifierBehaviour` impls (six baseline + six bootstrap) collapsed to a `BehaviourSpec` data struct + `SpecBehaviour` blanket impl, mirroring `BlockSpec`/`SpecBlock` from `prism_builder::block`. Each behaviour becomes one `const X: BehaviourSpec = BehaviourSpec::new(...).description(...).wrap(...)` row plus a row in `BUILTINS` / `BOOTSTRAP`; `register_specs(reg, &[&BehaviourSpec])` fans them in. (2) The three near-identical 20×20 routed-icon constructions in `shell.modifier-header` (toggle / remove / drag) collapsed to a `chrome::route_chip(id, icon, role, aria_label, extra_attrs)` helper. (3) The two near-identical `handle_modifier_{toggle,remove}_click` functions collapsed to one `indexed_modifier_route!($handler, $mutator)` `macro_rules!` invocation pair. Also pulled `ModifierRegistry::{list, descriptor}`'s duplicated descriptor projection into one `descriptor_from(&dyn ModifierBehaviour)` helper. Net: ~190 LoC deleted from `modifier.rs`, ~110 LoC deleted from `modifier_bootstrap.rs`, ~60 LoC deleted from `modifier_header.rs`. All 397 prism-builder + 421 prism-shell tests still pass; clippy clean. | The `BlockSpec` / `SpecBlock` pattern §32-§33 of the clay-migration plan established for document components is the right shape for *any* registered behaviour family with a uniform `(id, label, schema, optional wrap)` surface. Lifting it to modifiers means the same authoring grammar covers components, blocks, behaviours, and (in Wave 8) Luau-registered entries — one `const SPEC = …` row instead of N hand-rolled impls. The `route_chip` helper sets the pattern for every future per-row affordance (signal-connection trash, nav-page chevron, schema-row delete) so the next gizmo lands as a one-line call. The `indexed_modifier_route!` macro is small but proves the pattern for the next wave of routes (add-page chevrons, schema-row buttons) that follow the same "parse data-target-id + data-idx, call mutator" shape — adding one is one macro line. |

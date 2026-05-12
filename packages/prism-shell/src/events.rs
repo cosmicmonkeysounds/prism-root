@@ -52,13 +52,24 @@ pub fn dispatch_event(
         // canvas gizmo capture runs. This lets clicks on inspector
         // rows / field-editor toggles mutate state without poking
         // through the canvas-tool dispatch.
-        Event::PointerDown { x, y, .. } => {
+        Event::PointerDown { x, y, button } => {
             // B4: a pointer-down that *isn't* on a text-input field
             // commits any active field-focus session before any other
             // routing runs. Clicking a chrome button, a second field
             // row, or the canvas all reach this branch — none should
             // leave the focus "stuck" on the previous field.
             let blurred = pre_route_field_focus_blur(inner, hit.as_ref());
+            // Wave 3.4: a right-click on a canvas-resident hit opens
+            // the context menu and short-circuits the rest of the
+            // pointer chain. Chrome surfaces stay on primary-only
+            // routes; the secondary button is a canvas concern.
+            if *button == prism_ui_runtime::event::PointerButton::Secondary {
+                let opened = hit
+                    .as_ref()
+                    .map(|h| route_context_menu_open(inner, h, *x, *y))
+                    .unwrap_or(false);
+                return blurred || opened;
+            }
             let routed = hit
                 .as_ref()
                 .map(|h| route_pointer_down(inner, h))
@@ -74,6 +85,29 @@ pub fn dispatch_event(
                     .as_ref()
                     .map(|h| route_on_click(inner, h))
                     .unwrap_or(false);
+            // Wave 3.4: any primary click outside the context menu
+            // dismisses it. Sits before the canvas-node-select route
+            // so clicking on a node behind the menu re-selects rather
+            // than leaving a stale overlay.
+            let dismissed = !routed
+                && !acted
+                && hit
+                    .as_ref()
+                    .map(|h| route_context_menu_dismiss(inner, h))
+                    .unwrap_or(false);
+            // Wave 3.2: when a palette item is armed, a primary click
+            // on the canvas (page, preview, or any tagged canvas
+            // node) starts a palette drag. Takes precedence over
+            // `route_canvas_node_select` so picking a palette item
+            // and clicking an existing node parents the new node
+            // under it rather than re-selecting it.
+            let palette_armed = !routed
+                && !acted
+                && !dismissed
+                && hit
+                    .as_ref()
+                    .map(|h| route_palette_drag_begin(inner, h, *x, *y))
+                    .unwrap_or(false);
             // §43 B5: a click on a rendered canvas document node
             // (tagged `data-canvas-node="<id>"` by `builder_canvas`)
             // routes to `select_node` *before* the canvas-tool drag
@@ -82,12 +116,17 @@ pub fn dispatch_event(
             // this — `routed` short-circuits the chain.
             let selected = !routed
                 && !acted
+                && !dismissed
+                && !palette_armed
                 && hit
                     .as_ref()
                     .map(|h| route_canvas_node_select(inner, h))
                     .unwrap_or(false);
-            let captured = inner.borrow_mut().state.canvas.pointer_down(*x, *y);
-            blurred || routed || acted || selected || captured
+            // The gizmo / handle drag capture stays the last fallback.
+            // Skipped when a palette drag claimed the press so the
+            // canvas doesn't also try to grab the same down event.
+            let captured = !palette_armed && inner.borrow_mut().state.canvas.pointer_down(*x, *y);
+            blurred || routed || acted || dismissed || palette_armed || selected || captured
         }
         Event::PointerMove { x, y } => {
             // B4: a property-row number-scrub session intercepts
@@ -105,7 +144,33 @@ pub fn dispatch_event(
                     false
                 }
             };
-            scrubbed || inner.borrow_mut().state.canvas.pointer_move(*x, *y)
+            // Wave 3.2: while a palette drag is in flight every
+            // pointer-move updates the ghost's pointer position and
+            // tracks the canvas node under the cursor. Falls through
+            // cleanly when no drag is active.
+            let palette_moved = {
+                let active = inner.borrow().state.catalog.palette_drag.is_some();
+                if active {
+                    let target = hit
+                        .as_ref()
+                        .and_then(|h| attr_value(h, "data-canvas-node").map(str::to_string));
+                    inner
+                        .borrow_mut()
+                        .state
+                        .update_palette_drag(*x, *y, target.as_deref())
+                } else {
+                    false
+                }
+            };
+            // Wave 3.3: a resize-handle drag intercepts pointer-move
+            // before the generic canvas gizmo arm. The mutator returns
+            // false when no session is active so this falls through
+            // cleanly.
+            let resized = inner.borrow_mut().state.update_resize_drag(*x, *y);
+            scrubbed
+                || palette_moved
+                || resized
+                || inner.borrow_mut().state.canvas.pointer_move(*x, *y)
         }
         Event::PointerUp { x, y, .. } => {
             // B4: end the number-scrub session if one was active. If
@@ -125,7 +190,30 @@ pub fn dispatch_event(
                     .as_ref()
                     .map(|h| step_number_on_click(inner, h))
                     .unwrap_or(false);
-            stepped || inner.borrow_mut().state.canvas.pointer_up(*x, *y)
+            // Wave 3.2: commit the palette drag at release. The
+            // drop-target captured by the last move (or the initial
+            // down) decides parent; the new node moves the
+            // selection so the inspector / properties refresh.
+            let dropped = {
+                let active = inner.borrow().state.catalog.palette_drag.is_some();
+                if active {
+                    let mut guard = inner.borrow_mut();
+                    let g = &mut *guard;
+                    let registry = g.registry.as_component_registry();
+                    g.state.end_palette_drag(Some(registry)).is_some()
+                } else {
+                    false
+                }
+            };
+            // Wave 3.3: commit the resize drag at release. The
+            // transform mutations from `update_resize_drag` are
+            // already live in the document; this just drops the
+            // session so the next click can start a new one.
+            let resize_committed = inner.borrow_mut().state.end_resize_drag();
+            stepped
+                || dropped
+                || resize_committed
+                || inner.borrow_mut().state.canvas.pointer_up(*x, *y)
         }
         // §24: every other event variant fans out through the service
         // registry. Services declare their interest via `on_event`;
@@ -174,6 +262,12 @@ const POINTER_ROUTES: &[(&str, PointerHandler)] = &[
     ("signal-connection-row", handle_signal_connection_row_click),
     ("nav-button", handle_nav_button_click),
     ("menu-pill", handle_menu_pill_click),
+    // Wave 3.3: pointer-down on a `shell.resize-handle` carries
+    // `data-direction` (one of `tl|t|tr|r|br|b|bl|l`); the handler
+    // captures the direction + snapshot for the active selection so
+    // the next pointer-move applies the delta against a pristine
+    // transform (no integration drift across the drag).
+    ("resize-handle", handle_resize_handle_press),
     // Wave 1.6 of `docs/dev/composable-builder-plan.md` — composable
     // inspector. Each row in the modifier-header strip is a separate
     // route; the picker overlay's open / select pair completes the
@@ -711,6 +805,10 @@ fn route_on_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
 /// against the active document and re-derives the inspector tree +
 /// property rows for the new selection. Returns true when the
 /// selection actually moved (so the frame needs to redraw).
+///
+/// Wave 3.3 — also captures the hit's bounding rect into
+/// `state.canvas.selection_bbox` so the next frame paints the
+/// selection outline + 8-handle ring around the actual click rect.
 fn route_canvas_node_select(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
     let Some(node_id) = attr_value(hit, "data-canvas-node") else {
         return false;
@@ -718,7 +816,117 @@ fn route_canvas_node_select(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> b
     let mut guard = inner.borrow_mut();
     let g = &mut *guard;
     let registry = g.registry.as_component_registry();
-    g.state.select_node(node_id, Some(registry))
+    let moved = g.state.select_node(node_id, Some(registry));
+    // Capture the bbox unconditionally — a click that lands on the
+    // already-selected node still re-grounds the gizmo against the
+    // current layout (which may have drifted since the last click,
+    // e.g. after a window resize). `set_selection_bbox` is a pure
+    // data write so re-setting an equal value is cheap.
+    g.state
+        .set_selection_bbox(Some(crate::state::SelectionBbox {
+            x: hit.bounds.x,
+            y: hit.bounds.y,
+            width: hit.bounds.width,
+            height: hit.bounds.height,
+        }));
+    moved
+}
+
+/// Wave 3.3 — pointer-down on one of the 8 resize handles painted by
+/// `build_selection_layer` around the selected canvas node. The
+/// handle carries `data-direction` (`tl|t|tr|r|br|b|bl|l`); the
+/// handler snapshots the selection's transform and captures the
+/// origin. The follow-up pointer-moves run through
+/// `state.update_resize_drag(x, y)` in the PointerMove arm.
+fn handle_resize_handle_press(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
+    let Some(direction) = attr_value(hit, "data-direction") else {
+        return false;
+    };
+    // Use the hit's bbox center as the origin so the drag delta is
+    // measured from the handle's anchor point, not an arbitrary
+    // click position inside the handle. The handle is an 8x8 rect;
+    // sampling the centre keeps the math agnostic to where inside
+    // the handle the user pressed.
+    let origin_x = hit.bounds.x + hit.bounds.width * 0.5;
+    let origin_y = hit.bounds.y + hit.bounds.height * 0.5;
+    let mut guard = inner.borrow_mut();
+    guard.state.begin_resize_drag(direction, origin_x, origin_y)
+}
+
+/// Wave 3.2: hit-tests for whether a pointer-down landed on the
+/// canvas (any of the canvas's tagged frames, the page rect, the
+/// preview layer, or any preview node). When the catalog has a
+/// palette item armed, this opens a palette drag at the cursor.
+/// Returns true when the drag actually started.
+fn route_palette_drag_begin(
+    inner: &Rc<RefCell<ShellInner>>,
+    hit: &HitRect,
+    x: f32,
+    y: f32,
+) -> bool {
+    if !is_canvas_hit(hit) {
+        return false;
+    }
+    let target = attr_value(hit, "data-canvas-node").map(str::to_string);
+    inner
+        .borrow_mut()
+        .state
+        .begin_palette_drag(x, y, target.as_deref())
+}
+
+/// Wave 3.2: a hit lands "on the canvas" when it sits inside the
+/// canvas frame — either the frame container itself, the page
+/// rect, the preview layer's host container, or any container the
+/// preview-tagging pass marked with `data-canvas-node`. The four
+/// chrome roles cover the empty-canvas drop case; the
+/// canvas-node attr covers the "drop under an existing node" case.
+fn is_canvas_hit(hit: &HitRect) -> bool {
+    if attr_value(hit, "data-canvas-node").is_some() {
+        return true;
+    }
+    matches!(
+        attr_value(hit, "data-role"),
+        Some("builder-canvas")
+            | Some("canvas-page")
+            | Some("canvas-preview")
+            | Some("canvas-overlay")
+    )
+}
+
+/// Wave 3.4: a right-click on a canvas-resident hit opens the
+/// context menu populated with that node's actions. A right-click
+/// on the empty canvas falls back to the document-level actions
+/// (paste-from-clipboard). Returns true when the menu actually
+/// opened.
+fn route_context_menu_open(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect, x: f32, y: f32) -> bool {
+    if !is_canvas_hit(hit) {
+        return false;
+    }
+    let target = attr_value(hit, "data-canvas-node").map(str::to_string);
+    let mut guard = inner.borrow_mut();
+    let g = &mut *guard;
+    let registry = g.registry.as_component_registry();
+    g.state
+        .open_context_menu(x, y, target.as_deref(), Some(registry))
+}
+
+/// Wave 3.4: a primary click anywhere except a menu-item dismisses
+/// an open context menu. Menu-item clicks reach `route_on_click`
+/// (which routes through `data-on-click="cmd <id>"`) before this
+/// check, so the activation path stays the priority.
+fn route_context_menu_dismiss(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
+    // Don't dismiss while the click is inside the menu itself —
+    // the dispatch on the item will close it (or leave it open
+    // when the item is a non-activating separator).
+    let inside_menu = matches!(
+        attr_value(hit, "data-role"),
+        Some("context-menu") | Some("menu-dropdown")
+    ) || attr_value(hit, "role") == Some("menuitem");
+    if inside_menu {
+        return false;
+    }
+    let mut guard = inner.borrow_mut();
+    guard.state.close_context_menu()
 }
 
 fn attr_value<'a>(hit: &'a HitRect, key: &str) -> Option<&'a str> {
@@ -2425,5 +2633,507 @@ mod tests {
             1
         );
         assert!(!inner.state.overlay.modifier_picker.open, "picker closes");
+    }
+
+    // ── Wave 3.2 palette drag → drop tests ──────────────────────────
+
+    /// A canvas hit while `palette_selected` is armed must capture
+    /// a palette drag (recording the cursor + drop target) without
+    /// also re-selecting the canvas node under the cursor.
+    #[test]
+    fn pointer_down_on_canvas_with_palette_armed_begins_palette_drag() {
+        use prism_ui_runtime::event::PointerButton;
+        let shell = Shell::new().expect("boot");
+        {
+            let mut guard = shell.inner.borrow_mut();
+            guard.state.catalog.palette_selected = Some("text".into());
+        }
+        // A canvas hit shaped like the lowered `demo-heading` preview
+        // node — `data-canvas-node="demo-heading"` is the disambiguator.
+        let hit = HitRect {
+            id: "demo-heading".into(),
+            bounds: Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 80.0,
+                height: 24.0,
+            },
+            attrs: vec![
+                ("data-role".into(), "canvas-preview".into()),
+                ("data-canvas-node".into(), "demo-heading".into()),
+            ],
+        };
+        let dirty = dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 100.0,
+                y: 200.0,
+                button: PointerButton::Primary,
+            },
+            Some(hit),
+        );
+        assert!(dirty, "palette drag start requests redraw");
+        let inner = shell.inner.borrow();
+        let drag = inner
+            .state
+            .catalog
+            .palette_drag
+            .as_ref()
+            .expect("drag captured");
+        assert_eq!(drag.kind, "text");
+        assert_eq!(drag.pointer, (100.0, 200.0));
+        assert_eq!(drag.drop_target.as_deref(), Some("demo-heading"));
+    }
+
+    /// A palette drag released over a canvas node inserts the new
+    /// node under that target, clears `palette_selected`, and moves
+    /// the canvas selection onto the freshly-dropped node.
+    #[test]
+    fn pointer_up_with_active_palette_drag_inserts_node_under_target() {
+        use prism_ui_runtime::event::PointerButton;
+        let shell = Shell::new().expect("boot");
+        let before = shell.inner.borrow().state.canvas.node_count();
+        {
+            let mut guard = shell.inner.borrow_mut();
+            guard.state.catalog.palette_selected = Some("button".into());
+        }
+        // Step 1: PointerDown on a canvas-preview hit captures the
+        // drag and records the drop target.
+        let target_id = shell
+            .inner
+            .borrow()
+            .state
+            .canvas
+            .document
+            .root
+            .as_ref()
+            .unwrap()
+            .id
+            .clone();
+        let hit = HitRect {
+            id: target_id.clone(),
+            bounds: Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 200.0,
+                height: 200.0,
+            },
+            attrs: vec![
+                ("data-role".into(), "canvas-preview".into()),
+                ("data-canvas-node".into(), target_id.clone()),
+            ],
+        };
+        let _ = dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 12.0,
+                y: 12.0,
+                button: PointerButton::Primary,
+            },
+            Some(hit.clone()),
+        );
+        // Step 2: PointerUp commits the insert.
+        let dirty = dispatch_event(
+            &shell.inner,
+            &Event::PointerUp {
+                x: 20.0,
+                y: 20.0,
+                button: PointerButton::Primary,
+            },
+            Some(hit),
+        );
+        assert!(dirty, "drop commits the insert → redraw");
+        let after = shell.inner.borrow().state.canvas.node_count();
+        assert_eq!(after, before + 1, "node-count rises by one");
+        let inner = shell.inner.borrow();
+        assert!(
+            inner.state.catalog.palette_drag.is_none(),
+            "drag state is consumed"
+        );
+        assert!(
+            inner.state.catalog.palette_selected.is_none(),
+            "palette pill clears after drop"
+        );
+        // Selection moves to the new node (its id is "button-new" +
+        // a unique suffix because the target's children may already
+        // hold a `button-new`).
+        assert!(
+            inner
+                .state
+                .canvas
+                .selection
+                .as_deref()
+                .map(|s| s.starts_with("button-new"))
+                .unwrap_or(false),
+            "selection moves to the dropped node"
+        );
+    }
+
+    /// With no palette item armed, a canvas click falls through to
+    /// the existing select-canvas-node path — the Wave 3.2 hook
+    /// must not steal clicks that aren't actually palette-driven.
+    #[test]
+    fn pointer_down_on_canvas_without_palette_armed_falls_through_to_select() {
+        use prism_ui_runtime::event::PointerButton;
+        let shell = Shell::new().expect("boot");
+        // No palette pick.
+        assert!(shell
+            .inner
+            .borrow()
+            .state
+            .catalog
+            .palette_selected
+            .is_none());
+        let hit = HitRect {
+            id: "demo-heading".into(),
+            bounds: Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 80.0,
+                height: 24.0,
+            },
+            attrs: vec![
+                ("data-role".into(), "canvas-preview".into()),
+                ("data-canvas-node".into(), "demo-heading".into()),
+            ],
+        };
+        let _ = dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 10.0,
+                y: 10.0,
+                button: PointerButton::Primary,
+            },
+            Some(hit),
+        );
+        let inner = shell.inner.borrow();
+        assert!(
+            inner.state.catalog.palette_drag.is_none(),
+            "no drag started"
+        );
+        assert_eq!(
+            inner.state.canvas.selection.as_deref(),
+            Some("demo-heading"),
+            "ordinary canvas click still selects"
+        );
+    }
+
+    // ── Wave 3.4 right-click context menu tests ─────────────────────
+
+    /// A right-click on a canvas-resident hit opens the context menu
+    /// with the node-mutation triad plus clipboard rows; the canvas
+    /// selection moves to the right-clicked node so command
+    /// activation operates against it.
+    #[test]
+    fn right_click_on_canvas_node_opens_context_menu_with_actions() {
+        use prism_ui_runtime::event::PointerButton;
+        let shell = Shell::new().expect("boot");
+        let hit = HitRect {
+            id: "demo-heading".into(),
+            bounds: Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 80.0,
+                height: 24.0,
+            },
+            attrs: vec![
+                ("data-role".into(), "canvas-preview".into()),
+                ("data-canvas-node".into(), "demo-heading".into()),
+            ],
+        };
+        let dirty = dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 50.0,
+                y: 50.0,
+                button: PointerButton::Secondary,
+            },
+            Some(hit),
+        );
+        assert!(dirty, "right-click opens the menu → redraw");
+        let inner = shell.inner.borrow();
+        assert_eq!(
+            inner.state.canvas.selection.as_deref(),
+            Some("demo-heading"),
+            "right-click moves the selection cursor",
+        );
+        let labels: Vec<&str> = inner
+            .state
+            .menus
+            .context
+            .iter()
+            .filter(|m| !m.separator)
+            .map(|m| m.label.as_str())
+            .collect();
+        assert!(
+            labels.contains(&"Delete"),
+            "menu carries the Delete row, got {labels:?}"
+        );
+        assert!(
+            labels.contains(&"Move Up"),
+            "menu carries the Move Up row, got {labels:?}"
+        );
+    }
+
+    /// A right-click on the empty canvas (no `data-canvas-node`) still
+    /// opens the menu, falling back to document-level actions.
+    #[test]
+    fn right_click_on_empty_canvas_opens_paste_only_menu() {
+        use prism_ui_runtime::event::PointerButton;
+        let shell = Shell::new().expect("boot");
+        // Clear selection so the menu reflects "no node selected."
+        {
+            let mut guard = shell.inner.borrow_mut();
+            guard.state.canvas.selection = None;
+        }
+        let hit = HitRect {
+            id: "canvas".into(),
+            bounds: Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 800.0,
+                height: 600.0,
+            },
+            attrs: vec![("data-role".into(), "canvas-page".into())],
+        };
+        let _ = dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 400.0,
+                y: 300.0,
+                button: PointerButton::Secondary,
+            },
+            Some(hit),
+        );
+        let inner = shell.inner.borrow();
+        let labels: Vec<&str> = inner
+            .state
+            .menus
+            .context
+            .iter()
+            .filter(|m| !m.separator)
+            .map(|m| m.label.as_str())
+            .collect();
+        assert_eq!(labels, vec!["Paste"]);
+    }
+
+    /// A primary click outside the menu closes an open context menu.
+    /// The hit need not match any chrome — even an idle canvas
+    /// surface dismisses it.
+    #[test]
+    fn primary_click_outside_menu_dismisses_open_context_menu() {
+        use prism_ui_runtime::event::PointerButton;
+        let shell = Shell::new().expect("boot");
+        // Seed an open menu.
+        {
+            let mut guard = shell.inner.borrow_mut();
+            guard.state.menus.context.push(crate::state::MenuItem {
+                label: "Foo".into(),
+                shortcut: None,
+                command: Some("noop".into()),
+                separator: false,
+                enabled: true,
+            });
+        }
+        let hit = HitRect {
+            id: "elsewhere".into(),
+            bounds: Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 10.0,
+                height: 10.0,
+            },
+            attrs: vec![],
+        };
+        let dirty = dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 0.0,
+                y: 0.0,
+                button: PointerButton::Primary,
+            },
+            Some(hit),
+        );
+        assert!(dirty, "dismiss requests a redraw");
+        assert!(shell.inner.borrow().state.menus.context.is_empty());
+    }
+
+    // ── Wave 3.3 selection-gizmo + resize tests ─────────────────────
+
+    /// A canvas-node click captures the hit's bounding rect into
+    /// `state.canvas.selection_bbox` so the next frame paints the
+    /// selection outline + 8-handle ring at the real layout rect.
+    #[test]
+    fn pointer_down_on_canvas_node_captures_selection_bbox() {
+        use prism_ui_runtime::event::PointerButton;
+        let shell = Shell::new().expect("boot");
+        let hit = HitRect {
+            id: "demo-heading".into(),
+            bounds: Rect {
+                x: 24.0,
+                y: 48.0,
+                width: 160.0,
+                height: 32.0,
+            },
+            attrs: vec![
+                ("data-role".into(), "canvas-preview".into()),
+                ("data-canvas-node".into(), "demo-heading".into()),
+            ],
+        };
+        let _ = dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 25.0,
+                y: 49.0,
+                button: PointerButton::Primary,
+            },
+            Some(hit),
+        );
+        let bbox = shell
+            .inner
+            .borrow()
+            .state
+            .canvas
+            .selection_bbox
+            .expect("bbox captured");
+        assert_eq!(bbox.x, 24.0);
+        assert_eq!(bbox.y, 48.0);
+        assert_eq!(bbox.width, 160.0);
+        assert_eq!(bbox.height, 32.0);
+    }
+
+    /// A pointer-down on a resize-handle hit captures the direction
+    /// and snapshots the selection's transform; a follow-up
+    /// pointer-move translates the node along the handle's axes.
+    #[test]
+    fn resize_handle_press_then_move_translates_selection_transform() {
+        use prism_builder::Node;
+        use prism_core::foundation::spatial::Transform2D;
+        use prism_ui_runtime::event::PointerButton;
+        let shell = Shell::new().expect("boot");
+        // Seed a doc with a known-position node and select it so
+        // the handle handler has something to drag.
+        {
+            let mut guard = shell.inner.borrow_mut();
+            let g = &mut *guard;
+            g.state.canvas.document = prism_builder::BuilderDocument {
+                root: Some(Node {
+                    id: "root".into(),
+                    component: "container".into(),
+                    transform: Transform2D {
+                        position: [100.0, 100.0],
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            g.state.canvas.selection = Some("root".into());
+        }
+        let handle_hit = hit_with("resize-handle", "", &[("data-direction", "br")]);
+        let _ = dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 0.0,
+                y: 0.0,
+                button: PointerButton::Primary,
+            },
+            Some(handle_hit),
+        );
+        assert!(
+            shell.inner.borrow().state.canvas.resize_drag.is_some(),
+            "press captures the drag session"
+        );
+        // PointerMove with no hit (resize drag doesn't need one):
+        // delta (50, 30) under bottom-right handle adds positively.
+        let _ = dispatch_event(&shell.inner, &Event::PointerMove { x: 50.0, y: 30.0 }, None);
+        let pos = shell
+            .inner
+            .borrow()
+            .state
+            .canvas
+            .document
+            .root
+            .as_ref()
+            .unwrap()
+            .transform
+            .position;
+        // Origin was (handle bbox center = 5, 5). Delta = (45, 25)
+        // against zoom 1.0. Snapshot = (100, 100). After drag:
+        // (100 + 45, 100 + 25) = (145, 125).
+        assert!((pos[0] - 145.0).abs() < 0.5, "x translated: {pos:?}");
+        assert!((pos[1] - 125.0).abs() < 0.5, "y translated: {pos:?}");
+        // PointerUp commits the drag (clears the session).
+        let _ = dispatch_event(
+            &shell.inner,
+            &Event::PointerUp {
+                x: 50.0,
+                y: 30.0,
+                button: PointerButton::Primary,
+            },
+            None,
+        );
+        assert!(
+            shell.inner.borrow().state.canvas.resize_drag.is_none(),
+            "release commits the drag"
+        );
+    }
+
+    /// A resize-handle press without a selected canvas node is a
+    /// clean no-op — clicking a stale handle (e.g. one painted from
+    /// a prior selection that the user then deselected) doesn't
+    /// capture an empty drag.
+    #[test]
+    fn resize_handle_press_without_selection_is_a_noop() {
+        use prism_ui_runtime::event::PointerButton;
+        let shell = Shell::new().expect("boot");
+        {
+            let mut guard = shell.inner.borrow_mut();
+            guard.state.canvas.selection = None;
+        }
+        let handle_hit = hit_with("resize-handle", "", &[("data-direction", "br")]);
+        let _ = dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 0.0,
+                y: 0.0,
+                button: PointerButton::Primary,
+            },
+            Some(handle_hit),
+        );
+        assert!(shell.inner.borrow().state.canvas.resize_drag.is_none());
+    }
+
+    /// An unknown `data-direction` value falls through cleanly; the
+    /// 8-direction whitelist guards against malformed authoring.
+    #[test]
+    fn resize_handle_press_with_unknown_direction_falls_through() {
+        use prism_builder::Node;
+        use prism_ui_runtime::event::PointerButton;
+        let shell = Shell::new().expect("boot");
+        {
+            let mut guard = shell.inner.borrow_mut();
+            let g = &mut *guard;
+            g.state.canvas.document = prism_builder::BuilderDocument {
+                root: Some(Node {
+                    id: "root".into(),
+                    component: "container".into(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            g.state.canvas.selection = Some("root".into());
+        }
+        let handle_hit = hit_with("resize-handle", "", &[("data-direction", "???")]);
+        let _ = dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 0.0,
+                y: 0.0,
+                button: PointerButton::Primary,
+            },
+            Some(handle_hit),
+        );
+        assert!(shell.inner.borrow().state.canvas.resize_drag.is_none());
     }
 }

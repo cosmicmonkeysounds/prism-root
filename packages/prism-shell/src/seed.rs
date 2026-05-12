@@ -130,6 +130,7 @@ fn seed_catalog() -> CatalogSlot {
         files: seed_files(),
         palette: seed_palette(),
         palette_selected: None,
+        palette_drag: None,
     }
 }
 

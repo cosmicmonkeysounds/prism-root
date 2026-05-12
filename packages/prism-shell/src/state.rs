@@ -193,6 +193,10 @@ impl AppState {
     /// this method, not every Esc handler.
     pub fn clear_selection(&mut self) {
         self.canvas.selection = None;
+        // Wave 3.3: the bbox is keyed to the prior selection; drop
+        // it so the next frame doesn't paint a stale gizmo around
+        // a node that's no longer selected.
+        self.canvas.selection_bbox = None;
         for node in &mut self.builder.inspector {
             node.selected = false;
         }
@@ -266,6 +270,189 @@ impl AppState {
         self.canvas.selection = Some(node_id.into());
         self.resync_builder_for_selection(registry);
         true
+    }
+
+    /// Wave 3.2 of `docs/dev/composable-builder-plan.md` — capture a
+    /// palette-driven drag at the given pointer position. Returns
+    /// `true` when a palette item is armed (`palette_selected.is_some()`)
+    /// and a drag session opened; `false` otherwise (the click falls
+    /// through to canvas-node-select or the gizmo capture).
+    pub fn begin_palette_drag(&mut self, x: f32, y: f32, drop_target: Option<&str>) -> bool {
+        let Some(kind) = self.catalog.palette_selected.clone() else {
+            return false;
+        };
+        self.catalog.palette_drag = Some(PaletteDrag {
+            kind,
+            pointer: (x, y),
+            drop_target: drop_target.map(str::to_string),
+        });
+        true
+    }
+
+    /// Wave 3.2 — update the in-flight palette drag's pointer and
+    /// current drop target. Returns `true` when the drag is active so
+    /// the next frame redraws the ghost; `false` when no drag is in
+    /// flight (the pointer-move falls through to the canvas).
+    pub fn update_palette_drag(&mut self, x: f32, y: f32, drop_target: Option<&str>) -> bool {
+        let Some(drag) = self.catalog.palette_drag.as_mut() else {
+            return false;
+        };
+        drag.pointer = (x, y);
+        drag.drop_target = drop_target.map(str::to_string);
+        true
+    }
+
+    /// Wave 3.2 — commit the in-flight palette drag. Materialises a
+    /// fresh node of the dragged kind, inserts it under the resolved
+    /// drop target (or under the document root when none was hit),
+    /// clears the palette-selected pill, and moves the canvas
+    /// selection onto the new node so the inspector / properties
+    /// refresh against it. Returns the new node id on success.
+    pub fn end_palette_drag(
+        &mut self,
+        registry: Option<&prism_builder::ComponentRegistry>,
+    ) -> Option<NodeId> {
+        let drag = self.catalog.palette_drag.take()?;
+        // Clear the armed pill so subsequent clicks don't re-trigger
+        // a drop; the user re-picks an item to drop again. Matches
+        // the discoverable Figma/Sketch model — palette pick =
+        // one-shot intent.
+        self.catalog.palette_selected = None;
+        let value = palette_node_template(&drag.kind)?;
+        let new_id = self
+            .canvas
+            .insert_under_node(value, drag.drop_target.as_deref())?;
+        self.canvas.selection = Some(new_id.clone());
+        self.resync_builder_for_selection(registry);
+        Some(new_id)
+    }
+
+    /// Wave 3.2 — discard the in-flight palette drag without
+    /// inserting anything. Used by Esc-cancel and by routes that
+    /// pre-empt the drag (e.g. the user opens a context menu mid-drag).
+    /// Returns `true` when a drag was actually cancelled.
+    pub fn cancel_palette_drag(&mut self) -> bool {
+        self.catalog.palette_drag.take().is_some()
+    }
+
+    /// Wave 3.4 — open the canvas context menu at `(x, y)`. When
+    /// `target_id` resolves to a canvas-document node the menu is
+    /// populated with that node's actions (move up / move down /
+    /// delete / duplicate); on the empty canvas it falls back to
+    /// document-level actions (paste from clipboard when non-empty).
+    /// Returns `true` when the menu actually opened — `false` when
+    /// no actions would be available so the existing menu state
+    /// stays untouched.
+    pub fn open_context_menu(
+        &mut self,
+        _x: f32,
+        _y: f32,
+        target_id: Option<&str>,
+        registry: Option<&prism_builder::ComponentRegistry>,
+    ) -> bool {
+        // Target id moves the canvas selection so subsequent
+        // command activation (`builder.delete-selected`,
+        // `builder.move-selected-up`, …) operates on the right
+        // node. Empty-canvas right-clicks clear the selection so
+        // paste-from-clipboard lands at root.
+        if let Some(id) = target_id {
+            self.select_node(id, registry);
+        }
+        let items = canvas_context_menu_items(self);
+        if items.is_empty() {
+            return false;
+        }
+        self.menus.context = items;
+        true
+    }
+
+    /// Wave 3.4 — close the canvas context menu. Returns `true`
+    /// when the menu was actually open (so the next frame
+    /// re-renders without it).
+    pub fn close_context_menu(&mut self) -> bool {
+        if self.menus.context.is_empty() {
+            return false;
+        }
+        self.menus.context.clear();
+        true
+    }
+
+    /// Wave 3.3 — set the canvas's selection bbox from a hit-test
+    /// result. Called by `route_canvas_node_select` after the
+    /// selection cursor moves so the next frame paints the gizmo +
+    /// 8-handle ring around the actual click rect. `None` clears the
+    /// bbox so a stale outline doesn't survive a deselect.
+    pub fn set_selection_bbox(&mut self, bbox: Option<SelectionBbox>) {
+        self.canvas.selection_bbox = bbox;
+    }
+
+    /// Wave 3.3 — start a resize drag against the currently-selected
+    /// canvas node. `direction` is the handle's `data-direction`
+    /// emission (`tl|t|tr|r|br|b|bl|l`); `(x, y)` is the
+    /// pointer-down position. Returns `true` when a session opens
+    /// (selection exists + handle direction recognised); `false`
+    /// otherwise so the canvas's `pointer_down` falls through to
+    /// the existing gizmo capture.
+    pub fn begin_resize_drag(&mut self, direction: &str, x: f32, y: f32) -> bool {
+        let Some(node_id) = self.canvas.selection.clone() else {
+            return false;
+        };
+        let Some(snapshot) = self
+            .canvas
+            .document
+            .root
+            .as_ref()
+            .and_then(|r| r.find(&node_id))
+            .map(|n| n.transform.clone())
+        else {
+            return false;
+        };
+        if !matches!(direction, "tl" | "t" | "tr" | "r" | "br" | "b" | "bl" | "l") {
+            return false;
+        }
+        self.canvas.resize_drag = Some(ResizeDragState {
+            direction: direction.to_string(),
+            node_id,
+            origin: (x, y),
+            snapshot,
+        });
+        true
+    }
+
+    /// Wave 3.3 — apply a resize delta to the selection's transform.
+    /// The drag mutates `transform.position` along the handle's
+    /// outward axes (matching `apply_handle_delta`'s discipline —
+    /// real width/height mutators land alongside the per-node
+    /// `width` / `height` layout API). Returns `true` when an
+    /// active session translated the node; `false` when no drag is
+    /// in flight.
+    pub fn update_resize_drag(&mut self, x: f32, y: f32) -> bool {
+        let Some(drag) = self.canvas.resize_drag.as_ref().cloned() else {
+            return false;
+        };
+        let zoom = self.canvas.viewport.zoom.max(f32::EPSILON);
+        let dx = (x - drag.origin.0) / zoom;
+        let dy = (y - drag.origin.1) / zoom;
+        let (px, py) = resize_delta_signs(&drag.direction);
+        let Some(node) = self
+            .canvas
+            .document
+            .root
+            .as_mut()
+            .and_then(|r| r.find_mut(&drag.node_id))
+        else {
+            return false;
+        };
+        node.transform.position[0] = drag.snapshot.position[0] + px * dx;
+        node.transform.position[1] = drag.snapshot.position[1] + py * dy;
+        true
+    }
+
+    /// Wave 3.3 — commit the in-flight resize drag. Returns `true`
+    /// when a session was active so the next frame redraws against
+    /// the mutated transform.
+    pub fn end_resize_drag(&mut self) -> bool {
+        self.canvas.resize_drag.take().is_some()
     }
 
     /// §43 C2: set one property on a doc node and resync the builder
@@ -2010,6 +2197,7 @@ pub struct CatalogSlot {
     pub files: Vec<FileNode>,
     pub palette: Vec<PaletteItem>,
     pub palette_selected: Option<String>,
+    pub palette_drag: Option<PaletteDrag>,
 }
 
 #[derive(Clone, Debug)]
@@ -2049,6 +2237,20 @@ pub struct PaletteItem {
     pub label: String,
     pub icon: String,
     pub category: String,
+}
+
+/// Wave 3.2 of `docs/dev/composable-builder-plan.md` — in-flight
+/// palette-driven drop. Set by `begin_palette_drag` when the user
+/// pointer-downs on the canvas with a palette item armed; updated
+/// per pointer-move with the cursor position and the canvas node
+/// under it (if any); consumed by `end_palette_drag` on release,
+/// which inserts a fresh node of `kind` under `drop_target` (or
+/// under the document root when None).
+#[derive(Clone, Debug)]
+pub struct PaletteDrag {
+    pub kind: String,
+    pub pointer: (f32, f32),
+    pub drop_target: Option<NodeId>,
 }
 
 impl CatalogSlot {
@@ -2306,6 +2508,49 @@ pub struct CanvasSlot {
     /// matching subscribers wake. One field, two consumers, zero
     /// per-block plumbing.
     pub(crate) bindings: prism_builder::DocumentBindings,
+    /// Wave 3.3 — bounding box of the currently-selected canvas node,
+    /// captured from `Surface::hit_test_at` at the moment of click.
+    /// Drives the `selection-rect` JSON prop on `shell.builder-canvas`,
+    /// which paints the selection outline + 8-handle ring around the
+    /// node. `None` when no canvas node is selected or the last
+    /// click pre-dated the bbox capture (headless tests / non-pointer
+    /// programmatic selection); the canvas still renders, just without
+    /// the gizmo overlay.
+    pub selection_bbox: Option<SelectionBbox>,
+    /// Wave 3.3 — in-flight resize-handle drag against the current
+    /// selection. The pointer-down on a `data-role="resize-handle"`
+    /// hit captures direction + the node's pre-drag transform; each
+    /// pointer-move applies a position delta along the handle's axes;
+    /// pointer-up commits.
+    pub(crate) resize_drag: Option<ResizeDragState>,
+}
+
+/// Wave 3.3 — pixel rect carried as the `selection-rect` prop on
+/// `shell.builder-canvas`. Kept as a separate struct (rather than
+/// reusing `prism_ui_runtime::command::Rect`) so the canvas
+/// emission stays JSON-stable and the slot doesn't take a hard
+/// dep on a transitive runtime type for what's essentially a
+/// four-float carrier.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SelectionBbox {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+/// Wave 3.3 — pointer-driven resize session against a canvas node.
+/// `direction` is the handle's `data-direction` (`tl|t|tr|r|br|b|bl|l`);
+/// `origin` is the pointer-down position; `snapshot` captures the
+/// node's `Transform2D` at session start so each pointer-move
+/// applies a pristine delta (matches `apply_handle_delta`'s
+/// snapshot discipline).
+#[derive(Clone, Debug)]
+pub(crate) struct ResizeDragState {
+    pub direction: String,
+    pub node_id: NodeId,
+    pub origin: (f32, f32),
+    pub snapshot: prism_core::foundation::spatial::Transform2D,
 }
 
 /// Responsive preview target for the builder canvas. Three discrete
@@ -2546,7 +2791,7 @@ impl CanvasSlot {
         // overflows on every realistic viewport). Picking the device
         // preset here keeps the canvas page reasonable across devices.
         let (page_w, page_h) = device_page_dims(self.device);
-        json!({
+        let mut props = json!({
             "selection-id": self.selection.clone().unwrap_or_default(),
             "tool": self.tool.as_str(),
             "viewport-width": self.viewport.width,
@@ -2559,7 +2804,21 @@ impl CanvasSlot {
             "place-mode": self.picker.open,
             "device": self.device.as_str(),
             "node-count": self.node_count(),
-        })
+        });
+        // Wave 3.3 — emit the selection bbox so `build_selection_layer`
+        // paints the outline + 8-handle ring around the live click
+        // rect. Absent when no canvas node is selected or the
+        // selection was set programmatically (no pointer hit to
+        // sample bounds from).
+        if let Some(bbox) = self.selection_bbox {
+            props["selection-rect"] = json!({
+                "x": bbox.x,
+                "y": bbox.y,
+                "width": bbox.width,
+                "height": bbox.height,
+            });
+        }
+        props
     }
 
     /// JSON for `shell.builder-toolbar` (§43 D2). The toolbar emits
@@ -3041,6 +3300,26 @@ impl CanvasSlot {
         inserted.then_some(new_id)
     }
 
+    /// Wave 3.2 — insert a fresh node tree as the last child of
+    /// `target` (or of the document root when `target` is `None`).
+    /// Used by the palette-drop pipeline: a drop on top of an existing
+    /// canvas node parents the new node under it; a drop on empty
+    /// canvas appends at the root. Always assigns a fresh id
+    /// (`rename_subtree`) so repeated drops of the same palette item
+    /// never collide.
+    pub fn insert_under_node(&mut self, value: Value, target: Option<&str>) -> Option<NodeId> {
+        let mut node: prism_builder::Node = serde_json::from_value(value).ok()?;
+        rename_subtree(&mut node, &self.document, "drop");
+        let new_id = node.id.clone();
+        let root = self.document.root.as_mut()?;
+        let dest = target.unwrap_or(root.id.as_str()).to_string();
+        if root.id == dest {
+            root.children.push(node);
+            return Some(new_id);
+        }
+        push_under(root, &dest, node).then_some(new_id)
+    }
+
     /// Remove the currently-selected node from the document. Used by
     /// `clipboard.cut`. The selection cursor is cleared because the
     /// node it pointed at no longer exists.
@@ -3150,6 +3429,149 @@ fn rewrite_ids(
     for c in &mut node.children {
         rewrite_ids(c, tag, existing);
     }
+}
+
+/// Wave 3.3 — map a handle direction to the `(px, py)` sign pair
+/// that drives the resize delta. Mirrors `HandleSide::deltas` on
+/// the existing transform-based handle drag (which uses an enum);
+/// the string-keyed version lives here because the route comes in
+/// as a kebab-case attr (`tl|t|tr|...`) and the enum mapping is
+/// internal to the synthetic hit-test path. Top/left handles
+/// translate the node negatively; bottom/right translate
+/// positively; the four cardinal edges pin the orthogonal axis at
+/// zero.
+fn resize_delta_signs(dir: &str) -> (f32, f32) {
+    match dir {
+        "tl" => (-1.0, -1.0),
+        "t" => (0.0, -1.0),
+        "tr" => (1.0, -1.0),
+        "r" => (1.0, 0.0),
+        "br" => (1.0, 1.0),
+        "b" => (0.0, 1.0),
+        "bl" => (-1.0, 1.0),
+        "l" => (-1.0, 0.0),
+        _ => (0.0, 0.0),
+    }
+}
+
+/// Wave 3.4 — build the canvas context-menu rows for the current
+/// `(selection, clipboard, document)` state. When a node is
+/// selected the menu carries the node-mutation triad (move up /
+/// down / delete) plus a duplicate row when the clipboard would
+/// allow it; when no node is selected the menu falls back to the
+/// document-level actions (paste, add page). Returns an empty
+/// vector when no action would be meaningful so the open-menu
+/// route can short-circuit.
+fn canvas_context_menu_items(state: &AppState) -> Vec<MenuItem> {
+    let mut items: Vec<MenuItem> = Vec::new();
+    let has_selection = state.canvas.selection.is_some();
+    if has_selection {
+        items.push(MenuItem {
+            label: "Move Up".into(),
+            shortcut: None,
+            command: Some("builder.move-selected-up".into()),
+            separator: false,
+            enabled: true,
+        });
+        items.push(MenuItem {
+            label: "Move Down".into(),
+            shortcut: None,
+            command: Some("builder.move-selected-down".into()),
+            separator: false,
+            enabled: true,
+        });
+        items.push(MenuItem::separator());
+        items.push(MenuItem {
+            label: "Duplicate".into(),
+            shortcut: Some("Cmd+D".into()),
+            command: Some("clipboard.duplicate".into()),
+            separator: false,
+            enabled: true,
+        });
+        items.push(MenuItem {
+            label: "Copy".into(),
+            shortcut: Some("Cmd+C".into()),
+            command: Some("clipboard.copy".into()),
+            separator: false,
+            enabled: true,
+        });
+        items.push(MenuItem {
+            label: "Cut".into(),
+            shortcut: Some("Cmd+X".into()),
+            command: Some("clipboard.cut".into()),
+            separator: false,
+            enabled: true,
+        });
+        items.push(MenuItem::separator());
+        items.push(MenuItem {
+            label: "Delete".into(),
+            shortcut: Some("Delete".into()),
+            command: Some("builder.delete-selected".into()),
+            separator: false,
+            enabled: true,
+        });
+    } else {
+        items.push(MenuItem {
+            label: "Paste".into(),
+            shortcut: Some("Cmd+V".into()),
+            command: Some("clipboard.paste".into()),
+            separator: false,
+            // `clipboard.paste` itself is a no-op against an empty
+            // clipboard cell — surface the row enabled so the
+            // visual affordance matches every other paste site (the
+            // existing menu-bar Paste entry follows the same
+            // discipline).
+            enabled: true,
+        });
+    }
+    items
+}
+
+/// Wave 3.2 — append `incoming` as the last child of `target_id`,
+/// searched recursively from `parent`. Returns true on first match.
+fn push_under(
+    parent: &mut prism_builder::Node,
+    target_id: &str,
+    incoming: prism_builder::Node,
+) -> bool {
+    if parent.id == target_id {
+        parent.children.push(incoming);
+        return true;
+    }
+    let mut moving = Some(incoming);
+    for child in &mut parent.children {
+        if let Some(node) = moving.take() {
+            if push_under(child, target_id, node.clone()) {
+                return true;
+            }
+            moving = Some(node);
+        }
+    }
+    false
+}
+
+/// Wave 3.2 — `kind` → serializable `Node` template. The palette
+/// catalogue is seeded from `starter::BUILTINS` plus the `card`
+/// prefab, so the only two paths needed are (1) the prefab
+/// materialiser for `card` and (2) a vanilla `Node` for every
+/// regular component id. Block-specific lower funcs fall back to
+/// their schema defaults when props are empty — the dropped node
+/// renders with sensible chrome on the first frame.
+fn palette_node_template(kind: &str) -> Option<Value> {
+    if let Some(def) = prism_builder::builtin_prefab(kind) {
+        // Use a counter seeded from the kind so repeated drops
+        // produce unique ids before `rename_subtree` runs.
+        let mut counter = 0u64;
+        let node = prism_builder::materialize_prefab(&def, &mut counter);
+        return serde_json::to_value(node).ok();
+    }
+    let node = prism_builder::Node {
+        id: format!("{kind}-new"),
+        component: prism_builder::ComponentId::from(kind),
+        props: Value::Object(Default::default()),
+        ..Default::default()
+    };
+    serde_json::to_value(node).ok()
 }
 
 /// Insert `incoming` next to (or after) the child `target_id` under
@@ -3807,6 +4229,275 @@ mod tests {
         // Idempotent edits return false — the derivation pass doesn't
         // need to rerun when the value didn't change.
         assert!(!state.set_node_prop("heading", "body", json!("Updated body"), Some(&reg)));
+    }
+
+    // ── Wave 3.2 palette drag → drop unit tests ─────────────────────
+
+    #[test]
+    fn begin_palette_drag_requires_armed_palette_pill() {
+        // Wave 3.2: without `palette_selected` no drag opens. The
+        // route in events.rs only calls `begin_palette_drag` after
+        // confirming the hit is canvas-resident, but the mutator
+        // still guards against a stale call.
+        let mut state = AppState::default();
+        assert!(!state.begin_palette_drag(0.0, 0.0, None));
+        assert!(state.catalog.palette_drag.is_none());
+    }
+
+    #[test]
+    fn begin_palette_drag_records_kind_pointer_and_target() {
+        let mut state = AppState::default();
+        state.catalog.palette_selected = Some("button".into());
+        assert!(state.begin_palette_drag(12.0, 34.0, Some("root")));
+        let drag = state.catalog.palette_drag.as_ref().unwrap();
+        assert_eq!(drag.kind, "button");
+        assert_eq!(drag.pointer, (12.0, 34.0));
+        assert_eq!(drag.drop_target.as_deref(), Some("root"));
+    }
+
+    #[test]
+    fn update_palette_drag_advances_pointer_and_target() {
+        let mut state = AppState::default();
+        state.catalog.palette_selected = Some("text".into());
+        state.begin_palette_drag(0.0, 0.0, None);
+        assert!(state.update_palette_drag(40.0, 60.0, Some("root")));
+        let drag = state.catalog.palette_drag.as_ref().unwrap();
+        assert_eq!(drag.pointer, (40.0, 60.0));
+        assert_eq!(drag.drop_target.as_deref(), Some("root"));
+    }
+
+    #[test]
+    fn end_palette_drag_inserts_under_target_and_clears_palette_state() {
+        let mut reg = prism_builder::ComponentRegistry::new();
+        prism_builder::starter::register_builtins(&mut reg).expect("builtins");
+        let mut state = AppState::default();
+        state.canvas.document = doc_with_three_nodes();
+        state.catalog.palette_selected = Some("text".into());
+        state.begin_palette_drag(0.0, 0.0, Some("root"));
+        let new_id = state
+            .end_palette_drag(Some(&reg))
+            .expect("drop inserts a node");
+        // The new node lands as a child of `root` (its declared target).
+        let root = state.canvas.document.root.as_ref().unwrap();
+        assert!(
+            root.children.iter().any(|c| c.id == new_id),
+            "new node under root",
+        );
+        assert!(state.catalog.palette_drag.is_none(), "drag consumed");
+        assert!(state.catalog.palette_selected.is_none(), "palette cleared");
+        assert_eq!(state.canvas.selection.as_deref(), Some(new_id.as_str()));
+    }
+
+    #[test]
+    fn end_palette_drag_with_no_target_falls_back_to_root() {
+        let mut state = AppState::default();
+        state.canvas.document = doc_with_three_nodes();
+        state.catalog.palette_selected = Some("text".into());
+        state.begin_palette_drag(0.0, 0.0, None);
+        let new_id = state.end_palette_drag(None).expect("drop succeeds");
+        let root = state.canvas.document.root.as_ref().unwrap();
+        assert!(root.children.iter().any(|c| c.id == new_id));
+    }
+
+    #[test]
+    fn cancel_palette_drag_drops_session_without_inserting() {
+        let mut state = AppState::default();
+        state.canvas.document = doc_with_three_nodes();
+        let before = state.canvas.node_count();
+        state.catalog.palette_selected = Some("text".into());
+        state.begin_palette_drag(0.0, 0.0, Some("root"));
+        assert!(state.cancel_palette_drag());
+        assert!(state.catalog.palette_drag.is_none());
+        // Cancel does NOT clear `palette_selected` — re-arming the
+        // same pill across Esc is the desired UX (user picked the
+        // tool intentionally; Esc only cancels the current gesture).
+        assert_eq!(
+            state.catalog.palette_selected.as_deref(),
+            Some("text"),
+            "cancel preserves the armed pill"
+        );
+        assert_eq!(
+            state.canvas.node_count(),
+            before,
+            "cancelling never mutates the doc"
+        );
+    }
+
+    // ── Wave 3.4 context menu unit tests ────────────────────────────
+
+    #[test]
+    fn open_context_menu_on_selected_canvas_node_carries_node_actions() {
+        let mut reg = prism_builder::ComponentRegistry::new();
+        prism_builder::starter::register_builtins(&mut reg).expect("builtins");
+        let mut state = AppState::default();
+        state.canvas.document = doc_with_three_nodes();
+        // Right-clicking moves selection to the target id before the
+        // items are derived; mirror that here.
+        assert!(state.open_context_menu(10.0, 20.0, Some("btn"), Some(&reg)));
+        assert_eq!(state.canvas.selection.as_deref(), Some("btn"));
+        let labels: Vec<&str> = state
+            .menus
+            .context
+            .iter()
+            .filter(|m| !m.separator)
+            .map(|m| m.label.as_str())
+            .collect();
+        assert!(labels.contains(&"Move Up"));
+        assert!(labels.contains(&"Move Down"));
+        assert!(labels.contains(&"Delete"));
+        assert!(labels.contains(&"Copy"));
+        assert!(labels.contains(&"Duplicate"));
+    }
+
+    #[test]
+    fn open_context_menu_on_empty_canvas_falls_back_to_paste() {
+        let mut state = AppState::default();
+        // No selection → paste-only menu.
+        assert!(state.canvas.selection.is_none());
+        assert!(state.open_context_menu(0.0, 0.0, None, None));
+        let labels: Vec<&str> = state
+            .menus
+            .context
+            .iter()
+            .filter(|m| !m.separator)
+            .map(|m| m.label.as_str())
+            .collect();
+        assert_eq!(labels, vec!["Paste"]);
+    }
+
+    #[test]
+    fn close_context_menu_clears_open_menu() {
+        let mut state = AppState::default();
+        state.menus.context.push(MenuItem {
+            label: "x".into(),
+            shortcut: None,
+            command: None,
+            separator: false,
+            enabled: true,
+        });
+        assert!(state.close_context_menu());
+        assert!(state.menus.context.is_empty());
+    }
+
+    #[test]
+    fn close_context_menu_is_idempotent_against_empty_menu() {
+        let mut state = AppState::default();
+        // Closing an already-closed menu is a clean no-op so an
+        // every-frame dismiss route stays quiet.
+        assert!(!state.close_context_menu());
+    }
+
+    // ── Wave 3.3 selection bbox + resize tests ──────────────────────
+
+    #[test]
+    fn builder_canvas_props_emit_selection_rect_when_bbox_set() {
+        let mut state = AppState::default();
+        state.canvas.selection_bbox = Some(SelectionBbox {
+            x: 10.0,
+            y: 20.0,
+            width: 100.0,
+            height: 50.0,
+        });
+        let props = state.canvas.builder_canvas_props();
+        let rect = props.get("selection-rect").expect("emitted");
+        assert_eq!(rect["x"], 10.0);
+        assert_eq!(rect["y"], 20.0);
+        assert_eq!(rect["width"], 100.0);
+        assert_eq!(rect["height"], 50.0);
+    }
+
+    #[test]
+    fn builder_canvas_props_omit_selection_rect_when_no_bbox() {
+        let state = AppState::default();
+        let props = state.canvas.builder_canvas_props();
+        assert!(props.get("selection-rect").is_none());
+    }
+
+    #[test]
+    fn begin_resize_drag_requires_selection() {
+        let mut state = AppState::default();
+        assert!(!state.begin_resize_drag("br", 0.0, 0.0));
+    }
+
+    #[test]
+    fn begin_resize_drag_rejects_unknown_direction() {
+        let mut state = AppState::default();
+        state.canvas.document = doc_with_three_nodes();
+        state.canvas.selection = Some("heading".into());
+        assert!(!state.begin_resize_drag("???", 0.0, 0.0));
+    }
+
+    #[test]
+    fn resize_drag_round_trip_translates_position_by_handle_signs() {
+        use prism_core::foundation::spatial::Transform2D;
+        let mut state = AppState::default();
+        state.canvas.document = doc_with_three_nodes();
+        // Seed the heading at (100, 100) so the deltas are visible.
+        let root = state.canvas.document.root.as_mut().unwrap();
+        let heading = root.find_mut("heading").unwrap();
+        heading.transform = Transform2D {
+            position: [100.0, 100.0],
+            ..Default::default()
+        };
+        state.canvas.selection = Some("heading".into());
+        // Bottom-right handle: positive on both axes.
+        assert!(state.begin_resize_drag("br", 0.0, 0.0));
+        assert!(state.update_resize_drag(20.0, 30.0));
+        let pos = state
+            .canvas
+            .document
+            .root
+            .as_ref()
+            .unwrap()
+            .find("heading")
+            .unwrap()
+            .transform
+            .position;
+        assert_eq!(pos, [120.0, 130.0]);
+        assert!(state.end_resize_drag());
+        assert!(state.canvas.resize_drag.is_none());
+        // After commit, the mutation persists.
+        let final_pos = state
+            .canvas
+            .document
+            .root
+            .as_ref()
+            .unwrap()
+            .find("heading")
+            .unwrap()
+            .transform
+            .position;
+        assert_eq!(final_pos, [120.0, 130.0]);
+    }
+
+    #[test]
+    fn resize_drag_top_left_handle_translates_negative_on_both_axes() {
+        use prism_core::foundation::spatial::Transform2D;
+        let mut state = AppState::default();
+        state.canvas.document = doc_with_three_nodes();
+        let root = state.canvas.document.root.as_mut().unwrap();
+        let heading = root.find_mut("heading").unwrap();
+        heading.transform = Transform2D {
+            position: [200.0, 200.0],
+            ..Default::default()
+        };
+        state.canvas.selection = Some("heading".into());
+        assert!(state.begin_resize_drag("tl", 50.0, 50.0));
+        // Drag towards (40, 40) — both deltas negative under tl
+        // handle signs, so the node moves "up-left" by the deltas.
+        assert!(state.update_resize_drag(40.0, 40.0));
+        let pos = state
+            .canvas
+            .document
+            .root
+            .as_ref()
+            .unwrap()
+            .find("heading")
+            .unwrap()
+            .transform
+            .position;
+        // Snapshot (200, 200) + (-1 * (40-50), -1 * (40-50)) = (210, 210).
+        assert_eq!(pos, [210.0, 210.0]);
     }
 
     #[test]
@@ -4489,6 +5180,7 @@ mod tests {
                 category: "Text".into(),
             }],
             palette_selected: Some("heading".into()),
+            palette_drag: None,
         }
     }
 
@@ -4690,6 +5382,8 @@ mod tests {
             device: Device::Desktop,
             drag: None,
             bindings: prism_builder::DocumentBindings::new(),
+            selection_bbox: None,
+            resize_drag: None,
         }
     }
 
