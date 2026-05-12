@@ -24,7 +24,6 @@ pub mod field_editor;
 pub mod gizmo_move;
 pub mod gizmo_rotate;
 pub mod gizmo_scale;
-pub mod inspector_row;
 pub mod modifier_header;
 pub mod modifier_picker;
 pub mod nav_graph;

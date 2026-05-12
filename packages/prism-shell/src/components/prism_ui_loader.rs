@@ -673,6 +673,43 @@ fn component_palette_signals() -> Vec<SignalDef> {
     )])
 }
 
+fn inspector_row_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("node-id", "Node ID"),
+        FieldSpec::text("component-id", "Component ID"),
+        FieldSpec::text("kind", "Kind").with_default(Value::String("node".into())),
+        FieldSpec::number("depth", "Depth", NumericBounds::min(0.0)).with_default(Value::from(0.0)),
+        FieldSpec::boolean("selected", "Selected").with_default(Value::Bool(false)),
+        FieldSpec::boolean("show-delete", "Show delete (host-driven hover)")
+            .with_default(Value::Bool(false)),
+    ]
+}
+
+fn inspector_row_signals() -> Vec<SignalDef> {
+    with_common_signals(vec![
+        SignalDef::new(
+            "row-clicked",
+            "Row was clicked — host selects the bound node-id.",
+        ),
+        SignalDef::new(
+            "row-right-clicked",
+            "Row was right-clicked — host opens a context menu at the (x, y).",
+        ),
+        SignalDef::new(
+            "move-up",
+            "Move-up chevron clicked (selected node rows only).",
+        ),
+        SignalDef::new(
+            "move-down",
+            "Move-down chevron clicked (selected node rows only).",
+        ),
+        SignalDef::new(
+            "delete-track",
+            "Trash clicked (row-kind rows with `show-delete=true`).",
+        ),
+    ])
+}
+
 pub static SHELL_PRISM_UI_COMPONENTS: &[PrismUiSpec] = &[
     PrismUiSpec::new(
         "shell.toolbar-separator",
@@ -845,6 +882,12 @@ pub static SHELL_PRISM_UI_COMPONENTS: &[PrismUiSpec] = &[
     )
     .schema(component_palette_schema)
     .signals(component_palette_signals),
+    PrismUiSpec::new(
+        "shell.inspector-row",
+        include_str!("../../ui/components/inspector-row.prism-ui"),
+    )
+    .schema(inspector_row_schema)
+    .signals(inspector_row_signals),
 ];
 
 #[cfg(test)]

@@ -119,7 +119,6 @@ pub static SHELL_BUILTINS: &[&BlockSpec] = &[
     // `prism_ui_loader.rs` pins that they don't double-register.
     &super::app_card::APP_CARD_SPEC,
     &super::drag_number_field::DRAG_NUMBER_FIELD_SPEC,
-    &super::inspector_row::INSPECTOR_ROW_SPEC,
     &super::transform_editor::TRANSFORM_EDITOR_SPEC,
     &super::field_editor::FIELD_EDITOR_SPEC,
     &super::app_window::APP_WINDOW_SPEC,

@@ -943,8 +943,16 @@ fn apply_container_attributes(
             // pass-through; preserve them on the semantic emission
             // so the HTML / SSR backends inherit them and the
             // hit-test cache can route off them like any `data-*`.
+            //
+            // Wave 12 follow-up: mirror the `data:` namespace's
+            // empty-string filter so authors can use ternary
+            // (`aria:level="{depth > 0 ? depth + 1 : ''}"`) to omit
+            // the attribute conditionally. A literal `aria-foo=""` is
+            // meaningless to every screen reader, so dropping it
+            // matches user intent rather than HTML's serialisation
+            // shape.
             AttributeNamespace::Aria => {
-                if let Some(value) = raw {
+                if let Some(value) = raw.filter(|s| !s.is_empty()) {
                     props
                         .semantic
                         .attrs

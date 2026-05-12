@@ -684,6 +684,29 @@ no new traits):
   ternary-driven overrides that fold through `apply_style_override`
   exactly like authored `style:` attributes do. Net ~250 LoC of
   Rust deleted, ~50 LoC of `.prism-ui` added.
+- [x] **12.4** Second DSL consumer: `shell.inspector-row`
+  migrates to `.prism-ui` source. The three `kind` variants
+  (`node` / `row` / `empty`) collapse to a chain of ternary
+  expressions over `style:background`, `style:radius`, `font-size`,
+  `style:color`, `role`, and `aria:selected` — the
+  per-kind metrics table the Rust source used (`KIND_NODE` /
+  `KIND_ROW` / `KIND_EMPTY`) becomes one-line ternaries against
+  the DSL's expression evaluator. Depth-based indent
+  (`padding-left="{12 + depth * 16}"`) uses arithmetic in DSL
+  expressions (`prism_core::language::expression`'s `BinaryOp::Add`
+  + `BinaryOp::Mul`). The optional right cluster (chevrons when
+  selected on `node` kind; trash when `show-delete` on `row` kind)
+  composes through three `<shell.icon-button if=...>` instances —
+  Vue/React-style conditional rendering against the same DSL `if=`
+  substrate Wave 11.2 hardened. Net ~530 LoC of Rust deleted,
+  ~55 LoC of `.prism-ui` added.
+- [x] **12.5** Substrate follow-up: `aria:` namespace mirrors the
+  Wave 11.2 `data:` empty-string filter so ternary-conditional
+  ARIA attrs (`aria:level="{depth > 0 ? depth + 1 : ''}"`,
+  `aria:selected="{... ? 'true' : ''}"`) omit cleanly when the
+  branch resolves empty. A literal `aria-foo=""` is meaningless to
+  every screen reader, so dropping it matches user intent rather
+  than HTML's serialisation shape.
 
 **Vue/React parallel:** today you write
 ```html
