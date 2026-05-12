@@ -39,6 +39,12 @@ pub struct PropCtx<'a> {
     /// per-NodeId reactive context. `None` in headless / test paths
     /// where no reactive tracking is wanted.
     pub block_invalidator: Option<&'a BlockInvalidator>,
+    /// **Wave 1** of `docs/dev/composable-builder-plan.md`: open
+    /// registry of `ModifierBehaviour` impls. The canvas binding
+    /// plumbs this into the builder's `LowerCtx::with_modifier_registry`
+    /// so attached `node.modifiers` fold over each block's lowered
+    /// output. `None` on headless / pure-slot-accessor paths.
+    pub modifier_registry: Option<&'a prism_builder::ModifierRegistry>,
 }
 
 /// What a single binding emits for one frame:
@@ -234,11 +240,30 @@ fn register_builtin_bindings(reg: &mut ShellPropBindings) {
         "shell.builder-canvas",
         Box::new(|ctx| {
             let props = ctx.state.canvas.builder_canvas_props();
-            let children = ctx.state.canvas.lower_document_to_ui_with_invalidator(
+            // Wave 1: thread the shell's modifier registry into the
+            // builder's `LowerCtx::with_modifier_registry` so attached
+            // `node.modifiers` fold over each block's output during
+            // the canvas's document walk.
+            let children = ctx.state.canvas.lower_document_to_ui_full(
                 ctx.registry,
                 ctx.block_invalidator.cloned(),
+                ctx.modifier_registry,
             );
             PropEmission::from_props(props).with_children(children)
+        }),
+    );
+
+    // Wave 1.6 — `shell.modifier-picker` binding: needs the live
+    // modifier registry to project options, so it lives on the
+    // closure-style path (not `SLOT_BINDINGS`).
+    reg.register(
+        "shell.modifier-picker",
+        Box::new(|ctx| {
+            PropEmission::from_props(
+                ctx.state
+                    .overlay
+                    .modifier_picker_props(ctx.modifier_registry),
+            )
         }),
     );
 
@@ -279,6 +304,7 @@ mod tests {
             canvas_zoom: 1.0,
             registry: None,
             block_invalidator: None,
+            modifier_registry: None,
         }
     }
 
@@ -429,6 +455,7 @@ mod tests {
             canvas_zoom: 1.0,
             registry: Some(&reg),
             block_invalidator: None,
+            modifier_registry: None,
         };
         let snap_l = bindings.snapshot(&ctx_live);
         let canvas_l = snap_l

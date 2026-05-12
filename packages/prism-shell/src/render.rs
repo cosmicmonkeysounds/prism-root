@@ -227,6 +227,7 @@ mod tests {
             canvas_zoom: 1.0,
             registry: None,
             block_invalidator: None,
+            modifier_registry: None,
         }
     }
 
@@ -510,6 +511,7 @@ mod tests {
             canvas_zoom: 1.0,
             registry: Some(&live_reg),
             block_invalidator: None,
+            modifier_registry: None,
         };
         let emissions = bindings.snapshot(&ctx);
         let canvas = emissions
@@ -546,6 +548,7 @@ mod tests {
             canvas_zoom: 1.0,
             registry: None,
             block_invalidator: None,
+            modifier_registry: None,
         };
         let emissions = bindings.snapshot(&ctx);
         let canvas = emissions

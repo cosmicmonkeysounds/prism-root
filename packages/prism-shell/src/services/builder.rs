@@ -187,6 +187,7 @@ mod tests {
             luau: &mut luau,
             clipboard: &mut clipboard,
             registry: None,
+            modifier_registry: None,
         };
         reg.commands().run(id, &mut ctx)
     }

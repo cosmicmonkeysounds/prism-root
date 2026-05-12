@@ -70,6 +70,7 @@ mod tests {
             luau: &mut luau,
             clipboard: &mut clipboard,
             registry: None,
+            modifier_registry: None,
         };
         assert!(reg.commands().run("menu.close", &mut ctx));
         assert!(state.menus.dropdown.is_empty() && state.menus.context.is_empty());

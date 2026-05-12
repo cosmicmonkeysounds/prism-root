@@ -127,6 +127,7 @@ mod tests {
                 luau: &mut luau,
                 clipboard: &mut clipboard,
                 registry: None,
+                modifier_registry: None,
             };
             assert!(reg.commands().run("clipboard.copy", &mut ctx));
         }
@@ -144,6 +145,7 @@ mod tests {
                 luau: &mut luau,
                 clipboard: &mut clipboard,
                 registry: None,
+                modifier_registry: None,
             };
             assert!(reg.commands().run("clipboard.paste", &mut ctx));
         }
@@ -171,6 +173,7 @@ mod tests {
                 luau: &mut luau,
                 clipboard: &mut clipboard,
                 registry: None,
+                modifier_registry: None,
             };
             assert!(reg.commands().run("clipboard.cut", &mut ctx));
         }
@@ -192,6 +195,7 @@ mod tests {
                 luau: &mut luau,
                 clipboard: &mut clipboard,
                 registry: None,
+                modifier_registry: None,
             };
             assert!(reg.commands().run("clipboard.paste", &mut ctx));
         }

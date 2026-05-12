@@ -144,6 +144,12 @@ pub static SHELL_BUILTINS: &[&BlockSpec] = &[
     &super::builder_canvas::BUILDER_CANVAS_SPEC,
     &super::builder_toolbar::BUILDER_TOOLBAR_SPEC,
     &super::component_picker::COMPONENT_PICKER_SPEC,
+    // Wave 1 — `docs/dev/composable-builder-plan.md`. The composable-
+    // inspector trio: one section header per attached behaviour, an
+    // add-modifier footer, and an overlay picker.
+    &super::modifier_header::MODIFIER_HEADER_SPEC,
+    &super::add_modifier_button::ADD_MODIFIER_BUTTON_SPEC,
+    &super::modifier_picker::MODIFIER_PICKER_SPEC,
 ];
 
 /// Register every spec in [`SHELL_BUILTINS`]. One-line fan-out via
@@ -217,6 +223,47 @@ mod tests {
         register_shell_builtins(&mut reg).expect("first");
         let err = register_shell_builtins(&mut reg).expect_err("dup");
         assert!(matches!(err, RegistryError::AlreadyRegistered(_)));
+    }
+
+    /// Wave 5.2 of `docs/dev/composable-builder-plan.md` — boot-time
+    /// contract that the shell namespace (`shell.*`) and the builder
+    /// document catalog (`prism_builder::starter::BUILTINS` + the
+    /// `card` prefab + the `facet` component) carry disjoint ids.
+    /// `register_specs` rejects duplicates at runtime via
+    /// `RegistryError::AlreadyRegistered`, so a collision *would*
+    /// crash `Shell::new` at the second registration call — but a
+    /// named pin makes the contract searchable and surfaces the
+    /// offending id directly instead of as a boot-failure backtrace.
+    #[test]
+    fn no_overlapping_block_ids_between_shell_and_starter() {
+        use std::collections::HashSet;
+
+        let shell_ids: HashSet<&str> = SHELL_BUILTINS.iter().map(|spec| spec.id).collect();
+
+        let mut doc_ids: HashSet<&str> = prism_builder::starter::BUILTINS
+            .iter()
+            .map(|spec| spec.id)
+            .collect();
+        doc_ids.insert("card");
+        doc_ids.insert("facet");
+
+        let collisions: Vec<&str> = shell_ids.intersection(&doc_ids).copied().collect();
+        assert!(
+            collisions.is_empty(),
+            "shell and document catalogs must carry disjoint ids; \
+             collisions: {collisions:?}",
+        );
+
+        // And the merge actually succeeds — the runtime guarantee
+        // backing the static set check.
+        let mut reg = ShellComponentRegistry::new();
+        register_shell_builtins(&mut reg).expect("shell");
+        register_document_builtins(&mut reg).expect("document");
+        assert_eq!(
+            reg.len(),
+            shell_ids.len() + doc_ids.len(),
+            "merged registry size must equal the sum of disjoint catalogs",
+        );
     }
 
     #[test]

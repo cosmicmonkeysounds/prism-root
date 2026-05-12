@@ -149,6 +149,7 @@ mod tests {
             luau: &mut luau,
             clipboard: &mut clipboard,
             registry: None,
+            modifier_registry: None,
         };
         let outcome = reg.fan_out(&key("s", true, false), &mut ctx);
         assert_eq!(outcome, EventOutcome::Handled, "palette captures the key");
@@ -175,6 +176,7 @@ mod tests {
             luau: &mut luau,
             clipboard: &mut clipboard,
             registry: None,
+            modifier_registry: None,
         };
         let cmds = CommandTable::default();
         assert_eq!(

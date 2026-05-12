@@ -16,8 +16,41 @@
 //! `InputService` so it wins the fan-out race.
 
 use prism_ui_runtime::event::Event;
+use serde_json::json;
 
 use crate::services::{CommandTable, EventOutcome, MutCtx, ShellService};
+
+/// Wave 2.2 of `docs/dev/composable-builder-plan.md`: arrow-key
+/// nudge for the currently focused number / integer field. Reads
+/// the focus session's `target_id` + `key`, adds `delta` to the
+/// existing prop value, and writes back through `set_node_prop`.
+/// `kind == "integer"` rounds to the nearest int; "number" keeps
+/// the f64 value.
+fn nudge_focused_number(ctx: &mut MutCtx<'_>, delta: f64, kind: &str) {
+    let Some(focus) = ctx.state.field_focus.as_ref().cloned() else {
+        return;
+    };
+    let registry = ctx.registry;
+    let current = ctx
+        .state
+        .canvas
+        .document
+        .root
+        .as_ref()
+        .and_then(|r| r.find(&focus.target_id))
+        .and_then(|n| n.props.get(&focus.key))
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    let next = current + delta;
+    let value = if kind == "integer" {
+        json!(next.round() as i64)
+    } else {
+        json!(next)
+    };
+    let _ = ctx
+        .state
+        .set_node_prop(&focus.target_id, &focus.key, value, registry);
+}
 
 #[derive(Default)]
 pub struct FieldFocusService;
@@ -48,14 +81,54 @@ impl ShellService for FieldFocusService {
                 if modifiers.ctrl || modifiers.meta || modifiers.alt {
                     return EventOutcome::Pass;
                 }
+                // Wave 2.2: arrow-key nudging for number / integer
+                // fields. ±1 by default, ±10 when shift is held.
+                // Min / max clamp piggybacks on `set_node_prop`'s
+                // `NumberDrag` clamp path indirectly — but since the
+                // field-focus path doesn't carry min/max state, we
+                // re-read them off the focus prop's `data-min` /
+                // `data-max` attrs via the focus session at click time;
+                // for now we nudge unbounded, and rely on the
+                // drag-scrub path to enforce bounds when scrubbing.
+                let focus_kind = ctx
+                    .state
+                    .field_focus
+                    .as_ref()
+                    .map(|f| f.kind.clone())
+                    .unwrap_or_default();
+                if matches!(focus_kind.as_str(), "number" | "integer")
+                    && matches!(code.as_str(), "arrowup" | "arrowdown")
+                {
+                    let step: f64 = if modifiers.shift { 10.0 } else { 1.0 };
+                    let signed = if code == "arrowup" { step } else { -step };
+                    nudge_focused_number(ctx, signed, &focus_kind);
+                    return EventOutcome::Handled;
+                }
                 match code.as_str() {
                     "backspace" => {
                         ctx.state.backspace_field(registry);
                         EventOutcome::Handled
                     }
                     "enter" => {
-                        ctx.state.commit_field_focus();
-                        EventOutcome::Handled
+                        // Wave 2.1: Shift-Enter inserts a literal
+                        // newline for textarea-kind fields (multi-
+                        // line text). Plain Enter commits. The
+                        // distinction is made on the focus's kind +
+                        // the shift modifier, so single-line text
+                        // fields still commit on Enter regardless.
+                        let is_multiline = ctx
+                            .state
+                            .field_focus
+                            .as_ref()
+                            .map(|f| f.kind == "textarea")
+                            .unwrap_or(false);
+                        if modifiers.shift && is_multiline {
+                            ctx.state.type_field_text("\n", registry);
+                            EventOutcome::Handled
+                        } else {
+                            ctx.state.commit_field_focus();
+                            EventOutcome::Handled
+                        }
                     }
                     "escape" => {
                         ctx.state.cancel_field_focus(registry);
@@ -120,6 +193,7 @@ mod tests {
             luau: &mut luau,
             clipboard: &mut clipboard,
             registry: None,
+            modifier_registry: None,
         };
         reg.fan_out(event, &mut ctx)
     }
@@ -251,9 +325,138 @@ mod tests {
             luau: &mut luau,
             clipboard: &mut clipboard,
             registry: None,
+            modifier_registry: None,
         };
         let outcome = svc.on_event(&event, &mut ctx, &cmds);
         assert!(matches!(outcome, EventOutcome::Pass));
+    }
+
+    /// Wave 2.1: Shift-Enter inserts a literal newline for textarea
+    /// fields. Plain Enter still commits.
+    #[test]
+    fn shift_enter_inserts_newline_for_textarea_kind() {
+        let mut state = AppState::default();
+        state.canvas.document = seeded_doc();
+        state.canvas.selection = Some("target".into());
+        state.begin_field_focus("target", "body", "textarea");
+        // begin_field_focus prefills the draft with the existing prop
+        // value (`"hi"` per seeded_doc), so type_field_text appends.
+        state.type_field_text("line1", None);
+        let shift_enter = Event::Key {
+            code: "enter".into(),
+            pressed: true,
+            modifiers: Modifiers {
+                shift: true,
+                ..Default::default()
+            },
+        };
+        fan_out(&mut state, &shift_enter);
+        assert!(state.field_focus.is_some(), "Shift-Enter must NOT commit");
+        let draft = state.field_focus.as_ref().unwrap().draft.clone();
+        assert!(draft.ends_with('\n'), "trailing newline missing: {draft:?}");
+        assert!(
+            draft.contains("line1\n"),
+            "line1 followed by newline: {draft:?}"
+        );
+        // Plain Enter commits.
+        let plain_enter = Event::Key {
+            code: "enter".into(),
+            pressed: true,
+            modifiers: Modifiers::default(),
+        };
+        fan_out(&mut state, &plain_enter);
+        assert!(state.field_focus.is_none());
+    }
+
+    /// Wave 2.2: Up/Down arrow on a focused number field nudges
+    /// the bound prop by 1, by 10 with shift.
+    #[test]
+    fn arrow_keys_nudge_focused_number_field() {
+        let mut state = AppState::default();
+        state.canvas.document = BuilderDocument {
+            root: Some(Node {
+                id: "root".into(),
+                component: "container".into(),
+                children: vec![Node {
+                    id: "n".into(),
+                    component: "container".into(),
+                    props: json!({ "padding": 10 }),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        state.canvas.selection = Some("n".into());
+        state.begin_field_focus("n", "padding", "integer");
+
+        // ArrowUp: +1
+        let up = Event::Key {
+            code: "arrowup".into(),
+            pressed: true,
+            modifiers: Modifiers::default(),
+        };
+        fan_out(&mut state, &up);
+        let pad = state
+            .canvas
+            .document
+            .root
+            .as_ref()
+            .unwrap()
+            .find("n")
+            .unwrap()
+            .props
+            .get("padding")
+            .and_then(|v| v.as_i64())
+            .unwrap();
+        assert_eq!(pad, 11);
+
+        // Shift+ArrowDown: -10
+        let shift_down = Event::Key {
+            code: "arrowdown".into(),
+            pressed: true,
+            modifiers: Modifiers {
+                shift: true,
+                ..Default::default()
+            },
+        };
+        fan_out(&mut state, &shift_down);
+        let pad = state
+            .canvas
+            .document
+            .root
+            .as_ref()
+            .unwrap()
+            .find("n")
+            .unwrap()
+            .props
+            .get("padding")
+            .and_then(|v| v.as_i64())
+            .unwrap();
+        assert_eq!(pad, 1);
+    }
+
+    /// Wave 2.1: Shift-Enter on a single-line `text` field still
+    /// commits — multi-line is opt-in via `kind = "textarea"`.
+    #[test]
+    fn shift_enter_on_text_kind_still_commits() {
+        let mut state = AppState::default();
+        state.canvas.document = seeded_doc();
+        state.canvas.selection = Some("target".into());
+        state.begin_field_focus("target", "body", "text");
+        let shift_enter = Event::Key {
+            code: "enter".into(),
+            pressed: true,
+            modifiers: Modifiers {
+                shift: true,
+                ..Default::default()
+            },
+        };
+        fan_out(&mut state, &shift_enter);
+        assert!(
+            state.field_focus.is_none(),
+            "Shift-Enter commits text fields"
+        );
     }
 
     #[test]

@@ -43,6 +43,7 @@ use serde_json::Value;
 
 use crate::document::Node;
 use crate::layout::{Dimension, FlexDirection, FlowProps, LayoutMode};
+use crate::modifier::ModifierRegistry;
 use crate::reactive_props::DocumentBindings;
 use crate::registry::ComponentRegistry;
 use crate::style::{resolve_cascade, StyleProperties};
@@ -185,6 +186,16 @@ pub struct LowerCtx<'a> {
     /// `None` for headless tests + the non-reactive SSR path — those
     /// callers read directly from `node.props` and don't subscribe.
     bindings: Option<&'a DocumentBindings>,
+    /// **Wave 1** of `docs/dev/composable-builder-plan.md`: open
+    /// registry of `ModifierBehaviour` impls. When installed, every
+    /// recursive [`Self::lower`] call folds the lowered child through
+    /// `node.modifiers` innermost-first, calling each registered
+    /// behaviour's `wrap`. `enabled = false` skips the wrap; unknown
+    /// ids fall through unchanged. `None` on headless / SSR paths —
+    /// those callers render the bare component output without
+    /// behaviour wrapping. Propagates into recursive child scopes
+    /// unchanged (one registry per document walk).
+    modifier_registry: Option<&'a ModifierRegistry>,
 }
 
 impl<'a> LowerCtx<'a> {
@@ -199,6 +210,7 @@ impl<'a> LowerCtx<'a> {
             tag_emissions: None,
             block_invalidator: None,
             bindings: None,
+            modifier_registry: None,
         }
     }
 
@@ -236,6 +248,20 @@ impl<'a> LowerCtx<'a> {
     /// The currently installed reactive prop store, if any.
     pub fn bindings(&self) -> Option<&DocumentBindings> {
         self.bindings
+    }
+
+    /// Install a [`ModifierRegistry`] — every recursive [`Self::lower`]
+    /// call folds the lowered child through `node.modifiers` via the
+    /// matching behaviour's `wrap`. **Wave 1** of
+    /// `docs/dev/composable-builder-plan.md`.
+    pub fn with_modifier_registry(mut self, registry: &'a ModifierRegistry) -> Self {
+        self.modifier_registry = Some(registry);
+        self
+    }
+
+    /// The currently installed modifier registry, if any.
+    pub fn modifier_registry(&self) -> Option<&ModifierRegistry> {
+        self.modifier_registry
     }
 
     /// Builder-style installer for host-supplied pre-lowered children.
@@ -285,6 +311,13 @@ impl<'a> LowerCtx<'a> {
     /// fresh child-scope `LowerCtx` is handed to whichever
     /// `Component::lower_ui` impl owns this node's component id.
     /// Unknown ids fall back to [`Self::default_container`].
+    ///
+    /// **Wave 1** modifier fold: after the component lowers, the
+    /// resulting `UiNode` is folded through `node.modifiers`
+    /// innermost-first via each modifier's `ModifierBehaviour::wrap`.
+    /// Disabled modifiers (`enabled = false`) skip; unknown ids fall
+    /// through unchanged. Headless / SSR paths with no
+    /// `modifier_registry` skip the fold entirely.
     pub fn lower(&self, node: &Node) -> UiNode {
         let style = resolve_cascade(self.parent_style, &StyleProperties::default(), &node.style);
         // Note: host_children is intentionally not propagated — it
@@ -293,7 +326,8 @@ impl<'a> LowerCtx<'a> {
         // it's a snapshot keyed by tag, valid for the entire pass.
         // block_invalidator IS propagated: one invalidator instance
         // covers the whole document walk; per-NodeId contexts are
-        // managed inside the invalidator.
+        // managed inside the invalidator. modifier_registry IS
+        // propagated: one registry covers the whole walk.
         let child = LowerCtx {
             registry: self.registry,
             parent_style: &style,
@@ -301,6 +335,7 @@ impl<'a> LowerCtx<'a> {
             tag_emissions: self.tag_emissions.clone(),
             block_invalidator: self.block_invalidator.clone(),
             bindings: self.bindings,
+            modifier_registry: self.modifier_registry,
         };
         // Phase 3b: wrap the `Component::lower_ui` call in a per-NodeId
         // reactive context when an invalidator is installed. Signal
@@ -314,9 +349,26 @@ impl<'a> LowerCtx<'a> {
             }
             child.default_container(node, &style)
         };
-        match &self.block_invalidator {
+        let lowered = match &self.block_invalidator {
             Some(inv) if !node.id.is_empty() => inv.run_for_node(&node.id, body),
             _ => body(),
+        };
+        // Wave 1 modifier fold. Innermost-first means later entries in
+        // `node.modifiers` wrap earlier entries — `iter().rev()`
+        // produces the right ordering for `fold`.
+        match self.modifier_registry {
+            Some(reg) if !node.modifiers.is_empty() => {
+                node.modifiers.iter().rev().fold(lowered, |child, m| {
+                    if !m.enabled {
+                        return child;
+                    }
+                    match reg.get(&m.kind) {
+                        Some(beh) => beh.wrap(m, child),
+                        None => child,
+                    }
+                })
+            }
+            _ => lowered,
         }
     }
 
@@ -538,6 +590,7 @@ impl<'a> LowerCtx<'a> {
             tag_emissions: self.tag_emissions.clone(),
             block_invalidator: self.block_invalidator.clone(),
             bindings: self.bindings,
+            modifier_registry: self.modifier_registry,
         };
         // Phase 3b: wrap the synthesised composition's lower in a
         // per-NodeId reactive context too, scoped on the *derived* id.
@@ -1373,5 +1426,163 @@ mod tests {
         let h = hover_bg("#0000001f").unwrap();
         let c = h.background.unwrap();
         assert_eq!(c.a, 0x1f);
+    }
+
+    // ── Wave 1: modifier render fold ─────────────────────────────────
+
+    /// A behaviour that wraps the child in a tagged container so the
+    /// fold order is observable from the output tree.
+    struct TagWrapBehaviour {
+        id: &'static str,
+        marker: &'static str,
+    }
+    impl crate::modifier::ModifierBehaviour for TagWrapBehaviour {
+        fn id(&self) -> crate::modifier::ModifierId {
+            std::borrow::Cow::Borrowed(self.id)
+        }
+        fn label(&self) -> &str {
+            self.id
+        }
+        fn schema(&self) -> Vec<crate::registry::FieldSpec> {
+            Vec::new()
+        }
+        fn wrap(&self, _modifier: &crate::modifier::Modifier, child: UiNode) -> UiNode {
+            // Wrap the child in a container whose semantic tag carries
+            // the marker — the fold-order pin reads these back off the
+            // output tree.
+            UiNode::Container {
+                id: format!("wrap-{}", self.marker),
+                props: ContainerProps {
+                    semantic: prism_ui_runtime::layout::Semantic::tag(self.marker),
+                    ..ContainerProps::default()
+                },
+                children: vec![child],
+            }
+        }
+    }
+
+    fn make_test_node(id: &str) -> Node {
+        Node {
+            id: id.into(),
+            component: "container".into(),
+            props: serde_json::Value::Null,
+            children: vec![],
+            layout_mode: LayoutMode::default(),
+            transform: prism_core::foundation::spatial::Transform2D::default(),
+            modifiers: vec![],
+            style: StyleProperties::default(),
+        }
+    }
+
+    #[test]
+    fn modifier_fold_applies_innermost_first() {
+        let mut reg = crate::modifier::ModifierRegistry::new();
+        reg.register(std::sync::Arc::new(TagWrapBehaviour {
+            id: "outer-beh",
+            marker: "outer",
+        }))
+        .unwrap();
+        reg.register(std::sync::Arc::new(TagWrapBehaviour {
+            id: "inner-beh",
+            marker: "inner",
+        }))
+        .unwrap();
+
+        let mut node = make_test_node("n0");
+        // Order on disk: [outer, inner]. Innermost-first means `inner`
+        // wraps the bare child first, then `outer` wraps that.
+        // Resulting tree: outer → inner → bare.
+        node.modifiers
+            .push(crate::modifier::Modifier::new("outer-beh"));
+        node.modifiers
+            .push(crate::modifier::Modifier::new("inner-beh"));
+
+        let style = StyleProperties::default();
+        let ctx = LowerCtx::new(None, &style).with_modifier_registry(&reg);
+        let lowered = ctx.lower(&node);
+
+        let UiNode::Container {
+            props: outer_props,
+            children: outer_children,
+            ..
+        } = &lowered
+        else {
+            panic!("expected outer wrap container, got {lowered:?}");
+        };
+        assert_eq!(outer_props.semantic.tag.as_deref(), Some("outer"));
+        let UiNode::Container {
+            props: inner_props, ..
+        } = &outer_children[0]
+        else {
+            panic!("expected inner wrap container");
+        };
+        assert_eq!(inner_props.semantic.tag.as_deref(), Some("inner"));
+    }
+
+    #[test]
+    fn modifier_fold_skips_disabled_entries() {
+        let mut reg = crate::modifier::ModifierRegistry::new();
+        reg.register(std::sync::Arc::new(TagWrapBehaviour {
+            id: "should-wrap",
+            marker: "applied",
+        }))
+        .unwrap();
+        reg.register(std::sync::Arc::new(TagWrapBehaviour {
+            id: "skip-me",
+            marker: "skipped",
+        }))
+        .unwrap();
+
+        let mut node = make_test_node("n1");
+        node.modifiers
+            .push(crate::modifier::Modifier::new("should-wrap"));
+        node.modifiers
+            .push(crate::modifier::Modifier::new("skip-me").disabled());
+
+        let style = StyleProperties::default();
+        let ctx = LowerCtx::new(None, &style).with_modifier_registry(&reg);
+        let lowered = ctx.lower(&node);
+
+        let UiNode::Container { props, .. } = &lowered else {
+            panic!()
+        };
+        // Only the enabled behaviour wrapped — the disabled one didn't.
+        assert_eq!(props.semantic.tag.as_deref(), Some("applied"));
+    }
+
+    #[test]
+    fn modifier_fold_passes_through_unknown_ids() {
+        let reg = crate::modifier::ModifierRegistry::new(); // empty
+        let mut node = make_test_node("n2");
+        node.modifiers
+            .push(crate::modifier::Modifier::new("nonexistent"));
+
+        let style = StyleProperties::default();
+        let ctx = LowerCtx::new(None, &style).with_modifier_registry(&reg);
+        let lowered = ctx.lower(&node);
+        // Default container fallback — no wrap applied.
+        let UiNode::Container { id, .. } = &lowered else {
+            panic!()
+        };
+        assert_eq!(id, "n2");
+    }
+
+    #[test]
+    fn modifier_fold_no_op_without_registry() {
+        // Without `with_modifier_registry`, the fold is skipped
+        // entirely — headless / SSR paths preserve their current
+        // output unchanged.
+        let mut node = make_test_node("n3");
+        node.modifiers.push(crate::modifier::Modifier::from_kind(
+            crate::modifier::ModifierKind::Tooltip,
+        ));
+
+        let style = StyleProperties::default();
+        let ctx = LowerCtx::new(None, &style);
+        let lowered = ctx.lower(&node);
+        let UiNode::Container { id, .. } = &lowered else {
+            panic!()
+        };
+        assert_eq!(id, "n3");
     }
 }

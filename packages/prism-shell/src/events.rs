@@ -140,6 +140,7 @@ pub fn dispatch_event(
             let viewport = g.viewport;
             let services = &g.services;
             let registry = g.registry.as_component_registry();
+            let modifier_registry: &prism_builder::ModifierRegistry = g.modifier_registry.as_ref();
             let mut ctx = crate::services::MutCtx {
                 state: &mut g.state,
                 viewport,
@@ -148,6 +149,7 @@ pub fn dispatch_event(
                 luau: g.luau.as_mut(),
                 clipboard: &mut g.clipboard,
                 registry: Some(registry),
+                modifier_registry: Some(modifier_registry),
             };
             matches!(services.fan_out(event, &mut ctx), EventOutcome::Handled)
         }
@@ -172,6 +174,18 @@ const POINTER_ROUTES: &[(&str, PointerHandler)] = &[
     ("signal-connection-row", handle_signal_connection_row_click),
     ("nav-button", handle_nav_button_click),
     ("menu-pill", handle_menu_pill_click),
+    // Wave 1.6 of `docs/dev/composable-builder-plan.md` — composable
+    // inspector. Each row in the modifier-header strip is a separate
+    // route; the picker overlay's open / select pair completes the
+    // attach flow.
+    ("modifier-toggle", handle_modifier_toggle_click),
+    ("modifier-remove", handle_modifier_remove_click),
+    ("modifier-reorder", handle_modifier_reorder_click),
+    ("add-modifier-open", handle_add_modifier_open_click),
+    (
+        "modifier-picker-select",
+        handle_modifier_picker_select_click,
+    ),
 ];
 
 fn route_pointer_down(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
@@ -274,11 +288,22 @@ fn handle_field_edit_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bo
             min,
             max,
         });
+        // Wave 2.2: ALSO open a `field_focus` session so arrow keys
+        // (handled by `FieldFocusService`) nudge the value ±1 / ±10
+        // without the user needing to drag. The drag and the focus
+        // coexist: pointer-move runs the scrub; arrow keys nudge;
+        // Esc / Enter / clicking elsewhere closes the focus; the
+        // drag ends on pointer-up regardless.
+        guard.state.begin_field_focus(target, key, kind);
         return true;
     }
     // Text-editing kinds: open a focus session. Subsequent Text/Key
     // events route through `FieldFocusService` until commit / cancel.
-    if matches!(kind, "text" | "color" | "file") {
+    // Wave 2.1 of `docs/dev/composable-builder-plan.md`: `textarea`
+    // shares the same focus session shape as `text` — the only
+    // difference is multi-line commit semantics, which `FieldFocusService`
+    // distinguishes on `field_focus.kind` at Enter time.
+    if matches!(kind, "text" | "textarea" | "color" | "file") {
         let mut guard = inner.borrow_mut();
         return guard.state.begin_field_focus(target, key, kind);
     }
@@ -436,6 +461,100 @@ fn handle_toolbar_zoom_reset_click(inner: &Rc<RefCell<ShellInner>>, _hit: &HitRe
     true
 }
 
+// ── Wave 1.6 modifier routes ─────────────────────────────────────
+
+fn parse_modifier_idx(hit: &HitRect) -> Option<usize> {
+    attr_value(hit, "data-modifier-idx").and_then(|s| s.parse::<usize>().ok())
+}
+
+fn handle_modifier_toggle_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
+    let Some(target) = attr_value(hit, "data-target-id") else {
+        return false;
+    };
+    let Some(idx) = parse_modifier_idx(hit) else {
+        return false;
+    };
+    let mut guard = inner.borrow_mut();
+    let g = &mut *guard;
+    let registry = g.registry.as_component_registry();
+    g.state.toggle_modifier(target, idx, Some(registry))
+}
+
+fn handle_modifier_remove_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
+    let Some(target) = attr_value(hit, "data-target-id") else {
+        return false;
+    };
+    let Some(idx) = parse_modifier_idx(hit) else {
+        return false;
+    };
+    let mut guard = inner.borrow_mut();
+    let g = &mut *guard;
+    let registry = g.registry.as_component_registry();
+    g.state.detach_modifier(target, idx, Some(registry))
+}
+
+/// Wave 1.6 — `data-role="modifier-reorder"`. Today the route is a
+/// hook for the Wave 3 pointer-drag gesture; without that gesture,
+/// the only useful one-click behaviour is to nudge the modifier up
+/// one position (and wrap to the bottom from the top). Keeps the
+/// behaviour observable end-to-end through one mutator call until
+/// the drag handle lands.
+fn handle_modifier_reorder_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
+    let Some(target) = attr_value(hit, "data-target-id") else {
+        return false;
+    };
+    let Some(idx) = parse_modifier_idx(hit) else {
+        return false;
+    };
+    let mut guard = inner.borrow_mut();
+    let g = &mut *guard;
+    let len = g
+        .state
+        .canvas
+        .document
+        .root
+        .as_ref()
+        .and_then(|r| r.find(target))
+        .map(|n| n.modifiers.len())
+        .unwrap_or(0);
+    if len <= 1 {
+        return false;
+    }
+    let to = if idx == 0 { len - 1 } else { idx - 1 };
+    let registry = g.registry.as_component_registry();
+    g.state.reorder_modifier(target, idx, to, Some(registry))
+}
+
+fn handle_add_modifier_open_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
+    let Some(target) = attr_value(hit, "data-target-id") else {
+        return false;
+    };
+    let attached_raw = attr_value(hit, "data-attached").unwrap_or("[]");
+    let attached: Vec<String> = serde_json::from_str(attached_raw).unwrap_or_default();
+    let mut guard = inner.borrow_mut();
+    guard.state.overlay.modifier_picker = crate::state::ModifierPicker {
+        open: true,
+        target_id: target.to_string(),
+        attached,
+    };
+    true
+}
+
+fn handle_modifier_picker_select_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
+    let Some(target) = attr_value(hit, "data-target-id") else {
+        return false;
+    };
+    let Some(modifier_id) = attr_value(hit, "data-modifier-id") else {
+        return false;
+    };
+    let mut guard = inner.borrow_mut();
+    let g = &mut *guard;
+    let registry = g.registry.as_component_registry();
+    let attached = g.state.attach_modifier(target, modifier_id, Some(registry));
+    g.state.overlay.modifier_picker = crate::state::ModifierPicker::default();
+    attached
+}
+
 /// B4: commit the active text-input focus session when the user
 /// clicks anywhere that isn't the *same* field. The router calls
 /// this *before* every other pointer-down route, so the next route
@@ -535,6 +654,7 @@ fn route_on_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
     let g = &mut *guard;
     let viewport = g.viewport;
     let registry = g.registry.as_component_registry();
+    let modifier_registry: &prism_builder::ModifierRegistry = g.modifier_registry.as_ref();
     // Split-borrow: `services` reads the command table while `ctx`
     // borrows every mutable shell resource. Re-borrowing each field
     // through `g` keeps the borrow checker happy — the same pattern
@@ -548,6 +668,7 @@ fn route_on_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
         luau: g.luau.as_mut(),
         clipboard: &mut g.clipboard,
         registry: Some(registry),
+        modifier_registry: Some(modifier_registry),
     };
     match action {
         ParsedAction::Emit { signal } => {
@@ -2114,5 +2235,192 @@ mod tests {
             shell.inner.borrow().state.canvas.selection,
             baseline_selection,
         );
+    }
+
+    // ── Wave 1.6 modifier route tests ───────────────────────────────
+
+    fn attach_tooltip_to(shell: &Shell, node_id: &str) {
+        // Helper: attach a tooltip modifier to the named doc node so
+        // the route tests have a target to toggle / remove / reorder.
+        use prism_builder::{Modifier, ModifierKind};
+        let mut guard = shell.inner.borrow_mut();
+        let g = &mut *guard;
+        if let Some(n) = g
+            .state
+            .canvas
+            .document
+            .root
+            .as_mut()
+            .and_then(|r| r.find_mut(node_id))
+        {
+            n.modifiers.push(Modifier::from_kind(ModifierKind::Tooltip));
+        }
+        let registry = g.registry.as_component_registry();
+        g.state.resync_builder_for_selection(Some(registry));
+    }
+
+    #[test]
+    fn pointer_down_on_modifier_toggle_flips_enabled() {
+        use prism_ui_runtime::event::PointerButton;
+        let shell = Shell::new().expect("boot");
+        attach_tooltip_to(&shell, "demo-button");
+        // Select the button so the inspector sees its modifiers.
+        {
+            let mut guard = shell.inner.borrow_mut();
+            let g = &mut *guard;
+            let registry = g.registry.as_component_registry();
+            g.state.select_node("demo-button", Some(registry));
+        }
+
+        let hit = hit_with(
+            "modifier-toggle",
+            "demo-button",
+            &[("data-modifier-idx", "0")],
+        );
+        let dirty = dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 1.0,
+                y: 1.0,
+                button: PointerButton::Primary,
+            },
+            Some(hit),
+        );
+        assert!(dirty);
+        let enabled = shell
+            .inner
+            .borrow()
+            .state
+            .canvas
+            .document
+            .root
+            .as_ref()
+            .unwrap()
+            .find("demo-button")
+            .unwrap()
+            .modifiers[0]
+            .enabled;
+        assert!(!enabled, "first click disables the modifier");
+    }
+
+    #[test]
+    fn pointer_down_on_modifier_remove_detaches_entry() {
+        use prism_ui_runtime::event::PointerButton;
+        let shell = Shell::new().expect("boot");
+        attach_tooltip_to(&shell, "demo-button");
+        assert_eq!(
+            shell
+                .inner
+                .borrow()
+                .state
+                .canvas
+                .document
+                .root
+                .as_ref()
+                .unwrap()
+                .find("demo-button")
+                .unwrap()
+                .modifiers
+                .len(),
+            1
+        );
+
+        let hit = hit_with(
+            "modifier-remove",
+            "demo-button",
+            &[("data-modifier-idx", "0")],
+        );
+        let _ = dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 1.0,
+                y: 1.0,
+                button: PointerButton::Primary,
+            },
+            Some(hit),
+        );
+        let len = shell
+            .inner
+            .borrow()
+            .state
+            .canvas
+            .document
+            .root
+            .as_ref()
+            .unwrap()
+            .find("demo-button")
+            .unwrap()
+            .modifiers
+            .len();
+        assert_eq!(len, 0);
+    }
+
+    #[test]
+    fn pointer_down_on_add_modifier_open_seeds_picker_state() {
+        use prism_ui_runtime::event::PointerButton;
+        let shell = Shell::new().expect("boot");
+        let hit = hit_with(
+            "add-modifier-open",
+            "demo-button",
+            &[("data-attached", r#"["tooltip"]"#)],
+        );
+        let _ = dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 1.0,
+                y: 1.0,
+                button: PointerButton::Primary,
+            },
+            Some(hit),
+        );
+        let picker = shell.inner.borrow().state.overlay.modifier_picker.clone();
+        assert!(picker.open);
+        assert_eq!(picker.target_id, "demo-button");
+        assert_eq!(picker.attached, vec!["tooltip".to_string()]);
+    }
+
+    #[test]
+    fn pointer_down_on_modifier_picker_select_attaches_and_closes_picker() {
+        use prism_ui_runtime::event::PointerButton;
+        let shell = Shell::new().expect("boot");
+        // Open the picker first.
+        {
+            let mut guard = shell.inner.borrow_mut();
+            guard.state.overlay.modifier_picker = crate::state::ModifierPicker {
+                open: true,
+                target_id: "demo-button".into(),
+                attached: vec![],
+            };
+        }
+        let hit = hit_with(
+            "modifier-picker-select",
+            "demo-button",
+            &[("data-modifier-id", "tooltip")],
+        );
+        let _ = dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 1.0,
+                y: 1.0,
+                button: PointerButton::Primary,
+            },
+            Some(hit),
+        );
+        let inner = shell.inner.borrow();
+        assert_eq!(
+            inner
+                .state
+                .canvas
+                .document
+                .root
+                .as_ref()
+                .unwrap()
+                .find("demo-button")
+                .unwrap()
+                .modifiers
+                .len(),
+            1
+        );
+        assert!(!inner.state.overlay.modifier_picker.open, "picker closes");
     }
 }

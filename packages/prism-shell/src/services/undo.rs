@@ -108,6 +108,7 @@ mod tests {
             luau,
             clipboard,
             registry: None,
+            modifier_registry: None,
         }
     }
 

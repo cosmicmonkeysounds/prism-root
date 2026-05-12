@@ -46,6 +46,13 @@ pub enum ShellError {
 /// VFS, …) re-introduce themselves as fields here as they're ported.
 pub struct ShellInner {
     pub registry: ShellComponentRegistry,
+    /// **Wave 1** of `docs/dev/composable-builder-plan.md`: open
+    /// registry of `ModifierBehaviour` impls. Seeded with the six
+    /// baseline kinds in `Shell::new`; threaded into `PropCtx` /
+    /// `MutCtx` so the canvas binding can install it on the
+    /// builder's `LowerCtx` and the inspector can list attachable
+    /// behaviours.
+    pub modifier_registry: Arc<prism_builder::ModifierRegistry>,
     pub resolver: Arc<dyn TagResolver>,
     pub bindings: ShellPropBindings,
     pub services: ServiceRegistry,
@@ -96,6 +103,10 @@ impl ShellInner {
             // per-block invalidator so document blocks lower inside
             // per-NodeId reactive contexts wired to the dirty queue.
             block_invalidator: Some(self.render_scope.block_invalidator()),
+            // Wave 1: the canvas binding installs this on the
+            // builder's `LowerCtx::with_modifier_registry` so attached
+            // `node.modifiers` fold over each block's output.
+            modifier_registry: Some(self.modifier_registry.as_ref()),
         }
     }
 
@@ -109,6 +120,7 @@ impl ShellInner {
         // Re-borrow explicitly so the borrow checker sees the disjoint
         // slices.
         let registry = self.registry.as_component_registry();
+        let modifier_registry: &prism_builder::ModifierRegistry = self.modifier_registry.as_ref();
         MutCtx {
             state: &mut self.state,
             viewport: self.viewport,
@@ -117,6 +129,7 @@ impl ShellInner {
             luau: self.luau.as_mut(),
             clipboard: &mut self.clipboard,
             registry: Some(registry),
+            modifier_registry: Some(modifier_registry),
         }
     }
 }
@@ -136,16 +149,25 @@ impl Shell {
         let bindings = ShellPropBindings::with_builtins();
         let services = ServiceRegistry::with_builtins();
         let skeleton = Skeleton::load().map_err(ShellError::Skeleton)?;
+        let modifier_registry = Arc::new(prism_builder::ModifierRegistry::with_builtins());
+        let mut seed_state = crate::seed::initial_state();
+        // Wave 1: hand the shared modifier registry to AppState so
+        // every `resync_builder_for_selection` call (boot, hit-test,
+        // command body) derives modifier sections without per-callsite
+        // plumbing.
+        seed_state.modifier_registry = Some(Arc::clone(&modifier_registry));
         let inner = Rc::new(RefCell::new(ShellInner {
             registry,
+            modifier_registry,
             resolver,
             bindings,
             services,
-            // §43 A1: hydrated boot state. `AppState::default()` is the
+            // §43 A1 + Wave 1: hydrated boot state with the modifier
+            // registry installed. `AppState::default()` is the
             // zero-data shape for tests and headless renders;
             // `Shell::new` boots into a populated catalog + canvas
             // document so the first frame looks like Studio.
-            state: crate::seed::initial_state(),
+            state: seed_state,
             viewport: Viewport {
                 width: 1280.0,
                 height: 800.0,

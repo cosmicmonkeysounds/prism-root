@@ -138,6 +138,10 @@ pub struct MutCtx<'a> {
     /// callers compiling — derivations no-op when the registry
     /// isn't available.
     pub registry: Option<&'a prism_builder::ComponentRegistry>,
+    /// **Wave 1** read-only seam: command bodies that attach /
+    /// detach / toggle / reorder modifiers reach the registry
+    /// through this field. Mirror of `PropCtx.modifier_registry`.
+    pub modifier_registry: Option<&'a prism_builder::ModifierRegistry>,
 }
 
 // ── command spec + table ──────────────────────────────────────────
@@ -444,6 +448,7 @@ mod tests {
             luau: &mut luau,
             clipboard: &mut clipboard,
             registry: None,
+            modifier_registry: None,
         };
         assert_eq!(
             reg.fan_out(&Event::Wheel { dx: 0.0, dy: 0.0 }, &mut ctx),

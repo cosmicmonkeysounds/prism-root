@@ -128,6 +128,15 @@ pub struct AppState {
     /// bound prop, pointer-up clears it. Clicks shorter than the drag
     /// threshold fall through to the existing `+1 step` path.
     pub number_drag: Option<NumberDrag>,
+    /// **Wave 1** of `docs/dev/composable-builder-plan.md`: optional
+    /// shared modifier registry. `Shell::new` populates this once at
+    /// boot with the six-baseline `ModifierRegistry::with_builtins()`;
+    /// `resync_builder_for_selection` pulls from here to derive
+    /// modifier sections + the add-modifier footer. Tests that
+    /// pre-date Wave 1 leave it `None` to preserve the flat-rows
+    /// shape. The `Arc` keeps `AppState: Clone` cheap and shares the
+    /// registry across reloads.
+    pub modifier_registry: Option<std::sync::Arc<prism_builder::ModifierRegistry>>,
 }
 
 /// Text-input focus state. Lives on `AppState` rather than a service so
@@ -208,10 +217,17 @@ impl AppState {
         &mut self,
         registry: Option<&prism_builder::ComponentRegistry>,
     ) {
+        // Wave 1: pull the modifier registry off `AppState` (set once
+        // at boot by `Shell::new`). Tests that leave it `None`
+        // preserve the pre-Wave-1 flat-rows shape; the live shell
+        // gets one section per attached `node.modifiers` entry plus
+        // an add-modifier footer.
+        let mod_registry = self.modifier_registry.clone();
         self.builder.inspector =
             derive_inspector_tree(&self.canvas.document, &self.canvas.selection);
         self.builder.property_rows = derive_property_rows(
             registry,
+            mod_registry.as_deref(),
             &self.canvas.document,
             self.canvas.selection.as_deref(),
         );
@@ -283,6 +299,163 @@ impl AppState {
             return false;
         }
         prism_builder::NodeMutator::with_bindings(&self.canvas.bindings).write(target, key, value);
+        self.resync_builder_for_selection(registry);
+        true
+    }
+
+    // ── Wave 1.5 modifier mutators ───────────────────────────────────
+    //
+    // Each mutator validates against the doc, short-circuits on
+    // no-op edits, and ends with `resync_builder_for_selection` so
+    // the inspector + property rows stay coherent. Mirrors §43 C
+    // discipline: one re-derivation seam, never per-callsite.
+
+    /// Wave 1.5 — attach a behaviour to a doc node. Returns `true` when
+    /// the document actually changed. Rejects unknown node ids and
+    /// duplicate attachments (one modifier of each id per node).
+    pub fn attach_modifier(
+        &mut self,
+        node_id: &str,
+        modifier_id: &str,
+        registry: Option<&prism_builder::ComponentRegistry>,
+    ) -> bool {
+        let target = self
+            .canvas
+            .document
+            .root
+            .as_mut()
+            .and_then(|r| r.find_mut(node_id));
+        let Some(target) = target else {
+            return false;
+        };
+        if target.modifiers.iter().any(|m| m.kind == modifier_id) {
+            return false;
+        }
+        target
+            .modifiers
+            .push(prism_builder::Modifier::new(modifier_id));
+        self.resync_builder_for_selection(registry);
+        true
+    }
+
+    /// Wave 1.5 — remove an attached behaviour at `idx`. No-op on
+    /// out-of-range or unknown node id.
+    pub fn detach_modifier(
+        &mut self,
+        node_id: &str,
+        idx: usize,
+        registry: Option<&prism_builder::ComponentRegistry>,
+    ) -> bool {
+        let target = self
+            .canvas
+            .document
+            .root
+            .as_mut()
+            .and_then(|r| r.find_mut(node_id));
+        let Some(target) = target else {
+            return false;
+        };
+        if idx >= target.modifiers.len() {
+            return false;
+        }
+        target.modifiers.remove(idx);
+        self.resync_builder_for_selection(registry);
+        true
+    }
+
+    /// Wave 1.5 — flip the `enabled` flag on a modifier. The render
+    /// fold skips disabled entries; the inspector emits the header but
+    /// suppresses the schema rows (so the panel collapses for off
+    /// behaviours).
+    pub fn toggle_modifier(
+        &mut self,
+        node_id: &str,
+        idx: usize,
+        registry: Option<&prism_builder::ComponentRegistry>,
+    ) -> bool {
+        let target = self
+            .canvas
+            .document
+            .root
+            .as_mut()
+            .and_then(|r| r.find_mut(node_id));
+        let Some(target) = target else {
+            return false;
+        };
+        let Some(modifier) = target.modifiers.get_mut(idx) else {
+            return false;
+        };
+        modifier.enabled = !modifier.enabled;
+        self.resync_builder_for_selection(registry);
+        true
+    }
+
+    /// Wave 1.5 — reorder modifiers in the stack (innermost-first
+    /// `wrap` order is read off the `Vec` in reverse, so swapping
+    /// indices visibly changes the on-canvas composition). No-op on
+    /// out-of-range indices or `from == to`.
+    pub fn reorder_modifier(
+        &mut self,
+        node_id: &str,
+        from: usize,
+        to: usize,
+        registry: Option<&prism_builder::ComponentRegistry>,
+    ) -> bool {
+        if from == to {
+            return false;
+        }
+        let target = self
+            .canvas
+            .document
+            .root
+            .as_mut()
+            .and_then(|r| r.find_mut(node_id));
+        let Some(target) = target else {
+            return false;
+        };
+        if from >= target.modifiers.len() || to >= target.modifiers.len() {
+            return false;
+        }
+        let m = target.modifiers.remove(from);
+        target.modifiers.insert(to, m);
+        self.resync_builder_for_selection(registry);
+        true
+    }
+
+    /// Wave 1.5 — write one prop on an attached modifier. Mirror of
+    /// `set_node_prop` for the modifier sections of the inspector;
+    /// the field-edit router dispatches here when a row carries
+    /// `data-edit-target="modifier"` + `data-modifier-idx`.
+    pub fn set_modifier_prop(
+        &mut self,
+        node_id: &str,
+        modifier_idx: usize,
+        key: &str,
+        value: serde_json::Value,
+        registry: Option<&prism_builder::ComponentRegistry>,
+    ) -> bool {
+        let target = self
+            .canvas
+            .document
+            .root
+            .as_mut()
+            .and_then(|r| r.find_mut(node_id));
+        let Some(target) = target else {
+            return false;
+        };
+        let Some(modifier) = target.modifiers.get_mut(modifier_idx) else {
+            return false;
+        };
+        // Coerce existing `props` to an object if needed (a brand-new
+        // modifier has `props: Null`).
+        if !modifier.props.is_object() {
+            modifier.props = serde_json::Value::Object(serde_json::Map::new());
+        }
+        let map = modifier.props.as_object_mut().expect("just coerced");
+        if map.get(key) == Some(&value) {
+            return false;
+        }
+        map.insert(key.into(), value);
         self.resync_builder_for_selection(registry);
         true
     }
@@ -532,6 +705,7 @@ fn inspector_label_for(node: &prism_builder::Node) -> String {
 /// loaded plugins. Headless render paths keep working.
 fn derive_property_rows(
     registry: Option<&prism_builder::ComponentRegistry>,
+    modifier_registry: Option<&prism_builder::ModifierRegistry>,
     doc: &prism_builder::BuilderDocument,
     selection: Option<&str>,
 ) -> Vec<PropertyRow> {
@@ -552,6 +726,7 @@ fn derive_property_rows(
     };
     let schema = component.schema();
     let mut rows: Vec<PropertyRow> = Vec::with_capacity(schema.len() + 1);
+    // ── Section 1: the node's typed component identity ───────────
     rows.push(PropertyRow {
         component: "shell.section-header".into(),
         props: json!({
@@ -562,7 +737,87 @@ fn derive_property_rows(
     for spec in schema {
         rows.push(property_row_from_spec(&spec, &node.props, &node.id));
     }
+    // ── Section 2..N: one per attached modifier ──────────────────
+    //
+    // Wave 1: each attached `node.modifiers` entry produces a
+    // `shell.modifier-header` row (with toggle + remove affordances)
+    // followed by its schema rows projected through
+    // `property_row_from_spec`. Modifier props live in a flat
+    // namespace (`modifier.<idx>.<key>`) so the existing field-edit
+    // routing reaches them through one path; the `target-id` carries
+    // the **owning node's** id with the modifier index in
+    // `data-modifier-idx` so the click router can disambiguate.
+    if let Some(mod_reg) = modifier_registry {
+        for (idx, modifier) in node.modifiers.iter().enumerate() {
+            let descriptor = mod_reg.descriptor(&modifier.kind);
+            let label = descriptor
+                .as_ref()
+                .map(|d| d.label.as_str())
+                .unwrap_or(modifier.kind.as_str());
+            let description = descriptor
+                .as_ref()
+                .map(|d| d.description.as_str())
+                .unwrap_or("");
+            rows.push(PropertyRow {
+                component: "shell.modifier-header".into(),
+                props: json!({
+                    "label": label,
+                    "description": description,
+                    "modifier-id": modifier.kind,
+                    "modifier-idx": idx,
+                    "enabled": modifier.enabled,
+                    "target-id": node.id,
+                }),
+            });
+            if modifier.enabled {
+                let m_schema = mod_reg.schema_for(&modifier.kind);
+                for spec in m_schema {
+                    rows.push(property_row_from_modifier_spec(
+                        &spec,
+                        &modifier.props,
+                        &node.id,
+                        idx,
+                    ));
+                }
+            }
+        }
+        // ── Footer: + Add Behaviour ──────────────────────────────
+        rows.push(PropertyRow {
+            component: "shell.add-modifier-button".into(),
+            props: json!({
+                "target-id": node.id,
+                // Names of behaviours already attached (the picker
+                // filters these out so users can't double-attach).
+                "attached": node.modifiers.iter().map(|m| m.kind.clone()).collect::<Vec<_>>(),
+            }),
+        });
+    }
     rows
+}
+
+/// Project a modifier's `FieldSpec` onto a property row keyed to the
+/// owning node + modifier index. Mirror of `property_row_from_spec`
+/// but adds `data-modifier-idx` so the §43 C2 hit-test router
+/// dispatches to `AppState::set_modifier_prop` (Wave 1.5) instead of
+/// `set_node_prop`.
+fn property_row_from_modifier_spec(
+    spec: &prism_core::widget::field::FieldSpec,
+    props: &Value,
+    target_id: &str,
+    modifier_idx: usize,
+) -> PropertyRow {
+    let base = property_row_from_spec(spec, props, target_id);
+    let mut props_obj = base.props;
+    if let Some(obj) = props_obj.as_object_mut() {
+        obj.insert("modifier-idx".into(), json!(modifier_idx));
+        // Override the kind-edit route so the router routes to a
+        // modifier prop write, not a node prop write.
+        obj.insert("edit-target".into(), json!("modifier"));
+    }
+    PropertyRow {
+        component: base.component,
+        props: props_obj,
+    }
 }
 
 /// Project one `FieldSpec` onto a `PropertyRow` consumed by
@@ -1050,6 +1305,21 @@ pub struct OverlaySlot {
     pub toasts: Vec<Toast>,
     pub command_palette: CommandPalette,
     pub help_tooltip: Option<HelpTooltip>,
+    /// Wave 1.6 of `docs/dev/composable-builder-plan.md` — modifier
+    /// picker overlay. `open = true` after the inspector's "+ Add
+    /// Behaviour" footer is clicked; selecting a behaviour or pressing
+    /// Esc closes it.
+    pub modifier_picker: ModifierPicker,
+}
+
+/// Wave 1.6 — open/closed state of the `shell.modifier-picker`
+/// overlay. The owning-node id seeds the attach mutator on selection;
+/// `attached` filters the registry list so users can't double-attach.
+#[derive(Clone, Debug, Default)]
+pub struct ModifierPicker {
+    pub open: bool,
+    pub target_id: String,
+    pub attached: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -1126,6 +1396,47 @@ impl OverlaySlot {
             Some(t) => json!({ "title": t.title, "summary": t.summary, "visible": true }),
             None => json!({ "title": "", "summary": "", "visible": false }),
         }
+    }
+
+    /// JSON for `shell.modifier-picker`. Wave 1.6 of
+    /// `docs/dev/composable-builder-plan.md`. Pulls the registered
+    /// behaviours from the shared `ModifierRegistry`, filters out the
+    /// already-attached ids (the `add-modifier-open` route stashed
+    /// them on `self.modifier_picker.attached`), and emits the
+    /// picker's open/target-id state.
+    pub fn modifier_picker_props(
+        &self,
+        registry: Option<&prism_builder::ModifierRegistry>,
+    ) -> Value {
+        let options = match (self.modifier_picker.open, registry) {
+            (true, Some(reg)) => {
+                let attached: std::collections::HashSet<&str> = self
+                    .modifier_picker
+                    .attached
+                    .iter()
+                    .map(String::as_str)
+                    .collect();
+                let entries: Vec<Value> = reg
+                    .list()
+                    .into_iter()
+                    .filter(|d| !attached.contains(d.id.as_str()))
+                    .map(|d| {
+                        json!({
+                            "id": d.id,
+                            "label": d.label,
+                            "description": d.description,
+                        })
+                    })
+                    .collect();
+                Value::Array(entries)
+            }
+            _ => Value::Array(Vec::new()),
+        };
+        json!({
+            "open": self.modifier_picker.open,
+            "target-id": self.modifier_picker.target_id,
+            "options": options,
+        })
     }
 
     fn toasts_json(&self) -> Value {
@@ -2284,23 +2595,35 @@ impl CanvasSlot {
         &self,
         registry: Option<&prism_builder::ComponentRegistry>,
     ) -> Vec<prism_ui_runtime::layout::Node> {
-        self.lower_document_to_ui_with_invalidator(registry, None)
+        self.lower_document_to_ui_full(registry, None, None)
     }
 
-    /// Phase 3b + Phase 4b of `docs/dev/dioxus-inspiration.md`: lower
-    /// the builder document with an optional [`BlockInvalidator`]
-    /// (per-block dirty subscriptions) and the canvas's
-    /// [`prism_builder::DocumentBindings`] (per-NodeId reactive prop
-    /// bags). When both are installed every recursive `lower()` wraps
-    /// the block's `Component::lower_ui` body in a per-NodeId reactive
-    /// context AND routes `ctx.prop_*` reads through the matching
-    /// signal — so a `NodeMutator::with_bindings(..).write(..)` on the
-    /// same NodeId fires the invalidator's `on_dirty` callback
-    /// automatically.
+    /// Phase 3b / 4b shim kept for callers that don't carry the
+    /// modifier registry. New code uses [`Self::lower_document_to_ui_full`].
     pub fn lower_document_to_ui_with_invalidator(
         &self,
         registry: Option<&prism_builder::ComponentRegistry>,
         invalidator: Option<prism_builder::ui_lower::BlockInvalidator>,
+    ) -> Vec<prism_ui_runtime::layout::Node> {
+        self.lower_document_to_ui_full(registry, invalidator, None)
+    }
+
+    /// Phase 3b + Phase 4b of `docs/dev/dioxus-inspiration.md` +
+    /// Wave 1 of `docs/dev/composable-builder-plan.md`: lower the
+    /// builder document with an optional [`BlockInvalidator`]
+    /// (per-block dirty subscriptions), the canvas's
+    /// [`prism_builder::DocumentBindings`] (per-NodeId reactive prop
+    /// bags), and an optional [`prism_builder::ModifierRegistry`]
+    /// (Wave 1 render fold of `node.modifiers` over each block's
+    /// output). All three install on the same `LowerCtx` so reactive
+    /// reads subscribe, signal writes invalidate, and attached
+    /// behaviours wrap the rendered subtree without per-block
+    /// plumbing.
+    pub fn lower_document_to_ui_full(
+        &self,
+        registry: Option<&prism_builder::ComponentRegistry>,
+        invalidator: Option<prism_builder::ui_lower::BlockInvalidator>,
+        modifier_registry: Option<&prism_builder::ModifierRegistry>,
     ) -> Vec<prism_ui_runtime::layout::Node> {
         let Some(reg) = registry else {
             return Vec::new();
@@ -2309,12 +2632,14 @@ impl CanvasSlot {
             return Vec::new();
         };
         let cascade = prism_builder::StyleProperties::default();
-        let ctx = prism_builder::ui_lower::LowerCtx::new(Some(reg), &cascade)
+        let mut ctx = prism_builder::ui_lower::LowerCtx::new(Some(reg), &cascade)
             .with_bindings(&self.bindings);
-        let ctx = match invalidator {
-            Some(inv) => ctx.with_block_invalidator(inv),
-            None => ctx,
-        };
+        if let Some(inv) = invalidator {
+            ctx = ctx.with_block_invalidator(inv);
+        }
+        if let Some(mod_reg) = modifier_registry {
+            ctx = ctx.with_modifier_registry(mod_reg);
+        }
         vec![ctx.lower(root)]
     }
 
@@ -3042,6 +3367,375 @@ mod tests {
         assert_eq!(
             header_label, "button",
             "section header must reflect new selection"
+        );
+    }
+
+    /// Wave 1.3 of `docs/dev/composable-builder-plan.md` — pin the
+    /// modifier-sections derivation. Each attached `node.modifiers`
+    /// entry emits one `shell.modifier-header` row plus its schema
+    /// rows; an `shell.add-modifier-button` row trails the stack as
+    /// the footer.
+    #[test]
+    fn derive_property_rows_emits_section_per_attached_modifier() {
+        use prism_builder::{Modifier, ModifierKind};
+        let mut reg = prism_builder::ComponentRegistry::new();
+        prism_builder::starter::register_builtins(&mut reg).expect("builtins");
+        let mod_reg = std::sync::Arc::new(prism_builder::ModifierRegistry::with_builtins());
+
+        let mut doc = doc_with_three_nodes();
+        // Attach two modifiers to the button.
+        let btn = doc.root.as_mut().unwrap().find_mut("btn").unwrap();
+        btn.modifiers.push(
+            Modifier::from_kind(ModifierKind::Tooltip).with_props(json!({
+                "text": "Click me",
+                "placement": "top",
+            })),
+        );
+        btn.modifiers
+            .push(Modifier::from_kind(ModifierKind::ResponsiveVisibility));
+
+        let mut state = AppState::default();
+        state.canvas.document = doc;
+        state.canvas.selection = Some("btn".into());
+        state.modifier_registry = Some(std::sync::Arc::clone(&mod_reg));
+        state.resync_builder_for_selection(Some(&reg));
+
+        // Row structure: section-header(button) + button schema rows
+        // + modifier-header(Tooltip) + tooltip schema rows
+        // + modifier-header(Responsive Visibility) + responsive rows
+        // + add-modifier-button footer.
+        let kinds: Vec<&str> = state
+            .builder
+            .property_rows
+            .iter()
+            .map(|r| r.component.as_str())
+            .collect();
+
+        let mod_header_count = kinds
+            .iter()
+            .filter(|c| **c == "shell.modifier-header")
+            .count();
+        assert_eq!(mod_header_count, 2, "one header per attached modifier");
+
+        let footer_count = kinds
+            .iter()
+            .filter(|c| **c == "shell.add-modifier-button")
+            .count();
+        assert_eq!(footer_count, 1, "exactly one add-modifier footer");
+
+        // Footer comes last.
+        assert_eq!(
+            kinds.last().copied(),
+            Some("shell.add-modifier-button"),
+            "footer must be the final row"
+        );
+
+        // First modifier header carries Tooltip's label.
+        let first_mod_header = state
+            .builder
+            .property_rows
+            .iter()
+            .find(|r| r.component == "shell.modifier-header")
+            .expect("at least one modifier header");
+        assert_eq!(
+            first_mod_header.props.get("label").and_then(|v| v.as_str()),
+            Some("Tooltip"),
+            "first modifier header label",
+        );
+        assert_eq!(
+            first_mod_header
+                .props
+                .get("modifier-id")
+                .and_then(|v| v.as_str()),
+            Some("tooltip"),
+        );
+        assert_eq!(
+            first_mod_header
+                .props
+                .get("modifier-idx")
+                .and_then(|v| v.as_u64()),
+            Some(0),
+        );
+    }
+
+    /// Wave 1.3 — disabled modifiers emit the header but suppress
+    /// their schema rows (so the panel stays compact for off
+    /// behaviours).
+    #[test]
+    fn disabled_modifier_emits_header_but_no_schema_rows() {
+        use prism_builder::{Modifier, ModifierKind};
+        let mut reg = prism_builder::ComponentRegistry::new();
+        prism_builder::starter::register_builtins(&mut reg).expect("builtins");
+        let mod_reg = std::sync::Arc::new(prism_builder::ModifierRegistry::with_builtins());
+
+        let mut doc = doc_with_three_nodes();
+        let btn = doc.root.as_mut().unwrap().find_mut("btn").unwrap();
+        btn.modifiers
+            .push(Modifier::from_kind(ModifierKind::Tooltip).disabled());
+
+        let mut state = AppState::default();
+        state.canvas.document = doc;
+        state.canvas.selection = Some("btn".into());
+        state.modifier_registry = Some(std::sync::Arc::clone(&mod_reg));
+        state.resync_builder_for_selection(Some(&reg));
+
+        let kinds: Vec<&str> = state
+            .builder
+            .property_rows
+            .iter()
+            .map(|r| r.component.as_str())
+            .collect();
+        let header_count = kinds
+            .iter()
+            .filter(|c| **c == "shell.modifier-header")
+            .count();
+        assert_eq!(header_count, 1, "one header for the disabled modifier");
+
+        // Two text rows (Tooltip schema is `text` + `placement`)
+        // must NOT appear since the modifier is disabled.
+        let modifier_field_rows: Vec<_> = state
+            .builder
+            .property_rows
+            .iter()
+            .filter(|r| r.component == "shell.field-editor")
+            .filter(|r| r.props.get("modifier-idx").is_some())
+            .collect();
+        assert!(
+            modifier_field_rows.is_empty(),
+            "disabled modifier must not emit schema rows; got {modifier_field_rows:?}",
+        );
+    }
+
+    /// Wave 1.5 — attach + detach + toggle mutators round-trip
+    /// through the doc + property rows.
+    #[test]
+    fn attach_modifier_appends_section_and_resyncs() {
+        use prism_builder::ModifierKind;
+        let mut reg = prism_builder::ComponentRegistry::new();
+        prism_builder::starter::register_builtins(&mut reg).expect("builtins");
+        let mod_reg = std::sync::Arc::new(prism_builder::ModifierRegistry::with_builtins());
+
+        let mut state = AppState::default();
+        state.canvas.document = doc_with_three_nodes();
+        state.canvas.selection = Some("btn".into());
+        state.modifier_registry = Some(std::sync::Arc::clone(&mod_reg));
+
+        assert!(state.attach_modifier("btn", ModifierKind::Tooltip.id(), Some(&reg)));
+        // Modifier landed on the doc node.
+        let btn = state
+            .canvas
+            .document
+            .root
+            .as_ref()
+            .unwrap()
+            .find("btn")
+            .unwrap();
+        assert_eq!(btn.modifiers.len(), 1);
+        assert_eq!(btn.modifiers[0].kind, "tooltip");
+        // Property rows resync'd — there's now a modifier-header.
+        let headers: Vec<_> = state
+            .builder
+            .property_rows
+            .iter()
+            .filter(|r| r.component == "shell.modifier-header")
+            .collect();
+        assert_eq!(headers.len(), 1);
+
+        // Second attempt to attach the same id is a no-op (one
+        // modifier of each id per node).
+        assert!(!state.attach_modifier("btn", ModifierKind::Tooltip.id(), Some(&reg)));
+    }
+
+    #[test]
+    fn toggle_modifier_flips_enabled_and_resyncs() {
+        use prism_builder::{Modifier, ModifierKind};
+        let mod_reg = std::sync::Arc::new(prism_builder::ModifierRegistry::with_builtins());
+        let mut state = AppState::default();
+        state.canvas.document = doc_with_three_nodes();
+        state.canvas.selection = Some("btn".into());
+        state.modifier_registry = Some(std::sync::Arc::clone(&mod_reg));
+        let btn = state
+            .canvas
+            .document
+            .root
+            .as_mut()
+            .unwrap()
+            .find_mut("btn")
+            .unwrap();
+        btn.modifiers
+            .push(Modifier::from_kind(ModifierKind::Tooltip));
+
+        assert!(state.toggle_modifier("btn", 0, None));
+        let btn = state
+            .canvas
+            .document
+            .root
+            .as_ref()
+            .unwrap()
+            .find("btn")
+            .unwrap();
+        assert!(!btn.modifiers[0].enabled);
+        assert!(state.toggle_modifier("btn", 0, None));
+        let btn = state
+            .canvas
+            .document
+            .root
+            .as_ref()
+            .unwrap()
+            .find("btn")
+            .unwrap();
+        assert!(btn.modifiers[0].enabled);
+
+        // Out-of-range idx is a no-op.
+        assert!(!state.toggle_modifier("btn", 99, None));
+    }
+
+    #[test]
+    fn detach_modifier_drops_section_and_resyncs() {
+        use prism_builder::{Modifier, ModifierKind};
+        let mut reg = prism_builder::ComponentRegistry::new();
+        prism_builder::starter::register_builtins(&mut reg).expect("builtins");
+        let mod_reg = std::sync::Arc::new(prism_builder::ModifierRegistry::with_builtins());
+
+        let mut state = AppState::default();
+        state.canvas.document = doc_with_three_nodes();
+        state.canvas.selection = Some("btn".into());
+        state.modifier_registry = Some(std::sync::Arc::clone(&mod_reg));
+        let btn = state
+            .canvas
+            .document
+            .root
+            .as_mut()
+            .unwrap()
+            .find_mut("btn")
+            .unwrap();
+        btn.modifiers
+            .push(Modifier::from_kind(ModifierKind::Tooltip));
+        btn.modifiers
+            .push(Modifier::from_kind(ModifierKind::HoverEffect));
+
+        // Detach idx 0 → Tooltip removed; HoverEffect now at idx 0.
+        assert!(state.detach_modifier("btn", 0, Some(&reg)));
+        let btn = state
+            .canvas
+            .document
+            .root
+            .as_ref()
+            .unwrap()
+            .find("btn")
+            .unwrap();
+        assert_eq!(btn.modifiers.len(), 1);
+        assert_eq!(btn.modifiers[0].kind, "hover-effect");
+
+        // Out-of-range detach is a no-op.
+        assert!(!state.detach_modifier("btn", 99, Some(&reg)));
+    }
+
+    #[test]
+    fn reorder_modifier_swaps_indices() {
+        use prism_builder::{Modifier, ModifierKind};
+        let mut state = AppState::default();
+        state.canvas.document = doc_with_three_nodes();
+        let btn = state
+            .canvas
+            .document
+            .root
+            .as_mut()
+            .unwrap()
+            .find_mut("btn")
+            .unwrap();
+        btn.modifiers
+            .push(Modifier::from_kind(ModifierKind::Tooltip));
+        btn.modifiers
+            .push(Modifier::from_kind(ModifierKind::HoverEffect));
+        btn.modifiers
+            .push(Modifier::from_kind(ModifierKind::EnterAnimation));
+
+        assert!(state.reorder_modifier("btn", 0, 2, None));
+        let btn = state
+            .canvas
+            .document
+            .root
+            .as_ref()
+            .unwrap()
+            .find("btn")
+            .unwrap();
+        // After reorder: [hover-effect, enter-animation, tooltip]
+        let ids: Vec<&str> = btn.modifiers.iter().map(|m| m.kind.as_str()).collect();
+        assert_eq!(ids, vec!["hover-effect", "enter-animation", "tooltip"]);
+
+        // No-op identical indices.
+        assert!(!state.reorder_modifier("btn", 1, 1, None));
+        // Out-of-range fails cleanly.
+        assert!(!state.reorder_modifier("btn", 0, 99, None));
+    }
+
+    #[test]
+    fn set_modifier_prop_writes_to_modifier_props_not_node_props() {
+        use prism_builder::{Modifier, ModifierKind};
+        let mut state = AppState::default();
+        state.canvas.document = doc_with_three_nodes();
+        let btn = state
+            .canvas
+            .document
+            .root
+            .as_mut()
+            .unwrap()
+            .find_mut("btn")
+            .unwrap();
+        btn.modifiers
+            .push(Modifier::from_kind(ModifierKind::Tooltip));
+
+        assert!(state.set_modifier_prop("btn", 0, "text", json!("Save changes"), None,));
+        let btn = state
+            .canvas
+            .document
+            .root
+            .as_ref()
+            .unwrap()
+            .find("btn")
+            .unwrap();
+        assert_eq!(
+            btn.modifiers[0].props.get("text").and_then(|v| v.as_str()),
+            Some("Save changes")
+        );
+        // Owning node's `props` is untouched.
+        assert!(btn.props.get("text").is_none());
+    }
+
+    /// Wave 1.3 — without a modifier registry installed (tests /
+    /// headless), the property-row shape collapses to the pre-Wave-1
+    /// flat-list form (no modifier headers, no footer).
+    #[test]
+    fn no_modifier_registry_means_no_modifier_rows() {
+        use prism_builder::{Modifier, ModifierKind};
+        let mut reg = prism_builder::ComponentRegistry::new();
+        prism_builder::starter::register_builtins(&mut reg).expect("builtins");
+
+        let mut doc = doc_with_three_nodes();
+        let btn = doc.root.as_mut().unwrap().find_mut("btn").unwrap();
+        btn.modifiers
+            .push(Modifier::from_kind(ModifierKind::Tooltip));
+
+        let mut state = AppState::default();
+        state.canvas.document = doc;
+        state.canvas.selection = Some("btn".into());
+        // Note: modifier_registry left as None.
+        state.resync_builder_for_selection(Some(&reg));
+
+        let kinds: Vec<&str> = state
+            .builder
+            .property_rows
+            .iter()
+            .map(|r| r.component.as_str())
+            .collect();
+        assert!(
+            !kinds.contains(&"shell.modifier-header"),
+            "no modifier headers without registry; got {kinds:?}",
+        );
+        assert!(
+            !kinds.contains(&"shell.add-modifier-button"),
+            "no add-modifier footer without registry; got {kinds:?}",
         );
     }
 

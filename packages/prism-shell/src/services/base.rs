@@ -74,6 +74,7 @@ mod tests {
                 luau: &mut luau,
                 clipboard: &mut clipboard,
                 registry: None,
+                modifier_registry: None,
             };
             assert!(reg.commands().run("palette.toggle", &mut ctx));
         }
@@ -90,6 +91,7 @@ mod tests {
                 luau: &mut luau,
                 clipboard: &mut clipboard,
                 registry: None,
+                modifier_registry: None,
             };
             assert!(reg.commands().run("palette.toggle", &mut ctx));
         }

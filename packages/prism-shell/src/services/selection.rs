@@ -126,6 +126,7 @@ mod tests {
             luau: &mut luau,
             clipboard: &mut clipboard,
             registry: None,
+            modifier_registry: None,
         };
         assert!(reg.commands().run("selection.clear", &mut ctx));
         assert!(state.canvas.selection.is_none());
@@ -167,6 +168,7 @@ mod tests {
                 luau: &mut luau,
                 clipboard: &mut clipboard,
                 registry: None,
+                modifier_registry: None,
             };
             assert!(reg.commands().run(id, &mut ctx), "command `{id}` not found");
             expect[0] += dx;

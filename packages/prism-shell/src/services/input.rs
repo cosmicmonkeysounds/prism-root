@@ -272,6 +272,7 @@ mod tests {
             luau: &mut luau,
             clipboard: &mut clipboard,
             registry: None,
+            modifier_registry: None,
         };
         assert_eq!(
             reg.fan_out(&key("z", true, false), &mut ctx),
@@ -299,6 +300,7 @@ mod tests {
             luau: &mut luau,
             clipboard: &mut clipboard,
             registry: None,
+            modifier_registry: None,
         };
         let release = Event::Key {
             code: "z".into(),
@@ -341,6 +343,7 @@ mod tests {
             luau: &mut luau,
             clipboard: &mut clipboard,
             registry: None,
+            modifier_registry: None,
         };
         assert_eq!(
             reg.fan_out(&key("q", false, false), &mut ctx),
@@ -387,6 +390,7 @@ mod tests {
                 luau: &mut luau,
                 clipboard: &mut clipboard,
                 registry: None,
+                modifier_registry: None,
             };
             assert_eq!(
                 reg.fan_out(&key("p", true, true), &mut ctx),

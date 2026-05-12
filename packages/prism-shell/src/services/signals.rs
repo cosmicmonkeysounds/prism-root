@@ -168,6 +168,7 @@ mod tests {
             luau: &mut luau,
             clipboard: &mut clipboard,
             registry: None,
+            modifier_registry: None,
         };
         assert_eq!(fire_signal(&mut ctx, "n", "clicked", &Value::Null, 0), 0);
     }
