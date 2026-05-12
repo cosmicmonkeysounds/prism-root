@@ -18,12 +18,23 @@ required-features = ["native"]
 default = ["native"]
 native = ["prism-core/crdt", "prism-ui-runtime/femtovg"]
 web = ["dep:wasm-bindgen", "dep:console_error_panic_hook", "dep:getrandom", "uuid/js", "prism-ui-runtime/web"]
+# Phase 9 of `docs/dev/dioxus-inspiration.md`. Wraps the per-frame
+# render walk in `subsecond::call` so a swapped-in `lower_ui` body
+# patches in-place without dropping the `Surface` tree or the
+# reactive `Owner` graph. Off by default because the subsecond
+# runtime hook adds a small per-call indirection. `prism dev shell`
+# turns it on when invoked with `--hot=subsecond`.
+hot-reload = ["dep:subsecond"]
 
 [dependencies]
 prism-core = { path = "../prism-core" }
 prism-builder = { path = "../prism-builder" }
 prism-dock = { path = "../prism-dock" }
 prism-ui-runtime = { path = "../prism-ui-runtime", default-features = false, features = ["html"] }
+
+# Phase 9 — runtime hot-patching seam. Gated by the `hot-reload`
+# feature; production builds drop the dep entirely.
+subsecond = { workspace = true, optional = true }
 
 wasm-bindgen = { workspace = true, optional = true }
 console_error_panic_hook = { workspace = true, optional = true }

@@ -58,6 +58,7 @@ Two routers coexist:
 | `routes/` | 25 route modules covering the full API surface |
 | `ws` | WebSocket relay protocol (auth, envelope, collect, ping, sync, hashcash, presence) |
 | `ssr_routes` | Original SSR portal router (`build_router`) |
+| `ssr_cache` | **Phase 8 of `docs/dev/dioxus-inspiration.md`.** `CachedFragment` (one `Effect`-backed HTML cache: body is `FnMut() -> String` that reads reactive signals; re-fires automatically on signal change; tracks a `generation()` counter for staleness checks) and `SsrCache` (an `IndexMap<route, CachedFragment>` + `Owner`). Per-route invalidation is independent because each fragment's effect subscribes only to the signals its body touches. `FederatedSignal<T>` / `RelaySignal<T>` reads inside a fragment body give cross-fleet cache invalidation for free — the same federation bus that updates the data signal invalidates every relay's local cache. Single-threaded today (reactive primitives use `UnsyncStorage`); axum integration through a dedicated SSR worker is the follow-up. 9 unit tests. |
 
 ## API Routes
 

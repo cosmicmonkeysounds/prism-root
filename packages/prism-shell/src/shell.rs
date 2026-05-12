@@ -26,6 +26,7 @@ use crate::components::{
 use crate::events::dispatch_event;
 use crate::props::{PropCtx, ShellPropBindings};
 use crate::render::{render_tree, Skeleton};
+use crate::render_scope::RenderScope;
 use crate::services::{
     Clipboard, LuauHost, MutCtx, NoopLuauHost, OsVfs, ServiceRegistry, UndoStack, Vfs,
 };
@@ -62,6 +63,18 @@ pub struct ShellInner {
     /// In-memory clipboard cell — `ClipboardService` (§25) is the
     /// only consumer.
     pub clipboard: Clipboard,
+    /// Phase 3 of `docs/dev/dioxus-inspiration.md` (reactive
+    /// overhaul): per-shell `RenderScope` owns the reactive-graph
+    /// Owner + `DirtyQueue<NodeId>`. Services and bindings can call
+    /// `render_scope.invalidate_on(node_id, || sig.read(..))` to
+    /// wire fine-grained signal-driven redraws without authoring a
+    /// new dispatch arm. The femtovg event handler reads
+    /// `render_scope.needs_redraw()` after each event and merges
+    /// that with the legacy `dispatch_event` bool to decide whether
+    /// to rebuild the tree. Per-block lower scoping comes in a
+    /// follow-up; today this is the seam that fires the full
+    /// per-frame `render_tree`.
+    pub render_scope: RenderScope,
 }
 
 impl ShellInner {
@@ -137,6 +150,7 @@ impl Shell {
             vfs: Box::new(OsVfs),
             luau: Box::new(NoopLuauHost::default()),
             clipboard: Clipboard::default(),
+            render_scope: RenderScope::new(),
         }));
         // §43 C1: one-shot post-boot resync. The seed sets selection
         // and the inspector tree, but `derive_property_rows` needs the
@@ -155,14 +169,22 @@ impl Shell {
     /// Build the initial runtime tree. Pure function of `(skeleton,
     /// bindings, resolver, ctx)` — exposed so tests, alternate hosts,
     /// and the per-frame redraw closure all hit the same path.
+    ///
+    /// Wrapped in `subsecond::call` under the `hot-reload` feature
+    /// so changes to `render_tree`'s body (and transitively, the
+    /// block lower bodies it calls) patch in-place via subsecond
+    /// without dropping the `Surface` tree or the reactive `Owner`
+    /// graph. Phase 9 of `docs/dev/dioxus-inspiration.md`.
     pub fn render(&self) -> Vec<UiNode> {
         let inner = self.inner.borrow();
-        render_tree(
-            &self.skeleton,
-            &inner.bindings,
-            Arc::clone(&inner.resolver),
-            &inner.prop_ctx(),
-        )
+        render_with_hot_reload(|| {
+            render_tree(
+                &self.skeleton,
+                &inner.bindings,
+                Arc::clone(&inner.resolver),
+                &inner.prop_ctx(),
+            )
+        })
     }
 
     #[cfg(feature = "native")]
@@ -191,14 +213,33 @@ impl Shell {
             if matches!(event, Event::PointerMove { .. }) {
                 surface.set_hovered(hit.as_ref().map(|h| h.id.clone()));
             }
-            if dispatch_event(&inner, event, hit) {
+            let event_dirty = dispatch_event(&inner, event, hit);
+            // Phase 3 of `docs/dev/dioxus-inspiration.md`: reactive
+            // services that invalidate through `render_scope` push
+            // node IDs into the per-shell `DirtyQueue`. Either path
+            // (event dispatch or signal-driven invalidation) is
+            // sufficient reason to re-render this frame. We drain
+            // the queue regardless so per-block lowering can wire
+            // up against it once that lands; today the whole tree
+            // re-renders either way.
+            let reactive_dirty = {
                 let guard = inner.borrow();
-                let tree = render_tree(
-                    &skeleton,
-                    &guard.bindings,
-                    Arc::clone(&guard.resolver),
-                    &guard.prop_ctx(),
-                );
+                let needs = guard.render_scope.needs_redraw();
+                if needs {
+                    let _drained = guard.render_scope.drain_dirty();
+                }
+                needs
+            };
+            if event_dirty || reactive_dirty {
+                let guard = inner.borrow();
+                let tree = render_with_hot_reload(|| {
+                    render_tree(
+                        &skeleton,
+                        &guard.bindings,
+                        Arc::clone(&guard.resolver),
+                        &guard.prop_ctx(),
+                    )
+                });
                 surface.set_tree(wrap_root(tree));
             }
         });
@@ -241,6 +282,33 @@ fn wrap_root(children: Vec<UiNode>) -> UiNode {
         },
         children,
     }
+}
+
+/// Phase 9 of `docs/dev/dioxus-inspiration.md` reload anchor.
+/// Wraps the per-frame render walk in `subsecond::call` when the
+/// `hot-reload` feature is on, so a swapped-in `lower_ui` body
+/// patches in-place without dropping the `Surface` tree or the
+/// reactive `Owner` graph. Without the feature the wrapper is a
+/// straight pass-through — no per-frame cost.
+#[cfg(feature = "hot-reload")]
+fn render_with_hot_reload<F>(f: F) -> Vec<UiNode>
+where
+    F: FnMut() -> Vec<UiNode>,
+{
+    // `subsecond::call` is the hot-patch boundary. The closure
+    // body is the thing subsecond hot-patches at runtime;
+    // everything outside this call site stays put across patches.
+    subsecond::call(f)
+}
+
+#[cfg(not(feature = "hot-reload"))]
+fn render_with_hot_reload<F>(mut f: F) -> Vec<UiNode>
+where
+    F: FnMut() -> Vec<UiNode>,
+{
+    // Without the `hot-reload` feature this is a straight
+    // pass-through; subsecond isn't compiled in at all.
+    f()
 }
 
 /// Pointer-event hit-test. One closed-form helper so every pointer

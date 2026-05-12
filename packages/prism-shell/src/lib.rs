@@ -33,12 +33,14 @@ pub mod components;
 pub mod events;
 pub mod props;
 pub mod render;
+pub mod render_scope;
 pub mod seed;
 pub mod services;
 pub mod state;
 
 mod shell;
 
+pub use render_scope::RenderScope;
 pub use shell::{Shell, ShellError};
 pub use state::{
     AppState, BuilderSlot, CanvasSlot, CanvasViewport, ChromeSlot, CodeBuffer, CommandPalette,

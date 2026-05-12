@@ -94,6 +94,19 @@ pub fn type_defs() -> Vec<(&'static str, &'static str)> {
             crate::luau_bindings_consts::CONFIG_HANDLE_TYPE_NAME,
             crate::luau_bindings_consts::CONFIG_HANDLE_TYPE_DEF,
         ),
+        // Phase 5 of `docs/dev/dioxus-inspiration.md`: reactive
+        // substrate userdata. Bindings live in
+        // `crate::luau_reactive` (feature-gated), constants live
+        // unconditionally in `luau_bindings_consts` so the codegen
+        // pipeline can pick them up without the `luau` feature.
+        (
+            crate::luau_bindings_consts::REACTIVE_SIGNAL_TYPE_NAME,
+            crate::luau_bindings_consts::REACTIVE_SIGNAL_TYPE_DEF,
+        ),
+        (
+            crate::luau_bindings_consts::REACTIVE_MEMO_TYPE_NAME,
+            crate::luau_bindings_consts::REACTIVE_MEMO_TYPE_DEF,
+        ),
     ]);
     defs
 }
@@ -175,6 +188,13 @@ mod tests {
         assert!(names.contains(&"Objects"));
         assert!(names.contains(&"Edges"));
         assert!(names.contains(&"Config"));
+    }
+
+    #[test]
+    fn reactive_substrate_types_are_registered() {
+        let names: Vec<&str> = type_defs().iter().map(|(n, _)| *n).collect();
+        assert!(names.contains(&"Signal"), "Signal type stub missing");
+        assert!(names.contains(&"Memo"), "Memo type stub missing");
     }
 
     #[test]

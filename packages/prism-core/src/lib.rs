@@ -71,15 +71,19 @@ pub mod language;
 #[cfg(feature = "luau")]
 pub mod luau_bindings;
 pub mod luau_bindings_consts;
+#[cfg(feature = "luau")]
+pub mod luau_reactive;
 pub mod luau_types;
 pub mod network;
+pub mod reactive;
 pub mod shell_mode;
 pub mod widget;
 
 pub use boot_config::{BootConfig, DEFAULT_BOOT_CONFIG};
 pub use design_tokens::DesignTokens;
-pub use kernel::atom::{select, select_ref, Atom, AtomSubscription, SharedAtom};
+pub use kernel::atom::{select, select_memo, select_ref, Atom, AtomSubscription};
 #[cfg(feature = "crdt")]
 pub use kernel::crdt_sync::{CrdtSync, SyncEvent, SyncSubscription};
 pub use kernel::{Action, Store, Subscription};
+pub use reactive::{DirtyQueue, Effect, Memo, Owner, ReactiveContext, Signal};
 pub use shell_mode::{Permission, ShellMode, ShellModeContext};

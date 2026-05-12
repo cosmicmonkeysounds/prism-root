@@ -101,6 +101,22 @@ ed25519-dalek = { version = "2", features = ["rand_core"] }
 x25519-dalek = { version = "2", features = ["getrandom", "static_secrets"] }
 hkdf = "0.12"
 hmac = "0.12"
+
+# Generational arena for Copy + 'static reactive handles. Phase 0
+# of the Dioxus-inspired reactive overhaul
+# (`docs/dev/dioxus-inspiration.md`). The substrate every
+# `reactive::Signal<T>` is built on — without it the entire reactive
+# API would be `Rc<RefCell<…>>` at every call site.
+generational-box = "0.7"
+
+# Runtime hot-patching engine — Phase 9 of
+# `docs/dev/dioxus-inspiration.md`. The dev-loop's primary
+# hot-reload path; `prism dev shell --hot=subsecond` swaps in a
+# changed `lower_ui` body without dropping the `Surface` tree or
+# the reactive `Owner` graph. Full kill-and-respawn stays the
+# fallback for struct-layout changes that subsecond can't patch.
+subsecond = "0.7"
+
 pbkdf2 = { version = "0.12", default-features = false }
 aes-gcm = "0.10"
 chacha20poly1305 = "0.10"

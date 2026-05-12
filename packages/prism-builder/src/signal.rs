@@ -4,6 +4,30 @@
 //! [`Component::signals()`]. Document authors wire connections between
 //! nodes: source signal -> target action. The render walker emits the
 //! appropriate event handlers for each backend.
+//!
+//! # Naming overlap with `prism_core::reactive`
+//!
+//! The word "signal" is now taken twice in the workspace:
+//!
+//! * `prism_core::reactive::Signal<T>` — a `Copy + 'static` reactive
+//!   cell used by the Dioxus-inspired runtime substrate
+//!   (`docs/dev/dioxus-inspiration.md`). Reads inside a reactive
+//!   context auto-subscribe; writes invalidate every subscriber.
+//! * `prism_builder::signal::SignalDef` / [`Connection`] —
+//!   user-authorable *event channels*. A `SignalDef` is the schema for
+//!   a fireable event (`emit save`); a `Connection` is the authored
+//!   wiring from a source `(node, signal)` to a target `(node,
+//!   action)`. There is no reactive subscription here — it's a
+//!   pure-data switchboard the [`dispatch_signal`] function walks.
+//!
+//! The two are deliberately coexisting (see
+//! `docs/dev/dioxus-inspiration.md` §5 "Naming hygiene"). The
+//! end-state plan is that the authored grammar compiles each
+//! `SignalDef` into a hidden `reactive::Signal<()>` and each
+//! `Connection` into a hidden `Effect`, at which point both names
+//! mean the same thing underneath. Until then: when we mean the
+//! reactive cell, spell it `reactive::Signal<T>`; when we mean the
+//! authored event channel, say "connection signal" or `SignalDef`.
 
 use prism_core::language::codegen::symbol_def::{SymbolDef, SymbolKind, SymbolParam};
 use prism_core::language::codegen::symbol_emitter::SymbolEmmyDocEmitter;
@@ -54,12 +78,37 @@ pub struct Connection {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum ActionKind {
-    SetProperty { key: String, value: Value },
+    SetProperty {
+        key: String,
+        value: Value,
+    },
     ToggleVisibility,
-    NavigateTo { target: String },
-    PlayAnimation { animation: String },
-    EmitSignal { signal: String },
-    Custom { handler: String },
+    NavigateTo {
+        target: String,
+    },
+    PlayAnimation {
+        animation: String,
+    },
+    EmitSignal {
+        signal: String,
+    },
+    Custom {
+        handler: String,
+    },
+    /// Phase 4 of `docs/dev/dioxus-inspiration.md`: declarative
+    /// one-way reactive binding. Compiles to an `Effect` on document
+    /// load — `target_node.target_key` mirrors the value at `source`
+    /// (a path expression like `$selection.name`). The host's
+    /// signals service is responsible for resolving the source path
+    /// against the current reactive context and registering the
+    /// effect; the dispatch executor's contribution is to surface
+    /// the parsed action verbatim. Distinct from `SetProperty` —
+    /// `SetProperty` writes once on a fired signal; `Bind` declares
+    /// an ongoing reactive relationship.
+    Bind {
+        target_key: String,
+        source: String,
+    },
 }
 
 /// §43 A1: parsed shape of a `.prism-ui` `on:*` attribute value.
@@ -96,6 +145,16 @@ pub enum ParsedAction {
         node: String,
         key: String,
         value: Value,
+    },
+    /// `bind <node>.<key> = <source>` — reactive one-way binding,
+    /// the Phase 4 grammar of `docs/dev/dioxus-inspiration.md`. The
+    /// `source` is a path expression (e.g. `$selection.name`) the
+    /// host resolves at install time and reads inside an `Effect`
+    /// that writes back into `node.key`.
+    Bind {
+        node: String,
+        key: String,
+        source: String,
     },
     /// `toggle <node>` — visibility toggle. Same follow-up note as
     /// `SetProperty`.
@@ -167,7 +226,32 @@ pub fn parse_action(raw: &str) -> Option<ParsedAction> {
         "set" => {
             parse_set_body(rest).unwrap_or_else(|| ParsedAction::Unsupported { raw: raw.into() })
         }
+        "bind" => {
+            parse_bind_body(rest).unwrap_or_else(|| ParsedAction::Unsupported { raw: raw.into() })
+        }
         _ => ParsedAction::Unsupported { raw: raw.into() },
+    })
+}
+
+/// Parse the body of a `bind` action. Shape:
+/// `<node>.<key> = <source-path>`. Source paths are kept verbatim
+/// at parse time — `$selection.name`, `$user.email`, etc. The host
+/// signals service resolves them at install time and registers the
+/// resulting `Effect`. Empty / malformed bodies return `None`.
+fn parse_bind_body(rest: &str) -> Option<ParsedAction> {
+    let (lhs, source_raw) = rest.split_once('=')?;
+    let lhs = lhs.trim();
+    let source = source_raw.trim();
+    let (node, key) = lhs.split_once('.')?;
+    let node = node.trim();
+    let key = key.trim();
+    if node.is_empty() || key.is_empty() || source.is_empty() {
+        return None;
+    }
+    Some(ParsedAction::Bind {
+        node: node.to_string(),
+        key: key.to_string(),
+        source: source.to_string(),
     })
 }
 
@@ -231,6 +315,15 @@ pub enum DispatchResult {
         handler: String,
         payload: serde_json::Map<String, Value>,
     },
+    /// Phase 4 of `docs/dev/dioxus-inspiration.md`. The host signals
+    /// service receives this and is expected to register an `Effect`
+    /// reading from `source` and writing into
+    /// `target_node.target_key` whenever the source updates.
+    Bind {
+        target_node: NodeId,
+        target_key: String,
+        source: String,
+    },
 }
 
 /// Evaluate a signal event against a document's connection list.
@@ -264,6 +357,11 @@ pub fn dispatch_signal(event: &SignalEvent, connections: &[Connection]) -> Vec<D
             ActionKind::Custom { handler } => DispatchResult::Custom {
                 handler: handler.clone(),
                 payload: event.payload.clone(),
+            },
+            ActionKind::Bind { target_key, source } => DispatchResult::Bind {
+                target_node: c.target_node.clone(),
+                target_key: target_key.clone(),
+                source: source.clone(),
             },
         })
         .collect()
@@ -501,6 +599,40 @@ mod tests {
                 assert_eq!(value, json!(true));
             }
             other => panic!("expected SetProperty, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_action_bind_round_trips_node_key_and_source_path() {
+        // Phase 4 of `docs/dev/dioxus-inspiration.md`. Source paths
+        // are kept verbatim — the host resolves them at install
+        // time, this layer just parses the surface grammar.
+        match parse_action("bind modal.title = $selection.name").expect("parses") {
+            ParsedAction::Bind { node, key, source } => {
+                assert_eq!(node, "modal");
+                assert_eq!(key, "title");
+                assert_eq!(source, "$selection.name");
+            }
+            other => panic!("expected Bind, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_action_bind_rejects_missing_lhs_or_rhs() {
+        // Missing equals → unsupported.
+        match parse_action("bind modal.title").expect("parses") {
+            ParsedAction::Unsupported { .. } => {}
+            other => panic!("expected Unsupported, got {other:?}"),
+        }
+        // Empty source path → unsupported.
+        match parse_action("bind modal.title =").expect("parses") {
+            ParsedAction::Unsupported { .. } => {}
+            other => panic!("expected Unsupported, got {other:?}"),
+        }
+        // Missing node.key dot → unsupported.
+        match parse_action("bind title = $selection.name").expect("parses") {
+            ParsedAction::Unsupported { .. } => {}
+            other => panic!("expected Unsupported, got {other:?}"),
         }
     }
 
@@ -781,6 +913,57 @@ mod tests {
             }
             _ => panic!("expected Custom"),
         }
+    }
+
+    #[test]
+    fn dispatch_signal_bind_carries_target_key_and_source() {
+        // Phase 4 of `docs/dev/dioxus-inspiration.md`. The dispatch
+        // executor surfaces `Bind` verbatim; the host's signals
+        // service receives this and registers an `Effect` that
+        // reads from `source` and writes into `target_node.target_key`.
+        let connections = vec![Connection {
+            id: "c1".into(),
+            source_node: "btn".into(),
+            signal: "loaded".into(),
+            target_node: "modal".into(),
+            action: ActionKind::Bind {
+                target_key: "title".into(),
+                source: "$selection.name".into(),
+            },
+            params: Value::Null,
+        }];
+        let event = SignalEvent {
+            source_node: "btn".into(),
+            signal: "loaded".into(),
+            payload: Default::default(),
+        };
+        let results = dispatch_signal(&event, &connections);
+        assert_eq!(results.len(), 1);
+        match &results[0] {
+            DispatchResult::Bind {
+                target_node,
+                target_key,
+                source,
+            } => {
+                assert_eq!(target_node, "modal");
+                assert_eq!(target_key, "title");
+                assert_eq!(source, "$selection.name");
+            }
+            other => panic!("expected Bind, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn action_kind_bind_round_trips_through_serde() {
+        let action = ActionKind::Bind {
+            target_key: "title".into(),
+            source: "$selection.name".into(),
+        };
+        let json = serde_json::to_string(&action).unwrap();
+        let back: ActionKind = serde_json::from_str(&json).unwrap();
+        assert!(matches!(back, ActionKind::Bind { .. }));
+        // Verify the tagged discriminator is "bind" (kebab-case).
+        assert!(json.contains("\"bind\""));
     }
 
     #[test]

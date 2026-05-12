@@ -7,6 +7,13 @@
 //! so the CRDT stays the source of truth and changes fan out to
 //! atom subscribers automatically.
 //!
+//! Phase 2 of `docs/dev/dioxus-inspiration.md` retired the
+//! `SharedAtom<T> = Rc<RefCell<Atom<T>>>` alias — [`Atom`] is now
+//! `Clone`-cheap on its own (an `Rc<AtomInner<T>>` under the hood)
+//! and all mutating methods take `&self`. The map below stores
+//! atoms directly. Bridging an atom into a reactive context's
+//! signal goes through [`Atom::reactive_signal`].
+//!
 //! For remote sync, [`import_and_refresh`](CrdtSync::import_and_refresh)
 //! imports a peer snapshot and refreshes every tracked atom to
 //! reflect the merged state.
@@ -19,7 +26,7 @@ use crate::foundation::object_model::{EdgeId, GraphObject, ObjectEdge, ObjectId}
 use crate::foundation::persistence::{
     CollectionChange, CollectionChangeKind, CollectionStore, PersistenceError,
 };
-use crate::kernel::atom::{Atom, SharedAtom};
+use crate::kernel::atom::Atom;
 
 /// Change event emitted by [`CrdtSync`] to its global listeners.
 #[derive(Debug, Clone)]
@@ -57,8 +64,8 @@ impl SyncSubscription {
 /// then sync the corresponding atom.
 pub struct CrdtSync {
     store: Rc<RefCell<CollectionStore>>,
-    object_atoms: HashMap<String, SharedAtom<Option<GraphObject>>>,
-    edge_atoms: HashMap<String, SharedAtom<Option<ObjectEdge>>>,
+    object_atoms: HashMap<String, Atom<Option<GraphObject>>>,
+    edge_atoms: HashMap<String, Atom<Option<ObjectEdge>>>,
     listeners: Vec<(u64, SyncListener)>,
     next_listener_id: u64,
 }
@@ -83,25 +90,49 @@ impl CrdtSync {
     /// Get or create a reactive atom tracking a specific object.
     /// Holds `Some(GraphObject)` while the object exists, `None`
     /// after removal.
-    pub fn object_atom(&mut self, id: &str) -> SharedAtom<Option<GraphObject>> {
+    pub fn object_atom(&mut self, id: &str) -> Atom<Option<GraphObject>> {
         if let Some(atom) = self.object_atoms.get(id) {
             return atom.clone();
         }
         let current = self.store.borrow().get_object(&ObjectId(id.to_string()));
-        let atom = Rc::new(RefCell::new(Atom::new(current)));
+        let atom = Atom::new(current);
         self.object_atoms.insert(id.to_string(), atom.clone());
         atom
     }
 
     /// Get or create a reactive atom tracking a specific edge.
-    pub fn edge_atom(&mut self, id: &str) -> SharedAtom<Option<ObjectEdge>> {
+    pub fn edge_atom(&mut self, id: &str) -> Atom<Option<ObjectEdge>> {
         if let Some(atom) = self.edge_atoms.get(id) {
             return atom.clone();
         }
         let current = self.store.borrow().get_edge(&EdgeId(id.to_string()));
-        let atom = Rc::new(RefCell::new(Atom::new(current)));
+        let atom = Atom::new(current);
         self.edge_atoms.insert(id.to_string(), atom.clone());
         atom
+    }
+
+    // ── reactive::Signal bridge (Phase 2 of `docs/dev/dioxus-inspiration.md`) ─
+
+    /// Mirror this object's tracked atom into a reactive
+    /// [`crate::reactive::Signal`]. Reads subscribe the current
+    /// reactive context; Loro mutations propagate
+    /// `CrdtSync::process_changes` → atom → signal → subscribers.
+    pub fn object_signal(
+        &mut self,
+        id: &str,
+        owner: &crate::reactive::Owner,
+    ) -> crate::reactive::Signal<Option<GraphObject>> {
+        self.object_atom(id).reactive_signal(owner)
+    }
+
+    /// Mirror this edge's tracked atom into a reactive
+    /// [`crate::reactive::Signal`].
+    pub fn edge_signal(
+        &mut self,
+        id: &str,
+        owner: &crate::reactive::Owner,
+    ) -> crate::reactive::Signal<Option<ObjectEdge>> {
+        self.edge_atom(id).reactive_signal(owner)
     }
 
     // ── Mutations (CRDT-first) ───────────────────────────────────
@@ -206,11 +237,11 @@ impl CrdtSync {
         let store = self.store.borrow();
         for (id, atom) in &self.object_atoms {
             let current = store.get_object(&ObjectId(id.clone()));
-            atom.borrow_mut().set(current);
+            atom.set(current);
         }
         for (id, atom) in &self.edge_atoms {
             let current = store.get_edge(&EdgeId(id.clone()));
-            atom.borrow_mut().set(current);
+            atom.set(current);
         }
     }
 
@@ -248,14 +279,14 @@ impl CrdtSync {
     fn sync_object(&mut self, id: &str) {
         if let Some(atom) = self.object_atoms.get(id) {
             let current = self.store.borrow().get_object(&ObjectId(id.to_string()));
-            atom.borrow_mut().set(current);
+            atom.set(current);
         }
     }
 
     fn sync_edge(&mut self, id: &str) {
         if let Some(atom) = self.edge_atoms.get(id) {
             let current = self.store.borrow().get_edge(&EdgeId(id.to_string()));
-            atom.borrow_mut().set(current);
+            atom.set(current);
         }
     }
 
@@ -326,7 +357,7 @@ mod tests {
     fn object_atom_starts_none_for_missing_object() {
         let mut sync = make_sync();
         let atom = sync.object_atom("obj-1");
-        assert!(atom.borrow().get().is_none());
+        assert!(atom.get().is_none());
     }
 
     #[test]
@@ -339,7 +370,7 @@ mod tests {
         let mut sync = CrdtSync::new(store);
 
         let atom = sync.object_atom("obj-1");
-        assert_eq!(atom.borrow().get().as_ref().unwrap().name, "Alpha");
+        assert_eq!(atom.get().as_ref().unwrap().name, "Alpha");
     }
 
     #[test]
@@ -348,12 +379,12 @@ mod tests {
         let atom = sync.object_atom("obj-1");
 
         sync.write_object(&make_object("obj-1", "First")).unwrap();
-        assert_eq!(atom.borrow().get().as_ref().unwrap().name, "First");
+        assert_eq!(atom.get().as_ref().unwrap().name, "First");
 
         let mut updated = make_object("obj-1", "Second");
         updated.status = Some("active".into());
         sync.write_object(&updated).unwrap();
-        assert_eq!(atom.borrow().get().as_ref().unwrap().name, "Second");
+        assert_eq!(atom.get().as_ref().unwrap().name, "Second");
     }
 
     #[test]
@@ -362,10 +393,10 @@ mod tests {
         let atom = sync.object_atom("obj-1");
 
         sync.write_object(&make_object("obj-1", "Doomed")).unwrap();
-        assert!(atom.borrow().get().is_some());
+        assert!(atom.get().is_some());
 
         sync.remove_object(&object_id("obj-1")).unwrap();
-        assert!(atom.borrow().get().is_none());
+        assert!(atom.get().is_none());
     }
 
     #[test]
@@ -375,7 +406,7 @@ mod tests {
 
         let names: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
         let nc = names.clone();
-        atom.borrow_mut().subscribe(move |obj| {
+        atom.subscribe(move |obj| {
             let name = obj.as_ref().map(|o| o.name.clone()).unwrap_or_default();
             nc.borrow_mut().push(name);
         });
@@ -393,7 +424,7 @@ mod tests {
 
         let fires = Rc::new(Cell::new(0usize));
         let fc = fires.clone();
-        atom.borrow_mut().subscribe(move |_| fc.set(fc.get() + 1));
+        atom.subscribe(move |_| fc.set(fc.get() + 1));
 
         let obj = make_object("obj-1", "Same");
         sync.write_object(&obj).unwrap();
@@ -409,7 +440,7 @@ mod tests {
     fn edge_atom_starts_none_for_missing_edge() {
         let mut sync = make_sync();
         let atom = sync.edge_atom("e-1");
-        assert!(atom.borrow().get().is_none());
+        assert!(atom.get().is_none());
     }
 
     #[test]
@@ -418,7 +449,7 @@ mod tests {
         let atom = sync.edge_atom("e-1");
 
         sync.write_edge(&make_edge("e-1", "a", "b")).unwrap();
-        assert_eq!(atom.borrow().get().as_ref().unwrap().relation, "depends-on");
+        assert_eq!(atom.get().as_ref().unwrap().relation, "depends-on");
     }
 
     #[test]
@@ -427,10 +458,10 @@ mod tests {
         let atom = sync.edge_atom("e-1");
 
         sync.write_edge(&make_edge("e-1", "a", "b")).unwrap();
-        assert!(atom.borrow().get().is_some());
+        assert!(atom.get().is_some());
 
         sync.remove_edge(&edge_id("e-1")).unwrap();
-        assert!(atom.borrow().get().is_none());
+        assert!(atom.get().is_none());
     }
 
     // ── Remote sync ──────────────────────────────────────────────
@@ -451,10 +482,10 @@ mod tests {
         )));
         let mut sync = CrdtSync::new(store2);
         let atom = sync.object_atom("shared");
-        assert!(atom.borrow().get().is_none());
+        assert!(atom.get().is_none());
 
         sync.import_and_refresh(&snapshot).unwrap();
-        assert_eq!(atom.borrow().get().as_ref().unwrap().name, "Original");
+        assert_eq!(atom.get().as_ref().unwrap().name, "Original");
     }
 
     #[test]
@@ -471,7 +502,7 @@ mod tests {
         sync2.import_and_refresh(&snapshot).unwrap();
 
         let atom = sync2.object_atom("a");
-        assert_eq!(atom.borrow().get().as_ref().unwrap().name, "Alpha");
+        assert_eq!(atom.get().as_ref().unwrap().name, "Alpha");
     }
 
     // ── process_changes ──────────────────────────────────────────
@@ -492,7 +523,7 @@ mod tests {
             id: "obj-1".into(),
         }]);
 
-        assert_eq!(atom.borrow().get().as_ref().unwrap().name, "External");
+        assert_eq!(atom.get().as_ref().unwrap().name, "External");
     }
 
     #[test]
@@ -563,11 +594,14 @@ mod tests {
     }
 
     #[test]
-    fn same_id_returns_same_atom() {
+    fn same_id_returns_clone_of_same_atom() {
         let mut sync = make_sync();
         let a1 = sync.object_atom("x");
         let a2 = sync.object_atom("x");
-        assert!(Rc::ptr_eq(&a1, &a2));
+        // Clones share state; mutating through one is visible
+        // through the other.
+        a1.set(Some(make_object("x", "via a1")));
+        assert_eq!(a2.get().as_ref().unwrap().name, "via a1");
         assert_eq!(sync.tracked_object_count(), 1);
     }
 
@@ -593,7 +627,7 @@ mod tests {
 
         let seen: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
         let sc = seen.clone();
-        atom.borrow_mut().subscribe(move |obj| {
+        atom.subscribe(move |obj| {
             let name = obj
                 .as_ref()
                 .map(|o| o.name.clone())
@@ -616,5 +650,55 @@ mod tests {
             .borrow()
             .get_object(&object_id("task-1"))
             .is_none());
+    }
+
+    // ── Phase 2 — reactive::Signal bridge ────────────────────────
+
+    #[test]
+    fn object_signal_mirrors_atom_and_updates_on_write() {
+        let mut sync = make_sync();
+        let owner = crate::reactive::Owner::new();
+        let signal = sync.object_signal("task-1", &owner);
+
+        assert!(signal.snapshot().is_none());
+
+        sync.write_object(&make_object("task-1", "Alpha")).unwrap();
+        assert_eq!(signal.snapshot().unwrap().name, "Alpha");
+
+        sync.write_object(&make_object("task-1", "Beta")).unwrap();
+        assert_eq!(signal.snapshot().unwrap().name, "Beta");
+
+        sync.remove_object(&object_id("task-1")).unwrap();
+        assert!(signal.snapshot().is_none());
+    }
+
+    #[test]
+    fn reactive_effect_wakes_on_crdt_write() {
+        let mut sync = make_sync();
+        let owner = crate::reactive::Owner::new();
+        let signal = sync.object_signal("task-1", &owner);
+
+        let names: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+        let names_for = names.clone();
+        let _e = crate::reactive::Effect::new(move || {
+            let name = signal.read(|opt| {
+                opt.as_ref()
+                    .map(|o| o.name.clone())
+                    .unwrap_or("(none)".into())
+            });
+            names_for.borrow_mut().push(name);
+        });
+        assert_eq!(&*names.borrow(), &["(none)"]);
+
+        sync.write_object(&make_object("task-1", "Created"))
+            .unwrap();
+        sync.write_object(&make_object("task-1", "Updated"))
+            .unwrap();
+        sync.remove_object(&object_id("task-1")).unwrap();
+
+        assert_eq!(
+            &*names.borrow(),
+            &["(none)", "Created", "Updated", "(none)"]
+        );
     }
 }

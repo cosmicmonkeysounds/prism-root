@@ -47,6 +47,7 @@ src/
   lib.rs               # public surface + `web_start` wasm entry
   props.rs             # `ShellPropBindings` (read side — slot → JSON props)
   render.rs            # `render_tree` + `Skeleton` loader
+  render_scope.rs      # `RenderScope` — Phase 3 reactive Owner + DirtyQueue
   shell.rs             # `Shell` + `ShellInner` borrow-pack
   state.rs             # `AppState` + every typed slot
 ```
@@ -66,6 +67,17 @@ Phase 5 cutover.
   with `native` at link time. The `#[wasm_bindgen(start)]` entry
   point in `src/lib.rs::web_start` boots the same `Shell` the
   native binary does.
+- `hot-reload` — **Phase 9 of `docs/dev/dioxus-inspiration.md`.**
+  Pulls in `subsecond` and wraps the per-frame `render_tree` walk
+  inside `subsecond::call`. A swapped-in `lower_ui` body patches
+  in-place (preserving the `Surface` tree and the reactive `Owner`
+  graph) instead of forcing a kill-and-respawn dev loop. The
+  patch-pipeline integration (cargo invocation that emits the
+  runtime patch + `subsecond::register_handler` hookup) is a
+  prism-cli follow-up; today turning the feature on installs the
+  anchor so the rest can land incrementally. Off by default
+  because the anchor adds a small per-call indirection.
+  `prism dev shell --hot=subsecond` enables it automatically.
 
 ## Public surface
 From `src/lib.rs`:
@@ -76,10 +88,24 @@ From `src/lib.rs`:
   immediately on web until the web backend's `run` lands).
 - `ShellInner` — per-frame shared state: `registry`, `resolver`,
   `bindings`, `services`, `state` (the `AppState`), `viewport`,
-  `undo`, `vfs`, `luau`, `clipboard`. Two methods construct the
-  per-frame borrow-packs: `prop_ctx()` for reads, `mut_ctx()` for
-  writes. Adding a new datum is one field here and one assignment
-  in each ctx builder.
+  `undo`, `vfs`, `luau`, `clipboard`, `render_scope`. Two methods
+  construct the per-frame borrow-packs: `prop_ctx()` for reads,
+  `mut_ctx()` for writes. Adding a new datum is one field here and
+  one assignment in each ctx builder.
+- `RenderScope` — Phase 3 of
+  `docs/dev/dioxus-inspiration.md`. Owns a `reactive::Owner` plus a
+  `DirtyQueue<NodeId>` (node IDs are `String`s). The femtovg event
+  handler reads `render_scope.needs_redraw()` after every dispatch
+  and merges it with the existing `dispatch_event` bool to decide
+  whether to re-render. Reactive code (services, bindings) calls
+  `render_scope.invalidate_on(node_id, || sig.read(..))` to wire
+  signal-driven invalidation without authoring a new dispatch arm;
+  the effect runs once to subscribe (skipped) and re-fires on every
+  subsequent write to anything `sig.read` touched, pushing
+  `node_id` into the dirty queue. Per-block lower scoping (the
+  "only re-lower the dirty subtrees" half of Phase 3) is a
+  follow-up; today the queue's non-emptiness drives a full
+  `render_tree` re-walk like the event-dispatch path always has.
 - `AppState` + slot types — `BuilderSlot`, `CanvasSlot`,
   `ChromeSlot`, `OverlaySlot`, `NavigationSlot`, `WorkspaceSlot`,
   `ProjectSlot`, `SearchSlot`, plus the leaf records (`Toast`,

@@ -129,6 +129,15 @@ fn apply_action(
             // Cross-resource reach: Luau via `MutCtx::luau`.
             let _ = ctx.luau.exec(handler, payload);
         }
+        ActionKind::Bind { .. } => {
+            // Phase 4 of `docs/dev/dioxus-inspiration.md`. `Bind`
+            // declares an ongoing reactive relationship, not a
+            // per-fire action — it's installed once when the
+            // document loads (registering an `Effect`), not
+            // executed every time the source signal fires. Skipping
+            // it here is correct; the Effect-installation path is a
+            // separate follow-up wired through `ReactiveProps`.
+        }
     }
 }
 

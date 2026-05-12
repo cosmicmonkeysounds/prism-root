@@ -88,3 +88,26 @@ pub const CONFIG_HANDLE_TYPE_DEF: &str = r#"export type Config = {
     reset: (self: Config, key: string, scope: SettingScope?) -> (),
     is_overridden: (self: Config, key: string) -> boolean,
 }"#;
+
+// ───── Reactive substrate (Phase 5) ───────────────────────────────────
+// Type stubs for the userdata impls in `crate::luau_reactive`. Lands
+// in a sibling `reactive.d.luau` file (next to `signals.d.luau`) once
+// the codegen pipeline picks it up. The `Signal` exposed here is the
+// Phase 5 reactive cell (`prism-core::reactive::Signal<Value>`), not
+// the `prism_builder::signal::SignalDef` event channel — see §5 of
+// `docs/dev/dioxus-inspiration.md` for the naming hygiene rule.
+
+pub const REACTIVE_SIGNAL_TYPE_NAME: &str = "Signal";
+pub const REACTIVE_SIGNAL_TYPE_DEF: &str = r#"export type Signal = {
+    read: (self: Signal) -> any,
+    peek: (self: Signal) -> any,
+    track: (self: Signal) -> (),
+    write: (self: Signal, value: any) -> (),
+    set: (self: Signal, value: any) -> (),
+}"#;
+
+pub const REACTIVE_MEMO_TYPE_NAME: &str = "Memo";
+pub const REACTIVE_MEMO_TYPE_DEF: &str = r#"export type Memo = {
+    read: (self: Memo) -> any,
+    peek: (self: Memo) -> any,
+}"#;

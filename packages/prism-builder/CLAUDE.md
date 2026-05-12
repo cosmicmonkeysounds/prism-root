@@ -221,7 +221,34 @@ Modules in `src/` (excluding `lib.rs`):
 - `signal.rs` — `SignalDef`, `Connection`, `ActionKind`,
   `SignalEvent`, `DispatchResult`, `dispatch_signal`,
   `common_signals`, `with_common_signals`, `signal_symbols`,
-  `generate_signal_type_stubs`, `signal_contexts`.
+  `generate_signal_type_stubs`, `signal_contexts`. **Naming
+  overlap**: `prism-core::reactive::Signal<T>` (Dioxus-inspired
+  reactive cell, `docs/dev/dioxus-inspiration.md`) and the
+  `SignalDef` here (user-authorable event channel) coexist by
+  module scoping — see the file-level docstring on `signal.rs`. The
+  end-state plan compiles `SignalDef` into a hidden
+  `reactive::Signal<()>` + `Effect`; until then, refer to the
+  reactive cell as `reactive::Signal<T>` and the authored channel
+  as `SignalDef` / "connection signal." **Phase 4 grammar:**
+  `ActionKind::Bind { target_key, source }` + `ParsedAction::Bind {
+  node, key, source }` + `DispatchResult::Bind` cover the
+  `bind <node>.<key> = <source>` syntax — a declarative one-way
+  reactive binding compiled to an `Effect` on document load (the
+  Effect-installation seam itself is a follow-up; today the
+  dispatch executor surfaces `Bind` verbatim).
+- `reactive_props.rs` — **Phase 4 primitive** of
+  `docs/dev/dioxus-inspiration.md`. `ReactiveProps` is a
+  `Clone`-cheap (shared `Rc<Inner>`) prop bag backing the
+  end-state `Node::props`: a per-key `IndexMap<String,
+  reactive::Signal<Value>>` materialised lazily on first
+  `signal(key)` call plus a canonical JSON store kept in sync
+  through `set(key, value)`. Today this lives alongside
+  `Node::props: Value`; the migration of `Node` itself to a
+  `ReactiveProps` field touches every consumer of `Node::props[..]`
+  (`luau_component`, `prefab`, `ui_resolver`, `facet`) and is a
+  dedicated PR. The primitive unblocks `ActionKind::Bind` testing
+  + per-block reactive prop reads against a standalone
+  `ReactiveProps`. 11 unit tests.
 - `starter.rs` — 17 built-in blocks + `register_builtins`.
 - `style.rs` — `StyleProperties` + `resolve_cascade`.
 - `ui_lower.rs` — shared `LowerCtx` + helpers (`container_with`,

@@ -47,6 +47,7 @@ use quote::quote;
 use syn::{parse_macro_input, Data, DataEnum, DataStruct, DeriveInput, Field, Fields, Ident, Type};
 
 mod daemon_command;
+mod daemon_fn;
 mod daemon_module;
 mod editable;
 mod prism_block;
@@ -101,6 +102,25 @@ pub fn daemon_command(attr: TokenStream, item: TokenStream) -> TokenStream {
     let attr2: TokenStream2 = attr.into();
     let item2: TokenStream2 = item.into();
     match daemon_command::expand(attr2, item2) {
+        Ok(ts) => ts.into(),
+        Err(e) => e.to_compile_error().into(),
+    }
+}
+
+/// Phase 6 scaffold of the Dioxus-inspired reactive overhaul
+/// (`docs/dev/dioxus-inspiration.md`). End-state: a single
+/// `async fn name(args) -> Result<T, E>` annotated with
+/// `#[daemon_fn(id = "…")]` emits both the server-side handler and
+/// the typed client stub that serializes over `interprocess` +
+/// `postcard`. Today the macro parses the syntax and validates the
+/// signature (must be `async`, must return `Result<_, _>`) but only
+/// emits the original function plus a tooling marker const.
+/// Required: `id = "…"`. Optional: `permission = User|Dev|Admin`.
+#[proc_macro_attribute]
+pub fn daemon_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let attr2: TokenStream2 = attr.into();
+    let item2: TokenStream2 = item.into();
+    match daemon_fn::expand(attr2, item2) {
         Ok(ts) => ts.into(),
         Err(e) => e.to_compile_error().into(),
     }

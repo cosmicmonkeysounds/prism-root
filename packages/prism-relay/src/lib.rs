@@ -21,6 +21,7 @@ pub mod relay_state;
 pub mod result;
 pub mod router;
 pub mod routes;
+pub mod ssr_cache;
 pub mod ssr_routes;
 pub mod state;
 pub mod util;

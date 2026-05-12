@@ -573,6 +573,11 @@ fn route_on_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
         | ParsedAction::Toggle { .. }
         | ParsedAction::Play { .. }
         | ParsedAction::Luau { .. }
+        // `bind` declares an ongoing reactive relationship, not a
+        // per-click action — Phase 4 of `docs/dev/dioxus-inspiration.md`.
+        // The Effect-installation seam lands later; the inline-action
+        // executor treats `bind` as a no-op here.
+        | ParsedAction::Bind { .. }
         | ParsedAction::Unsupported { .. } => false,
     }
 }

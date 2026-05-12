@@ -24,6 +24,7 @@ pub mod modifier;
 pub mod prefab;
 pub mod prism_ui_emit;
 pub mod project;
+pub mod reactive_props;
 pub mod registry;
 pub mod resource;
 pub mod schemas;
@@ -64,6 +65,7 @@ pub use modifier::{Modifier, ModifierKind};
 pub use prefab::{ExposedSlot, PrefabComponent, PrefabDef};
 pub use prism_ui_emit::{emit_document, emit_node};
 pub use project::{ProjectFile, FILE_EXTENSION, FORMAT_VERSION};
+pub use reactive_props::ReactiveProps;
 pub use registry::{
     ComponentRegistry, FieldKind, FieldSpec, FieldValue, FileFieldConfig, NumericBounds,
     RegistryError, SelectOption,

@@ -65,12 +65,44 @@ pub struct DevArgs {
     /// something the watcher otherwise obscures.
     #[arg(long = "no-hot-reload", default_value_t = false)]
     pub no_hot_reload: bool,
+
+    /// Phase 9 of `docs/dev/dioxus-inspiration.md`: select the
+    /// hot-reload strategy. `respawn` (default) keeps the existing
+    /// kill-and-respawn loop; `subsecond` compiles the shell with
+    /// `--features hot-reload` so `subsecond::call` wraps the
+    /// render walk, letting the patch pipeline swap in a changed
+    /// `lower_ui` body without dropping the `Surface` tree or
+    /// reactive `Owner` graph. Falls back to `respawn` for changes
+    /// subsecond can't patch (struct-layout edits, public-API
+    /// breaks).
+    #[arg(long = "hot", value_enum, default_value_t = HotReloadStrategy::Respawn)]
+    pub hot: HotReloadStrategy,
+}
+
+#[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HotReloadStrategy {
+    /// Kill the child on every `.rs` change and re-exec `cargo run`.
+    /// Today's default.
+    Respawn,
+    /// Compile the shell with `--features hot-reload` and lean on
+    /// `subsecond::call` to patch the render-walk body in place.
+    /// The patch pipeline integration itself (separate cargo
+    /// build that emits the runtime patch) is a sibling
+    /// `prism dev` follow-up; today this strategy turns on the
+    /// subsecond anchor in the shell binary and otherwise falls
+    /// through to respawn.
+    Subsecond,
 }
 
 impl DevArgs {
     /// True when hot-reload is active for this invocation.
     pub fn hot_reload(&self) -> bool {
         !self.no_hot_reload
+    }
+
+    /// True when the user opted into the subsecond hot-patch path.
+    pub fn use_subsecond(&self) -> bool {
+        self.hot == HotReloadStrategy::Subsecond && self.hot_reload()
     }
 }
 
@@ -97,20 +129,26 @@ pub fn plan(args: &DevArgs, workspace: &Workspace) -> Vec<CommandBuilder> {
 
     let mut out = Vec::new();
     for t in targets {
-        for b in builders_for(t, workspace, args.hot_reload()) {
+        for b in builders_for(t, workspace, args.hot_reload(), args.use_subsecond()) {
             out.push(b);
         }
     }
     out
 }
 
-fn builders_for(target: DevTarget, workspace: &Workspace, hot_reload: bool) -> Vec<CommandBuilder> {
+fn builders_for(
+    target: DevTarget,
+    workspace: &Workspace,
+    hot_reload: bool,
+    use_subsecond: bool,
+) -> Vec<CommandBuilder> {
     match target {
         DevTarget::Shell => vec![cargo_run_dev_builder(
             "prism-shell",
             "shell",
             workspace,
             hot_reload,
+            use_subsecond,
         )],
         DevTarget::Studio => vec![
             // Studio's `prism-daemond` sidecar lives next to the
@@ -120,7 +158,13 @@ fn builders_for(target: DevTarget, workspace: &Workspace, hot_reload: bool) -> V
             // synchronous preflight (like web-build / web-bindgen),
             // not a long-running supervised child.
             super::build::daemon_bin_builder(workspace, false),
-            cargo_run_dev_builder("prism-studio", "studio", workspace, hot_reload),
+            cargo_run_dev_builder(
+                "prism-studio",
+                "studio",
+                workspace,
+                hot_reload,
+                use_subsecond,
+            ),
         ],
         DevTarget::Web => vec![
             web_build_builder(workspace),
@@ -141,12 +185,21 @@ fn cargo_run_dev_builder(
     label: &str,
     workspace: &Workspace,
     _hot_reload: bool,
+    use_subsecond: bool,
 ) -> CommandBuilder {
-    CommandBuilder::cargo()
+    let mut b = CommandBuilder::cargo()
         .arg("run")
         .package(package)
         .cwd(workspace.root())
-        .label(label)
+        .label(label);
+    if use_subsecond && package == "prism-shell" {
+        // Phase 9: turn on the `subsecond::call` anchor in the
+        // shell binary. The patch pipeline itself ships the
+        // generated dylib through `subsecond::register_handler` at
+        // runtime; that's a follow-up.
+        b = b.arg("--features").arg("hot-reload");
+    }
+    b
 }
 
 fn web_build_builder(workspace: &Workspace) -> CommandBuilder {
@@ -338,6 +391,7 @@ mod tests {
         DevArgs {
             target,
             no_hot_reload: false,
+            hot: HotReloadStrategy::Respawn,
         }
     }
 
@@ -345,6 +399,15 @@ mod tests {
         DevArgs {
             target,
             no_hot_reload: true,
+            hot: HotReloadStrategy::Respawn,
+        }
+    }
+
+    fn args_subsecond(target: DevTarget) -> DevArgs {
+        DevArgs {
+            target,
+            no_hot_reload: false,
+            hot: HotReloadStrategy::Subsecond,
         }
     }
 
@@ -363,6 +426,42 @@ mod tests {
         let a = args_no_reload(DevTarget::Shell);
         let p = plan(&a, &ws());
         assert_eq!(p.len(), 1);
+        let argv = p[0].argv().1;
+        assert_eq!(argv, vec!["run", "--package", "prism-shell"]);
+    }
+
+    #[test]
+    fn shell_with_subsecond_strategy_injects_hot_reload_feature() {
+        // Phase 9 of `docs/dev/dioxus-inspiration.md`. The
+        // `--hot=subsecond` flag wires `--features hot-reload` onto
+        // the shell's cargo invocation; the in-shell anchor
+        // (`subsecond::call` around `render_tree`) goes live.
+        let a = args_subsecond(DevTarget::Shell);
+        let p = plan(&a, &ws());
+        assert_eq!(p.len(), 1);
+        assert_eq!(
+            p[0].argv().1,
+            vec![
+                "run",
+                "--package",
+                "prism-shell",
+                "--features",
+                "hot-reload"
+            ]
+        );
+    }
+
+    #[test]
+    fn subsecond_strategy_disabled_when_no_hot_reload() {
+        // `--no-hot-reload --hot=subsecond` is the "drop the whole
+        // hot-reload apparatus" combo; the feature flag must not be
+        // injected.
+        let a = DevArgs {
+            target: DevTarget::Shell,
+            no_hot_reload: true,
+            hot: HotReloadStrategy::Subsecond,
+        };
+        let p = plan(&a, &ws());
         let argv = p[0].argv().1;
         assert_eq!(argv, vec!["run", "--package", "prism-shell"]);
     }

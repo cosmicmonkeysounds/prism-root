@@ -45,7 +45,7 @@ pub mod prism_kernel;
 pub mod state_machine;
 pub mod store;
 
-pub use atom::{select, select_ref, Atom, AtomSubscription, SharedAtom};
+pub use atom::{select, select_memo, select_ref, Atom, AtomSubscription};
 pub use initializer::{
     install_initializers, noop_disposer, Disposer, KernelInitializer, KernelInitializerContext,
 };
