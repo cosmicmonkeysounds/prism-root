@@ -180,6 +180,13 @@ impl Block for PrismUiBlock {
         if let Some(host) = ctx.host_children() {
             scope = scope.with_host_children_ui(host.to_vec());
         }
+        // Wave 13.1 — named-slot map. The resolver partitioned a
+        // dispatched element's AST children by `slot="X"`; this thread
+        // surfaces those buckets to `<slot name="X"/>` reads inside
+        // the DSL body.
+        if let Some(slots) = ctx.host_children_by_slot() {
+            scope = scope.with_host_children_by_slot(Arc::clone(slots));
+        }
 
         let nodes = lower_document_with_scope(&self.parsed, &scope);
         match collapse_to_single_root(nodes, node, style, ctx) {
@@ -666,6 +673,225 @@ fn component_palette_schema() -> Vec<FieldSpec> {
     ]
 }
 
+fn dock_tab_bar_schema() -> Vec<FieldSpec> {
+    vec![FieldSpec::text("tabs", "Tabs (JSON array)")]
+}
+
+fn component_picker_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::boolean("open", "Open").with_default(Value::Bool(false)),
+        FieldSpec::text("query", "Query string"),
+        FieldSpec::text(
+            "categories",
+            "Categories (JSON array of {label, items: [{id, label, icon?}]})",
+        ),
+    ]
+}
+
+fn component_picker_signals() -> Vec<SignalDef> {
+    with_common_signals(vec![
+        SignalDef::new("item-picked", "Item activated."),
+        SignalDef::new("query-changed", "Query string changed."),
+        SignalDef::new("dismissed", "Popup dismissed."),
+    ])
+}
+
+fn connection_picker_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::boolean("open", "Open").with_default(Value::Bool(false)),
+        FieldSpec::text("source-signal", "Source signal"),
+        FieldSpec::text("action-kind", "Action kind"),
+        FieldSpec::text("target-label", "Target label"),
+    ]
+}
+
+fn drag_number_field_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("key", "Key"),
+        FieldSpec::text("label", "Label"),
+        FieldSpec::number("value", "Value", NumericBounds::default())
+            .with_default(Value::from(0.0)),
+        FieldSpec::number("step", "Step", NumericBounds::min(0.0)).with_default(Value::from(1.0)),
+        FieldSpec::number("min", "Minimum", NumericBounds::default())
+            .with_default(Value::from(-99_999.0)),
+        FieldSpec::number("max", "Maximum", NumericBounds::default())
+            .with_default(Value::from(99_999.0)),
+        FieldSpec::text("display-value", "Pre-formatted value (host computes)")
+            .with_default(Value::String("0".into())),
+    ]
+}
+
+fn drag_number_field_signals() -> Vec<SignalDef> {
+    with_common_signals(vec![
+        SignalDef::new("changed", "Drag updated the value.").with_payload(vec![
+            FieldSpec::text("key", "Key"),
+            FieldSpec::number("value", "Value", NumericBounds::default()),
+        ]),
+        SignalDef::new("committed", "Inline edit accepted.").with_payload(vec![
+            FieldSpec::text("key", "Key"),
+            FieldSpec::text("text", "Raw text"),
+        ]),
+    ])
+}
+
+fn gizmo_move_schema() -> Vec<FieldSpec> {
+    vec![FieldSpec::text("axis-active", "Active axis (x|y|hub)")]
+}
+
+fn gizmo_move_signals() -> Vec<SignalDef> {
+    with_common_signals(vec![
+        SignalDef::new("axis-pressed", "Axis arm pressed."),
+        SignalDef::new("axis-dragged", "Axis arm dragged."),
+    ])
+}
+
+fn gizmo_rotate_schema() -> Vec<FieldSpec> {
+    vec![FieldSpec::text("active", "Active state")]
+}
+
+fn gizmo_rotate_signals() -> Vec<SignalDef> {
+    with_common_signals(vec![
+        SignalDef::new("ring-pressed", "Ring pressed."),
+        SignalDef::new("ring-dragged", "Ring dragged (degrees delta)."),
+    ])
+}
+
+fn gizmo_scale_schema() -> Vec<FieldSpec> {
+    vec![FieldSpec::text("axis-active", "Active axis (x|y|hub)")]
+}
+
+fn gizmo_scale_signals() -> Vec<SignalDef> {
+    with_common_signals(vec![
+        SignalDef::new("axis-pressed", "Axis pressed."),
+        SignalDef::new("axis-dragged", "Axis dragged."),
+    ])
+}
+
+fn resize_handle_schema() -> Vec<FieldSpec> {
+    vec![FieldSpec::text("direction", "Handle direction (tl|t|tr|r|br|b|bl|l)").required()]
+}
+
+fn resize_handle_signals() -> Vec<SignalDef> {
+    with_common_signals(vec![
+        SignalDef::new("handle-pressed", "Handle pressed."),
+        SignalDef::new("handle-dragged", "Handle dragged."),
+    ])
+}
+
+fn dock_divider_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("orientation", "Orientation (vertical|horizontal)")
+            .with_default(Value::String("vertical".into())),
+        FieldSpec::number("length", "Cross-axis length", NumericBounds::min(0.0))
+            .with_default(Value::from(0.0)),
+    ]
+}
+
+fn app_window_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("title", "Window title"),
+        FieldSpec::text("status", "Status bar text"),
+        FieldSpec::text("app-name", "Active app name"),
+        // JSON arrays; host populates from workspace state.
+        FieldSpec::text("menus", "Menu pills (JSON array)"),
+        FieldSpec::text("tabs", "Tab pills (JSON array)"),
+        FieldSpec::boolean("show-tabs", "Show tab strip").with_default(Value::Bool(false)),
+        FieldSpec::number("active-menu", "Active menu index", NumericBounds::default())
+            .with_default(Value::from(-1.0)),
+        FieldSpec::text("nav-buttons", "Activity-bar buttons (JSON array)"),
+    ]
+}
+
+fn app_window_signals() -> Vec<SignalDef> {
+    with_common_signals(vec![SignalDef::new(
+        "nav-clicked",
+        "Activity-bar button clicked — payload is the nav id.",
+    )])
+}
+
+fn builder_toolbar_schema() -> Vec<FieldSpec> {
+    use serde_json::json;
+    vec![
+        FieldSpec::text("device", "Active device preview (desktop|tablet|mobile)"),
+        FieldSpec::number("zoom", "Canvas zoom", NumericBounds::min_max(0.1, 8.0))
+            .with_default(Value::from(1.0)),
+        FieldSpec::number("node-count", "Total node count", NumericBounds::min(0.0))
+            .with_default(Value::from(0.0)),
+        FieldSpec::text("tool", "Active tool (move|rotate|scale)"),
+        FieldSpec::text("zoom-label", "Pre-formatted zoom percent label")
+            .with_default(Value::String("100%".into())),
+        // Wave 13.1-era `for=` iteration tables. The native source kept
+        // these as `const ALIGN_ENTRIES` / `const DEVICE_ENTRIES`; the
+        // DSL migration moves them into prop defaults so the iteration
+        // is one `for="entry in align-entries"` over a typed array.
+        FieldSpec::text("align-entries", "Alignment buttons (JSON)").with_default(json!([
+            { "entry-id": "align-left",   "icon": "icons/align-left.svg",   "tooltip": "Align left",   "command": "builder.align-left" },
+            { "entry-id": "align-center", "icon": "icons/align-center.svg", "tooltip": "Align center", "command": "builder.align-center" },
+            { "entry-id": "align-right",  "icon": "icons/align-right.svg",  "tooltip": "Align right",  "command": "builder.align-right" },
+        ])),
+        FieldSpec::text("device-entries", "Device pills (JSON)").with_default(json!([
+            { "entry-id": "desktop", "label": "Desktop", "tooltip": "Desktop preview" },
+            { "entry-id": "tablet",  "label": "Tablet",  "tooltip": "Tablet preview" },
+            { "entry-id": "mobile",  "label": "Mobile",  "tooltip": "Mobile preview" },
+        ])),
+    ]
+}
+
+fn builder_toolbar_signals() -> Vec<SignalDef> {
+    with_common_signals(vec![
+        SignalDef::new("align-clicked", "Alignment button clicked."),
+        SignalDef::new("device-changed", "Device pill clicked."),
+        SignalDef::new("zoom-in", "+ zoom clicked."),
+        SignalDef::new("zoom-out", "- zoom clicked."),
+        SignalDef::new("zoom-reset", "100% label clicked to reset."),
+    ])
+}
+
+fn modifier_picker_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::boolean("open", "Open").with_default(Value::Bool(false)),
+        FieldSpec::text("target-id", "Owning node id"),
+        FieldSpec::text(
+            "options",
+            "Options (JSON array of {id, label, description})",
+        ),
+    ]
+}
+
+fn modifier_header_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("label", "Behaviour label").required(),
+        FieldSpec::text("description", "Description"),
+        FieldSpec::text("modifier-id", "Registered behaviour id").required(),
+        FieldSpec::integer(
+            "modifier-idx",
+            "Index in node.modifiers",
+            NumericBounds::min(0.0),
+        )
+        .with_default(Value::from(0.0)),
+        FieldSpec::boolean("enabled", "Enabled").with_default(Value::Bool(true)),
+        FieldSpec::text("target-id", "Owning node id").required(),
+    ]
+}
+
+fn app_card_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("app-id", "App ID").required(),
+        FieldSpec::text("name", "Name"),
+        FieldSpec::text("description", "Description"),
+        FieldSpec::text("icon", "Icon"),
+        FieldSpec::text("accent-color", "Accent color")
+            .with_default(Value::String("#0060c0".into())),
+        FieldSpec::integer(
+            "page-count",
+            "Page count",
+            NumericBounds::min_max(0.0, 999.0),
+        )
+        .with_default(Value::from(1.0)),
+        FieldSpec::boolean("is-create", "Is create card").with_default(Value::Bool(false)),
+    ]
+}
+
 fn component_palette_signals() -> Vec<SignalDef> {
     with_common_signals(vec![SignalDef::new(
         "item-activated",
@@ -888,6 +1114,84 @@ pub static SHELL_PRISM_UI_COMPONENTS: &[PrismUiSpec] = &[
     )
     .schema(inspector_row_schema)
     .signals(inspector_row_signals),
+    PrismUiSpec::new(
+        "shell.app-card",
+        include_str!("../../ui/components/app-card.prism-ui"),
+    )
+    .schema(app_card_schema),
+    PrismUiSpec::new(
+        "shell.modifier-header",
+        include_str!("../../ui/components/modifier-header.prism-ui"),
+    )
+    .schema(modifier_header_schema),
+    PrismUiSpec::new(
+        "shell.modifier-picker",
+        include_str!("../../ui/components/modifier-picker.prism-ui"),
+    )
+    .schema(modifier_picker_schema),
+    PrismUiSpec::new(
+        "shell.builder-toolbar",
+        include_str!("../../ui/components/builder-toolbar.prism-ui"),
+    )
+    .schema(builder_toolbar_schema)
+    .signals(builder_toolbar_signals),
+    PrismUiSpec::new(
+        "shell.app-window",
+        include_str!("../../ui/components/app-window.prism-ui"),
+    )
+    .schema(app_window_schema)
+    .signals(app_window_signals),
+    PrismUiSpec::new(
+        "shell.dock-divider",
+        include_str!("../../ui/components/dock-divider.prism-ui"),
+    )
+    .schema(dock_divider_schema),
+    PrismUiSpec::new(
+        "shell.resize-handle",
+        include_str!("../../ui/components/resize-handle.prism-ui"),
+    )
+    .schema(resize_handle_schema)
+    .signals(resize_handle_signals),
+    PrismUiSpec::new(
+        "shell.gizmo-move",
+        include_str!("../../ui/components/gizmo-move.prism-ui"),
+    )
+    .schema(gizmo_move_schema)
+    .signals(gizmo_move_signals),
+    PrismUiSpec::new(
+        "shell.gizmo-rotate",
+        include_str!("../../ui/components/gizmo-rotate.prism-ui"),
+    )
+    .schema(gizmo_rotate_schema)
+    .signals(gizmo_rotate_signals),
+    PrismUiSpec::new(
+        "shell.gizmo-scale",
+        include_str!("../../ui/components/gizmo-scale.prism-ui"),
+    )
+    .schema(gizmo_scale_schema)
+    .signals(gizmo_scale_signals),
+    PrismUiSpec::new(
+        "shell.drag-number-field",
+        include_str!("../../ui/components/drag-number-field.prism-ui"),
+    )
+    .schema(drag_number_field_schema)
+    .signals(drag_number_field_signals),
+    PrismUiSpec::new(
+        "shell.connection-picker",
+        include_str!("../../ui/components/connection-picker.prism-ui"),
+    )
+    .schema(connection_picker_schema),
+    PrismUiSpec::new(
+        "shell.component-picker",
+        include_str!("../../ui/components/component-picker.prism-ui"),
+    )
+    .schema(component_picker_schema)
+    .signals(component_picker_signals),
+    PrismUiSpec::new(
+        "shell.dock-tab-bar",
+        include_str!("../../ui/components/dock-tab-bar.prism-ui"),
+    )
+    .schema(dock_tab_bar_schema),
 ];
 
 #[cfg(test)]

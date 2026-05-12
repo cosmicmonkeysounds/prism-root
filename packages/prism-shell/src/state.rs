@@ -3077,6 +3077,9 @@ impl CanvasSlot {
             "zoom": self.viewport.zoom,
             "node-count": self.node_count(),
             "tool": self.tool.as_str(),
+            // Pre-formatted percent label so the DSL doesn't need a
+            // `floor()` / `* 100` arithmetic helper.
+            "zoom-label": format!("{}%", (self.viewport.zoom * 100.0).round() as i32),
         })
     }
 

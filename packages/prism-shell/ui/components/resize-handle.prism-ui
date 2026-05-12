@@ -1,0 +1,20 @@
+<!--
+  shell.resize-handle — single 8px square handle on a selection rect.
+  Wave 11.3 (Tier-2) migration of resize_handle.rs.
+
+  `direction` ∈ {tl, t, tr, r, br, b, bl, l}. Cursor + aria-label
+  derived via ternary chains; unknown directions fall back to
+  "default" / "Resize".
+-->
+<container
+    tag="span"
+    width="8"
+    height="8"
+    style:background="#ffffffff"
+    style:radius="1"
+    role="button"
+    aria-label="{direction == 'tl' ? 'Resize top-left' : (direction == 't' ? 'Resize top' : (direction == 'tr' ? 'Resize top-right' : (direction == 'r' ? 'Resize right' : (direction == 'br' ? 'Resize bottom-right' : (direction == 'b' ? 'Resize bottom' : (direction == 'bl' ? 'Resize bottom-left' : (direction == 'l' ? 'Resize left' : 'Resize'))))))) }"
+    data:role="resize-handle"
+    data:direction="{direction}"
+    data:cursor="{direction == 'tl' || direction == 'br' ? 'nwse-resize' : (direction == 'tr' || direction == 'bl' ? 'nesw-resize' : (direction == 't' || direction == 'b' ? 'ns-resize' : (direction == 'l' || direction == 'r' ? 'ew-resize' : 'default'))) }"
+    data:stroke="#0060c0"/>

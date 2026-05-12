@@ -1,0 +1,20 @@
+<!--
+  shell.dock-tab-bar — horizontal strip of tabs above a dock panel.
+  Wave 11.2 migration of dock_tab_bar.rs.
+
+  Iterates `tabs` (JSON array of {tab-id, label, active}) and dispatches
+  each through shell.dock-tab via props spread.
+-->
+<container
+    tag="div"
+    direction="row"
+    width="grow"
+    height="28"
+    style:background="#08000000"
+    role="tablist"
+    data:role="dock-tab-bar">
+  <shell.dock-tab
+      for="tab in tabs"
+      id="{id}::tab::{tab.tab-id}"
+      props="{tab}"/>
+</container>

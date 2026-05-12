@@ -39,10 +39,11 @@
 //! AST children through the runtime and inject them as a `<slot/>`
 //! binding when a block opts in.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use prism_core::language::prism_ui::{
-    ast::TemplatePart, AttributeNamespace, AttributeValue, Element,
+    ast::TemplatePart, AttributeNamespace, AttributeValue, Element, Node as AstNode,
 };
 use prism_ui_runtime::interpret::{
     apply_style_override, evaluate_expression, lookup_expression_in_scope, lower_ast_children,
@@ -119,13 +120,22 @@ impl TagResolver for RegistryTagResolver {
         let host_supplied: Option<Vec<UiNode>> = scope
             .host_children_for(&element.tag)
             .map(|slice| slice.to_vec());
-        let pre_lowered: Vec<UiNode> = if let Some(injected) = host_supplied {
-            injected
-        } else if element.children.is_empty() {
-            Vec::new()
-        } else {
-            lower_ast_children(&element.children, scope)
-        };
+        // Wave 13.1 — partition AST children by their `slot="X"`
+        // attribute. The default bucket (`""`) plus the legacy single-
+        // slot contract land in `host_children`; each named bucket
+        // lands in `host_children_by_slot` so `<slot name="X"/>` reads
+        // pull from the right pile. When the host already supplied
+        // pre-lowered children (`host_children_for(tag)` hit), the slot
+        // map is empty — composition blocks that opt into named slots
+        // use the AST path.
+        let (pre_lowered, slot_map): (Vec<UiNode>, HashMap<String, Vec<UiNode>>) =
+            if let Some(injected) = host_supplied {
+                (injected, HashMap::new())
+            } else if element.children.is_empty() {
+                (Vec::new(), HashMap::new())
+            } else {
+                partition_children_by_slot(&element.children, scope)
+            };
         // Thread the scope's tag-keyed emission snapshot into LowerCtx
         // so any `lower_as` call inside `component.lower_ui` (the
         // dock-panel routing path is the canonical caller) picks up
@@ -133,9 +143,12 @@ impl TagResolver for RegistryTagResolver {
         // for host_children. Without this thread-through, routed
         // content tags (`shell.builder-canvas`, `shell.component-palette`,
         // `shell.properties-panel`) get empty props / zero children.
-        let ctx = LowerCtx::new(Some(&self.registry), &cascade)
+        let mut ctx = LowerCtx::new(Some(&self.registry), &cascade)
             .with_host_children(&pre_lowered)
             .with_tag_emissions(scope.tag_emissions_arc());
+        if !slot_map.is_empty() {
+            ctx = ctx.with_host_children_by_slot(Arc::new(slot_map));
+        }
         let mut lowered = component.lower_ui(&ctx, &node, &cascade);
         // §43 A1: any `on:<event>="<action>"` attribute on the source
         // element rides through to the lowered container as a
@@ -166,6 +179,62 @@ impl TagResolver for RegistryTagResolver {
 /// hits and so can't dispatch. Authors who want a clickable text node
 /// today wrap it in a container; a follow-up can either tag the
 /// inner leaf's outer container or grow hit-testable leaves.
+/// Wave 13.1 — partition a dispatched element's AST children by their
+/// `slot="X"` attribute (Vue / Web Components named-slot pattern).
+/// Children with no `slot=` attribute land in the default bucket; the
+/// rest land in a `HashMap<String, Vec<UiNode>>` keyed by slot name.
+///
+/// **Why partition before lowering**: each bucket lowers in the
+/// *caller's* scope (parent context), not the dispatched component's
+/// scope. That matches Vue / Svelte slot semantics — slot content
+/// reads bindings from where it was authored, not where it was
+/// emitted. Lowering each bucket separately is the cheapest seam.
+///
+/// `slot="X"` is a bare attribute, not a namespaced one, mirroring
+/// the Web Components convention. Authors write
+/// `<text slot="header">Title</text>` and the `slot` attribute is
+/// consumed by the resolver — it never reaches the dispatched block
+/// as a prop.
+fn partition_children_by_slot(
+    children: &[AstNode],
+    scope: &LowerScope,
+) -> (Vec<UiNode>, HashMap<String, Vec<UiNode>>) {
+    let mut default_bucket: Vec<AstNode> = Vec::new();
+    let mut named_buckets: HashMap<String, Vec<AstNode>> = HashMap::new();
+    for node in children {
+        match node {
+            AstNode::Element(el) => {
+                let slot_name = el.attributes.iter().find_map(|attr| {
+                    if matches!(attr.name.namespace, AttributeNamespace::Bare)
+                        && attr.name.local == "slot"
+                    {
+                        resolved_attribute_string(&attr.value, scope)
+                    } else {
+                        None
+                    }
+                });
+                match slot_name {
+                    Some(name) if !name.is_empty() => {
+                        named_buckets.entry(name).or_default().push(node.clone())
+                    }
+                    _ => default_bucket.push(node.clone()),
+                }
+            }
+            other => default_bucket.push(other.clone()),
+        }
+    }
+    let default_ui = if default_bucket.is_empty() {
+        Vec::new()
+    } else {
+        lower_ast_children(&default_bucket, scope)
+    };
+    let slot_map: HashMap<String, Vec<UiNode>> = named_buckets
+        .into_iter()
+        .map(|(name, asts)| (name, lower_ast_children(&asts, scope)))
+        .collect();
+    (default_ui, slot_map)
+}
+
 fn attach_on_handlers(node: &mut UiNode, element: &Element, scope: &LowerScope) {
     let mut on_attrs: Vec<(String, String)> = Vec::new();
     for attr in &element.attributes {

@@ -1,0 +1,61 @@
+<!--
+  shell.component-picker — popup overlay for adding a component to a
+  grid cell. Wave 11.2 migration of component_picker.rs.
+
+  Closed → 0×0 hidden overlay. Open → 280px column with an optional
+  query text + one nested category-group per entry (label + items).
+  Each item row carries data-role + data-id for the host's
+  POINTER_ROUTES("component-picker-item") routing.
+-->
+<container
+    if="{!open}"
+    tag="div"
+    width="0"
+    height="0"
+    data:role="component-picker"
+    data:visible="false"
+    aria:hidden="true"/>
+<container
+    else
+    tag="div"
+    direction="column"
+    gap="4"
+    padding-left="8"
+    padding-right="8"
+    padding-top="8"
+    padding-bottom="8"
+    width="280"
+    style:background="#f0ffffff"
+    style:radius="8"
+    role="dialog"
+    aria-modal="true"
+    aria-label="Component picker"
+    data:role="component-picker">
+  <text if="{query}" font-size="10" style:color="#80000000">filter · {query}</text>
+  <container
+      for="cat in categories"
+      id="{id}::cat::{cat.label}"
+      direction="column"
+      gap="4">
+    <text if="{cat.label}" font-size="11" style:color="#80000000">{cat.label}</text>
+    <container
+        for="item in cat.items"
+        id="{id}::cat::{cat.label}::item::{item.id}"
+        tag="div"
+        direction="row"
+        gap="8"
+        padding-left="8"
+        padding-right="8"
+        padding-top="6"
+        padding-bottom="6"
+        height="32"
+        style:radius="4"
+        style:background:hovered="#0f000000"
+        role="option"
+        data:role="component-picker-item"
+        data:id="{item.id}">
+      <image if="{item.icon}" src="{item.icon}" width="16" height="16"/>
+      <text font-size="12" style:color="#000000">{item.label}</text>
+    </container>
+  </container>
+</container>

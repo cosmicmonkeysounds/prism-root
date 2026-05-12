@@ -1,0 +1,71 @@
+<!--
+  shell.app-window — top-level Studio shell scaffolding. Wave 11.2 +
+  Wave 13.1 migration of app_window.rs.
+
+  Four named slots (Vue / Web Components pattern):
+    - menu    (top strip)       — fallback: `<shell.menu-bar-row>`
+    - nav     (left activity)   — fallback: dispatched `<shell.nav-button>` per entry in `nav-buttons`
+    - status  (bottom strip)    — fallback: `<shell.status-bar>` carrying the `status` prop
+    - default (content body)    — no override surface today; `<host-children/>` emits the caller's
+                                  non-slotted children verbatim
+
+  A caller authors a slot override with `<text slot="menu">Custom</text>`;
+  the resolver buckets the AST child by `slot=` attribute and threads
+  it through `LowerScope::host_children_by_slot` — the named `<slot/>`
+  element prefers the override over the fallback.
+-->
+<container
+    tag="div"
+    direction="column"
+    width="grow"
+    height="grow"
+    data:role="app-window">
+
+  <slot name="menu">
+    <shell.menu-bar-row
+        id="{id}::menu"
+        app-name="{app-name}"
+        menus="{menus}"
+        tabs="{tabs}"
+        show-tabs="{show-tabs}"
+        active-menu="{active-menu}"/>
+  </slot>
+
+  <container
+      id="{id}::body"
+      direction="row"
+      width="grow"
+      height="grow">
+    <slot name="nav">
+      <container
+          id="{id}::activity-bar"
+          tag="nav"
+          direction="column"
+          width="40"
+          height="grow"
+          style:background="#0d000000"
+          role="navigation"
+          aria-label="Activity bar">
+        <shell.nav-button
+            for="item, idx in nav-buttons"
+            id="{id}::nav::{idx}"
+            props="{item}"/>
+      </container>
+    </slot>
+    <container
+        id="{id}::content"
+        tag="main"
+        width="grow"
+        height="grow"
+        style:background="#ffffff"
+        role="main">
+      <host-children/>
+    </container>
+  </container>
+
+  <slot name="status">
+    <shell.status-bar
+        id="{id}::status"
+        text="{status}"/>
+  </slot>
+</container>

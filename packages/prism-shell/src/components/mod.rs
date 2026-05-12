@@ -6,30 +6,16 @@
 //! `SHELL_BUILTINS` table in `registry.rs`. The strategy and rationale
 //! are documented in `docs/dev/clay-migration-plan.md` §12 + §33.
 
-pub mod app_card;
-pub mod app_window;
 pub mod builder_canvas;
-pub mod builder_toolbar;
 pub mod chrome;
 pub mod code_editor;
 pub mod command_palette;
-pub mod component_picker;
-pub mod connection_picker;
-pub mod dock_divider;
 pub mod dock_panel;
-pub mod dock_tab_bar;
 pub mod dock_workspace;
-pub mod drag_number_field;
 pub mod field_editor;
-pub mod gizmo_move;
-pub mod gizmo_rotate;
-pub mod gizmo_scale;
-pub mod modifier_header;
-pub mod modifier_picker;
 pub mod nav_graph;
 pub mod prism_ui_loader;
 pub mod registry;
-pub mod resize_handle;
 pub mod schema_designer;
 pub mod transform_editor;
 

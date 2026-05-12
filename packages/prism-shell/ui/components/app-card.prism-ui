@@ -1,0 +1,82 @@
+<!--
+  shell.app-card — 160px launchpad card. Wave 11.2 migration of
+  app_card.rs.
+
+  Two visual variants:
+    - default: rail (4px) + body with icon-host, name, description, badge
+    - is-create=true: rail + centred plus glyph + "Create App" label
+
+  Hover swaps card background; icon name → asset path is a flat ternary
+  chain (8 known icons + a box fallback). The badge label is singular
+  for page-count==1 and plural otherwise.
+-->
+<container
+    tag="article"
+    direction="column"
+    height="160"
+    style:radius="12"
+    style:background="#ffffff"
+    style:background:hovered="#f4f4f4"
+    data:role="app-card"
+    data:app="{app-id}"
+    data:create="{is-create ? 'true' : ''}">
+
+  <container
+      id="{id}::rail"
+      height="4"
+      style:background="{accent-color ? accent-color : '#0060c0'}"/>
+
+  <container
+      if="{is-create}"
+      id="{id}::body"
+      direction="column"
+      gap="8"
+      height="grow"
+      padding-left="20"
+      padding-right="20"
+      padding-top="24"
+      padding-bottom="20">
+    <image id="{id}::plus" src="icons/plus.svg" width="32" height="32"/>
+    <text font-size="14" style:color="#b3000000">Create App</text>
+  </container>
+
+  <container
+      else
+      id="{id}::body"
+      direction="column"
+      gap="8"
+      height="grow"
+      padding-left="20"
+      padding-right="20"
+      padding-top="20"
+      padding-bottom="20">
+    <container
+        id="{id}::header"
+        direction="row"
+        gap="10">
+      <container
+          id="{id}::icon-host"
+          width="36"
+          height="36"
+          style:radius="8"
+          style:background="{accent-color ? accent-color : '#0060c0'}">
+        <image
+            id="{id}::icon"
+            src="{icon == 'globe' ? 'icons/globe.svg' : (icon == 'music' ? 'icons/grip.svg' : (icon == 'zap' ? 'icons/zap.svg' : (icon == 'code' ? 'icons/code.svg' : (icon == 'cube' ? 'icons/box.svg' : (icon == 'star' ? 'icons/help-circle.svg' : (icon == 'heart' ? 'icons/user.svg' : (icon == 'film' ? 'icons/image.svg' : 'icons/box.svg'))))))) }"
+            width="18"
+            height="18"/>
+      </container>
+      <text font-size="16" style:color="#000000">{name}</text>
+    </container>
+    <text font-size="12" style:color="#99000000">{description}</text>
+    <container
+        id="{id}::badge"
+        height="20"
+        style:radius="4"
+        style:background="#14000000"
+        padding-left="6"
+        padding-right="6">
+      <text font-size="10" style:color="#7f000000">{page-count == 1 ? '1 page' : page-count + ' pages'}</text>
+    </container>
+  </container>
+</container>

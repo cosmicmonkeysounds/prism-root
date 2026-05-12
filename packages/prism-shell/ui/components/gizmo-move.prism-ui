@@ -1,0 +1,46 @@
+<!--
+  shell.gizmo-move — Godot-style XY move gizmo overlay.
+  Wave 11.3 (Tier-2) migration of gizmo_move.rs.
+
+  Red horizontal arm (rounded), green vertical arm (rounded), and a
+  white round centre hub. Each child carries the `data-role` and
+  `data-axis` attrs the renderer / hit-tester use.
+-->
+<container
+    tag="div"
+    direction="row"
+    role="group"
+    aria-label="Move gizmo"
+    data:role="gizmo"
+    data:tool="move">
+  <container
+      id="{id}::arm-x"
+      tag="span"
+      width="60"
+      height="4"
+      style:background="#ff4040ff"
+      style:radius="2"
+      role="presentation"
+      data:role="gizmo-axis"
+      data:axis="x"/>
+  <container
+      id="{id}::arm-y"
+      tag="span"
+      width="4"
+      height="60"
+      style:background="#40c060ff"
+      style:radius="2"
+      role="presentation"
+      data:role="gizmo-axis"
+      data:axis="y"/>
+  <container
+      id="{id}::hub"
+      tag="span"
+      width="12"
+      height="12"
+      style:background="#ffffffff"
+      style:radius="6"
+      role="button"
+      aria-label="Move gizmo center"
+      data:role="gizmo-hub"/>
+</container>

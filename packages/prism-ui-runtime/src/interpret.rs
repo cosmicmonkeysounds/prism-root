@@ -132,6 +132,15 @@ pub struct LowerScope {
     /// tag-keyed pre-injection) and from [`SlotBindings`] (AST-level
     /// `<slot/>` expansion). `None` outside the loader's seam.
     host_children_ui: Option<Arc<Vec<Node>>>,
+    /// **Wave 13.1** — pre-lowered named-slot map. The resolver
+    /// buckets a dispatched element's children by their `slot="X"`
+    /// attribute and threads the resulting map here via the DSL
+    /// loader. A `<slot name="X"/>` element in a DSL component body
+    /// pulls from this map (after first checking the AST-level
+    /// [`SlotBindings`]) before falling back to its own fallback
+    /// children. Empty map (`None`-equivalent default) on every path
+    /// that doesn't go through `RegistryTagResolver`.
+    host_children_by_slot: Arc<HashMap<String, Vec<Node>>>,
 }
 
 impl std::fmt::Debug for LowerScope {
@@ -255,6 +264,29 @@ impl LowerScope {
     /// `<host-children/>` element. `None` outside the loader's seam.
     pub fn host_children_ui(&self) -> Option<&[Node]> {
         self.host_children_ui.as_deref().map(|v| v.as_slice())
+    }
+
+    /// **Wave 13.1** — install the named-slot map. Keys are
+    /// `slot="X"` attribute values from the caller's AST children;
+    /// values are the pre-lowered UI nodes for that bucket. The
+    /// resolver populates this from a dispatched element's children;
+    /// `<slot name="X"/>` reads from it.
+    pub fn with_host_children_by_slot(mut self, slots: Arc<HashMap<String, Vec<Node>>>) -> Self {
+        self.host_children_by_slot = slots;
+        self
+    }
+
+    /// **Wave 13.1** — look up the pre-lowered children for a named
+    /// slot. Returns `None` when no `host_children_by_slot` map was
+    /// installed *or* when the requested slot is absent.
+    pub fn host_children_for_slot(&self, name: &str) -> Option<&[Node]> {
+        self.host_children_by_slot.get(name).map(|v| v.as_slice())
+    }
+
+    /// **Wave 13.1** — clone-cheap snapshot of the slot map. Loader
+    /// callers thread this through from `LowerCtx::host_children_by_slot()`.
+    pub fn host_children_by_slot_arc(&self) -> Arc<HashMap<String, Vec<Node>>> {
+        Arc::clone(&self.host_children_by_slot)
     }
 }
 
@@ -419,17 +451,26 @@ fn lower_element(el: &Element, scope: &LowerScope) -> Vec<Node> {
         "input" => vec![input_from(el, scope)],
         "image" => vec![image_from(el, scope)],
         // `<slot/>` and `<slot name="x"/>` resolve to whatever the
-        // caller injected. Default slot uses the unnamed binding;
-        // named slots match by `name`. If the caller didn't bind a
-        // matching slot, the slot element's own children render as
-        // fallback content — the same semantics every component DSL
-        // converged on. See `LowerScope`/`SlotBindings`.
+        // caller injected. Lookup order (Wave 13.1):
+        //   1. AST-level slot bindings (`LowerScope::slots`) — set
+        //      when a parent component's body interpolated AST-level
+        //      slot content (used by template expansion).
+        //   2. Pre-lowered named-slot map (`host_children_by_slot`) —
+        //      set when the resolver partitioned a dispatched
+        //      element's children by `slot="X"` attribute.
+        //   3. The element's own children (fallback content).
+        // Default slot (no `name=`) maps to the empty-string slot
+        // bucket when reading from the pre-lowered map.
         "slot" => {
             let name = bare_attr_value(el, "name", scope);
-            match scope.slots.resolve(name.as_deref()) {
-                Some(injected) => lower_children(injected, scope),
-                None => lower_children(&el.children, scope),
+            if let Some(injected) = scope.slots.resolve(name.as_deref()) {
+                return lower_children(injected, scope);
             }
+            let key = name.as_deref().unwrap_or("");
+            if let Some(injected) = scope.host_children_for_slot(key) {
+                return injected.to_vec();
+            }
+            lower_children(&el.children, scope)
         }
         // Wave 11.2 — `<host-children/>` injection point. A DSL-
         // authored shell component (toast-stack, launchpad, app-window)
@@ -440,10 +481,21 @@ fn lower_element(el: &Element, scope: &LowerScope) -> Vec<Node> {
         // stored `Vec<Node>` verbatim. Falls back to the element's own
         // AST children (acting as a fallback slot) when nothing is
         // bound — same semantics `<slot/>` carries.
-        "host-children" => match scope.host_children_ui() {
-            Some(injected) => injected.to_vec(),
-            None => lower_children(&el.children, scope),
-        },
+        //
+        // Wave 13.1 — opt-in `name="X"` attribute pulls from the
+        // pre-lowered named-slot map instead, so a DSL author can
+        // pick either spelling.
+        "host-children" => {
+            if let Some(name) = bare_attr_value(el, "name", scope) {
+                if let Some(injected) = scope.host_children_for_slot(&name) {
+                    return injected.to_vec();
+                }
+            }
+            match scope.host_children_ui() {
+                Some(injected) => injected.to_vec(),
+                None => lower_children(&el.children, scope),
+            }
+        }
         // Unknown tag — first ask the host's tag resolver (if any).
         // Hosts plug a `TagResolver` (e.g. `prism-builder`'s
         // `RegistryTagResolver`) through `LowerScope::with_resolver`
@@ -986,6 +1038,23 @@ fn apply_container_attributes(
                         .semantic
                         .attrs
                         .push((format!("data-transition-{}", local), value));
+                }
+            }
+            // Wave 13.3: `use:<id>[="<value>"]` directive sugar for
+            // attaching a registered `ModifierBehaviour`. Today the
+            // namespace lowers to `data-use-<id>="<value>"` so author
+            // intent round-trips through the SSR / hit-test caches;
+            // full runtime modifier-fold integration follows when the
+            // resolver-side `ModifierRegistry` thread-through lands.
+            // Same data-round-trips-now pattern Wave 9.4 (transitions)
+            // and Wave 9.2 (:selected / :focused state styles) use.
+            AttributeNamespace::Use => {
+                let value = raw.unwrap_or_else(|| "true".into());
+                if !value.is_empty() {
+                    props
+                        .semantic
+                        .attrs
+                        .push((format!("data-use-{}", local), value));
                 }
             }
             // `bind:<key>="<source>"` is sugar for
@@ -1686,6 +1755,54 @@ mod tests {
     }
 
     #[test]
+    fn slot_named_falls_through_to_host_children_by_slot_map() {
+        // Wave 13.1 — when no AST-level SlotBindings carries `header`,
+        // the runtime falls through to `host_children_by_slot["header"]`.
+        // The resolver populates this from a dispatched element's
+        // `slot="X"` AST children; here we set it directly.
+        let (doc, errs) = parse(r#"<container><slot name="header"/></container>"#);
+        assert!(errs.is_empty());
+        let mut map: HashMap<String, Vec<Node>> = HashMap::new();
+        map.insert(
+            "header".into(),
+            vec![Node::Text {
+                id: "hdr".into(),
+                content: "FROM-HOST".into(),
+                props: TextProps::default(),
+            }],
+        );
+        let scope = LowerScope::default().with_host_children_by_slot(Arc::new(map));
+        let nodes = lower_document_with_scope(&doc, &scope);
+        let Node::Container { children, .. } = &nodes[0] else {
+            panic!()
+        };
+        assert_eq!(children.len(), 1);
+        let Node::Text { content, .. } = &children[0] else {
+            panic!()
+        };
+        assert_eq!(content, "FROM-HOST");
+    }
+
+    #[test]
+    fn slot_unknown_name_falls_back_to_fallback_children() {
+        // No binding for `nonexistent` — the element's own children
+        // (the fallback) render instead.
+        let (doc, _) = parse(
+            r#"<container><slot name="nonexistent"><text>FALLBACK</text></slot></container>"#,
+        );
+        let scope = LowerScope::default();
+        let nodes = lower_document_with_scope(&doc, &scope);
+        let Node::Container { children, .. } = &nodes[0] else {
+            panic!()
+        };
+        assert_eq!(children.len(), 1);
+        let Node::Text { content, .. } = &children[0] else {
+            panic!()
+        };
+        assert_eq!(content, "FALLBACK");
+    }
+
+    #[test]
     fn slot_named_binding_isolates_from_default() {
         let (doc, _) = parse(
             r#"<container>
@@ -2180,6 +2297,35 @@ mod tests {
         assert_eq!(
             attrs.get("data-transition-transform").map(String::as_str),
             Some("120ms")
+        );
+    }
+
+    /// Wave 13.3 — `use:<modifier-id>[="<value>"]` directive lowers
+    /// to a `data-use-<id>` semantic attribute. Authors write
+    /// `<container use:hover use:tooltip="Click to save"/>` instead
+    /// of hand-emitting the `data-use-` ladder; runtime modifier-fold
+    /// integration is a follow-up.
+    #[test]
+    fn use_namespace_lowers_to_data_use_attr() {
+        let nodes = interpret(r#"<container use:hover use:tooltip="Click to save"/>"#).unwrap();
+        let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let attrs: std::collections::HashMap<_, _> = props
+            .semantic
+            .attrs
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        // Empty-bodied `use:hover` materialises as `data-use-hover="true"`
+        // so SSR / hit-test caches see a non-empty value to dispatch on.
+        assert_eq!(
+            attrs.get("data-use-hover").map(String::as_str),
+            Some("true")
+        );
+        assert_eq!(
+            attrs.get("data-use-tooltip").map(String::as_str),
+            Some("Click to save")
         );
     }
 

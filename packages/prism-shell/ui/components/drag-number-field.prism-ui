@@ -1,0 +1,29 @@
+<!--
+  shell.drag-number-field — 24px-tall drag-to-edit numeric scrubber.
+  Wave 11.3 (Tier-2) migration of drag_number_field.rs.
+
+  Outer is a `label` with `data-key` so the inspector / event router
+  finds the bound prop. Inner row carries the optional 11px label +
+  the formatted value. Pre-formatted `display-value` prop sidesteps
+  the absence of a numeric formatter in the DSL — the caller / binding
+  emission rounds + trims via Rust's `format_drag_value`.
+-->
+<container
+    tag="label"
+    height="28"
+    style:radius="4"
+    style:background="#28000000"
+    style:background:hovered="#3c000000"
+    aria-label="{label}"
+    data:key="{key}">
+  <container
+      id="{id}::row"
+      direction="row"
+      gap="4"
+      height="grow"
+      padding-left="6"
+      padding-right="6">
+    <text if="{label}" font-size="11" style:color="#99000000">{label}</text>
+    <text font-size="12" style:color="#000000">{display-value}</text>
+  </container>
+</container>

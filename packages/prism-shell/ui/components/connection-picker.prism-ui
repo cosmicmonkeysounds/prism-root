@@ -1,0 +1,124 @@
+<!--
+  shell.connection-picker — overlay form that builds a fresh
+  SignalConnection. Wave 11.2 migration of connection_picker.rs.
+
+  Closed → 0×0 hidden overlay. Open → 320px column with 3 field
+  rows (source-signal / action-kind / target-label) + a button row
+  (Cancel + Add). Each field row carries data-role + data-field for
+  events::POINTER_ROUTES("connection-picker-field"). Empty values
+  render an em-dash placeholder.
+-->
+<container
+    if="{!open}"
+    tag="div"
+    width="0"
+    height="0"
+    data:role="connection-picker"
+    data:visible="false"
+    aria:hidden="true"/>
+<container
+    else
+    tag="div"
+    direction="column"
+    gap="6"
+    padding-left="12"
+    padding-right="12"
+    padding-top="12"
+    padding-bottom="12"
+    width="320"
+    style:background="#f0ffffff"
+    style:radius="8"
+    role="dialog"
+    aria-label="Add connection"
+    data:role="connection-picker"
+    data:visible="true">
+  <container
+      id="{id}::source"
+      tag="button"
+      direction="row"
+      gap="8"
+      padding-left="8"
+      padding-right="8"
+      padding-top="4"
+      padding-bottom="4"
+      height="32"
+      style:radius="4"
+      style:background:hovered="#0f000000"
+      role="button"
+      aria-label="Edit Signal"
+      data:role="connection-picker-field"
+      data:field="source-signal">
+    <text font-size="10" style:color="#7f000000">Signal</text>
+    <text font-size="12" style:color="#000000">{source-signal ? source-signal : '—'}</text>
+  </container>
+  <container
+      id="{id}::kind"
+      tag="button"
+      direction="row"
+      gap="8"
+      padding-left="8"
+      padding-right="8"
+      padding-top="4"
+      padding-bottom="4"
+      height="32"
+      style:radius="4"
+      style:background:hovered="#0f000000"
+      role="button"
+      aria-label="Edit Action"
+      data:role="connection-picker-field"
+      data:field="action-kind">
+    <text font-size="10" style:color="#7f000000">Action</text>
+    <text font-size="12" style:color="#000000">{action-kind ? action-kind : '—'}</text>
+  </container>
+  <container
+      id="{id}::target"
+      tag="button"
+      direction="row"
+      gap="8"
+      padding-left="8"
+      padding-right="8"
+      padding-top="4"
+      padding-bottom="4"
+      height="32"
+      style:radius="4"
+      style:background:hovered="#0f000000"
+      role="button"
+      aria-label="Edit Target"
+      data:role="connection-picker-field"
+      data:field="target-label">
+    <text font-size="10" style:color="#7f000000">Target</text>
+    <text font-size="12" style:color="#000000">{target-label ? target-label : '—'}</text>
+  </container>
+  <container
+      id="{id}::buttons"
+      direction="row"
+      gap="8"
+      padding-top="8">
+    <container
+        id="{id}::cancel"
+        tag="button"
+        direction="row"
+        padding-left="16"
+        padding-right="16"
+        height="32"
+        style:background="#11000000"
+        style:radius="4"
+        aria-label="Cancel"
+        data:role="connection-picker-cancel">
+      <text font-size="12" style:color="#000000">Cancel</text>
+    </container>
+    <container
+        id="{id}::add"
+        tag="button"
+        direction="row"
+        padding-left="16"
+        padding-right="16"
+        height="32"
+        style:background="#0060c0"
+        style:radius="4"
+        aria-label="Add connection"
+        data:role="connection-picker-add">
+      <text font-size="12" style:color="#ffffff">Add</text>
+    </container>
+  </container>
+</container>

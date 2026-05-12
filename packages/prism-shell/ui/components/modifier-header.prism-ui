@@ -1,0 +1,86 @@
+<!--
+  shell.modifier-header — section divider for one attached Modifier
+  in the Inspector. Wave 11.2 migration of modifier_header.rs.
+
+  Three per-row affordances (chips with data-role routing):
+    toggle  — left-side enable switch (check-square / square icon)
+    remove  — right-side x
+    reorder — right-side drag handle (menu icon)
+
+  Each chip is a 20×20 button with 4px padding and data-target-id +
+  data-modifier-idx so events::POINTER_ROUTES routes the click to
+  the right (node, behaviour-index) pair.
+-->
+<container
+    tag="header"
+    direction="column"
+    height="36"
+    data:role="modifier-header"
+    data:target-id="{target-id}"
+    data:modifier-id="{modifier-id}"
+    data:modifier-idx="{modifier-idx}"
+    data:disabled="{!enabled ? 'true' : ''}">
+  <container
+      id="{id}::row"
+      direction="row"
+      gap="6"
+      padding-left="8"
+      padding-right="4"
+      height="35">
+    <container
+        id="{id}::toggle"
+        tag="button"
+        width="20"
+        height="20"
+        padding-left="4"
+        padding-right="4"
+        padding-top="4"
+        padding-bottom="4"
+        aria-label="{enabled ? 'Disable' : 'Enable'}"
+        data:role="modifier-toggle"
+        data:target-id="{target-id}"
+        data:modifier-idx="{modifier-idx}"
+        data:modifier-id="{modifier-id}"
+        aria:pressed="{enabled ? 'true' : 'false'}">
+      <image
+          src="{enabled ? 'icons/check-square.svg' : 'icons/square.svg'}"
+          width="12"
+          height="12"/>
+    </container>
+    <text
+        font-size="11"
+        style:color="{enabled ? '#cc000000' : '#66000000'}">{label}</text>
+    <container id="{id}::spacer" width="grow"/>
+    <container
+        id="{id}::remove"
+        tag="button"
+        width="20"
+        height="20"
+        padding-left="4"
+        padding-right="4"
+        padding-top="4"
+        padding-bottom="4"
+        aria-label="Remove behaviour"
+        data:role="modifier-remove"
+        data:target-id="{target-id}"
+        data:modifier-idx="{modifier-idx}">
+      <image src="icons/x.svg" width="12" height="12"/>
+    </container>
+    <container
+        id="{id}::drag"
+        tag="button"
+        width="20"
+        height="20"
+        padding-left="4"
+        padding-right="4"
+        padding-top="4"
+        padding-bottom="4"
+        aria-label="Reorder behaviour"
+        data:role="modifier-reorder"
+        data:target-id="{target-id}"
+        data:modifier-idx="{modifier-idx}">
+      <image src="icons/menu.svg" width="12" height="12"/>
+    </container>
+  </container>
+  <container id="{id}::hairline" height="1" style:background="#19000000"/>
+</container>

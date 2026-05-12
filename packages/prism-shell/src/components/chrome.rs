@@ -15,8 +15,7 @@
 
 use prism_builder::style::StyleProperties;
 use prism_builder::ui_lower::{
-    bare_container, colored_text_node, hover_bg, image_node, parse_color, tinted_image_node,
-    uniform_radius,
+    bare_container, colored_text_node, hover_bg, image_node, parse_color, uniform_radius,
 };
 use prism_ui_runtime::command::Color;
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
@@ -48,51 +47,15 @@ pub fn icon_button_node(
     aria_label: Option<&str>,
     command: Option<&str>,
 ) -> UiNode {
-    icon_button_node_tinted(id, icon, enabled, aria_label, None, command)
-}
-
-/// Tinted variant of [`icon_button_node`] — paints the glyph through
-/// `tint` as a mask. The original Slint shell drove icon colour via
-/// the `colorize` property; in the runtime that's a `Node::Image`
-/// `tint`. `None` falls back to the as-authored monochrome render.
-///
-/// `command` is an optional command-table id; when set and the
-/// button is enabled, the lowered container carries
-/// `data-on-click="cmd <id>"` so the shell's `route_on_click`
-/// dispatches the click through the command table. Disabled buttons
-/// drop the attr so the rest of the pointer-down chain still gets
-/// to run.
-pub fn icon_button_node_tinted(
-    id: impl Into<String>,
-    icon: impl Into<String>,
-    enabled: bool,
-    aria_label: Option<&str>,
-    tint: Option<Color>,
-    command: Option<&str>,
-) -> UiNode {
     let id = id.into();
-    let glyph_id = format!("{id}::glyph");
     let glyph_style = StyleProperties::default();
-    let glyph = match tint {
-        Some(c) => tinted_image_node(
-            glyph_id,
-            icon.into(),
-            &glyph_style,
-            Sizing::Fixed(ICON_GLYPH_SIZE),
-            Sizing::Fixed(ICON_GLYPH_SIZE),
-            c,
-        ),
-        None => image_node(
-            glyph_id,
-            icon.into(),
-            // No cascade context here — embedded buttons don't inherit
-            // a parent text colour for their glyph. Image lowering only
-            // reads `style.color` as a default tint, which we don't want.
-            &glyph_style,
-            Sizing::Fixed(ICON_GLYPH_SIZE),
-            Sizing::Fixed(ICON_GLYPH_SIZE),
-        ),
-    };
+    let glyph = image_node(
+        format!("{id}::glyph"),
+        icon.into(),
+        &glyph_style,
+        Sizing::Fixed(ICON_GLYPH_SIZE),
+        Sizing::Fixed(ICON_GLYPH_SIZE),
+    );
 
     let command = command
         .filter(|s| !s.is_empty() && enabled)
@@ -115,63 +78,6 @@ pub fn icon_button_node_tinted(
     })
 }
 
-/// Compact 20×20 icon chip with declarative routing attrs — the
-/// per-row affordances that hang off rows in the Inspector (the
-/// three sub-buttons on `shell.modifier-header`, the future "+/×"
-/// chips on signal-connection rows, etc.).
-///
-/// Distinct from [`icon_button_node`]:
-///   * smaller (20px vs 28px) — fits inline in a row strip,
-///   * routes via `data-role` + extra attrs rather than the
-///     command-table `data-on-click="cmd …"` channel.
-///
-/// `extra_attrs` lets the caller layer per-button discriminators
-/// (`data-modifier-idx`, `data-modifier-id`, `data-edge`, …) onto
-/// the same outer container the role attr lives on.
-pub fn route_chip(
-    id: impl Into<String>,
-    icon: impl Into<String>,
-    role: &str,
-    aria_label: &str,
-    extra_attrs: &[(&str, &str)],
-) -> UiNode {
-    const CHIP_SIZE: f32 = 20.0;
-    const CHIP_ICON: f32 = 12.0;
-    const CHIP_PAD: f32 = 4.0;
-    let id = id.into();
-    let glyph_style = StyleProperties::default();
-    let glyph = image_node(
-        format!("{id}::icon"),
-        icon.into(),
-        &glyph_style,
-        Sizing::Fixed(CHIP_ICON),
-        Sizing::Fixed(CHIP_ICON),
-    );
-    let aria_owned = aria_label.to_string();
-    let role_owned = role.to_string();
-    let extras: Vec<(String, String)> = extra_attrs
-        .iter()
-        .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
-        .collect();
-    bare_container(id, vec![glyph], move |props| {
-        props.width = Sizing::Fixed(CHIP_SIZE);
-        props.height = Sizing::Fixed(CHIP_SIZE);
-        props.padding = Padding {
-            left: CHIP_PAD,
-            right: CHIP_PAD,
-            top: CHIP_PAD,
-            bottom: CHIP_PAD,
-        };
-        let mut sem = Semantic::tag("button")
-            .with_attr("data-role", role_owned.as_str())
-            .with_attr("aria-label", aria_owned.as_str());
-        for (k, v) in &extras {
-            sem = sem.with_attr(k.as_str(), v.as_str());
-        }
-        props.semantic = sem;
-    })
-}
-
 /// Zero-size placeholder used by overlay blocks (command palette,
 /// menu dropdown, context menu, component picker, help tooltip) when
 /// their visibility prop is `false`. The skeleton authors every
@@ -190,18 +96,6 @@ pub fn hidden_overlay(id: impl Into<String>, role: &'static str) -> UiNode {
             .with_attr("data-role", role)
             .with_attr("data-visible", "false")
             .with_attr("aria-hidden", "true");
-    })
-}
-
-/// Tiny indent dot — the 6×6 marker the inspector / outline / dock
-/// list use to anchor each row visually. `radius_px` typically 1px
-/// for "row" shapes (square-ish) and 3px for "node" shapes (circular).
-pub fn indent_dot(id: impl Into<String>, color: &str, radius_px: f32) -> UiNode {
-    bare_container(id, vec![], |props| {
-        props.width = Sizing::Fixed(6.0);
-        props.height = Sizing::Fixed(6.0);
-        props.radius = uniform_radius(radius_px);
-        props.background = parse_color(color);
     })
 }
 
@@ -303,85 +197,6 @@ pub fn format_drag_value(v: f64) -> String {
     }
 }
 
-/// Single coloured rectangle representing one axis arm of a gizmo
-/// (move / scale). Renders as a `<span role="presentation">` with
-/// `data-role="gizmo-axis"` and a `data-axis` attr the painter / hit
-/// tester picks up. `rounded` controls the half-thickness pill radius
-/// (move-gizmo arms are rounded, scale-gizmo arms are square).
-pub fn gizmo_axis_arm(
-    id: String,
-    axis: char,
-    length: f32,
-    thick: f32,
-    color: &str,
-    rounded: bool,
-) -> UiNode {
-    let (w, h) = if axis == 'x' {
-        (length, thick)
-    } else {
-        (thick, length)
-    };
-    let axis_str = if axis == 'x' { "x" } else { "y" };
-    bare_container(id, vec![], |p| {
-        p.width = Sizing::Fixed(w);
-        p.height = Sizing::Fixed(h);
-        p.background = parse_color(color);
-        if rounded {
-            p.radius = uniform_radius(thick / 2.0);
-        }
-        p.semantic = Semantic::tag("span")
-            .with_attr("role", "presentation")
-            .with_attr("data-role", "gizmo-axis")
-            .with_attr("data-axis", axis_str);
-    })
-}
-
-/// Coloured square / circle handle inside a gizmo (hub, cap, rotate
-/// handle). `data_role` differentiates `gizmo-hub` / `gizmo-cap` /
-/// `gizmo-handle`. `axis` opt-adds `data-axis` for cap-style handles.
-/// `radius` controls the corner round (0 = square, size/2 = circle).
-pub fn gizmo_handle(
-    id: String,
-    size: f32,
-    radius: f32,
-    color: &str,
-    aria: &str,
-    data_role: &str,
-    axis: Option<char>,
-) -> UiNode {
-    bare_container(id, vec![], |p| {
-        p.width = Sizing::Fixed(size);
-        p.height = Sizing::Fixed(size);
-        p.background = parse_color(color);
-        if radius > 0.0 {
-            p.radius = uniform_radius(radius);
-        }
-        let mut s = Semantic::tag("span")
-            .with_attr("role", "button")
-            .with_attr("aria-label", aria)
-            .with_attr("data-role", data_role);
-        if let Some(a) = axis {
-            s = s.with_attr("data-axis", if a == 'x' { "x" } else { "y" });
-        }
-        p.semantic = s;
-    })
-}
-
-/// Outer `<div role="group">` wrapper shared by every gizmo-tool block.
-/// `tool` populates the `data-tool` attr the hit tester routes through.
-pub fn gizmo_root(id: String, children: Vec<UiNode>, aria: &str, tool: &str, row: bool) -> UiNode {
-    bare_container(id, children, |p| {
-        if row {
-            p.direction = Direction::Row;
-        }
-        p.semantic = Semantic::tag("div")
-            .with_attr("role", "group")
-            .with_attr("aria-label", aria)
-            .with_attr("data-role", "gizmo")
-            .with_attr("data-tool", tool);
-    })
-}
-
 /// Resolve a hex string to a [`Color`], falling back to fully
 /// transparent when the parse fails. Used for chrome primitives whose
 /// "no colour" branch should still produce a deterministic value.
@@ -431,18 +246,6 @@ mod tests {
             .attrs
             .iter()
             .any(|(k, v)| k == "disabled" && v == "disabled"));
-    }
-
-    #[test]
-    fn indent_dot_renders_as_6x6_filled_square() {
-        let n = indent_dot("dot", "#000000", 3.0);
-        let UiNode::Container { props, .. } = n else {
-            panic!()
-        };
-        assert_eq!(props.width, Sizing::Fixed(6.0));
-        assert_eq!(props.height, Sizing::Fixed(6.0));
-        assert_eq!(props.radius.tl, 3.0);
-        assert!(props.background.is_some());
     }
 
     #[test]

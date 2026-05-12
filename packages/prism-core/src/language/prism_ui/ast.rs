@@ -110,6 +110,14 @@ pub enum AttributeNamespace {
     /// install, per-prop interpolation) lands when the
     /// `Effect`-driven animator does (`docs/dev/composable-builder-plan.md` §9.4).
     Transition,
+    /// **Wave 13.3** — `use:<modifier-id>[="<value>"]` directive
+    /// (Vue `v-X`, Svelte `use:X`). Author shorthand for attaching a
+    /// registered `ModifierBehaviour` from DSL. Today the runtime
+    /// lowers `use:hover` / `use:tooltip="Click"` to a `data-use-<id>`
+    /// semantic attr so author intent round-trips; full modifier-fold
+    /// integration is a follow-up alongside the resolver-side
+    /// modifier seam.
+    Use,
     /// `class` / `id` — CSS-style addressing for inspector + HTML.
     Identifier,
 }
@@ -176,6 +184,7 @@ impl AttributeNamespace {
                 "data" => AttributeNamespace::Data,
                 "route" => AttributeNamespace::Route,
                 "transition" => AttributeNamespace::Transition,
+                "use" => AttributeNamespace::Use,
                 _ => return (AttributeNamespace::Bare, raw.to_string()),
             };
             return (ns, rest.to_string());

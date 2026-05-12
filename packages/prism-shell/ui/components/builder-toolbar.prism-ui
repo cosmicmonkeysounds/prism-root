@@ -1,0 +1,122 @@
+<!--
+  shell.builder-toolbar — 32px strip above the builder canvas.
+  Wave 11.2 migration of builder_toolbar.rs.
+
+  Four declarative clusters separated by `shell.toolbar-separator`:
+    1. Alignment buttons (3× shell.icon-button via `for`)
+    2. Device-mode pills (3× pill via `for`, active state via ternary)
+    3. Zoom cluster (zoom-out + reset-pill + zoom-in)
+    4. Node-count badge (singular vs plural via ternary)
+
+  Each pill / button has a `data:role` + `data:command` (where applicable)
+  that route through the shell's command-table dispatch.
+-->
+<container
+    tag="nav"
+    direction="row"
+    gap="6"
+    width="grow"
+    height="32"
+    padding-left="8"
+    padding-right="8"
+    style:background="#f4000000"
+    role="toolbar"
+    aria-label="Builder canvas toolbar"
+    data:role="builder-toolbar">
+
+  <container
+      id="{id}::align"
+      direction="row"
+      gap="2"
+      height="grow"
+      role="group"
+      aria-label="Alignment"
+      data:role="toolbar-align-cluster">
+    <shell.icon-button
+        for="entry in align-entries"
+        id="{id}::align::{entry.entry-id}"
+        icon="{entry.icon}"
+        tooltip-text="{entry.tooltip}"
+        command="{entry.command}"/>
+  </container>
+
+  <shell.toolbar-separator id="{id}::sep-1"/>
+
+  <container
+      id="{id}::device"
+      direction="row"
+      gap="4"
+      height="grow"
+      role="radiogroup"
+      aria-label="Device preview"
+      data:role="toolbar-device-cluster">
+    <container
+        for="entry in device-entries"
+        id="{id}::device::{entry.entry-id}"
+        tag="button"
+        direction="row"
+        height="24"
+        padding-left="10"
+        padding-right="10"
+        style:background="{entry.entry-id == device ? '#260060c0' : '#0c000000'}"
+        style:radius="3"
+        role="radio"
+        aria-label="{entry.tooltip}"
+        aria:checked="{entry.entry-id == device ? 'true' : ''}"
+        data:role="toolbar-device-pill"
+        data:device="{entry.entry-id}">
+      <text font-size="11" style:color="{entry.entry-id == device ? '#000000' : '#99000000'}">{entry.label}</text>
+    </container>
+  </container>
+
+  <shell.toolbar-separator id="{id}::sep-2"/>
+
+  <container
+      id="{id}::zoom"
+      direction="row"
+      gap="4"
+      height="grow"
+      role="group"
+      aria-label="Zoom"
+      data:role="toolbar-zoom-cluster">
+    <shell.icon-button
+        id="{id}::zoom::out"
+        icon="icons/minus.svg"
+        tooltip-text="Zoom out"
+        command="view.zoom-out"/>
+    <container
+        id="{id}::zoom::pill"
+        tag="button"
+        direction="row"
+        height="24"
+        padding-left="10"
+        padding-right="10"
+        style:background="#0c000000"
+        style:radius="3"
+        aria-label="Reset zoom to 100%"
+        data:role="toolbar-zoom-reset">
+      <text font-size="11" style:color="#000000">{zoom-label}</text>
+    </container>
+    <shell.icon-button
+        id="{id}::zoom::in"
+        icon="icons/plus.svg"
+        tooltip-text="Zoom in"
+        command="view.zoom-in"/>
+  </container>
+
+  <shell.toolbar-separator id="{id}::sep-3"/>
+
+  <container
+      id="{id}::count"
+      direction="row"
+      height="24"
+      padding-left="10"
+      padding-right="10"
+      style:background="#0c000000"
+      style:radius="3"
+      role="status"
+      aria-label="Node count"
+      data:role="toolbar-node-count">
+    <text font-size="11" style:color="#99000000">{node-count == 1 ? '1 node' : node-count + ' nodes'}</text>
+  </container>
+</container>

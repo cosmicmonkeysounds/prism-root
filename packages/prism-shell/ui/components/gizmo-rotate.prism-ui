@@ -1,0 +1,35 @@
+<!--
+  shell.gizmo-rotate — rotate gizmo overlay (orange ring + handle dot).
+  Wave 11.3 (Tier-2) migration of gizmo_rotate.rs.
+
+  Ring fill is transparent — the renderer reads `data-stroke` to paint
+  the orange outline. Handle is the draggable degree marker.
+-->
+<container
+    tag="div"
+    direction="column"
+    role="group"
+    aria-label="Rotate gizmo"
+    data:role="gizmo"
+    data:tool="rotate">
+  <container
+      id="{id}::ring"
+      tag="span"
+      width="80"
+      height="80"
+      style:background="#00ff8c1a"
+      style:radius="40"
+      role="presentation"
+      data:role="gizmo-ring"
+      data:stroke="#ff8c1aff"/>
+  <container
+      id="{id}::handle"
+      tag="span"
+      width="12"
+      height="12"
+      style:background="#ffffffff"
+      style:radius="6"
+      role="button"
+      aria-label="Rotate handle"
+      data:role="gizmo-handle"/>
+</container>

@@ -1,0 +1,60 @@
+<!--
+  shell.modifier-picker — overlay listing every behaviour the
+  ModifierRegistry knows about, minus the ones already attached.
+  Wave 11.2 migration of modifier_picker.rs.
+
+  Closed → 0×0 hidden overlay (§43-A2 pattern). Open → 280px column
+  with one row per option; each row carries data-role + data-modifier-id
+  for `events::POINTER_ROUTES("modifier-picker-select")`. Empty options
+  state shows "All behaviours attached." text.
+-->
+<container
+    if="{!open}"
+    tag="div"
+    width="0"
+    height="0"
+    data:role="modifier-picker"
+    data:visible="false"
+    aria:hidden="true"/>
+<container
+    else
+    tag="div"
+    direction="column"
+    gap="2"
+    padding-left="6"
+    padding-right="6"
+    padding-top="6"
+    padding-bottom="6"
+    width="280"
+    style:background="#f0ffffff"
+    style:radius="8"
+    role="menu"
+    aria-label="Add behaviour"
+    data:role="modifier-picker"
+    data:target-id="{target-id}"
+    data:visible="true">
+  <text if="{!options}" font-size="12" style:color="#7f000000">All behaviours attached.</text>
+  <container
+      for="item in options"
+      id="{id}::row::{item.id}"
+      tag="button"
+      direction="row"
+      gap="8"
+      padding-left="8"
+      padding-right="8"
+      padding-top="6"
+      padding-bottom="6"
+      height="40"
+      style:radius="4"
+      style:background:hovered="#0f000000"
+      role="menuitem"
+      aria-label="{item.label}"
+      data:role="modifier-picker-select"
+      data:target-id="{target-id}"
+      data:modifier-id="{item.id}">
+    <container id="{id}::row::{item.id}::col" direction="column" gap="2">
+      <text font-size="12" style:color="#000000">{item.label}</text>
+      <text if="{item.description}" font-size="10" style:color="#7f000000">{item.description}</text>
+    </container>
+  </container>
+</container>

@@ -160,6 +160,17 @@ pub struct LowerCtx<'a> {
     /// no new abstraction, no parallel context type, the existing
     /// `LowerCtx` simply carries a sparse extra slot.
     host_children: Option<&'a [UiNode]>,
+    /// **Wave 13.1** — named-slot map. The resolver partitions a
+    /// dispatched element's AST children by their `slot="X"` attribute,
+    /// pre-lowers each bucket in the caller's scope, and threads the
+    /// resulting `HashMap<slot-name, Vec<UiNode>>` here. A DSL component
+    /// body reads back via `<slot name="X"/>`, which falls through to
+    /// the runtime's `LowerScope::host_children_for_slot(name)` when
+    /// no AST-level slot binding carries that name. Children with no
+    /// `slot=` attribute continue to land in `host_children` as the
+    /// default bucket — back-compat with Wave 11.2's single-slot
+    /// contract.
+    host_children_by_slot: Option<Arc<HashMap<String, Vec<UiNode>>>>,
     /// Tag-keyed binding emissions snapshot, threaded through from
     /// [`prism_ui_runtime::interpret::LowerScope::with_tag_emissions`].
     /// When [`Self::lower_as`] synthesises a routed content tag (the
@@ -207,6 +218,7 @@ impl<'a> LowerCtx<'a> {
             registry,
             parent_style,
             host_children: None,
+            host_children_by_slot: None,
             tag_emissions: None,
             block_invalidator: None,
             bindings: None,
@@ -274,6 +286,23 @@ impl<'a> LowerCtx<'a> {
         self
     }
 
+    /// **Wave 13.1** — install the named-slot map. Composition-style
+    /// blocks (`shell.app-window`) thread this through to the DSL
+    /// loader, which seeds the runtime `LowerScope::host_children_by_slot`
+    /// so `<slot name="X"/>` reads pull from the right bucket.
+    pub fn with_host_children_by_slot(mut self, slots: Arc<HashMap<String, Vec<UiNode>>>) -> Self {
+        self.host_children_by_slot = Some(slots);
+        self
+    }
+
+    /// **Wave 13.1** — the named-slot bucket map, if a host upstream
+    /// supplied one. Clone-cheap (`Arc`); callers forward into a
+    /// runtime `LowerScope` via
+    /// `LowerScope::with_host_children_by_slot(ctx.host_children_by_slot().cloned())`.
+    pub fn host_children_by_slot(&self) -> Option<&Arc<HashMap<String, Vec<UiNode>>>> {
+        self.host_children_by_slot.as_ref()
+    }
+
     /// Install the tag-keyed emissions map snapshot. The resolver hands
     /// this through from
     /// [`prism_ui_runtime::interpret::LowerScope::tag_emissions_arc`];
@@ -332,6 +361,7 @@ impl<'a> LowerCtx<'a> {
             registry: self.registry,
             parent_style: &style,
             host_children: None,
+            host_children_by_slot: None,
             tag_emissions: self.tag_emissions.clone(),
             block_invalidator: self.block_invalidator.clone(),
             bindings: self.bindings,
@@ -598,6 +628,7 @@ impl<'a> LowerCtx<'a> {
             registry: self.registry,
             parent_style: &style,
             host_children,
+            host_children_by_slot: None,
             tag_emissions: self.tag_emissions.clone(),
             block_invalidator: self.block_invalidator.clone(),
             bindings: self.bindings,

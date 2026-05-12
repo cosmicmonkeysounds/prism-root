@@ -215,7 +215,9 @@ fn synthetic_attribute(key: &str, value: &Value) -> prism_ui_ast::Attribute {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::components::{register_shell_builtins, ShellComponentRegistry};
+    use crate::components::{
+        register_shell_builtins, registry::register_full_shell_chrome, ShellComponentRegistry,
+    };
     use crate::props::ShellPropBindings;
     use crate::AppState;
 
@@ -420,7 +422,9 @@ mod tests {
         let skel = Skeleton::load().expect("parse");
         let bindings = ShellPropBindings::with_builtins();
         let mut reg = ShellComponentRegistry::new();
-        register_shell_builtins(&mut reg).expect("register");
+        // Wave 11.2 batch: `shell.app-window` is DSL-authored, so the
+        // skeleton's outer tag resolves via the full chrome registry.
+        register_full_shell_chrome(&mut reg).expect("register");
         let resolver = reg.tag_resolver();
 
         let mut state = AppState::default();

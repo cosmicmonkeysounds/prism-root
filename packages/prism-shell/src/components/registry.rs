@@ -117,35 +117,20 @@ pub static SHELL_BUILTINS: &[&BlockSpec] = &[
     // `register_prism_ui_components` in `shell.rs`. The
     // `prism_ui_specs_register_disjoint_from_native_builtins` test in
     // `prism_ui_loader.rs` pins that they don't double-register.
-    &super::app_card::APP_CARD_SPEC,
-    &super::drag_number_field::DRAG_NUMBER_FIELD_SPEC,
     &super::transform_editor::TRANSFORM_EDITOR_SPEC,
     &super::field_editor::FIELD_EDITOR_SPEC,
-    &super::app_window::APP_WINDOW_SPEC,
-    &super::dock_divider::DOCK_DIVIDER_SPEC,
-    &super::dock_tab_bar::DOCK_TAB_BAR_SPEC,
     &super::dock_panel::DOCK_PANEL_SPEC,
     &super::dock_workspace::DOCK_WORKSPACE_SPEC,
     &super::command_palette::COMMAND_PALETTE_SPEC,
     &super::schema_designer::SCHEMA_DESIGNER_SPEC,
     &super::nav_graph::NAV_GRAPH_SPEC,
     &super::code_editor::CODE_EDITOR_SPEC,
-    &super::gizmo_move::GIZMO_MOVE_SPEC,
-    &super::gizmo_rotate::GIZMO_ROTATE_SPEC,
-    &super::gizmo_scale::GIZMO_SCALE_SPEC,
-    &super::resize_handle::RESIZE_HANDLE_SPEC,
     &super::builder_canvas::BUILDER_CANVAS_SPEC,
-    &super::builder_toolbar::BUILDER_TOOLBAR_SPEC,
-    &super::component_picker::COMPONENT_PICKER_SPEC,
     // Wave 1 — `docs/dev/composable-builder-plan.md`. The composable-
-    // inspector trio: one section header per attached behaviour, an
-    // add-modifier footer, and an overlay picker.
-    &super::modifier_header::MODIFIER_HEADER_SPEC,
-    &super::modifier_picker::MODIFIER_PICKER_SPEC,
-    // Wave 4 — connection picker (overlay) lands here; the
-    // add-connection footer button migrated to `.prism-ui` source in
-    // Wave 11.2 (see prism_ui_loader::SHELL_PRISM_UI_COMPONENTS).
-    &super::connection_picker::CONNECTION_PICKER_SPEC,
+    // inspector trio (header / add-button / picker) all live as DSL
+    // rows now — see prism_ui_loader::SHELL_PRISM_UI_COMPONENTS.
+    // Wave 4 — connection picker (overlay) and Wave 11 add-connection
+    // footer both live in DSL — see prism_ui_loader::SHELL_PRISM_UI_COMPONENTS.
 ];
 
 /// Register every spec in [`SHELL_BUILTINS`]. One-line fan-out via
@@ -385,7 +370,9 @@ mod tests {
         use prism_ui_runtime::layout::Node as UiNode;
 
         let mut reg = ShellComponentRegistry::new();
-        register_shell_builtins(&mut reg).expect("register");
+        // Wave 11.2 batch: `shell.app-window` is now DSL-authored, so
+        // resolution goes through the full chrome registry.
+        register_full_shell_chrome(&mut reg).expect("register");
 
         let (doc, errs) = parse(
             r##"<shell.app-window id="aw" status="Ready">

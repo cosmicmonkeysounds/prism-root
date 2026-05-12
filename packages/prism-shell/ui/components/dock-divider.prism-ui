@@ -1,0 +1,18 @@
+<!--
+  shell.dock-divider — 6px draggable splitter between dock panels.
+  Wave 11.3 (Tier-2) migration of dock_divider.rs.
+
+  Orientation drives the cross-axis sizing:
+    - vertical (default): 6px wide, full-height
+    - horizontal:         full-width, 6px tall
+  `length > 1` overrides Grow with a fixed pixel length on the
+  long axis.
+-->
+<container
+    tag="div"
+    width="{orientation == 'horizontal' ? (length > 1 ? length : 'grow') : 6}"
+    height="{orientation == 'horizontal' ? 6 : (length > 1 ? length : 'grow')}"
+    style:background="#10000000"
+    role="separator"
+    aria-orientation="{orientation == 'horizontal' ? 'horizontal' : 'vertical'}"
+    data:divider="{id}"/>

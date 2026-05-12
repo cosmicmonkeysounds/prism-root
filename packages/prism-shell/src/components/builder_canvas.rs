@@ -479,13 +479,15 @@ fn format_coord(v: f64) -> String {
 mod tests {
     use super::*;
 
-    use crate::components::registry::{register_shell_builtins, ShellComponentRegistry};
+    use crate::components::registry::{register_full_shell_chrome, ShellComponentRegistry};
     use crate::components::testing::test_node;
 
     fn lower(props: Value) -> UiNode {
         let n = test_node("bc", "shell.builder-canvas", props);
         let mut reg = ShellComponentRegistry::new();
-        register_shell_builtins(&mut reg).expect("register");
+        // Wave 11.2 batch: `shell.builder-toolbar` is DSL-authored, so
+        // the canvas's toolbar-dispatch needs the full chrome registry.
+        register_full_shell_chrome(&mut reg).expect("register");
         let cascade = StyleProperties::default();
         let ctx = LowerCtx::new(Some(reg.as_component_registry()), &cascade);
         builder_canvas_lower(&ctx, &n, &cascade)
@@ -634,7 +636,7 @@ mod tests {
         let mut n = test_node("bc", "shell.builder-canvas", props);
         n.children = doc_nodes;
         let mut reg = ShellComponentRegistry::new();
-        register_shell_builtins(&mut reg).expect("register shell");
+        register_full_shell_chrome(&mut reg).expect("register shell");
         // The preview nodes are `container` / `text` etc. — register
         // the builder builtins so `lower_children` can resolve them.
         let mut comp_reg = prism_builder::ComponentRegistry::new();

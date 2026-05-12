@@ -108,7 +108,7 @@ pub const DOCK_PANEL_SPEC: prism_builder::BlockSpec =
 mod tests {
     use super::*;
 
-    use crate::components::registry::{register_shell_builtins, ShellComponentRegistry};
+    use crate::components::registry::{register_full_shell_chrome, ShellComponentRegistry};
     use crate::components::testing::test_node_with_children;
     use prism_builder::document::Node as BuilderNode;
     use serde_json::json;
@@ -120,7 +120,9 @@ mod tests {
     fn lower(props: Value, kids: Vec<BuilderNode>) -> UiNode {
         let cascade = StyleProperties::default();
         let mut r = ShellComponentRegistry::new();
-        register_shell_builtins(&mut r).expect("register");
+        // Wave 11.2 batch: `shell.dock-tab-bar` is DSL-authored, so the
+        // panel's dispatch path needs the full chrome registry.
+        register_full_shell_chrome(&mut r).expect("register");
         let owned = r;
         let ctx = LowerCtx::new(Some(owned.as_component_registry()), &cascade);
         dock_panel_lower(&ctx, &node(props, kids), &cascade)

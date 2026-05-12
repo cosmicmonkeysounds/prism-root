@@ -1,0 +1,64 @@
+<!--
+  shell.gizmo-scale — Godot-style scale gizmo. Wave 11.3 (Tier-2)
+  migration of gizmo_scale.rs.
+
+  Red arm + red square cap (X axis), green arm + green square cap
+  (Y axis), and a white near-square central hub. Arms are square
+  (radius=0) unlike move; caps are flush squares.
+-->
+<container
+    tag="div"
+    direction="row"
+    role="group"
+    aria-label="Scale gizmo"
+    data:role="gizmo"
+    data:tool="scale">
+  <container
+      id="{id}::arm-x"
+      tag="span"
+      width="56"
+      height="4"
+      style:background="#ff4040ff"
+      role="presentation"
+      data:role="gizmo-axis"
+      data:axis="x"/>
+  <container
+      id="{id}::cap-x"
+      tag="span"
+      width="12"
+      height="12"
+      style:background="#ff4040ff"
+      role="button"
+      aria-label="Scale X handle"
+      data:role="gizmo-cap"
+      data:axis="x"/>
+  <container
+      id="{id}::arm-y"
+      tag="span"
+      width="4"
+      height="56"
+      style:background="#40c060ff"
+      role="presentation"
+      data:role="gizmo-axis"
+      data:axis="y"/>
+  <container
+      id="{id}::cap-y"
+      tag="span"
+      width="12"
+      height="12"
+      style:background="#40c060ff"
+      role="button"
+      aria-label="Scale Y handle"
+      data:role="gizmo-cap"
+      data:axis="y"/>
+  <container
+      id="{id}::hub"
+      tag="span"
+      width="12"
+      height="12"
+      style:background="#ffffffff"
+      style:radius="2"
+      role="button"
+      aria-label="Uniform scale hub"
+      data:role="gizmo-hub"/>
+</container>
