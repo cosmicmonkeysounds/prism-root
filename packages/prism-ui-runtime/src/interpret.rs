@@ -31,12 +31,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use prism_core::language::prism_ui::{
-    parse, AttributeNamespace, AttributeValue, Document as AstDocument, Element, Node as AstNode,
-    ParseError,
+    parse, split_state_suffix, AttributeNamespace, AttributeValue, Document as AstDocument,
+    Element, Node as AstNode, ParseError,
 };
 
 use crate::command::{Color, CornerRadius};
-use crate::layout::{ContainerProps, Direction, Node, Padding, Semantic, Sizing, TextProps};
+use crate::layout::{
+    ContainerProps, Direction, HoverOverrides, Node, Padding, Semantic, Sizing, TextProps,
+};
 
 // ---------------------------------------------------------------------------
 // Tag resolver — DI hook for unknown tags
@@ -693,24 +695,69 @@ fn apply_container_attributes(
                     *id = v;
                 }
             }
-            AttributeNamespace::Style => match local {
-                "background" => {
-                    if let Some(c) = raw.as_deref().and_then(parse_color) {
-                        props.background = Some(c);
+            // Wave 9.2: `style:<key>:<state>="<value>"` peels the
+            // trailing `:hovered` / `:selected` / `:focused` suffix
+            // and routes the override into the matching sparse
+            // bundle. `:hovered` lands on
+            // [`ContainerProps::hover`], which the layout pass
+            // already swaps in when the node's id matches
+            // [`Surface::hovered_id`]. `:selected` / `:focused` have
+            // no container-level runtime infra yet, so the override
+            // round-trips as a `data-style-<key>-<state>="<value>"`
+            // semantic attribute — same shape as Wave 9.4
+            // transitions: data carries the intent, runtime wiring
+            // lands as a follow-up without changing the authoring
+            // grammar.
+            AttributeNamespace::Style => {
+                let (key, state) = split_state_suffix(local);
+                match (key, state) {
+                    ("background", None) => {
+                        if let Some(c) = raw.as_deref().and_then(parse_color) {
+                            props.background = Some(c);
+                        }
                     }
-                }
-                "radius" => {
-                    if let Some(v) = raw.as_deref().and_then(parse_f32) {
-                        props.radius = CornerRadius {
-                            tl: v,
-                            tr: v,
-                            br: v,
-                            bl: v,
-                        };
+                    ("radius", None) => {
+                        if let Some(v) = raw.as_deref().and_then(parse_f32) {
+                            props.radius = CornerRadius {
+                                tl: v,
+                                tr: v,
+                                br: v,
+                                bl: v,
+                            };
+                        }
                     }
+                    ("background", Some("hovered")) => {
+                        if let Some(c) = raw.as_deref().and_then(parse_color) {
+                            props
+                                .hover
+                                .get_or_insert_with(HoverOverrides::default)
+                                .background = Some(c);
+                        }
+                    }
+                    ("radius", Some("hovered")) => {
+                        if let Some(v) = raw.as_deref().and_then(parse_f32) {
+                            props
+                                .hover
+                                .get_or_insert_with(HoverOverrides::default)
+                                .radius = Some(CornerRadius {
+                                tl: v,
+                                tr: v,
+                                br: v,
+                                bl: v,
+                            });
+                        }
+                    }
+                    (key, Some(state)) => {
+                        if let Some(value) = raw {
+                            props
+                                .semantic
+                                .attrs
+                                .push((format!("data-style-{}-{}", key, state), value));
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
-            },
+            }
             // §43 A1: `on:<event>="<action>"` lowers to a
             // `data-on-<event>` semantic attribute. The shell event
             // router reads it back at pointer-down time and dispatches
@@ -725,6 +772,73 @@ fn apply_container_attributes(
                         .semantic
                         .attrs
                         .push((format!("data-on-{}", local), action));
+                }
+            }
+            // Wave 9.1: `route:<key>="<value>"` lowers to a
+            // `data-<key>` semantic attribute. Lifts the hit-test
+            // routing convention — `data-role`, `data-target-id`,
+            // `data-direction`, etc. — into a typed namespace so
+            // `.prism-ui` authors write
+            // `<container route:role="resize-handle" route:direction="br"/>`
+            // instead of the bare `data-` ladder. The runtime
+            // contract is the same — `data-*` attrs flow through
+            // the hit-test cache verbatim.
+            AttributeNamespace::Route => {
+                if let Some(value) = raw {
+                    props
+                        .semantic
+                        .attrs
+                        .push((format!("data-{}", local), value));
+                }
+            }
+            // `aria:<role>="<value>"` and `data:<key>="<value>"` are
+            // pass-through; preserve them on the semantic emission
+            // so the HTML / SSR backends inherit them and the
+            // hit-test cache can route off them like any `data-*`.
+            AttributeNamespace::Aria => {
+                if let Some(value) = raw {
+                    props
+                        .semantic
+                        .attrs
+                        .push((format!("aria-{}", local), value));
+                }
+            }
+            AttributeNamespace::Data => {
+                if let Some(value) = raw {
+                    props
+                        .semantic
+                        .attrs
+                        .push((format!("data-{}", local), value));
+                }
+            }
+            // Wave 9.4: `transition:<prop>="<duration>"` records a
+            // declarative animation hint as `data-transition-<prop>`
+            // so the host can read it at install time. The runtime
+            // `Effect`-driven animator that consumes the hint is
+            // the follow-up — today the data round-trips through
+            // the semantic attrs without behaviour change.
+            AttributeNamespace::Transition => {
+                if let Some(value) = raw {
+                    props
+                        .semantic
+                        .attrs
+                        .push((format!("data-transition-{}", local), value));
+                }
+            }
+            // `bind:<key>="<source>"` is sugar for
+            // `prism_builder::signal::ActionKind::Bind { target_key,
+            // source }` — but the bind installer runs against the
+            // canvas document's `connections` list, not the
+            // interpreted shell skeleton. Surface the binding
+            // verbatim as `data-bind-<key>` so the host can either
+            // install the effect at boot (the dioxus-inspiration
+            // Phase 4 path) or no-op cleanly during the SSR walk.
+            AttributeNamespace::Bind => {
+                if let Some(value) = raw {
+                    props
+                        .semantic
+                        .attrs
+                        .push((format!("data-bind-{}", local), value));
                 }
             }
             _ => {}
@@ -1426,6 +1540,217 @@ mod tests {
             attrs.get("data-on-hover").map(String::as_str),
             Some("cmd help.show"),
         );
+    }
+
+    /// Wave 9.1 — `route:<key>="<value>"` lowers to a `data-<key>`
+    /// semantic attribute the hit-test cache reads off. The
+    /// namespace is sugar — `route:role="x"` and `data:role="x"`
+    /// emit the same `data-role="x"`.
+    #[test]
+    fn route_namespace_lowers_to_data_dash_attr_on_container() {
+        let nodes =
+            interpret(r#"<container id="btn" route:role="resize-handle" route:direction="br"/>"#)
+                .unwrap();
+        let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+            panic!("expected container, got {:?}", nodes[0])
+        };
+        let attrs: std::collections::HashMap<_, _> = props
+            .semantic
+            .attrs
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        assert_eq!(
+            attrs.get("data-role").map(String::as_str),
+            Some("resize-handle")
+        );
+        assert_eq!(attrs.get("data-direction").map(String::as_str), Some("br"));
+    }
+
+    /// `data:<key>="<value>"` pass-through stays equivalent to the
+    /// `route:` namespace — same lowered shape, different
+    /// authoring vocabulary (data: is the bare pass-through,
+    /// route: is sugar for the hit-test conventions). Either form
+    /// reaches the hit cache.
+    #[test]
+    fn data_namespace_lowers_to_data_dash_attr_on_container() {
+        let nodes =
+            interpret(r#"<container data:role="palette-item" data:target-id="text"/>"#).unwrap();
+        let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let attrs: std::collections::HashMap<_, _> = props
+            .semantic
+            .attrs
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        assert_eq!(
+            attrs.get("data-role").map(String::as_str),
+            Some("palette-item")
+        );
+        assert_eq!(
+            attrs.get("data-target-id").map(String::as_str),
+            Some("text")
+        );
+    }
+
+    /// `aria:<role>="<value>"` lowers to an `aria-<role>` semantic
+    /// attribute — the SSR + HTML backends pick it up verbatim,
+    /// the runtime hit-test cache does not gate on aria-* attrs
+    /// today but the data round-trips so the convention stays
+    /// addressable.
+    #[test]
+    fn aria_namespace_lowers_to_aria_dash_attr_on_container() {
+        let nodes = interpret(r#"<container aria:label="Resize" aria:hidden="false"/>"#).unwrap();
+        let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let attrs: std::collections::HashMap<_, _> = props
+            .semantic
+            .attrs
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        assert_eq!(attrs.get("aria-label").map(String::as_str), Some("Resize"));
+        assert_eq!(attrs.get("aria-hidden").map(String::as_str), Some("false"));
+    }
+
+    /// Wave 9.4 — `transition:<prop>="<duration>"` lowers to a
+    /// `data-transition-<prop>` semantic attribute the
+    /// `Effect`-driven animator (follow-up) consumes.
+    #[test]
+    fn transition_namespace_lowers_to_data_transition_attr() {
+        let nodes =
+            interpret(r#"<container transition:opacity="200ms" transition:transform="120ms"/>"#)
+                .unwrap();
+        let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let attrs: std::collections::HashMap<_, _> = props
+            .semantic
+            .attrs
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        assert_eq!(
+            attrs.get("data-transition-opacity").map(String::as_str),
+            Some("200ms")
+        );
+        assert_eq!(
+            attrs.get("data-transition-transform").map(String::as_str),
+            Some("120ms")
+        );
+    }
+
+    /// `bind:<key>="<source>"` lowers to a `data-bind-<key>`
+    /// semantic attribute carrying the source path verbatim. The
+    /// reactive-binding installer (Phase 4 of the dioxus plan)
+    /// reads these off when the document loads.
+    #[test]
+    fn bind_namespace_lowers_to_data_bind_attr() {
+        let nodes = interpret(r#"<container bind:title="$selection.name"/>"#).unwrap();
+        let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let attrs: std::collections::HashMap<_, _> = props
+            .semantic
+            .attrs
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        assert_eq!(
+            attrs.get("data-bind-title").map(String::as_str),
+            Some("$selection.name")
+        );
+    }
+
+    /// Wave 9.2 — `style:background:hovered="<color>"` folds into
+    /// the container's `hover` override bundle. The plain
+    /// `style:background` still lands on `props.background`; the
+    /// `:hovered` variant only contributes to `HoverOverrides`.
+    #[test]
+    fn style_state_namespace_hovered_lowers_into_hover_overrides() {
+        let nodes = interpret(
+            r##"<container style:background="#000000" style:background:hovered="#3366ff"/>"##,
+        )
+        .unwrap();
+        let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let bg = props.background.expect("resting background set");
+        assert_eq!((bg.r, bg.g, bg.b), (0x00, 0x00, 0x00));
+        let hover = props.hover.as_ref().expect("hover bundle populated");
+        let hbg = hover.background.expect("hover background set");
+        assert_eq!((hbg.r, hbg.g, hbg.b), (0x33, 0x66, 0xff));
+    }
+
+    /// Wave 9.2 — `style:radius:hovered="<px>"` rounds all four
+    /// corners on hover, mirroring the resting-radius shape.
+    #[test]
+    fn style_state_namespace_hovered_lowers_radius_to_hover_overrides() {
+        let nodes = interpret(r#"<container style:radius:hovered="8"/>"#).unwrap();
+        let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let hover = props.hover.as_ref().expect("hover bundle populated");
+        let r = hover.radius.expect("hover radius set");
+        assert!((r.tl - 8.0).abs() < f32::EPSILON);
+        assert!((r.br - 8.0).abs() < f32::EPSILON);
+    }
+
+    /// Wave 9.2 — `:selected` / `:focused` states have no
+    /// container-level runtime infra yet, so the override
+    /// round-trips as `data-style-<key>-<state>` semantic attrs.
+    /// Same shape as Wave 9.4 transitions — data carries author
+    /// intent, runtime hookup is the follow-up.
+    #[test]
+    fn style_state_namespace_selected_and_focused_round_trip_as_data_attrs() {
+        let nodes = interpret(
+            r##"<container style:background:selected="#ff0000" style:background:focused="#00ff00"/>"##,
+        )
+        .unwrap();
+        let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let attrs: std::collections::HashMap<_, _> = props
+            .semantic
+            .attrs
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        assert_eq!(
+            attrs
+                .get("data-style-background-selected")
+                .map(String::as_str),
+            Some("#ff0000")
+        );
+        assert_eq!(
+            attrs
+                .get("data-style-background-focused")
+                .map(String::as_str),
+            Some("#00ff00")
+        );
+        assert!(
+            props.hover.is_none(),
+            "non-hover states should not populate hover"
+        );
+    }
+
+    /// Wave 9.2 — an unrecognized state suffix (`:active`) is
+    /// treated as part of the key (no split), so the lookup
+    /// against the bare key/state pair falls through cleanly
+    /// without touching `props.background` / `props.hover` /
+    /// `props.semantic.attrs`.
+    #[test]
+    fn style_state_namespace_unknown_suffix_falls_through_cleanly() {
+        let nodes = interpret(r##"<container style:background:active="#abcdef"/>"##).unwrap();
+        let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        assert!(props.background.is_none());
+        assert!(props.hover.is_none());
+        assert!(props.semantic.attrs.is_empty());
     }
 
     #[test]

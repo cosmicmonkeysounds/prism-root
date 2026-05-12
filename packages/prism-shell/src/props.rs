@@ -239,7 +239,16 @@ fn register_builtin_bindings(reg: &mut ShellPropBindings) {
     reg.register(
         "shell.builder-canvas",
         Box::new(|ctx| {
-            let props = ctx.state.canvas.builder_canvas_props();
+            let mut props = ctx.state.canvas.builder_canvas_props();
+            // Wave 3.2 polish: thread the in-flight palette-drag
+            // state into the canvas's prop bag so the overlay layer
+            // paints a ghost rect at the cursor. The drag lives on
+            // `CatalogSlot`, the canvas reads only `CanvasSlot` —
+            // one binding row merges them so the canvas block stays
+            // single-source.
+            props["palette-drag"] = crate::state::CanvasSlot::palette_drag_overlay(
+                ctx.state.catalog.palette_drag.as_ref(),
+            );
             // Wave 1: thread the shell's modifier registry into the
             // builder's `LowerCtx::with_modifier_registry` so attached
             // `node.modifiers` fold over each block's output during
@@ -265,6 +274,13 @@ fn register_builtin_bindings(reg: &mut ShellPropBindings) {
                     .modifier_picker_props(ctx.modifier_registry),
             )
         }),
+    );
+
+    // Wave 4.3 — `shell.connection-picker` binding. The overlay's
+    // four props mirror its schema (open + the three form fields).
+    reg.register(
+        "shell.connection-picker",
+        Box::new(|ctx| PropEmission::from_props(ctx.state.overlay.connection_picker_props())),
     );
 
     // Stub bindings — derived, not maintained. Every id in

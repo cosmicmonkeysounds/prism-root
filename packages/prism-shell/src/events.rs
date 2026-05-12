@@ -280,6 +280,21 @@ const POINTER_ROUTES: &[(&str, PointerHandler)] = &[
         "modifier-picker-select",
         handle_modifier_picker_select_click,
     ),
+    // Wave 4.3 — connection picker. The form has three field rows
+    // (`data-field` ∈ source-signal | action-kind | target-label)
+    // and two action buttons. The field handler dispatches to the
+    // matching mutator; today only `action-kind` actually cycles,
+    // source / target await Wave 10's text-input primitive but
+    // surface their hover affordance immediately.
+    (
+        "connection-picker-field",
+        handle_connection_picker_field_click,
+    ),
+    ("connection-picker-add", handle_connection_picker_add_click),
+    (
+        "connection-picker-cancel",
+        handle_connection_picker_cancel_click,
+    ),
 ];
 
 fn route_pointer_down(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
@@ -851,6 +866,44 @@ fn handle_resize_handle_press(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) ->
     let origin_y = hit.bounds.y + hit.bounds.height * 0.5;
     let mut guard = inner.borrow_mut();
     guard.state.begin_resize_drag(direction, origin_x, origin_y)
+}
+
+/// Wave 4.3 — click on one of the picker's three field rows. The
+/// row carries `data-field` ∈ {source-signal, action-kind,
+/// target-label}; `action-kind` cycles in place, the two text
+/// fields surface today as no-ops awaiting Wave 10's text-input
+/// primitive (the hover affordance + routing attr land now so the
+/// upgrade is one mutator wiring later).
+fn handle_connection_picker_field_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
+    let Some(field) = attr_value(hit, "data-field") else {
+        return false;
+    };
+    match field {
+        "action-kind" => inner
+            .borrow_mut()
+            .state
+            .cycle_connection_picker_action_kind(),
+        // `source-signal` / `target-label` text-input UX lands
+        // with Wave 10's `<text-input>` primitive. Report the
+        // click as consumed (no fall-through to canvas-tool drag)
+        // so the picker stays open and the user can finish
+        // confirming the rest of the form.
+        "source-signal" | "target-label" => true,
+        _ => false,
+    }
+}
+
+/// Wave 4.3 — confirm the picker → create the connection, close.
+fn handle_connection_picker_add_click(inner: &Rc<RefCell<ShellInner>>, _hit: &HitRect) -> bool {
+    let mut guard = inner.borrow_mut();
+    let g = &mut *guard;
+    let registry = g.registry.as_component_registry();
+    g.state.confirm_connection_picker(Some(registry)).is_some()
+}
+
+/// Wave 4.3 — cancel the picker without inserting.
+fn handle_connection_picker_cancel_click(inner: &Rc<RefCell<ShellInner>>, _hit: &HitRect) -> bool {
+    inner.borrow_mut().state.close_connection_picker()
 }
 
 /// Wave 3.2: hit-tests for whether a pointer-down landed on the
@@ -3135,5 +3188,157 @@ mod tests {
             Some(handle_hit),
         );
         assert!(shell.inner.borrow().state.canvas.resize_drag.is_none());
+    }
+
+    // ── Wave 4.3 connection picker route tests ──────────────────────
+
+    /// Clicking the connection-picker's `action-kind` field cycles
+    /// through the declared `ActionKind` variant list. Each click
+    /// advances one step; the picker stays open so the user can
+    /// also edit source/target before confirming.
+    #[test]
+    fn pointer_down_on_connection_picker_action_kind_cycles() {
+        use prism_ui_runtime::event::PointerButton;
+        let shell = Shell::new().expect("boot");
+        {
+            let mut guard = shell.inner.borrow_mut();
+            assert!(guard.state.open_connection_picker());
+        }
+        let baseline = shell
+            .inner
+            .borrow()
+            .state
+            .overlay
+            .connection_picker
+            .action_kind
+            .clone();
+        let hit = hit_with(
+            "connection-picker-field",
+            "",
+            &[("data-field", "action-kind")],
+        );
+        let dirty = dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 0.0,
+                y: 0.0,
+                button: PointerButton::Primary,
+            },
+            Some(hit),
+        );
+        assert!(dirty, "cycle moves the field → redraw");
+        let after = shell
+            .inner
+            .borrow()
+            .state
+            .overlay
+            .connection_picker
+            .action_kind
+            .clone();
+        assert_ne!(after, baseline, "action-kind advanced");
+    }
+
+    /// The Add button confirms the picker → a fresh
+    /// `SignalConnection` lands and the picker closes.
+    #[test]
+    fn pointer_down_on_connection_picker_add_inserts_and_closes() {
+        use prism_ui_runtime::event::PointerButton;
+        let shell = Shell::new().expect("boot");
+        let before = shell.inner.borrow().state.builder.signal_connections.len();
+        {
+            let mut guard = shell.inner.borrow_mut();
+            guard.state.open_connection_picker();
+            guard.state.overlay.connection_picker.source_signal = "clicked".into();
+            guard.state.overlay.connection_picker.target_label = "x".into();
+        }
+        let hit = hit_with("connection-picker-add", "", &[]);
+        let dirty = dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 0.0,
+                y: 0.0,
+                button: PointerButton::Primary,
+            },
+            Some(hit),
+        );
+        assert!(dirty, "add → redraw");
+        let inner = shell.inner.borrow();
+        assert_eq!(
+            inner.state.builder.signal_connections.len(),
+            before + 1,
+            "one connection added"
+        );
+        assert!(
+            !inner.state.overlay.connection_picker.open,
+            "picker closes after add"
+        );
+    }
+
+    /// The Cancel button closes the picker without inserting.
+    #[test]
+    fn pointer_down_on_connection_picker_cancel_closes_without_insert() {
+        use prism_ui_runtime::event::PointerButton;
+        let shell = Shell::new().expect("boot");
+        let before = shell.inner.borrow().state.builder.signal_connections.len();
+        {
+            let mut guard = shell.inner.borrow_mut();
+            guard.state.open_connection_picker();
+            guard.state.overlay.connection_picker.source_signal = "clicked".into();
+        }
+        let hit = hit_with("connection-picker-cancel", "", &[]);
+        let dirty = dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 0.0,
+                y: 0.0,
+                button: PointerButton::Primary,
+            },
+            Some(hit),
+        );
+        assert!(dirty);
+        assert_eq!(
+            shell.inner.borrow().state.builder.signal_connections.len(),
+            before,
+            "no insert on cancel"
+        );
+        assert!(!shell.inner.borrow().state.overlay.connection_picker.open);
+    }
+
+    /// The "+ Add Connection" footer in the signals panel dispatches
+    /// `signals.open-connection-picker` via the existing
+    /// `data-on-click="cmd <id>"` path. Verify that the route fires
+    /// the command and the picker actually opens.
+    #[test]
+    fn data_on_click_open_picker_dispatches_through_command_table() {
+        use prism_ui_runtime::event::PointerButton;
+        let shell = Shell::new().expect("boot");
+        assert!(!shell.inner.borrow().state.overlay.connection_picker.open);
+        let hit = HitRect {
+            id: "add-button".into(),
+            bounds: Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 100.0,
+                height: 30.0,
+            },
+            attrs: vec![(
+                "data-on-click".into(),
+                "cmd signals.open-connection-picker".into(),
+            )],
+        };
+        let dirty = dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 1.0,
+                y: 1.0,
+                button: PointerButton::Primary,
+            },
+            Some(hit),
+        );
+        assert!(dirty);
+        assert!(
+            shell.inner.borrow().state.overlay.connection_picker.open,
+            "picker opened via command dispatch"
+        );
     }
 }

@@ -31,6 +31,7 @@
 pub mod assets;
 pub mod components;
 pub mod events;
+pub mod headless;
 pub mod props;
 pub mod render;
 pub mod render_scope;

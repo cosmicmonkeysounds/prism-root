@@ -21,12 +21,15 @@ fn signals_panel_schema() -> Vec<FieldSpec> {
             "connections",
             "Connections (JSON array of signal-connection-row props)",
         ),
+        FieldSpec::boolean("show-add", "Render the add-connection footer")
+            .with_default(serde_json::Value::Bool(true)),
     ]
 }
 
 fn signals_panel_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties) -> UiNode {
     let style = StyleProperties::default();
     let title = ctx.prop_str(node, "title");
+    let show_add = ctx.prop_bool(node, "show-add", true);
 
     let mut kids = ctx
         .host_children()
@@ -55,6 +58,20 @@ fn signals_panel_lower(ctx: &LowerCtx<'_>, node: &Node, _style: &StyleProperties
             ) {
                 kids.push(child);
             }
+        }
+    }
+
+    // Wave 4.3: panel footer renders a "+ Add Connection" ghost
+    // button that opens the picker overlay. Default-on so every
+    // signals-panel instance gets the affordance; authors who
+    // want the bare list set `show-add="false"`.
+    if show_add {
+        if let Some(footer) = ctx.lower_as(
+            "shell.add-connection-button",
+            format!("{}::add", node.id),
+            serde_json::json!({}),
+        ) {
+            kids.push(footer);
         }
     }
 
@@ -98,7 +115,10 @@ mod tests {
 
     #[test]
     fn empty_panel_has_section_role() {
-        let ui = lower(json!({}));
+        // `show-add: false` keeps the panel bare so the section
+        // role / empty-children invariants stay clean. The
+        // production binding leaves the default on (true).
+        let ui = lower(json!({ "show-add": false }));
         let UiNode::Container {
             children, props, ..
         } = ui
@@ -113,6 +133,7 @@ mod tests {
     fn connections_dispatch_to_rows() {
         let ui = lower(json!({
             "title": "Wired up",
+            "show-add": false,
             "connections": [
                 { "source-signal": "clicked", "action-kind": "SetProperty", "target-label": "x" },
                 { "source-signal": "hovered", "action-kind": "EmitSignal", "target-label": "y" },
@@ -123,5 +144,30 @@ mod tests {
         };
         // title + 2 rows
         assert_eq!(children.len(), 3);
+    }
+
+    #[test]
+    fn show_add_default_true_renders_add_connection_footer_at_panel_tail() {
+        // Wave 4.3: the footer ships on by default so every signals
+        // panel surfaces the "+ Add Connection" affordance. Tail
+        // position is critical — the user expects the affordance
+        // below the last connection row.
+        let ui = lower(json!({
+            "connections": [
+                { "source-signal": "clicked", "action-kind": "SetProperty", "target-label": "x" },
+            ],
+        }));
+        let UiNode::Container { children, .. } = ui else {
+            panic!()
+        };
+        let last = children.last().expect("non-empty");
+        let UiNode::Container { props, .. } = last else {
+            panic!("footer should be a container")
+        };
+        assert!(props
+            .semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-role" && v == "add-connection"));
     }
 }

@@ -266,16 +266,26 @@ pub fn run(args: &DevArgs, workspace: &Workspace, dry_run: bool) -> Result<u8> {
         if args.hot_reload() {
             return exec_dev_loop(
                 studio,
-                vec![workspace.shell_src_dir(), workspace.studio_src_dir()],
+                vec![
+                    workspace.shell_src_dir(),
+                    workspace.shell_ui_dir(),
+                    workspace.studio_src_dir(),
+                ],
             );
         }
         return exec_foreground(studio);
     }
 
     // Single-target shell with hot-reload on: wrap the cargo child
-    // in a DevLoop so `.rs` changes kill + respawn the process.
+    // in a DevLoop so `.rs` and `.prism-ui` changes kill + respawn
+    // the process. Wave 11.5 — the skeleton directory is watched
+    // alongside `src/` so editing `ui/app.prism-ui` picks up on
+    // the next boot.
     if args.target == DevTarget::Shell && args.hot_reload() && plan.len() == 1 {
-        return exec_dev_loop(&plan[0], vec![workspace.shell_src_dir()]);
+        return exec_dev_loop(
+            &plan[0],
+            vec![workspace.shell_src_dir(), workspace.shell_ui_dir()],
+        );
     }
 
     // Single-target (non-web, non-studio) dev is just a foreground

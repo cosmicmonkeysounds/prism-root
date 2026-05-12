@@ -181,6 +181,30 @@ impl Default for ReactiveProps {
     }
 }
 
+// Wave 8.1 — `node:props():read("k") / :write("k", v) / :signal("k")`
+// mirror of `ReactiveProps::{get, set, signal}` on the Rust side. The
+// surface matches one method per side so a Luau-authored component or
+// modifier reaches for props the same way Rust does. `:signal(k)`
+// returns the `Signal<Value>` userdata from
+// `prism_core::luau_reactive`, so the full reactive vocabulary
+// (`read` / `peek` / `track` / `write` / `set`) is available through
+// the existing impl.
+#[cfg(feature = "luau")]
+impl mlua::UserData for ReactiveProps {
+    fn add_methods<M: mlua::UserDataMethods<Self>>(methods: &mut M) {
+        methods.add_method("read", |lua, this, key: String| {
+            let v = this.get(&key);
+            mlua::LuaSerdeExt::to_value(lua, &v)
+        });
+        methods.add_method("write", |lua, this, (key, value): (String, mlua::Value)| {
+            let v: Value = mlua::LuaSerdeExt::from_value(lua, value)?;
+            this.set(&key, v);
+            Ok(())
+        });
+        methods.add_method("signal", |_, this, key: String| Ok(this.signal(&key)));
+    }
+}
+
 /// Per-document binding context — the runtime side of an authored
 /// `ActionKind::Bind` connection. Owns:
 ///

@@ -42,3 +42,4 @@
 <shell.context-menu id="ctx"/>
 <shell.menu-dropdown id="menu-dd"/>
 <shell.component-picker id="picker"/>
+<shell.connection-picker id="conn-picker"/>

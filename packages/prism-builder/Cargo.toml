@@ -17,7 +17,7 @@ default = []
 # only) — flipping this feature on materialises the `UserData` /
 # `IntoLua` / `FromLua` impls the macro emits behind `cfg(feature =
 # "luau")`. Mirrors the `luau` feature on `prism-core`.
-luau = ["dep:mlua"]
+luau = ["dep:mlua", "prism-core/luau"]
 
 [dependencies]
 serde = { workspace = true }

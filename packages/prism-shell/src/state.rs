@@ -386,6 +386,168 @@ impl AppState {
         self.canvas.selection_bbox = bbox;
     }
 
+    // ── Wave 4 signal-connection mutators ───────────────────────────
+    //
+    // The signals panel reads `state.builder.signal_connections` as a
+    // flat view-model list. Wave 4 adds the four edit paths the panel
+    // can drive:
+    //
+    // * `add_signal_connection`     — push a fresh row
+    // * `update_signal_connection_field` — edit one cell on a row
+    // * `delete_selected_signal_connection` — already on `BuilderSlot`
+    //
+    // Each mutator ends with `resync_builder_for_selection` so the
+    // panel rows + inspector tree stay coherent. The connection
+    // picker overlay (Wave 4.3) drives `add_signal_connection`
+    // through `confirm_connection_picker`.
+
+    /// Wave 4.4 — append a fresh `SignalConnection` and refresh the
+    /// builder panels. Returns the id of the row (used by tests +
+    /// the picker confirm to move the cursor onto the newly-created
+    /// row so the user can immediately delete or re-edit it).
+    pub fn add_signal_connection(
+        &mut self,
+        connection: SignalConnection,
+        registry: Option<&prism_builder::ComponentRegistry>,
+    ) -> String {
+        let id = connection.id.clone();
+        self.builder.signal_connections.push(connection);
+        // Move the chevron cursor onto the new row so the trash
+        // affordance is immediately reachable; mirrors
+        // `attach_modifier`'s "land on the freshly-created row" UX.
+        self.builder.selected_connection = Some(id.clone());
+        self.resync_builder_for_selection(registry);
+        id
+    }
+
+    /// Wave 4.4 — write one field (`source-signal` / `action-kind` /
+    /// `target-label`) on the named connection. Returns `true` when
+    /// the document actually changed. Unknown ids and unknown field
+    /// keys are clean no-ops so a stale picker dispatch doesn't blow
+    /// up; the caller can gate redraws on the return value.
+    pub fn update_signal_connection_field(
+        &mut self,
+        connection_id: &str,
+        field: &str,
+        value: &str,
+        registry: Option<&prism_builder::ComponentRegistry>,
+    ) -> bool {
+        let Some(conn) = self
+            .builder
+            .signal_connections
+            .iter_mut()
+            .find(|c| c.id == connection_id)
+        else {
+            return false;
+        };
+        let slot: &mut String = match field {
+            "source-signal" => &mut conn.source_signal,
+            "action-kind" => &mut conn.action_kind,
+            "target-label" => &mut conn.target_label,
+            _ => return false,
+        };
+        if slot == value {
+            return false;
+        }
+        *slot = value.to_string();
+        self.resync_builder_for_selection(registry);
+        true
+    }
+
+    // ── Wave 4.3 connection-picker mutators ─────────────────────────
+
+    /// Wave 4.3 — flip the picker open with sensible defaults so the
+    /// user starts on a usable form shape. Re-opening an already-
+    /// open picker is a clean no-op; the existing fields persist so
+    /// an accidental click on the "+" button doesn't reset the
+    /// user's in-progress entry.
+    pub fn open_connection_picker(&mut self) -> bool {
+        if self.overlay.connection_picker.open {
+            return false;
+        }
+        self.overlay.connection_picker = ConnectionPicker {
+            open: true,
+            source_signal: "clicked".into(),
+            action_kind: "SetProperty".into(),
+            target_label: String::new(),
+        };
+        true
+    }
+
+    /// Wave 4.3 — close the picker without inserting. Used by Esc,
+    /// Cancel, and the post-confirm clear inside
+    /// `confirm_connection_picker`.
+    pub fn close_connection_picker(&mut self) -> bool {
+        if !self.overlay.connection_picker.open {
+            return false;
+        }
+        self.overlay.connection_picker = ConnectionPicker::default();
+        true
+    }
+
+    /// Wave 4.3 — write one of the picker's three form fields. Used
+    /// by the picker's click-to-cycle action-kind row and any future
+    /// text-input integration on the source / target fields.
+    /// Returns `true` when the field actually changed.
+    pub fn set_connection_picker_field(&mut self, field: &str, value: &str) -> bool {
+        let picker = &mut self.overlay.connection_picker;
+        let slot: &mut String = match field {
+            "source-signal" => &mut picker.source_signal,
+            "action-kind" => &mut picker.action_kind,
+            "target-label" => &mut picker.target_label,
+            _ => return false,
+        };
+        if slot == value {
+            return false;
+        }
+        *slot = value.to_string();
+        true
+    }
+
+    /// Wave 4.3 — advance the picker's action-kind through the
+    /// declared variant list, wrapping at the end. Mirrors the
+    /// click-to-cycle semantics on `field-edit` rows for `select`
+    /// kinds. Returns `true` when the value moved.
+    pub fn cycle_connection_picker_action_kind(&mut self) -> bool {
+        let next = ConnectionPicker::cycle_action_kind(&self.overlay.connection_picker.action_kind);
+        if next == self.overlay.connection_picker.action_kind {
+            return false;
+        }
+        self.overlay.connection_picker.action_kind = next.to_string();
+        true
+    }
+
+    /// Wave 4.3 — commit the picker's form into a fresh
+    /// `SignalConnection`. The id is generated from the source +
+    /// target so re-confirming a duplicate yields a stable
+    /// collision name; `rename_for_uniqueness` is the deduper.
+    /// Returns the freshly-created id; the picker closes regardless.
+    pub fn confirm_connection_picker(
+        &mut self,
+        registry: Option<&prism_builder::ComponentRegistry>,
+    ) -> Option<String> {
+        let picker = self.overlay.connection_picker.clone();
+        if !picker.open || picker.source_signal.is_empty() {
+            self.close_connection_picker();
+            return None;
+        }
+        let raw_id = format!(
+            "c-{}-{}",
+            sanitise_id(&picker.source_signal),
+            sanitise_id(&picker.target_label),
+        );
+        let id = uniquify_connection_id(&self.builder.signal_connections, &raw_id);
+        let connection = SignalConnection {
+            id: id.clone(),
+            source_signal: picker.source_signal,
+            action_kind: picker.action_kind,
+            target_label: picker.target_label,
+        };
+        self.add_signal_connection(connection, registry);
+        self.close_connection_picker();
+        Some(id)
+    }
+
     /// Wave 3.3 — start a resize drag against the currently-selected
     /// canvas node. `direction` is the handle's `data-direction`
     /// emission (`tl|t|tr|r|br|b|bl|l`); `(x, y)` is the
@@ -1497,6 +1659,11 @@ pub struct OverlaySlot {
     /// Behaviour" footer is clicked; selecting a behaviour or pressing
     /// Esc closes it.
     pub modifier_picker: ModifierPicker,
+    /// Wave 4.3 of `docs/dev/composable-builder-plan.md` — connection
+    /// picker overlay. `open = true` after the signals panel's "+
+    /// Add Connection" footer is clicked; the three form fields
+    /// drive a new `SignalConnection` on confirm.
+    pub connection_picker: ConnectionPicker,
 }
 
 /// Wave 1.6 — open/closed state of the `shell.modifier-picker`
@@ -1507,6 +1674,48 @@ pub struct ModifierPicker {
     pub open: bool,
     pub target_id: String,
     pub attached: Vec<String>,
+}
+
+/// Wave 4.3 — open/closed state of the `shell.connection-picker`
+/// overlay plus the three form fields the user fills in to build
+/// a new `SignalConnection`. Default state is "closed with empty
+/// fields"; `open_connection_picker` flips `open` true with sensible
+/// defaults so the user starts on a usable shape.
+#[derive(Clone, Debug, Default)]
+pub struct ConnectionPicker {
+    pub open: bool,
+    pub source_signal: String,
+    pub action_kind: String,
+    pub target_label: String,
+}
+
+impl ConnectionPicker {
+    /// Wave 4.3 — ordered list of `ActionKind` variant labels the
+    /// picker cycles through when the user clicks the action-kind
+    /// row. The order mirrors `prism_builder::signal::ActionKind`'s
+    /// declaration so adding a variant there is the only edit a
+    /// future grammar change needs.
+    pub const ACTION_KINDS: &'static [&'static str] = &[
+        "SetProperty",
+        "ToggleVisibility",
+        "NavigateTo",
+        "PlayAnimation",
+        "EmitSignal",
+        "Custom",
+        "Bind",
+    ];
+
+    /// Next variant after `current` in `ACTION_KINDS`, wrapping at
+    /// the end. Used by the picker's click-to-cycle row.
+    pub fn cycle_action_kind(current: &str) -> &'static str {
+        let len = Self::ACTION_KINDS.len();
+        let idx = Self::ACTION_KINDS
+            .iter()
+            .position(|k| *k == current)
+            .map(|i| (i + 1) % len)
+            .unwrap_or(0);
+        Self::ACTION_KINDS[idx]
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1623,6 +1832,19 @@ impl OverlaySlot {
             "open": self.modifier_picker.open,
             "target-id": self.modifier_picker.target_id,
             "options": options,
+        })
+    }
+
+    /// Wave 4.3 — JSON for `shell.connection-picker`. The block
+    /// reads `open` to gate visibility and the three form fields
+    /// for the row labels; the routing attrs the user clicks come
+    /// from the block itself, not the prop bag.
+    pub fn connection_picker_props(&self) -> Value {
+        json!({
+            "open": self.connection_picker.open,
+            "source-signal": self.connection_picker.source_signal,
+            "action-kind": self.connection_picker.action_kind,
+            "target-label": self.connection_picker.target_label,
         })
     }
 
@@ -2821,6 +3043,25 @@ impl CanvasSlot {
         props
     }
 
+    /// Wave 3.2 polish — emit the in-flight palette-drag state so the
+    /// canvas overlay layer can paint a ghost rect at the cursor.
+    /// Lives on the canvas binding's host emission rather than the
+    /// `builder_canvas_props` JSON because the drag state belongs to
+    /// `CatalogSlot`, not `CanvasSlot` — `props.rs` merges this into
+    /// the canvas prop bag in one row.
+    pub fn palette_drag_overlay(drag: Option<&PaletteDrag>) -> Value {
+        match drag {
+            Some(d) => json!({
+                "active": true,
+                "kind": d.kind,
+                "x": d.pointer.0,
+                "y": d.pointer.1,
+                "drop-target": d.drop_target.clone().unwrap_or_default(),
+            }),
+            None => json!({ "active": false }),
+        }
+    }
+
     /// JSON for `shell.builder-toolbar` (§43 D2). The toolbar emits
     /// the alignment buttons, device-mode cluster, zoom, and node
     /// count — every datum derives from this slot, so a single
@@ -3428,6 +3669,50 @@ fn rewrite_ids(
     node.id = candidate;
     for c in &mut node.children {
         rewrite_ids(c, tag, existing);
+    }
+}
+
+/// Wave 4.3 — kebab-case a free-form label for use in a stable
+/// connection id. Lowercases ASCII letters, replaces every
+/// non-alphanumeric run with a single `-`, and trims edge dashes.
+/// Empty input yields `"item"` so the resulting id never collapses
+/// to a bare separator.
+fn sanitise_id(label: &str) -> String {
+    let mut out = String::with_capacity(label.len());
+    let mut prev_sep = true;
+    for ch in label.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+            prev_sep = false;
+        } else if !prev_sep {
+            out.push('-');
+            prev_sep = true;
+        }
+    }
+    while out.ends_with('-') {
+        out.pop();
+    }
+    if out.is_empty() {
+        "item".into()
+    } else {
+        out
+    }
+}
+
+/// Wave 4.3 — find a unique id for a new connection given the
+/// existing list. Mirrors the `rename_subtree` pattern: try the
+/// raw id, then `<id>-2`, `<id>-3`, … until it doesn't collide.
+fn uniquify_connection_id(existing: &[SignalConnection], raw: &str) -> String {
+    if !existing.iter().any(|c| c.id == raw) {
+        return raw.to_string();
+    }
+    let mut n = 2u32;
+    loop {
+        let candidate = format!("{raw}-{n}");
+        if !existing.iter().any(|c| c.id == candidate) {
+            return candidate;
+        }
+        n += 1;
     }
 }
 
@@ -4387,6 +4672,142 @@ mod tests {
         assert!(!state.close_context_menu());
     }
 
+    // ── Wave 4 connection picker + mutator tests ────────────────────
+
+    #[test]
+    fn open_connection_picker_seeds_form_defaults() {
+        let mut state = AppState::default();
+        assert!(state.open_connection_picker());
+        assert!(state.overlay.connection_picker.open);
+        // Defaults populate the source + kind so the user starts on
+        // a usable form; target is empty until the user picks a
+        // node.
+        assert_eq!(state.overlay.connection_picker.source_signal, "clicked");
+        assert_eq!(state.overlay.connection_picker.action_kind, "SetProperty");
+        assert!(state.overlay.connection_picker.target_label.is_empty());
+    }
+
+    #[test]
+    fn open_connection_picker_is_idempotent_against_open_state() {
+        let mut state = AppState::default();
+        state.open_connection_picker();
+        state.overlay.connection_picker.target_label = "x".into();
+        // Re-opening keeps the user's in-progress entry intact.
+        assert!(!state.open_connection_picker());
+        assert_eq!(state.overlay.connection_picker.target_label, "x");
+    }
+
+    #[test]
+    fn close_connection_picker_clears_form_and_returns_true_when_open() {
+        let mut state = AppState::default();
+        state.open_connection_picker();
+        state.overlay.connection_picker.target_label = "x".into();
+        assert!(state.close_connection_picker());
+        assert!(!state.overlay.connection_picker.open);
+        assert!(state.overlay.connection_picker.target_label.is_empty());
+        // Idempotent against already-closed state.
+        assert!(!state.close_connection_picker());
+    }
+
+    #[test]
+    fn cycle_connection_picker_action_kind_wraps_at_end_of_variant_list() {
+        let mut state = AppState::default();
+        state.open_connection_picker();
+        // Walk the entire variant list once + one wrap, asserting
+        // every step yields the next declared variant.
+        let kinds: Vec<&str> = ConnectionPicker::ACTION_KINDS.to_vec();
+        let mut seen: Vec<String> = vec![state.overlay.connection_picker.action_kind.clone()];
+        for _ in 0..kinds.len() {
+            state.cycle_connection_picker_action_kind();
+            seen.push(state.overlay.connection_picker.action_kind.clone());
+        }
+        // After N+1 cycles the value returned to the start.
+        assert_eq!(seen.first(), seen.last(), "wraps to start: {seen:?}");
+        // Every variant appeared at least once across the walk.
+        for k in kinds {
+            assert!(seen.iter().any(|s| s == k), "{k} appeared; got {seen:?}");
+        }
+    }
+
+    #[test]
+    fn confirm_connection_picker_inserts_unique_id_and_moves_cursor() {
+        let mut reg = prism_builder::ComponentRegistry::new();
+        prism_builder::starter::register_builtins(&mut reg).expect("builtins");
+        let mut state = AppState::default();
+        state.canvas.document = doc_with_three_nodes();
+        state.open_connection_picker();
+        state.overlay.connection_picker.source_signal = "clicked".into();
+        state.overlay.connection_picker.target_label = "demo-button".into();
+        let id = state.confirm_connection_picker(Some(&reg));
+        assert!(id.is_some(), "confirm returns the new id");
+        assert!(!state.overlay.connection_picker.open, "picker closes");
+        // Cursor lands on the new row.
+        assert_eq!(state.builder.selected_connection, id);
+        // A second confirm with the same fields generates a unique
+        // id by appending a numeric suffix.
+        state.open_connection_picker();
+        state.overlay.connection_picker.source_signal = "clicked".into();
+        state.overlay.connection_picker.target_label = "demo-button".into();
+        let id2 = state
+            .confirm_connection_picker(Some(&reg))
+            .expect("second confirm");
+        assert_ne!(id, Some(id2.clone()), "ids do not collide");
+    }
+
+    #[test]
+    fn confirm_connection_picker_with_empty_source_signal_is_a_noop() {
+        let mut state = AppState::default();
+        let before = state.builder.signal_connections.len();
+        state.open_connection_picker();
+        state.overlay.connection_picker.source_signal = String::new();
+        assert!(state.confirm_connection_picker(None).is_none());
+        assert_eq!(state.builder.signal_connections.len(), before);
+        // Confirm still closes the picker (the user's intent was
+        // clearly "I'm done"; clearing the form lets Esc behave
+        // the same as Cancel).
+        assert!(!state.overlay.connection_picker.open);
+    }
+
+    #[test]
+    fn update_signal_connection_field_writes_one_field_and_resyncs() {
+        let mut state = AppState::default();
+        state.builder.signal_connections.push(SignalConnection {
+            id: "c1".into(),
+            source_signal: "clicked".into(),
+            action_kind: "SetProperty".into(),
+            target_label: "x".into(),
+        });
+        assert!(state.update_signal_connection_field("c1", "target-label", "demo-button", None));
+        assert_eq!(
+            state.builder.signal_connections[0].target_label,
+            "demo-button"
+        );
+        // Idempotent edits return false — re-writing the same value
+        // skips the resync path.
+        assert!(!state.update_signal_connection_field("c1", "target-label", "demo-button", None));
+        // Unknown ids fall through cleanly.
+        assert!(!state.update_signal_connection_field("missing", "target-label", "z", None));
+        // Unknown field keys fall through cleanly.
+        assert!(!state.update_signal_connection_field("c1", "made-up-key", "z", None));
+    }
+
+    #[test]
+    fn add_signal_connection_returns_id_and_lands_on_cursor() {
+        let mut state = AppState::default();
+        let id = state.add_signal_connection(
+            SignalConnection {
+                id: "c-foo".into(),
+                source_signal: "clicked".into(),
+                action_kind: "EmitSignal".into(),
+                target_label: "y".into(),
+            },
+            None,
+        );
+        assert_eq!(id, "c-foo");
+        assert_eq!(state.builder.selected_connection.as_deref(), Some("c-foo"));
+        assert_eq!(state.builder.signal_connections.len(), 1);
+    }
+
     // ── Wave 3.3 selection bbox + resize tests ──────────────────────
 
     #[test]
@@ -4411,6 +4832,33 @@ mod tests {
         let state = AppState::default();
         let props = state.canvas.builder_canvas_props();
         assert!(props.get("selection-rect").is_none());
+    }
+
+    #[test]
+    fn palette_drag_overlay_active_shape() {
+        // Wave 3.2 polish: `palette_drag_overlay` projects a
+        // `PaletteDrag` into the JSON the canvas overlay's ghost
+        // paint reads. The four keys (active, kind, x, y,
+        // drop-target) are all required for the renderer-side
+        // anchor + label to populate.
+        let drag = PaletteDrag {
+            kind: "button".into(),
+            pointer: (40.0, 80.0),
+            drop_target: Some("demo-heading".into()),
+        };
+        let v = CanvasSlot::palette_drag_overlay(Some(&drag));
+        assert_eq!(v["active"], true);
+        assert_eq!(v["kind"], "button");
+        assert_eq!(v["x"], 40.0);
+        assert_eq!(v["y"], 80.0);
+        assert_eq!(v["drop-target"], "demo-heading");
+    }
+
+    #[test]
+    fn palette_drag_overlay_inactive_when_no_drag() {
+        let v = CanvasSlot::palette_drag_overlay(None);
+        assert_eq!(v["active"], false);
+        assert!(v.get("kind").is_none());
     }
 
     #[test]

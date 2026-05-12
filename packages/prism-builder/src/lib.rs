@@ -19,11 +19,14 @@ pub mod html;
 pub mod layout;
 #[cfg(feature = "luau")]
 pub mod luau_component;
+#[cfg(feature = "luau")]
+pub mod luau_modifier;
 pub mod luau_types;
 pub mod modifier;
 pub mod modifier_bootstrap;
 pub mod mutator;
 pub mod prefab;
+pub mod primitives;
 pub mod prism_ui_emit;
 pub mod project;
 pub mod reactive_props;
@@ -90,5 +93,10 @@ pub use variant::{VariantAxis, VariantOption};
 
 #[cfg(feature = "luau")]
 pub use luau_component::{ActiveRegistry, LuauComponent, LuauRenderRegistry, VirtualNode};
+#[cfg(feature = "luau")]
+pub use luau_modifier::{
+    generate_modifier_type_stubs, register_modifier_from_luau, ActiveModifierRegistry,
+    LuauModifier, LuauModifierDef, LuauModifierRegistry,
+};
 #[cfg(feature = "luau")]
 pub use script_loader::{load_widgets, LoadReport, ScriptLoadError};

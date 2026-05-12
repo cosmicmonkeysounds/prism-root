@@ -130,6 +130,43 @@ impl ShellService for BuilderService {
                     ctx.state.builder.delete_selected_signal_connection();
                 }
             ),
+            // Wave 4.3 — connection picker open/close/cycle/confirm.
+            // Each command is a single mutator call; the click
+            // dispatch happens through `route_on_click` so the
+            // picker rows + footer button thread their `command`
+            // attribute through the existing chain.
+            cmd!(
+                "signals.open-connection-picker",
+                "Add Connection",
+                "Signals",
+                |ctx| {
+                    ctx.state.open_connection_picker();
+                }
+            ),
+            cmd!(
+                "signals.close-connection-picker",
+                "Close Connection Picker",
+                "Signals",
+                |ctx| {
+                    ctx.state.close_connection_picker();
+                }
+            ),
+            cmd!(
+                "signals.cycle-connection-picker-action-kind",
+                "Cycle Connection Action Kind",
+                "Signals",
+                |ctx| {
+                    ctx.state.cycle_connection_picker_action_kind();
+                }
+            ),
+            cmd!(
+                "signals.confirm-connection-picker",
+                "Add Connection",
+                "Signals",
+                |ctx| {
+                    ctx.state.confirm_connection_picker(ctx.registry);
+                }
+            ),
         ]
     }
 }

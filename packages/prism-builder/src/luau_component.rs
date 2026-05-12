@@ -135,7 +135,7 @@ impl mlua::FromLua for VirtualNode {
 
 // ── JSON ↔ Lua helpers ──────────────────────────────────────────────
 
-fn lua_value_to_json(value: &LuaValue) -> mlua::Result<Value> {
+pub(crate) fn lua_value_to_json(value: &LuaValue) -> mlua::Result<Value> {
     Ok(match value {
         LuaValue::Nil => Value::Null,
         LuaValue::Boolean(b) => Value::Bool(*b),
@@ -166,7 +166,7 @@ fn lua_value_to_json(value: &LuaValue) -> mlua::Result<Value> {
     })
 }
 
-fn json_to_lua(lua: &Lua, value: &Value) -> mlua::Result<LuaValue> {
+pub(crate) fn json_to_lua(lua: &Lua, value: &Value) -> mlua::Result<LuaValue> {
     Ok(match value {
         Value::Null => LuaValue::Nil,
         Value::Bool(b) => LuaValue::Boolean(*b),
@@ -360,6 +360,13 @@ fn install_widget_global(lua: &Lua, pending: Arc<RefCell<Vec<PendingWidget>>>) -
     install_axis_helper(lua, &wrapper)?;
     globals.set("prism", wrapper)?;
     Ok(())
+}
+
+/// Public re-export of [`install_field_helpers`] for sibling Luau
+/// modules (`luau_modifier`). Same body — kept as a thin alias so
+/// `luau_modifier` doesn't reach into a private function.
+pub(crate) fn install_field_helpers_pub(lua: &Lua, wrapper: &Table) -> mlua::Result<()> {
+    install_field_helpers(lua, wrapper)
 }
 
 fn install_field_helpers(lua: &Lua, wrapper: &Table) -> mlua::Result<()> {

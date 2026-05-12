@@ -1,17 +1,27 @@
-//! `prism test visual` — automated visual regression suite.
+//! `prism visual` — automated visual regression suite.
 //!
-//! Runs predefined test scenes through the `prism-shell` binary,
-//! captures screenshots, and saves them to a known directory for
-//! visual diff review. Each scene is a deterministic state
-//! configuration — no manual interaction needed.
+//! Wave 7.3 of `docs/dev/composable-builder-plan.md` —
+//! `prism visual` no longer wraps a macOS `screencapture` shim;
+//! it shells directly through `prism-shell --scene <name>
+//! --screenshot <path>`, which is the same headless capture path
+//! the shell's own visual tests use. The scene list mirrors
+//! `prism_shell::headless::BuiltinScene::ALL` — the
+//! `scene_names_match_shell_builtin_set` named pin asserts the
+//! sets stay in sync.
+//!
+//! Today's `--screenshot` emission is the deterministic JSON
+//! dump (Wave 7.2 PNG deferred — femtovg offscreen GPU plumbing
+//! lands when the backend exposes a surfaceless render path).
+//! When PNG ships, the file extension below switches back to
+//! `.png` without changing the CLI / scene / harness contract.
 //!
 //! ## Usage
 //!
 //! ```bash
-//! prism test visual                     # run all scenes
-//! prism test visual --scene builder-grid  # run a single scene
-//! prism test visual --list              # list available scenes
-//! prism test visual --output /tmp/shots # custom output directory
+//! prism visual                     # run all 6 built-in scenes
+//! prism visual --scene modifier    # run a single scene
+//! prism visual --list              # list available scenes
+//! prism visual --output /tmp/shots # custom output directory
 //! ```
 
 use anyhow::Result;
@@ -43,20 +53,25 @@ pub struct VisualArgs {
     pub viewports: Option<String>,
 }
 
+/// Scene names the harness knows about — must stay in sync with
+/// `prism_shell::headless::BuiltinScene::ALL`. The
+/// `scene_names_match_shell_builtin_set` test is the named pin
+/// that gates that contract; updating this list without updating
+/// the shell-side `BuiltinScene` enum (or vice versa) trips it.
 const ALL_SCENES: &[&str] = &[
-    "launchpad",
-    // §43 Phase E1 verification scene — the populated Studio frame
-    // (chrome + canvas document + right-rail properties) every phase
-    // boundary screenshots against.
-    "builder",
-    "builder-empty",
-    "builder-grid",
-    "builder-tablet",
-    "builder-mobile",
-    "inspector",
-    "code-editor",
-    "explorer",
+    "default",
+    "selection",
+    "modifier",
+    "context-menu",
+    "palette-drag",
+    "connection-picker",
 ];
+
+/// Extension for the per-scene dump file. Today's `prism-shell
+/// --screenshot` emits a JSON snapshot of the lowered UI tree
+/// (Wave 7.2 PNG deferred — see module header). When PNG lands,
+/// this flips to `png` and the test below changes the assertion.
+const SCREENSHOT_EXT: &str = "json";
 
 pub fn plan(args: &VisualArgs, workspace: &Workspace) -> Vec<CommandBuilder> {
     if args.list {
@@ -98,7 +113,7 @@ pub fn plan(args: &VisualArgs, workspace: &Workspace) -> Vec<CommandBuilder> {
     );
 
     for scene in &scenes {
-        let screenshot_path = format!("{output_dir}/{scene}.png");
+        let screenshot_path = format!("{output_dir}/{scene}.{SCREENSHOT_EXT}");
         commands.push(
             CommandBuilder::cargo()
                 .arg("run")
@@ -171,10 +186,10 @@ mod tests {
     #[test]
     fn single_scene_plan() {
         let mut a = args();
-        a.scene = Some("builder-grid".into());
+        a.scene = Some("modifier".into());
         let p = plan(&a, &ws());
         assert_eq!(p.len(), 2); // mkdir + one scene
-        assert!(p[1].display().contains("builder-grid"));
+        assert!(p[1].display().contains("modifier"));
     }
 
     #[test]
@@ -183,5 +198,45 @@ mod tests {
         a.output = Some("/tmp/my-shots".into());
         let p = plan(&a, &ws());
         assert!(p[1].display().contains("/tmp/my-shots/"));
+    }
+
+    /// Wave 7.3 — the scene list this CLI hard-codes must match the
+    /// closed set the shell knows how to apply
+    /// (`prism_shell::headless::BuiltinScene::ALL`). Drift between
+    /// the two surfaces would surface as a `cargo run -p prism-shell
+    /// -- --scene <name>` exit-1 at runtime; this pin catches it at
+    /// build time without dragging the shell dependency into
+    /// prism-cli.
+    #[test]
+    fn scene_names_match_shell_builtin_set() {
+        const SHELL_BUILTIN_SCENE_NAMES: &[&str] = &[
+            "default",
+            "selection",
+            "modifier",
+            "context-menu",
+            "palette-drag",
+            "connection-picker",
+        ];
+        assert_eq!(ALL_SCENES, SHELL_BUILTIN_SCENE_NAMES);
+    }
+
+    /// Wave 7.3 — the per-scene emission path lands in the output
+    /// directory with the same extension the shell's
+    /// `dump_frame()` writes (today JSON, swaps to PNG when Wave
+    /// 7.2 ships). The plan's discipline says "the file emission
+    /// path is replaceable with PNG without changing the CLI /
+    /// scene / harness contract" — this pin guards that contract.
+    #[test]
+    fn each_scene_emits_one_screenshot_command_with_expected_extension() {
+        let p = plan(&args(), &ws());
+        assert_eq!(p.len(), ALL_SCENES.len() + 1);
+        for (i, scene) in ALL_SCENES.iter().enumerate() {
+            let cmd = &p[i + 1];
+            let line = cmd.display();
+            assert!(
+                line.contains(&format!("/{scene}.{SCREENSHOT_EXT}")),
+                "expected output path for scene {scene} to end in .{SCREENSHOT_EXT}, got: {line}"
+            );
+        }
     }
 }

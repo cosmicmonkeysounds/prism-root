@@ -32,7 +32,15 @@ use crate::watch::{WatchBatch, WatchLoop};
 /// treated as filesystem noise (editor swap files, target/ artifacts
 /// if the watch root straddles them, formatter side-writes, etc.)
 /// and do not trigger a respawn.
-pub const DEFAULT_EXTENSIONS: &[&str] = &["rs"];
+///
+/// `prism-ui` is the `.prism-ui` skeleton extension — Wave 11.5 of
+/// `docs/dev/composable-builder-plan.md`. Editing `ui/app.prism-ui`
+/// drops a respawn the same way a `.rs` edit does so the next boot
+/// re-parses the document; the subsecond patch path (Phase 9 of
+/// `docs/dev/dioxus-inspiration.md`) will eventually intercept this
+/// extension to swap the parsed skeleton into the running
+/// `Surface` without cargo running.
+pub const DEFAULT_EXTENSIONS: &[&str] = &["rs", "prism-ui"];
 
 /// Short interval the blocking watcher task uses when polling each
 /// underlying [`WatchLoop`]. Kept deliberately small so shutdown
@@ -527,5 +535,34 @@ mod tests {
             paths: paths.clone(),
         };
         assert_eq!(filter_batch(&batch, &[]), paths);
+    }
+
+    /// Wave 11.5 — `.prism-ui` is part of the default extension
+    /// filter so editing the shell skeleton triggers the respawn
+    /// loop just like a `.rs` edit. The named pin guards the
+    /// contract documented on [`DEFAULT_EXTENSIONS`].
+    #[test]
+    fn default_extensions_include_rs_and_prism_ui_for_shell_hot_reload() {
+        assert!(DEFAULT_EXTENSIONS.contains(&"rs"));
+        assert!(DEFAULT_EXTENSIONS.contains(&"prism-ui"));
+    }
+
+    #[test]
+    fn filter_batch_with_default_extensions_keeps_skeleton_edits() {
+        let paths = vec![
+            PathBuf::from("/ws/src/lib.rs"),
+            PathBuf::from("/ws/ui/app.prism-ui"),
+            PathBuf::from("/ws/README.md"),
+        ];
+        let batch = WatchBatch { paths };
+        let exts: Vec<String> = DEFAULT_EXTENSIONS.iter().map(|s| s.to_string()).collect();
+        let filtered = filter_batch(&batch, &exts);
+        assert_eq!(
+            filtered,
+            vec![
+                PathBuf::from("/ws/src/lib.rs"),
+                PathBuf::from("/ws/ui/app.prism-ui"),
+            ]
+        );
     }
 }

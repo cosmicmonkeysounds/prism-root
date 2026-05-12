@@ -98,6 +98,19 @@ impl Workspace {
         self.package("prism-shell").join("src")
     }
 
+    /// Wave 11.5 — the `.prism-ui` skeleton directory watched
+    /// alongside [`Self::shell_src_dir`] during `prism dev shell`
+    /// hot-reload. Today's path: `packages/prism-shell/ui/`. A
+    /// `.prism-ui` edit triggers the same kill + cargo respawn as
+    /// a `.rs` edit so the next boot re-parses the skeleton; the
+    /// subsecond hot-patch path (Phase 9 of
+    /// `docs/dev/dioxus-inspiration.md`) will swap the parsed
+    /// document into the live `Surface` in place when the patch
+    /// pipeline lands.
+    pub fn shell_ui_dir(&self) -> PathBuf {
+        self.package("prism-shell").join("ui")
+    }
+
     /// Source tree for Studio's own Rust code. Watched alongside
     /// [`Self::shell_src_dir`] during `prism dev studio` hot-reload.
     pub fn studio_src_dir(&self) -> PathBuf {
@@ -159,6 +172,17 @@ mod tests {
         assert_eq!(
             ws.shell_web_dir(),
             PathBuf::from("/tmp/fake-root/packages/prism-shell/web")
+        );
+    }
+
+    /// Wave 11.5 — `shell_ui_dir` resolves to the `.prism-ui`
+    /// skeleton directory the dev loop watches alongside `src/`.
+    #[test]
+    fn shell_ui_dir_resolves_to_the_skeleton_directory() {
+        let ws = Workspace::new("/tmp/fake-root");
+        assert_eq!(
+            ws.shell_ui_dir(),
+            PathBuf::from("/tmp/fake-root/packages/prism-shell/ui")
         );
     }
 

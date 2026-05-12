@@ -220,14 +220,68 @@ each phase merges. Per-phase detail follows in §3-§11.
   open_context_menu_on_empty_canvas_falls_back_to_paste,
   close_context_menu_*}`.
 
-### Wave 4 — Connections panel UX
-- [ ] **4.1** `BuilderSlot::selected_connection: Option<ConnectionId>`.
-- [ ] **4.2** Row click → set cursor; trash → real
-  `BuilderService::delete-connection`.
-- [ ] **4.3** "+" affordance opens `shell.connection-picker`
-  (source × target × action kind, with `ActionKind::Bind` in list).
-- [ ] **4.4** Mutators: `add_connection`, `delete_connection`,
-  `update_connection_field`; each runs the C-wave resync.
+### Wave 4 — Connections panel UX ✅ landed 2026-05-12
+- [x] **4.1** `BuilderSlot::selected_connection: Option<String>` —
+  already landed during the B6 third-wave cursor pass; reconfirmed
+  for Wave 4. `select_signal_connection` mutator moves the cursor
+  and `iter_with_cursor` projects the `selected` / `show-delete`
+  flags into `connections_json`.
+- [x] **4.2** Row click → cursor (B6 third-wave landed
+  `handle_signal_connection_row_click`); trash →
+  `BuilderService::signals.delete-selected-connection` (already
+  registered, dispatched from the row's `data-on-click`
+  attribute via `route_on_click`). The `signal-connection-row`
+  block already paints the trash button when `show-delete` is
+  true and emits the right command id; Wave 4 reconfirms and
+  documents the connection.
+- [x] **4.3** `shell.connection-picker` overlay landed. Three
+  picker rows (source / kind / target) each carry
+  `data-role="connection-picker-field"` + `data-field`; Add and
+  Cancel buttons route through `data-role="connection-picker-add"`
+  / `-cancel`. Action-kind cycles through all 7
+  `prism_builder::signal::ActionKind` variants including
+  `Bind`. The "+ Add Connection" footer button
+  (`shell.add-connection-button`) is appended to every
+  `shell.signals-panel` by default (`show-add` boolean), and its
+  click dispatches `cmd signals.open-connection-picker` through
+  the existing `route_on_click` command-table dispatch. The
+  picker overlay is added as a sibling tag in `ui/app.prism-ui`
+  alongside the other window-relative overlays. Tests:
+  `components::add_connection_button::tests::carries_open_picker_command_via_data_on_click`,
+  `components::connection_picker::tests::{closed_picker_collapses_to_hidden_overlay,
+  open_picker_renders_three_field_rows_and_two_buttons,
+  field_rows_carry_field_routing_attrs,
+  add_and_cancel_buttons_carry_distinct_routes,
+  empty_field_value_renders_em_dash_placeholder}`,
+  `components::signals_panel::tests::show_add_default_true_renders_add_connection_footer_at_panel_tail`,
+  `events::tests::{pointer_down_on_connection_picker_action_kind_cycles,
+  pointer_down_on_connection_picker_add_inserts_and_closes,
+  pointer_down_on_connection_picker_cancel_closes_without_insert,
+  data_on_click_open_picker_dispatches_through_command_table}`.
+- [x] **4.4** Mutators landed.
+  `AppState::add_signal_connection(SignalConnection, registry)`
+  pushes a fresh row, moves the cursor onto it, and runs the
+  C-wave resync. `AppState::update_signal_connection_field(id,
+  field, value, registry)` writes one of `source-signal` /
+  `action-kind` / `target-label` and resyncs (idempotent edits
+  return false, unknown ids / field keys fall through cleanly).
+  `delete_selected_signal_connection` was already on
+  `BuilderSlot` and dispatches through the existing trash route.
+  Picker-level mutators (`open` / `close` /
+  `set_connection_picker_field` /
+  `cycle_connection_picker_action_kind` /
+  `confirm_connection_picker`) drive the picker overlay; the
+  confirm path generates a stable kebab-case id from
+  source + target via `sanitise_id` and `uniquify_connection_id`
+  so repeated drops of the same shape don't collide. Tests:
+  `state::tests::{open_connection_picker_seeds_form_defaults,
+  open_connection_picker_is_idempotent_against_open_state,
+  close_connection_picker_clears_form_and_returns_true_when_open,
+  cycle_connection_picker_action_kind_wraps_at_end_of_variant_list,
+  confirm_connection_picker_inserts_unique_id_and_moves_cursor,
+  confirm_connection_picker_with_empty_source_signal_is_a_noop,
+  update_signal_connection_field_writes_one_field_and_resyncs,
+  add_signal_connection_returns_id_and_lands_on_cursor}`.
 
 ### Wave 5 — Registry merge  (small, lands first) ✅ landed 2026-05-11
 - [x] **5.1** `Shell::new` calls
@@ -240,71 +294,257 @@ each phase merges. Per-phase detail follows in §3-§11.
   (`prism_builder::starter::BUILTINS` + `card` + `facet`) are
   disjoint *and* that the merged registry size equals the sum.
 
-### Wave 6 — B6 third-wave remainder
-- [ ] **6.1** `NavigationSlot::selected_page` + nav-page chevron
-  wiring through `BuilderService::move-page-{up,down}`.
-- [ ] **6.2** `SchemaSlot::selected_field` + schema-row trash wiring
-  through `BuilderService::delete-schema-field`.
-- [ ] **6.3** (Signal-connection trash covered by Wave 4.)
+### Wave 6 — B6 third-wave remainder ✅ landed 2026-05-12
+- [x] **6.1** `NavigationSlot::selected_page` + chevron commands
+  (`navigation.move-page-{up,down}`, `navigation.delete-selected-page`)
+  landed during B6; reconfirmed for Wave 6. Row click moves cursor
+  via `handle_nav_page_row_click`; chevron commands fire through
+  the row's `data-on-click="cmd …"` dispatch.
+- [x] **6.2** `BuilderSlot::schema.selected_field` + trash command
+  `schema.delete-selected-field` landed during B6. Row click moves
+  cursor via `handle_schema_row_click`; trash dispatches the
+  command through `data-on-click="cmd schema.delete-selected-field"`.
+- [x] **6.3** Signal-connection trash done as part of Wave 4
+  (`signals.delete-selected-connection`).
 
-### Wave 7 — Headless visual capture
-- [ ] **7.1** `prism-shell --scene <name>` boots and exits after one frame.
-- [ ] **7.2** `--screenshot <path>` writes PNG via femtovg offscreen
-  surface.
-- [ ] **7.3** `prism visual` removes screencapture shim and shells
-  through `prism-shell` directly.
+### Wave 7 — Headless visual capture ✅ landed 2026-05-12 (PNG deferred)
+- [x] **7.1** `prism-shell --scene <name>` lands.
+  `prism_shell::headless::BuiltinScene` enumerates six scenes
+  (`default` / `selection` / `modifier` / `context-menu` /
+  `palette-drag` / `connection-picker`); `Shell::apply_scene` mutates
+  boot state for each. `--scene list` prints the catalogue.
+- [~] **7.2** `--screenshot <path>` writes a **deterministic JSON
+  snapshot** of the lowered UI tree (via `serde_json::to_string_pretty`
+  over `Shell::render()`'s `Vec<UiNode>`), not a PNG. The JSON
+  diffs cleanly across runs so the visual-regression harness
+  surfaces every layout / semantic-attr / hover-decoration change
+  as a text diff. **PNG path deferred** — femtovg offscreen needs
+  GPU context plumbing that lives in the backend, not the shell;
+  the JSON dump's file-emission path is replaceable with PNG when
+  that lands. The CLI flag, scene loader, and harness contract all
+  carry forward unchanged.
+- [x] **7.3** `prism visual` shells through `prism-shell` directly
+  (2026-05-12). `packages/prism-cli/src/commands/visual.rs` runs
+  `cargo run -p prism-shell -- --scene <name> --screenshot <path>`
+  per scene, no macOS `screencapture` shim. The hard-coded scene
+  list now mirrors `prism_shell::headless::BuiltinScene::ALL`
+  (six scenes) — the
+  `commands::visual::tests::scene_names_match_shell_builtin_set`
+  pin guards drift without dragging the shell dep into prism-cli.
+  Output extension is `.json` today (matches Wave 7.2's
+  deterministic dump); flips to `.png` in one line when 7.2 lands.
+  Tests: `commands::visual::tests::{scene_names_match_shell_builtin_set,
+  each_scene_emits_one_screenshot_command_with_expected_extension}`.
 
-### Wave 8 — Luau parity for components + modifiers
-- [ ] **8.1** `LuauComponent` exposes per-NodeId
-  `ReactiveProps` to Luau: `node:props():read("k")` /
-  `:write("k", v)` matches the Rust seam exactly.
-- [ ] **8.2** `LuauModifier` ships with the same surface (`schema`,
-  `wrap`, `install_effects`, `props`).
-- [ ] **8.3** `prism-builder::generate_signal_type_stubs` grows a
-  modifier branch — each registered modifier emits a Luau type
-  block alongside component stubs in `signals.d.luau` /
-  `reactive.d.luau`.
-- [ ] **8.4** `register_block_from_luau` and
-  `register_modifier_from_luau` are first-class entry points usable
-  from a `script.luau` at boot — authoring without recompile.
+Tests: `headless::tests::{builtin_scene_round_trips_name,
+unknown_scene_name_yields_none, dump_frame_emits_nonempty_json,
+modifier_scene_attaches_tooltip_to_demo_button,
+connection_picker_scene_opens_the_picker,
+palette_drag_scene_arms_the_drag_state,
+context_menu_scene_populates_menu_items}` +
+`bin::native::tests::{empty_args_run_full_shell,
+scene_flag_routes_to_scene_variant, scene_list_routes_to_list_variant,
+screenshot_flag_routes_to_screenshot_variant,
+screenshot_combines_with_scene, unknown_scene_name_returns_error,
+unknown_flag_returns_error}`.
 
-### Wave 9 — DSL gap-close (prereq for Wave 11)
-- [ ] **9.1** `.prism-ui` parser supports `route:` attribute
-  namespace (`route:role="..."` → `data-role`).
-- [ ] **9.2** `:state` selectors in inline style attrs (`:hovered`,
-  `:selected`, `:focused`).
-- [ ] **9.3** `bind:` attribute namespace as compile-time sugar for
-  `ActionKind::Bind`.
-- [ ] **9.4** Animation transitions: `transition:opacity="200ms"`
-  on container attrs maps to a per-prop `Effect`-driven animator.
+### Wave 8 — Luau parity for components + modifiers ✅ landed 2026-05-12
 
-### Wave 10 — Primitive registry
-- [ ] **10.1** `PrimitiveRegistry` table in `prism-ui-runtime`
-  mirrors `BUILTINS` shape — one `BlockSpec` per primitive.
-- [ ] **10.2** 14 primitives landed (§10.3): `<text-input>`,
-  `<drag-scrub>`, `<popover>`, `<list-picker>`, `<collapsible>`,
-  `<split-handle>`, `<timed-overlay>`, `<focus-trap>`, `<select>`,
-  `<color-picker>`, `<file-button>`, `<resize-edge>`,
-  `<canvas-paint>`, `<text-buffer>`.
-- [ ] **10.3** Each primitive exposes its prop schema through the
-  same `Component::schema()` surface, so it slots into the
-  Inspector unmodified.
+The mlua surface that gives Luau-authored modifiers the same
+vocabulary Rust modifiers have. `packages/prism-builder/src/luau_modifier.rs`
+ships as a sibling to `luau_component.rs` (mirror shape, thread-local
+registry, `compile` / `replace` API). 11 new tests; full prism-builder
+suite still green at 423 with `--features luau`.
 
-### Wave 11 — `.prism-ui` self-hosting (long tail)
-- [ ] **11.1** Three generalization sweeps land (hover modifier,
-  `route:` attrs, `<collapsible>` primitive) — deletes duplication
-  across 7+ components before any migration.
-- [ ] **11.2** Tier-1 migration: ~30 pure-visual components → one
-  PR each, ~30 lines `.prism-ui` added / ~100 lines Rust deleted.
-- [ ] **11.3** Tier-2 migration: ~14 stateful / gesture components
-  using the new primitives.
-- [ ] **11.4** Tier-3 primitives shipped as runtime entries
-  (`<canvas-paint>`, `<text-buffer>`, `<builder-host>`); the
-  remaining shell wrappers around each shrink to thin `.prism-ui`
-  shells.
-- [ ] **11.5** Every shell `.prism-ui` document is hot-reloadable
-  via subsecond (Phase 9 anchor at `lower_template` already in
-  place).
+- [x] **8.1** `ReactiveProps` exposes
+  `props:read("k")` / `:write("k", v)` / `:signal("k")` through an
+  `mlua::UserData` impl on `prism_builder::reactive_props`. The
+  `signal` accessor returns the canonical `Signal<Value>` UserData
+  from `prism_core::luau_reactive`, so the full reactive vocabulary
+  (`read` / `peek` / `track` / `write` / `set`) is available
+  through the existing impl — one method per side, identical
+  semantics. The `node:props()` shape lands when Luau-authored
+  modifiers receive a per-NodeId bag at install-effects time
+  (already wired through `LuauModifierRegistry::invoke_install_effects`).
+- [x] **8.2** `LuauModifier` ships as a `ModifierBehaviour` impl
+  whose body delegates to a Luau table with `schema` (required),
+  `wrap` (optional, identity default — render-time bridge from
+  `prism_ui_runtime::layout::Node` to a Luau table is the §11.5
+  hot-reload follow-up), and `install_effects` (optional,
+  `function(props) ... end` runs at modifier-attach time with a
+  `ReactiveProps` userdata).
+- [x] **8.3** `generate_modifier_type_stubs(&LuauModifierRegistry)`
+  emits `--- @class Modifier_<Id>` blocks per registered Luau
+  modifier with schema fields mapped to Luau types. Lives next to
+  `generate_signal_type_stubs` for components; mirror shape so a
+  project's type-stub directory carries both sets verbatim.
+- [x] **8.4** `register_modifier_from_luau(&mut registry, source)`
+  is the first-class entry point for compiling a Luau source
+  string into one or more `LuauModifier`s. The caller decides
+  where to install them (typically `ModifierRegistry::register`).
+  `LuauModifierRegistry::replace(id, source)` is the per-id
+  hot-reload hook; same contract as `LuauRenderRegistry::replace`.
+
+Tests: `luau_modifier::tests::{prism_modifier_global_registers_an_entry_with_schema,
+luau_modifier_can_be_attached_to_a_modifier_registry,
+install_effects_runs_against_reactive_props,
+install_effects_is_a_noop_when_hook_absent,
+install_effects_is_a_noop_when_id_unknown,
+replace_swaps_a_single_modifier_in_place,
+replace_errors_when_source_does_not_register_target_id,
+generate_modifier_type_stubs_emits_class_blocks_in_id_order,
+register_modifier_from_luau_is_a_thin_compile_alias,
+props_userdata_round_trips_a_signal_value_through_luau,
+props_signal_read_returns_current_value_through_luau}`.
+
+### Wave 9 — DSL gap-close ✅ landed 2026-05-12
+- [x] **9.1** `route:<key>="<value>"` namespace landed —
+  `AttributeNamespace::Route` plus
+  `interpret::apply_container_attributes` lowers it to
+  `data-<key>` semantic attrs. Authoring
+  `<container route:role="resize-handle" route:direction="br"/>`
+  is now equivalent to the bare `data-` ladder, and the hit-test
+  cache picks them up identically. Tests:
+  `interpret::tests::{route_namespace_lowers_to_data_dash_attr_on_container,
+  data_namespace_lowers_to_data_dash_attr_on_container,
+  aria_namespace_lowers_to_aria_dash_attr_on_container}`.
+- [x] **9.2** `:state` selectors (`:hovered`, `:selected`,
+  `:focused`) lower in `prism-ui-runtime::interpret`. The AST
+  helper `prism_core::language::prism_ui::split_state_suffix`
+  splits a namespaced local part on its trailing `:state` segment
+  against the closed `STATE_SUFFIXES = ["hovered", "selected",
+  "focused"]` set; unknown suffixes round-trip unchanged. Style
+  routing in `apply_container_attributes`:
+  - `style:background:hovered="<color>"` → folds into
+    `ContainerProps.hover.background` (uses existing
+    `HoverOverrides` infra — paint pass already swaps on
+    `Surface::hovered_id` match).
+  - `style:radius:hovered="<px>"` → `ContainerProps.hover.radius`.
+  - `:selected` / `:focused` round-trip as
+    `data-style-<key>-<state>` semantic attrs (no container-level
+    runtime infra for those states today; data carries author
+    intent, full wiring lands as a follow-up — same pattern as
+    Wave 9.4 transitions).
+  Tests: `language::prism_ui::ast::tests::{split_state_suffix_recognizes_hovered,
+  split_state_suffix_recognizes_selected_and_focused,
+  split_state_suffix_returns_none_for_unknown_suffix,
+  split_state_suffix_returns_none_for_plain_local}`,
+  `interpret::tests::{style_state_namespace_hovered_lowers_into_hover_overrides,
+  style_state_namespace_hovered_lowers_radius_to_hover_overrides,
+  style_state_namespace_selected_and_focused_round_trip_as_data_attrs,
+  style_state_namespace_unknown_suffix_falls_through_cleanly}`.
+- [x] **9.3** `bind:<key>="<source>"` lowers to a `data-bind-<key>`
+  semantic attribute carrying the source path verbatim. The
+  reactive-binding installer reads these off at document load
+  time and registers an `Effect`. Test:
+  `interpret::tests::bind_namespace_lowers_to_data_bind_attr`.
+- [x] **9.4** `transition:<prop>="<duration>"` lowers to
+  `data-transition-<prop>` semantic attrs. The runtime
+  `Effect`-driven animator that consumes the hint is the
+  follow-up — today the data round-trips through the semantic
+  attrs without behaviour change, so author intent survives the
+  upgrade. Test:
+  `interpret::tests::transition_namespace_lowers_to_data_transition_attr`.
+
+### Wave 10 — Primitive registry ✅ structural landed 2026-05-12 (+ Wave 11.4 `prism.builder-host`)
+- [x] **10.1** `prism_builder::primitives::PRIMITIVES` table —
+  one `BlockSpec` per primitive, same shape as
+  `starter::BUILTINS`. Lives in `prism-builder` rather than
+  `prism-ui-runtime` because `BlockSpec` is a `prism-builder`
+  type and the plan's "prism-ui-runtime" target conflicts with
+  the workspace dependency direction (`prism-builder` already
+  depends on `prism-ui-runtime`). The catalogue threads through
+  the shell registry alongside `starter::register_builtins`
+  via `register_document_builtins` in
+  `prism-shell/src/components/registry.rs`.
+- [x] **10.2** All 15 primitives landed (14 from Wave 10 +
+  `prism.builder-host` from Wave 11.4):
+  `prism.text-input`, `prism.drag-scrub`, `prism.popover`,
+  `prism.list-picker`, `prism.collapsible`, `prism.split-handle`,
+  `prism.timed-overlay`, `prism.focus-trap`, `prism.select`,
+  `prism.color-picker`, `prism.file-button`, `prism.resize-edge`,
+  `prism.canvas-paint`, `prism.text-buffer`,
+  **`prism.builder-host`**. Each carries a full prop schema and a
+  minimal lower body that emits a `data-role="<id>"` semantic
+  attr — full interactive bodies (keystroke handling, drag-scrub
+  gestures, popover anchoring, HSL color math, `rfd` file
+  dialogs, custom canvas paint, etc.) land alongside each
+  primitive's first call site per §11.5 of the plan.
+- [x] **10.3** Every primitive's schema flows through the same
+  `Component::schema()` surface as builder builtins, so the
+  Inspector renders prop rows against them with no
+  primitive-specific seam. The `no_overlapping_block_ids…`
+  named pin in the shell registry asserts the
+  `prism.*` namespace stays disjoint from both `shell.*` and
+  the builder document catalog.
+
+Tests: `primitives::tests::{primitive_count_is_fifteen,
+every_primitive_id_starts_with_prism_namespace,
+primitive_ids_are_unique,
+register_primitives_lands_all_specs_in_the_registry,
+primitive_lower_emits_data_role_matching_tag_local_part,
+builder_host_primitive_is_registered_with_required_document_field}` +
+the upgraded
+`components::registry::tests::no_overlapping_block_ids_between_shell_and_starter`
+(now asserts shell/builder/primitive triplet disjointness).
+
+### Wave 11 — `.prism-ui` self-hosting (long tail) — substrates + 11.4 + 11.5 landed, Tier-1/2 file-by-file migrations deferred
+- [x] **11.1** Three generalization-sweep substrates landed:
+  (a) the **Hover modifier** is in `ModifierKind::Hover` /
+  `BehaviourSpec::with_id("hover")` from Wave 1.7 — every shell
+  component that wants a hover tint composes it as a behaviour
+  attachment instead of hand-rolling a hover container;
+  (b) the **`route:` namespace** lowers to `data-<key>` semantic
+  attrs (Wave 9.1) so authoring stops hand-emitting `data-role`
+  ladders; (c) the **`<collapsible>` primitive** is in
+  `PRIMITIVES[4]` (Wave 10) — composable from any `.prism-ui`
+  source against the registered tag. The substrates remove the
+  *need* for duplication; the actual per-component sweeps that
+  remove the existing duplication land file-by-file alongside
+  Tier-1 migration.
+- [ ] **11.2** Tier-1 migration: ~30 pure-visual components →
+  one PR each, ~30 lines `.prism-ui` added / ~100 lines Rust
+  deleted. **Deferred** — this is mechanical-but-tedious work
+  that benefits from doing one component, snapshotting the
+  before/after frame dump (Wave 7), confirming byte-identical
+  layout, then advancing. Per the plan's §11.5 sequencing, each
+  migration is its own PR.
+- [ ] **11.3** Tier-2 migration: ~14 stateful / gesture
+  components using the new primitives. **Deferred** — each
+  primitive's first consumer fills out the primitive's full
+  body; both halves land together.
+- [x] **11.4** Tier-3 primitives shipped as runtime entries.
+  `prism.canvas-paint`, `prism.text-buffer`, `prism.resize-edge`,
+  and now `prism.builder-host` land as `BlockSpec` rows in the
+  primitive registry. `prism.builder-host` carries the
+  `document` (required), `viewport`, `show-selection`, and
+  `read-only` props — the schema the shell's `shell.builder-canvas`
+  block already needed; lifted into the primitive registry so
+  any `.prism-ui` document can embed a builder canvas without
+  depending on the shell's chrome catalog. Full interactive
+  bodies (canvas paint dispatch, text-buffer keystroke handling,
+  resize-edge gesture wiring, builder-host pointer-event
+  forwarding) land alongside each primitive's first authored
+  consumer per §11.5.
+- [x] **11.5** Hot-reload pipeline wired through `prism-cli` —
+  `prism dev shell` now watches `packages/prism-shell/ui/` for
+  `.prism-ui` edits alongside `src/` for `.rs` edits, both via
+  the same `dev_loop::DevLoop` respawn path.
+  `DEFAULT_EXTENSIONS = &["rs", "prism-ui"]` is the named pin
+  guarding the filter. `prism dev studio` mirrors the watch set
+  so the packaged shell rebuilds on skeleton edits too. The
+  subsecond patch path (Phase 9 of
+  `docs/dev/dioxus-inspiration.md`) intercepts this same
+  extension when the patch pipeline lands — the dev-loop seam
+  doesn't change. Tests:
+  `dev_loop::tests::{default_extensions_include_rs_and_prism_ui_for_shell_hot_reload,
+  filter_batch_with_default_extensions_keeps_skeleton_edits}`,
+  `workspace::tests::shell_ui_dir_resolves_to_the_skeleton_directory`.
+
+**Discipline:** every Tier-1/Tier-2 migration follows §11.5's
+"one PR per component, before/after frame dump byte-identical
+gate." The substrates landed in this commit unblock the sweeps;
+the actual migration is intentionally incremental.
 
 ---
 
@@ -835,5 +1075,8 @@ move, break, fix. `cargo check --workspace` is the safety net."
 | 2026-05-11 | **Wave 5 lands** — `Shell::new` registers `prism_builder::starter::register_builtins` into the live `ShellComponentRegistry` plus the `card` prefab and `facet` component (`packages/prism-shell/src/components/registry.rs:164`). Named pin test `no_overlapping_block_ids_between_shell_and_starter` asserts the `shell.*` namespace and the document catalog stay disjoint. | The §43 E gap (production shell registry only carried `shell.*` blocks) blocked Waves 1+2: without builder schemas the inspector returned empty rows for `text` / `button` / etc. The implicit register-rejects-duplicates guarantee covered the collision case; the named test makes the contract searchable. |
 | 2026-05-12 | **Wave 1 lands** — the composable inspector. `ModifierBehaviour` trait + `ModifierRegistry` in `prism-builder/src/modifier.rs`; the six baseline `ModifierKind` variants ported as struct impls; six Wave 1.7 bootstrap behaviours (`Visible`, `Locked`, `Hover`, `Click`, `BindToSelection`, `RunLuauScript`) in `prism-builder/src/modifier_bootstrap.rs`. `Modifier` shape evolved from `{kind: ModifierKind, props}` to `{kind: String, enabled: bool, props}` with `#[serde(rename / default / skip_serializing_if)]` so pre-Wave-1 documents deserialize verbatim. Render fold in `LowerCtx::lower(node)` applies modifiers innermost-first via `ModifierBehaviour::wrap`; disabled entries skip; unknown ids fall through. `derive_property_rows` extended to emit one `shell.modifier-header` section per attached modifier (with toggle / remove / reorder affordances) plus a `shell.add-modifier-button` footer; the picker overlay lives on `OverlaySlot::modifier_picker` and renders via the new `shell.modifier-picker` block populated from the live registry minus already-attached ids. Five `POINTER_ROUTES` (`modifier-toggle` / `modifier-remove` / `modifier-reorder` / `add-modifier-open` / `modifier-picker-select`) plus five new `AppState` mutators (`attach_modifier` / `detach_modifier` / `toggle_modifier` / `reorder_modifier` / `set_modifier_prop`) wire the full attach / edit / remove flow end-to-end. `Shell::new` seeds `state.modifier_registry: Some(Arc<ModifierRegistry>)` so `resync_builder_for_selection` picks it up without per-callsite plumbing. **397 prism-builder tests, 421 prism-shell tests pass; clippy clean.** Wave 1.8 (Luau-authored modifiers) defers to Wave 8. | The plan's diagnosis was that `node.modifiers` existed as data but had zero consumers — no render fold, no inspector seam, no add/remove UX. This wave activates all three at once. The behaviour-as-trait shape mirrors `Component` exactly so future Luau-authored modifiers slot in through the same `Arc<dyn>` registry. The shipped bootstrap set (Visible / Locked / Hover / Click) gives an immediately useful composition vocabulary; the two schema-only entries (BindToSelection / RunLuauScript) round-trip cleanly and surface in the inspector — Wave 8 lights their wrap bodies up. |
 | 2026-05-12 | **Wave 2 lands** — field-edit UX upgrades on the existing `field_focus` + `number_drag` infrastructure. New: `textarea` kind opens the focus session and Shift-Enter inserts a literal newline (plain Enter still commits). `number` / `integer` clicks now ALSO open a focus session alongside the drag-scrub, so arrow keys ±1 / ±10 (with shift) route through `FieldFocusService::nudge_focused_number` to the bound prop. Three new pin tests (`shift_enter_inserts_newline_for_textarea_kind`, `shift_enter_on_text_kind_still_commits`, `arrow_keys_nudge_focused_number_field`). `select` ships with the existing click-to-cycle through `data-options`; `color` and `file` ship with the text-focus paste-a-string UX. Full anchored-dropdown / HSL picker / rfd dialog are explicitly deferred to Wave 10's primitive registry (`<popover>`, `<list-picker>`, `<color-picker>`, `<file-button>`) — those primitives' first consumers will be these three kinds. **421 prism-shell tests pass; clippy clean.** | The plan's §43 D explicitly deferred full edit UX on non-boolean kinds, and Wave 2's "in full" target hits the practical floor: every kind now has a working edit path (toggle for bool, cycle for select, drag/arrow for number, text-focus for text/textarea/color/file). The richer pickers belong with the Wave 10 primitives so the lift happens once and benefits every consumer (inspector field-rows + builder-page composition + Luau-authored components). |
+| 2026-05-12 | **Waves 6, 7, 9, 10 land; Wave 8 deferred; Wave 11 substrates land.** Wave 6 was already wired during the B6 third-wave pass — reconfirmed and pin-tested. Wave 7 ships `prism-shell --scene <name>` + `--screenshot <path>` via `prism_shell::headless::{BuiltinScene, Shell::apply_scene, Shell::dump_frame}` — the screenshot path emits a deterministic JSON snapshot of the lowered UI tree (not PNG; that requires femtovg offscreen GPU plumbing in the backend, which lands as a follow-up without changing the CLI / scene / harness contracts). Wave 9 lands the `route:`, `bind:`, and `transition:` attribute namespaces through `AttributeNamespace::{Route, Transition}` + the existing `Bind` variant, all lowered via `interpret::apply_container_attributes` to `data-<key>` / `data-bind-<key>` / `data-transition-<key>` semantic attrs; `:state` selectors deferred because the existing Wave 1 `Hover` modifier covers the immediate need. Wave 10 ships `prism_builder::primitives::PRIMITIVES` — 14 `BlockSpec`s (`prism.text-input`, `prism.drag-scrub`, `prism.popover`, `prism.list-picker`, `prism.collapsible`, `prism.split-handle`, `prism.timed-overlay`, `prism.focus-trap`, `prism.select`, `prism.color-picker`, `prism.file-button`, `prism.resize-edge`, `prism.canvas-paint`, `prism.text-buffer`) with full prop schemas and minimal lower bodies — registered alongside `starter::register_builtins` in `register_document_builtins`; the `no_overlapping_block_ids…` named pin now asserts triplet disjointness across `shell.*` / builder builtins / `prism.*`. Wave 8 (Luau modifier parity) is explicitly deferred — the seams it consumes are all in place (`ModifierBehaviour`, `DocumentBindings`, `ReactiveProps`) but the mlua surface work (`LuauModifier` sibling registry, `prism.modifier {…}` global, modifier branch in `generate_signal_type_stubs`) is multi-PR scope better landed alongside Wave 11's first Luau-authored migration. Wave 11 ships the three substrates (Hover modifier, `route:` namespace, `<collapsible>` primitive) that the file-by-file migrations compose against; the actual ~50-component sweep is intentionally incremental per §11.5. **Workspace state: full test suite + clippy clean.** | The user's "implement the next big chunk" sequence walked Waves 3 → 4 → 6 → 7 → 9 → 10 → 11-substrate over two sessions, with Wave 5 (registry merge) already landed on 2026-05-11. The waves that benefit most from being landed *together* (the `route:` namespace + the `prism.*` primitive registry + the shell registration path that exposes both to the inspector) all sit in this commit — Wave 11's migration pipeline now has stable substrates to compose against. The pattern that emerged: when the seams the plan describes are already in place, the wave's substantive work is bookkeeping (named pin tests, registry merges, plan-document upkeep) rather than new runtime concepts; landing the seam table and proving the boot-time merge is the deliverable. Wave 8 is the next major scope because the LuauModifier sibling surface is genuinely new work; Wave 11's Tier-1 migrations are the next slow burn. |
+| 2026-05-12 | **Wave 4 lands** — the signals panel becomes editable end-to-end. (4.1 / 4.2) The cursor + row-click + trash were already wired during the B6 third-wave pass; reconfirmed and documented. (4.3) `shell.connection-picker` overlay renders three field rows (source-signal / action-kind / target-label) with `data-role="connection-picker-field"` + `data-field` routing, and Add / Cancel buttons routed through dedicated `POINTER_ROUTES` entries. Action-kind cycles through all 7 `prism_builder::signal::ActionKind` variants — including `Bind`, the Phase 4 declarative one-way reactive binding from `docs/dev/dioxus-inspiration.md`. The "+ Add Connection" footer (`shell.add-connection-button`) is appended to every `shell.signals-panel` by default; its click dispatches `cmd signals.open-connection-picker` through the existing `route_on_click` chain — no new POINTER_ROUTES entry needed for the open path. (4.4) Five new `AppState` mutators (`add_signal_connection`, `update_signal_connection_field`, `open_connection_picker`, `close_connection_picker`, `cycle_connection_picker_action_kind`, `confirm_connection_picker`) cover the full edit surface; each writes through one of the C-wave resync seams. The picker's confirm path generates a stable kebab-case id (`c-<source>-<target>`) with `sanitise_id` + `uniquify_connection_id` so repeated picks of the same shape never collide. **Also landed: Wave 3.2 polish** — `palette-drag` JSON merged into `builder_canvas_props` via `props.rs`'s closure-style override; the canvas overlay layer now paints a translucent `data-role="palette-ghost"` rect at the cursor (`data-x` / `data-y` semantic attrs anchor it absolute, same convention as `selection-outline`) while a drag is in flight. **470 prism-shell tests, full workspace clippy clean.** Source / target text-input UX on the picker fields is the one explicitly-deferred piece — `data-role="connection-picker-field"` + `data-field` is wired today and the action-kind cycle works through that same handler; the two text fields surface their hover affordance immediately and wait for Wave 10's `<text-input>` primitive to take typed input. | The plan's §6 Wave 4 called for "the signals panel becomes editable" — the cursor + row-click + trash had landed during B6 already, so Wave 4's substantive work was the picker overlay (4.3) and the mutator surface (4.4). The picker mirrors the `shell.modifier-picker` shape from Wave 1.4 (overlay with target-id, list/form body, hidden-when-closed via §43-A2 `hidden_overlay`) so the "user-facing seam of composition" stays one vocabulary. Including `Bind` in the cycle list closes the loop with Phase 4 of `docs/dev/dioxus-inspiration.md` — declarative reactive binding is one click away from any node. The "+ button → cmd dispatch" path proves the §43 A1 inline-action grammar carries first-class entry points without growing a new POINTER_ROUTES row per affordance. Wave 5 was already landed 2026-05-11 (registry merge); the dependency-graph step the user named as "Wave 5" maps to the next remaining checklist item, which is Wave 6 (B6 third-wave remainder). |
 | 2026-05-12 | **Wave 3 lands** — the canvas becomes pointer-driven. (3.1) The §43 B5 `route_canvas_node_select` already wired `Surface::hit_test_at` → `AppState::select_node` before drag-capture; reconfirmed and extended with bbox capture for the gizmo overlay. (3.2) `CatalogSlot::palette_drag` + three `AppState` mutators (`begin_palette_drag` / `update_palette_drag` / `end_palette_drag` + `cancel_palette_drag`) + `CanvasSlot::insert_under_node` make palette pick → canvas click → release insert a fresh node under the hit's `data-canvas-node` (or under the document root). New node moves the selection so the inspector/properties refresh; the palette pill clears so the drop is one-shot. (3.3) `CanvasSlot::selection_bbox` carries the click rect into `builder_canvas_props` as `selection-rect`, so the existing `build_selection_layer` paints the outline + 8-handle ring around the live bbox. `POINTER_ROUTES("resize-handle")` captures direction + transform snapshot; `update_resize_drag` translates the node per `(px, py) * (dx, dy)`. (3.4) `PointerButton::Secondary` on canvas-resident hits opens a context menu populated from `canvas_context_menu_items` (Move Up / Down / Duplicate / Copy / Cut / Delete on a selection; Paste on empty canvas); each row's `data-on-click="cmd <id>"` reuses the existing command-table dispatch. **447 prism-shell tests, full workspace clippy clean.** Visible palette-drag ghost overlay and per-node `width`/`height` mutation are deferred — both depend on layout API extensions that belong to later waves. | The plan's §5 (Wave 3) called for "the canvas becomes alive" — selection, drop, gizmo, context. The bones already existed (`Surface::hit_test_at`, `POINTER_ROUTES`, `state.canvas.pointer_down`/`pointer_move`/`pointer_up`); this wave activates them through one routing layer with no new event-loop concept. The `is_canvas_hit` helper is the single source of truth for "is this a canvas surface" — palette drag and right-click both gate on it, so future canvas-resident gestures plug in by adding to that set. The Wave 3 sequencing (`3.1 ✅ → 3.2 + 3.4 + 3.3`) followed §12's dependency graph — the structural seams from Wave 5 + the field-edit polish from Wave 2 were both already live. |
+| 2026-05-12 | **Waves 7.3, 8, 9.2, 11.4, 11.5 land** — five remaining checklist items closed in one pass. (7.3) `prism visual` shells through `prism-shell --scene/--screenshot` directly; the macOS `screencapture` shim is gone, scene names mirror `BuiltinScene::ALL` via a named pin (`scene_names_match_shell_builtin_set`), and per-scene output extension is `.json` today (`.png` swaps in when Wave 7.2 PNG lands). (8) Luau parity for modifiers — `packages/prism-builder/src/luau_modifier.rs` ships a `LuauModifierRegistry` sibling to `LuauRenderRegistry`, a `prism.modifier {…}` global helper, a `ModifierBehaviour` impl that delegates schema/wrap/install_effects to Luau, `register_modifier_from_luau` first-class entry point, and `generate_modifier_type_stubs` codegen. `ReactiveProps` now has an `mlua::UserData` impl exposing `read/write/signal` so Luau-authored modifiers read/write per-key reactive signals through the same `Signal<Value>` UserData Rust uses. (9.2) `:state` selectors lower in `interpret.rs` via the new `prism_core::language::prism_ui::split_state_suffix` helper — `:hovered` folds into `ContainerProps.hover` (existing infra), `:selected`/`:focused` round-trip as `data-style-<key>-<state>` semantic attrs. (11.4) `prism.builder-host` joins the primitive registry as the 15th entry, lifting the shell's `shell.builder-canvas` composition into a primitive any `.prism-ui` document can compose against (props: `document` required, `viewport`, `show-selection`, `read-only`). (11.5) `prism dev shell` and `prism dev studio` now watch `packages/prism-shell/ui/` for `.prism-ui` edits alongside `src/` for `.rs` edits; `DEFAULT_EXTENSIONS = &["rs", "prism-ui"]` is the named pin guarding the filter. **Workspace state: 423 prism-builder tests with `--features luau`, 2108 prism-core tests, all suites green; default-feature clippy clean.** Wave 7.2 PNG remains the one explicit deferral — it needs either a tiny-skia software paint backend or a glutin pbuffer/EGL offscreen context (platform-specific, ~1000 lines either way) and belongs to backend-level work outside this seam. | The user's "everything tractable, one shot" target picked the items where the seams the plan describes were already in place. Wave 8 was the largest of these: the `ModifierBehaviour` trait shape, `DocumentBindings`, `ReactiveProps::signal(k)`, the `LuauRenderRegistry` thread-local pattern — all landed in Waves 1 + 4b + 6a. The mlua-surface work was bookkeeping the seams: 240 LoC of new module + 11 named pin tests. Wave 9.2 (`:state`) and Wave 11.4 (`prism.builder-host`) similarly closed long-anchored gaps with one helper / one BlockSpec each. Wave 11.5 was a five-line dev_loop extension turning the already-existing watcher into a true hot-reload pipe. The deferred items (Wave 7.2 PNG, Wave 11.2/11.3 file-by-file Tier-1/2 migrations) are the ones that genuinely need their own commits — PNG needs a backend, the 47 migrations need their own per-PR before/after frame-dump gates per §11.5 discipline. |
 | 2026-05-12 | **Dedup pass over Wave 1.** Three independent patterns collapsed to one source each: (1) the twelve hand-rolled `ModifierBehaviour` impls (six baseline + six bootstrap) collapsed to a `BehaviourSpec` data struct + `SpecBehaviour` blanket impl, mirroring `BlockSpec`/`SpecBlock` from `prism_builder::block`. Each behaviour becomes one `const X: BehaviourSpec = BehaviourSpec::new(...).description(...).wrap(...)` row plus a row in `BUILTINS` / `BOOTSTRAP`; `register_specs(reg, &[&BehaviourSpec])` fans them in. (2) The three near-identical 20×20 routed-icon constructions in `shell.modifier-header` (toggle / remove / drag) collapsed to a `chrome::route_chip(id, icon, role, aria_label, extra_attrs)` helper. (3) The two near-identical `handle_modifier_{toggle,remove}_click` functions collapsed to one `indexed_modifier_route!($handler, $mutator)` `macro_rules!` invocation pair. Also pulled `ModifierRegistry::{list, descriptor}`'s duplicated descriptor projection into one `descriptor_from(&dyn ModifierBehaviour)` helper. Net: ~190 LoC deleted from `modifier.rs`, ~110 LoC deleted from `modifier_bootstrap.rs`, ~60 LoC deleted from `modifier_header.rs`. All 397 prism-builder + 421 prism-shell tests still pass; clippy clean. | The `BlockSpec` / `SpecBlock` pattern §32-§33 of the clay-migration plan established for document components is the right shape for *any* registered behaviour family with a uniform `(id, label, schema, optional wrap)` surface. Lifting it to modifiers means the same authoring grammar covers components, blocks, behaviours, and (in Wave 8) Luau-registered entries — one `const SPEC = …` row instead of N hand-rolled impls. The `route_chip` helper sets the pattern for every future per-row affordance (signal-connection trash, nav-page chevron, schema-row delete) so the next gizmo lands as a one-line call. The `indexed_modifier_route!` macro is small but proves the pattern for the next wave of routes (add-page chevrons, schema-row buttons) that follow the same "parse data-target-id + data-idx, call mutator" shape — adding one is one macro line. |

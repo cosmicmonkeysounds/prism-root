@@ -28,8 +28,8 @@ pub mod grammar;
 pub mod provider;
 
 pub use ast::{
-    Attribute, AttributeName, AttributeNamespace, AttributeValue, Document, Element, Expression,
-    Node, ParseError,
+    split_state_suffix, Attribute, AttributeName, AttributeNamespace, AttributeValue, Document,
+    Element, Expression, Node, ParseError, STATE_SUFFIXES,
 };
 pub use contribution::{create_prism_ui_contribution, PRISM_UI_EXTENSIONS, PRISM_UI_ID};
 pub use grammar::parse;

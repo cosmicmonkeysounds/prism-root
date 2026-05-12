@@ -150,6 +150,12 @@ pub static SHELL_BUILTINS: &[&BlockSpec] = &[
     &super::modifier_header::MODIFIER_HEADER_SPEC,
     &super::add_modifier_button::ADD_MODIFIER_BUTTON_SPEC,
     &super::modifier_picker::MODIFIER_PICKER_SPEC,
+    // Wave 4 — connection picker + add-connection footer. The
+    // signals panel renders the add-button as its bottom row and
+    // the picker overlay sits sibling to the other window-relative
+    // overlays in `ui/app.prism-ui`.
+    &super::add_connection_button::ADD_CONNECTION_BUTTON_SPEC,
+    &super::connection_picker::CONNECTION_PICKER_SPEC,
 ];
 
 /// Register every spec in [`SHELL_BUILTINS`]. One-line fan-out via
@@ -168,7 +174,12 @@ pub fn register_shell_builtins(reg: &mut ShellComponentRegistry) -> Result<(), R
 /// `RegistryError::AlreadyRegistered`, so collisions surface at boot
 /// rather than as silent shadowing.
 pub fn register_document_builtins(reg: &mut ShellComponentRegistry) -> Result<(), RegistryError> {
-    prism_builder::starter::register_builtins(&mut reg.inner)
+    prism_builder::starter::register_builtins(&mut reg.inner)?;
+    // Wave 10 — the 14-row primitive registry alongside the document
+    // builtins. `prism.text-input` / `prism.popover` / etc. resolve
+    // through the same registry so the resolver dispatches Wave 11's
+    // `.prism-ui` source consistently.
+    prism_builder::primitives::register_primitives(&mut reg.inner)
 }
 
 #[cfg(test)]
@@ -247,11 +258,35 @@ mod tests {
         doc_ids.insert("card");
         doc_ids.insert("facet");
 
+        // Wave 10 — the 14 `prism.*` primitives merge in alongside
+        // the document builtins. Keep them in their own namespace so
+        // the disjointness contract scales: `shell.*`, document
+        // builtins, and `prism.*` primitives all need unique ids
+        // against each other.
+        let primitive_ids: HashSet<&str> = prism_builder::primitives::PRIMITIVES
+            .iter()
+            .map(|spec| spec.id)
+            .collect();
+
         let collisions: Vec<&str> = shell_ids.intersection(&doc_ids).copied().collect();
         assert!(
             collisions.is_empty(),
             "shell and document catalogs must carry disjoint ids; \
              collisions: {collisions:?}",
+        );
+        let prim_doc_collisions: Vec<&str> =
+            primitive_ids.intersection(&doc_ids).copied().collect();
+        assert!(
+            prim_doc_collisions.is_empty(),
+            "primitive and document catalogs must carry disjoint ids; \
+             collisions: {prim_doc_collisions:?}",
+        );
+        let prim_shell_collisions: Vec<&str> =
+            primitive_ids.intersection(&shell_ids).copied().collect();
+        assert!(
+            prim_shell_collisions.is_empty(),
+            "primitive and shell catalogs must carry disjoint ids; \
+             collisions: {prim_shell_collisions:?}",
         );
 
         // And the merge actually succeeds — the runtime guarantee
@@ -261,8 +296,9 @@ mod tests {
         register_document_builtins(&mut reg).expect("document");
         assert_eq!(
             reg.len(),
-            shell_ids.len() + doc_ids.len(),
-            "merged registry size must equal the sum of disjoint catalogs",
+            shell_ids.len() + doc_ids.len() + primitive_ids.len(),
+            "merged registry size must equal the sum of disjoint catalogs \
+             (shell + document + primitives)",
         );
     }
 

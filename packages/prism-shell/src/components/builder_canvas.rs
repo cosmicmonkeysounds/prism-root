@@ -24,6 +24,12 @@ const CANVAS_BG: &str = "#040000";
 const PAGE_BG: &str = "#ffffff";
 const GRID_LINE: &str = "#22000000";
 const SELECTION_BORDER: &str = "#0060c0";
+/// Wave 3.2 polish — fill colour of the palette-drag ghost pill
+/// painted under the cursor while the user drags a palette item
+/// across the canvas. Translucent blue so the underlying preview
+/// stays legible.
+const PALETTE_GHOST_BG: &str = "#660060c0";
+const PALETTE_GHOST_BORDER: &str = "#0060c0";
 /// Translucent blue tint painted as the background of the currently
 /// selected canvas-document node. Visible against any underlying
 /// content (white page bg, text glyphs, button fills) without
@@ -67,6 +73,10 @@ fn builder_canvas_schema() -> Vec<FieldSpec> {
         FieldSpec::text(
             "grid-cells",
             "Grid cells JSON array of {x, y, width, height, occupied}",
+        ),
+        FieldSpec::text(
+            "palette-drag",
+            "Palette-drag ghost JSON {active, kind, x, y, drop-target}",
         ),
     ]
 }
@@ -331,11 +341,74 @@ fn build_selection_layer(ctx: &LowerCtx<'_>, node: &Node) -> UiNode {
         }
     }
 
+    // Wave 3.2 polish: paint a translucent ghost pill at the cursor
+    // while a palette-drag is in flight. The pill carries the
+    // palette item's id as `data-kind` so the renderer can draw a
+    // label or icon next to the rect when needed (the minimal fill
+    // is enough for the user to track the cursor today).
+    if let Some(ghost) = build_palette_drag_ghost(node) {
+        layer_kids.push(ghost);
+    }
+
     bare_container(format!("{}::overlay", node.id), layer_kids, |p| {
         p.semantic = Semantic::tag("div")
             .with_attr("role", "presentation")
             .with_attr("data-role", "canvas-overlay");
     })
+}
+
+/// Wave 3.2 polish — render the palette-drag ghost as an absolute-
+/// positioned rect inside the canvas overlay. Reads `palette-drag`
+/// from the canvas's prop bag (populated by `props.rs` from
+/// `CatalogSlot::palette_drag`). Returns `None` when no drag is
+/// active so the overlay layer stays untouched on the common path.
+fn build_palette_drag_ghost(node: &Node) -> Option<UiNode> {
+    let drag = node.props.get("palette-drag")?;
+    if !drag
+        .get("active")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        return None;
+    }
+    let x = drag.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let y = drag.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let kind = drag
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let drop_target = drag
+        .get("drop-target")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    Some(bare_container(
+        format!("{}::palette-ghost", node.id),
+        vec![],
+        |p| {
+            p.width = Sizing::Fixed(96.0);
+            p.height = Sizing::Fixed(28.0);
+            p.background = parse_color(PALETTE_GHOST_BG);
+            p.radius = uniform_radius(4.0);
+            let mut s = Semantic::tag("div")
+                .with_attr("role", "presentation")
+                .with_attr("data-role", "palette-ghost")
+                .with_attr("data-kind", kind)
+                // Cursor anchor — top-left of the ghost paints at
+                // the pointer. The renderer reads `data-x`/`data-y`
+                // the same way it does for `selection-outline` so
+                // the two overlay variants share the absolute-
+                // positioning convention.
+                .with_attr("data-x", format_coord(x))
+                .with_attr("data-y", format_coord(y))
+                .with_attr("data-stroke", PALETTE_GHOST_BORDER);
+            if !drop_target.is_empty() {
+                s = s.with_attr("data-drop-target", drop_target);
+            }
+            p.semantic = s;
+        },
+    ))
 }
 
 /// Annotate every container in `nodes` (recursively) with the three
@@ -660,6 +733,96 @@ mod tests {
         assert!(
             props.hover.is_some(),
             "every canvas preview container declares hover_bg"
+        );
+    }
+
+    #[test]
+    fn palette_drag_ghost_paints_inside_canvas_overlay_when_active() {
+        // Wave 3.2 polish: the canvas overlay layer carries a
+        // `data-role="palette-ghost"` container at the cursor
+        // position whenever a palette drag is in flight.
+        let ui = lower(json!({
+            "palette-drag": {
+                "active": true,
+                "kind": "text",
+                "x": 120.0,
+                "y": 240.0,
+                "drop-target": "demo-heading",
+            },
+        }));
+        let UiNode::Container { children, .. } = ui else {
+            panic!()
+        };
+        let UiNode::Container {
+            children: overlay, ..
+        } = &page_of(&children)[2]
+        else {
+            panic!()
+        };
+        let ghost = overlay
+            .iter()
+            .find_map(|c| {
+                if let UiNode::Container { props, .. } = c {
+                    if props
+                        .semantic
+                        .attrs
+                        .iter()
+                        .any(|(k, v)| k == "data-role" && v == "palette-ghost")
+                    {
+                        return Some(props);
+                    }
+                }
+                None
+            })
+            .expect("palette ghost present");
+        assert!(ghost
+            .semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-kind" && v == "text"));
+        assert!(ghost
+            .semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-x" && v == "120"));
+        assert!(ghost
+            .semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-y" && v == "240"));
+        assert!(ghost
+            .semantic
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-drop-target" && v == "demo-heading"));
+    }
+
+    #[test]
+    fn palette_drag_ghost_absent_when_inactive() {
+        let ui = lower(json!({
+            "palette-drag": { "active": false },
+        }));
+        let UiNode::Container { children, .. } = ui else {
+            panic!()
+        };
+        let UiNode::Container {
+            children: overlay, ..
+        } = &page_of(&children)[2]
+        else {
+            panic!()
+        };
+        assert!(
+            overlay.iter().all(|c| {
+                let UiNode::Container { props, .. } = c else {
+                    return true;
+                };
+                props
+                    .semantic
+                    .attrs
+                    .iter()
+                    .all(|(k, v)| !(k == "data-role" && v == "palette-ghost"))
+            }),
+            "no ghost while inactive",
         );
     }
 

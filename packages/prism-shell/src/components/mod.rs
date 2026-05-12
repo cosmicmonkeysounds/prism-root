@@ -6,6 +6,7 @@
 //! `SHELL_BUILTINS` table in `registry.rs`. The strategy and rationale
 //! are documented in `docs/dev/clay-migration-plan.md` §12 + §33.
 
+pub mod add_connection_button;
 pub mod add_modifier_button;
 pub mod app_card;
 pub mod app_window;
@@ -16,6 +17,7 @@ pub mod code_editor;
 pub mod command_palette;
 pub mod component_palette;
 pub mod component_picker;
+pub mod connection_picker;
 pub mod context_menu;
 pub mod dock_divider;
 pub mod dock_panel;
