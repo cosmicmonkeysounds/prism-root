@@ -92,7 +92,27 @@ impl Parser {
     // ── Precedence chain ──────────────────────────────────────────
 
     fn parse_expr(&mut self) -> AnyExprNode {
-        self.parse_or()
+        self.parse_ternary()
+    }
+
+    /// `cond ? then : else_` — right-associative. Trees as
+    /// `a ? b : c ? d : e` → `a ? b : (c ? d : e)`. Eats only one
+    /// `?` per call; the recursive `parse_ternary()` for the else
+    /// branch chains the rest. Returns the head when there's no `?`,
+    /// so non-ternary expressions stay shape-identical.
+    fn parse_ternary(&mut self) -> AnyExprNode {
+        let cond = self.parse_or();
+        if self.eat(TokenKind::Question).is_some() {
+            let then_branch = self.parse_or();
+            self.expect(TokenKind::Colon, "Expected ':' in ternary expression");
+            let else_branch = self.parse_ternary();
+            return AnyExprNode::Conditional {
+                cond: Box::new(cond),
+                then_branch: Box::new(then_branch),
+                else_branch: Box::new(else_branch),
+            };
+        }
+        cond
     }
 
     fn parse_or(&mut self) -> AnyExprNode {
@@ -263,10 +283,38 @@ impl Parser {
                 self.expect(TokenKind::RParen, "Expected ')' after function arguments");
                 return AnyExprNode::Call { name: t.raw, args };
             }
+            // Chain dotted-path segments into `subfield` — `item.label`
+            // and `tabs.0.name` both parse to a single Operand whose
+            // ValueStore traverses the path. `Ident.Number.Ident` is
+            // accepted so JSON array index segments work uniformly.
+            let mut subfield: Option<String> = None;
+            while self.eat(TokenKind::Dot).is_some() {
+                // Identifier or numeric (array-index) segment both
+                // capture as the segment's raw text; the ValueStore
+                // walks the dotted path uniformly. Anything else
+                // terminates the chain with an error.
+                let seg = if matches!(self.peek().kind, TokenKind::Ident | TokenKind::Number) {
+                    self.advance().raw
+                } else {
+                    let tok = self.peek().clone();
+                    self.errors.push(ExprError {
+                        message: format!(
+                            "Expected identifier or index after '.' in operand path, got '{}'",
+                            tok.raw
+                        ),
+                        offset: Some(tok.offset),
+                    });
+                    break;
+                };
+                subfield = Some(match subfield {
+                    Some(prev) => format!("{prev}.{seg}"),
+                    None => seg,
+                });
+            }
             return AnyExprNode::Operand {
                 operand_type: "field".to_string(),
                 id: t.raw,
-                subfield: None,
+                subfield,
             };
         }
         if self.eat(TokenKind::LParen).is_some() {
@@ -382,5 +430,54 @@ mod tests {
     fn reports_unclosed_paren() {
         let r = parse("(1 + 2");
         assert!(!r.errors.is_empty());
+    }
+
+    #[test]
+    fn parses_dotted_path_into_operand_subfield() {
+        let r = parse("item.label");
+        match r.node.unwrap() {
+            AnyExprNode::Operand { id, subfield, .. } => {
+                assert_eq!(id, "item");
+                assert_eq!(subfield.as_deref(), Some("label"));
+            }
+            _ => panic!("expected operand"),
+        }
+    }
+
+    #[test]
+    fn parses_deep_dotted_path_with_numeric_segment() {
+        let r = parse("tabs.0.name");
+        match r.node.unwrap() {
+            AnyExprNode::Operand { id, subfield, .. } => {
+                assert_eq!(id, "tabs");
+                assert_eq!(subfield.as_deref(), Some("0.name"));
+            }
+            _ => panic!("expected operand"),
+        }
+    }
+
+    #[test]
+    fn parses_ternary_right_associative() {
+        let r = parse("a ? b : c ? d : e");
+        match r.node.unwrap() {
+            AnyExprNode::Conditional { else_branch, .. } => match *else_branch {
+                AnyExprNode::Conditional { .. } => {}
+                other => panic!("expected nested ternary in else branch, got {other:?}"),
+            },
+            other => panic!("expected ternary at root, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_c_style_logical_operators() {
+        let r = parse("a && b || !c");
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        // root is `||` due to lower precedence
+        match r.node.unwrap() {
+            AnyExprNode::Binary {
+                op: BinaryOp::Or, ..
+            } => {}
+            other => panic!("expected `||` at root, got {other:?}"),
+        }
     }
 }

@@ -169,6 +169,15 @@ pub enum AnyExprNode {
         name: String,
         args: Vec<AnyExprNode>,
     },
+    /// `cond ? then : else_branch` — right-associative ternary.
+    /// JS-truthy on `cond`. Added Wave 11.2 substrate to unblock the
+    /// remaining shell migrations whose row variants needed
+    /// `selected ? SELECTED_BG : kind == 'error' ? ERROR_BG : DEFAULT_BG`.
+    Conditional {
+        cond: Box<AnyExprNode>,
+        then_branch: Box<AnyExprNode>,
+        else_branch: Box<AnyExprNode>,
+    },
 }
 
 impl AnyExprNode {
@@ -179,6 +188,7 @@ impl AnyExprNode {
             Self::Unary { .. } => "unary",
             Self::Binary { .. } => "binary",
             Self::Call { .. } => "call",
+            Self::Conditional { .. } => "conditional",
         }
     }
 }

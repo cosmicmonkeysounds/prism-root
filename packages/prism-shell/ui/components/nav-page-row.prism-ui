@@ -1,0 +1,61 @@
+<!--
+  shell.nav-page-row — single page row in the navigation panel. Wave
+  11.2 migration of nav_page_row.rs.
+
+  Layout: a 32px row with [left text cluster | optional chevron pair |
+  optional trash]. Selected paints `#26000000`, active paints
+  `#160060c0`; both with `aria-current` / `aria-selected` set.
+  Chevrons appear only when selected (they dispatch
+  `navigation.move-page-{up,down}` against the cursor); trash
+  appears only when `show-delete=true`.
+
+  `node-count` / `link-count` summary line is omitted when both are
+  zero, matching the Rust block's "show counts when at least one is
+  non-zero" rule.
+-->
+<container
+    tag="div"
+    direction="row"
+    height="32"
+    padding-left="12"
+    padding-right="6"
+    style:radius="4"
+    style:background="{selected ? '#26000000' : is-active ? '#160060c0' : ''}"
+    style:background:hovered="#0a000000"
+    role="listitem"
+    data:role="nav-page-row"
+    data:target-id="{page-id}"
+    aria:current="{is-active ? 'page' : ''}"
+    aria:selected="{selected ? 'true' : ''}">
+  <container direction="row" gap="8" height="grow">
+    <text font-size="12" style:color="#000000">{page-title ? page-title : '(untitled)'}</text>
+    <text if="{route}" font-size="11" style:color="#80000000">{route}</text>
+    <text
+        if="{node-count > 0 || link-count > 0}"
+        font-size="10"
+        style:color="#80000000">{node-count} nodes · {link-count} links</text>
+  </container>
+  <container if="{selected || show-delete}" direction="row" gap="2" height="grow">
+    <shell.icon-button
+        if="{selected}"
+        id="{page-id}::move-up"
+        icon="icons/chevron-up.svg"
+        enabled="true"
+        tooltip-text="Move up"
+        command="navigation.move-page-up"/>
+    <shell.icon-button
+        if="{selected}"
+        id="{page-id}::move-down"
+        icon="icons/chevron-down.svg"
+        enabled="true"
+        tooltip-text="Move down"
+        command="navigation.move-page-down"/>
+    <shell.icon-button
+        if="{show-delete}"
+        id="{page-id}::delete"
+        icon="icons/trash.svg"
+        enabled="true"
+        tooltip-text="Delete page"
+        command="navigation.delete-selected-page"/>
+  </container>
+</container>

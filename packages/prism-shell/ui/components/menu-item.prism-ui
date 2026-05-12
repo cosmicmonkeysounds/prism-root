@@ -1,0 +1,47 @@
+<!--
+  shell.menu-item — single labelled row inside a dropdown or context
+  menu. Wave 11.2 migration of menu_item.rs.
+
+  Authors can pass either `disabled` (schema-side) or `enabled`
+  (state-side); both compose via `disabled || !enabled` thanks to the
+  Wave 11.2 boolean substrate.
+
+  Disabled rows skip the hover background, the data-on-click affordance,
+  and dim the label colour. Enabled rows carry `data-on-click="cmd <id>"`
+  when a command is bound (downstream `parse_action` treats an empty
+  body as a no-op, so the disabled branch's omission is the correct
+  behaviour).
+-->
+<container
+    if="{disabled || !enabled}"
+    tag="div"
+    direction="row"
+    gap="12"
+    padding-left="10"
+    padding-right="10"
+    padding-top="6"
+    padding-bottom="6"
+    height="28"
+    style:radius="3"
+    role="menuitem"
+    aria:disabled="true">
+  <text font-size="12" style:color="#66000000">{label}</text>
+  <text if="{shortcut}" font-size="11" style:color="#88000000">{shortcut}</text>
+</container>
+<container
+    else
+    tag="div"
+    direction="row"
+    gap="12"
+    padding-left="10"
+    padding-right="10"
+    padding-top="6"
+    padding-bottom="6"
+    height="28"
+    style:radius="3"
+    style:background:hovered="#0f000000"
+    role="menuitem"
+    data:on-click="{command ? 'cmd ' + command : ''}">
+  <text font-size="12" style:color="#000000">{label}</text>
+  <text if="{shortcut}" font-size="11" style:color="#88000000">{shortcut}</text>
+</container>

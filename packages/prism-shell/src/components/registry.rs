@@ -96,15 +96,20 @@ impl ShellComponentRegistry {
 /// file. Adding a primitive = one new const + one row here.
 pub static SHELL_BUILTINS: &[&BlockSpec] = &[
     &super::icon_button::ICON_BUTTON_SPEC,
-    &super::toast::TOAST_SPEC,
     // Wave 11.2 — the following ids were Rust-authored before being
     // migrated to `.prism-ui` source. Each row was deleted alongside
     // its `components/<id>.rs` file:
     //   First wave  (2026-05-12 a9c199c): toolbar-separator, help-tooltip,
     //     docs-view, docs-sidebar, toast-stack, launchpad.
-    //   Second wave (this commit): explorer, docs-content,
+    //   Second wave (a previous commit): explorer, docs-content,
     //     section-header, nav-button, inspector-tree, nav-page-list,
-    //     signals-panel.
+    //     signals-panel, workflow-page-bar, menu-dropdown, context-menu,
+    //     add-modifier-button, add-connection-button.
+    //   Third wave (this commit, substrate-unblocked): toast, menu-item,
+    //     signal-connection-row, schema-row, nav-page-row,
+    //     properties-panel. These six unlocked when the Wave 11.2 DSL
+    //     substrate landed (ternary, C-style `||`/`&&`/`!`, dotted-path
+    //     comparison, `<dispatch component="{…}"/>`).
     // They land into the registry through
     // `register_prism_ui_components` in `shell.rs`. The
     // `prism_ui_specs_register_disjoint_from_native_builtins` test in
@@ -124,13 +129,8 @@ pub static SHELL_BUILTINS: &[&BlockSpec] = &[
     &super::dock_panel::DOCK_PANEL_SPEC,
     &super::dock_workspace::DOCK_WORKSPACE_SPEC,
     &super::command_palette::COMMAND_PALETTE_SPEC,
-    &super::menu_item::MENU_ITEM_SPEC,
-    &super::properties_panel::PROPERTIES_PANEL_SPEC,
     &super::component_palette::COMPONENT_PALETTE_SPEC,
-    &super::signal_connection_row::SIGNAL_CONNECTION_ROW_SPEC,
-    &super::schema_row::SCHEMA_ROW_SPEC,
     &super::schema_designer::SCHEMA_DESIGNER_SPEC,
-    &super::nav_page_row::NAV_PAGE_ROW_SPEC,
     &super::nav_graph::NAV_GRAPH_SPEC,
     &super::code_editor::CODE_EDITOR_SPEC,
     &super::gizmo_move::GIZMO_MOVE_SPEC,

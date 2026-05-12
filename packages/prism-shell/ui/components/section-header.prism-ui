@@ -1,29 +1,21 @@
 <!--
   shell.section-header — 36px collapsible-section header used in
   sidebars, properties panels, and the inspector. Wave 11.2 migration
-  of section_header.rs.
+  of section_header.rs (collapsed to single-container form via the
+  ternary substrate).
 
-  Two visual states: expanded (chevron-down + dark label) vs
-  collapsed (chevron-left + dim label + "(default)" badge). The
-  outer container is `<header>` for SSR semantics; data-section is
-  always set to the bound `section-id` (empty when omitted).
+  Visual state: expanded (chevron-down + dark label) vs collapsed
+  (chevron-left + dim label + "(default)" badge). The outer container
+  is `<header>` for SSR semantics; `data-section` is always set to
+  the bound `section-id` (empty when omitted).
 -->
 <container tag="header" direction="column" height="36">
   <container direction="row" gap="6" padding-left="4" padding-right="4" height="35">
     <image
-        if="{collapsed}"
-        src="icons/chevron-left.svg"
+        src="{collapsed ? 'icons/chevron-left.svg' : 'icons/chevron-down.svg'}"
         width="10"
         height="10"/>
-    <image
-        else
-        src="icons/chevron-down.svg"
-        width="10"
-        height="10"/>
-
-    <text if="{collapsed}" font-size="11" style:color="#7f000000">{label}</text>
-    <text else font-size="11" style:color="#cc000000">{label}</text>
-
+    <text font-size="11" style:color="{collapsed ? '#7f000000' : '#cc000000'}">{label}</text>
     <text if="{collapsed}" font-size="10" style:color="#4c000000">(default)</text>
   </container>
   <container height="1" style:background="#19000000"/>

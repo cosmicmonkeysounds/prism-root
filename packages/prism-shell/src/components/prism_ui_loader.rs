@@ -48,10 +48,10 @@ use prism_builder::{
     ui_resolver::RegistryTagResolver,
     Block,
 };
-use serde_json::Value;
 use prism_core::language::prism_ui::{parse, Document as AstDocument};
 use prism_ui_runtime::interpret::{lower_document_with_scope, LowerScope, TagResolver};
 use prism_ui_runtime::layout::Node as UiNode;
+use serde_json::Value;
 
 use crate::components::registry::ShellComponentRegistry;
 
@@ -435,6 +435,116 @@ fn add_modifier_button_schema() -> Vec<FieldSpec> {
     ]
 }
 
+// ── Batch 3 (Wave 11.2): row variants + ternary / boolean / dispatch ──
+//
+// Six more Tier-1 migrations landing alongside the DSL substrate
+// (ternary, C-style `&&`/`||`/`!`, dotted-path comparison, dynamic
+// `<dispatch>`). Each was previously blocked on one of the four
+// substrate features the plan called out at §11.2; with the substrate
+// in place every block here is a single `.prism-ui` file + one row.
+
+fn toast_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("title", "Title").required(),
+        FieldSpec::text("body", "Body"),
+        FieldSpec::text("kind", "Kind").with_default(Value::String("info".into())),
+    ]
+}
+
+fn toast_signals() -> Vec<SignalDef> {
+    with_common_signals(vec![SignalDef::new(
+        "dismissed",
+        "User dismissed the toast (close click, swipe, or auto-timeout).",
+    )])
+}
+
+fn menu_item_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("item-id", "Item id").required(),
+        FieldSpec::text("label", "Label").required(),
+        FieldSpec::text("shortcut", "Shortcut hint"),
+        FieldSpec::boolean("disabled", "Disabled").with_default(Value::Bool(false)),
+        FieldSpec::boolean("enabled", "Enabled (state-side authoring)")
+            .with_default(Value::Bool(true)),
+        FieldSpec::text("command", "Command id to dispatch on click"),
+    ]
+}
+
+fn signal_connection_row_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("connection-id", "Connection id (cursor key)"),
+        FieldSpec::text("source-signal", "Source signal"),
+        FieldSpec::text("action-kind", "Action kind"),
+        FieldSpec::text("target-label", "Target label"),
+        FieldSpec::boolean("selected", "Selected").with_default(Value::Bool(false)),
+        FieldSpec::boolean("show-delete", "Show delete affordance")
+            .with_default(Value::Bool(false)),
+    ]
+}
+
+fn signal_connection_row_signals() -> Vec<SignalDef> {
+    with_common_signals(vec![
+        SignalDef::new(
+            "row-clicked",
+            "Row activated; host selects the bound connection.",
+        ),
+        SignalDef::new("delete-clicked", "Trash button pressed."),
+    ])
+}
+
+fn schema_row_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("field-id", "Field id (cursor key)"),
+        FieldSpec::text("field-name", "Field name"),
+        FieldSpec::text("field-kind", "Field kind"),
+        FieldSpec::boolean("required", "Required").with_default(Value::Bool(false)),
+        FieldSpec::boolean("selected", "Selected").with_default(Value::Bool(false)),
+        FieldSpec::boolean("show-delete", "Show delete affordance")
+            .with_default(Value::Bool(false)),
+    ]
+}
+
+fn schema_row_signals() -> Vec<SignalDef> {
+    with_common_signals(vec![
+        SignalDef::new(
+            "row-clicked",
+            "Row activated; host selects the bound field.",
+        ),
+        SignalDef::new("delete-clicked", "Trash button pressed."),
+    ])
+}
+
+fn nav_page_row_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("page-id", "Page id"),
+        FieldSpec::text("page-title", "Page title"),
+        FieldSpec::text("route", "Route"),
+        FieldSpec::boolean("is-active", "Active page").with_default(Value::Bool(false)),
+        FieldSpec::number("node-count", "Node count", NumericBounds::min(0.0))
+            .with_default(Value::from(0.0)),
+        FieldSpec::number("link-count", "Inbound link count", NumericBounds::min(0.0))
+            .with_default(Value::from(0.0)),
+        FieldSpec::boolean("selected", "Selected").with_default(Value::Bool(false)),
+        FieldSpec::boolean("show-delete", "Show delete").with_default(Value::Bool(false)),
+    ]
+}
+
+fn nav_page_row_signals() -> Vec<SignalDef> {
+    with_common_signals(vec![
+        SignalDef::new("row-clicked", "Row activated."),
+        SignalDef::new("move-up", "Move up clicked."),
+        SignalDef::new("move-down", "Move down clicked."),
+        SignalDef::new("delete-clicked", "Trash clicked."),
+    ])
+}
+
+fn properties_panel_schema() -> Vec<FieldSpec> {
+    vec![FieldSpec::text(
+        "rows",
+        "Rows (JSON array of {component, props})",
+    )]
+}
+
 pub static SHELL_PRISM_UI_COMPONENTS: &[PrismUiSpec] = &[
     PrismUiSpec::new(
         "shell.toolbar-separator",
@@ -529,6 +639,41 @@ pub static SHELL_PRISM_UI_COMPONENTS: &[PrismUiSpec] = &[
         include_str!("../../ui/components/add-connection-button.prism-ui"),
     )
     .schema(no_schema),
+    // Batch 3 — substrate-unblocked migrations.
+    PrismUiSpec::new(
+        "shell.toast",
+        include_str!("../../ui/components/toast.prism-ui"),
+    )
+    .schema(toast_schema)
+    .signals(toast_signals),
+    PrismUiSpec::new(
+        "shell.menu-item",
+        include_str!("../../ui/components/menu-item.prism-ui"),
+    )
+    .schema(menu_item_schema),
+    PrismUiSpec::new(
+        "shell.signal-connection-row",
+        include_str!("../../ui/components/signal-connection-row.prism-ui"),
+    )
+    .schema(signal_connection_row_schema)
+    .signals(signal_connection_row_signals),
+    PrismUiSpec::new(
+        "shell.schema-row",
+        include_str!("../../ui/components/schema-row.prism-ui"),
+    )
+    .schema(schema_row_schema)
+    .signals(schema_row_signals),
+    PrismUiSpec::new(
+        "shell.nav-page-row",
+        include_str!("../../ui/components/nav-page-row.prism-ui"),
+    )
+    .schema(nav_page_row_schema)
+    .signals(nav_page_row_signals),
+    PrismUiSpec::new(
+        "shell.properties-panel",
+        include_str!("../../ui/components/properties-panel.prism-ui"),
+    )
+    .schema(properties_panel_schema),
 ];
 
 #[cfg(test)]
@@ -637,7 +782,10 @@ mod tests {
         let nodes = shell.render();
         // Collect every `data-role` across the rendered tree.
         fn walk(n: &UiNode, sink: &mut Vec<String>) {
-            if let UiNode::Container { props, children, .. } = n {
+            if let UiNode::Container {
+                props, children, ..
+            } = n
+            {
                 for (k, v) in &props.semantic.attrs {
                     if k == "data-role" {
                         sink.push(v.clone());
@@ -671,22 +819,23 @@ mod tests {
         use crate::props::{PropCtx, PropEmission, ShellPropBindings};
         use crate::render::{render_tree, Skeleton};
 
-        let skel = Skeleton::from_source(
-            r#"<shell.workflow-page-bar id="workflow"/>"#,
-        )
-        .expect("parse");
+        let skel =
+            Skeleton::from_source(r#"<shell.workflow-page-bar id="workflow"/>"#).expect("parse");
 
         let (reg, _) = build_registry();
         let bindings = {
             let mut b = ShellPropBindings::default();
-            b.register("shell.workflow-page-bar", Box::new(|_| {
-                PropEmission::from_props(json!({
-                    "pages": [
-                        { "page-id": "edit", "label": "Edit", "active": true },
-                        { "page-id": "code", "label": "Code" },
-                    ],
-                }))
-            }));
+            b.register(
+                "shell.workflow-page-bar",
+                Box::new(|_| {
+                    PropEmission::from_props(json!({
+                        "pages": [
+                            { "page-id": "edit", "label": "Edit", "active": true },
+                            { "page-id": "code", "label": "Code" },
+                        ],
+                    }))
+                }),
+            );
             b
         };
         let state = crate::AppState::default();

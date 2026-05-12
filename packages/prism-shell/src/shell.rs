@@ -20,9 +20,7 @@ use prism_ui_runtime::event::Event;
 use prism_ui_runtime::interpret::TagResolver;
 use prism_ui_runtime::layout::{HitRect, Node as UiNode, Surface, Viewport};
 
-use crate::components::{
-    register_document_builtins, ShellComponentRegistry,
-};
+use crate::components::{register_document_builtins, ShellComponentRegistry};
 use crate::events::dispatch_event;
 use crate::props::{PropCtx, ShellPropBindings};
 use crate::render::{render_tree, Skeleton};

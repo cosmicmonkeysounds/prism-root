@@ -1,0 +1,46 @@
+<!--
+  shell.signal-connection-row — one row in the signals panel describing
+  a source → kind → target connection. Wave 11.2 migration of
+  signal_connection_row.rs.
+
+  Layout: a 30px row with [left text cluster | optional trash button].
+  Selected paints `#26000000`; hover always paints `#0a000000`.
+  The trash dispatches `signals.delete-selected-connection` against
+  the active cursor (no per-row id needed — the row click moves the
+  cursor first).
+-->
+<container
+    tag="div"
+    direction="row"
+    height="30"
+    padding-left="12"
+    padding-right="6"
+    style:radius="4"
+    style:background="{selected ? '#26000000' : ''}"
+    style:background:hovered="#0a000000"
+    role="listitem"
+    data:role="signal-connection-row"
+    data:target-id="{connection-id}"
+    aria:selected="{selected ? 'true' : ''}">
+  <container direction="row" gap="8" height="grow">
+    <text
+        if="{source-signal}"
+        font-size="12"
+        style:color="#0060c0">{source-signal}</text>
+    <text
+        if="{!source-signal}"
+        font-size="12"
+        style:color="#0060c0">(no signal)</text>
+    <text if="{action-kind}" font-size="12" style:color="#80000000">→</text>
+    <text if="{action-kind}" font-size="12" style:color="#000000">{action-kind}</text>
+    <text if="{target-label}" font-size="12" style:color="#80000000">·</text>
+    <text if="{target-label}" font-size="11" style:color="#80000000">{target-label}</text>
+  </container>
+  <shell.icon-button
+      if="{show-delete}"
+      id="{connection-id}::delete"
+      icon="icons/trash.svg"
+      enabled="true"
+      tooltip-text="Delete connection"
+      command="signals.delete-selected-connection"/>
+</container>

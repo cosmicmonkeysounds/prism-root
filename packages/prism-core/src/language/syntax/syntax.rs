@@ -396,6 +396,22 @@ pub fn infer_node_type(node: &AnyExprNode, context: Option<&SchemaContext>) -> E
             .get(name.to_ascii_lowercase().as_str())
             .map(|s| s.return_type)
             .unwrap_or(ExprType::Unknown),
+        // Ternary's type is the join of its two branches — both arms
+        // share the same inferred type when sound; mismatch falls back
+        // to Unknown so the validator surfaces the issue.
+        AnyExprNode::Conditional {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            let lt = infer_node_type(then_branch, context);
+            let rt = infer_node_type(else_branch, context);
+            if lt == rt {
+                lt
+            } else {
+                ExprType::Unknown
+            }
+        }
     }
 }
 
@@ -496,6 +512,15 @@ fn validate_node_types(
         }
         AnyExprNode::Unary { operand, .. } => {
             validate_node_types(operand, context, diagnostics, source);
+        }
+        AnyExprNode::Conditional {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
+            validate_node_types(cond, context, diagnostics, source);
+            validate_node_types(then_branch, context, diagnostics, source);
+            validate_node_types(else_branch, context, diagnostics, source);
         }
         AnyExprNode::Literal { .. } => {}
     }

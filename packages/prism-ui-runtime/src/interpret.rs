@@ -536,14 +536,27 @@ fn expand_control_flow(
                     out.push((node.clone(), None));
                 }
             }
-            Some(ControlFlow::For { var, source }) => {
+            Some(ControlFlow::For {
+                var,
+                index_var,
+                source,
+            }) => {
                 chain_taken = None;
                 let items = scope
                     .binding(&source)
                     .and_then(|v| v.as_array().cloned())
                     .unwrap_or_default();
-                for item in items {
-                    let child_scope = scope.clone().with_binding(var.clone(), item);
+                for (idx, item) in items.into_iter().enumerate() {
+                    let mut child_scope = scope.clone().with_binding(var.clone(), item);
+                    // Optional iteration-index binding — `for="row, idx
+                    // in rows"` exposes the index as a typed integer.
+                    // Authors use it to build stable per-row ids
+                    // (`id="row-{idx}"`) so hit-testing has a unique key
+                    // per dispatched container.
+                    if let Some(idx_name) = index_var.as_ref() {
+                        child_scope = child_scope
+                            .with_binding(idx_name.clone(), serde_json::Value::from(idx as i64));
+                    }
                     out.push((node.clone(), Some(child_scope)));
                 }
             }
@@ -557,7 +570,11 @@ enum ControlFlow {
     If(String),
     ElseIf(String),
     Else,
-    For { var: String, source: String },
+    For {
+        var: String,
+        index_var: Option<String>,
+        source: String,
+    },
 }
 
 fn control_flow_attr(el: &Element) -> Option<ControlFlow> {
@@ -571,7 +588,11 @@ fn control_flow_attr(el: &Element) -> Option<ControlFlow> {
             "else-if" => ControlFlow::ElseIf(body),
             "else" => ControlFlow::Else,
             "for" => parse_for_clause(&body)
-                .map(|(var, source)| ControlFlow::For { var, source })
+                .map(|(var, index_var, source)| ControlFlow::For {
+                    var,
+                    index_var,
+                    source,
+                })
                 .unwrap_or_else(|| ControlFlow::If("false".into())),
             _ => return None,
         });
@@ -579,26 +600,48 @@ fn control_flow_attr(el: &Element) -> Option<ControlFlow> {
     None
 }
 
-/// `"post in posts"` → `("post", "posts")`. Whitespace tolerant; any
-/// other shape returns `None` and the caller treats the element as
-/// dropped (`if false`).
-fn parse_for_clause(body: &str) -> Option<(String, String)> {
+/// `"post in posts"` → `("post", None, "posts")`.
+/// `"post, idx in posts"` → `("post", Some("idx"), "posts")` — the
+/// optional iteration-index variable lets authors build per-row stable
+/// ids (`<x id="row-{idx}"/>`), critical for hit-testing dispatched
+/// containers via `<dispatch for="row, idx in rows" id="props-{idx}"/>`.
+/// Whitespace tolerant; any other shape returns `None` and the caller
+/// treats the element as dropped (`if false`).
+fn parse_for_clause(body: &str) -> Option<(String, Option<String>, String)> {
     let body = body
         .trim()
         .trim_start_matches('{')
         .trim_end_matches('}')
         .trim();
-    let mut parts = body.split_whitespace();
-    let var = parts.next()?.to_string();
-    let kw = parts.next()?;
-    if kw != "in" {
+    // Split on `in` first so the iteration-variable side can carry an
+    // optional comma-separated index name without ambiguity with the
+    // `in` keyword.
+    let mut halves = body.splitn(2, " in ");
+    let lhs = halves.next()?.trim();
+    let source = halves.next()?.trim().to_string();
+    if source.is_empty() {
         return None;
     }
-    let source = parts.next()?.to_string();
+    // LHS shapes: `var` or `var, idx`. Reject anything else.
+    let mut lhs_parts = lhs.split(',').map(|s| s.trim());
+    let var = lhs_parts.next()?.to_string();
+    if var.is_empty() {
+        return None;
+    }
+    let index_var = lhs_parts
+        .next()
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty());
+    if lhs_parts.next().is_some() {
+        return None;
+    }
+    // Original guard: reject trailing junk in the source.
+    let mut parts = source.split_whitespace();
+    let _ = parts.next();
     if parts.next().is_some() {
         return None;
     }
-    Some((var, source))
+    Some((var, index_var, source))
 }
 
 // ---------------------------------------------------------------------------
@@ -954,7 +997,14 @@ fn apply_container_attributes(
                 }
             }
             AttributeNamespace::Data => {
-                if let Some(value) = raw {
+                // Skip empty resolved values so authors can use a
+                // ternary (`data:on-click="{cmd ? 'cmd ' + cmd : ''}"`)
+                // to omit the attr conditionally — Wave 11.2 substrate
+                // for the menu-item / row-variant migrations. A literal
+                // `data-foo=""` was already meaningless to every
+                // hit-test consumer (parse_action returned None) so
+                // omitting it is the correct behaviour, not a change.
+                if let Some(value) = raw.filter(|s| !s.is_empty()) {
                     props
                         .semantic
                         .attrs
@@ -1108,14 +1158,25 @@ fn attribute_string(value: &AttributeValue) -> Option<String> {
 /// every namespaced/bare reader routes through here so adding a new
 /// expression form is one place to update.
 fn resolved_attribute_string(value: &AttributeValue, scope: &LowerScope) -> Option<String> {
+    fn resolve_one(body: &str, scope: &LowerScope) -> String {
+        // Cheap path first — bare dotted-path binding lookup. Keeps
+        // typed `Value::String("hi")` stringified verbatim (lookup
+        // returns `&"hi"`, `stringify_value` strips the quotes) and
+        // avoids paying the expression-parser cost for plain `{name}`
+        // interpolations. Operator-bearing expressions fall through
+        // to `evaluate_expression`.
+        if let Some(v) = lookup_expression(body, scope) {
+            return stringify_value(v);
+        }
+        match evaluate_expression(body, scope) {
+            Some(v) => stringify_value(&v),
+            None => String::new(),
+        }
+    }
     match value {
         AttributeValue::String { value, .. } => Some(value.clone()),
         AttributeValue::Empty => None,
-        AttributeValue::Expression(expr) => Some(
-            lookup_expression(&expr.body, scope)
-                .map(stringify_value)
-                .unwrap_or_default(),
-        ),
+        AttributeValue::Expression(expr) => Some(resolve_one(&expr.body, scope)),
         AttributeValue::Template { parts, .. } => {
             let mut out = String::new();
             for part in parts {
@@ -1124,9 +1185,7 @@ fn resolved_attribute_string(value: &AttributeValue, scope: &LowerScope) -> Opti
                         value, ..
                     } => out.push_str(value),
                     prism_core::language::prism_ui::ast::TemplatePart::Expression(e) => {
-                        if let Some(v) = lookup_expression(&e.body, scope) {
-                            out.push_str(&stringify_value(v));
-                        }
+                        out.push_str(&resolve_one(&e.body, scope))
                     }
                 }
             }
@@ -1135,10 +1194,10 @@ fn resolved_attribute_string(value: &AttributeValue, scope: &LowerScope) -> Opti
     }
 }
 
-/// Scan a literal text run for `{ident}` segments and resolve them
-/// against the scope. Cheap, single-pass — no expression parser, just
-/// identifier lookup. Lifts to a real expression evaluator (Prism
-/// Syntax) in Phase 2 tail per plan §4.7.
+/// Scan a literal text run for `{expr}` segments and resolve them
+/// through the same `lookup_expression` → `evaluate_expression` cascade
+/// the attribute-template path uses, so an authored `<text>Hello, {kind == 'error' ? 'oops' : name}</text>`
+/// reads through the same vocabulary as `<container style:bg="{…}"/>`.
 fn interpolate(text: &str, scope: &LowerScope) -> String {
     if !text.contains('{') {
         return text.to_string();
@@ -1154,8 +1213,11 @@ fn interpolate(text: &str, scope: &LowerScope) -> String {
                 }
                 body.push(inner);
             }
-            if let Some(v) = lookup_expression(body.trim(), scope) {
+            let body = body.trim();
+            if let Some(v) = lookup_expression(body, scope) {
                 out.push_str(&stringify_value(v));
+            } else if let Some(v) = evaluate_expression(body, scope) {
+                out.push_str(&stringify_value(&v));
             }
         } else {
             out.push(c);
@@ -1209,11 +1271,14 @@ fn lookup_expression<'a>(body: &str, scope: &'a LowerScope) -> Option<&'a serde_
     Some(cursor)
 }
 
-/// Truthy evaluator for `if=` / `else-if=`. Mirrors the JS rule:
-/// missing/empty = false; literal `false`/`0` = false; otherwise true
-/// when the binding resolves to a non-empty value. Keeps the
-/// vocabulary small and predictable for v0; richer predicates land
-/// when the expression evaluator does.
+/// Truthy evaluator for `if=` / `else-if=`. Routes through the full
+/// expression evaluator in [`evaluate_expression`] so authors get
+/// ternary, boolean `||`/`&&`/`!`, comparisons, arithmetic, and dotted
+/// paths uniformly. The bare-path fast path (`{row.selected}`) still
+/// resolves through [`lookup_expression`] so a directly-bound JSON
+/// `Value` keeps its native truthy rule (empty arrays / empty objects
+/// are falsy — the expression coercion in [`ExprValue::to_boolean`]
+/// would otherwise stringify them).
 fn eval_truthy(body: &str, scope: &LowerScope) -> bool {
     let body = body
         .trim()
@@ -1223,26 +1288,126 @@ fn eval_truthy(body: &str, scope: &LowerScope) -> bool {
     if body.is_empty() {
         return false;
     }
-    if body.eq_ignore_ascii_case("true") {
-        return true;
+    // Direct binding lookup — handles the `if="{row.selected}"` shape
+    // where the bound value is a typed JSON value (array / object /
+    // bool). Falls through for any operator-bearing expression because
+    // `lookup_expression` only walks bare dotted paths.
+    if let Some(v) = lookup_expression(body, scope) {
+        return match v {
+            serde_json::Value::Null => false,
+            serde_json::Value::Bool(b) => *b,
+            serde_json::Value::Number(n) => n.as_f64().map(|f| f != 0.0).unwrap_or(false),
+            serde_json::Value::String(s) => !s.is_empty(),
+            serde_json::Value::Array(a) => !a.is_empty(),
+            serde_json::Value::Object(o) => !o.is_empty(),
+        };
     }
-    if body.eq_ignore_ascii_case("false") {
-        return false;
-    }
-    if let Ok(n) = body.parse::<f64>() {
-        return n != 0.0;
-    }
-    // Walk dotted paths through `lookup_expression` so `if="{row.selected}"`
-    // works the same way `{row.selected}` interpolations do — same
-    // resolver, same truthy rules.
-    match lookup_expression(body, scope) {
-        None => false,
-        Some(serde_json::Value::Null) => false,
-        Some(serde_json::Value::Bool(b)) => *b,
+    // Operator-bearing expressions (`a == 'b'`, `enabled && !disabled`,
+    // ternary heads, etc.) flow through the full Prism expression
+    // evaluator. `None` means parse failure or unresolved operand —
+    // treated as falsy, matching the JS rule.
+    match evaluate_expression(body, scope) {
+        Some(serde_json::Value::Null) | None => false,
+        Some(serde_json::Value::Bool(b)) => b,
         Some(serde_json::Value::Number(n)) => n.as_f64().map(|f| f != 0.0).unwrap_or(false),
         Some(serde_json::Value::String(s)) => !s.is_empty(),
         Some(serde_json::Value::Array(a)) => !a.is_empty(),
         Some(serde_json::Value::Object(o)) => !o.is_empty(),
+    }
+}
+
+/// Evaluate a `{...}` expression body against the active scope and
+/// return its computed JSON value. Wave 11.2 substrate: gives every
+/// authored attribute access to ternary (`a ? b : c`), boolean
+/// (`&& || !`), comparison (`== != < <= > >=`), arithmetic (`+ - * / %`),
+/// dotted paths (`item.label`, `tabs.0.name`), and the Prism expression
+/// builtins (`upper`, `len`, `min`, `concat`, …) — all in one pass
+/// through the existing `prism_core::language::expression` parser +
+/// evaluator. No hand-rolled regex or string-indexed parsing.
+///
+/// Returns `None` when the body is empty, the parser surfaces errors,
+/// or the result coerces to a JSON null. Callers fall back to their
+/// type-specific default (empty string for templates, false for
+/// `if=`, etc.).
+#[doc(hidden)]
+pub fn evaluate_expression(body: &str, scope: &LowerScope) -> Option<serde_json::Value> {
+    use prism_core::language::expression::{evaluate, parse as parse_expr, ExprValue, ValueStore};
+
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let parsed = parse_expr(trimmed);
+    if !parsed.errors.is_empty() {
+        return None;
+    }
+    let node = parsed.node?;
+
+    struct ScopeStore<'a> {
+        scope: &'a LowerScope,
+    }
+    impl<'a> ValueStore for ScopeStore<'a> {
+        fn resolve(&self, operand_type: &str, id: &str, subfield: Option<&str>) -> ExprValue {
+            if operand_type != "field" {
+                return ExprValue::String(String::new());
+            }
+            let mut cursor = match self.scope.binding(id) {
+                Some(v) => v,
+                None => return ExprValue::String(String::new()),
+            };
+            if let Some(path) = subfield {
+                for seg in path.split('.') {
+                    let seg = seg.trim();
+                    if seg.is_empty() {
+                        return ExprValue::String(String::new());
+                    }
+                    cursor = match cursor {
+                        serde_json::Value::Object(map) => match map.get(seg) {
+                            Some(v) => v,
+                            None => return ExprValue::String(String::new()),
+                        },
+                        serde_json::Value::Array(arr) => {
+                            match seg.parse::<usize>().ok().and_then(|i| arr.get(i)) {
+                                Some(v) => v,
+                                None => return ExprValue::String(String::new()),
+                            }
+                        }
+                        _ => return ExprValue::String(String::new()),
+                    };
+                }
+            }
+            json_to_expr_value(cursor)
+        }
+    }
+    let store = ScopeStore { scope };
+    Some(expr_value_to_json(evaluate(&node, &store)))
+}
+
+fn json_to_expr_value(v: &serde_json::Value) -> prism_core::language::expression::ExprValue {
+    use prism_core::language::expression::ExprValue;
+    match v {
+        serde_json::Value::Bool(b) => ExprValue::Boolean(*b),
+        serde_json::Value::Number(n) => ExprValue::Number(n.as_f64().unwrap_or(0.0)),
+        serde_json::Value::String(s) => ExprValue::String(s.clone()),
+        serde_json::Value::Null => ExprValue::String(String::new()),
+        // Arrays and objects don't participate in arithmetic / comparison
+        // — fall through as their JSON-stringified form so authors who
+        // accidentally compare an object stringify-compare instead of
+        // crashing the render.
+        serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
+            ExprValue::String(v.to_string())
+        }
+    }
+}
+
+fn expr_value_to_json(v: prism_core::language::expression::ExprValue) -> serde_json::Value {
+    use prism_core::language::expression::ExprValue;
+    match v {
+        ExprValue::Boolean(b) => serde_json::Value::Bool(b),
+        ExprValue::Number(n) => serde_json::Number::from_f64(n)
+            .map(serde_json::Value::Number)
+            .unwrap_or(serde_json::Value::Null),
+        ExprValue::String(s) => serde_json::Value::String(s),
     }
 }
 
@@ -1646,10 +1811,9 @@ mod tests {
 
     #[test]
     fn image_data_and_aria_namespaces_round_trip_on_semantic() {
-        let nodes = interpret(
-            r##"<image src="icons/x.svg" data:role="close-icon" aria:hidden="true"/>"##,
-        )
-        .unwrap();
+        let nodes =
+            interpret(r##"<image src="icons/x.svg" data:role="close-icon" aria:hidden="true"/>"##)
+                .unwrap();
         let Node::Image { semantic, .. } = &nodes[0] else {
             panic!("expected Image")
         };
@@ -2071,5 +2235,134 @@ mod tests {
             })
             .expect("text command emitted");
         assert_eq!(text_cmd, "type here");
+    }
+
+    // ─── Wave 11.2 substrate — expression evaluator across attrs ───
+
+    /// Templated attribute with a ternary head picks the matching
+    /// branch and stringifies — exactly what the toast / row-variant
+    /// migrations need to map a discriminant (`kind`, `selected`) to
+    /// a colour or label without a Rust seam.
+    #[test]
+    fn templated_attribute_resolves_ternary_against_scope() {
+        use serde_json::json;
+        let scope = LowerScope::default().with_binding("kind", json!("error"));
+        let doc =
+            parse(r##"<container style:background="{kind == 'error' ? '#cf222e' : '#0969da'}"/>"##)
+                .0;
+        let nodes = lower_document_with_scope(&doc, &scope);
+        let crate::layout::Node::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        // Container's `style:background` lowered into `props.background`;
+        // assert the resolved hex landed on the typed slot.
+        let bg = props.background.expect("background set");
+        assert_eq!(bg.r, 0xcf);
+        assert_eq!(bg.g, 0x22);
+        assert_eq!(bg.b, 0x2e);
+    }
+
+    /// `if=` on a control-flow attribute runs through the full
+    /// expression evaluator so authors can compose boolean expressions
+    /// (`enabled && !disabled`) without a Rust normalisation step.
+    #[test]
+    fn if_attribute_evaluates_boolean_expression() {
+        use serde_json::json;
+        let scope = LowerScope::default()
+            .with_binding("enabled", json!(true))
+            .with_binding("disabled", json!(false));
+        let doc = parse(
+            r#"<container>
+                <text if="{enabled && !disabled}">visible</text>
+                <text if="{!enabled || disabled}">hidden</text>
+            </container>"#,
+        )
+        .0;
+        let nodes = lower_document_with_scope(&doc, &scope);
+        let crate::layout::Node::Container { children, .. } = &nodes[0] else {
+            panic!()
+        };
+        // Exactly one of the two text nodes survives the conditional.
+        assert_eq!(children.len(), 1, "if= evaluator should drop the false arm");
+    }
+
+    /// `if=` with a comparison against a string literal — the row-variant
+    /// migration shape (`if="{kind == 'error'}"`) used across the toast,
+    /// signal-connection-row, schema-row, etc.
+    #[test]
+    fn if_attribute_supports_string_equality_comparison() {
+        use serde_json::json;
+        let render_with_kind = |k: &str| {
+            let scope = LowerScope::default().with_binding("kind", json!(k));
+            let doc = parse(
+                r#"<container>
+                    <text if="{kind == 'error'}">oops</text>
+                    <text if="{kind == 'success'}">ok</text>
+                </container>"#,
+            )
+            .0;
+            let nodes = lower_document_with_scope(&doc, &scope);
+            let crate::layout::Node::Container { children, .. } = &nodes[0] else {
+                panic!()
+            };
+            children.len()
+        };
+        assert_eq!(render_with_kind("error"), 1);
+        assert_eq!(render_with_kind("success"), 1);
+        assert_eq!(render_with_kind("info"), 0);
+    }
+
+    /// `for="row, idx in rows"` exposes the iteration index as a typed
+    /// number binding so the DSL author can synthesise stable per-row
+    /// ids — critical for hit-testing dispatched containers, which
+    /// only enter the hit cache when their `id` is non-empty.
+    #[test]
+    fn for_loop_exposes_optional_iteration_index() {
+        use serde_json::json;
+        let scope = LowerScope::default().with_binding(
+            "rows",
+            json!([
+                { "label": "Body" },
+                { "label": "Level" },
+                { "label": "Link URL" },
+            ]),
+        );
+        // `<container id="row-{idx}">` produces a unique id per item.
+        let doc = parse(
+            r#"<container>
+                <container for="row, idx in rows" id="row-{idx}">
+                    <text>{row.label}</text>
+                </container>
+            </container>"#,
+        )
+        .0;
+        let nodes = lower_document_with_scope(&doc, &scope);
+        let crate::layout::Node::Container { children, .. } = &nodes[0] else {
+            panic!()
+        };
+        let ids: Vec<&str> = children
+            .iter()
+            .filter_map(|c| match c {
+                crate::layout::Node::Container { id, .. } => Some(id.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ids, vec!["row-0", "row-1", "row-2"]);
+    }
+
+    /// Dotted-path lookups in expression position still resolve to the
+    /// underlying JSON value, so a `for="row in rows"` loop addressing
+    /// `{row.label}` continues to work after the parser switch.
+    #[test]
+    fn expression_evaluator_walks_dotted_path_into_object() {
+        use serde_json::json;
+        let scope =
+            LowerScope::default().with_binding("row", json!({ "label": "Hi", "kind": "error" }));
+        // Ternary referencing dotted field — exercises both substrate
+        // additions in one expression.
+        assert_eq!(
+            evaluate_expression("row.kind == 'error' ? row.label : 'fallback'", &scope),
+            Some(serde_json::Value::String("Hi".to_string()))
+        );
     }
 }

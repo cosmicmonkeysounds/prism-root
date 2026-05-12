@@ -1,0 +1,30 @@
+<!--
+  shell.properties-panel — right rail composing per-row property
+  editors. Wave 11.2 migration of properties_panel.rs.
+
+  Each entry in `rows` is `{ component, props }`; the `<dispatch>`
+  element looks up `item.component` against the live registry and
+  spreads `item.props` onto the dispatched node. Wave 11.2 dynamic-
+  dispatch substrate (resolver-side `<dispatch component="{…}"/>`
+  closes the long-standing migration blocker that required a Rust
+  `ctx.lower_as(component, id, props)` seam.
+-->
+<container
+    tag="section"
+    direction="column"
+    width="grow"
+    height="grow"
+    gap="8"
+    padding-left="12"
+    padding-right="12"
+    padding-top="12"
+    padding-bottom="12"
+    data:role="properties-panel"
+    aria:label="Properties">
+  <host-children/>
+  <dispatch
+      for="row, idx in rows"
+      id="props::row::{idx}"
+      component="{row.component}"
+      props="{row.props}"/>
+</container>

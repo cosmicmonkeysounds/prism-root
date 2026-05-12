@@ -33,6 +33,17 @@ fn eval_node(node: &AnyExprNode, store: &dyn ValueStore) -> ExprValue {
         }
         AnyExprNode::Binary { op, left, right } => eval_binary(*op, left, right, store),
         AnyExprNode::Call { name, args } => eval_call(name, args, store),
+        AnyExprNode::Conditional {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
+            if eval_node(cond, store).to_boolean() {
+                eval_node(then_branch, store)
+            } else {
+                eval_node(else_branch, store)
+            }
+        }
     }
 }
 
@@ -511,6 +522,51 @@ mod tests {
     fn wrap_bare_identifiers_leaves_brackets_and_strings() {
         let wrapped = wrap_bare_identifiers("[field:x] + 'hello'");
         assert_eq!(wrapped, "[field:x] + 'hello'");
+    }
+
+    #[test]
+    fn ternary_picks_then_branch_when_cond_truthy() {
+        let r = evaluate_expression(
+            "amount > 0 ? 'positive' : 'zero'",
+            &ctx(&[("amount", num(5.0))]),
+        );
+        assert_eq!(r.result, s("positive"));
+    }
+
+    #[test]
+    fn ternary_picks_else_branch_when_cond_falsy() {
+        let r = evaluate_expression(
+            "amount > 0 ? 'positive' : 'zero'",
+            &ctx(&[("amount", num(0.0))]),
+        );
+        assert_eq!(r.result, s("zero"));
+    }
+
+    #[test]
+    fn ternary_chains_right_associative() {
+        // a == 1 ? 'one' : (a == 2 ? 'two' : 'other')
+        let pick = |a: f64| {
+            evaluate_expression(
+                "a == 1 ? 'one' : a == 2 ? 'two' : 'other'",
+                &ctx(&[("a", num(a))]),
+            )
+            .result
+        };
+        assert_eq!(pick(1.0), s("one"));
+        assert_eq!(pick(2.0), s("two"));
+        assert_eq!(pick(3.0), s("other"));
+    }
+
+    #[test]
+    fn c_style_logical_operators_short_circuit() {
+        // `||` short-circuits the same way `or` does.
+        let r = evaluate_expression("true || 1/0", &ctx(&[]));
+        assert_eq!(r.result, ExprValue::Boolean(true));
+        let r = evaluate_expression("false && 1/0", &ctx(&[]));
+        assert_eq!(r.result, ExprValue::Boolean(false));
+        // `!` (without trailing `=`) negates.
+        let r = evaluate_expression("!false", &ctx(&[]));
+        assert_eq!(r.result, ExprValue::Boolean(true));
     }
 
     #[test]

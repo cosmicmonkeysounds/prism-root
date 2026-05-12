@@ -45,8 +45,8 @@ use prism_core::language::prism_ui::{
     ast::TemplatePart, AttributeNamespace, AttributeValue, Element,
 };
 use prism_ui_runtime::interpret::{
-    lookup_expression_in_scope, lower_ast_children, stringify_value_for_template, LowerScope,
-    TagResolver,
+    evaluate_expression, lookup_expression_in_scope, lower_ast_children,
+    stringify_value_for_template, LowerScope, TagResolver,
 };
 use prism_ui_runtime::layout::Node as UiNode;
 use serde_json::{Map, Value};
@@ -83,8 +83,27 @@ impl RegistryTagResolver {
 
 impl TagResolver for RegistryTagResolver {
     fn resolve(&self, element: &Element, scope: &LowerScope) -> Option<Vec<UiNode>> {
-        let component = self.registry.get(&element.tag)?;
-        let node = element_to_builder_node(element, scope);
+        // ── `<dispatch component="{expr}" props="{expr}"/>` —
+        // dynamic dispatch by resolving the `component` attr against
+        // scope and looking up the target block at render time. Closes
+        // the Wave 11.2 substrate gap that blocked `properties-panel`'s
+        // rows-with-component-field migration. The same path supports
+        // any block that wants to materialise children whose component
+        // ids only exist in data — recursive trees, plugin-authored
+        // overlays, etc.
+        let (component_id, dispatched_node) = if element.tag == "dispatch" {
+            let target = dynamic_dispatch_target(element, scope)?;
+            let component = self.registry.get(&target)?;
+            (
+                component,
+                dispatch_element_to_builder_node(element, &target, scope),
+            )
+        } else {
+            let component = self.registry.get(&element.tag)?;
+            (component, element_to_builder_node(element, scope))
+        };
+        let component = component_id;
+        let node = dispatched_node;
         let cascade = StyleProperties::default();
         // Host-injected children (binding-driven composition) win over
         // AST-pre-lowered children. The two paths cover disjoint cases
@@ -204,10 +223,16 @@ fn element_to_builder_node(element: &Element, scope: &LowerScope) -> BuilderNode
                 }
             }
             AttributeNamespace::Bare => {
-                props.insert(local.to_string(), resolved_attribute_value(&attr.value, scope));
+                props.insert(
+                    local.to_string(),
+                    resolved_attribute_value(&attr.value, scope),
+                );
             }
             AttributeNamespace::Data => {
-                props.insert(local.to_string(), resolved_attribute_value(&attr.value, scope));
+                props.insert(
+                    local.to_string(),
+                    resolved_attribute_value(&attr.value, scope),
+                );
             }
             AttributeNamespace::Aria => {
                 props.insert(
@@ -235,26 +260,52 @@ fn element_to_builder_node(element: &Element, scope: &LowerScope) -> BuilderNode
     }
 }
 
+/// True when the expression body is a bare dotted path / identifier
+/// (no operators, no comparisons, no function calls). Used to gate
+/// the evaluator fall-through: bare paths use `lookup_expression_in_scope`
+/// (returns Null on miss — the prop reader's expected fallback);
+/// operator-bearing expressions invoke the full evaluator.
+fn is_bare_path_expression(body: &str) -> bool {
+    let t = body.trim();
+    if t.is_empty() {
+        return false;
+    }
+    t.chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
+}
+
 /// Resolve an attribute value to a string under `scope`. Handles
-/// pure literals, single `{expr}` interpolations (stringified via the
-/// runtime's `Value` → `String` coercion), and templated mixes.
+/// pure literals, single `{expr}` interpolations, and templated mixes.
+/// Bare dotted-path lookups go through [`lookup_expression_in_scope`]
+/// (cheap, returns a `&Value`); operator-bearing expressions fall
+/// through to [`evaluate_expression`] so ternary, boolean, comparison,
+/// and arithmetic work uniformly in DSL attributes.
+///
 /// Returns `None` for `AttributeValue::Empty` (boolean attrs).
 fn resolved_attribute_string(value: &AttributeValue, scope: &LowerScope) -> Option<String> {
+    fn resolve_one(body: &str, scope: &LowerScope) -> String {
+        if let Some(v) = lookup_expression_in_scope(body, scope) {
+            return stringify_value_for_template(v);
+        }
+        if is_bare_path_expression(body) {
+            return String::new();
+        }
+        match evaluate_expression(body, scope) {
+            Some(v) => stringify_value_for_template(&v),
+            None => String::new(),
+        }
+    }
     match value {
         AttributeValue::String { value, .. } => Some(value.clone()),
         AttributeValue::Empty => None,
-        AttributeValue::Expression(expr) => lookup_expression_in_scope(&expr.body, scope)
-            .map(stringify_value_for_template)
-            .or_else(|| Some(String::new())),
+        AttributeValue::Expression(expr) => Some(resolve_one(&expr.body, scope)),
         AttributeValue::Template { parts, .. } => {
             let mut out = String::new();
             for part in parts {
                 match part {
                     TemplatePart::Literal { value, .. } => out.push_str(value),
                     TemplatePart::Expression(expr) => {
-                        if let Some(v) = lookup_expression_in_scope(&expr.body, scope) {
-                            out.push_str(&stringify_value_for_template(v));
-                        }
+                        out.push_str(&resolve_one(&expr.body, scope));
                     }
                 }
             }
@@ -264,18 +315,110 @@ fn resolved_attribute_string(value: &AttributeValue, scope: &LowerScope) -> Opti
 }
 
 /// Resolve an attribute value to a typed JSON [`Value`] under `scope`.
-/// A pure `{expr}` returns the bound JSON value verbatim (preserving
-/// arrays / objects / numbers / bools), so dynamic dispatch through
-/// `for="item in items"` can spread typed fields onto the dispatched
-/// block. Everything else (literal strings, templates) is coerced
-/// through [`value_for`].
+/// A pure `{expr}` returns the bound JSON value verbatim — arrays,
+/// objects, numbers, and bools survive the dispatch seam — so
+/// `for="item in items"` over `Vec<Object>` can spread typed fields
+/// onto the dispatched block. Operator-bearing expressions fall through
+/// to the full evaluator, returning a computed `Value`. Everything
+/// else (literal strings, templates) is coerced through [`value_for`].
 fn resolved_attribute_value(value: &AttributeValue, scope: &LowerScope) -> Value {
     match value {
         AttributeValue::Empty => Value::Bool(true),
-        AttributeValue::Expression(expr) => lookup_expression_in_scope(&expr.body, scope)
-            .cloned()
-            .unwrap_or(Value::Null),
+        AttributeValue::Expression(expr) => {
+            if let Some(v) = lookup_expression_in_scope(&expr.body, scope) {
+                return v.clone();
+            }
+            // Bare-path miss → Null (the prop reader's expected fallback,
+            // matches the pre-evaluator semantic). Operator-bearing
+            // expressions are evaluated and surface their computed value.
+            if is_bare_path_expression(&expr.body) {
+                return Value::Null;
+            }
+            evaluate_expression(&expr.body, scope).unwrap_or(Value::Null)
+        }
         _ => value_for(resolved_attribute_string(value, scope)),
+    }
+}
+
+/// Resolve the `component` attribute of a `<dispatch …/>` element to
+/// a registered component id. The attribute is interpolated against
+/// the active scope so `<dispatch component="{item.component}"/>`
+/// works inside a `for` loop. Returns `None` when the attribute is
+/// missing or resolves to an empty string.
+fn dynamic_dispatch_target(element: &Element, scope: &LowerScope) -> Option<String> {
+    for attr in &element.attributes {
+        if matches!(attr.name.namespace, AttributeNamespace::Bare) && attr.name.local == "component"
+        {
+            let s = resolved_attribute_string(&attr.value, scope)?;
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            return Some(trimmed.to_string());
+        }
+    }
+    None
+}
+
+/// Build the [`BuilderNode`] for a `<dispatch>` element. The
+/// `component` attribute is swallowed (consumed for routing); every
+/// other attribute flows through the same lane as a normal element so
+/// `id="…"`, `props="{…}"` spread, and bare attrs all work. The
+/// resulting node carries the *resolved* component id, not "dispatch".
+fn dispatch_element_to_builder_node(
+    element: &Element,
+    target: &str,
+    scope: &LowerScope,
+) -> BuilderNode {
+    let mut id = String::new();
+    let mut props: Map<String, Value> = Map::new();
+    for attr in &element.attributes {
+        let local = attr.name.local.as_str();
+        match attr.name.namespace {
+            AttributeNamespace::Identifier if local == "id" => {
+                id = resolved_attribute_string(&attr.value, scope).unwrap_or_default();
+            }
+            // Swallow the `component` routing attr; everything else
+            // follows the same per-namespace mapping as
+            // `element_to_builder_node`.
+            AttributeNamespace::Bare if local == "component" => {}
+            AttributeNamespace::Bare if local == "props" => {
+                if let Value::Object(map) = resolved_attribute_value(&attr.value, scope) {
+                    for (k, v) in map {
+                        props.insert(k, v);
+                    }
+                }
+            }
+            AttributeNamespace::Bare => {
+                props.insert(
+                    local.to_string(),
+                    resolved_attribute_value(&attr.value, scope),
+                );
+            }
+            AttributeNamespace::Data => {
+                props.insert(
+                    local.to_string(),
+                    resolved_attribute_value(&attr.value, scope),
+                );
+            }
+            AttributeNamespace::Aria => {
+                props.insert(
+                    format!("aria-{local}"),
+                    resolved_attribute_value(&attr.value, scope),
+                );
+            }
+            _ => {}
+        }
+    }
+    BuilderNode {
+        id,
+        component: target.into(),
+        props: Value::Object(props),
+        children: Vec::new(),
+        layout_mode: LayoutMode::default(),
+        transform: Transform2D::default(),
+        modifiers: Vec::new(),
+        style: StyleProperties::default(),
     }
 }
 
@@ -652,10 +795,7 @@ mod tests {
         let scope = LowerScope::default()
             .with_binding("count", Value::from(42i64))
             .with_binding("label", Value::String("Hello".into()))
-            .with_binding(
-                "row",
-                serde_json::json!({ "name": "Beta", "depth": 1 }),
-            );
+            .with_binding("row", serde_json::json!({ "name": "Beta", "depth": 1 }));
         let (doc, _) = parse(
             r#"<demo.box count="{count}" label="{label}" name="{row.name}" depth="{row.depth}" prefixed="d={row.depth}"/>"#,
         );
@@ -706,6 +846,55 @@ mod tests {
         // attribute still lands.
         assert!(bn.props.get("v").is_none());
         assert_eq!(bn.props["label"], Value::String("kept".into()));
+    }
+
+    #[test]
+    fn dispatch_element_dynamically_routes_to_resolved_component() {
+        // Wave 11.2 substrate: `<dispatch component="{row.component}"
+        // props="{row.props}"/>` looks up the target tag at render time
+        // and dispatches as if the source had named it directly.
+        // Closes the long-standing properties-panel migration block
+        // (rows-with-component-field).
+        let resolver = Arc::new(RegistryTagResolver::new(registry_with_demo()));
+        let scope = LowerScope::default().with_resolver(resolver).with_binding(
+            "row",
+            serde_json::json!({
+                "component": "demo.box",
+                "props": { "tint": "#ff0000" },
+            }),
+        );
+        let (doc, errs) = parse(r#"<dispatch component="{row.component}" props="{row.props}"/>"#);
+        assert!(errs.is_empty(), "parse errors: {errs:?}");
+        let nodes = lower_document_with_scope(&doc, &scope);
+        assert_eq!(nodes.len(), 1, "exactly one node from the dispatch");
+        // DemoBox lowers to a 40×40 container — confirm we hit it, not
+        // some `dispatch` fallback.
+        let UiNode::Container { props, .. } = &nodes[0] else {
+            panic!("dispatch should produce demo.box's container")
+        };
+        assert_eq!(
+            props.width,
+            prism_ui_runtime::layout::Sizing::Fixed(40.0),
+            "demo.box's 40×40 shape must surface — the dispatch routed correctly"
+        );
+        // Tint from `row.props.tint` flowed through the `props=` spread.
+        let bg = props.background.expect("dispatch should pass tint through");
+        assert_eq!(bg.r, 0xff);
+    }
+
+    #[test]
+    fn dispatch_with_unresolved_component_attr_returns_none() {
+        // Missing `component` attr means the dispatch can't find a
+        // target — the resolver returns None, leaving the unknown-tag
+        // fallback to surface the wrapper's children.
+        let resolver = Arc::new(RegistryTagResolver::new(registry_with_demo()));
+        let scope = LowerScope::default().with_resolver(resolver);
+        let (doc, _) = parse(r#"<dispatch/>"#);
+        let nodes = lower_document_with_scope(&doc, &scope);
+        assert!(
+            nodes.is_empty(),
+            "dispatch with no component attr must not produce a node, got {nodes:?}"
+        );
     }
 
     #[test]

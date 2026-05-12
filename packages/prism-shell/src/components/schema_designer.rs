@@ -94,14 +94,17 @@ pub const SCHEMA_DESIGNER_SPEC: prism_builder::BlockSpec =
 mod tests {
     use super::*;
 
-    use crate::components::registry::{register_shell_builtins, ShellComponentRegistry};
+    use crate::components::registry::{register_full_shell_chrome, ShellComponentRegistry};
     use crate::components::testing::test_node;
     use serde_json::json;
 
     fn lower(props: serde_json::Value) -> UiNode {
         let n = test_node("sd", "shell.schema-designer", props);
         let mut reg = ShellComponentRegistry::new();
-        register_shell_builtins(&mut reg).expect("register");
+        // Wave 11.2: `shell.schema-row` migrated to `.prism-ui` source,
+        // so the full chrome bootstrap (native + DSL) is required for
+        // the dispatch to resolve.
+        register_full_shell_chrome(&mut reg).expect("register");
         let cascade = StyleProperties::default();
         let ctx = LowerCtx::new(Some(reg.as_component_registry()), &cascade);
         schema_designer_lower(&ctx, &n, &cascade)

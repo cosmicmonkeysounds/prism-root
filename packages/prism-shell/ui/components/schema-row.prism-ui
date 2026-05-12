@@ -1,0 +1,42 @@
+<!--
+  shell.schema-row — single field entry in the schema designer. Wave
+  11.2 migration of schema_row.rs.
+
+  Layout: a 32px row with [type-badge | name | "*" required marker |
+  trash]. Selected paints `#26000000`; hover always paints `#0a000000`.
+  Trash dispatches `schema.delete-selected-field` (cursor-driven).
+-->
+<container
+    tag="div"
+    direction="row"
+    height="32"
+    padding-left="10"
+    padding-right="6"
+    style:radius="4"
+    style:background="{selected ? '#26000000' : ''}"
+    style:background:hovered="#0a000000"
+    role="listitem"
+    data:role="schema-row"
+    data:target-id="{field-id}"
+    aria:selected="{selected ? 'true' : ''}">
+  <container direction="row" gap="8" height="grow">
+    <container
+        padding-left="6"
+        padding-right="6"
+        padding-top="2"
+        padding-bottom="2"
+        style:radius="3"
+        style:background="#160060c0">
+      <text font-size="10" style:color="#0060c0">{field-kind ? field-kind : 'any'}</text>
+    </container>
+    <text font-size="12" style:color="#000000">{field-name ? field-name : '(unnamed)'}</text>
+    <text if="{required}" font-size="12" style:color="#b91c1c">*</text>
+  </container>
+  <shell.icon-button
+      if="{show-delete}"
+      id="{field-id}::delete"
+      icon="icons/trash.svg"
+      enabled="true"
+      tooltip-text="Delete field"
+      command="schema.delete-selected-field"/>
+</container>

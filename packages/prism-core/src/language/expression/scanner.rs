@@ -32,6 +32,13 @@ pub enum TokenKind {
     LParen,
     RParen,
     Comma,
+    /// `.` — field-access separator in dotted-path operands
+    /// (`item.label`, `tabs.0.name`).
+    Dot,
+    /// `?` — ternary head (`cond ? a : b`).
+    Question,
+    /// `:` — ternary middle and `else` branch separator.
+    Colon,
     Eof,
     Unknown,
 }
@@ -115,14 +122,33 @@ pub fn tokenize(source: &str) -> Vec<Token> {
             }
         }
 
-        // Number: digits or leading '.' followed by digit
-        if is_digit(ch) || (ch == '.' && i + 1 < bytes.len() && is_digit(bytes[i + 1] as char)) {
+        // Number: digits or leading '.' followed by digit. The
+        // leading-'.' form is suppressed when the previous token is an
+        // expression terminal (Ident / Number / RParen / Operand) so
+        // dotted-path operands like `tabs.0.name` tokenize as
+        // `Ident Dot Number Dot Ident` instead of swallowing the `.0`
+        // segment into a `.0` float. `.5` at the start of a primary
+        // (after no token, an operator, an opener, etc.) still parses
+        // as the numeric literal `0.5`.
+        let is_path_dot = ch == '.'
+            && matches!(
+                tokens.last().map(|t| t.kind),
+                Some(TokenKind::Ident | TokenKind::Number | TokenKind::RParen | TokenKind::Operand)
+            );
+        if !is_path_dot
+            && (is_digit(ch)
+                || (ch == '.' && i + 1 < bytes.len() && is_digit(bytes[i + 1] as char)))
+        {
             let mut num = String::new();
             while i < bytes.len() && is_digit(bytes[i] as char) {
                 num.push(bytes[i] as char);
                 i += 1;
             }
-            if i < bytes.len() && bytes[i] as char == '.' {
+            // Fractional part: only consume '.' when followed by a
+            // digit, so `0.name` tokenizes as `Number(0) Dot Ident`
+            // rather than `Number("0.") Ident` (which would lose the
+            // dot needed to chain dotted-path operands).
+            if i + 1 < bytes.len() && bytes[i] as char == '.' && is_digit(bytes[i + 1] as char) {
                 num.push('.');
                 i += 1;
                 while i < bytes.len() && is_digit(bytes[i] as char) {
@@ -220,6 +246,8 @@ pub fn tokenize(source: &str) -> Vec<Token> {
                 "!=" => Some(TokenKind::Neq),
                 "<=" => Some(TokenKind::Lte),
                 ">=" => Some(TokenKind::Gte),
+                "&&" => Some(TokenKind::And),
+                "||" => Some(TokenKind::Or),
                 _ => None,
             } {
                 tokens.push(Token::plain(kind, two, start));
@@ -228,7 +256,10 @@ pub fn tokenize(source: &str) -> Vec<Token> {
             }
         }
 
-        // Single-char operators
+        // Single-char operators. `!` (without trailing `=` — that was
+        // already consumed as `!=` above) is the C-style logical
+        // negation, equivalent to the `not` keyword. `.` `?` `:` round
+        // out the dotted-path / ternary grammar (Wave 11.2 substrate).
         if let Some(kind) = match ch {
             '+' => Some(TokenKind::Plus),
             '-' => Some(TokenKind::Minus),
@@ -241,6 +272,10 @@ pub fn tokenize(source: &str) -> Vec<Token> {
             '(' => Some(TokenKind::LParen),
             ')' => Some(TokenKind::RParen),
             ',' => Some(TokenKind::Comma),
+            '!' => Some(TokenKind::Not),
+            '.' => Some(TokenKind::Dot),
+            '?' => Some(TokenKind::Question),
+            ':' => Some(TokenKind::Colon),
             _ => None,
         } {
             tokens.push(Token::plain(kind, ch.to_string(), start));
@@ -316,5 +351,27 @@ mod tests {
         assert_eq!(toks[3].kind, TokenKind::Neq);
         assert_eq!(toks[5].kind, TokenKind::Lte);
         assert_eq!(toks[7].kind, TokenKind::Gte);
+    }
+
+    #[test]
+    fn tokenizes_c_style_logical_operators() {
+        let toks = tokenize("a && b || !c");
+        // Ident And Ident Or Not Ident Eof — six meaningful + Eof
+        assert_eq!(toks[1].kind, TokenKind::And);
+        assert_eq!(toks[3].kind, TokenKind::Or);
+        assert_eq!(toks[4].kind, TokenKind::Not);
+        assert_eq!(toks[5].kind, TokenKind::Ident);
+    }
+
+    #[test]
+    fn tokenizes_ternary_and_dot_path() {
+        let toks = tokenize("item.label ? 'a' : 'b'");
+        assert_eq!(toks[0].kind, TokenKind::Ident);
+        assert_eq!(toks[1].kind, TokenKind::Dot);
+        assert_eq!(toks[2].kind, TokenKind::Ident);
+        assert_eq!(toks[3].kind, TokenKind::Question);
+        assert_eq!(toks[4].kind, TokenKind::String);
+        assert_eq!(toks[5].kind, TokenKind::Colon);
+        assert_eq!(toks[6].kind, TokenKind::String);
     }
 }
