@@ -177,6 +177,13 @@ impl Modifier {
 /// schema-only behaviours one-liner registrations. `wrap` is the
 /// render-time hook: `LowerCtx::lower` folds the modifier stack over
 /// the lowered child innermost-first via this method.
+///
+/// Most behaviours don't need a hand-rolled impl — the [`BehaviourSpec`]
+/// data struct plus the blanket [`SpecBehaviour`] impl below cover the
+/// `(id, label, description, schema_fn, optional wrap_fn)` shape every
+/// builtin and bootstrap entry uses. Hand-written impls are reserved
+/// for cases that need richer state (e.g. Luau-authored behaviours
+/// that close over a runtime handle).
 pub trait ModifierBehaviour: Send + Sync + 'static {
     fn id(&self) -> ModifierId;
     fn label(&self) -> &str;
@@ -198,6 +205,95 @@ pub trait ModifierBehaviour: Send + Sync + 'static {
     /// Optional additional signals contributed by the modifier.
     fn signals(&self) -> Vec<SignalDef> {
         Vec::new()
+    }
+}
+
+/// Declarative descriptor for a modifier behaviour. Mirrors the
+/// `BlockSpec` / `SpecBlock` pattern in `crate::block`: one `&'static
+/// BehaviourSpec` per builtin, the blanket [`SpecBehaviour`] impl
+/// reads from it, and `register_specs` fans them into the registry.
+///
+/// `wrap` is optional — `None` means render identity, which covers
+/// every schema-only entry (Tooltip, BindToSelection, RunLuauScript,
+/// …) with no boilerplate.
+pub struct BehaviourSpec {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub description: &'static str,
+    pub icon: Option<&'static str>,
+    pub schema: fn() -> Vec<FieldSpec>,
+    pub wrap: Option<fn(&Modifier, UiNode) -> UiNode>,
+}
+
+impl BehaviourSpec {
+    /// Build a spec with sane defaults: no icon, identity wrap,
+    /// caller-provided schema function.
+    pub const fn new(
+        id: &'static str,
+        label: &'static str,
+        schema: fn() -> Vec<FieldSpec>,
+    ) -> Self {
+        Self {
+            id,
+            label,
+            description: "",
+            icon: None,
+            schema,
+            wrap: None,
+        }
+    }
+    pub const fn description(mut self, description: &'static str) -> Self {
+        self.description = description;
+        self
+    }
+    pub const fn icon(mut self, icon: &'static str) -> Self {
+        self.icon = Some(icon);
+        self
+    }
+    pub const fn wrap(mut self, wrap: fn(&Modifier, UiNode) -> UiNode) -> Self {
+        self.wrap = Some(wrap);
+        self
+    }
+}
+
+/// Single `ModifierBehaviour` impl that reads from a `&'static
+/// BehaviourSpec`. Replaces what would otherwise be one unit struct +
+/// one trait impl per builtin (and per Luau-registered entry once
+/// Wave 8 lands).
+pub struct SpecBehaviour {
+    spec: &'static BehaviourSpec,
+}
+
+impl SpecBehaviour {
+    pub const fn new(spec: &'static BehaviourSpec) -> Self {
+        Self { spec }
+    }
+    pub fn arc(spec: &'static BehaviourSpec) -> Arc<Self> {
+        Arc::new(Self::new(spec))
+    }
+}
+
+impl ModifierBehaviour for SpecBehaviour {
+    fn id(&self) -> ModifierId {
+        Cow::Borrowed(self.spec.id)
+    }
+    fn label(&self) -> &str {
+        self.spec.label
+    }
+    fn icon(&self) -> Option<&str> {
+        self.spec.icon
+    }
+    fn description(&self) -> &str {
+        self.spec.description
+    }
+    fn schema(&self) -> Vec<FieldSpec> {
+        (self.spec.schema)()
+    }
+    fn wrap(&self, modifier: &Modifier, child: UiNode) -> UiNode {
+        match self.spec.wrap {
+            Some(f) => f(modifier, child),
+            None => child,
+        }
     }
 }
 
@@ -272,12 +368,7 @@ impl ModifierRegistry {
     pub fn list(&self) -> Vec<ModifierDescriptor> {
         self.by_id
             .values()
-            .map(|b| ModifierDescriptor {
-                id: b.id().into_owned(),
-                label: b.label().to_string(),
-                icon: b.icon().map(str::to_string),
-                description: b.description().to_string(),
-            })
+            .map(|b| descriptor_from(b.as_ref()))
             .collect()
     }
 
@@ -302,24 +393,38 @@ impl ModifierRegistry {
 
     /// Descriptor for a single registered id, if present.
     pub fn descriptor(&self, id: &str) -> Option<ModifierDescriptor> {
-        self.get(id).map(|b| ModifierDescriptor {
-            id: b.id().into_owned(),
-            label: b.label().to_string(),
-            icon: b.icon().map(str::to_string),
-            description: b.description().to_string(),
-        })
+        self.get(id).map(|b| descriptor_from(b.as_ref()))
     }
+}
+
+/// Pure projection from a `&dyn ModifierBehaviour` to its metadata
+/// descriptor. Shared by `list()` and `descriptor(id)` so the four
+/// trait method calls don't drift between the two callers.
+fn descriptor_from(beh: &dyn ModifierBehaviour) -> ModifierDescriptor {
+    ModifierDescriptor {
+        id: beh.id().into_owned(),
+        label: beh.label().to_string(),
+        icon: beh.icon().map(str::to_string),
+        description: beh.description().to_string(),
+    }
+}
+
+/// Fan `&[&BehaviourSpec]` into an existing registry. Sister to
+/// `crate::block::register_specs`. One declarative table → N
+/// behaviour registrations, no per-spec ceremony at the call site.
+pub fn register_specs(
+    reg: &mut ModifierRegistry,
+    specs: &[&'static BehaviourSpec],
+) -> Result<(), ModifierRegistryError> {
+    for spec in specs {
+        reg.register(SpecBehaviour::arc(spec))?;
+    }
+    Ok(())
 }
 
 /// Register the six baseline behaviours into an existing registry.
 pub fn register_builtins(reg: &mut ModifierRegistry) -> Result<(), ModifierRegistryError> {
-    reg.register(Arc::new(ScrollOverflowBehaviour))?;
-    reg.register(Arc::new(HoverEffectBehaviour))?;
-    reg.register(Arc::new(EnterAnimationBehaviour))?;
-    reg.register(Arc::new(ResponsiveVisibilityBehaviour))?;
-    reg.register(Arc::new(TooltipBehaviour))?;
-    reg.register(Arc::new(AccessibilityOverrideBehaviour))?;
-    Ok(())
+    register_specs(reg, BUILTINS)
 }
 
 /// Legacy free function preserved for the small number of pre-Wave-1
@@ -328,178 +433,150 @@ pub fn modifier_schema(kind: ModifierKind) -> Vec<FieldSpec> {
     ModifierRegistry::with_builtins().schema_for(kind.id())
 }
 
-// ── Baseline behaviour impls ────────────────────────────────────────
+// ── Baseline behaviour specs ────────────────────────────────────────
+//
 // Schema bodies preserved verbatim from the pre-Wave-1
-// `modifier_schema(kind)` match arms. `wrap` defaults to identity for
-// all six — concrete render wrappers land alongside Wave 11's primitive
-// registry (the post-DSL primitives are where Tooltip / HoverEffect /
-// ScrollOverflow get their teeth). Until then, attaching one of these
-// six is schema-only but still round-trips through the document.
+// `modifier_schema(kind)` match arms. `wrap` is `None` (identity) for
+// all six — concrete render wrappers land alongside Wave 11's
+// primitive registry (the post-DSL primitives are where Tooltip /
+// HoverEffect / ScrollOverflow get their teeth). Until then,
+// attaching one of these six is schema-only but still round-trips
+// through the document.
 
-pub struct ScrollOverflowBehaviour;
-impl ModifierBehaviour for ScrollOverflowBehaviour {
-    fn id(&self) -> ModifierId {
-        Cow::Borrowed("scroll-overflow")
-    }
-    fn label(&self) -> &str {
-        "Scroll Overflow"
-    }
-    fn description(&self) -> &str {
-        "Makes content scrollable when it exceeds the container bounds."
-    }
-    fn schema(&self) -> Vec<FieldSpec> {
-        vec![FieldSpec::select(
-            "direction",
-            "Direction",
+fn scroll_overflow_schema() -> Vec<FieldSpec> {
+    vec![FieldSpec::select(
+        "direction",
+        "Direction",
+        vec![
+            SelectOption::new("vertical", "Vertical"),
+            SelectOption::new("horizontal", "Horizontal"),
+            SelectOption::new("both", "Both"),
+        ],
+    )]
+}
+
+fn hover_effect_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::select(
+            "effect",
+            "Effect",
             vec![
-                SelectOption::new("vertical", "Vertical"),
-                SelectOption::new("horizontal", "Horizontal"),
-                SelectOption::new("both", "Both"),
+                SelectOption::new("scale", "Scale up"),
+                SelectOption::new("fade", "Fade"),
+                SelectOption::new("lift", "Lift (shadow)"),
+                SelectOption::new("glow", "Glow"),
             ],
-        )]
-    }
+        ),
+        FieldSpec::number(
+            "duration_ms",
+            "Duration (ms)",
+            NumericBounds::min_max(50.0, 2000.0),
+        )
+        .with_default(Value::from(200)),
+    ]
 }
 
-pub struct HoverEffectBehaviour;
-impl ModifierBehaviour for HoverEffectBehaviour {
-    fn id(&self) -> ModifierId {
-        Cow::Borrowed("hover-effect")
-    }
-    fn label(&self) -> &str {
-        "Hover Effect"
-    }
-    fn description(&self) -> &str {
-        "Applies a visual effect when the user hovers over the element."
-    }
-    fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::select(
-                "effect",
-                "Effect",
-                vec![
-                    SelectOption::new("scale", "Scale up"),
-                    SelectOption::new("fade", "Fade"),
-                    SelectOption::new("lift", "Lift (shadow)"),
-                    SelectOption::new("glow", "Glow"),
-                ],
-            ),
-            FieldSpec::number(
-                "duration_ms",
-                "Duration (ms)",
-                NumericBounds::min_max(50.0, 2000.0),
-            )
-            .with_default(Value::from(200)),
-        ]
-    }
+fn enter_animation_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::select(
+            "animation",
+            "Animation",
+            vec![
+                SelectOption::new("fade-in", "Fade in"),
+                SelectOption::new("slide-up", "Slide up"),
+                SelectOption::new("slide-left", "Slide left"),
+                SelectOption::new("scale-up", "Scale up"),
+            ],
+        ),
+        FieldSpec::number(
+            "duration_ms",
+            "Duration (ms)",
+            NumericBounds::min_max(50.0, 3000.0),
+        )
+        .with_default(Value::from(300)),
+        FieldSpec::number(
+            "delay_ms",
+            "Delay (ms)",
+            NumericBounds::min_max(0.0, 5000.0),
+        )
+        .with_default(Value::from(0)),
+    ]
 }
 
-pub struct EnterAnimationBehaviour;
-impl ModifierBehaviour for EnterAnimationBehaviour {
-    fn id(&self) -> ModifierId {
-        Cow::Borrowed("enter-animation")
-    }
-    fn label(&self) -> &str {
-        "Enter Animation"
-    }
-    fn description(&self) -> &str {
-        "Animates the element when it first appears in the viewport."
-    }
-    fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::select(
-                "animation",
-                "Animation",
-                vec![
-                    SelectOption::new("fade-in", "Fade in"),
-                    SelectOption::new("slide-up", "Slide up"),
-                    SelectOption::new("slide-left", "Slide left"),
-                    SelectOption::new("scale-up", "Scale up"),
-                ],
-            ),
-            FieldSpec::number(
-                "duration_ms",
-                "Duration (ms)",
-                NumericBounds::min_max(50.0, 3000.0),
-            )
-            .with_default(Value::from(300)),
-            FieldSpec::number(
-                "delay_ms",
-                "Delay (ms)",
-                NumericBounds::min_max(0.0, 5000.0),
-            )
-            .with_default(Value::from(0)),
-        ]
-    }
+fn responsive_visibility_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::boolean("show_mobile", "Show on mobile (<640px)"),
+        FieldSpec::boolean("show_tablet", "Show on tablet (640\u{2013}1024px)"),
+        FieldSpec::boolean("show_desktop", "Show on desktop (>1024px)"),
+    ]
 }
 
-pub struct ResponsiveVisibilityBehaviour;
-impl ModifierBehaviour for ResponsiveVisibilityBehaviour {
-    fn id(&self) -> ModifierId {
-        Cow::Borrowed("responsive-visibility")
-    }
-    fn label(&self) -> &str {
-        "Responsive Visibility"
-    }
-    fn description(&self) -> &str {
-        "Controls visibility at different viewport breakpoints."
-    }
-    fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::boolean("show_mobile", "Show on mobile (<640px)"),
-            FieldSpec::boolean("show_tablet", "Show on tablet (640\u{2013}1024px)"),
-            FieldSpec::boolean("show_desktop", "Show on desktop (>1024px)"),
-        ]
-    }
+fn tooltip_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("text", "Tooltip text").required(),
+        FieldSpec::select(
+            "placement",
+            "Placement",
+            vec![
+                SelectOption::new("top", "Top"),
+                SelectOption::new("bottom", "Bottom"),
+                SelectOption::new("left", "Left"),
+                SelectOption::new("right", "Right"),
+            ],
+        ),
+    ]
 }
 
-pub struct TooltipBehaviour;
-impl ModifierBehaviour for TooltipBehaviour {
-    fn id(&self) -> ModifierId {
-        Cow::Borrowed("tooltip")
-    }
-    fn label(&self) -> &str {
-        "Tooltip"
-    }
-    fn description(&self) -> &str {
-        "Shows a tooltip on hover with configurable text and placement."
-    }
-    fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::text("text", "Tooltip text").required(),
-            FieldSpec::select(
-                "placement",
-                "Placement",
-                vec![
-                    SelectOption::new("top", "Top"),
-                    SelectOption::new("bottom", "Bottom"),
-                    SelectOption::new("left", "Left"),
-                    SelectOption::new("right", "Right"),
-                ],
-            ),
-        ]
-    }
+fn accessibility_override_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("role", "ARIA role"),
+        FieldSpec::text("label", "ARIA label"),
+        FieldSpec::text("description", "ARIA description"),
+        FieldSpec::boolean("hidden", "ARIA hidden"),
+    ]
 }
 
-pub struct AccessibilityOverrideBehaviour;
-impl ModifierBehaviour for AccessibilityOverrideBehaviour {
-    fn id(&self) -> ModifierId {
-        Cow::Borrowed("accessibility-override")
-    }
-    fn label(&self) -> &str {
-        "Accessibility Override"
-    }
-    fn description(&self) -> &str {
-        "Overrides ARIA attributes for assistive technology."
-    }
-    fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::text("role", "ARIA role"),
-            FieldSpec::text("label", "ARIA label"),
-            FieldSpec::text("description", "ARIA description"),
-            FieldSpec::boolean("hidden", "ARIA hidden"),
-        ]
-    }
-}
+const SCROLL_OVERFLOW: BehaviourSpec =
+    BehaviourSpec::new("scroll-overflow", "Scroll Overflow", scroll_overflow_schema)
+        .description("Makes content scrollable when it exceeds the container bounds.");
+
+const HOVER_EFFECT: BehaviourSpec =
+    BehaviourSpec::new("hover-effect", "Hover Effect", hover_effect_schema)
+        .description("Applies a visual effect when the user hovers over the element.");
+
+const ENTER_ANIMATION: BehaviourSpec =
+    BehaviourSpec::new("enter-animation", "Enter Animation", enter_animation_schema)
+        .description("Animates the element when it first appears in the viewport.");
+
+const RESPONSIVE_VISIBILITY: BehaviourSpec = BehaviourSpec::new(
+    "responsive-visibility",
+    "Responsive Visibility",
+    responsive_visibility_schema,
+)
+.description("Controls visibility at different viewport breakpoints.");
+
+const TOOLTIP: BehaviourSpec = BehaviourSpec::new("tooltip", "Tooltip", tooltip_schema)
+    .description("Shows a tooltip on hover with configurable text and placement.");
+
+const ACCESSIBILITY_OVERRIDE: BehaviourSpec = BehaviourSpec::new(
+    "accessibility-override",
+    "Accessibility Override",
+    accessibility_override_schema,
+)
+.description("Overrides ARIA attributes for assistive technology.");
+
+/// Single source of truth for the baseline modifier catalog. Adding
+/// a new baseline behaviour is one new `const SPEC` above and one
+/// row here — same shape `prism_builder::starter::BUILTINS` uses for
+/// document components.
+pub const BUILTINS: &[&BehaviourSpec] = &[
+    &SCROLL_OVERFLOW,
+    &HOVER_EFFECT,
+    &ENTER_ANIMATION,
+    &RESPONSIVE_VISIBILITY,
+    &TOOLTIP,
+    &ACCESSIBILITY_OVERRIDE,
+];
 
 #[cfg(test)]
 mod tests {
@@ -580,9 +657,9 @@ mod tests {
     #[test]
     fn registry_rejects_double_registration() {
         let mut reg = ModifierRegistry::new();
-        reg.register(Arc::new(ScrollOverflowBehaviour)).unwrap();
+        reg.register(SpecBehaviour::arc(&SCROLL_OVERFLOW)).unwrap();
         let err = reg
-            .register(Arc::new(ScrollOverflowBehaviour))
+            .register(SpecBehaviour::arc(&SCROLL_OVERFLOW))
             .expect_err("dup");
         assert!(matches!(err, ModifierRegistryError::AlreadyRegistered(_)));
     }

@@ -64,10 +64,9 @@ pub use layout::{
     LayoutMode, NodeLayout, PageLayout, PageSize, SplitDirection, TrackSize,
 };
 pub use modifier::{
-    register_builtins as register_modifier_builtins, AccessibilityOverrideBehaviour,
-    EnterAnimationBehaviour, HoverEffectBehaviour, Modifier, ModifierBehaviour, ModifierDescriptor,
-    ModifierId, ModifierKind, ModifierRegistry, ModifierRegistryError,
-    ResponsiveVisibilityBehaviour, ScrollOverflowBehaviour, TooltipBehaviour,
+    register_builtins as register_modifier_builtins, register_specs as register_modifier_specs,
+    BehaviourSpec, Modifier, ModifierBehaviour, ModifierDescriptor, ModifierId, ModifierKind,
+    ModifierRegistry, ModifierRegistryError, SpecBehaviour,
 };
 pub use mutator::NodeMutator;
 pub use prefab::{ExposedSlot, PrefabComponent, PrefabDef};

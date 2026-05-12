@@ -1,9 +1,8 @@
 //! Wave 1.7 of `docs/dev/composable-builder-plan.md`: bootstrap
 //! behaviour set on top of the six baseline `ModifierKind` variants.
 //!
-//! Six small `ModifierBehaviour` impls that immediately put the
-//! composable Inspector to work without waiting for the Wave 11 DSL
-//! migration:
+//! Six `BehaviourSpec` rows that immediately put the composable
+//! Inspector to work without waiting for the Wave 11 DSL migration:
 //!
 //! | id                  | what it does                                                     |
 //! |---------------------|------------------------------------------------------------------|
@@ -14,248 +13,192 @@
 //! | `bind-to-selection` | Reactive bind one node's prop to the current selection (Wave 8). |
 //! | `run-luau-script`   | Spawns a Luau handler on the bound signal (Wave 8).              |
 //!
-//! Five of the six have working `wrap` bodies today; the last two
+//! Four of the six have working `wrap` bodies today; the last two
 //! (`bind-to-selection`, `run-luau-script`) ship as schema-only
 //! placeholders that round-trip cleanly and surface the right shape
 //! in the Inspector — Wave 8's Luau parity wires their effects.
 //!
-//! See `register_bootstrap_modifiers` for the entry point;
+//! See `register_bootstrap` for the entry point;
 //! `ModifierRegistry::with_builtins` already chains it after the six
 //! baseline kinds.
-
-use std::borrow::Cow;
 
 use prism_ui_runtime::layout::{ContainerProps, Node as UiNode, Semantic, Sizing};
 use serde_json::Value;
 
-use crate::modifier::{Modifier, ModifierBehaviour, ModifierId};
+use crate::modifier::{
+    register_specs, BehaviourSpec, Modifier, ModifierRegistry, ModifierRegistryError,
+};
 use crate::registry::FieldSpec;
 use crate::ui_lower::hover_bg;
 
+// ── schemas ────────────────────────────────────────────────────────
+
+fn visible_schema() -> Vec<FieldSpec> {
+    vec![FieldSpec::boolean("visible", "Visible").with_default(Value::Bool(true))]
+}
+fn locked_schema() -> Vec<FieldSpec> {
+    vec![FieldSpec::boolean("locked", "Locked").with_default(Value::Bool(true))]
+}
+fn hover_schema() -> Vec<FieldSpec> {
+    vec![FieldSpec::text("tint", "Tint (CSS color)").with_default(Value::String("#0f000000".into()))]
+}
+fn click_schema() -> Vec<FieldSpec> {
+    vec![FieldSpec::text("action", "Action (e.g. `emit save`)").required()]
+}
+fn bind_to_selection_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("source-key", "Selection key (e.g. `id`, `label`)").required(),
+        FieldSpec::text("target-key", "Prop key on this node").required(),
+    ]
+}
+fn run_luau_script_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("handler", "Signal id (e.g. `clicked`, `value-changed`)").required(),
+        FieldSpec::text("script", "Luau source").required(),
+    ]
+}
+
+// ── wrap bodies ────────────────────────────────────────────────────
+
 /// `visible = false` collapses the rendered subtree to a zero-sized
-/// container so it disappears from layout entirely. Headless / SSR
-/// callers see the same shape — useful for live "hide this draft"
-/// edits in the canvas without deleting the node.
-pub struct VisibleBehaviour;
-impl ModifierBehaviour for VisibleBehaviour {
-    fn id(&self) -> ModifierId {
-        Cow::Borrowed("visible")
+/// container. Useful for live "hide this draft" edits without
+/// deleting the node.
+fn visible_wrap(modifier: &Modifier, child: UiNode) -> UiNode {
+    let visible = modifier
+        .props
+        .get("visible")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    if visible {
+        return child;
     }
-    fn label(&self) -> &str {
-        "Visible"
-    }
-    fn description(&self) -> &str {
-        "Hide the node without removing it from the document."
-    }
-    fn schema(&self) -> Vec<FieldSpec> {
-        vec![FieldSpec::boolean("visible", "Visible").with_default(Value::Bool(true))]
-    }
-    fn wrap(&self, modifier: &Modifier, child: UiNode) -> UiNode {
-        let visible = modifier
-            .props
-            .get("visible")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true);
-        if visible {
-            return child;
-        }
-        // Collapse to zero-size — preserves the parent's container
-        // shape but contributes nothing to layout.
-        UiNode::Container {
-            id: format!(
-                "{}::hidden",
-                ui_node_id(&child).unwrap_or("modifier-visible")
-            ),
-            props: ContainerProps {
-                width: Sizing::Fixed(0.0),
-                height: Sizing::Fixed(0.0),
-                semantic: Semantic::tag("div")
-                    .with_attr("data-modifier", "visible")
-                    .with_attr("data-visible", "false")
-                    .with_attr("aria-hidden", "true"),
-                ..ContainerProps::default()
-            },
-            children: vec![],
-        }
+    let id = ui_node_id(&child).unwrap_or("modifier-visible").to_string();
+    UiNode::Container {
+        id: format!("{id}::hidden"),
+        props: ContainerProps {
+            width: Sizing::Fixed(0.0),
+            height: Sizing::Fixed(0.0),
+            semantic: Semantic::tag("div")
+                .with_attr("data-modifier", "visible")
+                .with_attr("data-visible", "false")
+                .with_attr("aria-hidden", "true"),
+            ..ContainerProps::default()
+        },
+        children: vec![],
     }
 }
 
 /// Marks the wrapped subtree as `aria-disabled="true"`. Today's
-/// `POINTER_ROUTES` table doesn't yet read this attr to suppress
-/// clicks — that lands when Wave 3's canvas gestures consult it —
-/// but the SSR side is already correct.
-pub struct LockedBehaviour;
-impl ModifierBehaviour for LockedBehaviour {
-    fn id(&self) -> ModifierId {
-        Cow::Borrowed("locked")
+/// `POINTER_ROUTES` doesn't yet read this attr to suppress clicks
+/// (that lands when Wave 3's canvas gestures consult it), but the
+/// SSR side is already correct.
+fn locked_wrap(modifier: &Modifier, child: UiNode) -> UiNode {
+    let locked = modifier
+        .props
+        .get("locked")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    if !locked {
+        return child;
     }
-    fn label(&self) -> &str {
-        "Locked"
-    }
-    fn description(&self) -> &str {
-        "Disable interaction with this node and its descendants."
-    }
-    fn schema(&self) -> Vec<FieldSpec> {
-        vec![FieldSpec::boolean("locked", "Locked").with_default(Value::Bool(true))]
-    }
-    fn wrap(&self, modifier: &Modifier, child: UiNode) -> UiNode {
-        let locked = modifier
-            .props
-            .get("locked")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true);
-        if !locked {
-            return child;
-        }
-        wrap_with_attrs(
-            child,
-            "locked",
-            &[("data-modifier", "locked"), ("aria-disabled", "true")],
-        )
-    }
+    wrap_with_attrs(
+        child,
+        "locked",
+        &[("data-modifier", "locked"), ("aria-disabled", "true")],
+    )
 }
 
-/// Wraps the child in a hover-aware container — `tint` is the
-/// background applied on hover. Reuses the existing `hover_bg`
-/// helper so the runtime's hover swap fires automatically when the
-/// cursor enters the container.
-pub struct HoverBehaviour;
-impl ModifierBehaviour for HoverBehaviour {
-    fn id(&self) -> ModifierId {
-        Cow::Borrowed("hover")
-    }
-    fn label(&self) -> &str {
-        "Hover"
-    }
-    fn description(&self) -> &str {
-        "Visual feedback while the pointer is over the node."
-    }
-    fn schema(&self) -> Vec<FieldSpec> {
-        vec![FieldSpec::text("tint", "Tint (CSS color)")
-            .with_default(Value::String("#0f000000".into()))]
-    }
-    fn wrap(&self, modifier: &Modifier, child: UiNode) -> UiNode {
-        let tint = modifier
-            .props
-            .get("tint")
-            .and_then(|v| v.as_str())
-            .unwrap_or("#0f000000");
-        let hover = hover_bg(tint);
-        let id = ui_node_id(&child).unwrap_or("modifier-hover").to_string();
-        UiNode::Container {
-            id: format!("{}::hover", id),
-            props: ContainerProps {
-                width: Sizing::Fit,
-                height: Sizing::Fit,
-                hover,
-                semantic: Semantic::tag("div").with_attr("data-modifier", "hover"),
-                ..ContainerProps::default()
-            },
-            children: vec![child],
-        }
+/// Wraps the child in a hover-aware container. Reuses the existing
+/// `hover_bg` helper so the runtime's hover swap fires automatically.
+fn hover_wrap(modifier: &Modifier, child: UiNode) -> UiNode {
+    let tint = modifier
+        .props
+        .get("tint")
+        .and_then(|v| v.as_str())
+        .unwrap_or("#0f000000");
+    let hover = hover_bg(tint);
+    let id = ui_node_id(&child).unwrap_or("modifier-hover").to_string();
+    UiNode::Container {
+        id: format!("{id}::hover"),
+        props: ContainerProps {
+            width: Sizing::Fit,
+            height: Sizing::Fit,
+            hover,
+            semantic: Semantic::tag("div").with_attr("data-modifier", "hover"),
+            ..ContainerProps::default()
+        },
+        children: vec![child],
     }
 }
 
 /// Emits a `data-on-click` attr so the §43 `route_on_click` router
-/// fires the configured action when the node is clicked. The action
-/// string is the same grammar `on:click="emit save"` already speaks
-/// — `emit <signal>`, `set <node>.<key> = <expr>`, `bind …`, etc.
-pub struct ClickBehaviour;
-impl ModifierBehaviour for ClickBehaviour {
-    fn id(&self) -> ModifierId {
-        Cow::Borrowed("click")
+/// fires the configured action. The action string speaks the same
+/// grammar `on:click="emit save"` already does.
+fn click_wrap(modifier: &Modifier, child: UiNode) -> UiNode {
+    let action = modifier
+        .props
+        .get("action")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if action.is_empty() {
+        return child;
     }
-    fn label(&self) -> &str {
-        "Click"
-    }
-    fn description(&self) -> &str {
-        "Run an inline action when the node is clicked."
-    }
-    fn schema(&self) -> Vec<FieldSpec> {
-        vec![FieldSpec::text("action", "Action (e.g. `emit save`)").required()]
-    }
-    fn wrap(&self, modifier: &Modifier, child: UiNode) -> UiNode {
-        let action = modifier
-            .props
-            .get("action")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        if action.is_empty() {
-            return child;
-        }
-        wrap_with_attrs(
-            child,
-            "click",
-            &[
-                ("data-modifier", "click"),
-                ("data-on-click", action),
-                ("role", "button"),
-            ],
-        )
-    }
+    wrap_with_attrs(
+        child,
+        "click",
+        &[
+            ("data-modifier", "click"),
+            ("data-on-click", action),
+            ("role", "button"),
+        ],
+    )
 }
 
-/// Schema-only behaviour: declare that one prop of this node binds
-/// reactively to the current `selection`. The actual `Effect`
-/// installation lands in Wave 8 (Luau parity wave) — for now the
-/// modifier round-trips through the document and shows up in the
-/// inspector.
-pub struct BindToSelectionBehaviour;
-impl ModifierBehaviour for BindToSelectionBehaviour {
-    fn id(&self) -> ModifierId {
-        Cow::Borrowed("bind-to-selection")
-    }
-    fn label(&self) -> &str {
-        "Bind to Selection"
-    }
-    fn description(&self) -> &str {
-        "One-way reactive bind from the current canvas selection to a prop."
-    }
-    fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::text("source-key", "Selection key (e.g. `id`, `label`)").required(),
-            FieldSpec::text("target-key", "Prop key on this node").required(),
-        ]
-    }
-}
+// ── specs + registration ───────────────────────────────────────────
 
-/// Schema-only behaviour: run a Luau script in response to a signal
-/// on this node. The runtime hookup lands in Wave 8 (`LuauModifier`
-/// plus `install_effects`). Until then, the modifier round-trips
-/// through the inspector + document with the right shape so the
-/// edit surface is in place.
-pub struct RunLuauScriptBehaviour;
-impl ModifierBehaviour for RunLuauScriptBehaviour {
-    fn id(&self) -> ModifierId {
-        Cow::Borrowed("run-luau-script")
-    }
-    fn label(&self) -> &str {
-        "Run Luau Script"
-    }
-    fn description(&self) -> &str {
-        "Execute a Luau script in response to a signal on this node."
-    }
-    fn schema(&self) -> Vec<FieldSpec> {
-        vec![
-            FieldSpec::text("handler", "Signal id (e.g. `clicked`, `value-changed`)").required(),
-            FieldSpec::text("script", "Luau source").required(),
-        ]
-    }
-}
+const VISIBLE: BehaviourSpec = BehaviourSpec::new("visible", "Visible", visible_schema)
+    .description("Hide the node without removing it from the document.")
+    .wrap(visible_wrap);
+
+const LOCKED: BehaviourSpec = BehaviourSpec::new("locked", "Locked", locked_schema)
+    .description("Disable interaction with this node and its descendants.")
+    .wrap(locked_wrap);
+
+const HOVER: BehaviourSpec = BehaviourSpec::new("hover", "Hover", hover_schema)
+    .description("Visual feedback while the pointer is over the node.")
+    .wrap(hover_wrap);
+
+const CLICK: BehaviourSpec = BehaviourSpec::new("click", "Click", click_schema)
+    .description("Run an inline action when the node is clicked.")
+    .wrap(click_wrap);
+
+const BIND_TO_SELECTION: BehaviourSpec = BehaviourSpec::new(
+    "bind-to-selection",
+    "Bind to Selection",
+    bind_to_selection_schema,
+)
+.description("One-way reactive bind from the current canvas selection to a prop.");
+
+const RUN_LUAU_SCRIPT: BehaviourSpec =
+    BehaviourSpec::new("run-luau-script", "Run Luau Script", run_luau_script_schema)
+        .description("Execute a Luau script in response to a signal on this node.");
+
+/// Single source of truth for the Wave 1.7 bootstrap catalog. One
+/// new `const SPEC` above and one row here adds a behaviour.
+pub const BOOTSTRAP: &[&BehaviourSpec] = &[
+    &VISIBLE,
+    &LOCKED,
+    &HOVER,
+    &CLICK,
+    &BIND_TO_SELECTION,
+    &RUN_LUAU_SCRIPT,
+];
 
 /// Register the six bootstrap behaviours into an existing registry.
 /// `ModifierRegistry::with_builtins` calls this after the six
 /// baseline kinds (`scroll-overflow`, `hover-effect`, …).
-pub fn register_bootstrap(
-    reg: &mut crate::modifier::ModifierRegistry,
-) -> Result<(), crate::modifier::ModifierRegistryError> {
-    reg.register(std::sync::Arc::new(VisibleBehaviour))?;
-    reg.register(std::sync::Arc::new(LockedBehaviour))?;
-    reg.register(std::sync::Arc::new(HoverBehaviour))?;
-    reg.register(std::sync::Arc::new(ClickBehaviour))?;
-    reg.register(std::sync::Arc::new(BindToSelectionBehaviour))?;
-    reg.register(std::sync::Arc::new(RunLuauScriptBehaviour))?;
-    Ok(())
+pub fn register_bootstrap(reg: &mut ModifierRegistry) -> Result<(), ModifierRegistryError> {
+    register_specs(reg, BOOTSTRAP)
 }
 
 // ── helpers ──────────────────────────────────────────────────────
@@ -273,8 +216,8 @@ fn ui_node_id(node: &UiNode) -> Option<&str> {
 }
 
 /// Wrap a `UiNode` in a transparent container that carries a set of
-/// semantic attributes. Used by `LockedBehaviour` / `ClickBehaviour`
-/// to layer attrs onto an existing child without mutating its props.
+/// semantic attributes. Used by `locked_wrap` / `click_wrap` to layer
+/// attrs onto an existing child without mutating its props.
 fn wrap_with_attrs(child: UiNode, marker: &str, attrs: &[(&str, &str)]) -> UiNode {
     let id = ui_node_id(&child).unwrap_or("modifier").to_string();
     let mut sem = Semantic::tag("div");
@@ -282,7 +225,7 @@ fn wrap_with_attrs(child: UiNode, marker: &str, attrs: &[(&str, &str)]) -> UiNod
         sem = sem.with_attr(*k, *v);
     }
     UiNode::Container {
-        id: format!("{}::{}", id, marker),
+        id: format!("{id}::{marker}"),
         props: ContainerProps {
             width: Sizing::Fit,
             height: Sizing::Fit,
@@ -296,7 +239,7 @@ fn wrap_with_attrs(child: UiNode, marker: &str, attrs: &[(&str, &str)]) -> UiNod
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modifier::{Modifier, ModifierRegistry};
+    use crate::modifier::{Modifier, ModifierBehaviour, ModifierRegistry, SpecBehaviour};
     use serde_json::json;
 
     fn dummy_child() -> UiNode {
@@ -307,11 +250,16 @@ mod tests {
         }
     }
 
+    /// Walk through `SpecBehaviour::new(spec).wrap(...)` to exercise
+    /// the public surface that the registry actually invokes.
+    fn run_wrap(spec: &'static BehaviourSpec, modifier: &Modifier, child: UiNode) -> UiNode {
+        SpecBehaviour::new(spec).wrap(modifier, child)
+    }
+
     #[test]
     fn visible_off_returns_zero_size_container() {
-        let beh = VisibleBehaviour;
         let m = Modifier::new("visible").with_props(json!({ "visible": false }));
-        let out = beh.wrap(&m, dummy_child());
+        let out = run_wrap(&VISIBLE, &m, dummy_child());
         let UiNode::Container { props, .. } = &out else {
             panic!()
         };
@@ -325,20 +273,18 @@ mod tests {
 
     #[test]
     fn visible_on_is_pass_through() {
-        let beh = VisibleBehaviour;
         let m = Modifier::new("visible").with_props(json!({ "visible": true }));
-        let out = beh.wrap(&m, dummy_child());
+        let out = run_wrap(&VISIBLE, &m, dummy_child());
         let UiNode::Container { id, .. } = &out else {
             panic!()
         };
-        assert_eq!(id, "core"); // unwrapped
+        assert_eq!(id, "core");
     }
 
     #[test]
     fn locked_wraps_with_aria_disabled() {
-        let beh = LockedBehaviour;
         let m = Modifier::new("locked").with_props(json!({ "locked": true }));
-        let out = beh.wrap(&m, dummy_child());
+        let out = run_wrap(&LOCKED, &m, dummy_child());
         let UiNode::Container {
             props, children, ..
         } = &out
@@ -355,9 +301,8 @@ mod tests {
 
     #[test]
     fn hover_wraps_with_hover_override() {
-        let beh = HoverBehaviour;
         let m = Modifier::new("hover").with_props(json!({ "tint": "#1f000000" }));
-        let out = beh.wrap(&m, dummy_child());
+        let out = run_wrap(&HOVER, &m, dummy_child());
         let UiNode::Container { props, .. } = &out else {
             panic!()
         };
@@ -366,9 +311,8 @@ mod tests {
 
     #[test]
     fn click_emits_data_on_click_attr() {
-        let beh = ClickBehaviour;
         let m = Modifier::new("click").with_props(json!({ "action": "emit save" }));
-        let out = beh.wrap(&m, dummy_child());
+        let out = run_wrap(&CLICK, &m, dummy_child());
         let UiNode::Container { props, .. } = &out else {
             panic!()
         };
@@ -381,9 +325,8 @@ mod tests {
 
     #[test]
     fn click_empty_action_is_pass_through() {
-        let beh = ClickBehaviour;
         let m = Modifier::new("click");
-        let out = beh.wrap(&m, dummy_child());
+        let out = run_wrap(&CLICK, &m, dummy_child());
         let UiNode::Container { id, .. } = &out else {
             panic!()
         };
@@ -409,17 +352,18 @@ mod tests {
         ] {
             assert!(reg.contains(id), "bootstrap missing `{id}`");
         }
-        // And `with_builtins()` is the union — baseline + bootstrap.
+        // `with_builtins()` is the union — baseline + bootstrap.
         let full = ModifierRegistry::with_builtins();
         assert_eq!(full.len(), 12);
     }
 
     #[test]
     fn schema_only_behaviours_pass_through_in_wrap() {
-        // `bind-to-selection` and `run-luau-script` have no wrap bodies
-        // yet — the default identity impl must keep the child intact.
+        // `bind-to-selection` and `run-luau-script` have no wrap
+        // bodies — the `None` slot on their `BehaviourSpec` must
+        // keep the child intact.
         let m = Modifier::new("bind-to-selection");
-        let out = BindToSelectionBehaviour.wrap(&m, dummy_child());
+        let out = run_wrap(&BIND_TO_SELECTION, &m, dummy_child());
         let UiNode::Container { id, .. } = &out else {
             panic!()
         };

@@ -116,6 +116,63 @@ pub fn icon_button_node_tinted(
     })
 }
 
+/// Compact 20×20 icon chip with declarative routing attrs — the
+/// per-row affordances that hang off rows in the Inspector (the
+/// three sub-buttons on `shell.modifier-header`, the future "+/×"
+/// chips on signal-connection rows, etc.).
+///
+/// Distinct from [`icon_button_node`]:
+///   * smaller (20px vs 28px) — fits inline in a row strip,
+///   * routes via `data-role` + extra attrs rather than the
+///     command-table `data-on-click="cmd …"` channel.
+///
+/// `extra_attrs` lets the caller layer per-button discriminators
+/// (`data-modifier-idx`, `data-modifier-id`, `data-edge`, …) onto
+/// the same outer container the role attr lives on.
+pub fn route_chip(
+    id: impl Into<String>,
+    icon: impl Into<String>,
+    role: &str,
+    aria_label: &str,
+    extra_attrs: &[(&str, &str)],
+) -> UiNode {
+    const CHIP_SIZE: f32 = 20.0;
+    const CHIP_ICON: f32 = 12.0;
+    const CHIP_PAD: f32 = 4.0;
+    let id = id.into();
+    let glyph_style = StyleProperties::default();
+    let glyph = image_node(
+        format!("{id}::icon"),
+        icon.into(),
+        &glyph_style,
+        Sizing::Fixed(CHIP_ICON),
+        Sizing::Fixed(CHIP_ICON),
+    );
+    let aria_owned = aria_label.to_string();
+    let role_owned = role.to_string();
+    let extras: Vec<(String, String)> = extra_attrs
+        .iter()
+        .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+        .collect();
+    bare_container(id, vec![glyph], move |props| {
+        props.width = Sizing::Fixed(CHIP_SIZE);
+        props.height = Sizing::Fixed(CHIP_SIZE);
+        props.padding = Padding {
+            left: CHIP_PAD,
+            right: CHIP_PAD,
+            top: CHIP_PAD,
+            bottom: CHIP_PAD,
+        };
+        let mut sem = Semantic::tag("button")
+            .with_attr("data-role", role_owned.as_str())
+            .with_attr("aria-label", aria_owned.as_str());
+        for (k, v) in &extras {
+            sem = sem.with_attr(k.as_str(), v.as_str());
+        }
+        props.semantic = sem;
+    })
+}
+
 /// Zero-size placeholder used by overlay blocks (command palette,
 /// menu dropdown, context menu, component picker, help tooltip) when
 /// their visibility prop is `false`. The skeleton authors every

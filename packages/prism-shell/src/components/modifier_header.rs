@@ -19,13 +19,14 @@ use prism_builder::{
     document::Node,
     registry::FieldSpec,
     style::StyleProperties,
-    ui_lower::{bare_container, colored_text_node, image_node, parse_color, LowerCtx},
+    ui_lower::{bare_container, colored_text_node, parse_color, LowerCtx},
 };
 use prism_ui_runtime::layout::{Direction, Node as UiNode, Padding, Semantic, Sizing};
 use serde_json::Value;
 
+use crate::components::chrome::route_chip;
+
 const ROW_HEIGHT: f32 = 36.0;
-const ICON_SIZE: f32 = 12.0;
 const LABEL_FONT_SIZE: f32 = 11.0;
 const HAIRLINE_COLOR: &str = "#19000000";
 const LABEL_COLOR_ENABLED: &str = "#cc000000";
@@ -65,31 +66,20 @@ fn modifier_header_lower(ctx: &LowerCtx<'_>, node: &Node, style: &StylePropertie
     } else {
         "icons/square.svg"
     };
-    let toggle_icon = image_node(
-        format!("{}::toggle-icon", node.id),
-        toggle_icon_src.into(),
-        style,
-        Sizing::Fixed(ICON_SIZE),
-        Sizing::Fixed(ICON_SIZE),
+    let toggle_aria = if enabled { "Disable" } else { "Enable" };
+    let toggle_pressed = if enabled { "true" } else { "false" };
+    let toggle = route_chip(
+        format!("{}::toggle", node.id),
+        toggle_icon_src,
+        "modifier-toggle",
+        toggle_aria,
+        &[
+            ("data-target-id", target_id.as_str()),
+            ("data-modifier-idx", modifier_idx.as_str()),
+            ("data-modifier-id", modifier_id.as_str()),
+            ("aria-pressed", toggle_pressed),
+        ],
     );
-    let toggle = bare_container(format!("{}::toggle", node.id), vec![toggle_icon], |p| {
-        p.width = Sizing::Fixed(20.0);
-        p.height = Sizing::Fixed(20.0);
-        p.padding = Padding {
-            left: 4.0,
-            right: 4.0,
-            top: 4.0,
-            bottom: 4.0,
-        };
-        let mut sem = Semantic::tag("button");
-        sem = sem.with_attr("data-role", "modifier-toggle");
-        sem = sem.with_attr("data-target-id", &target_id);
-        sem = sem.with_attr("data-modifier-idx", &modifier_idx);
-        sem = sem.with_attr("data-modifier-id", &modifier_id);
-        sem = sem.with_attr("aria-label", if enabled { "Disable" } else { "Enable" });
-        sem = sem.with_attr("aria-pressed", if enabled { "true" } else { "false" });
-        p.semantic = sem;
-    });
 
     // Label
     let label_color = if enabled {
@@ -115,57 +105,31 @@ fn modifier_header_lower(ctx: &LowerCtx<'_>, node: &Node, style: &StylePropertie
     }
 
     // Remove × — right-side delete affordance.
-    let remove_icon = image_node(
-        format!("{}::remove-icon", node.id),
-        "icons/x.svg".into(),
-        style,
-        Sizing::Fixed(ICON_SIZE),
-        Sizing::Fixed(ICON_SIZE),
+    let remove = route_chip(
+        format!("{}::remove", node.id),
+        "icons/x.svg",
+        "modifier-remove",
+        "Remove behaviour",
+        &[
+            ("data-target-id", target_id.as_str()),
+            ("data-modifier-idx", modifier_idx.as_str()),
+        ],
     );
-    let remove = bare_container(format!("{}::remove", node.id), vec![remove_icon], |p| {
-        p.width = Sizing::Fixed(20.0);
-        p.height = Sizing::Fixed(20.0);
-        p.padding = Padding {
-            left: 4.0,
-            right: 4.0,
-            top: 4.0,
-            bottom: 4.0,
-        };
-        let mut sem = Semantic::tag("button");
-        sem = sem.with_attr("data-role", "modifier-remove");
-        sem = sem.with_attr("data-target-id", &target_id);
-        sem = sem.with_attr("data-modifier-idx", &modifier_idx);
-        sem = sem.with_attr("aria-label", "Remove behaviour");
-        p.semantic = sem;
-    });
 
     // Drag handle ≡ — reorder grip. Pointer gestures on this attach
     // to the §43-D `selection-gizmo`-style capture path (Wave 3);
     // until that lands, the icon is purely visual and the
     // `modifier-reorder` route is wired in `POINTER_ROUTES`.
-    let drag_icon = image_node(
-        format!("{}::drag-icon", node.id),
-        "icons/menu.svg".into(),
-        style,
-        Sizing::Fixed(ICON_SIZE),
-        Sizing::Fixed(ICON_SIZE),
+    let drag = route_chip(
+        format!("{}::drag", node.id),
+        "icons/menu.svg",
+        "modifier-reorder",
+        "Reorder behaviour",
+        &[
+            ("data-target-id", target_id.as_str()),
+            ("data-modifier-idx", modifier_idx.as_str()),
+        ],
     );
-    let drag = bare_container(format!("{}::drag", node.id), vec![drag_icon], |p| {
-        p.width = Sizing::Fixed(20.0);
-        p.height = Sizing::Fixed(20.0);
-        p.padding = Padding {
-            left: 4.0,
-            right: 4.0,
-            top: 4.0,
-            bottom: 4.0,
-        };
-        let mut sem = Semantic::tag("button");
-        sem = sem.with_attr("data-role", "modifier-reorder");
-        sem = sem.with_attr("data-target-id", &target_id);
-        sem = sem.with_attr("data-modifier-idx", &modifier_idx);
-        sem = sem.with_attr("aria-label", "Reorder behaviour");
-        p.semantic = sem;
-    });
 
     let spacer = bare_container(format!("{}::spacer", node.id), vec![], |p| {
         p.width = Sizing::Grow;

@@ -467,31 +467,34 @@ fn parse_modifier_idx(hit: &HitRect) -> Option<usize> {
     attr_value(hit, "data-modifier-idx").and_then(|s| s.parse::<usize>().ok())
 }
 
-fn handle_modifier_toggle_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
-    let Some(target) = attr_value(hit, "data-target-id") else {
-        return false;
+/// Boilerplate-eliminator for the per-row "click → mutator(target, idx)"
+/// shape used by `modifier-toggle` and `modifier-remove`. Both routes
+/// share the same `data-target-id` + `data-modifier-idx` parse, the
+/// same borrow + registry handoff — only the mutator name differs.
+/// Adding a third indexed route is one macro invocation:
+///
+/// ```ignore
+/// indexed_modifier_route!(handle_modifier_toggle_click, toggle_modifier);
+/// ```
+macro_rules! indexed_modifier_route {
+    ($handler:ident, $mutator:ident) => {
+        fn $handler(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
+            let Some(target) = attr_value(hit, "data-target-id") else {
+                return false;
+            };
+            let Some(idx) = parse_modifier_idx(hit) else {
+                return false;
+            };
+            let mut guard = inner.borrow_mut();
+            let g = &mut *guard;
+            let registry = g.registry.as_component_registry();
+            g.state.$mutator(target, idx, Some(registry))
+        }
     };
-    let Some(idx) = parse_modifier_idx(hit) else {
-        return false;
-    };
-    let mut guard = inner.borrow_mut();
-    let g = &mut *guard;
-    let registry = g.registry.as_component_registry();
-    g.state.toggle_modifier(target, idx, Some(registry))
 }
 
-fn handle_modifier_remove_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
-    let Some(target) = attr_value(hit, "data-target-id") else {
-        return false;
-    };
-    let Some(idx) = parse_modifier_idx(hit) else {
-        return false;
-    };
-    let mut guard = inner.borrow_mut();
-    let g = &mut *guard;
-    let registry = g.registry.as_component_registry();
-    g.state.detach_modifier(target, idx, Some(registry))
-}
+indexed_modifier_route!(handle_modifier_toggle_click, toggle_modifier);
+indexed_modifier_route!(handle_modifier_remove_click, detach_modifier);
 
 /// Wave 1.6 — `data-role="modifier-reorder"`. Today the route is a
 /// hook for the Wave 3 pointer-drag gesture; without that gesture,
