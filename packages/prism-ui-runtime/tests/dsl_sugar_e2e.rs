@@ -717,3 +717,284 @@ fn reduce_with_sum_drives_a_numeric_attribute() {
         prism_ui_runtime::layout::Sizing::Fixed(v) if (v - 56.0).abs() < f32::EPSILON
     ));
 }
+
+// ---------- take / drop / pluck / group_by / count_by / any / all /
+// chunk / zip / range ----------
+
+#[test]
+fn take_and_drop_paginate_an_array() {
+    let scope = LowerScope::default().with_binding("rows", json!(["a", "b", "c", "d", "e"]));
+    // page 2 of size 2 = drop(rows, 2), then take(_, 2)
+    let nodes = lower(
+        r#"<container>
+            <text for="r in take(drop(rows, 2), 2)">{r}</text>
+           </container>"#,
+        &scope,
+    );
+    let Node::Container { children, .. } = &nodes[0] else {
+        panic!()
+    };
+    let mut texts = Vec::new();
+    for c in children {
+        flatten_text(c, &mut texts);
+    }
+    assert_eq!(texts, vec!["c".to_string(), "d".into()]);
+}
+
+#[test]
+fn pluck_is_alias_for_map_field() {
+    let scope = LowerScope::default().with_binding(
+        "people",
+        json!([
+            {"name": "Ada"},
+            {"name": "Linus"},
+        ]),
+    );
+    let nodes = lower(r#"<text>{join(pluck(people, 'name'), '/')}</text>"#, &scope);
+    let Node::Text { content, .. } = &nodes[0] else {
+        panic!()
+    };
+    assert_eq!(content, "Ada/Linus");
+}
+
+#[test]
+fn group_by_buckets_objects_by_field_value() {
+    let scope = LowerScope::default().with_binding(
+        "rows",
+        json!([
+            {"kind": "task", "label": "A"},
+            {"kind": "note", "label": "B"},
+            {"kind": "task", "label": "C"},
+        ]),
+    );
+    // entries(group_by(rows, 'kind')) → [
+    //   {key: "task", value: […, …]},
+    //   {key: "note", value: [...]},
+    // ]
+    let nodes = lower(
+        r#"<container>
+            <container for="g in entries(group_by(rows, 'kind'))">
+              <text>{g.key}: {g.value.length}</text>
+            </container>
+           </container>"#,
+        &scope,
+    );
+    let Node::Container { children, .. } = &nodes[0] else {
+        panic!()
+    };
+    let mut texts = Vec::new();
+    for c in children {
+        flatten_text(c, &mut texts);
+    }
+    assert_eq!(texts.len(), 2);
+    assert!(texts.iter().any(|t| t.contains("task") && t.contains('2')));
+    assert!(texts.iter().any(|t| t.contains("note") && t.contains('1')));
+}
+
+#[test]
+fn count_by_summarises_field_value_frequencies() {
+    let scope = LowerScope::default().with_binding(
+        "rows",
+        json!([
+            {"status": "draft"},
+            {"status": "active"},
+            {"status": "active"},
+            {"status": "active"},
+            {"status": "archived"},
+        ]),
+    );
+    let nodes = lower(
+        r#"<container>
+            <text for="e in entries(count_by(rows, 'status'))">{e.key}={e.value}</text>
+           </container>"#,
+        &scope,
+    );
+    let Node::Container { children, .. } = &nodes[0] else {
+        panic!()
+    };
+    let mut texts = Vec::new();
+    for c in children {
+        flatten_text(c, &mut texts);
+    }
+    assert_eq!(texts.len(), 3);
+    assert!(texts.iter().any(|t| t.contains("draft") && t.contains('1')));
+    assert!(texts
+        .iter()
+        .any(|t| t.contains("active") && t.contains('3')));
+    assert!(texts
+        .iter()
+        .any(|t| t.contains("archived") && t.contains('1')));
+}
+
+#[test]
+fn any_returns_true_when_at_least_one_field_matches() {
+    let scope = LowerScope::default().with_binding(
+        "rows",
+        json!([
+            {"done": false},
+            {"done": true},
+            {"done": false},
+        ]),
+    );
+    let nodes = lower(
+        r#"<text if="{any(rows, 'done', true)}">at least one finished</text>"#,
+        &scope,
+    );
+    let Node::Text { content, .. } = &nodes[0] else {
+        panic!()
+    };
+    assert_eq!(content, "at least one finished");
+}
+
+#[test]
+fn all_returns_false_when_any_item_misses() {
+    let scope = LowerScope::default().with_binding(
+        "rows",
+        json!([
+            {"done": true},
+            {"done": false},
+        ]),
+    );
+    let nodes = lower(
+        r#"<container>
+            <text if="{all(rows, 'done', true)}">complete</text>
+            <text else>incomplete</text>
+           </container>"#,
+        &scope,
+    );
+    let Node::Container { children, .. } = &nodes[0] else {
+        panic!()
+    };
+    let mut texts = Vec::new();
+    for c in children {
+        flatten_text(c, &mut texts);
+    }
+    assert_eq!(texts, vec!["incomplete".to_string()]);
+}
+
+#[test]
+fn chunk_partitions_array_into_fixed_size_sub_arrays() {
+    let scope = LowerScope::default().with_binding("rows", json!(["a", "b", "c", "d", "e"]));
+    // chunk(rows, 2) → [[a,b],[c,d],[e]]
+    let nodes = lower(
+        r#"<container>
+            <container for="row in chunk(rows, 2)">
+              <text>{row.length}: {join(row, ',')}</text>
+            </container>
+           </container>"#,
+        &scope,
+    );
+    let Node::Container { children, .. } = &nodes[0] else {
+        panic!()
+    };
+    let mut texts = Vec::new();
+    for c in children {
+        flatten_text(c, &mut texts);
+    }
+    assert_eq!(texts.len(), 3);
+    assert!(texts[0].contains("2") && texts[0].contains("a,b"));
+    assert!(texts[1].contains("2") && texts[1].contains("c,d"));
+    assert!(texts[2].contains("1") && texts[2].contains("e"));
+}
+
+#[test]
+fn zip_pairs_parallel_arrays_truncating_to_shortest() {
+    let scope = LowerScope::default()
+        .with_binding("labels", json!(["A", "B", "C"]))
+        .with_binding("values", json!([1, 2, 3, 4]));
+    // zip(labels, values) → [[A,1],[B,2],[C,3]] — index 3 dropped
+    let nodes = lower(
+        r#"<container>
+            <text for="pair in zip(labels, values)">{pair.0}={pair.1}</text>
+           </container>"#,
+        &scope,
+    );
+    let Node::Container { children, .. } = &nodes[0] else {
+        panic!()
+    };
+    let mut texts = Vec::new();
+    for c in children {
+        flatten_text(c, &mut texts);
+    }
+    assert_eq!(texts.len(), 3);
+    assert!(texts.iter().any(|t| t.contains("A") && t.contains('1')));
+    assert!(texts.iter().any(|t| t.contains("C") && t.contains('3')));
+}
+
+#[test]
+fn range_returns_typed_integer_array() {
+    let scope = LowerScope::default();
+    // single-arg form == range(0, n)
+    let nodes = lower(
+        r#"<container>
+            <text for="i in range(3)">{i}</text>
+           </container>"#,
+        &scope,
+    );
+    let Node::Container { children, .. } = &nodes[0] else {
+        panic!()
+    };
+    let mut texts = Vec::new();
+    for c in children {
+        flatten_text(c, &mut texts);
+    }
+    assert_eq!(texts, vec!["0".to_string(), "1".into(), "2".into()]);
+}
+
+#[test]
+fn range_with_start_end_and_step_walks_arithmetic_progression() {
+    let scope = LowerScope::default();
+    let nodes = lower(
+        r#"<container>
+            <text for="i in range(10, 30, 5)">{i}</text>
+           </container>"#,
+        &scope,
+    );
+    let Node::Container { children, .. } = &nodes[0] else {
+        panic!()
+    };
+    let mut texts = Vec::new();
+    for c in children {
+        flatten_text(c, &mut texts);
+    }
+    assert_eq!(
+        texts,
+        vec!["10".to_string(), "15".into(), "20".into(), "25".into()]
+    );
+}
+
+#[test]
+fn full_pipeline_compose_group_pluck_join_for_dashboard_summary() {
+    // Realistic pipeline: take the active items, group them by their
+    // assignee, then for each group render "<name>: 3 items" in the
+    // form of `<entries by name>`. Validates that the full
+    // composition reads cleanly through the new vocabulary.
+    let scope = LowerScope::default().with_binding(
+        "tasks",
+        json!([
+            {"status": "active",   "assignee": "Ada",   "id": 1},
+            {"status": "active",   "assignee": "Ada",   "id": 2},
+            {"status": "active",   "assignee": "Linus", "id": 3},
+            {"status": "archived", "assignee": "Ada",   "id": 4},
+            {"status": "active",   "assignee": "Linus", "id": 5},
+        ]),
+    );
+    let nodes = lower(
+        r#"<container>
+            <container for="g in entries(group_by(filter(tasks, 'status', 'active'), 'assignee'))">
+              <text>{g.key}: {g.value.length}</text>
+            </container>
+           </container>"#,
+        &scope,
+    );
+    let Node::Container { children, .. } = &nodes[0] else {
+        panic!()
+    };
+    let mut texts = Vec::new();
+    for c in children {
+        flatten_text(c, &mut texts);
+    }
+    assert_eq!(texts.len(), 2);
+    assert!(texts.iter().any(|t| t.contains("Ada") && t.contains('2')));
+    assert!(texts.iter().any(|t| t.contains("Linus") && t.contains('2')));
+}

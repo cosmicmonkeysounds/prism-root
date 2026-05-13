@@ -20,6 +20,19 @@ padding (`padding="8 16"`, TRBL), `<fragment>` grouping element,
 `@event` ≡ `on:event` and `:prop` ≡ `bind:prop` shorthands, `class="…"`
 PRSS integration (see [PRSS reference](prss-reference.md)).
 
+**Recently landed (2026-05-14):** `<dispatch tag="{expr}"/>` runtime-tag
+dispatch for the closed-set primitive vocabulary (`container` / `text` /
+`spacer` / `image` / `fragment` / …) alongside the registered-tag form,
+virtual trailing segments (`items.length` / `items.first` / `items.last`)
+on array / object / string bindings, `on:event=""` empty-string filter +
+dotted modifier-suffix flattening (`on:click.once.stop` →
+`data-on-click-once-stop`), and the functional-helper vocabulary:
+`map` / `reduce` / `filter` / `find` / `slice` / `sort_by` /
+`unique` / `reverse` / `keys` / `values` / `entries` / `includes` /
+`index_of` / `join` / `concat_arr` / `take` / `drop` / `pluck` /
+`group_by` / `count_by` / `any` / `all` / `chunk` / `zip` / `range`.
+See §5.4.1.
+
 **Related docs:** ADR-008 (decision to replace Slint with the DSL),
 `clay-migration-plan.md` (phase plan), `composable-builder-plan.md`
 (Waves 9 – 15 of grammar), `dioxus-inspiration.md` (reactive
@@ -431,6 +444,26 @@ table. Dotted paths walk JSON object fields:
 `for` iterators bind in the immediate scope, so within a loop body
 `item` and `item.label` resolve through scope.
 
+#### 5.3.1 Virtual trailing segments
+
+Any dotted-path that ends in one of the recognised **virtual
+segments** below resolves through `lookup_path_owned` to a synthesised
+typed value. Works on every consumer that reads a path (attribute
+interpolations, `{expr}` in text, `for=` sources, `if=` predicates).
+
+| Segment | Array → | Object → | String → |
+|---|---|---|---|
+| `.length`, `.size`, `.count` | number of items | number of keys | grapheme count |
+| `.first` | first item | — | first char (as string) |
+| `.last`  | last item  | — | last char (as string)  |
+
+```prui
+<container for="i in 0..rows.length">…</container>
+<text>showing {rows.length} rows</text>
+<text>{rows.first.label} … {rows.last.label}</text>
+<container if="{form.length > 3}">advanced mode</container>
+```
+
 ### 5.4 Built-in functions
 
 Provided by `language::expression::evaluator::builtin_functions`.
@@ -439,7 +472,7 @@ A representative subset:
 | Function | Shape | Notes |
 |---|---|---|
 | `if(cond, then, else)` | ternary alias | Useful in template contexts |
-| `len(x)` | `string \| array \| object` → number | |
+| `len(x)` | `string` → grapheme count | Array / object → use `.length` virtual segment (§5.3.1) |
 | `min(a, b, …)`, `max(a, b, …)` | varargs | |
 | `round(n)`, `floor(n)`, `ceil(n)`, `abs(n)` | number → number | |
 | `concat(a, b, …)` | varargs → string | |
@@ -449,6 +482,77 @@ A representative subset:
 
 The full list lives in `language::syntax::syntax_engine::builtin_functions`
 — the same registry the LSP completions read from.
+
+#### 5.4.1 Functional helpers on arrays / objects
+
+PRUI's expression evaluator carries `Number | String | Boolean`;
+collection-typed values flow through a **runtime-side call resolver**
+(`prism_ui_runtime::interpret::try_call_owned`) that recognises the
+following call shape:
+
+```text
+fn_name(arg1, arg2, …) [ . dotted.access ]?
+```
+
+Args are: number literal, `'single'` / `"double"` string,
+`true` / `false` / `null`, a bare path (resolved via
+`lookup_path_owned`), or a nested call. Calls compose freely —
+`slice(filter(rows, 'status', 'active'), 0, 5)` reads as expected.
+
+| Function | Shape | Notes |
+|---|---|---|
+| `map(arr, "field")` | `[Object] → [V]` | Project a field. Alias: `pluck`. |
+| `pluck(arr, "field")` | `[Object] → [V]` | Same as `map`; lodash spelling. |
+| `filter(arr, "field", value)` | `[Object] → [Object]` | Keep items whose `field == value`. |
+| `find(arr, "field", value)` | `[Object] → Object \| null` | First match. |
+| `reduce(arr, "op" [, "field"])` | `[V] → number` | `op ∈ {sum, product, min, max, count, avg}`. Optional 3rd arg names a field on object items. |
+| `slice(arr, start [, end])` | `[V] → [V]` | Python-style slice; negative indices count from end. |
+| `take(arr, n)`, `drop(arr, n)` | `[V] → [V]` | Pagination pair (`drop` skips, `take` keeps). |
+| `sort_by(arr, "field" [, "asc" \| "desc"])` | `[Object] → [Object]` | Stable sort by field; default `asc`. |
+| `unique(arr)` | `[V] → [V]` | Dedupe, preserving first occurrence. |
+| `reverse(arr)` | `[V] → [V]` | Reverse a typed array (distinct from the `for=` `reverse` modifier — this is a value, not a clause). |
+| `keys(obj)`, `values(obj)`, `entries(obj)` | `Object → [String]` / `[V]` / `[{key,value}]` | JS-shape object iteration helpers. |
+| `includes(arr, value)` | `[V] → Boolean` | Loose-equality membership. |
+| `index_of(arr, value)` | `[V] → Number` | Position or `-1`. |
+| `join(arr [, sep])` | `[V] → String` | Stringify-and-concatenate; default sep `,`. |
+| `concat_arr(a, b, …)` | `[V] → [V]` | Flatten N arrays. |
+| `group_by(arr, "field")` | `[Object] → Object<String, [Object]>` | Bucket by field value; pair with `entries(…)`. |
+| `count_by(arr, "field")` | `[Object] → Object<String, Number>` | Summarise frequencies. |
+| `any(arr [, "field", value])`, `all(arr [, "field", value])` | varargs → Boolean | Membership / universality tests. Field+value form matches `filter`; bare form tests truthiness. |
+| `chunk(arr, n)` | `[V] → [[V]]` | Fixed-size sub-arrays; final chunk may be short. |
+| `zip(a, b, …)` | varargs → `[[V]]` | N-tuples, truncated to shortest input. |
+| `range(n)` / `range(start, end)` / `range(start, end, step)` | → `[Number]` | Standalone integer array (the `for=` `0..n` form's value-shape twin). |
+
+**Composition rationale.** PRUI deliberately doesn't have first-class
+functions (§16). The functional helpers cover the shape every
+template engine evolved toward — `map`/`filter`/`reduce` over typed
+data — while staying inside the bounded, declarative tree-render
+contract. Each helper takes string-named field references; nothing
+introduces a lambda or closure surface.
+
+**Examples:**
+
+```prui
+<!-- Render a CSV — common dashboard pattern. -->
+<text>{join(map(people, 'name'), ', ')}</text>
+
+<!-- Group + render — sections-per-group view. -->
+<container for="g in entries(group_by(filter(tasks, 'status', 'active'), 'assignee'))">
+  <heading level="4">{g.key} ({g.value.length})</heading>
+  <text for="t in g.value">• {t.title}</text>
+</container>
+
+<!-- Pagination shape. -->
+<container for="row in take(drop(rows, page * per_page), per_page)">
+  <shell.row props="{row}"/>
+</container>
+
+<!-- Numeric attribute fed by reduce. -->
+<container width="{reduce(rows, 'sum', 'size')}" height="40"/>
+
+<!-- Stable-id rendering via index_of. -->
+<container for="item in items" id="row-{index_of(items, item)}"/>
+```
 
 ### 5.5 Mixed templates
 
@@ -1057,25 +1161,38 @@ as runtime *primitives* (`prism.builder-host`, `prism.text-buffer`,
 against the primitive; the primitive owns the imperative body.
 
 **Runtime tag dispatch.** `<{panel.tag} .../>` is not directly
-expressible, but the equivalent shape lives at the resolver
-level: **`<dispatch component="{expr}" props="{obj}"/>`** resolves
-its `component` attribute through scope and dispatches against
-the live registry at render time. `properties-panel` already uses
-this to materialise per-row inspector editors whose component id
-lives in data.
+expressible, but the equivalent shape is **`<dispatch>`** with one
+of two attribute forms:
+
+| Attribute | Routing | Target vocabulary |
+|---|---|---|
+| `component="{expr}"` | Resolver path (`RegistryTagResolver`) | Registered component ids only |
+| `tag="{expr}"` | Runtime-side rewrite + same lowering arms | Closed-set primitives (`container` / `text` / `heading` / `spacer` / `image` / `input` / `fragment` / `slot` / `host-children`) **and** registered tags |
+
+The `tag=` form rewrites the element into a synthetic one whose tag
+*is* the resolved name; the closed-set arms in `lower_element_body`
+handle primitives, and unknown synthesised tags fall through to the
+resolver (so `tag="shell.icon-button"` reaches the same block
+`<shell.icon-button .../>` would). When both attributes are present,
+`tag=` wins.
 
 ```prui
+<!-- Registered-component dispatch (long-standing). -->
 <dispatch for="row, idx in rows"
           id="props::row::{idx}"
           component="{row.component}"
           props="{row.props}"/>
+
+<!-- Primitive-vocabulary dispatch (2026-05-14). -->
+<container for="row in rows">
+  <dispatch tag="{row.kind}" id="{row.id}">{row.body}</dispatch>
+</container>
 ```
 
-The remaining limit: `<dispatch>` resolves through the host's
-`TagResolver` (i.e. only registered tags), so it cannot target a
-closed-set runtime primitive like `<container>` or `<text>` from
-a data-driven name. That's intentional — the closed set is the
-runtime's contract, not a registry.
+A `<dispatch>` whose `tag=` resolves to `dispatch` itself is dropped
+to avoid an infinite re-dispatch loop; the same applies to a
+`tag=""`/`tag=` empty resolve — the element falls through to the
+resolver's legacy `component=` path.
 
 **Per-frame imperative bodies.** Anything that needs to compute
 during the render walk (selection bbox in viewport coordinates,

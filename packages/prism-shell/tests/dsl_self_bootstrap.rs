@@ -908,6 +908,59 @@ required = ["builder"]
 }
 
 #[test]
+fn per_app_stylesheet_hot_reload_round_trips_through_install_method() {
+    // End-to-end PRSS hot-reload chain: load an app with a styles
+    // declaration, activate it, then push a fresh stylesheet via
+    // `install_app_stylesheet` (the API the dev-loop watcher will
+    // call when `apps/<id>/app.prss` changes). The render must
+    // surface the new class set on the next frame.
+    use prism_shell::render::Stylesheet;
+    let manifests: &[(&str, &str)] = &[(
+        "lattice",
+        r#"id = "lattice"
+label = "Lattice"
+
+[entry]
+styles = "app.prss"
+"#,
+    )];
+    with_apps_dir("stylesheet_hot_reload", manifests, || {
+        let root = std::env::var("PRISM_APPS_DIR").unwrap();
+        let styles_path = std::path::Path::new(&root).join("lattice").join("app.prss");
+        std::fs::write(&styles_path, "[class.lattice-v1]\nbackground = \"#000\"\n").unwrap();
+        let shell = prism_shell::Shell::new().expect("Shell::new");
+        shell.switch_active_app(Some("lattice"));
+        let _ = shell.render();
+
+        // Initial sheet has v1 only.
+        {
+            let inner = shell.inner.borrow();
+            let sheet = inner.active_app_stylesheet().expect("active");
+            assert!(sheet.sheet().classes.contains_key("lattice-v1"));
+            assert!(!sheet.sheet().classes.contains_key("lattice-v2"));
+        }
+
+        // Hot-reload: parse a new sheet and install for `lattice`.
+        let v2 = Stylesheet::from_source("[class.lattice-v2]\nbackground = \"#fff\"\n");
+        let dirty = shell.install_app_stylesheet("lattice", v2);
+        assert!(dirty, "active-app hot-reload must mark dirty");
+
+        // Render picks up the new sheet.
+        let _ = shell.render();
+        let inner = shell.inner.borrow();
+        let sheet = inner.active_app_stylesheet().expect("active");
+        assert!(
+            sheet.sheet().classes.contains_key("lattice-v2"),
+            "hot-reloaded class should be present after install"
+        );
+        assert!(
+            !sheet.sheet().classes.contains_key("lattice-v1"),
+            "old class should be gone after install replaces"
+        );
+    });
+}
+
+#[test]
 fn no_apps_directory_falls_back_to_hardcoded_launchpad() {
     // Sanity check: clear PRISM_APPS_DIR + point at a path that
     // doesn't exist; Shell::new still constructs without panic and

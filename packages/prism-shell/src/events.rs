@@ -517,16 +517,19 @@ fn handle_toolbar_device_pill_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRe
 }
 
 /// Click on a Launchpad `shell.app-card` — switches the workspace's
-/// `active_app` cursor to the card's `data-app` id. Cards without a
-/// `data-app` value (the "create" affordance) fall through cleanly;
-/// the per-app skeleton swap they should eventually trigger is the
-/// D4 follow-up in `ui-migration-followups.md`.
+/// `active_app` cursor to the card's `data-app` id via the full
+/// ADR-009 + ADR-010 swap chain (skeleton + service factories +
+/// render dirty). Cards without a `data-app` value (the "create"
+/// affordance) fall through cleanly. The D4 follow-up referenced in
+/// `ui-migration-followups.md` lands here: launchpad clicks now flow
+/// through `Shell::switch_active_app`, so per-app skeleton swap and
+/// service rebuild are automatic.
 fn handle_app_card_click(inner: &Rc<RefCell<ShellInner>>, hit: &HitRect) -> bool {
     let Some(app_id) = attr_value(hit, "data-app") else {
         return false;
     };
     let mut guard = inner.borrow_mut();
-    guard.state.workspace.set_active_app(app_id)
+    guard.switch_active_app(Some(app_id))
 }
 
 /// Click on a schema-designer row — moves the chevron cursor
@@ -2729,6 +2732,102 @@ mod tests {
         assert_eq!(
             shell.inner.borrow().state.workspace.active_app.as_deref(),
             Some("lattice"),
+        );
+    }
+
+    #[test]
+    fn pointer_down_on_app_card_drives_full_swap_chain() {
+        // ADR-009 + ADR-010 wiring: a launchpad click must flow
+        // through the same `switch_active_app` path that the public
+        // shell API uses — cursor update + service rebuild +
+        // render scope dirty. Previously the handler only moved the
+        // cursor (`WorkspaceSlot::set_active_app`), bypassing the
+        // service rebuild.
+        use prism_ui_runtime::event::PointerButton;
+        let shell = Shell::new().expect("boot");
+        // Drain any pre-existing dirty state from boot.
+        let _ = shell.render();
+        assert!(
+            !shell.inner.borrow().render_scope.needs_redraw(),
+            "render-scope should be clean after a successful render"
+        );
+
+        let hit = HitRect {
+            id: "card-flux".into(),
+            bounds: Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 160.0,
+                height: 160.0,
+            },
+            attrs: vec![
+                ("data-role".into(), "app-card".into()),
+                ("data-app".into(), "flux".into()),
+            ],
+        };
+        let dirty = dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 5.0,
+                y: 5.0,
+                button: PointerButton::Primary,
+            },
+            Some(hit),
+        );
+        assert!(dirty);
+        // Cursor moved.
+        assert_eq!(
+            shell.inner.borrow().state.workspace.active_app.as_deref(),
+            Some("flux"),
+        );
+        // Render scope was marked dirty by `switch_active_app`'s
+        // FRAME_DIRTY_SENTINEL — proves the full chain fired, not
+        // just the cursor write.
+        assert!(
+            shell.inner.borrow().render_scope.needs_redraw(),
+            "click on app-card should mark the render scope dirty via switch_active_app"
+        );
+    }
+
+    #[test]
+    fn pointer_down_on_already_active_app_card_is_idempotent() {
+        // The full chain is idempotent: clicking the already-active
+        // app's tile returns `false` from `switch_active_app` (no
+        // rebuild, no dirty bump). The dispatcher still reports
+        // `dirty` because clicking *something* counts as activity in
+        // its conservative redraw model, but the underlying state
+        // didn't move.
+        use prism_ui_runtime::event::PointerButton;
+        let shell = Shell::new().expect("boot");
+        shell.switch_active_app(Some("musica"));
+        let _ = shell.render();
+
+        let hit = HitRect {
+            id: "card-musica".into(),
+            bounds: Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 160.0,
+                height: 160.0,
+            },
+            attrs: vec![
+                ("data-role".into(), "app-card".into()),
+                ("data-app".into(), "musica".into()),
+            ],
+        };
+        let _ = dispatch_event(
+            &shell.inner,
+            &Event::PointerDown {
+                x: 5.0,
+                y: 5.0,
+                button: PointerButton::Primary,
+            },
+            Some(hit),
+        );
+        // Cursor stays put.
+        assert_eq!(
+            shell.inner.borrow().state.workspace.active_app.as_deref(),
+            Some("musica"),
         );
     }
 

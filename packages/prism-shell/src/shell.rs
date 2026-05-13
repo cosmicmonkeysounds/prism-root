@@ -168,6 +168,27 @@ impl ShellInner {
             .unwrap_or(&self.default_app_skeleton)
     }
 
+    /// ADR-009 + ADR-010: shared implementation of `switch_active_app`.
+    /// Owned by `ShellInner` so both the public `Shell::switch_active_app`
+    /// entry point and the in-dispatcher event handlers
+    /// (`handle_app_card_click` et al.) share exactly one code path.
+    ///
+    /// Returns `true` when the cursor actually moved.
+    pub fn switch_active_app(&mut self, app_id: Option<&str>) -> bool {
+        if self.state.workspace.active_app.as_deref() == app_id {
+            return false;
+        }
+        self.state.workspace.active_app = app_id.map(|s| s.to_string());
+        let ctx_app_id = self.state.workspace.active_app.clone();
+        self.services
+            .rebuild_app_services(&crate::services::ServiceContext {
+                app_id: ctx_app_id.as_deref(),
+            });
+        self.render_scope
+            .mark_dirty(crate::render_scope::FRAME_DIRTY_SENTINEL);
+        true
+    }
+
     /// ADR-009 follow-on: the active app's PRSS stylesheet, if any.
     /// Returns `None` when the active app is unset, when no app is
     /// active, or when the active app declared no `[entry] styles`.
@@ -368,34 +389,61 @@ impl Shell {
     /// Returns `true` when the cursor actually moved, `false` for
     /// the idempotent no-op path.
     ///
+    /// Delegates to [`ShellInner::switch_active_app`]; this is the
+    /// public entry point hosts call without going through
+    /// `RefCell::borrow_mut`. Event handlers inside the dispatcher
+    /// already have a `&mut ShellInner` and call the inner method
+    /// directly.
+    ///
     /// [`ServiceFactory`]: crate::services::ServiceFactory
     /// [`ServiceContext`]: crate::services::ServiceContext
     pub fn switch_active_app(&self, app_id: Option<&str>) -> bool {
-        // Cheap pre-check: if the cursor is already where the caller
-        // wants it, don't re-run the rebuild or mark dirty.
-        {
-            let inner = self.inner.borrow();
-            if inner.state.workspace.active_app.as_deref() == app_id {
-                return false;
-            }
-        }
-        // Three side effects, single `&mut` borrow.
+        self.inner.borrow_mut().switch_active_app(app_id)
+    }
+
+    /// ADR-009 follow-on: install (or replace) the stylesheet
+    /// associated with a specific app id. Pairs with the boot-time
+    /// cache built in `Shell::new` to support hot-reload — when the
+    /// dev-loop's PRSS watcher detects a change to
+    /// `apps/<id>/app.prss`, the host re-parses the file and hands
+    /// the resulting [`Stylesheet`] to this method.
+    ///
+    /// If `app_id` matches the currently active app, marks the
+    /// frame dirty so the next render picks up the new cascade
+    /// against the host stylesheet. Hot-reload of an inactive app's
+    /// sheet updates the cache without paying for a redraw — the
+    /// next `switch_active_app` to that id surfaces the new values.
+    ///
+    /// Returns `true` when the install actually marked dirty (the
+    /// app was active), `false` for the inactive-cache-update path.
+    pub fn install_app_stylesheet(&self, app_id: &str, stylesheet: Stylesheet) -> bool {
         let mut inner = self.inner.borrow_mut();
-        inner.state.workspace.active_app = app_id.map(|s| s.to_string());
-        // Rebuild scope held inline so the borrow of services + the
-        // construction of the ServiceContext don't overlap. The
-        // context is `Copy`, so cloning the app_id slice from the
-        // freshly-set state field is cheap.
-        let ctx_app_id = inner.state.workspace.active_app.clone();
-        inner
-            .services
-            .rebuild_app_services(&crate::services::ServiceContext {
-                app_id: ctx_app_id.as_deref(),
-            });
-        inner
-            .render_scope
-            .mark_dirty(crate::render_scope::FRAME_DIRTY_SENTINEL);
-        true
+        inner.app_stylesheets.insert(app_id.to_string(), stylesheet);
+        if inner.state.workspace.active_app.as_deref() == Some(app_id) {
+            inner
+                .render_scope
+                .mark_dirty(crate::render_scope::FRAME_DIRTY_SENTINEL);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// ADR-009 follow-on: drop a per-app stylesheet from the cache.
+    /// Hot-reload path for the rare case where an author deletes
+    /// `app.prss` or replaces it with a broken file the watcher
+    /// can't parse. Marks dirty when the dropped app was active.
+    pub fn uninstall_app_stylesheet(&self, app_id: &str) -> bool {
+        let mut inner = self.inner.borrow_mut();
+        let was_present = inner.app_stylesheets.remove(app_id).is_some();
+        if was_present && inner.state.workspace.active_app.as_deref() == Some(app_id) {
+            inner
+                .render_scope
+                .mark_dirty(crate::render_scope::FRAME_DIRTY_SENTINEL);
+            true
+        } else {
+            false
+        }
     }
 
     /// Read the currently-active app id. `None` when no launchpad
@@ -735,6 +783,85 @@ mod tests {
             is_dirty_after && !was_dirty_before,
             "switch must flip the dirty bit (before={was_dirty_before}, after={is_dirty_after})"
         );
+    }
+
+    #[test]
+    fn install_app_stylesheet_caches_for_inactive_app_without_dirtying() {
+        let shell = Shell::new().expect("boot");
+        let _ = shell.render();
+        let _ = shell.inner.borrow().render_scope.drain_dirty();
+        let sheet = Stylesheet::from_source("[class.foo]\nbackground = \"#aabbcc\"\n");
+        let dirty = shell.install_app_stylesheet("lattice", sheet);
+        assert!(!dirty, "inactive-app install should not flip the dirty bit");
+        // The cache entry lands either way.
+        assert!(shell.inner.borrow().app_stylesheets.contains_key("lattice"));
+        assert!(
+            !shell.inner.borrow().render_scope.needs_redraw(),
+            "render scope must stay clean when installing for an inactive app"
+        );
+    }
+
+    #[test]
+    fn install_app_stylesheet_marks_dirty_when_active() {
+        let shell = Shell::new().expect("boot");
+        shell.switch_active_app(Some("lattice"));
+        let _ = shell.render();
+        // Drain whatever boot/render/switch put on the queue so we
+        // can observe the fresh install_app_stylesheet emission in
+        // isolation. `drain_dirty` is the canonical reset path.
+        let _ = shell.inner.borrow().render_scope.drain_dirty();
+        let sheet = Stylesheet::from_source("[class.bar]\nbackground = \"#112233\"\n");
+        let dirty = shell.install_app_stylesheet("lattice", sheet);
+        assert!(dirty, "active-app install should flip the dirty bit");
+        assert!(shell.inner.borrow().render_scope.needs_redraw());
+    }
+
+    #[test]
+    fn install_app_stylesheet_replaces_existing_entry() {
+        let shell = Shell::new().expect("boot");
+        let first = Stylesheet::from_source("[class.a]\nbackground = \"#000000\"\n");
+        let second = Stylesheet::from_source("[class.b]\nbackground = \"#ffffff\"\n");
+        shell.install_app_stylesheet("flux", first);
+        shell.install_app_stylesheet("flux", second);
+        let inner = shell.inner.borrow();
+        let cached = inner.app_stylesheets.get("flux").unwrap();
+        // The second sheet's class is present; the first is gone.
+        assert!(cached.sheet().classes.contains_key("b"));
+        assert!(!cached.sheet().classes.contains_key("a"));
+    }
+
+    #[test]
+    fn uninstall_app_stylesheet_removes_cache_and_signals_when_active() {
+        let shell = Shell::new().expect("boot");
+        let sheet = Stylesheet::from_source("[class.x]\nbackground = \"#000\"\n");
+        shell.install_app_stylesheet("lattice", sheet);
+        // Inactive: no dirty signal on uninstall.
+        let signalled = shell.uninstall_app_stylesheet("lattice");
+        assert!(!signalled);
+        assert!(!shell.inner.borrow().app_stylesheets.contains_key("lattice"));
+
+        // Re-install + activate, then uninstall: dirty fires.
+        shell.install_app_stylesheet(
+            "lattice",
+            Stylesheet::from_source("[class.y]\nbackground = \"#000\"\n"),
+        );
+        shell.switch_active_app(Some("lattice"));
+        let _ = shell.render();
+        let signalled = shell.uninstall_app_stylesheet("lattice");
+        assert!(
+            signalled,
+            "uninstalling the active app's sheet should mark dirty"
+        );
+    }
+
+    #[test]
+    fn uninstall_app_stylesheet_for_unknown_app_is_a_noop() {
+        let shell = Shell::new().expect("boot");
+        let _ = shell.render();
+        let _ = shell.inner.borrow().render_scope.drain_dirty();
+        let signalled = shell.uninstall_app_stylesheet("never-registered");
+        assert!(!signalled);
+        assert!(!shell.inner.borrow().render_scope.needs_redraw());
     }
 
     /// Wave 14.3 — `Shell::render` runs the animator pre/post the

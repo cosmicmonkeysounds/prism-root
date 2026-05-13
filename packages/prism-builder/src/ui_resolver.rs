@@ -1302,4 +1302,109 @@ mod tests {
         let bg = props.background.expect("override should set bg");
         assert_eq!((bg.r, bg.g, bg.b), (0x00, 0xff, 0x00));
     }
+
+    // ---------- Functional-helper calls round-trip through the
+    // resolver's attribute paths (props=, attribute interpolation,
+    // typed-attribute spread). The runtime's `lookup_path_owned` is
+    // the shared seam, so a `props="{find(rows, 'id', target).props}"`
+    // shape should pass the typed object through to the dispatched
+    // block. ----------
+
+    #[test]
+    fn functional_call_in_dispatch_props_spread() {
+        // `<dispatch component="demo.box" props="{find(rows, 'id',
+        // active).props}"/>` — pull the row whose `id` matches a
+        // selection cursor, then spread its `props` onto the
+        // dispatched block. Validates that the resolver's
+        // `resolved_attribute_value` consumes a call result through
+        // `lookup_path_owned_in_scope`.
+        let resolver = Arc::new(RegistryTagResolver::new(registry_with_demo()));
+        let scope = LowerScope::default()
+            .with_resolver(resolver)
+            .with_binding(
+                "rows",
+                serde_json::json!([
+                    {"id": 1, "props": {"tint": "#aa0000"}},
+                    {"id": 2, "props": {"tint": "#00aa00"}},
+                ]),
+            )
+            .with_binding("active", serde_json::json!(2));
+        let (doc, errs) =
+            parse(r##"<dispatch component="demo.box" props="{find(rows, 'id', active).props}"/>"##);
+        assert!(errs.is_empty(), "parse errors: {errs:?}");
+        let nodes = lower_document_with_scope(&doc, &scope);
+        let UiNode::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let bg = props.background.expect("tint flowed through");
+        assert_eq!((bg.r, bg.g, bg.b), (0x00, 0xaa, 0x00));
+    }
+
+    #[test]
+    fn functional_call_in_attribute_interpolation_lowers_to_string() {
+        // `<demo.box tint="{first(map(rows, 'tint'))}"/>` — composed
+        // call (`first` over a `map` projection). The resolver's
+        // attribute path stringifies the result and the block reads
+        // it as a normal prop.
+        let resolver = Arc::new(RegistryTagResolver::new(registry_with_demo()));
+        let scope = LowerScope::default().with_resolver(resolver).with_binding(
+            "rows",
+            serde_json::json!([
+                {"tint": "#3366ff"},
+                {"tint": "#ff9933"},
+            ]),
+        );
+        // `map(rows, 'tint').first` reads through the virtual segment
+        // chain → string "#3366ff" → tint prop on the block.
+        let (doc, errs) = parse(r##"<demo.box tint="{map(rows, 'tint').first}"/>"##);
+        assert!(errs.is_empty(), "parse errors: {errs:?}");
+        let nodes = lower_document_with_scope(&doc, &scope);
+        let UiNode::Container { props, .. } = &nodes[0] else {
+            panic!()
+        };
+        let bg = props.background.expect("tint resolved");
+        assert_eq!((bg.r, bg.g, bg.b), (0x33, 0x66, 0xff));
+    }
+
+    #[test]
+    fn for_loop_with_filter_call_drives_repeated_dispatch() {
+        // The headline case: a `for=` whose source is a filtered
+        // array, dispatching one block per matching row. Round-trips
+        // through the resolver + runtime + functional helpers in
+        // one flow.
+        let resolver = Arc::new(RegistryTagResolver::new(registry_with_demo()));
+        let scope = LowerScope::default().with_resolver(resolver).with_binding(
+            "rows",
+            serde_json::json!([
+                {"status": "active",   "tint": "#aa0000"},
+                {"status": "archived", "tint": "#666666"},
+                {"status": "active",   "tint": "#00aa00"},
+                {"status": "active",   "tint": "#0000aa"},
+            ]),
+        );
+        let (doc, errs) = parse(
+            r##"<container>
+                <demo.box for="row in filter(rows, 'status', 'active')" tint="{row.tint}"/>
+               </container>"##,
+        );
+        assert!(errs.is_empty(), "parse errors: {errs:?}");
+        let nodes = lower_document_with_scope(&doc, &scope);
+        let UiNode::Container { children, .. } = &nodes[0] else {
+            panic!()
+        };
+        assert_eq!(children.len(), 3, "three active rows survived the filter");
+        // Each child is a demo.box-shaped container with its tint
+        // background applied.
+        let tints: Vec<(u8, u8, u8)> = children
+            .iter()
+            .filter_map(|c| match c {
+                UiNode::Container { props, .. } => props.background.map(|c| (c.r, c.g, c.b)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            tints,
+            vec![(0xaa, 0x00, 0x00), (0x00, 0xaa, 0x00), (0x00, 0x00, 0xaa)],
+        );
+    }
 }

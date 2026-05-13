@@ -21,7 +21,6 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use indexmap::IndexMap;
 use prism_ui_runtime::layout::Node as UiNode;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -315,9 +314,16 @@ pub enum ModifierRegistryError {
 }
 
 /// Open registry of `ModifierBehaviour` impls.
+///
+/// Thin newtype around [`prism_core::Catalog`] specialised for
+/// `Arc<dyn ModifierBehaviour>`. The trait's `id()` returns `Cow`
+/// rather than `&str`, so we use the catalog's `insert(id, value)`
+/// path (instead of the `HasId`-based `register`) and add the
+/// duplicate-id check on top to preserve the
+/// [`ModifierRegistryError::AlreadyRegistered`] contract.
 #[derive(Default, Clone)]
 pub struct ModifierRegistry {
-    by_id: IndexMap<String, Arc<dyn ModifierBehaviour>>,
+    inner: prism_core::Catalog<Arc<dyn ModifierBehaviour>>,
 }
 
 impl ModifierRegistry {
@@ -344,44 +350,44 @@ impl ModifierRegistry {
         beh: Arc<dyn ModifierBehaviour>,
     ) -> Result<(), ModifierRegistryError> {
         let id = beh.id().into_owned();
-        if self.by_id.contains_key(&id) {
+        if self.inner.contains(&id) {
             return Err(ModifierRegistryError::AlreadyRegistered(id));
         }
-        self.by_id.insert(id, beh);
+        self.inner.insert(id, beh);
         Ok(())
     }
 
     pub fn get(&self, id: &str) -> Option<&Arc<dyn ModifierBehaviour>> {
-        self.by_id.get(id)
+        self.inner.get(id)
     }
 
     pub fn contains(&self, id: &str) -> bool {
-        self.by_id.contains_key(id)
+        self.inner.contains(id)
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (&String, &Arc<dyn ModifierBehaviour>)> {
-        self.by_id.iter()
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &Arc<dyn ModifierBehaviour>)> {
+        self.inner.entries()
     }
 
     /// Stable iteration over descriptor metadata, in registration
     /// order. Used by the inspector's `add-modifier` picker.
     pub fn list(&self) -> Vec<ModifierDescriptor> {
-        self.by_id
-            .values()
+        self.inner
+            .iter()
             .map(|b| descriptor_from(b.as_ref()))
             .collect()
     }
 
     pub fn ids(&self) -> impl Iterator<Item = &str> + '_ {
-        self.by_id.keys().map(String::as_str)
+        self.inner.ids()
     }
 
     pub fn len(&self) -> usize {
-        self.by_id.len()
+        self.inner.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.by_id.is_empty()
+        self.inner.is_empty()
     }
 
     /// Schema lookup for a registered id. Returns an empty vector for

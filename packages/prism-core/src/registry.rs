@@ -121,6 +121,14 @@ impl<T> Catalog<T> {
             .map(|(_, v)| v)
             .collect()
     }
+
+    /// Whether the catalog already has an entry for this id. Works
+    /// regardless of whether `T` impls [`HasId`] — the key is
+    /// `String`-typed at the storage layer, so membership is a pure
+    /// map lookup.
+    pub fn contains(&self, id: &str) -> bool {
+        self.entries.contains_key(id)
+    }
 }
 
 impl<T: HasId> Catalog<T> {
@@ -132,11 +140,6 @@ impl<T: HasId> Catalog<T> {
         let id = value.id().to_string();
         self.entries.insert(id, value);
         self
-    }
-
-    /// Whether the catalog already has an entry for this id.
-    pub fn contains(&self, id: &str) -> bool {
-        self.entries.contains_key(id)
     }
 }
 

@@ -2429,6 +2429,16 @@ const ARRAY_CALL_NAMES: &[&str] = &[
     "index_of",
     "join",
     "concat_arr",
+    "take",
+    "drop",
+    "pluck",
+    "group_by",
+    "count_by",
+    "any",
+    "all",
+    "chunk",
+    "zip",
+    "range",
 ];
 
 /// Try to resolve `body` as a functional-builtin call — optionally
@@ -2849,7 +2859,179 @@ fn eval_array_call(name: &str, args: &[serde_json::Value]) -> Option<serde_json:
             }
             Some(Value::Array(out))
         }
+        "take" => {
+            // `take(arr, n)` — first N items. `n <= 0` returns empty;
+            // `n >= len` returns the whole array.
+            let arr = arr_arg(0)?;
+            let n = i64_arg(1).unwrap_or(0).max(0) as usize;
+            Some(Value::Array(arr.iter().take(n).cloned().collect()))
+        }
+        "drop" => {
+            // `drop(arr, n)` — every item AFTER the first N. Pair to
+            // `take` for pagination patterns.
+            let arr = arr_arg(0)?;
+            let n = i64_arg(1).unwrap_or(0).max(0) as usize;
+            Some(Value::Array(arr.iter().skip(n).cloned().collect()))
+        }
+        "pluck" => {
+            // Alias for `map(arr, "field")` — same semantics, name
+            // matches the lodash / underscore vocabulary so authors
+            // coming from those libraries reach for the obvious word.
+            let arr = arr_arg(0)?;
+            let field = str_arg(1)?;
+            Some(Value::Array(
+                arr.iter()
+                    .map(|item| match item {
+                        Value::Object(map) => map.get(field).cloned().unwrap_or(Value::Null),
+                        _ => Value::Null,
+                    })
+                    .collect(),
+            ))
+        }
+        "group_by" => {
+            // `group_by(arr, "field")` — IndexMap-shaped object whose
+            // keys are the distinct field values (in first-seen order)
+            // and values are arrays of the items that share that key.
+            // Round-trips through `for="entry in entries(group_by(…))"`
+            // so authors can render section-per-group views.
+            let arr = arr_arg(0)?;
+            let field = str_arg(1)?;
+            let mut groups: serde_json::Map<String, Value> = serde_json::Map::new();
+            for item in arr {
+                let key = match item.get(field) {
+                    Some(Value::String(s)) => s.clone(),
+                    Some(other) => stringify_value(other),
+                    None => String::new(),
+                };
+                groups
+                    .entry(key)
+                    .or_insert_with(|| Value::Array(Vec::new()))
+                    .as_array_mut()
+                    .unwrap()
+                    .push(item.clone());
+            }
+            Some(Value::Object(groups))
+        }
+        "count_by" => {
+            // `count_by(arr, "field")` — like `group_by` but values
+            // are counts rather than item lists. Powers
+            // `{"draft": 4, "active": 12}` summaries.
+            let arr = arr_arg(0)?;
+            let field = str_arg(1)?;
+            let mut counts: serde_json::Map<String, Value> = serde_json::Map::new();
+            for item in arr {
+                let key = match item.get(field) {
+                    Some(Value::String(s)) => s.clone(),
+                    Some(other) => stringify_value(other),
+                    None => String::new(),
+                };
+                let entry = counts.entry(key).or_insert_with(|| Value::from(0i64));
+                let next = entry.as_i64().unwrap_or(0) + 1;
+                *entry = Value::from(next);
+            }
+            Some(Value::Object(counts))
+        }
+        "any" => {
+            // `any(arr, "field", value)` — true iff at least one item
+            // matches the field test. Single-arg form `any(arr)`
+            // returns "does the array contain a truthy value" — useful
+            // when an upstream stage already filtered.
+            let arr = arr_arg(0)?;
+            let field = str_arg(1);
+            let needle = args.get(2);
+            Some(Value::Bool(arr.iter().any(|item| match (field, needle) {
+                (Some(f), Some(n)) => item.get(f).map(|v| values_loose_eq(v, n)).unwrap_or(false),
+                _ => is_truthy_value(item),
+            })))
+        }
+        "all" => {
+            // Sibling to `any` — every item must match. Empty array →
+            // true (vacuous truth, matches Rust `all`'s shape).
+            let arr = arr_arg(0)?;
+            let field = str_arg(1);
+            let needle = args.get(2);
+            Some(Value::Bool(arr.iter().all(|item| match (field, needle) {
+                (Some(f), Some(n)) => item.get(f).map(|v| values_loose_eq(v, n)).unwrap_or(false),
+                _ => is_truthy_value(item),
+            })))
+        }
+        "chunk" => {
+            // `chunk(arr, n)` — split into fixed-size sub-arrays. The
+            // final chunk is short when `arr.len() % n != 0`. `n <= 0`
+            // returns the whole array as a single chunk to mimic the
+            // lodash shape and keep callers from accidentally producing
+            // infinite iteration on a misconfigured size.
+            let arr = arr_arg(0)?;
+            let n = i64_arg(1).unwrap_or(1).max(1) as usize;
+            let out: Vec<Value> = arr
+                .chunks(n)
+                .map(|slice| Value::Array(slice.to_vec()))
+                .collect();
+            Some(Value::Array(out))
+        }
+        "zip" => {
+            // `zip(a, b, …)` — produce an array of N-tuples (as
+            // arrays), one per index, up to the shortest input. Used
+            // for "render rows from two parallel lists" patterns
+            // (e.g. headers + values).
+            let arrays: Vec<&Vec<Value>> = args
+                .iter()
+                .filter_map(|v| {
+                    if let Value::Array(a) = v {
+                        Some(a)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            if arrays.is_empty() {
+                return Some(Value::Array(Vec::new()));
+            }
+            let len = arrays.iter().map(|a| a.len()).min().unwrap_or(0);
+            let zipped: Vec<Value> = (0..len)
+                .map(|i| Value::Array(arrays.iter().map(|a| a[i].clone()).collect()))
+                .collect();
+            Some(Value::Array(zipped))
+        }
+        "range" => {
+            // `range(n)` / `range(start, end)` / `range(start, end,
+            // step)` — produces an integer array. The same `0..n`
+            // numbers a `for=` clause natively supports, but as a
+            // standalone array value so the result can be passed
+            // around as data (`pluck`, `concat_arr`, etc.).
+            let (start, end, step) = match args.len() {
+                1 => (0, i64_arg(0)?, 1),
+                2 => (i64_arg(0)?, i64_arg(1)?, 1),
+                3 => (i64_arg(0)?, i64_arg(1)?, i64_arg(2)?.max(1)),
+                _ => return None,
+            };
+            if start >= end {
+                return Some(Value::Array(Vec::new()));
+            }
+            let nums: Vec<Value> = (start..end)
+                .step_by(step as usize)
+                .map(Value::from)
+                .collect();
+            Some(Value::Array(nums))
+        }
         _ => None,
+    }
+}
+
+/// Truthiness predicate over a raw JSON value — matches the
+/// `eval_truthy` rule (null / false / 0 / "" / [] / {} → false;
+/// anything else → true). Shared by `any` / `all` so a single-arg
+/// call (`any(rows)`) reads through the same vocabulary `if=`
+/// uses.
+fn is_truthy_value(v: &serde_json::Value) -> bool {
+    use serde_json::Value;
+    match v {
+        Value::Null => false,
+        Value::Bool(b) => *b,
+        Value::Number(n) => n.as_f64().map(|f| f != 0.0).unwrap_or(false),
+        Value::String(s) => !s.is_empty(),
+        Value::Array(a) => !a.is_empty(),
+        Value::Object(o) => !o.is_empty(),
     }
 }
 

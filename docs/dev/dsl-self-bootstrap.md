@@ -327,6 +327,37 @@ Each step lands with:
   **Workspace total after wave: 3690 tests passing**, zero failures,
   `cargo clippy --workspace --all-targets -- -D warnings` clean.
 
+- 2026-05-13: **Continuation wave** — three more extensions plus a
+  cross-crate bug fix:
+  1. **`shell.app-card` click → `switch_active_app`.** The launchpad
+     event handler used to call `WorkspaceSlot::set_active_app`
+     directly, which moved the cursor but bypassed the ADR-009 +
+     ADR-010 swap chain. Lifted the body of `Shell::switch_active_app`
+     onto `ShellInner` so the public Shell method *and*
+     `handle_app_card_click` share one path. **3 new event tests**
+     including `pointer_down_on_app_card_drives_full_swap_chain`.
+  2. **`ModifierRegistry` collapsed onto `prism_core::Catalog<T>`.**
+     Mirrors the DockCatalog refactor — `ModifierRegistry` is now a
+     thin newtype around `Catalog<Arc<dyn ModifierBehaviour>>`. The
+     `contains` accessor moved to `Catalog`'s general impl block
+     (no `HasId` bound) so trait-object catalogs can use it.
+     **419 prism-builder tests** unchanged.
+  3. **Per-app stylesheet hot-reload methods.**
+     `Shell::install_app_stylesheet(id, sheet)` and
+     `Shell::uninstall_app_stylesheet(id)` for the dev-loop watcher
+     to call when an `app.prss` changes on disk. Marks the frame
+     dirty only when the affected app is currently active (idempotent
+     for inactive-app cache updates). **5 new shell::tests** + 1 e2e
+     test exercising the full install → render flow.
+  4. **Bug fix:** `prism_cli::dev_loop::drain_child_io` was aborting
+     reader tasks *before* awaiting them, racing with BufReader
+     line-forwarding. The flaky `stdout_is_routed_through_the_sink`
+     test now passes deterministically. The fix lets readers exit
+     naturally on pipe EOF with a 1-second timeout as a backstop.
+
+  **Workspace total after wave: 3712 tests passing**, zero failures,
+  `cargo clippy --workspace --all-targets -- -D warnings` clean.
+
   **Residual follow-up:** binding `prism.register_panel` /
   `prism.register_component` / `prism.register_service` as Luau
   `UserData` methods on a `Arc<dyn AppRegistrar>` handle, threaded
