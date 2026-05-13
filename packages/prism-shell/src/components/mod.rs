@@ -9,15 +9,12 @@
 pub mod builder_canvas;
 pub mod chrome;
 pub mod code_editor;
-pub mod command_palette;
 pub mod dock_panel;
 pub mod dock_workspace;
 pub mod field_editor;
 pub mod nav_graph;
 pub mod prism_ui_loader;
 pub mod registry;
-pub mod schema_designer;
-pub mod transform_editor;
 
 pub use registry::{
     register_document_builtins, register_shell_builtins, ShellComponentRegistry, SHELL_BUILTINS,

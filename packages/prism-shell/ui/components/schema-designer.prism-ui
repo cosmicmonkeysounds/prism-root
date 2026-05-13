@@ -1,0 +1,27 @@
+<!--
+  shell.schema-designer — Data workflow page panel composing
+  shell.schema-row entries from a `fields` JSON array. Wave 11.3
+  migration of schema_designer.rs.
+
+  Reads `title` (section title), `schema-name` (sub-label rendered
+  as "schema · <name>"), and `fields` (JSON array of schema-row
+  props). `<host-children/>` lets caller-supplied chrome land
+  between the header and the dispatched rows.
+-->
+<container
+    tag="section"
+    direction="column"
+    gap="6"
+    padding-left="16"
+    padding-right="16"
+    padding-top="14"
+    padding-bottom="14"
+    width="grow"
+    height="grow"
+    aria-label="Schema designer"
+    data:role="schema-designer">
+  <text if="{title}" font-size="14" style:color="#000000">{title}</text>
+  <text if="{schema-name}" font-size="11" style:color="#80000000">schema · {schema-name}</text>
+  <host-children/>
+  <shell.schema-row for="item in fields" id="{item.field-id}" props="{item}"/>
+</container>

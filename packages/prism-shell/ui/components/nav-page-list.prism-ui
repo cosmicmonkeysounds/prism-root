@@ -20,4 +20,5 @@
     aria-label="Pages"
     data:role="nav-page-list">
   <shell.nav-page-row for="item in pages" id="{item.page-id}" props="{item}"/>
+  <text else font-size="11" style:color="#80000000" padding="6">No pages yet.</text>
 </container>

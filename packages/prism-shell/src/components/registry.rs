@@ -117,12 +117,9 @@ pub static SHELL_BUILTINS: &[&BlockSpec] = &[
     // `register_prism_ui_components` in `shell.rs`. The
     // `prism_ui_specs_register_disjoint_from_native_builtins` test in
     // `prism_ui_loader.rs` pins that they don't double-register.
-    &super::transform_editor::TRANSFORM_EDITOR_SPEC,
     &super::field_editor::FIELD_EDITOR_SPEC,
     &super::dock_panel::DOCK_PANEL_SPEC,
     &super::dock_workspace::DOCK_WORKSPACE_SPEC,
-    &super::command_palette::COMMAND_PALETTE_SPEC,
-    &super::schema_designer::SCHEMA_DESIGNER_SPEC,
     &super::nav_graph::NAV_GRAPH_SPEC,
     &super::code_editor::CODE_EDITOR_SPEC,
     &super::builder_canvas::BUILDER_CANVAS_SPEC,

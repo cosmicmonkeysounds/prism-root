@@ -1,0 +1,90 @@
+<!--
+  shell.transform-editor — Godot-style Position / Rotation / Scale /
+  Anchor stack used in the right-sidebar properties panel. Wave 11.3
+  migration of transform_editor.rs.
+
+  Each numeric row composes shell.drag-number-field instances; the
+  caller-driven axis label colour comes through `label-color`.
+  `display-value` rounds via the JS-style `round(v*100)/100`
+  expression so 3.0 → "3", 1.5 → "1.5", 12.345 → "12.34" — matches
+  Rust's `format_drag_value` for the values transforms care about.
+-->
+<container
+    tag="section"
+    direction="column"
+    gap="2"
+    padding-left="4"
+    padding-right="4"
+    padding-top="4"
+    padding-bottom="4"
+    data:role="transform-editor">
+  <!-- Position row -->
+  <container direction="row" gap="4">
+    <container width="52" height="grow">
+      <text font-size="10" style:color="#99000000">Position</text>
+    </container>
+    <shell.drag-number-field
+        id="{id}::field::transform.position.0"
+        key="transform.position.0"
+        label="x"
+        label-color="#e06060"
+        value="{pos-x}"
+        display-value="{round(pos-x * 100) / 100}"/>
+    <shell.drag-number-field
+        id="{id}::field::transform.position.1"
+        key="transform.position.1"
+        label="y"
+        label-color="#60c060"
+        value="{pos-y}"
+        display-value="{round(pos-y * 100) / 100}"/>
+  </container>
+  <!-- Rotation row -->
+  <container direction="row" gap="4">
+    <container width="52" height="grow">
+      <text font-size="10" style:color="#99000000">Rotation</text>
+    </container>
+    <shell.drag-number-field
+        id="{id}::field::transform.rotation"
+        key="transform.rotation"
+        value="{rotation}"
+        display-value="{round(rotation * 100) / 100}"/>
+  </container>
+  <!-- Scale row -->
+  <container direction="row" gap="4">
+    <container width="52" height="grow">
+      <text font-size="10" style:color="#99000000">Scale</text>
+    </container>
+    <shell.drag-number-field
+        id="{id}::field::transform.scale.0"
+        key="transform.scale.0"
+        label="x"
+        label-color="#e06060"
+        value="{scale-x}"
+        display-value="{round(scale-x * 100) / 100}"/>
+    <shell.drag-number-field
+        id="{id}::field::transform.scale.1"
+        key="transform.scale.1"
+        label="y"
+        label-color="#60c060"
+        value="{scale-y}"
+        display-value="{round(scale-y * 100) / 100}"/>
+  </container>
+  <!-- Anchor row -->
+  <container direction="row" gap="4">
+    <container width="52" height="grow">
+      <text font-size="10" style:color="#99000000">Anchor</text>
+    </container>
+    <container
+        tag="button"
+        type="button"
+        height="24"
+        style:radius="3"
+        style:background="#08000000"
+        style:background:hovered="#14000000"
+        padding-left="6"
+        padding-right="6"
+        data:role="anchor-picker">
+      <text font-size="11" style:color="#000000">{anchor}</text>
+    </container>
+  </container>
+</container>

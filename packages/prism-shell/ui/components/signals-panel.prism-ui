@@ -26,5 +26,6 @@
       for="item in connections"
       id="{item.connection-id}"
       props="{item}"/>
+  <text else font-size="11" style:color="#80000000">No connections yet.</text>
   <shell.add-connection-button if="{show-add}"/>
 </container>

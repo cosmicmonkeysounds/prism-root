@@ -23,7 +23,7 @@
       height="grow"
       padding-left="6"
       padding-right="6">
-    <text if="{label}" font-size="11" style:color="#99000000">{label}</text>
+    <text if="{label}" font-size="11" style:color="{label-color}">{label}</text>
     <text font-size="12" style:color="#000000">{display-value}</text>
   </container>
 </container>

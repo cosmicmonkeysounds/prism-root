@@ -684,6 +684,62 @@ fn dock_tab_bar_schema() -> Vec<FieldSpec> {
     vec![FieldSpec::text("tabs", "Tabs (JSON array)")]
 }
 
+fn schema_designer_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::text("title", "Section title"),
+        FieldSpec::text("schema-name", "Schema name"),
+        FieldSpec::text("fields", "Fields (JSON array of schema-row props)"),
+    ]
+}
+
+fn transform_editor_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::number("pos-x", "Position X", NumericBounds::default())
+            .with_default(Value::from(0.0)),
+        FieldSpec::number("pos-y", "Position Y", NumericBounds::default())
+            .with_default(Value::from(0.0)),
+        FieldSpec::number("rotation", "Rotation", NumericBounds::default())
+            .with_default(Value::from(0.0)),
+        FieldSpec::number("scale-x", "Scale X", NumericBounds::default())
+            .with_default(Value::from(1.0)),
+        FieldSpec::number("scale-y", "Scale Y", NumericBounds::default())
+            .with_default(Value::from(1.0)),
+        FieldSpec::text("anchor", "Anchor").with_default(Value::String("top-left".into())),
+    ]
+}
+
+fn transform_editor_signals() -> Vec<SignalDef> {
+    with_common_signals(vec![
+        SignalDef::new(
+            "field-edited",
+            "Anchor / committed-text edits — payload mirrors the Slint (key, text) callback.",
+        ),
+        SignalDef::new(
+            "field-edited-number",
+            "Numeric drag tick — payload mirrors the Slint (key, value) callback.",
+        ),
+    ])
+}
+
+fn command_palette_schema() -> Vec<FieldSpec> {
+    vec![
+        FieldSpec::boolean("open", "Open").with_default(Value::Bool(false)),
+        FieldSpec::text("query", "Search query"),
+        FieldSpec::text("placeholder", "Placeholder")
+            .with_default(Value::String("Search commands…".into())),
+        FieldSpec::text("results", "Results (JSON array)"),
+        FieldSpec::integer("selected-index", "Selected result", NumericBounds::min(0.0))
+            .with_default(Value::from(0.0)),
+    ]
+}
+
+fn command_palette_signals() -> Vec<SignalDef> {
+    with_common_signals(vec![
+        SignalDef::new("query-changed", "User typed in the input."),
+        SignalDef::new("result-activated", "User picked a result."),
+    ])
+}
+
 fn component_picker_schema() -> Vec<FieldSpec> {
     vec![
         FieldSpec::boolean("open", "Open").with_default(Value::Bool(false)),
@@ -725,6 +781,8 @@ fn drag_number_field_schema() -> Vec<FieldSpec> {
             .with_default(Value::from(99_999.0)),
         FieldSpec::text("display-value", "Pre-formatted value (host computes)")
             .with_default(Value::String("0".into())),
+        FieldSpec::text("label-color", "Axis-label colour (CSS hex)")
+            .with_default(Value::String("#99000000".into())),
     ]
 }
 
@@ -1199,6 +1257,26 @@ pub static SHELL_PRISM_UI_COMPONENTS: &[PrismUiSpec] = &[
         include_str!("../../ui/components/dock-tab-bar.prism-ui"),
     )
     .schema(dock_tab_bar_schema),
+    // Wave 11.3 — Tier-2 migration of schema_designer.rs.
+    PrismUiSpec::new(
+        "shell.schema-designer",
+        include_str!("../../ui/components/schema-designer.prism-ui"),
+    )
+    .schema(schema_designer_schema),
+    // Wave 11.3 — Tier-2 migration of transform_editor.rs.
+    PrismUiSpec::new(
+        "shell.transform-editor",
+        include_str!("../../ui/components/transform-editor.prism-ui"),
+    )
+    .schema(transform_editor_schema)
+    .signals(transform_editor_signals),
+    // Wave 11.3 — Tier-2 migration of command_palette.rs.
+    PrismUiSpec::new(
+        "shell.command-palette",
+        include_str!("../../ui/components/command-palette.prism-ui"),
+    )
+    .schema(command_palette_schema)
+    .signals(command_palette_signals),
 ];
 
 #[cfg(test)]

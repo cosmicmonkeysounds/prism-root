@@ -696,28 +696,132 @@ fn expand_control_flow(
                 index_var,
                 source,
             }) => {
-                chain_taken = None;
-                let items = active
-                    .binding(&source)
-                    .and_then(|v| v.as_array().cloned())
-                    .unwrap_or_default();
-                for (idx, item) in items.into_iter().enumerate() {
+                // **Wave 15.2** — numeric range `0..n` / `0..=n` short-circuits the
+                // binding-lookup path before falling back to **Wave 15.3** object
+                // iteration on a JSON object (each LHS-pair element binds
+                // `(value, key)`) and the original array iteration.
+                let iter = resolve_for_iteration(&source, active);
+                // **Wave 15.1** — empty iteration sets `chain_taken =
+                // Some(false)` so a subsequent `else` (Svelte's
+                // `{:each}{:else}` shape) runs as the empty-state fallback.
+                // Non-empty iteration sets `Some(true)` to suppress the
+                // else branch, matching the if-chain rule. The previous
+                // unconditional reset-to-`None` becomes the "no for at
+                // all" baseline up at `None` of `match cf`.
+                chain_taken = Some(!iter.is_empty());
+                for (idx, (key, item)) in iter.into_iter().enumerate() {
                     let mut child_scope = active.clone().with_binding(var.clone(), item);
-                    // Optional iteration-index binding — `for="row, idx
-                    // in rows"` exposes the index as a typed integer.
-                    // Authors use it to build stable per-row ids
-                    // (`id="row-{idx}"`) so hit-testing has a unique key
-                    // per dispatched container.
+                    // Optional iteration-index / object-key binding —
+                    // `for="row, idx in rows"` exposes the index as a
+                    // typed integer for arrays / ranges; `for="value, key
+                    // in obj"` exposes the string key for objects. Same
+                    // LHS slot, type depends on the source shape (Wave
+                    // 15.3).
                     if let Some(idx_name) = index_var.as_ref() {
-                        child_scope = child_scope
-                            .with_binding(idx_name.clone(), serde_json::Value::from(idx as i64));
+                        child_scope = child_scope.with_binding(idx_name.clone(), key);
                     }
                     out.push((node.clone(), Some(child_scope)));
+                    // `idx` is the running iteration counter; the
+                    // bound second-LHS value is whatever the source
+                    // shape natively produces (integer for arrays /
+                    // ranges, string for object entries).
+                    let _ = idx;
                 }
             }
         }
     }
     out
+}
+
+/// **Wave 15.2 / 15.3** — resolve the right-hand side of a `for=`
+/// attribute into an ordered list of `(second-LHS, primary-LHS)`
+/// pairs. The primary is the item bound to `var`; the second is the
+/// value bound to `index_var` when present.
+///
+/// Three source shapes, in priority order:
+/// 1. **Numeric range** `start..end` / `start..=end` (Wave 15.2).
+///    Both endpoints resolve through the full expression evaluator
+///    so `for="i in 0..items.length"` works as well as `for="i in
+///    0..10"`. Reverse ranges (start > end) yield an empty
+///    iteration — Rust `Range`'s shape.
+/// 2. **JSON object** (Wave 15.3). When the source resolves to a
+///    `Value::Object`, iterate `(key, value)` entries in insertion
+///    order. The second-LHS binding receives the string key.
+/// 3. **JSON array** (the pre-Wave-15 path). Iterate values; the
+///    second-LHS binding receives the integer index.
+fn resolve_for_iteration(
+    source: &str,
+    scope: &LowerScope,
+) -> Vec<(serde_json::Value, serde_json::Value)> {
+    let trimmed = source.trim();
+    // Wave 15.2 — range form. `..=` parsed before `..` so the
+    // inclusive form isn't swallowed by the exclusive split.
+    if let Some((start_raw, end_raw, inclusive)) = split_range(trimmed) {
+        let start = resolve_to_i64(start_raw, scope);
+        let end = resolve_to_i64(end_raw, scope);
+        if let (Some(start), Some(end)) = (start, end) {
+            let last = if inclusive { end } else { end - 1 };
+            if start > last {
+                return Vec::new();
+            }
+            return (start..=last)
+                .map(|n| (serde_json::Value::from(n), serde_json::Value::from(n)))
+                .collect();
+        }
+        return Vec::new();
+    }
+    // Resolve the source as an arbitrary expression so a dotted-path
+    // (`item.children`) resolves through scope. Bare identifiers go
+    // through `lookup_expression`'s cheap path first.
+    let resolved = lookup_expression(trimmed, scope)
+        .cloned()
+        .or_else(|| evaluate_expression(trimmed, scope));
+    match resolved {
+        Some(serde_json::Value::Object(map)) => map
+            .into_iter()
+            .map(|(k, v)| (serde_json::Value::String(k), v))
+            .collect(),
+        Some(serde_json::Value::Array(arr)) => arr
+            .into_iter()
+            .enumerate()
+            .map(|(i, v)| (serde_json::Value::from(i as i64), v))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Split `start..end` / `start..=end` into `(start, end, inclusive)`.
+/// Returns `None` when no `..` appears, so the caller falls through to
+/// the value-binding lookup. Inclusive (`..=`) wins over exclusive
+/// (`..`) so an author writing `0..=10` doesn't accidentally end up
+/// with `0..` + `=10`.
+fn split_range(body: &str) -> Option<(&str, &str, bool)> {
+    if let Some((start, end)) = body.split_once("..=") {
+        return Some((start.trim(), end.trim(), true));
+    }
+    if let Some((start, end)) = body.split_once("..") {
+        return Some((start.trim(), end.trim(), false));
+    }
+    None
+}
+
+/// Resolve a range endpoint to an integer. Tries the cheap parse
+/// first (so `0..10` doesn't pay the expression-parser cost), then
+/// falls through to the full evaluator (so `0..items.length` works
+/// when an array's length is exposed via a bound `length` field on
+/// scope) and finally the bare-binding lookup.
+fn resolve_to_i64(s: &str, scope: &LowerScope) -> Option<i64> {
+    if let Ok(n) = s.parse::<i64>() {
+        return Some(n);
+    }
+    let value = lookup_expression(s, scope)
+        .cloned()
+        .or_else(|| evaluate_expression(s, scope))?;
+    match value {
+        serde_json::Value::Number(n) => n.as_i64().or_else(|| n.as_f64().map(|f| f as i64)),
+        serde_json::Value::String(s) => s.parse::<i64>().ok(),
+        _ => None,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -729,6 +833,17 @@ enum ControlFlow {
         var: String,
         index_var: Option<String>,
         source: String,
+        /// Iteration step. Only meaningful for numeric ranges
+        /// (`for="i in 0..100 step 10"`). `None` defaults to step 1.
+        /// Non-range sources ignore this — array / object iteration
+        /// always emits every entry. Parser guarantees `>= 1` when
+        /// `Some`.
+        step: Option<i64>,
+        /// Reverse iteration order. Applies after collecting all
+        /// entries (range, array, or object). `for="item in items reverse"`,
+        /// `for="i in 0..10 reverse"`, `for="i in 0..100 step 10 reverse"`
+        /// all valid.
+        reverse: bool,
     },
 }
 
@@ -743,11 +858,15 @@ fn control_flow_attr(el: &Element) -> Option<ControlFlow> {
             "else-if" => ControlFlow::ElseIf(body),
             "else" => ControlFlow::Else,
             "for" => parse_for_clause(&body)
-                .map(|(var, index_var, source)| ControlFlow::For {
-                    var,
-                    index_var,
-                    source,
-                })
+                .map(
+                    |(var, index_var, source, step, reverse)| ControlFlow::For {
+                        var,
+                        index_var,
+                        source,
+                        step,
+                        reverse,
+                    },
+                )
                 .unwrap_or_else(|| ControlFlow::If("false".into())),
             _ => return None,
         });
@@ -916,6 +1035,7 @@ fn input_from(el: &Element, scope: &LowerScope) -> Node {
     let mut props = TextProps::default();
     let mut width = Sizing::default();
     let mut height = Sizing::default();
+    let mut focused = false;
     for attr in &el.attributes {
         let local = attr.name.local.as_str();
         let raw = resolved_attribute_string(&attr.value, scope);
@@ -937,6 +1057,12 @@ fn input_from(el: &Element, scope: &LowerScope) -> Node {
                     if let Some(s) = raw.as_deref().and_then(parse_sizing) {
                         height = s;
                     }
+                }
+                // Wave 11.3 — focus state surfaces through the DSL so
+                // `<input focused="{is-focused}"/>` reports the
+                // live edit target without a Rust helper.
+                "focused" => {
+                    focused = matches!(raw.as_deref(), Some("true"));
                 }
                 _ => {}
             },
@@ -962,7 +1088,7 @@ fn input_from(el: &Element, scope: &LowerScope) -> Node {
         height,
         radius: CornerRadius::default(),
         semantic: Semantic::default(),
-        focused: false,
+        focused,
     }
 }
 
@@ -2843,6 +2969,172 @@ mod tests {
         assert_eq!(id_b, "b");
         assert!((a.padding.left - 4.0).abs() < f32::EPSILON);
         assert!((b.padding.left - 20.0).abs() < f32::EPSILON);
+    }
+
+    // ── Wave 15 — iteration / loop patterns ──
+
+    /// **Wave 15.1** — Svelte-style `{:each}{:else}` shape: a `for`
+    /// that iterates zero items lets a following `else` sibling
+    /// render as the empty-state fallback. Non-empty iteration
+    /// suppresses the branch.
+    #[test]
+    fn else_after_empty_for_renders_fallback() {
+        use serde_json::json;
+        let scope = LowerScope::default().with_binding("items", json!([]));
+        let source = r#"
+            <container id="row" for="item in items"/>
+            <text else>No items.</text>
+        "#;
+        let nodes = interpret_with_scope(source, &scope).unwrap();
+        // For-loop emitted zero containers; the else-text replaces it.
+        assert_eq!(nodes.len(), 1);
+        let crate::layout::Node::Text { content, .. } = &nodes[0] else {
+            panic!("expected fallback text, got {:?}", nodes[0]);
+        };
+        assert_eq!(content, "No items.");
+    }
+
+    #[test]
+    fn else_after_non_empty_for_is_suppressed() {
+        use serde_json::json;
+        let scope = LowerScope::default().with_binding("items", json!(["a", "b"]));
+        let source = r#"
+            <container id="row" for="item in items"/>
+            <text else>No items.</text>
+        "#;
+        let nodes = interpret_with_scope(source, &scope).unwrap();
+        // Two for-rows emitted; the else-text is suppressed.
+        assert_eq!(nodes.len(), 2);
+        for n in &nodes {
+            assert!(matches!(n, crate::layout::Node::Container { .. }));
+        }
+    }
+
+    #[test]
+    fn else_if_after_empty_for_evaluates_predicate() {
+        use serde_json::json;
+        let scope = LowerScope::default()
+            .with_binding("items", json!([]))
+            .with_binding("show", json!(true));
+        let source = r#"
+            <container id="row" for="item in items"/>
+            <text else-if="{show}">Else-if branch.</text>
+            <text else>Fallback.</text>
+        "#;
+        let nodes = interpret_with_scope(source, &scope).unwrap();
+        assert_eq!(nodes.len(), 1);
+        let crate::layout::Node::Text { content, .. } = &nodes[0] else {
+            panic!("expected else-if branch text, got {:?}", nodes[0]);
+        };
+        assert_eq!(content, "Else-if branch.");
+    }
+
+    /// **Wave 15.2** — `for="i in 0..3"` iterates `i ∈ [0, 3)`,
+    /// matching Rust's `Range` / Python's `range(3)` shape.
+    #[test]
+    fn range_exclusive_iterates_start_through_end_minus_one() {
+        let source = r#"<container id="row-{i}" for="i in 0..3" padding="{i}"/>"#;
+        let nodes = interpret(source).unwrap();
+        assert_eq!(nodes.len(), 3);
+        for (idx, n) in nodes.iter().enumerate() {
+            let crate::layout::Node::Container { id, props, .. } = n else {
+                panic!()
+            };
+            assert_eq!(id, &format!("row-{idx}"));
+            assert!((props.padding.left - idx as f32).abs() < f32::EPSILON);
+        }
+    }
+
+    /// **Wave 15.2** — `..=` inclusive variant matches Rust's
+    /// `RangeInclusive` shape.
+    #[test]
+    fn range_inclusive_iterates_start_through_end() {
+        let source = r#"<container id="row-{i}" for="i in 0..=3"/>"#;
+        let nodes = interpret(source).unwrap();
+        assert_eq!(nodes.len(), 4, "0..=3 includes 0,1,2,3");
+    }
+
+    /// **Wave 15.2** — start > end yields zero items, no panic.
+    #[test]
+    fn range_with_descending_endpoints_yields_zero_items() {
+        let source = r#"<container id="row-{i}" for="i in 5..3"/>"#;
+        let nodes = interpret(source).unwrap();
+        assert!(nodes.is_empty());
+    }
+
+    /// **Wave 15.2** — range endpoints resolve through the scope
+    /// binding map. `for="i in 0..n"` with `n` bound to 4 iterates
+    /// `0..4`.
+    #[test]
+    fn range_endpoints_resolve_through_scope_bindings() {
+        use serde_json::json;
+        let scope = LowerScope::default().with_binding("n", json!(4));
+        let nodes =
+            interpret_with_scope(r#"<container id="r-{i}" for="i in 0..n"/>"#, &scope).unwrap();
+        assert_eq!(nodes.len(), 4);
+    }
+
+    /// **Wave 15.3** — iterating over a JSON object yields one entry
+    /// per `(key, value)` pair in insertion order. The primary LHS
+    /// variable binds the value; the optional second LHS variable
+    /// binds the string key (mirroring the index-variable shape for
+    /// arrays).
+    #[test]
+    fn for_loop_over_object_iterates_entries_in_insertion_order() {
+        use serde_json::json;
+        let scope = LowerScope::default().with_binding(
+            "props",
+            json!({ "alpha": "first", "beta": "second", "gamma": "third" }),
+        );
+        let source = r#"<text for="value in props">{value}</text>"#;
+        let nodes = interpret_with_scope(source, &scope).unwrap();
+        let contents: Vec<String> = nodes
+            .iter()
+            .map(|n| match n {
+                crate::layout::Node::Text { content, .. } => content.clone(),
+                _ => panic!("expected text node"),
+            })
+            .collect();
+        assert_eq!(contents, vec!["first", "second", "third"]);
+    }
+
+    #[test]
+    fn for_loop_over_object_binds_key_to_second_lhs_variable() {
+        use serde_json::json;
+        let scope = LowerScope::default()
+            .with_binding("props", json!({ "alpha": "first", "beta": "second" }));
+        // `<text>{a} {b}</text>` interpolations are space-joined by
+        // `collect_text_content` — keep the assertion on the joined
+        // shape rather than fighting the runtime convention.
+        let source = r#"<text for="value, key in props">{key} {value}</text>"#;
+        let nodes = interpret_with_scope(source, &scope).unwrap();
+        let contents: Vec<String> = nodes
+            .iter()
+            .map(|n| match n {
+                crate::layout::Node::Text { content, .. } => content.clone(),
+                _ => panic!(),
+            })
+            .collect();
+        assert_eq!(contents, vec!["alpha first", "beta second"]);
+    }
+
+    /// **Regression pin** — the Wave 15.3 dispatch on source shape
+    /// must not break the existing array + index path. `for="x, idx
+    /// in arr"` still binds `idx` to the integer index.
+    #[test]
+    fn for_loop_index_variable_still_works_on_arrays() {
+        use serde_json::json;
+        let scope = LowerScope::default().with_binding("xs", json!(["a", "b"]));
+        let source = r#"<text for="x, i in xs">{i} {x}</text>"#;
+        let nodes = interpret_with_scope(source, &scope).unwrap();
+        let contents: Vec<String> = nodes
+            .iter()
+            .map(|n| match n {
+                crate::layout::Node::Text { content, .. } => content.clone(),
+                _ => panic!(),
+            })
+            .collect();
+        assert_eq!(contents, vec!["0 a", "1 b"]);
     }
 
     /// **Wave 14.3** — `on:click.once` lowers to `data-on-click-once`
